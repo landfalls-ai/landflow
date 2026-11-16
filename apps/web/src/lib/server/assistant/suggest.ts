@@ -9,11 +9,11 @@ import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import type { LanguageModel } from '@landflow/engine';
 import type { AssistantOp, RunDigest } from '@/lib/shared/assistant-ops';
+import { needsPerson } from '@/lib/shared/run-check'; // SB09:
 import type { NodeTypeInfo, Workflow } from '@/lib/shared/types';
 import { PARAMETER_FORMATS } from '../flow-builder';
 import { parseJsonReply } from '../nodes/structured';
 import { recordSuggestions, traceAssistant } from '../telemetry/assistant';
-import { needsPerson } from '@/lib/shared/run-check'; // SB09:
 import { destinationChanges } from './change-checks'; // SB09:
 import { assistantModel, modelLabel } from './model';
 import { registryLookup, validateOps } from './ops';

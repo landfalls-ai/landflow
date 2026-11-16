@@ -540,6 +540,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
           return result(`Not shown yet: ${slips.join('; ')}. Call propose_changes again with the numbers in the field's unit.`, 'Reworked the change', false, true);
         }
         // SB09: a change that means what its card says: retry settings in range and on, expressions that read fields the step's input has, a schedule that parses and names the days asked, no Authorization header read from the data. Back once, then shown with the lines on the card.
+        // retryProblems reads the ops after apply, so its range and contradiction lines are normally caught earlier by the `dropped` send-back; it stays for ops that reach here unchanged.
         const checkLines = [
           ...retryProblems(validated.ops, working, validated.workflow, { latest }),
           ...expressionMisses(validated.ops, working, validated.workflow, { runs, lookup, latest }),

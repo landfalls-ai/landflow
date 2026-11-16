@@ -109,6 +109,27 @@ describe('expressions against the step input', () => {
     expect(expressionMisses(ops, wf, after, { runs: {}, lookup: schemaLookup })).toEqual(['“Open status incident” reads $json.priority, which its input has no field of (it has: title, url)']);
   });
 
+  it('is silent when the proposal inserts a step that makes the field the step then reads', () => {
+    const wf = flow();
+    wf.nodes[1] = { ...wf.nodes[1], name: 'Triage' };
+    const ops: AssistantOp[] = [
+      { op: 'addNode', type: 'core.set', name: 'Shape', after: 'Triage', parameters: { summary: '{{ $json.title }}' } } as AssistantOp,
+      { op: 'disconnect', from: 'Triage', to: 'Open status incident' },
+      { op: 'connect', from: 'Shape', to: 'Open status incident' },
+      set({ body: '{{ $json.summary }}' }),
+    ];
+    const after = apply(ops, wf).workflow;
+    expect(after.nodes.some((n) => n.name === 'Shape')).toBe(true);
+    const own = { h: { status: 'success', durationMs: 1, inputs: [{ count: 1, sample: [{ title: 'x', priority: 'P0' }] }], outputs: [] } } as Record<string, RunDigest>;
+    expect(expressionMisses(ops, wf, after, { runs: own })).toEqual([]);
+  });
+
+  it('is silent when a feeder is edited in the same proposal', () => {
+    const wf = flow();
+    const ops = [set({ fields: { summary: '{{ $json.title }}' } }, 'Triage'), set({ body: '{{ $json.summary }}' })];
+    expect(expressionMisses(ops, wf, apply(ops, wf).workflow, { runs })).toEqual([]);
+  });
+
   it('checks $(\'Name\').item.json reads against that step', () => {
     const wf = flow();
     const ops = [set({ body: "{{ $('Triage').item.json.owner }}" })];
@@ -145,6 +166,16 @@ describe('Authorization headers', () => {
     const ops = [set({ authentication: 'genericCredentialType', genericAuthType: 'httpBearerAuth', headers: { header: [{ name: 'Authorization', value: 'Bearer abc' }] } })];
     expect(authHeaderProblems(ops, wf, apply(ops, wf).workflow)).toEqual(['“Open status incident” has a credential and a hand-written Authorization header: the header wins, so the credential is not used']);
     expect(validateOps(wf, ops, lookup()).cautions.join()).toMatch(/hand-written Authorization header/);
+  });
+
+  it('an existing hand-written header with a newly set credential is a caution', () => {
+    const wf = flow();
+    wf.nodes[2].parameters = { ...wf.nodes[2].parameters, headers: { header: [{ name: 'Authorization', value: 'Bearer old' }] } };
+    const ops = [set({ authentication: 'genericCredentialType', genericAuthType: 'httpBearerAuth' })];
+    expect(authHeaderProblems(ops, wf, apply(ops, wf).workflow, {}, 'credential')).toHaveLength(1);
+    expect(validateOps(wf, ops, lookup()).cautions.join()).toMatch(/hand-written Authorization header/);
+    const other = [set({ timeout: 5 })];
+    expect(authHeaderProblems(other, wf, apply(other, wf).workflow, {}, 'credential')).toEqual([]);
   });
 
   it('a header read from the data is named', () => {

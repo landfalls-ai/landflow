@@ -120,10 +120,10 @@ const WORKFLOW_SETTINGS: Record<keyof WorkflowSettingsPatch, 'string' | 'number'
 // SB09: what a node's settings may be (the engine ignores or mishandles the rest): out of range is dropped and named by the caller.
 const NODE_RANGES: Record<string, (value: number) => boolean> = {
   maxTries: (v) => Number.isInteger(v) && v >= 1 && v <= 10,
-  waitBetweenTriesMs: (v) => v <= 60_000,
-  timeoutSeconds: (v) => v > 0,
+  waitBetweenTriesMs: (v) => Number.isInteger(v) && v >= 0 && v <= 60_000,
+  timeoutSeconds: (v) => v >= 0.1 && v <= 86_400,
 };
-const NODE_RANGE_WORDS: Record<string, string> = { maxTries: 'a whole number from 1 to 10', waitBetweenTriesMs: '0 to 60000 milliseconds', timeoutSeconds: 'more than 0 seconds' };
+const NODE_RANGE_WORDS: Record<string, string> = { maxTries: 'a whole number from 1 to 10', waitBetweenTriesMs: 'a whole number from 0 to 60000 milliseconds', timeoutSeconds: '0.1 to 86400 seconds' };
 
 /** The settings of `raw` that `allowed` names, with the right types; undefined when none is left. */
 function settingsOf<T>(raw: unknown, allowed: Record<string, 'boolean' | 'number' | 'string' | 'onError' | 'backoff'>, ranges?: Record<string, (value: number) => boolean>): T | undefined {

@@ -100,10 +100,10 @@ function fieldsAt(sources: { samples: unknown[]; schemas: unknown[] }, path: str
 }
 
 /** The samples and schemas that say what `node` outputs. */
-function outputSources(node: Node, after: Workflow, context: CheckContext): { samples: unknown[]; schemas: unknown[] } {
+function outputSources(node: Node, after: Workflow, context: CheckContext, stale = false): { samples: unknown[]; schemas: unknown[] } {
   const samples: unknown[] = [];
   const schemas: unknown[] = [];
-  for (const port of context.runs?.[node.id]?.outputs ?? []) samples.push(...port.sample);
+  if (!stale) for (const port of context.runs?.[node.id]?.outputs ?? []) samples.push(...port.sample);
   for (const item of after.pinData?.[node.id] ?? []) samples.push(item.json);
   const descriptor = context.lookup?.(node.type);
   if (descriptor) {
@@ -137,17 +137,25 @@ export function expressionMisses(ops: AssistantOp[], before: Workflow, after: Wo
     const feeders = after.connections.filter((c) => c.type === 'main' && c.target === node.id).map((c) => after.nodes.find((n) => n.id === c.source)).filter((n): n is Node => Boolean(n));
     const input = { samples: [] as unknown[], schemas: [] as unknown[] };
     let inputKnown = feeders.length > 0;
+    // A feeder the same proposal adds or edits has a last run that no longer says what it will output.
+    const touched = (n: Node) => ops.some((o) => ((o.op === 'setParameters' || o.op === 'addNode' || o.op === 'renameNode') && (('node' in o ? o.node : undefined) === n.name || ('node' in o ? o.node : undefined) === n.id || (o.op === 'addNode' && (o.name ?? o.type) === n.name))));
+    const feedersOf = (wf: Workflow) => wf.connections.filter((c) => c.type === 'main' && c.target === node.id).map((c) => c.source).sort().join();
+    const feedersSame = feedersOf(before) === feedersOf(after) && !feeders.some(touched);
     for (const feeder of feeders) {
-      const source = outputSources(feeder, after, context);
+      const source = outputSources(feeder, after, context, touched(feeder));
       if (!source.samples.length && !source.schemas.length) inputKnown = false;
       input.samples.push(...source.samples);
       input.schemas.push(...source.schemas);
     }
-    if (!inputKnown) {
+    if (!inputKnown && feedersSame) {
       input.samples.length = 0;
       input.schemas.length = 0;
       for (const port of context.runs?.[node.id]?.inputs ?? []) input.samples.push(...port.sample);
       inputKnown = input.samples.length > 0;
+    }
+    if (!inputKnown) {
+      input.samples.length = 0;
+      input.schemas.length = 0;
     }
 
     for (const { text } of texts) {
@@ -204,7 +212,8 @@ function daysOf(field: string): string {
     }
     const list = [...days].sort((x, y) => x - y);
     if (list.length === 5 && list.join() === '1,2,3,4,5') return 'Mon–Fri';
-    return list.map((d) => DAY_NAMES[d]).join(', ');
+    const named = list.filter((d) => DAY_NAMES[d]).map((d) => DAY_NAMES[d]).join(', ');
+    return named || field;
   } catch {
     return field;
   }
@@ -279,10 +288,14 @@ export function authHeaderProblems(ops: AssistantOp[], before: Workflow, after: 
     if (!set?.node) continue;
     const node = set.node;
     const was = headerRows(byRef(before, set.name)?.parameters ?? {});
-    const rows = headerRows(node.parameters).filter((r) => /^authorization$/i.test(r.name) && !was.some((w) => w.name === r.name && w.value === r.value));
-    if (!rows.length) continue;
-    if (only !== 'credential' && rows.some((r) => /\$json|\$\(/.test(r.value))) out.push(`“${node.name}” builds its Authorization header from the data: use a credential (the person picks it), not a header read from the data`);
+    const all = headerRows(node.parameters).filter((r) => /^authorization$/i.test(r.name));
+    const rows = all.filter((r) => !was.some((w) => w.name === r.name && w.value === r.value));
+    const wasNode = byRef(before, set.name);
     const credentialed = CREDENTIAL_AUTH.has(String(node.parameters.authentication ?? '')) || Object.keys(node.credentials ?? {}).length > 0;
+    const credentialWas = Boolean(wasNode) && (CREDENTIAL_AUTH.has(String(wasNode?.parameters.authentication ?? '')) || Object.keys(wasNode?.credentials ?? {}).length > 0);
+    const hits = only === 'data' ? rows : only === 'credential' && !credentialWas ? all : only === 'credential' ? rows : rows.length ? all : [];
+    if (!hits.length) continue;
+    if (only !== 'credential' && rows.some((r) => /\$json|\$\(/.test(r.value))) out.push(`“${node.name}” builds its Authorization header from the data: use a credential (the person picks it), not a header read from the data`);
     if (only !== 'data' && credentialed) out.push(`“${node.name}” has a credential and a hand-written Authorization header: the header wins, so the credential is not used`);
   }
   return out;
