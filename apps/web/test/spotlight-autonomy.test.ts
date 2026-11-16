@@ -20,7 +20,7 @@ vi.mock('@/components/editor/assistant', async (original) => ({
 const { useAssistant } = await import('@/components/editor/assistant');
 const { useEditor } = await import('@/components/editor/store');
 const { testUntilItRuns } = await import('@/components/editor/test-session');
-const { afterReply, testDraft, typedSession, useAutonomous } = await import('@/components/editor/autonomous');
+const { afterReply, holdsForClick, testDraft, typedSession, useAutonomous } = await import('@/components/editor/autonomous');
 const { autonomyFor, autonomyOf, needsAClick, noteOpened, notePublished, useAutonomyFacts } = await import('@/components/editor/spotlight-autonomy');
 
 const graph = {
@@ -167,6 +167,17 @@ describe('what is sent', () => {
     expect(typedSession('why did it fail? fix it')).toEqual({ session: 'auto' });
     await open('saved', 4);
     expect(typedSession('make it retry 3 times')).toEqual({});
+  });
+
+  it('holds a reply for a click on a saved workflow, and on a new draft only when it removes a step', async () => {
+    const rm = [{ ops: [{ op: 'removeNode', node: 'Node 0' }] as never }];
+    const set = [{ ops: [{ op: 'setParameters', node: 'Node 0', parameters: {} }] as never }];
+    await open('saved', 2);
+    expect(holdsForClick(set)).toBe(true);
+    await open('fresh', 0);
+    useEditor.setState({ nodes: [{ id: 'n0', data: { wf: { id: 'n0', name: 'Node 0' } } }] as never });
+    expect(holdsForClick(set)).toBe(false);
+    expect(holdsForClick(rm)).toBe(true);
   });
 
   it('tests a drafted flow by itself only on a new draft', async () => {

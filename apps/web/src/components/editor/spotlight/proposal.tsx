@@ -222,7 +222,7 @@ export function AutonomousSwitch({ compact, explainer }: { compact?: boolean; ex
       {note && !explainer && <AutonomousExplainer onClose={close} className="fixed inset-x-3 bottom-3 z-50" />}
       {/* SB04: under the switch, over nothing of the canvas's layout (absolute: the header row keeps its height). */}
       {on && asksFirst && (
-        <p role="note" className="absolute right-0 top-full z-10 mt-1 w-[min(19rem,calc(100vw-1.5rem))] rounded-lg border border-hair bg-sf px-2.5 py-1.5 text-[11.5px] leading-snug text-t2 shadow-pop">
+        <p role="note" className="z-10 mt-1 rounded-lg max-md:fixed max-md:inset-x-3 md:absolute md:right-0 md:top-full md:w-72 border border-hair bg-sf px-2.5 py-1.5 text-[11.5px] leading-snug text-t2 shadow-pop">
           Spotlight acts alone only while it builds a new draft. This workflow is saved, so it asks first.
         </p>
       )}
