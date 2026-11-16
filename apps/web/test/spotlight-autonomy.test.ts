@@ -99,6 +99,23 @@ describe('the rule', () => {
     await vi.waitFor(() => expect(autonomyOf('published-empty')).toBe('asks-first'));
   });
 
+  it('a workflow opened empty and active is asks-first without the versions read', async () => {
+    const { api } = await import('@/lib/client/api');
+    vi.mocked(api).mockClear();
+    useEditor.setState({ workflowId: 'live', active: true, nodes: [], edges: [] });
+    expect(autonomyOf('live')).toBe('asks-first');
+    expect(api).not.toHaveBeenCalled();
+    useEditor.setState({ active: false });
+  });
+
+  it('a new draft becomes asks-first when a publish makes it active', async () => {
+    await open('draft', 0);
+    expect(autonomyOf('draft')).toBe('auto');
+    useEditor.setState({ active: true });
+    expect(autonomyOf('draft')).toBe('asks-first');
+    useEditor.setState({ active: false });
+  });
+
   it('carries the facts of a new workflow to its new id when its canvas is kept', async () => {
     await open('draft-1', 0);
     const nodes = useEditor.getState().nodes;

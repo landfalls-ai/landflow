@@ -28,7 +28,7 @@ const QUESTION_WORD = /^(?:why|what|how|which|who|whose|explain|tell me|show me 
 /** "when did it fail", "where is the webhook": an auxiliary right after; "when the total is over 100, …" is a condition. */
 const WH_AUX = /^(?:when|where)\s+(?:did|does|do|is|are|was|were|will|can|could|should|would|has|have)\b/;
 /** Third-person auxiliaries read as a question without a "?" ("does Check total run twice"), unless negated. */
-const AUX_SUBJECT = /^(?:is|are|was|were|does|did|has)\b(?!\s+not\b)/;
+const AUX_SUBJECT = /^(?:is|are|was|were|does|did|has)\b(?!\s+not\b)(?!\s+to\b)(?!\s+\w+ing\b)/;
 type Clause = 'change' | 'question' | 'other';
 
 function isChange(part: string): boolean {
@@ -62,7 +62,7 @@ export function askKind(message: string): AskKind {
   // One clause per sentence, per "label: request" and per "…, and then …"; a "?" stays with the clause it ends.
   const clauses: string[] = [];
   for (const sentence of text.match(/[^.!?\n:;]+[.!?\n:;]*/g) ?? []) {
-    const parts = sentence.split(/,\s*(?:and|then|also)\s+|\s+and then\s+/i).map((c) => c.trim());
+    const parts = sentence.split(new RegExp(`,\\s*(?:and|then|also)\\s+|\\s+and then\\s+|\\s+and\\s+(?=(?:${CHANGE_VERBS.join('|')}|please|can you|could you)\\b)`, 'i')).map((c) => c.trim());
     if (/\?\s*$/.test(sentence)) parts[parts.length - 1] += '?';
     clauses.push(...parts.map((c) => c.replace(/[.!\n:;]+$/, '')).filter((c) => c.replace(/[?\s]/g, '')));
   }

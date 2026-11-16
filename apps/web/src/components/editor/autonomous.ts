@@ -58,6 +58,13 @@ function opened(workflowId: string, nodeCount: number) {
       // Unread: the workflow stays what it was noted as (born empty); a publish from this tab ends it too.
     });
 }
+// A published workflow is not a new draft: `active` is set by a load and by every publish (the header, a rollback, a schedule, Spotlight's card).
+useEditor.subscribe((state, prev) => {
+  if (state.workflowId && state.active && (!prev.active || state.workflowId !== prev.workflowId)) {
+    noteOpened(state.workflowId, state.nodes.length);
+    notePublished(state.workflowId);
+  }
+});
 useEditor.subscribe((state, prev) => {
   if (state.workflowId === prev.workflowId || !state.workflowId) return;
   const earlier = useAutonomyFacts.getState().workflows[prev.workflowId];
@@ -69,7 +76,11 @@ useEditor.subscribe((state, prev) => {
   opened(state.workflowId, state.nodes.length);
 });
 // A store that loaded before this module did.
-if (useEditor.getState().workflowId) opened(useEditor.getState().workflowId, useEditor.getState().nodes.length);
+if (useEditor.getState().workflowId) {
+  const now = useEditor.getState();
+  opened(now.workflowId, now.nodes.length);
+  if (now.active) notePublished(now.workflowId);
+}
 
 /** The canvas as the rule reads it. */
 export function canvasGraph(): ChangeGraph {

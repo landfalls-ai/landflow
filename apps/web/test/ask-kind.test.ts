@@ -55,6 +55,11 @@ const table: Array<[string, AskKind]> = [
   ['why did it fail? use the other credential', 'change'],
   ['what does it do, and then add a retry', 'change'],
   ['why did it fail? the one from this morning please', 'change'],
+  ['Tell me why it failed and fix it', 'change'],
+  ['why did it fail and fix it', 'change'],
+  ['why did it fail and what ran last?', 'question'],
+  ['Has to retry 3 times', 'change'],
+  ['Is sending to the wrong channel', 'change'],
   ['retry', 'change'],
   ['hmm, the order flow', 'change'],
 ];
