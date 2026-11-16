@@ -10,6 +10,13 @@ const table: Array<[string, AskKind]> = [
   ['why did it fail? fix it', 'change'],
   ['', 'change'],
   ['   ', 'change'],
+  // Taking a change back is a change (review fixes).
+  ['revert the last change', 'change'],
+  ['undo that', 'change'],
+  ['please restore the Filter step', 'change'],
+  ['roll back the url to the old one', 'change'],
+  ['can you roll back to the first version?', 'change'],
+  ['why did you undo it?', 'question'],
   // An imperative at the start, or after a lead-in.
   ['fix it', 'change'],
   ['Remove the HTTP step', 'change'],

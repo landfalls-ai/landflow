@@ -20,6 +20,12 @@ export function isParseError(caught: unknown): boolean {
   return PARSE_ERROR.test(`${message} ${description}`) || (/^Ollama error 500$/i.test(message.trim()) && !description.trim());
 }
 
+/** The error's message and detail in one line, cut to 200: what a retry's span event records. */
+export function parseErrorText(caught: unknown): string {
+  const { message, description } = errorTexts(caught);
+  return `${message} ${description}`.trim().slice(0, 200);
+}
+
 function errorTexts(caught: unknown) {
   return { message: String((caught as Error)?.message ?? caught), description: String((caught as { description?: unknown })?.description ?? '') };
 }
@@ -32,8 +38,7 @@ export function withParseRetry(model: LanguageModel): LanguageModel {
         return await model.generate(input);
       } catch (caught) {
         if (input.signal?.aborted || isUsageCapError(caught) || !isParseError(caught)) throw caught;
-        const { message, description } = errorTexts(caught);
-        trace.getActiveSpan()?.addEvent('assistant.retry', { 'landflow.reason': `${message} ${description}`.trim().slice(0, 200) });
+        trace.getActiveSpan()?.addEvent('assistant.retry', { 'landflow.reason': parseErrorText(caught) });
         return model.generate(input);
       }
     },

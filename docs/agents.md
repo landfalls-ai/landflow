@@ -60,12 +60,12 @@ you. It searches them (`search_nodes`), reads their parameters (`get_node_docs`)
 call (those starting with **When Called by a Workflow or Agent**), the other agents, your credentials (names and types,
 never values) and the persona templates. Then it proposes the whole agent (`propose_agent`); asking for a change sends
 the whole agent again, built on the draft so far.
-
-On a local (Ollama) model the architect proposes with the flat `propose_design` instead: the same agent with every value
-as plain text (name, audience, mission, Always and Never one rule per line, answer length `short`, `medium` or `long` (a sentence, a paragraph, detailed),
-node, workflow and agent tool ids comma-separated), because the nested arrays of `propose_agent` do not get through
-Ollama's tool-call parser (qwen3-coder's XML call fails with "XML syntax error"). The draft, its checks and the way you
-change it are the same. When any model's tool call cannot be parsed, the architect asks once more offering `propose_design`
+ On a local (Ollama) model the architect proposes with the flat `propose_design` instead: the same agent with every
+value as plain text (name, audience, mission, Always and Never one rule per line, answer length `short`, `medium` or
+`long` (a sentence, a paragraph, detailed), node, workflow and agent tool ids comma-separated), because the nested
+arrays of `propose_agent` do not get through Ollama's tool-call parser (qwen3-coder's XML call fails with "XML syntax
+error"). The draft, its checks and the way you change it are the same. When any model's tool call cannot be parsed,
+the architect asks once more offering `propose_design`
 in place of `propose_agent`. A cloud or gateway model keeps `propose_agent`.
 
 The chat is on the chat kit ([assistant.md](assistant.md#chat-surfaces)): the tools it used are one line ("6 steps ·

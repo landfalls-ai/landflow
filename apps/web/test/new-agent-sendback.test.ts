@@ -123,6 +123,14 @@ describe('placedAsAsked', () => {
     expect(ops[0]).toMatchObject({ after: 'Sample question', before: 'Reply' });
     expect(notes).toHaveLength(1);
   });
+  it('leaves the agent alone when a step is added after it (the model already wired its answer onward)', () => {
+    const ops = [{ op: 'newAgent', name: 'Docs', ref: 'docs', instructions: 'x', after: 'Sample question' }, { op: 'addNode', type: 'core.noOp', name: 'Then', after: 'docs' }];
+    expect(placedAsAsked(ops, 'add an agent after Sample question that answers from our docs', names, next)).toEqual({ ops, notes: [] });
+  });
+  it('leaves an op that carries an output alone', () => {
+    const ops = [{ op: 'newAgent', name: 'Docs', instructions: 'x', after: 'Sample question', output: 1 }];
+    expect(placedAsAsked(ops, 'add an agent after Sample question that answers from our docs', names, next)).toEqual({ ops, notes: [] });
+  });
   it('puts an agent written with "after" alone in front of the one step that step feeds (no dead-end branch)', () => {
     const out = placedAsAsked([{ op: 'newAgent', name: 'Docs', instructions: 'x', after: 'Sample question' }], 'add an agent after Sample question that answers from our docs', names, next).ops as Array<Record<string, unknown>>;
     expect(out[0]).toMatchObject({ after: 'Sample question', before: 'Reply' });

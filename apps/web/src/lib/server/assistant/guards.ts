@@ -390,6 +390,7 @@ export function placedAsAsked(ops: unknown, message: string, nodeNames: string[]
     const hasBefore = typeof o.before === 'string';
     const afterOnly = typeof o.after === 'string' && o.before === undefined;
     if (!hasBefore && !afterOnly) return op;
+    if (o.output !== undefined) return op; // an output of the step it follows was chosen: that is a placement of its own
     if (hasBefore && o.after !== undefined) return op;
     if (hasBefore && said(whole, 'before', o.before as string)) return op;
     const mine = [o.name, o.ref].filter((h): h is string => typeof h === 'string' && !!h.trim()).map((h) => h.toLowerCase());
@@ -400,7 +401,12 @@ export function placedAsAsked(ops: unknown, message: string, nodeNames: string[]
       // The model wrote `after: X` alone: the agent would hang off X as a dead-end branch. Put it in front of the one step X feeds.
       if (o.after !== after) return op;
       const feeds = next(after);
-      const onward = ops.some((x) => x !== op && x && typeof x === 'object' && (x as Record<string, unknown>).op === 'connect' && mine.includes(String((x as Record<string, unknown>).from ?? '').toLowerCase()));
+      // A step already placed after the agent (a connect from it, or an addNode after it) is where its answer goes.
+      const onward = ops.some((x) => {
+        const y = x as Record<string, unknown> | null;
+        if (x === op || !y || typeof y !== 'object') return false;
+        return (y.op === 'connect' && mine.includes(String(y.from ?? '').toLowerCase())) || (y.op === 'addNode' && mine.includes(String(y.after ?? '').toLowerCase()));
+      });
       if (feeds.length !== 1 || onward) return op;
       notes.push(`placed “${String(o.name ?? 'the agent')}” between “${after}” and “${feeds[0]}”, as asked`);
       return { ...o, before: feeds[0] };

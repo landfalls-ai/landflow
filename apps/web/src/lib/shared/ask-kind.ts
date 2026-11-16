@@ -10,6 +10,7 @@ const CHANGE_VERBS = [
   'fix', 'change', 'add', 'remove', 'delete', 'set', 'make', 'update', 'replace', 'connect', 'rename', 'retry', 'send', 'use', 'put', 'build', 'create', 'move', 'turn', 'give', 'attach',
   'insert', 'swap', 'disconnect', 'rewire', 'duplicate', 'copy', 'drop', 'wire', 'switch', 'enable', 'disable', 'apply', 'run', 'try', 'clear', 'increase', 'decrease', 'reduce', 'limit', 'filter',
   'split', 'merge', 'route', 'pass', 'call', 'point', 'configure', 'edit', 'modify', 'adjust', 'correct', 'extend', 'wrap', 'skip', 'stop', 'start', 'schedule', 'trigger', 'post', 'write', 'log', 'store', 'save', 'notify', 'alert', 'email',
+  'revert', 'undo', 'restore', 'roll back',
 ];
 const VERB = `(?:${CHANGE_VERBS.join('|')})`;
 const IMPERATIVE = new RegExp(`^${VERB}\\b`);

@@ -222,6 +222,8 @@ export function AutonomousSwitch({ compact, explainer }: { compact?: boolean; ex
   );
 }
 
+export const ASKS_FIRST_NOTE = 'Spotlight acts alone only while it builds a new draft. This workflow is saved or published, so it asks first.';
+
 /**
  * SB04: on a saved or published workflow Spotlight asks first even with the switch on (decision D1). One quiet line in the
  * panel's flow (under the switch's row on a desktop, under the header on a phone), so it covers nothing.
@@ -233,7 +235,7 @@ export function AsksFirstNote({ className }: { className?: string }) {
   if (!on || !asksFirst) return null;
   return (
     <p role="note" className={cn('px-3 pb-1.5 text-[11.5px] leading-snug text-t3', className)}>
-      Spotlight acts alone only while it builds a new draft. This workflow is saved, so it asks first.
+      {ASKS_FIRST_NOTE}
     </p>
   );
 }

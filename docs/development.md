@@ -300,9 +300,9 @@ Start the matching infra services first ([deployment.md](deployment.md)), then r
 #### Spotlight scorecard
 
 Spotlight's builds, one-step fixes and agent creation are scored by scenarios in `apps/web/test/spotlight-scenarios/`
-(the evaluation of 2026-11-16, moved into the repo). Each scenario has a scripted form that always runs in the unit suite
-(`spotlight-scenarios.test.ts`: the product's route handlers, registry, `applyOps` and guards are real, only the model is
-scripted) and a live form on the local model that counts its checks:
+(the evaluation of 2026-11-16, moved into the repo). Each scenario has a scripted form that always runs in the unit
+suite (`spotlight-scenarios.test.ts`: the product's route handlers, registry, `applyOps` and guards are real, only the
+model is scripted) and a live form on the local model that counts its checks:
 
 ```bash
 cd apps/web && NODE_OPTIONS="--require $PWD/test/spotlight-scenarios/local-only.cjs" LANDFLOW_INTEGRATION=spotlight \

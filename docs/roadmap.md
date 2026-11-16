@@ -2306,26 +2306,45 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
 
 ## Spotlight wave sb1
 
-- **The scenario suite (SB00), built:** the evaluation's builds, one-step fixes and agent asks are scenarios in the repo
-  (`apps/web/test/spotlight-scenarios/sb00.ts`), each with a scripted form that always runs and a live form on the local
-  model (`LANDFLOW_INTEGRATION=spotlight`) that prints the Build, Fix one step and Agents scorecards and writes them as JSON, so a
-  package's fix has a before and an after ([development.md](development.md#spotlight-scorecard)). A guard,
-  `local-only.cjs`, makes any connection to anything but this machine fail, for the suite and for a live host
-  (`NODE_OPTIONS`). Not built: the browser scorecard (each package checks its own screens) and the agents' guardrails, eval cases
-  and test-run columns of the evaluation (the scenario outcome carries no such fields yet).
-- **The first draft fills its collections (SB01), built**: the first draft asks Ollama for `format: "json"` with the schema in the system prompt (a schema-held reply left every list empty: 9 of 9 drafts), parses the reply with a schema (one send-back, then the error), checks the draft for empty lists (`emptyParts`) and sends it back once with a line for each, keeps what is still empty as `FlowDraft.left`, maps a near-miss step type to the one it can mean, and pins test items on an app trigger or on the app step that reads data after a schedule. Not built: the staged build (wave sb3).
-- SB02 ✅ Done: a first draft is guarded as the chat guards a proposal: made-up channels, tables, owners, addresses, ids and
-  URL hosts are cleared and listed, one trigger, no empty Set, credentials listed, and the build applies the workflow's
-  allowed node types ([The empty canvas](assistant.md#spotlight)). The chat's made-up values guard widened to destinations
-  and URL hosts. Left: the credential picker (SB12) and the full build summary (SB15).
-- **SB03, built:** a test session cannot wreck a flow. A run blocked by the host's outbound policy is **Needs you** (no
-  fix); the yes to sending is per destination and asked before every run (**Run it for real**, **Undo that change**); a
-  fix may not remove a step the person asked for or change a value they gave (client and chat route); a pass after a fix
-  is reviewed again before **Ready for production**, and not at all after steps were removed; asks-first workflows, and a
-  new draft's fixes that remove a step, wait for **Apply** ([assistant.md](assistant.md#test-and-fix)).
-- **A question is answered, autonomy only on a brand-new draft (SB04, 2026-11-16).** Finding 2.1 (4 of 4 "why did the last run fail?" changed the flow) and decision D1: `askKind` decides question or change once, the chat offers no `propose_changes` for a question and the editor applies nothing for it, with a **Fix it** bubble after the answer; Spotlight acts alone only while it builds a brand-new draft (`spotlight-autonomy.ts`), a saved or published workflow shows the card and waits for Apply, and a removal waits for a click even on a new draft (finding 3.4's own confirm). Docs: [assistant.md](assistant.md#autonomous-mode). Left: the scope of a change and `ask_user` (sb2), a real diff on the card (sb2).
-- **A new agent survives a send-back (SB05)**: Spotlight's `newAgent` keeps its name unrecorded until its proposal is held, so a proposal sent back to be completed is no longer dropped as a stand-in of itself (findings 3.2); it carries `tools` and `knowledge` to the Agent architect; "after <step>" places it after the step (3.5); an Ollama tool-call parse error is retried once (3.9). Wave sb3 SB16 builds on these hints.
-- **SB06, the Agent architect on a local model**: the dialog offers the flat `propose_design` (with the persona fields as plain strings) on an Ollama model, and a parse error is retried with it ([agents.md](agents.md#agent-architect)).
+- **SB00, the scenario suite, built:** the evaluation's builds, one-step fixes and agent asks are scenarios in the
+  repo (`apps/web/test/spotlight-scenarios/sb00.ts`), each with a scripted form that always runs and a live form on
+  the local model (`LANDFLOW_INTEGRATION=spotlight`) that prints the Build, Fix one step and Agents scorecards and
+  writes them as JSON, so a package's fix has a before and an after
+  ([development.md](development.md#spotlight-scorecard)). A guard, `local-only.cjs`, makes any connection to anything
+  but this machine fail, for the suite and for a live host (`NODE_OPTIONS`). Not built: the browser scorecard (each
+  package checks its own screens) and the agents' guardrails, eval cases and test-run columns of the evaluation (the
+  scenario outcome carries no such fields yet).
+- **SB01, the first draft fills its collections, built:** the first draft asks Ollama for `format: "json"` with the
+  schema in the system prompt (a schema-held reply left every list empty: 9 of 9 drafts), parses the reply with a
+  schema (one send-back, then the error), checks the draft for empty lists (`emptyParts`) and sends it back once with
+  a line for each, keeps what is still empty as `FlowDraft.left`, maps a near-miss step type to the one it can mean,
+  and pins test items on an app trigger or on the app step that reads data after a schedule. Not built: the staged
+  build (wave sb3).
+- **SB02, the first draft is guarded, built:** a first draft is guarded as the chat guards a proposal: made-up
+  channels, tables, owners, addresses, ids and URL hosts are cleared and listed, one trigger, no empty Set,
+  credentials listed, and the build applies the workflow's allowed node types ([The empty
+  canvas](assistant.md#spotlight)). The chat's made-up values guard widened to destinations and URL hosts. Left: the
+  credential picker (SB12) and the full build summary (SB15).
+- **SB03, a test session cannot wreck a flow, built:** a run blocked by the host's outbound policy is **Needs you**
+  (no fix); the yes to sending is per destination and asked before every run (**Run it for real**, **Undo that
+  change**); a fix may not remove a step the person asked for or change a value they gave (client and chat route); a
+  pass after a fix is reviewed again before **Ready for production**, and not at all after steps were removed;
+  asks-first workflows, and a new draft's fixes that remove a step, wait for **Apply**
+  ([assistant.md](assistant.md#test-and-fix)).
+- **SB04, a question is answered and autonomy only on a brand-new draft, built (2026-11-16):** Finding 2.1 (4 of 4
+  "why did the last run fail?" changed the flow) and decision D1: `askKind` decides question or change once, the chat
+  offers no `propose_changes` for a question and the editor applies nothing for it, with a **Fix it** bubble after the
+  answer; Spotlight acts alone only while it builds a brand-new draft (`spotlight-autonomy.ts`), a saved or published
+  workflow shows the card and waits for Apply, and a removal waits for a click even on a new draft (finding 3.4's own
+  confirm). Docs: [assistant.md](assistant.md#autonomous-mode). Left: the scope of a change and `ask_user` (sb2), a
+  real diff on the card (sb2).
+- **SB05, a new agent survives a send-back, built:** Spotlight's `newAgent` keeps its name unrecorded until its
+  proposal is held, so a proposal sent back to be completed is no longer dropped as a stand-in of itself (findings
+  3.2); it carries `tools` and `knowledge` to the Agent architect; "after <step>" places it after the step (3.5); an
+  Ollama tool-call parse error is retried once (3.9). Wave sb3 SB16 builds on these hints.
+- **SB06, the Agent architect on a local model, built:** the dialog offers the flat `propose_design` (with the persona
+  fields as plain strings) on an Ollama model, and a parse error is retried with it
+  ([agents.md](agents.md#agent-architect)).
 - **Owed after the merge (carryover):** the live checks of the wave (the scorecard after, the httpbin incident
   replayed with and without `LANDFLOW_OUTBOUND_ALLOW`, the question 3 of 3, the first drafts with the plugins started
   locally, the docs and Linear agent and both Agent architect requests, all under `local-only.cjs` on Ollama in headed

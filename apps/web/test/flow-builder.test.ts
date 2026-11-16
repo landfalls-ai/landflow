@@ -6,13 +6,18 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { startFakeModels } from './fake-ai-services';
+import { startFakeModels, type FakeReply } from './fake-ai-services';
 
 let answer = '{}';
 // SB01: replies to give first, one per call, before `answer` repeats.
-let queue: string[] = [];
+let queue: Array<string | FakeReply> = [];
 let slowMs = 0;
-const fake = await startFakeModels({ reply: () => ({ text: queue.length ? queue.shift()! : answer, ...(slowMs && { delayMs: slowMs }) }) });
+const fake = await startFakeModels({
+  reply: () => {
+    const next = queue.length ? queue.shift()! : answer;
+    return typeof next === 'string' ? { text: next, ...(slowMs && { delayMs: slowMs }) } : next;
+  },
+});
 const ENV = { LANDFLOW_DATA_DIR: mkdtempSync(join(tmpdir(), 'landflow-flow-builder-')), LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '', OLLAMA_URL: fake.url.replace(/\/v1$/, '') };
 const previousEnv = { ...process.env };
 Object.assign(process.env, ENV);
@@ -83,7 +88,7 @@ describe('AI builder timeout', () => {
     slowMs = 400;
     process.env.LANDFLOW_BUILDER_TIMEOUT_SECONDS = '0.1';
     try {
-      await expect(buildFlow('anything', 'slow-model')).rejects.toThrow(/slow-model on Ollama at .* did not finish the draft within 0\.1 s.*LANDFLOW_BUILDER_TIMEOUT_SECONDS/);
+      await expect(buildFlow('anything', 'slow-model')).rejects.toThrow(/slow-model on Ollama at .* did not finish the draft within 0\.1 s \(LANDFLOW_BUILDER_TIMEOUT_SECONDS\)/);
     } finally {
       slowMs = 0;
       delete process.env.LANDFLOW_BUILDER_TIMEOUT_SECONDS;
@@ -278,6 +283,42 @@ describe('SB01: the first draft is held in JSON mode, checked and sent back once
     expect(flow.nodes).toHaveLength(3);
   });
 
+  it('keeps the first draft when the send-back fails: an Ollama 500, or a timeout in what is left of the budget', async () => {
+    queue = [ifReply([]), { error: { status: 500, body: '{"error":"out of memory"}' } }];
+    let before = mark();
+    let flow = await buildFlow('branch on the total');
+    expect(chatCalls().length - before).toBe(2);
+    expect(flow.nodes).toHaveLength(3);
+    expect(flow.left).toEqual([expect.objectContaining({ node: 'Check total', kind: 'empty' })]);
+
+    queue = [ifReply([]), { text: ifReply(FILLED), delayMs: 1500 }];
+    process.env.LANDFLOW_BUILDER_TIMEOUT_SECONDS = '1';
+    try {
+      before = mark();
+      flow = await buildFlow('branch on the total');
+    } finally {
+      delete process.env.LANDFLOW_BUILDER_TIMEOUT_SECONDS;
+    }
+    expect(chatCalls().length - before).toBe(2);
+    expect(flow.nodes).toHaveLength(3);
+    expect(flow.left).toEqual([expect.objectContaining({ node: 'Check total', kind: 'empty' })]);
+  });
+
+  it('takes a reply whose name, test data and outputs are the wrong shape, and nodes numbered with numbers', async () => {
+    answer = JSON.stringify({
+      name: 7,
+      nodes: [{ key: 1, type: 'core.manualTrigger', name: 'Start' }, { key: 2, type: 'core.noOp', name: 'Done' }],
+      connections: [{ from: 1, to: 2, output: 'first' }],
+      testData: { q: 1 },
+    });
+    const before = mark();
+    const flow = await buildFlow('do nothing');
+    expect(chatCalls().length - before).toBe(1);
+    expect(flow.name).toBe('Generated workflow');
+    expect(flow.edges).toEqual([['1', '2', 0, 'main']]);
+    expect(flow.dropped).toEqual([]);
+  });
+
   it('makes one request for a draft with nothing empty', async () => {
     answer = ifReply(FILLED);
     const before = mark();
@@ -313,6 +354,20 @@ describe('SB01: emptyParts', () => {
     ]).filter((p) => p.kind === 'empty');
     expect(found.map((p) => `${p.node}:${p.field}`).sort()).toEqual(['Every morning:rule', 'Route:rules', 'Shape:fields']);
     expect(found.find((p) => p.node === 'Route')!.ask).toContain('“Route” (core.switch): rules is empty');
+  });
+
+  it('does not list what the node ships filled: a workflow trigger’s inputs, a form’s fields, a schedule rule of a named kind', () => {
+    expect(
+      parts([
+        node('w', 'core.workflowTrigger', 'When called', {}),
+        node('x', 'core.workflowTrigger', 'When called 2', { inputs: {} }),
+        node('f', 'core.formTrigger', 'Form in', {}),
+        node('g', 'core.form', 'Ask', { formFields: {} }),
+        node('t', 'core.schedule', 'Daily', { unit: 'rules', rule: { interval: [{ field: 'days' }] } }),
+      ]).filter((p) => p.kind === 'empty'),
+    ).toEqual([]);
+    // A rule with no kind and a form whose fields were emptied are still listed.
+    expect(parts([node('t', 'core.schedule', 'Daily', { unit: 'rules', rule: { interval: [{}] } }), node('g', 'core.form', 'Ask', { formFields: { values: [] } })]).filter((p) => p.kind === 'empty').map((p) => p.field).sort()).toEqual(['formFields', 'rule']);
   });
 
   it('does not list a rule row with a time, or an optional list nobody needs', () => {
@@ -351,6 +406,12 @@ describe('SB01: near-miss types', () => {
     const flow = await buildFlow('get my Linear issues');
     expect(flow.nodes.find((n) => n.name === 'Get issues')!.type).toBe('sb01app.linear');
     expect(flow.dropped.join(' ')).not.toContain('core.linear.linear');
+  });
+
+  it('lists the remapped type, so the person can check it is the one meant', async () => {
+    answer = reply('core.linear.linear');
+    const flow = await buildFlow('get my Linear issues');
+    expect(flow.left).toContainEqual(expect.objectContaining({ node: 'Get issues', kind: 'dropped', text: expect.stringContaining('core.linear.linear') }));
   });
 
   it('drops it and lists it when two types could be meant', async () => {

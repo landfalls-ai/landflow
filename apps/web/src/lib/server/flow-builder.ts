@@ -220,7 +220,7 @@ async function draftWithOllama(model: string, messages: DraftMessage[], timeoutM
   }).catch((e: Error) => {
     // A timeout means Ollama answered too slowly, not that it is down: say so, and what to change.
     if (e.name === 'TimeoutError') {
-      throw new Error(`${model} on Ollama at ${ollamaUrl()} did not finish the draft within ${timeoutMs / 1000} s. The model may be slow or still loading: raise LANDFLOW_BUILDER_TIMEOUT_SECONDS, or set a faster LANDFLOW_BUILDER_MODEL`);
+      throw new Error(`${model} on Ollama at ${ollamaUrl()} did not finish the draft within ${builderTimeoutMs() / 1000} s (LANDFLOW_BUILDER_TIMEOUT_SECONDS). The model may be slow or still loading: raise it, or set a faster LANDFLOW_BUILDER_MODEL`);
     }
     throw new Error(`Could not reach Ollama at ${ollamaUrl()}: ${e.message}`);
   });
@@ -245,7 +245,7 @@ async function draftWithProvider(model: string, messages: DraftMessage[], timeou
     return turn.text;
   } catch (e) {
     if ((e as Error).name === 'TimeoutError' || (e as Error).name === 'AbortError') {
-      throw new Error(`${model} did not finish the draft within ${timeoutMs / 1000} s: raise LANDFLOW_BUILDER_TIMEOUT_SECONDS`);
+      throw new Error(`${model} did not finish the draft within ${builderTimeoutMs() / 1000} s (LANDFLOW_BUILDER_TIMEOUT_SECONDS): raise it`);
     }
     throw e;
   }
@@ -270,11 +270,14 @@ export function jsonOf(text: string): string {
 // SB01: the reply held to a schema. Lenient where models vary (a node without a key is dropped later, as before); strict
 // where a draft can't be built: `nodes` must be an array of objects, `parameters` a record, `connections` a list.
 const Count = z.union([z.number(), z.string().regex(/^\d+$/).transform(Number)]);
+/** A node's key: models number them (`1`, `2`), and the connections name them the same way. */
+const Key = z.union([z.string(), z.number().transform(String)]);
+// What does not shape the draft (its name, its test data, a connection's output) is dropped when it is the wrong shape, not an error.
 export const DraftReply = z.object({
-  name: z.string().nullish(),
-  nodes: z.array(z.object({ key: z.string().nullish(), type: z.string().nullish(), name: z.string().nullish(), parameters: z.record(z.string(), z.unknown()).nullish() })),
-  connections: z.array(z.object({ from: z.string().nullish(), to: z.string().nullish(), output: Count.nullish(), type: z.string().nullish() })).nullish(),
-  testData: z.array(z.unknown()).nullish(),
+  name: z.string().nullish().catch(undefined),
+  nodes: z.array(z.object({ key: Key.nullish(), type: z.string().nullish(), name: z.string().nullish(), parameters: z.record(z.string(), z.unknown()).nullish() })),
+  connections: z.array(z.object({ from: Key.nullish(), to: Key.nullish(), output: Count.nullish().catch(undefined), type: z.string().nullish() })).nullish(),
+  testData: z.array(z.unknown()).nullish().catch(undefined),
 });
 type Reply = z.infer<typeof DraftReply>;
 
@@ -336,7 +339,9 @@ function assemble(raw: Reply, byType: Map<string, NodeTypeInfo>, teams: readonly
   const keys = new Set<string>();
   for (const n of raw.nodes) {
     // SB01: a type that is not in the catalog maps to the one available type it can mean.
-    const info = n.type ? (byType.get(n.type) ?? nearType(n.type, byType)) : undefined;
+    const exact = n.type ? byType.get(n.type) : undefined;
+    const info = exact ?? (n.type ? nearType(n.type, byType) : undefined);
+    if (info && !exact && n.type) left.push({ node: n.name ?? info.descriptor.displayName, kind: 'dropped', text: `“${n.name ?? info.descriptor.displayName}”: the step type “${n.type}” is not available, so “${info.descriptor.displayName}” was used instead: check it is the one you meant` });
     if (!info || !n.key || keys.has(n.key)) {
       dropped.push(`node ${n.name ?? n.type ?? '?'} (${n.type ?? 'no type'})`);
       if (n.type && !info) left.push({ node: n.name ?? n.type, kind: 'dropped', text: `“${n.name ?? n.type}”: the step type “${n.type}” is not available, so it was left out` });
@@ -426,6 +431,13 @@ function shapeOf(type: string, p: PropertyDescriptor): string {
 /** Lists a step cannot work without although the node ships them empty: a table write's column values. */
 const NEEDED_LISTS = new Set(['core.dataTable:columns']);
 
+/** Lists that work as the node ships them: a bare draft that leaves one out (or `{}`) gets the default, which is not empty. */
+const USABLE_AS_IS = new Set(['core.workflowTrigger:inputs', 'core.formTrigger:formFields', 'core.form:formFields']);
+
+/** A schedule rule whose rows name their kind (`{ field: 'days' }`) runs on that kind's defaults (every day at 9). */
+const scheduleRuleNamed = (type: string, name: string, value: unknown): boolean =>
+  type === 'core.schedule' && name === 'rule' && plain(value) && Array.isArray(value.interval) && value.interval.length > 0 && value.interval.every((row) => plain(row) && typeof row.field === 'string' && row.field !== '');
+
 /** What the person is told a step does without the list. */
 function without(type: string, p: PropertyDescriptor): string {
   if (type === 'core.if' || type === 'core.filter') return 'no condition yet: it keeps every item';
@@ -452,6 +464,8 @@ export function emptyParts(draft: Pick<FlowDraft, 'nodes' | 'edges'>, byType: Ma
     for (const p of descriptor.properties) {
       if (p.type !== 'fixedCollection' || !p.groups?.length || !isPropertyVisible(p, effective)) continue;
       if (!collectionEmpty(p, parameters[p.name])) continue;
+      if (scheduleRuleNamed(n.type, p.name, parameters[p.name])) continue;
+      if (USABLE_AS_IS.has(`${n.type}:${p.name}`) && (parameters[p.name] == null || (plain(parameters[p.name]) && !Object.keys(parameters[p.name] as object).length))) continue;
       if (!p.required && !NEEDED_LISTS.has(`${n.type}:${p.name}`) && collectionEmpty(p, p.default)) continue;
       parts.push({
         node: n.name,

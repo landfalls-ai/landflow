@@ -114,6 +114,34 @@ describe('the Agent architect on a local model', () => {
     expect(events.some((e) => e.type === 'draft')).toBe(true);
   });
 
+  it('retries the adapter’s real error shape (its words in the description), and not an out-of-memory 500 or a usage cap', async () => {
+    const { NodeOperationError } = await import('@landflow/sdk');
+    const real = () => {
+      throw new NodeOperationError('Ollama error', { description: 'XML syntax error on line 1: unexpected EOF' });
+    };
+    const offered: string[][] = [];
+    const events = await ask(scripted('anthropic', [real, { toolCalls: [{ id: 'c1', name: 'propose_design', input: { name: 'PR Reviewer', role: 'Reviewer', instructions: 'Review.' } }] }, { text: 'Drafted.' }], offered));
+    expect(offered).toHaveLength(3);
+    expect(events.some((e) => e.type === 'draft')).toBe(true);
+
+    for (const failure of [new Error('Ollama error 500: out of memory'), Object.assign(new Error('Your monthly AI usage cap is reached (XML syntax error)'), { name: 'UsageCapError' })]) {
+      const once: string[][] = [];
+      await expect(ask(scripted('anthropic', [() => { throw failure; }, { text: 'never asked' }], once))).rejects.toThrow();
+      expect(once).toHaveLength(1);
+    }
+  });
+
+  it('an empty summary or "none" for the rules is no summary and no rule', async () => {
+    const events = await ask(scripted('ollama', [{ toolCalls: [{ id: 'c1', name: 'propose_design', input: { name: 'Quiet', role: 'Tester', instructions: 'Test.', always: 'none', never: 'N/A\n-\nNo\nNever guess' } }] }, { text: 'Drafted.' }]));
+    const draft = events.find((e) => e.type === 'draft');
+    if (draft?.type !== 'draft') throw new Error('no draft');
+    expect(draft.config.persona?.always ?? []).toEqual([]);
+    expect(draft.config.persona?.never).toEqual(['Never guess']);
+    expect(JSON.stringify(events)).not.toContain('Designed for Spotlight');
+    const proposed = events.find((e) => e.type === 'draft') as { summary?: string };
+    expect(proposed.summary ?? '').toBe('Draft: Quiet');
+  });
+
   it('still offers only propose_design first for Spotlight’s design', async () => {
     const offered: string[][] = [];
     await designAgent({ name: 'Reviewer', description: 'Reviews PRs', instructions: '' }, { types, actor: TEST_OWNER, model: scripted('ollama', [{ text: 'x' }, { text: 'y' }], offered) });

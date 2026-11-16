@@ -124,6 +124,13 @@ describe('the rule', () => {
   });
 });
 
+describe('the asks-first note', () => {
+  it('says the workflow is saved or published (publishing in this tab ends autonomy too)', async () => {
+    const { ASKS_FIRST_NOTE } = await import('@/components/editor/spotlight/proposal');
+    expect(ASKS_FIRST_NOTE).toContain('This workflow is saved or published, so it asks first.');
+  });
+});
+
 describe('needsAClick', () => {
   it('names a removal, and a disconnect that orphans a step', () => {
     expect(needsAClick([{ op: 'removeNode', node: 'Notify VIP' }], graph)).toEqual(['removes “Notify VIP”']);
