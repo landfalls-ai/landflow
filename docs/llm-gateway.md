@@ -515,7 +515,8 @@ page draws:
 
 The trend and the sheet read `GET /api/insights/ai` (`compare=1`, `stack=<group>`, the filters, `period=custom&from&to`)
 and `GET /api/insights/ai/runs` and `.../calls` (`format=csv`). The faint line is asked as a second report for the days
-just before the range, since the report holds only the previous period's totals.
+just before the range, since the report holds only the previous period's totals; it is asked once the report for the
+current view has landed, so a filter change sends no request for the old range.
 
 **Who sees what.** Owners and admins see everything. Anyone else sees the calls of the workflows and agents they can open
 and their own calls in the page's totals and in every group but one; calls they may not see are in no total, and a

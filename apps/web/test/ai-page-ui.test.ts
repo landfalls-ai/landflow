@@ -12,6 +12,7 @@ import {
   cacheCardState,
   pageStale,
   pageToday,
+  previousAsk,
   rangeLimit,
   drillable,
   drillQuery,
@@ -290,6 +291,24 @@ describe('the page and the cache card while the view changes', () => {
     const good = custom('2026-11-01', '2026-11-05');
     expect(pageStale(loadedKey, key(good), viewReady(good, '2026-11-16'))).toBe(true);
     expect(pageStale(undefined, key(good), true)).toBe(false);
+  });
+
+  it("asks the faint line's days only for the report that matches the view (no request for the old range with new filters)", () => {
+    const report = { period: '7d', from: '2026-11-10', to: '2026-11-16' };
+    const shownKey = key(DEFAULT_VIEW);
+    const ask = previousAsk(DEFAULT_VIEW, report, shownKey, shownKey);
+    expect(ask?.range).toEqual({ from: '2026-11-03', to: '2026-11-09' });
+    expect(new URLSearchParams(ask!.query).get('period')).toBe('custom');
+    expect(new URLSearchParams(ask!.query).get('from')).toBe('2026-11-03');
+    // A filter was added: the 7 days still on screen are the old view's, so nothing is asked until the new report lands.
+    const filtered: AiView = { ...DEFAULT_VIEW, filters: { userId: 'usr_ada' } };
+    expect(previousAsk(filtered, report, shownKey, key(filtered))).toBeUndefined();
+    const landed = previousAsk(filtered, report, key(filtered), key(filtered));
+    expect(new URLSearchParams(landed!.query).get('userId')).toBe('usr_ada');
+    // None before a report, for 24 hours, or past 90 days.
+    expect(previousAsk(DEFAULT_VIEW, undefined, undefined, shownKey)).toBeUndefined();
+    expect(previousAsk(DEFAULT_VIEW, { period: '24h', from: '2026-11-16', to: '2026-11-16' }, shownKey, shownKey)).toBeUndefined();
+    expect(previousAsk(DEFAULT_VIEW, { period: 'custom', from: '2026-01-01', to: '2026-11-16' }, shownKey, shownKey)).toBeUndefined();
   });
 
   it("takes the page's today from the report, not the browser", () => {
