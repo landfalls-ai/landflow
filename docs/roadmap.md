@@ -2451,3 +2451,7 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   reload.
 - **Owed to a person:** the asks-first wording and the **Needs you** rows on a real phone, and whether "saved" should
   end autonomy at the first autosave rather than at the next open (decision D1 reads it at the next open).
+
+## Spotlight wave sb2
+
+- **SB07, scope lock, built:** a request about one step carries a scope (the selected step, steps tagged with @, steps named with "only", or the step a new one goes after or before); the composer shows it as a chip (**Only “X”**, **New step after “X”**) whose × lifts it, the prompt says it, and `propose_changes` sends a change outside it back once and then leaves it out and lists it (finding 2.4; carryover item 3's "only the asked node" and item 2's placement half). Docs: [assistant.md](assistant.md#the-builder-chat). Left: asking "which step?" (SB11), what the model reads about the scope's steps (SB10).

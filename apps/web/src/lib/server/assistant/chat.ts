@@ -16,6 +16,7 @@ import type { NodeTypeInfo, PropertyDescriptor, Workflow } from '@/lib/shared/ty
 import { compositeOutline } from '../composites';
 import { PARAMETER_FORMATS } from '../flow-builder';
 import { askKind } from '@/lib/shared/ask-kind'; // SB04:
+import { outsideScope, scopeLabel, scopeOf, type SpotlightScope } from '@/lib/shared/spotlight-scope'; // SB07:
 import { assistantScope, isUsageCapError, runInUsageScope, type UsageScope } from '../ai-usage';
 import { recordSuggestions, traceAssistant } from '../telemetry/assistant';
 import { outcomeOf } from '../telemetry/metrics';
@@ -97,6 +98,8 @@ export interface ChatInput {
   messages: ChatTurn[];
   workflow: Workflow;
   selectedNodeId?: string;
+  /** SB07: the scope the editor sent for this message (the chip); `null` means the person lifted it (no scope); absent means derive one. */
+  scope?: SpotlightScope | null;
   /** Last main run of each node, by node id. */
   runs?: Record<string, RunDigest>;
   model?: string | LanguageModel;
@@ -359,6 +362,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
   /** A fix that missed the failing step was sent back once. */
   let offTargetSent = false;
   let keptSent = false; // SB03:
+  let scopeSent = false; // SB07:
   let applyRetried = false;
   /** The ops of each proposal so far, as sent: a model may send the same one again and again. */
   const sent = new Set<string>(input.resume?.sent);
@@ -381,6 +385,10 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
 
   const nodeByName = (name: string) => working.nodes.find((n) => n.name === name) ?? working.nodes.find((n) => n.name.toLowerCase() === name.toLowerCase() || n.id === name);
   const selected = input.selectedNodeId && working.nodes.find((n) => n.id === input.selectedNodeId);
+  // SB07: what the request may change: the selected, tagged or named steps, or where a new step goes. A test-and-fix session has its own rules.
+  // (`input.workflow.id` is the metered id, 'draft' when unsaved, so the tag's own workflow is not compared: `scopeOf` keeps the ids on this canvas.)
+  const taggedIds = (input.tagged?.reads ?? []).flatMap((r) => (r.ok && r.ref.type === 'node' ? [r.ref.id] : []));
+  const askScope = input.session === 'fix' || input.session === 'review' ? undefined : scopeOf({ sent: input.scope, message: input.messages.findLast((m) => m.role === 'user')?.content ?? '', nodes: working.nodes, selectedId: input.selectedNodeId, taggedIds });
   // What the person tagged: read and checked by the route (`tagMentions`), here only worded for the model. A tag that could
   // not be read is named and nothing more, so the model does not make up what it holds.
   const unread = (input.tagged?.reads ?? []).filter((r) => !r.ok).map((r) => r.label.replace(/^Couldn't read /, ''));
@@ -396,6 +404,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     builderContextEntry(input.actor, { workflowId: input.workflow.id }), // PC10: the goals of the project this workflow is in, as data
     tagged.length ? `\nThe user tagged these in the message (checked against what they may open):\n${tagged.join('\n')}` : '',
     question ? '\nThe latest message is a question: answer it; you cannot change the workflow in this reply.' : '', // SB04:
+    askScope && !question ? `\nScope: ${scopeLabel(askScope, working.nodes)}. Change only that (and, for a new step, put it there); say in one sentence if the request needs more.` : '', // SB07:
     input.session === 'auto' ? `\n${AUTO}` : input.session ? `\n${sessionText(input.autonomy ?? 'asks-first')}` : '',
   ].join('\n');
 
@@ -471,13 +480,31 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         }
         const { ops: proposedOps, invented: inventedNotes, values } = withoutInventedIds(teamed, known(), typeText, (op) => (op.op === 'addNode' ? String(op.type ?? '') : nodeByName(String(op.node ?? ''))?.type));
         for (const value of values) invented.add(value);
-        const validated = validateOps(working, proposedOps, lookup);
+        let validated = validateOps(working, proposedOps, lookup); // SB07: let
         const back = addedBack(validated.ops);
         if (back.length) {
           return result(
             `Nothing changes: ${back.join(', ')} ${back.length === 1 ? 'is' : 'are'} removed by a pending proposal because the user asked; don't add ${back.length === 1 ? 'it' : 'them'}, or a node doing the same job, back. If everything the latest message asks for is proposed, stop and say in one line what the cards do.`,
             'Skipped adding back a removed node',
           );
+        }
+        // SB07: a change outside the scope goes back once, then is left out and listed.
+        const outside = askScope ? outsideScope(validated.ops, askScope, working, input.messages.findLast((m) => m.role === 'user')?.content ?? '') : [];
+        if (askScope && outside.length) {
+          const label = scopeLabel(askScope, working.nodes);
+          if (!scopeSent) {
+            scopeSent = true;
+            return result(`Not shown: ${outside.map((o) => o.reason).join('\n')}.\nThe scope of this request is: ${label}. Change only that, then propose again.`, 'Outside what was asked');
+          }
+          const gone = new Set(outside.map((o) => o.index));
+          const prev = validated;
+          validated = validateOps(working, prev.ops.filter((_, i) => !gone.has(i)), lookup);
+          // Parts that failed the first check are not lost with the ops that passed it.
+          validated.dropped.unshift(...prev.dropped);
+          validated.ignored.unshift(...prev.ignored);
+          // `ignored`, not `dropped`: a dropped part would send the whole proposal back as failed.
+          validated.ignored.push(...outside.map((o) => `Left out: ${o.reason}`));
+          if (!validated.ops.length) return result(`Not shown: every change was outside what was asked (${label}). Say so in one sentence.`, 'Outside what was asked');
         }
         // A fix must touch the step that failed or what feeds it, and must change something.
         const wasted = input.session === 'fix' && !offTargetSent ? wastedFix(validated.ops, working, selected ? selected.id : undefined) : undefined;
@@ -566,7 +593,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         for (const handle of dedicated.handles) newAgents.add(standInKey(handle)); // SB05:
         sent.add(asSent);
         const dropped = [...validated.dropped, ...validated.ignored, ...inventedNotes, ...standIns.notes];
-        const notes = `${dropped.length ? ` Left out: ${dropped.join('; ')}.` : ''}${placed.notes.length ? ` Placement: ${placed.notes.join('; ')}.` : ''}${repeated.length ? ` Not added again: ${repeated.join('; ')}.` : ''}`;
+        const notes = `${dropped.length ? ` Left out: ${dropped.map((d) => d.replace(/^Left out: /, '')).join('; ')}.` : ''}${placed.notes.length ? ` Placement: ${placed.notes.join('; ')}.` : ''}${repeated.length ? ` Not added again: ${repeated.join('; ')}.` : ''}`;
         const count = `${validated.ops.length} change${validated.ops.length === 1 ? '' : 's'}`;
         const shown = input.session
           ? result(`Recorded (${count}); ${input.session === 'auto' || input.autonomy === 'auto' ? 'Spotlight applies it when you finish' : 'it waits for the person to apply it, then Spotlight tests again'}.${notes} Don't list the changes again. If the message asks for something this doesn't cover yet, propose it now; otherwise stop with your one sentence.`, `Proposed ${count}`)

@@ -22,6 +22,7 @@ import { emptyStored, withEarlier, type Stored } from './spotlight-history';
 import { saveAgentFor, type AgentPlace } from './new-agent';
 import { saveTeamFor } from './turn-into-team';
 import { defaultCollapsed } from './spotlight/states';
+import type { SpotlightScope } from '@/lib/shared/spotlight-scope'; // SB07:
 
 const freshKept = (): { id?: string; stored: Stored } => ({ stored: emptyStored() });
 
@@ -439,6 +440,8 @@ export interface SendOptions {
   mentions?: KeptMention[];
   /** Leave the selected node out of the context (its chip was removed). */
   withoutSelection?: boolean;
+  /** SB07: the scope the composer showed as a chip; `null` when the person lifted it. Not sent with a test-and-fix session's `fix` or `review`. */
+  scope?: SpotlightScope | null;
   /** Sent by a test-and-fix session: shown as a note, not as something the user typed. */
   auto?: boolean;
   /** The node to put in the context as if selected (the one a test run failed at). */
@@ -663,6 +666,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
           runs: runDigests(),
           ...(pending.length && { pending }),
           ...(options.mentions?.length && { mentions: { refs: options.mentions } }),
+          ...(options.scope !== undefined && options.session !== 'fix' && options.session !== 'review' && { scope: options.scope }), // SB07:
           ...(options.session && { session: options.session }),
           ...(options.session && options.autonomy && { autonomy: options.autonomy }),
           ...(options.resume && { resume: options.resume }),

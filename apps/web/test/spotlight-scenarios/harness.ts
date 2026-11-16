@@ -21,7 +21,7 @@ import { registryLookup } from '@/lib/server/assistant/ops';
 import { agentStore } from '@/lib/server/agents/store';
 import { handler } from '@/lib/server/http';
 import { startFakeModels, readSse, type FakeModels } from '../fake-ai-services';
-import { scriptedModel, touchedNodes, type Check, type Job, type Outcome, type Scenario, type ScriptTurn } from './scenario';
+import { scriptedModel, touchedNodes, type Check, type Job, type Outcome, type Scenario, type Start, type ScriptTurn } from './scenario';
 
 export type Form = 'unit' | 'live';
 
@@ -259,6 +259,9 @@ interface ChatCall {
   selected?: string;
   runs?: Record<string, RunDigest>;
   session?: 'fix' | 'review' | 'auto';
+  /** SB07: the scope by node id (`null`: lifted), and the steps tagged with @, by id. */
+  scope?: { kind: 'selected' | 'tagged' | 'only' | 'insert'; nodes: string[]; side?: 'after' | 'before' } | null;
+  tagged?: string[];
 }
 
 /**
@@ -275,6 +278,8 @@ async function chatOnce(call: ChatCall, form: Form, scripted: Scripted | undefin
     ...(call.selected && { selectedNodeId: call.selected }),
     ...(call.runs && { runs: call.runs }),
     ...(call.session && { session: call.session }),
+    ...(call.scope !== undefined && { scope: call.scope }), // SB07:
+    ...(call.tagged?.length && { mentions: { refs: call.tagged.map((id) => ({ type: 'node' as const, id, workflowId: call.workflow.id })) } }), // SB07:
   };
   if (form === 'live') {
     const route = await import('@/app/api/assistant/chat/route');
@@ -296,13 +301,15 @@ async function chatOnce(call: ChatCall, form: Form, scripted: Scripted | undefin
     const types = allowedTypes(call.workflow.id);
     const { agents, teams } = roster();
     const actorId = currentPrincipal()?.user?.id;
-    const tagged = await tagMentions(routeActor(), [], { workflow: call.workflow, workflowId: call.workflow.id, types, ...(call.runs && { runs: call.runs }) });
+    const tagged = await tagMentions(routeActor(), (body.mentions?.refs ?? []) as never, { // SB07: refs from start.tagged
+      workflow: call.workflow, workflowId: call.workflow.id, types, ...(call.runs && { runs: call.runs }) });
     await runChat({
       messages: body.messages as never,
       workflow: { ...call.workflow, id: meteredWorkflowId(call.workflow.id) ?? 'draft' } as Workflow,
       ...(call.selected && { selectedNodeId: call.selected }),
       ...(call.runs && { runs: call.runs }),
       ...(call.session && { session: call.session }),
+      ...(call.scope !== undefined && { scope: call.scope }), // SB07:
       model,
       types,
       teams,
@@ -315,6 +322,15 @@ async function chatOnce(call: ChatCall, form: Form, scripted: Scripted | undefin
     });
   });
   return { ...collect(events as never), calls: calls.length - callsBefore };
+}
+
+/** SB07: `start.scope` and `start.tagged` (by node name) as the request's ids. */
+function scopeOfStart(canvas: Workflow, start: Start | undefined): Pick<ChatCall, 'scope' | 'tagged'> {
+  const ids = (names: string[]) => names.flatMap((name) => canvas.nodes.filter((n) => n.name === name).map((n) => n.id));
+  return {
+    ...(start?.scope !== undefined && { scope: start.scope === null ? null : { ...start.scope, nodes: ids(start.scope.nodes) } }),
+    ...(start?.tagged?.length && { tagged: ids(start.tagged) }),
+  };
 }
 
 /** Apply every proposal with the product's `applyOps`, as Apply does. */
@@ -499,7 +515,7 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
       outcome.modelCalls = fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 1;
     } else if (scenario.via === 'chat' || scenario.via === 'session') {
       if (!canvas) throw new Error(`${scenario.id}: a chat scenario needs start.workflow`);
-      const result = await chatOnce({ ask: scenario.ask, workflow: canvas, selected: idOf(canvas, scenario.start?.selected), runs: runsById(canvas, scenario.start?.runs), session: scenario.start?.session }, form, scripted, options);
+      const result = await chatOnce({ ask: scenario.ask, workflow: canvas, selected: idOf(canvas, scenario.start?.selected), runs: runsById(canvas, scenario.start?.runs), session: scenario.start?.session, ...scopeOfStart(canvas, scenario.start) }, form, scripted, options);
       Object.assign(outcome, { text: result.text, tools: result.tools, proposals: result.proposals, ...(result.error && { error: result.error }) });
       withDone(result);
       outcome.after = applyAsTheEditor(canvas, result.proposals, scenario.start?.autonomy);

@@ -55,6 +55,11 @@ const Body = z.object({
     .array(z.object({ summary: z.string().max(300), ops: z.array(z.record(z.string(), z.unknown())).max(80) }))
     .max(20)
     .optional(),
+  /** SB07: the scope of the change (the composer's chip): `null` when the person lifted it; absent derives one from the message (lib/shared/spotlight-scope.ts). */
+  scope: z
+    .object({ kind: z.enum(['selected', 'tagged', 'only', 'insert']), nodes: z.array(z.string().max(200)).max(20), side: z.enum(['after', 'before']).optional() })
+    .nullable()
+    .optional(), // SB07:
   /** From Spotlight's test-and-fix session: a request for a fix to a failed run, or whether a run did what was asked. */
   session: z.enum(['fix', 'review', 'auto']).optional(),
   /** What Spotlight may do alone in that session: with `auto` it applies the fix itself, else (the default) the person's Apply is waited for. */
