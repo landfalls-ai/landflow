@@ -9,16 +9,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }[]>();
 const answers = new Map<string, unknown>();
+const calls: string[] = [];
 vi.mock('@/lib/client/api', async (original) => ({
   ...(await original<typeof import('@/lib/client/api')>()),
   api: (path: string) => {
+    calls.push(path);
     if (answers.has(path)) return Promise.resolve(answers.get(path));
     return new Promise((resolve, reject) => pending.set(path, [...(pending.get(path) ?? []), { resolve, reject }]));
   },
 }));
 
 const { useCredentialScope } = await import('@/components/projects/use-projects');
-const { usePublishedCredentialsDiffer } = await import('@/components/editor/use-published-credentials');
+const { usePublishedCredentialsDiffer, clearPublishedCredentialsCache } = await import('@/components/editor/use-published-credentials');
 
 let container: HTMLDivElement;
 let root: Root;
@@ -27,6 +29,8 @@ beforeEach(() => {
   root = createRoot(container);
   pending.clear();
   answers.clear();
+  calls.length = 0;
+  clearPublishedCredentialsCache();
 });
 afterEach(() => act(() => root.unmount()));
 
@@ -98,6 +102,7 @@ describe('usePublishedCredentialsDiffer', () => {
   it('says it when the published version has another credential, or none', async () => {
     publishedWith({ httpHeaderAuth: { id: 'other', name: 'x' } });
     expect(await run({ workflowId: 'wf_1', versionId: 'v7', nodeId: 'n1', credentials: mine })).toBe(true);
+    clearPublishedCredentialsCache();
     publishedWith(undefined);
     expect(await run({ workflowId: 'wf_1', versionId: 'v7', nodeId: 'n1', credentials: mine })).toBe(true);
   });
@@ -105,5 +110,12 @@ describe('usePublishedCredentialsDiffer', () => {
     publishedWith({ httpHeaderAuth: { id: 'h1', name: 'Echo header' } });
     expect(await run({ workflowId: 'wf_1', versionId: 'v7', nodeId: 'n1', credentials: mine })).toBe(false);
     expect(await run({ workflowId: 'wf_1', versionId: 'v7', nodeId: 'new-node', credentials: mine })).toBe(false);
+  });
+  it('fetches a published version once, whichever nodes are opened and however often', async () => {
+    publishedWith({ httpHeaderAuth: { id: 'h1', name: 'Echo header' } });
+    await run({ workflowId: 'wf_1', versionId: 'v7', nodeId: 'n1', credentials: mine });
+    await run({ workflowId: 'wf_1', versionId: 'v7', nodeId: 'n2', credentials: mine });
+    await run({ workflowId: 'wf_1', versionId: 'v7', nodeId: 'n1', credentials: mine });
+    expect(calls.filter((c) => c === versionUrl)).toHaveLength(1);
   });
 });

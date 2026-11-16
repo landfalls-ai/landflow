@@ -213,9 +213,10 @@ export function useEditLockSync(workflowId: string, loaded: boolean) {
   const sync = useCallback(
     async (takeover = false) => {
       await syncOnce(takeover);
-      useEditLock.setState({ known: true });
+      // An answer for a workflow the editor has since left says nothing about the one now open.
+      if (useEditLock.getState().workflowId === workflowId) useEditLock.setState({ known: true });
     },
-    [syncOnce],
+    [syncOnce, workflowId],
   );
 
   // Ask for the lock when the workflow has loaded, heartbeat, and release it when the editor closes.
