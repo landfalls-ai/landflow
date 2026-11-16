@@ -190,6 +190,18 @@ describe('GET /api/executions/:id/spend', () => {
     expect(spend.totals.calls).toBe(SPEND_CALL_LIMIT + 5);
   });
 
+  it('degrades a run from before wave 11 to its totals: no node, no iteration, purpose none', async () => {
+    execution('ex_old', 'wf_rs_demo');
+    usage({ id: 'au_old_1', at: at(0), execution_id: 'ex_old', workflow_id: 'wf_rs_demo', input_tokens: 400, output_tokens: 40 });
+    usage({ id: 'au_old_2', at: at(1), execution_id: 'ex_old', workflow_id: 'wf_rs_demo', input_tokens: 600, output_tokens: 60 });
+    const spend = (await get(spendRoute, 'ex_old')).body as RunSpend;
+    expect(spend.totals).toMatchObject({ inputTokens: 1000, outputTokens: 100, calls: 2 });
+    expect(spend.byNode).toEqual([]);
+    expect(spend.byIteration).toEqual([]);
+    expect(spend.byPurpose.map((s) => [s.key, s.calls])).toEqual([['none', 2]]);
+    expect(spend.composition).toBeUndefined();
+  });
+
   it('answers 404 for a run that is not there or the caller cannot open', async () => {
     expect((await get(spendRoute, 'ex_nothing')).status).toBe(404);
     expect((await get(spendRoute, 'ex_demo', stranger)).status).toBe(404);
@@ -228,6 +240,14 @@ describe('the cache line', () => {
     expect(cacheLine([call(1, { purpose: 'embed', cacheReadTokens: 10 })], map([])).hitRate).toBeUndefined();
   });
 
+  it('compares hashes only between splits of one source: a mixed pair is not an instructions change', () => {
+    const miss = call(2, { cacheWriteTokens: 5000 });
+    const first = call(1, { cacheWriteTokens: 5000 });
+    const gateway = { ...parts({ instructions: 'b' }), source: 'gateway' as const };
+    expect(cacheLine([first, miss], map([['c1', parts({ instructions: 'a' })], ['c2', gateway]]))).toMatchObject({ missCalls: 1, missReasons: ['unknown'] });
+    expect(cacheLine([first, miss], map([['c1', parts({ instructions: 'a' })], ['c2', parts({ instructions: 'b' })]]))).toMatchObject({ missReasons: ['instructions-changed'] });
+  });
+
   it('matches the previous call of the same agent and model', () => {
     const a = call(1, { agentId: 'a' });
     const b = call(2, { agentId: 'b' });
@@ -261,6 +281,32 @@ describe('GET /api/ai-calls/:id', () => {
     const view = (await get(callRoute, 'au_sec_2', member)).body as AiCallView;
     expect(view.call.agentId).toBeUndefined();
     expect(view.previous?.usageId).toBe('au_sec_1');
+  });
+
+  it('does not open a call in a child session of an agent the viewer cannot read (the rule runSpend applies)', async () => {
+    // au_p_member (above): a team member of another project's agent, called by the demo agent, in a run the member may open.
+    expect((await get(callRoute, 'au_p_member', member)).status).toBe(404);
+    expect((await get(callRoute, 'au_p_member', owner)).status).toBe(200);
+    // The same agent as the run's own, not a child session: opens through the run.
+    expect((await get(callRoute, 'au_sec_2', member)).status).toBe(200);
+  });
+
+  it('finds the previous call although more than 200 newer rows of another agent used the same model', async () => {
+    usage({ id: 'au_pv_first', at: at(1000), execution_id: 'ex_pv', workflow_id: 'wf_rs_demo', agent_id: demoAgent.id, session_id: 'as_pv' });
+    for (let i = 0; i < 230; i++) usage({ id: `au_pv_other_${String(i).padStart(3, '0')}`, at: at(1001 + i), execution_id: 'ex_pv', workflow_id: 'wf_rs_demo', agent_id: secretAgent.id, session_id: 'as_pv' });
+    usage({ id: 'au_pv_last', at: at(2000), execution_id: 'ex_pv', workflow_id: 'wf_rs_demo', agent_id: demoAgent.id, session_id: 'as_pv' });
+    const view = (await get(callRoute, 'au_pv_last', owner)).body as AiCallView;
+    expect(view.previous?.usageId).toBe('au_pv_first');
+  });
+
+  it('does not compare hashes of a Landflow split with a gateway split', async () => {
+    usage({ id: 'au_mx_1', at: at(3000), execution_id: 'ex_mx', workflow_id: 'wf_rs_demo', session_id: 'as_mx' });
+    split('au_mx_1', { parts: { instructions: 500 }, hashes: { instructions: 'aa' }, prefix: 'p1', at: at(3000) });
+    usage({ id: 'au_mx_2', at: at(3010), execution_id: 'ex_mx', workflow_id: 'wf_rs_demo', session_id: 'as_mx', source: 'litellm', gateway_request_id: 'req_mx_2' });
+    split('au_mx_2', { parts: { instructions: 500 }, hashes: { instructions: 'bb' }, prefix: 'p2', gatewayRequestId: 'req_mx_2', method: 'tokenizer', at: at(3010) });
+    const view = (await get(callRoute, 'au_mx_2', owner)).body as AiCallView;
+    expect(view.parts?.source).toBe('gateway');
+    expect(view.previous).toEqual({ usageId: 'au_mx_1', samePrefix: false, changedParts: [] });
   });
 
   it('the route is readable with executions:read', () => {

@@ -204,7 +204,9 @@ export function cacheLine(calls: SpendCall[], parts: ReadonlyMap<string, CallPar
       missCalls += 1;
       const before = parts.get(group[i - 1].usageId);
       const now = parts.get(call.usageId);
-      const changed = (part: PromptPart) => before?.partHashes?.[part] !== undefined && now?.partHashes?.[part] !== undefined && before.partHashes[part] !== now.partHashes[part];
+      // Gateway and Landflow hashes are made under different keys: compare only the splits of one source.
+      const comparable = before !== undefined && now !== undefined && before.source === now.source;
+      const changed = (part: PromptPart) => comparable && before.partHashes?.[part] !== undefined && now.partHashes?.[part] !== undefined && before.partHashes[part] !== now.partHashes[part];
       const prefix = now ? CACHE_PARTS.reduce((s, p) => s + (now.parts[p] ?? 0), 0) : undefined;
       if (changed('instructions')) reason('instructions-changed');
       else if (changed('toolDefinitions')) reason('tools-changed');
@@ -299,13 +301,7 @@ export async function runSpend(executionId: string, actor: Actor): Promise<RunSp
     return ok;
   };
   const childSession = new Map<string, boolean>();
-  const isChildSession = (row: UsageRow) => {
-    if (row.caller_agent_id) return true;
-    if (!row.session_id) return false;
-    let is = childSession.get(row.session_id);
-    if (is === undefined) childSession.set(row.session_id, (is = Boolean(agentStore.getSession(row.session_id)?.parentSessionId)));
-    return is;
-  };
+  const isChildSession = (row: UsageRow) => isChildSessionRow(row, childSession);
   const open: UsageRow[] = [];
   const hidden = emptySpendTotals();
   const hiddenRuns = new Set<string>();
@@ -383,9 +379,25 @@ export async function runSpend(executionId: string, actor: Actor): Promise<RunSp
   };
 }
 
-/** Whether `actor` may open this call (rule 3): its run, its agent or its project, else its own person and admins. */
+/** A row of a child session: an agent called by another agent (a team member, an agent tool), by caller or by session. */
+function isChildSessionRow(row: UsageRow, cache?: Map<string, boolean>): boolean {
+  if (row.caller_agent_id) return true;
+  if (!row.session_id) return false;
+  let is = cache?.get(row.session_id);
+  if (is === undefined) {
+    is = Boolean(agentStore.getSession(row.session_id)?.parentSessionId);
+    cache?.set(row.session_id, is);
+  }
+  return is;
+}
+
+/**
+ * Whether `actor` may open this call (rule 3): its run, its agent or its project, else its own person and admins. The
+ * rule of `runSpend` holds here too: a call in a child session of an agent the viewer cannot read is not opened.
+ */
 function canOpenCall(actor: Actor, row: UsageRow): boolean {
   if (isInstanceAdmin(actor)) return true;
+  if (row.agent_id && !canResource(actor, 'agent', row.agent_id, 'read') && isChildSessionRow(row)) return false;
   if (row.execution_id && canOpenRun(actor, row.execution_id)) return true;
   if (row.agent_id && canResource(actor, 'agent', row.agent_id, 'read')) return true;
   if (row.project_id && projectRole(actor, row.project_id)) return true;
@@ -407,14 +419,18 @@ export function aiCallView(usageId: string, actor: Actor): AiCallView | undefine
   let previous: AiCallView['previous'];
   const scope = row.session_id ? { column: 'session_id', value: row.session_id } : row.execution_id ? { column: 'execution_id', value: row.execution_id } : undefined;
   if (scope) {
-    const candidates = db.all<UsageRow>(`SELECT ${USAGE_COLUMNS} FROM ai_usage WHERE ${scope.column} = ? AND model = ? AND at <= ? AND id <> ? ORDER BY at DESC, id DESC LIMIT 200`, scope.value, row.model, row.at, row.id);
+    // The agent is in the SQL filter: in a run of several agents on one model, newer rows of the others must not push the real previous call out of the 200.
+    const agentFilter = row.agent_id ? { sql: 'agent_id = ?', args: [row.agent_id] } : { sql: 'agent_id IS NULL', args: [] };
+    const candidates = db.all<UsageRow>(`SELECT ${USAGE_COLUMNS} FROM ai_usage WHERE ${scope.column} = ? AND model = ? AND ${agentFilter.sql} AND at <= ? AND id <> ? ORDER BY at DESC, id DESC LIMIT 200`, scope.value, row.model, ...agentFilter.args, row.at, row.id);
     const before = matchPrevious({ ...call, agentId: row.agent_id ?? undefined }, candidates.map((c) => callOf(c, price, false, true)));
     if (before) {
       const earlier = partsOf(candidates.filter((c) => c.id === before.usageId)).get(before.usageId);
-      const hashesNow = parts?.partHashes;
-      const hashesBefore = earlier?.partHashes;
+      // Gateway and Landflow hashes use different keys: a mixed pair is not compared.
+      const comparable = parts !== undefined && earlier !== undefined && parts.source === earlier.source;
+      const hashesNow = comparable ? parts.partHashes : undefined;
+      const hashesBefore = comparable ? earlier.partHashes : undefined;
       const changedParts = hashesNow && hashesBefore ? ([...new Set([...Object.keys(hashesNow), ...Object.keys(hashesBefore)])] as PromptPart[]).filter((p) => hashesNow[p] !== hashesBefore[p]) : [];
-      previous = { usageId: before.usageId, samePrefix: Boolean(parts?.prefixHash && earlier?.prefixHash && parts.prefixHash === earlier.prefixHash), changedParts };
+      previous = { usageId: before.usageId, samePrefix: Boolean(comparable && parts.prefixHash && earlier.prefixHash && parts.prefixHash === earlier.prefixHash), changedParts };
     }
   }
   const runHref = row.execution_id && (isInstanceAdmin(actor) || canOpenRun(actor, row.execution_id)) ? `/runs/${row.execution_id}` : undefined;
