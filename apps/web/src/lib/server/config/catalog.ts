@@ -174,6 +174,8 @@ export const CONFIG_CATALOG: readonly ConfigVariable[] = [
   { name: 'LANDFLOW_STT_MODEL', group: 'ai', default: '`whisper-1`', description: 'the OpenAI-compatible speech-to-text server behind Spotlight\'s microphone ([assistant.md](../assistant.md#spotlight))' },
   { name: 'LANDFLOW_STT_API_KEY', group: 'ai', default: '–', description: 'the OpenAI-compatible speech-to-text server behind Spotlight\'s microphone ([assistant.md](../assistant.md#spotlight))', secret: true },
   { name: 'LANDFLOW_AI_USAGE_RETENTION_DAYS', group: 'ai', default: '`400`', description: 'how long per-call AI usage rows (tokens, cost) are kept', aliases: ['AI_USAGE_RETENTION_DAYS'] },
+  // SP23:
+  { name: 'LANDFLOW_AI_ANOMALY_MIN_USD', group: 'ai', default: '`1`', description: 'the smallest jump in dollars over a day\'s usual spend that counts as unusual AI spend; a key judged on tokens needs 100,000 ([llm-gateway.md](../llm-gateway.md#forecasts-and-unusual-spend))' },
   // SP03:
   { name: 'LANDFLOW_AI_CALL_PARTS_RETENTION_DAYS', group: 'ai', default: '`30`', description: 'how long the per-call split of a prompt into parts (token counts and hashes, never text) is kept ([llm-gateway.md](../llm-gateway.md#what-a-prompt-was-made-of))' },
   // SP22:

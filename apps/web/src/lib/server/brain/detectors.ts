@@ -24,6 +24,7 @@ import { percentile } from '../usage/query';
 import { overlapFindings } from './overlap';
 import type { NewProposal } from './proposals';
 import { practiceDrift } from './practice-drift'; // PR09:
+import { spendAnomalyFindings } from './spend-anomaly'; // SP23:
 import { fingerprintOf } from './proposals';
 
 const DAY_MS = 86_400_000;
@@ -826,6 +827,7 @@ export const DETECTOR_RUNS: Record<BuiltinDetectorId, (ctx: DetectContext) => Fi
   'missing-tool': missingTools,
   'work-overlap': workOverlap,
   'practice-drift': practiceDrift, // PR09:
+  'spend-anomaly': spendAnomalyFindings, // SP23:
 };
 
 export function detectContext(quiet: Partial<Record<DetectorId, number>> = {}, db: Database = database(), now = Date.now()): DetectContext {
