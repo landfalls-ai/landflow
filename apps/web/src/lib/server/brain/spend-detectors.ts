@@ -314,13 +314,24 @@ export function cacheMisses(ctx: DetectContext): Finding[] {
   return out;
 }
 
-/** The same prompt 5+ times in one day within one agent or workflow. */
+/** The same prompt 5+ times in one day within one agent or workflow (not the first prompt of runs that then called tools: that is fresh data each time). */
 export function repeatedCalls(ctx: DetectContext): Finding[] {
   const min = Math.ceil(5 * ctx.quiet('repeated-calls'));
   const out: Finding[] = [];
   for (const subject of load(ctx, 14)) {
+    // A run's first prompt is the same every time when the agent fetches fresh data through tools (a scheduled agent), so it is not
+    // a repeat: the first call of a run is left out when a call of that run carried tool results. The rows hold no prompt text,
+    // only the sizes of the parts, so "made tool calls" is read from the tool-results part of the run's calls.
+    const first = new Map<string, Call>();
+    const fetched = new Set<string>();
+    for (const call of subject.calls) {
+      const at = first.get(call.run);
+      if (!at || call.row.at < at.row.at || (call.row.at === at.row.at && call.row.id < at.row.id)) first.set(call.run, call);
+      if ((call.parts?.parts.toolResults ?? 0) > 0) fetched.add(call.run);
+    }
     const groups = new Map<string, Call[]>();
     for (const call of subject.calls) {
+      if (fetched.has(call.run) && first.get(call.run) === call) continue;
       const hash = call.parts?.promptHash;
       if (hash) groups.set(`${call.row.day}|${hash}`, [...(groups.get(`${call.row.day}|${hash}`) ?? []), call]);
     }

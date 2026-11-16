@@ -271,6 +271,20 @@ describe('repeated-calls', () => {
     many(4, (i) => ({ workflow: w.id, execution: `ex${i}`, prompt: 'abcdef0123456789', parts: { instructions: 100 } }));
     expect(run('repeated-calls')).toEqual([]);
   });
+  it('does not flag a scheduled agent whose first prompt is the same every run and then calls a tool', () => {
+    const a = agent('Hourly');
+    // The rows are stamped backwards in creation order, so the follow-up call (after the tool ran) is made first.
+    for (let i = 0; i < 6; i++) {
+      call({ agent: a.id, session: `h${i}`, prompt: `follow${i}`, parts: { instructions: 100, toolResults: 50 } });
+      call({ agent: a.id, session: `h${i}`, prompt: 'samefirstprompt', parts: { instructions: 100 } });
+    }
+    expect(run('repeated-calls')).toEqual([]);
+  });
+  it('still flags a workflow repeating one prompt inside a run', () => {
+    const w = workflow('wf_rep3');
+    many(6, () => ({ workflow: w.id, execution: 'one', prompt: 'samesamesame', parts: { instructions: 100, toolResults: 50 } }));
+    expect(run('repeated-calls')).toHaveLength(1);
+  });
   it('does not join prompts of different days', () => {
     const w = workflow('wf_rep2');
     many(3, (i) => ({ workflow: w.id, execution: `a${i}`, prompt: 'hashhashhash', daysAgo: 1, parts: { instructions: 1 } }));
