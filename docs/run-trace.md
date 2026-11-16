@@ -668,7 +668,8 @@ names and hashes only (the Run Trace's own content still follows `LANDFLOW_TRACE
   in `hidden` (runs, totals) and never listed or named. An agent they can't read is "Another agent".
 - `GET /api/ai-calls/:id` answers one call (`call`), its split in tokens (`parts`, with `source`: Landflow made it or the
   gateway did for a kagent call), the previous call of the same session (else run), agent and model (`previous`: whether
-  the stable prefix is the same and which parts changed, by hash) and the run's link. A call opens for anyone who can
+  the stable prefix is the same and which parts changed, by hash; `compared: false` when the two splits can't be
+  compared, because one has none or one is the gateway's and the other Landflow's) and the run's link. A call opens for anyone who can
   read its run or its agent or has a role in its project; a call with none of these opens only for its own person and
   owners and admins; a call in a child session of an agent the viewer can't read answers 404 too, as it is left out of
   the run's report. Anything else answers 404 (the rules are "Who sees what" in
@@ -724,7 +725,8 @@ tab reads, shared) by the rule above, then reads its view (`GET /api/ai-calls/:i
   numbers says so, decided by the provider's family (a gateway row's `anthropic/…` or `litellm` is never taken for a
   model without a cache).
 - **What changed**: "Same prefix as the previous call" (iteration 2 of a run, usually), or "The instructions changed" and
-  the like, against the previous call of the same session or run.
+  the like, against the previous call of the same session or run. Nothing is said when the two calls' splits can't be
+  compared (one has none, or the gateway made one and Landflow the other: their hashes use different keys).
 - **No split for this call**, with the reason: built outside Landflow, or no split was kept for it (a split is kept for a
   limited time), or the step isn't in the run's spend record yet, or it may be older than the 500 newest calls the record
   holds.

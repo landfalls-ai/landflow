@@ -107,7 +107,8 @@ const CHANGED_WORDS: Partial<Record<PromptPart, string>> = {
 
 /** What changed against the previous call: "Same prefix as the previous call", or what differs. Undefined without a previous call. */
 export function previousLine(previous: AiCallView['previous']): string | undefined {
-  if (!previous) return undefined;
+  // Splits that cannot be compared (none on one side, or gateway against Landflow) say nothing, rather than "changed".
+  if (!previous || previous.compared === false) return undefined;
   if (previous.samePrefix) return 'Same prefix as the previous call';
   const words = previous.changedParts.map((part) => CHANGED_WORDS[part]).filter((w): w is string => Boolean(w));
   return words.length ? [...new Set(words)].join(' · ') : 'The prefix changed since the previous call';

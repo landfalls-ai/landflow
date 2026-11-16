@@ -306,7 +306,7 @@ describe('GET /api/ai-calls/:id', () => {
     split('au_mx_2', { parts: { instructions: 500 }, hashes: { instructions: 'bb' }, prefix: 'p2', gatewayRequestId: 'req_mx_2', method: 'tokenizer', at: at(3010) });
     const view = (await get(callRoute, 'au_mx_2', owner)).body as AiCallView;
     expect(view.parts?.source).toBe('gateway');
-    expect(view.previous).toEqual({ usageId: 'au_mx_1', samePrefix: false, changedParts: [] });
+    expect(view.previous).toEqual({ usageId: 'au_mx_1', samePrefix: false, changedParts: [], compared: false });
   });
 
   it('the route is readable with executions:read', () => {

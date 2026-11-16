@@ -432,7 +432,7 @@ export function aiCallView(usageId: string, actor: Actor): AiCallView | undefine
       const hashesNow = comparable ? parts.partHashes : undefined;
       const hashesBefore = comparable ? earlier.partHashes : undefined;
       const changedParts = hashesNow && hashesBefore ? ([...new Set([...Object.keys(hashesNow), ...Object.keys(hashesBefore)])] as PromptPart[]).filter((p) => hashesNow[p] !== hashesBefore[p]) : [];
-      previous = { usageId: before.usageId, samePrefix: Boolean(comparable && parts.prefixHash && earlier.prefixHash && parts.prefixHash === earlier.prefixHash), changedParts };
+      previous = { usageId: before.usageId, samePrefix: Boolean(comparable && parts.prefixHash && earlier.prefixHash && parts.prefixHash === earlier.prefixHash), changedParts, ...(!comparable && { compared: false }) };
     }
   }
   const runHref = row.execution_id && (isInstanceAdmin(actor) || canOpenRun(actor, row.execution_id)) ? `/runs/${row.execution_id}` : undefined;

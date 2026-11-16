@@ -108,6 +108,8 @@ describe('the words', () => {
     expect(previousLine({ usageId: 'u0', samePrefix: false, changedParts: ['instructions', 'history'] })).toBe('The instructions changed');
     expect(previousLine({ usageId: 'u0', samePrefix: false, changedParts: [] })).toBe('The prefix changed since the previous call');
     expect(previousLine(undefined)).toBeUndefined();
+    // Splits that cannot be compared (gateway against Landflow, or none on one side) say nothing.
+    expect(previousLine({ usageId: 'u0', samePrefix: false, changedParts: [], compared: false })).toBeUndefined();
   });
   it('why there is no split', () => {
     expect(noSplitReason(call())).toContain('No split was kept');

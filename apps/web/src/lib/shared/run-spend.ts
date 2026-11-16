@@ -105,8 +105,12 @@ export interface AiCallView {
   call: SpendCall;
   /** The split, when one exists; `source` says who made it (Landflow, or the gateway for kagent calls). */
   parts?: { source: PartsSource; method: CountMethod; parts: Partial<Record<PromptPart, number>>; toolNames?: string[] };
-  /** Against the previous call of the same session or run (same agent, same model): what changed, by hash. */
-  previous?: { usageId: string; samePrefix: boolean; changedParts: PromptPart[] };
+  /**
+   * Against the previous call of the same session or run (same agent, same model): what changed, by hash. `compared` is
+   * false when the two calls' splits cannot be compared (one has none, or one is the gateway's and one Landflow's: their
+   * hashes use different keys); then `samePrefix` is false and `changedParts` empty, and a view says nothing about them.
+   */
+  previous?: { usageId: string; samePrefix: boolean; changedParts: PromptPart[]; compared?: boolean };
   /** Where to go: the run (when there is one the viewer may open) and the span. */
   runHref?: string;
 }
