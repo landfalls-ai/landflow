@@ -2280,6 +2280,15 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   seconds while the run is live ([run-trace.md](run-trace.md#spend)). A call opens its model span.
 - **One call's view (SP07), built:** a model step's sheet in the Run Trace shows the call's composition, cache line and what changed since the previous call; sessions show cached tokens ([run-trace.md](run-trace.md#one-call)).
 
+## Token spend wave 13
+
+- **Local models priced in Settings (SP12), built**: Settings → AI prices lists the local models seen in the last 30 days (calls, tokens, "Not priced" or the
+  price) with an inline "Set a price"; one `ollama/<model>` price covers Landflow's own `ollama` calls and the gateway's
+  `ollama_chat` rows ([observability.md](observability.md#8-token-and-cost-tracking)). The AI page's You card gives a member their own
+  spend and caps, and its Model group says "Not priced" and can rank by tokens ([llm-gateway.md](llm-gateway.md#the-ai-page)). By decision D5
+  (2026-11-16) there is no "equivalent cost" for a local model: it costs $0 until someone prices it, and an unpriced one
+  is ranked by tokens. Equivalent cost is dropped, not postponed.
+
 ## Practices (waves P1 and P2)
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided

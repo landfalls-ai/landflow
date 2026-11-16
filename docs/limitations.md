@@ -527,6 +527,14 @@ items still open (its "Wave 6" section); this page is the short list to check be
   day. They run on the leader only, so a stopped host asks for nothing until it is back (a missed wake-up is not replayed).
 - A February 29 wake-up schedule can be refused as `This schedule never fires` (the search looks 366 days ahead). A request for a run that was made before a task was reassigned stays open and answers 409 on Approve until someone denies it. With more than one host process, a run with a quiet step longer than 10 minutes can be marked failed by another process, and its later result is dropped. A run whose session was deleted settles as `Landflow restarted before the run finished`.
 
+## Token spend wave 13
+
+- A price for a local model applies from the moment it is saved. Calls recorded before keep the cost they had (usually $0):
+  there is no repricing of old rows.
+- Gateway rows imported before wave 13 do not say which provider the gateway ran them on (`ai_usage.gateway_provider` is
+  empty), so one that ran on Ollama is not listed under Local models until a new call of that model arrives; it is
+  still priced by model name.
+
 ## Practices (waves P1 and P2)
 
 - Practices reach the Claude Code mod, MCP clients, Landflow agents (PR06) and Landflow agents on kagent through the

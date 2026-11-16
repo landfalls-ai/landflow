@@ -509,7 +509,12 @@ the call may start, then prices and records what it used.
   included. A model id matches exactly, else by the longest prefix (`claude-sonnet-4-6` prices
   `claude-sonnet-4-6-20260101`); a `vendor/` prefix (OpenRouter style) is ignored, and an
   OpenAI-compatible server's model falls back to the other providers' prices. Unknown models cost
-  $0. Costs are estimates: batch prices aren't modelled.
+  $0. Costs are estimates: batch prices aren't modelled. **Local models** (Ollama through Landflow as `ollama`, or
+  through the LLM gateway, which logs `ollama_chat`) cost $0 until priced: **Settings → AI prices → Local models**
+  (`GET /api/settings/ai-prices/local`) lists each model seen in 30 days with its calls and tokens and an inline
+  "Set a price". One price (`ollama/<model>`) covers both provider names, never a hosted provider's or a built-in. A price
+  applies from the moment it is saved; recorded calls keep the cost they had (no repricing). There is no "equivalent
+  cost" for a local model.
 - **Cached tokens**: a price also has **cache read** and **cache write** columns (USD per million;
   Settings → AI prices). `inputTokens` is the whole prompt; the cached part is priced at the cache
   price and the rest at the input price. Anthropic: `cache_read_input_tokens` and
