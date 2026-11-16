@@ -15,6 +15,8 @@ import { Segmented } from '@/components/ui/segmented';
 import { StatCard } from '@/components/ui/stat-card';
 import { SectionLabel } from '@/components/ui/inputs';
 import { CapsCard, RequestsCard } from './ai-console-caps';
+import { AiCacheCard } from './ai-cache-card'; // SP11:
+import { AiForecastCard } from './ai-forecast-card'; // SP11:
 import { GatewayCard } from './ai-console-gateway';
 
 const REFRESH_MS = 60_000;
@@ -185,8 +187,10 @@ export function AiConsole() {
           {shown && group === 'person' && <PeopleTotal totals={shown.peopleTotals} admin={shown.viewer.admin} />}
           {shown ? <SpendBy rows={shown.groups[group]} label={label} /> : <div className="m-4 h-24 rounded-xl bg-acdim animate-pulse-soft" />}
         </Card>
+        <AiForecastCard /> {/* SP11: */}
         {shown && <CapsCard report={shown} onChanged={() => load()} />}
         {shown && <RequestsCard report={shown} onChanged={() => load()} />}
+        <AiCacheCard period={period} /> {/* SP11: */}
         <GatewayCard status={status} admin={Boolean(shown?.viewer.admin)} />
       </PageBody>
     </>
