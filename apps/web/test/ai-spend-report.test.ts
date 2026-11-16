@@ -408,6 +408,61 @@ describe('the rollup', () => {
     }
   });
 
+  it('a throw on one dirty day keeps the marks of the days after it, and of itself (fails if marks are taken before the days are rolled)', async () => {
+    const [a, b] = [daysAgo(20), daysAgo(19)];
+    const insert = (id: string, day: string) => database().insertNew('ai_usage', { id, at: `${day}T10:00:00.000Z`, day, provider: 'anthropic', model: 'claude-sonnet-5-5', operation: 'chat', input_tokens: 10, output_tokens: 1, cost: 1 });
+    const dirty = () => database().get<{ value: string }>("SELECT value FROM meta WHERE key = 'ai_spend_dirty_days'")?.value;
+    const db = database();
+    const original = db.all.bind(db);
+    try {
+      insert('throw-a', a);
+      insert('throw-b', b);
+      markSpendDays([a, b]);
+      let thrown = false;
+      (db as unknown as { all: unknown }).all = (sql: string, ...params: unknown[]) => {
+        if (!thrown && sql.includes('FROM ai_usage WHERE day = ?') && params[0] === a) {
+          thrown = true;
+          throw new Error('boom');
+        }
+        return original(sql, ...params);
+      };
+      await expect(runRollupInBatches(Date.now(), db, async () => {}, 7)).rejects.toThrow('boom');
+      (db as unknown as { all: unknown }).all = original;
+      expect(JSON.parse(dirty() ?? '[]')).toEqual([a, b]);
+      await runRollupInBatches(Date.now(), db, async () => {}, 7);
+      expect(dirty()).toBeUndefined();
+      for (const day of [a, b]) expect(Number(db.get<{ c: number }>('SELECT COALESCE(SUM(calls), 0) AS c FROM ai_usage_daily WHERE day = ?', day)!.c)).toBe(Number(db.get<{ c: number }>('SELECT COUNT(*) AS c FROM ai_usage WHERE day = ?', day)!.c));
+    } finally {
+      (db as unknown as { all: unknown }).all = original;
+      db.delete('ai_usage', { id: 'throw-a' });
+      db.delete('ai_usage', { id: 'throw-b' });
+      db.delete('meta', { key: 'ai_spend_dirty_days' });
+      rollupDay(a);
+      rollupDay(b);
+    }
+  });
+
+  it('stop() then start() while a pass runs leaves one timer and halts the old pass (fails without the generation counter)', async () => {
+    const through = daysAgo(30);
+    database().upsert('meta', { key: 'ai_spend_rolled_through', value: through });
+    for (let back = 0; back <= 30; back++) database().delete('ai_usage_daily', { day: daysAgo(back) });
+    const rolledOn = (day: string) => Number(database().get<{ c: number }>('SELECT COUNT(*) AS c FROM ai_usage_daily WHERE day = ?', day)!.c);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      aiSpendRollup.start();
+      await vi.advanceTimersByTimeAsync(15_000);
+      aiSpendRollup.stop();
+      aiSpendRollup.start();
+      for (let tick = 0; tick < 10; tick++) await new Promise((resolve) => setImmediate(resolve));
+      expect(rolledOn(daysAgo(0))).toBe(0);
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      aiSpendRollup.stop();
+      vi.useRealTimers();
+      runRollup();
+    }
+  });
+
   it('stop() ends a pass in flight between batches and leaves `through` alone', async () => {
     const through = daysAgo(30);
     database().upsert('meta', { key: 'ai_spend_rolled_through', value: through });

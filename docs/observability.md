@@ -534,7 +534,7 @@ the call may start, then prices and records what it used.
   day a late spend import marked dirty (the `meta` key `ai_spend_dirty_days`) and every day since its last pass (the
   `meta` key `ai_spend_rolled_through`, capped at the retention, so a host that was off for days loses nothing) every 10
   minutes, a week of days at a time with the event loop free between the steps (`runRollupInBatches`), through `delete`
-  and `upsert` calls in one transaction per day (a step takes its days' dirty marks out just before rolling them, so a mark a late import sets during a pause survives for the next pass; stopping the service ends a pass between steps), and prunes it at `LANDFLOW_AI_USAGE_RETENTION_DAYS` like `ai_usage`
+  and `upsert` calls in one transaction per day (a day's dirty mark is removed in the same transaction, and the same synchronous read, as its rewrite, so a throw or a kill keeps it and a mark a late import sets during a pause survives for the next pass; stopping or restarting the service ends a pass in flight between steps, and only the newest start arms the next one), and prunes it at `LANDFLOW_AI_USAGE_RETENTION_DAYS` like `ai_usage`
   itself. The AI page reads it for the days before yesterday ([llm-gateway.md](llm-gateway.md#the-ai-page)).
 - **Where it shows**: the execution view (tokens, cost and calls per model), Insights (a cost
   column and the period's total), an agent's Abilities → Guardrails (today and this month), and

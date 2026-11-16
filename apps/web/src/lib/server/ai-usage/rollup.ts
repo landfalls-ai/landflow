@@ -72,18 +72,28 @@ export function markSpendDays(days: Iterable<string>, db: Database = database())
   });
 }
 
-/** Rewrite one day of the rollup from the raw rows (an empty day leaves no rows). */
+/**
+ * Rewrite one day of the rollup from the raw rows (an empty day leaves no rows). The read, the day's dirty mark's removal, the
+ * delete and the upserts are one transaction in one synchronous tick: the mark goes only with the rewrite that saw the rows
+ * it stood for (a throw or a kill leaves it), and a mark set later, during a pause between batches, is for newer rows and stays.
+ */
 export function rollupDay(day: string, db: Database = database()): number {
-  const rows = db.all<DayRow>(
-    `SELECT ${coalesced},
+  return db.transaction(() => {
+    const rows = db.all<DayRow>(
+      `SELECT ${coalesced},
        COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens,
        COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens, COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
        COUNT(*) AS calls, COUNT(DISTINCT COALESCE(execution_id, session_id)) AS runs, COALESCE(SUM(cost), 0) AS cost
      FROM ai_usage WHERE day = ?
      GROUP BY ${ROLLUP_KEYS.map((key) => `COALESCE(${key}, '')`).join(', ')}`,
-    day,
-  );
-  db.transaction(() => {
+      day,
+    );
+    const marked = dirtyDays(db);
+    if (marked.includes(day)) {
+      const rest = marked.filter((d) => d !== day);
+      if (rest.length) db.upsert('meta', { key: DIRTY_KEY, value: JSON.stringify(rest) });
+      else db.delete('meta', { key: DIRTY_KEY });
+    }
     db.delete('ai_usage_daily', { day });
     for (const row of rows) {
       db.upsert('ai_usage_daily', {
@@ -98,8 +108,8 @@ export function rollupDay(day: string, db: Database = database()): number {
         cost: Number(row.cost),
       });
     }
+    return rows.length;
   });
-  return rows.length;
 }
 
 /** What one pass recomputes: today, yesterday, every day since the last pass (up to the retention) and the dirty days, oldest first. */
@@ -121,29 +131,6 @@ function planPass(now: number, db: Database): string[] {
   return [...days].sort();
 }
 
-/**
- * Roll up some days, taking their dirty marks out first, in the same synchronous step: a mark added after this step (a late
- * import during a pause between batches) is for rows this step's read did not see, so it must outlive the pass. A day whose
- * rollup throws is marked again.
- */
-function rollupTaken(days: string[], db: Database) {
-  db.transaction(() => {
-    const marked = dirtyDays(db);
-    const rest = marked.filter((day) => !days.includes(day));
-    if (rest.length === marked.length) return;
-    if (rest.length) db.upsert('meta', { key: DIRTY_KEY, value: JSON.stringify(rest) });
-    else db.delete('meta', { key: DIRTY_KEY });
-  });
-  for (const day of days) {
-    try {
-      rollupDay(day, db);
-    } catch (error) {
-      markSpendDays([day], db);
-      throw error;
-    }
-  }
-}
-
 /** The end of a pass: the day it reached and the retention prune. The dirty marks were taken, batch by batch, as the days were rolled. */
 function finishPass(now: number, db: Database) {
   const meter = aiUsageMeter();
@@ -157,7 +144,7 @@ function finishPass(now: number, db: Database) {
  */
 export function runRollup(now = Date.now(), db: Database = database()): string[] {
   const days = planPass(now, db);
-  rollupTaken(days, db);
+  for (const day of days) rollupDay(day, db);
   finishPass(now, db);
   return days;
 }
@@ -180,7 +167,7 @@ export async function runRollupInBatches(now = Date.now(), db: Database = databa
       if (halt()) return done;
     }
     const batch = days.slice(i, i + batchDays);
-    rollupTaken(batch, db);
+    for (const day of batch) rollupDay(day, db);
     done.push(...batch);
   }
   finishPass(now, db);
@@ -191,13 +178,15 @@ export async function runRollupInBatches(now = Date.now(), db: Database = databa
 export const aiSpendRollup = singleton('ai-spend-rollup', () => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = true;
+  // Each start is a generation: a pass of an older one halts between batches and never re-arms, so stop() then start() leaves one timer.
+  let generation = 0;
 
-  function arm(delay: number) {
+  function arm(delay: number, mine: number) {
     timer = setTimeout(() => {
-      runRollupInBatches(Date.now(), database(), yieldToEventLoop, BATCH_DAYS, () => stopped)
+      runRollupInBatches(Date.now(), database(), yieldToEventLoop, BATCH_DAYS, () => stopped || mine !== generation)
         .catch((error) => logger.warn('ai spend rollup failed', { error: (error as Error).message }))
         .finally(() => {
-          if (!stopped) arm(EVERY_MS);
+          if (!stopped && mine === generation) arm(EVERY_MS, mine);
         });
     }, delay);
     timer.unref?.();
@@ -207,7 +196,8 @@ export const aiSpendRollup = singleton('ai-spend-rollup', () => {
     start() {
       if (!stopped) return;
       stopped = false;
-      arm(15_000);
+      generation += 1;
+      arm(15_000, generation);
     },
     stop() {
       stopped = true;
