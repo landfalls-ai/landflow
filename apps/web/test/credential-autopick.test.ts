@@ -27,7 +27,7 @@ vi.mock('@/components/projects/use-projects', async (original) => ({
   useCredentialScope: () => ({ ...scopeState, reload: async () => {} }),
 }));
 
-const { autoPickStep, autoPicks } = await import('@/components/credentials/use-credentials');
+const { autoPickStep, autoPicks, credentialInputs, credentialsDiffer } = await import('@/components/credentials/use-credentials');
 const { NodeCredentials } = await import('@/components/credentials/node-credentials');
 const auth = await import('@/lib/server/auth');
 const { registry } = await import('@/lib/server/plugins/registry');
@@ -82,6 +82,29 @@ describe('which credential is picked, and when', () => {
   });
 });
 
+describe('what the panel works from', () => {
+  const all = [HEADER, BEARER];
+  it('is every credential, and not scope-known, until the workflow’s project answers (cause 1)', () => {
+    expect(credentialInputs({ all, scope: undefined, workflowId: 'wf_1' })).toEqual({ candidates: all, scoped: true, scopeKnown: false });
+    expect(credentialInputs({ all, scope: { ids: new Set(['b1']) }, workflowId: 'wf_1' })).toEqual({ candidates: [BEARER], scoped: true, scopeKnown: true });
+    expect(credentialInputs({ all, scope: undefined, workflowId: undefined })).toEqual({ candidates: all, scoped: false, scopeKnown: false });
+    expect(credentialInputs({ all: undefined, scope: undefined, workflowId: 'wf_1' }).candidates).toBeUndefined();
+  });
+
+  it('settles a slot that has a credential even while blocked, so clearing it before the scope arrives leaves it empty', () => {
+    const blocked = step({ scoped: true, scopeKnown: false, value: { httpHeaderAuth: { id: 'h1', name: 'x' } } });
+    expect(blocked.settled.has('httpHeaderAuth')).toBe(true);
+    expect(step({ scoped: true, scopeKnown: true, settled: blocked.settled, value: undefined }).next).toBeUndefined();
+  });
+
+  it('compares a node’s credentials with the published version’s by id, per slot', () => {
+    expect(credentialsDiffer({ a: { id: '1' } }, { a: { id: '1' } })).toBe(false);
+    expect(credentialsDiffer({ a: { id: '1' } }, { a: { id: '2' } })).toBe(true);
+    expect(credentialsDiffer({ a: { id: '1' } }, undefined)).toBe(true);
+    expect(credentialsDiffer(undefined, {})).toBe(false);
+  });
+});
+
 describe('what the panel says', () => {
   const html = (props: Record<string, unknown> = {}) =>
     renderToStaticMarkup(createElement(NodeCredentials, { nodeType: 'core.httpRequest', workflowId: 'wf_1', requirements: [{ name: 'httpHeaderAuth', required: true }], onChange: () => {}, ...props }));
@@ -89,9 +112,9 @@ describe('what the panel says', () => {
   it('says when the project’s credentials could not be checked', () => {
     listed = [HEADER];
     scopeState = { failed: true };
-    expect(html()).toContain('so none is picked automatically');
+    expect(html()).toContain('none is picked automatically');
     scopeState = { scope: { ids: new Set(['h1']) }, failed: false };
-    expect(html()).not.toContain('so none is picked automatically');
+    expect(html()).not.toContain('none is picked automatically');
   });
 
   it('says a live workflow’s runs by trigger keep the published credential until publish (cause 4)', () => {

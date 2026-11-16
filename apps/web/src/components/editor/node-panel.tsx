@@ -18,6 +18,7 @@ import { ParamForm } from './param-form';
 import { NodeSettingsPane } from './node-settings';
 import { PollStatus } from './poll-status';
 import { usePublication } from './publish-control';
+import { usePublishedCredentialsDiffer } from './use-published-credentials';
 import { parseHandle, useEditor } from './store';
 import { SuggestionsCard } from './suggestions-card';
 import { TriggerUrl } from './trigger-url';
@@ -107,7 +108,8 @@ export function NodePanel() {
   const workflowId = useEditor((s) => s.workflowId);
   const workflowActive = useEditor((s) => s.active);
   const dirty = useEditor((s) => s.dirty);
-  const readOnly = useEditLock((s) => s.readOnly);
+  // Until the lock has answered, `readOnly` is only the starting guess: nothing is picked on its own before then.
+  const readOnly = useEditLock((s) => s.readOnly || !s.known);
   // Saved but not published yet: the trigger URL still serves the published version.
   const unpublished = usePublication((s) => (s.workflowId === workflowId ? (s.status?.unpublishedChanges ?? false) : false));
   const [tab, setTab] = useState<'parameters' | 'settings'>('parameters');
@@ -115,6 +117,13 @@ export function NodePanel() {
   const [more, setMore] = useState(false);
   const pinned = useEditor((s) => (openNodeId ? s.pinData[openNodeId] : undefined));
   const nodes = useEditor((s) => s.nodes);
+  const publishedVersionId = usePublication((s) => (s.workflowId === workflowId ? s.status?.published?.versionId : undefined));
+  const credentialsNotPublished = usePublishedCredentialsDiffer({
+    workflowId: workflowActive ? workflowId || undefined : undefined,
+    versionId: publishedVersionId,
+    nodeId: openNodeId ?? undefined,
+    credentials: nodes.find((n) => n.id === openNodeId)?.data.wf.credentials,
+  });
   /** JSON being edited as the node's pinned output (test data), or null. */
   const [pinDraft, setPinDraft] = useState<string | null>(null);
   const [pinError, setPinError] = useState<string>();
@@ -390,7 +399,7 @@ export function NodePanel() {
                       requirements={credentialRequirements}
                       value={wf.credentials}
                       readOnly={readOnly}
-                      publishPending={workflowActive && (dirty || unpublished)}
+                      publishPending={workflowActive && credentialsNotPublished}
                       onChange={(credentials) => update({ credentials })}
                     />
                   ) : null}

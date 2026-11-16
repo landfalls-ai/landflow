@@ -12,7 +12,7 @@ import { Button } from '../ui/button';
 import { Select } from '../ui/inputs';
 import { useCredentialScope } from '../projects/use-projects';
 import { CredentialDialog, CredentialTypeIcon } from './credential-dialog';
-import { autoPickStep, qualifiedCredentialType, useCredentials } from './use-credentials';
+import { autoPickStep, credentialInputs, qualifiedCredentialType, useCredentials } from './use-credentials';
 
 const CREATE = '__create__';
 
@@ -31,16 +31,17 @@ export function NodeCredentials({
   requirements: NodeCredentialRequirement[];
   value?: CredentialRefs;
   onChange: (next: CredentialRefs | undefined) => void;
-  /** The edit is not going to be saved (another tab holds the lock): nothing is picked on its own. */
+  /** The edit is not going to be saved (another tab holds the lock, or that is not known yet): nothing is picked on its own. */
   readOnly?: boolean;
-  /** The workflow is live and has changes that are not published: triggers and the API still use the published credential. */
+  /** The workflow is live and this node's credential differs from the published version's: triggers still use the published one. */
   publishPending?: boolean;
 }) {
   const { credentials: all, types } = useCredentials();
   const { scope, failed, reload } = useCredentialScope(workflowId);
   // With a workflow, the choice waits for its project's credentials: before they are known nothing may be picked on the person's behalf.
-  const scoped = Boolean(workflowId);
-  const credentials = useMemo(() => (all && scope ? all.filter((c) => scope.ids.has(c.id)) : all), [all, scope]);
+  const { candidates: credentials, scoped, scopeKnown } = useMemo(() => credentialInputs({ all, scope, workflowId }), [all, scope, workflowId]);
+  const root = useRef<HTMLDivElement>(null);
+  const [retrying, setRetrying] = useState(false);
   const [dialog, setDialog] = useState<{ requirement: string; type: string; id?: string } | null>(null);
 
   const set = (requirement: string, ref?: { id: string; name: string }) => {
@@ -55,14 +56,14 @@ export function NodeCredentials({
   const settled = useRef<ReadonlySet<string>>(new Set());
   const names = requirements.map((r) => r.name).join('|');
   useEffect(() => {
-    const step = autoPickStep({ nodeType, requirements, candidates: credentials, scoped, scopeKnown: Boolean(scope), readOnly, settled: settled.current, value });
+    const step = autoPickStep({ nodeType, requirements, candidates: credentials, scoped, scopeKnown, readOnly, settled: settled.current, value });
     settled.current = step.settled;
     if (step.next) onChange(step.next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [credentials, scope, scoped, readOnly, nodeType, names, value]);
+  }, [credentials, scopeKnown, scoped, readOnly, nodeType, names, value]);
 
   return (
-    <div className="mb-5 space-y-3">
+    <div ref={root} className="mb-5 space-y-3">
       {requirements.map((requirement) => {
         const type = qualifiedCredentialType(nodeType, requirement.name);
         const info = types?.find((t) => t.type === type);
@@ -119,7 +120,7 @@ export function NodeCredentials({
               </p>
             )}
             {ref && !missing && publishPending && (
-              <p className="mt-1 text-[12px] text-t3">Triggers and the API keep using the published version until you publish this change.</p>
+              <p className="mt-1 text-[12px] text-t3">Triggers (webhooks, schedules, forms, chat) keep using the published version until you publish.</p>
             )}
             {!ref && requirement.required && credentials && (
               <p className="mt-1 text-[12px] text-t3">Required: the node fails until a credential is selected.</p>
@@ -128,14 +129,29 @@ export function NodeCredentials({
           </div>
         );
       })}
-      {scoped && failed && (
-        <p className="flex items-center gap-1 text-[12px] text-warn">
-          <TriangleAlert className="size-3" /> Couldn’t check which credentials this workflow’s project may use, so none is picked automatically.
-          <button type="button" className="underline" onClick={() => void reload()}>
-            Retry
-          </button>
-        </p>
-      )}
+      {/* Always rendered so a screen reader hears the warning appear, and the answer to Retry. */}
+      <div role="status" aria-live="polite">
+        {scoped && failed && (
+          <p className="flex flex-wrap items-center gap-1 text-[12px] text-warn">
+            <TriangleAlert className="size-3" /> Couldn’t check which credentials this workflow’s project may use, so every credential is listed and none is picked automatically.
+            <button
+              type="button"
+              className="underline disabled:opacity-60"
+              disabled={retrying}
+              aria-busy={retrying}
+              onClick={async () => {
+                setRetrying(true);
+                const ok = await reload();
+                setRetrying(false);
+                // The warning is gone: put focus on the first picker instead of on a button that vanished.
+                if (ok) root.current?.querySelector('select')?.focus();
+              }}
+            >
+              {retrying ? 'Retrying…' : 'Retry'}
+            </button>
+          </p>
+        )}
+      </div>
       {dialog && (
         <CredentialDialog
           credentialId={dialog.id}

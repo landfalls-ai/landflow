@@ -158,6 +158,7 @@ Every suite, from the repository root. All of them run offline.
 
 ```bash
 (cd apps/web && npx vitest run)                    # the host: routes, store, runner, auth, AI, queue mode on fakes…
+                                                   # (a test file that needs a DOM starts with `// @vitest-environment happy-dom`: node-credentials-effect.test.ts)
 pnpm typecheck                                     # every TypeScript package
 for p in protocol transports engine sdk cli; do (cd packages/$p && npx vitest run); done
 (cd services/code-runner && npx vitest run)

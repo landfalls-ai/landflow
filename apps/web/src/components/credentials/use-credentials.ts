@@ -77,10 +77,33 @@ export function autoPickStep(input: {
   value: Record<string, { id: string; name: string }> | undefined;
 }): { settled: Set<string>; next?: Record<string, { id: string; name: string }> } {
   const settled = new Set(input.settled);
+  // A requirement that has a credential is settled even while the step is blocked: if it is cleared before the step can
+  // run, that was the person's choice, not a slot to fill.
+  for (const r of input.requirements) if (input.value?.[r.name]) settled.add(r.name);
   if (input.readOnly || !input.candidates || (input.scoped && !input.scopeKnown)) return { settled };
   const open = input.requirements.filter((r) => !settled.has(r.name));
-  for (const r of input.requirements) if (input.value?.[r.name]) settled.add(r.name);
   const next = autoPicks(input.nodeType, open, input.candidates, input.value);
   for (const name of Object.keys(next ?? {})) settled.add(name);
   return { settled, next };
+}
+
+/**
+ * What the node panel's pickers and auto-pick work from: with a workflow, only the credentials its project may use
+ * (`scope`), and nothing may be picked until that is known (`scoped` without `scopeKnown`). Without a workflow every
+ * credential the person can see is offered. `candidates` is undefined until the credentials have loaded.
+ */
+export function credentialInputs<C extends { id: string }>(input: { all: C[] | undefined; scope: { ids: ReadonlySet<string> } | undefined; workflowId: string | undefined }) {
+  const scoped = Boolean(input.workflowId);
+  const { all, scope } = input;
+  const candidates = all && scope ? all.filter((c) => scope.ids.has(c.id)) : all;
+  return { candidates, scoped, scopeKnown: Boolean(scope) };
+}
+
+/** Whether a node's credentials in the draft are other than the published version's (compared by id, per slot). */
+export function credentialsDiffer(draft: Record<string, { id: string }> | undefined, published: Record<string, { id: string }> | undefined): boolean {
+  const a = draft ?? {};
+  const b = published ?? {};
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) if (a[key]?.id !== b[key]?.id) return true;
+  return false;
 }
