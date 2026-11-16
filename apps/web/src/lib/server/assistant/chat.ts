@@ -15,6 +15,7 @@ import { describeTeams, type TeamBrief } from '@/lib/shared/agent-teams';
 import type { NodeTypeInfo, PropertyDescriptor, Workflow } from '@/lib/shared/types';
 import { compositeOutline } from '../composites';
 import { PARAMETER_FORMATS } from '../flow-builder';
+import { askKind } from '@/lib/shared/ask-kind'; // SB04:
 import { assistantScope, isUsageCapError, runInUsageScope, type UsageScope } from '../ai-usage';
 import { recordSuggestions, traceAssistant } from '../telemetry/assistant';
 import { outcomeOf } from '../telemetry/metrics';
@@ -213,6 +214,7 @@ How to work:
 - A tool attached to an agent: a value the agent should choose when it calls the tool (a branch, a file path, an issue or pull request number, a message) is the expression {{ $fromAI('<parameter name>', '<what it is>', 'string' | 'number' | 'boolean') }}, never a bare $fromAI; fixed values (the owner, the repository, a channel) are set plainly. Credentials are the person's to pick: never set one, name the one to pick in your closing sentence.
 - After proposing, say in one sentence what it does and what the user still has to do (click Apply, pick a credential, run it). Nothing is applied yet: never say the change was applied or made. Don't repeat the ops in prose.
 - When asked whether a test run's result does what the user asked for, read the output of the last step with get_run_data and compare it with the request: if it falls short (wrong items, a filter that keeps everything, fields missing), propose the change; if it does what was asked, say so in one sentence and propose nothing.
+- A question about the flow or a run (why, what, how…) is answered from the workflow and the run data in at most two sentences, naming the cause; propose nothing unless the message asks for a change.
 - When a message reports a failed test run, read the failing node's run data with get_run_data, find the cause and propose the smallest change that fixes it, without asking first. Say the cause in one clause of at most 12 words ("“Triage Ticket” got an empty message."). Fix the failing node or what feeds it, never something else, and never by removing a node and adding the same one back. If only the user can fix it (a credential, an id, an account), say what to do in one sentence and propose nothing.
 - When no change is needed, just answer. Write for a phone: at most two short sentences (about 25 words), no headings or lists unless asked. Start with the result or the answer. Never describe what you are about to do or what you looked at ("Let me…", "I'll…", "Looking at…", "The error indicates…").
 - A parameter that get_node_docs shows with "stored as …" (a collection or fixed collection) is written exactly in that shape: the group names, the field names and, for a field with options, one of the listed values. Never a flat list, never a field or option value the docs don't list.
@@ -274,6 +276,12 @@ export function runChat(input: ChatInput): Promise<void> {
 }
 
 async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
+  // SB04: the latest typed message decides, once: a question is answered, never changed (sessions `fix` and `review` are never questions).
+  // `auto` on a question is ignored: there is nothing to apply.
+  const question = input.session !== 'fix' && input.session !== 'review' && askKind(input.messages.findLast((m) => m.role === 'user')?.content ?? '') === 'question';
+  if (question && input.session === 'auto') input = { ...input, session: undefined };
+  /** SB04: a question is offered every tool except the one that changes the workflow. */
+  const tools = question ? TOOLS.filter((t) => t.name !== 'propose_changes') : TOOLS;
   const { onEvent, runs = {} } = input;
   const trace = input.trace === true;
   const types = input.types ?? availableTypes();
@@ -372,6 +380,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     selected ? `\nThe user has “${selected.name}” selected:\n${nodeContext(working, selected.id, runs[selected.id], types)}` : '',
     builderContextEntry(input.actor, { workflowId: input.workflow.id }), // PC10: the goals of the project this workflow is in, as data
     tagged.length ? `\nThe user tagged these in the message (checked against what they may open):\n${tagged.join('\n')}` : '',
+    question ? '\nThe latest message is a question: answer it; you cannot change the workflow in this reply.' : '', // SB04:
     input.session === 'auto' ? `\n${AUTO}` : input.session ? `\n${SESSION}` : '',
   ].join('\n');
 
@@ -579,7 +588,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         const batch = trace ? coalesced((delta) => onEvent({ type: 'text.delta', step: currentStep, text: delta })) : undefined;
         let turn: Awaited<ReturnType<typeof model.generate>>;
         try {
-          turn = await withCallNote({ purpose: 'answer', draft: plainDraft({ system, tools: TOOLS, messages: history }) }, () => model.generate({ system, messages: history, tools: TOOLS, ...(input.signal && { signal: input.signal }), ...(batch && { onToken: batch.push }) })); // SP03:
+          turn = await withCallNote({ purpose: 'answer', draft: plainDraft({ system, tools, messages: history }) }, () => model.generate({ system, messages: history, tools, ...(input.signal && { signal: input.signal }), ...(batch && { onToken: batch.push }) })); // SP03:
         } catch (caught) {
           batch?.flush();
           // The failed step is not in the history: a checkpoint continues at it.
@@ -591,7 +600,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         usage.inputTokens += turn.usage?.inputTokens ?? 0;
         usage.outputTokens += turn.usage?.outputTokens ?? 0;
         const { text, calls } = turn.toolCalls.length ? { text: turn.text, calls: turn.toolCalls } : recoverToolCalls(turn.text);
-        const proposing = proposed || calls.some((call) => call.name === 'propose_changes');
+        const proposing = !question && (proposed || calls.some((call) => call.name === 'propose_changes')); // SB04:
         // Whether this step is sent back to the model (a fix that proposed nothing; a card announced and never made): then it is not the reply.
         const pressNow = !calls.length && input.session === 'fix' && !proposed && !pressed && !PERSON_ONLY.test(text);
         const applyNow = !calls.length && !input.session && !proposed && !waiting.size && APPLY_REQUEST.test(text);
@@ -643,7 +652,8 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         let progress = false;
         for (const call of calls) {
           const shownBefore = waitingSummaries.length;
-          const outcome = await execute(call);
+          // SB04: a propose_changes call (recovered from text) in the answer to a question shows no card.
+          const outcome: ToolResult = question && call.name === 'propose_changes' ? { id: call.id, name: call.name, content: 'Not offered: this is a question.', isError: true } : await execute(call);
           span.addEvent('assistant.tool', { 'gen_ai.tool.name': call.name, 'landflow.outcome': outcome.isError ? 'error' : 'ok' });
           results.push(outcome);
           // Progress is a new proposal, or a result this reply hasn't had yet.
