@@ -2397,6 +2397,8 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
 
 ## Token spend wave 14
 
+- **Waste detectors (SP13).** Six brain detectors find what the model was sent that it did not need: context bloat, fat tool results, unused tools, cache misses, repeated calls and agent loops ([second-brain.md](second-brain.md#4-detectors-and-suggestions)). The AI cost detector also judges an unpriced local model on tokens, naming a smaller local model of the same family seen on this instance. The brain's study no longer fails on a stale fact (`brain_facts.subject_type`).
+
 - **Built (SP14)**: your own AI spend from a brain key. The MCP tool `my_ai_spend { period? }` (`brain:read`), `GET /api/brain/my-spend?period=`
   (`brain:read`; the same answer as `GET /api/insights/ai/me`, which stays `executions:read`) and `landflow spend [--period] [--json]`
   show today, this month, the period by model (and purpose over MCP) and your caps with their forecast or pace. Only your own rows and
@@ -2557,7 +2559,3 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   not catch yet; one click on a credential row's radio did nothing before Apply (the label works; unconfirmed). The
   phone Execute/Debug pill overlap is the same on main (a phone follow-up). Not Spotlight: after runs the host logged
   "the brain's run failed: NOT NULL constraint failed: brain_facts.subject_type" 6 times. **Fixed in wave 14 (SP13):** `staleFactsBefore` writes the whole row, so the study finishes, is stamped, and the detectors run on the brain's own loop.
-
-## Token spend wave 14
-
-- **Waste detectors (SP13).** Six brain detectors find what the model was sent that it did not need: context bloat, fat tool results, unused tools, cache misses, repeated calls and agent loops ([second-brain.md](second-brain.md#4-detectors-and-suggestions)). The AI cost detector also judges an unpriced local model on tokens, naming a smaller local model of the same family seen on this instance. The brain's study no longer fails on a stale fact (`brain_facts.subject_type`).

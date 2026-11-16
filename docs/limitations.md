@@ -606,26 +606,6 @@ items still open (its "Wave 6" section); this page is the short list to check be
   composition; `GET /api/ai-calls/:id` answers for them. The sheet opens for the AI Agent node's model sub-node, a plugin
   node's `model` record and the harness mod's requests (found by the wave 12 join test `spend-trace-join`).
 
-## Token spend wave 14
-
-- **Unusual spend is checked for today and yesterday only**, every 10 minutes, against the 14 days before each. A day
-  older than that is never flagged after the fact, and a host that was off for days flags nothing for the days it missed.
-- **The baseline is a median over observed days, not a model**: no weekday or weekend pattern, no launch or planned
-  burst. A weekly rhythm (a heavy Monday) can look unusual on Mondays; the half-the-median and score rules soften that, the
-  smallest jump (`LANDFLOW_AI_ANOMALY_MIN_USD`, 100,000 tokens for unpriced keys) is the lever. There is no per-key
-  setting to mute one.
-- **A key is judged on tokens only when none of its 15 days has a cost.** A key that is priced on some days and unpriced
-  on others is judged on cost.
-- **The forecast flag is the AI page's forecast**: a straight line from the last 7 complete days, with the same
-  limits. One flag per cap and month; a cap that is exceeded later in the month is the threshold alert's.
-- **An acknowledged flag stays acknowledged for the day** unless the day's value doubles; there is no "snooze" and no
-  per-person acknowledgement (it clears for everyone).
-- **Landledger's anomalies are not read**: Landflow does not ask Landledger what it flagged, and Landledger's trigger has
-  no `cost.anomaly` event. The option "Landledger alerts on agent and model spikes" is a promise the person makes about
-  Landledger's own alerting, not a check.
-- A member's inbox never holds a person's or a model's unusual day (the inbox names no person); they see their own in
-  Needs you, and the owners and admins see everything there.
-
 ## Token spend wave 13
 
 - **Distinct runs scan the raw rows.** The rollup speeds the sums, but a count of distinct runs is read from `ai_usage`
@@ -663,3 +643,20 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 - Each waste detector reads at most 50,000 `ai_usage` rows (the newest, up to the moment judged); a busier instance judges the most recent calls only. They do not leave out manual (editor) runs, so a developer re-running a flow can trip `repeated-calls` or `context-bloat`. `cache-misses` judges only calls whose provider is `anthropic`: Claude through LiteLLM, Bedrock or Vertex is not judged. `repeated-calls` holds back per agent or workflow, so dismissing one repeated prompt quiets the rest of that subject. `unused-tools` skips agents whose prompt parts come from the gateway. The waste detectors read the prompt parts, which are kept 30 days: they see nothing older, and "unused tools" looks back 30 days at most. They cannot see a kagent agent's tool calls (kagent runs its own loop), so `unused-tools` skips those agents and workflows. A local model has no price, so its suggestion names a smaller local model seen on this instance in the last 30 days and gives no saving in money; with none seen there is no finding. An agent whose session can no longer be read is left out of `unused-tools` rather than guessed at.
 - **The status line's day** ([landflow-brain-mod.md](landflow-brain-mod.md)): the spend answer carries no day, so the mod keeps today's figure under its own local day. Near midnight, when the mod's timezone differs from the instance's, the line can keep or drop a figure a few hours off.
+- **Unusual spend is checked for today and yesterday only**, every 10 minutes, against the 14 days before each. A day
+  older than that is never flagged after the fact, and a host that was off for days flags nothing for the days it missed.
+- **The baseline is a median over observed days, not a model**: no weekday or weekend pattern, no launch or planned
+  burst. A weekly rhythm (a heavy Monday) can look unusual on Mondays; the half-the-median and score rules soften that, the
+  smallest jump (`LANDFLOW_AI_ANOMALY_MIN_USD`, 100,000 tokens for unpriced keys) is the lever. There is no per-key
+  setting to mute one.
+- **A key is judged on tokens only when none of its 15 days has a cost.** A key that is priced on some days and unpriced
+  on others is judged on cost.
+- **The forecast flag is the AI page's forecast**: a straight line from the last 7 complete days, with the same
+  limits. One flag per cap and month; a cap that is exceeded later in the month is the threshold alert's.
+- **An acknowledged flag stays acknowledged for the day** unless the day's value doubles; there is no "snooze" and no
+  per-person acknowledgement (it clears for everyone).
+- **Landledger's anomalies are not read**: Landflow does not ask Landledger what it flagged, and Landledger's trigger has
+  no `cost.anomaly` event. The option "Landledger alerts on agent and model spikes" is a promise the person makes about
+  Landledger's own alerting, not a check.
+- A member's inbox never holds a person's or a model's unusual day (the inbox names no person); they see their own in
+  Needs you, and the owners and admins see everything there.
