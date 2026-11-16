@@ -2347,6 +2347,15 @@ function paths(): Record<string, Record<string, Json>> {
     query: [text('day', 'YYYY-MM-DD')],
     responses: { 200: reply('The briefing', object({ day: { type: 'string' }, generatedAt: { type: 'string' }, source: { type: 'string', enum: ['live', 'flow'] }, today: array(briefingWorkItem), yesterday: array(briefingWorkItem), related: array({ type: 'object' }), summary: { type: 'string' }, autoSend: { type: 'string', enum: ['allowed', 'forbidden'] }, brain: { type: 'string', enum: ['on', 'off'] } }, ['day', 'generatedAt', 'source', 'today', 'yesterday', 'related', 'autoSend', 'brain'])), 400: invalid },
   });
+  // SP14: your own AI spend over a brain key.
+  add('get', '/api/brain/my-spend', {
+    tag: 'Second brain',
+    id: 'getBrainMyAiSpend',
+    summary: 'Your own AI spend',
+    description: 'Needs the `brain:read` scope (`brain:write` includes it) or a session. The same answer as `GET /api/insights/ai/me`: today, this month, the period by model, purpose and surface, and your own caps with their forecast or pace. Only the caller’s own rows and caps.',
+    query: [text('period', '24h, 7d (default), 30d or 90d')],
+    responses: { 200: reply('Your AI spend', { type: 'object' }), 400: invalid },
+  });
   // PR01: practices (docs/practices.md).
   const practiceDraftBody = object(
     {

@@ -113,6 +113,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   // B05: work events are the caller's own (docs/work-and-briefings.md): recording needs `brain:write`; the briefing and asking, `brain:read`.
   if (under('/api/brain/work')) return { scope: 'brain:write' };
   if (path === '/api/brain/briefing' || path === '/api/brain/ask') return { scope: 'brain:read' };
+  // SP14: your own AI spend, for a brain key (the CLI, the mod's status line); /api/insights/** stays executions:read.
+  if (path === '/api/brain/my-spend') return { scope: 'brain:read' };
   if (under('/api/brain')) return { scope: 'executions:read' };
   if (under('/api/proposals')) return { scope: read ? 'workflows:read' : 'workflows:write' };
   // B04: the @ picker's search lists only what the caller can open (lib/server/mentions/search.ts).
