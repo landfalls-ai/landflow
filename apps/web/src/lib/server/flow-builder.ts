@@ -13,6 +13,13 @@ import { outputFields } from './assistant/research';
 import { assistantModel } from './assistant/model';
 import { anthropicModel } from './nodes/models';
 import { ollamaUrl } from './config';
+// SB01: the draft's reply held to a schema, checked for empty parts and sent back once.
+import { z } from 'zod';
+import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
+import type { Workflow } from '@landflow/engine';
+import { collectionWarnings, structuralWarnings } from '@/lib/shared/assistant-ops';
+import { hollowSteps } from '@/lib/shared/run-check';
+import { mergeLeft, type DraftLeft } from '@/lib/shared/draft-left';
 
 export interface DraftNode {
   key: string;
@@ -31,6 +38,8 @@ export interface FlowDraft {
   model: string;
   durationMs: number;
   dropped: string[];
+  /** SB01: what the draft still lacks for the person (empty fields after one send-back, types that could not be kept). */
+  left?: DraftLeft[];
 }
 
 const DEFAULT_MODEL = process.env.LANDFLOW_BUILDER_MODEL ?? 'qwen3-coder:30b';
@@ -185,8 +194,18 @@ export function sampleItems(trigger: Pick<DraftNode, 'key' | 'type'> | undefined
   return [{ json }];
 }
 
-/** The draft as text from Ollama's chat API, held to SCHEMA by its `format`. */
-async function draftWithOllama(model: string, request: string, timeoutMs: number): Promise<string> {
+/** One turn of the conversation that drafts a flow. */
+type DraftMessage = { role: 'user' | 'assistant'; content: string };
+
+/** What the model is told: the instructions, and the schema its reply must match (Ollama's and the providers' alike). */
+const SYSTEM_WITH_SCHEMA = `${SYSTEM}\n\nAnswer with one JSON object and nothing else (no prose, no code fence), matching this JSON schema:\n${JSON.stringify(SCHEMA)}`;
+
+/**
+ * The draft as text from Ollama's chat API. SB01: `format: 'json'`, not the schema: with the whole catalog in the prompt a
+ * model held to the schema wrote empty objects where `parameters` is a bare object (every If with no condition). The
+ * schema is in the system prompt instead, as for the providers.
+ */
+async function draftWithOllama(model: string, messages: DraftMessage[], timeoutMs: number): Promise<string> {
   const response = await fetch(`${ollamaUrl()}/api/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -194,12 +213,9 @@ async function draftWithOllama(model: string, request: string, timeoutMs: number
     body: JSON.stringify({
       model,
       stream: false,
-      format: SCHEMA,
+      format: 'json',
       options: { temperature: 0.2 },
-      messages: [
-        { role: 'system', content: SYSTEM },
-        { role: 'user', content: request },
-      ],
+      messages: [{ role: 'system', content: SYSTEM_WITH_SCHEMA }, ...messages],
     }),
   }).catch((e: Error) => {
     // A timeout means Ollama answered too slowly, not that it is down: say so, and what to change.
@@ -218,14 +234,13 @@ async function draftWithOllama(model: string, request: string, timeoutMs: number
  * ANTHROPIC_API_KEY (or `ant auth login`), or OPENAI_API_KEY and OPENAI_BASE_URL. These have no schema-held format here,
  * so the schema goes in the system prompt and jsonOf() takes the object out of the reply.
  */
-async function draftWithProvider(model: string, request: string, timeoutMs: number): Promise<string> {
+async function draftWithProvider(model: string, messages: DraftMessage[], timeoutMs: number): Promise<string> {
   const [provider, ...rest] = model.split('/');
   // A whole draft needs more room than the assistant's 4096 tokens; non-streaming, so ~16000 keeps under SDK timeouts.
   // `fallback`: a refused draft is retried server-side on another model (Anthropic's `fallbacks: "default"`).
   const llm = provider === 'anthropic' ? anthropicModel({ model: rest.join('/'), effort: 'medium', maxTokens: 16_000, fallback: true }) : assistantModel(model);
-  const system = `${SYSTEM}\n\nAnswer with one JSON object and nothing else (no prose, no code fence), matching this JSON schema:\n${JSON.stringify(SCHEMA)}`;
   try {
-    const turn = await llm.generate({ system, messages: [{ role: 'user', content: request }], tools: [], responseFormat: 'json', signal: AbortSignal.timeout(timeoutMs) });
+    const turn = await llm.generate({ system: SYSTEM_WITH_SCHEMA, messages: messages.map((m) => (m.role === 'user' ? { role: 'user' as const, content: m.content } : { role: 'assistant' as const, text: m.content, toolCalls: [] })), tools: [], responseFormat: 'json', signal: AbortSignal.timeout(timeoutMs) });
     if (turn.stopReason === 'refusal') throw new Error(`${model} declined to draft this workflow: ${turn.text}`);
     return turn.text;
   } catch (e) {
@@ -234,6 +249,11 @@ async function draftWithProvider(model: string, request: string, timeoutMs: numb
     }
     throw e;
   }
+}
+
+/** SB01: the one place a draft's model call is made (the first request and each send-back). */
+function askModel(model: string, messages: DraftMessage[], timeoutMs: number): Promise<string> {
+  return /^(anthropic|openai)\//.test(model) ? draftWithProvider(model, messages, timeoutMs) : draftWithOllama(model, messages, timeoutMs);
 }
 
 /** The JSON object in a model's reply: the whole text, or what a code fence or prose around it holds. */
@@ -247,34 +267,79 @@ export function jsonOf(text: string): string {
   return start >= 0 && end > start ? trimmed.slice(start, end + 1) : trimmed || '{}';
 }
 
-/**
- * `teams` and `agents`: the published agent teams and agents the caller can see, so a step that needs an agent runs one
- * that fits, and a Run a Team or Run an Agent node gets a real one (by id, never a guess).
- */
-export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: readonly TeamBrief[] = [], agents: readonly AgentBrief[] = []): Promise<FlowDraft> {
-  const types = registry.nodeTypes().filter((t) => t.available);
-  const byType = new Map(types.map((t) => [t.type, t]));
-  const teamsNote = byType.has('core.runTeam') && teams.length ? `\n\nPublished agent teams (core.runTeam: put the team's teamId in teamId, never its name):\n${describeTeams([...teams])}` : '';
-  const started = Date.now();
-  const timeoutMs = builderTimeoutMs();
-  const agentsNote = byType.has('core.messageAgent') && agents.length ? `\n\nYour agents (core.messageAgent: put the agent's agentId in agentId, never its name):\n${describeAgents(agents)}` : '';
-  const request = `Node catalog:\n${catalog(types)}${agentsNote}${teamsNote}\n\nBuild this workflow:\n${prompt}`;
-  const content = /^(anthropic|openai)\//.test(model) ? await draftWithProvider(model, request, timeoutMs) : await draftWithOllama(model, request, timeoutMs);
-  let raw: { name?: string; nodes?: unknown[]; connections?: unknown[]; testData?: unknown };
-  try {
-    raw = JSON.parse(jsonOf(content));
-  } catch {
-    throw new Error('The model did not return valid JSON. Try again or rephrase.');
-  }
+// SB01: the reply held to a schema. Lenient where models vary (a node without a key is dropped later, as before); strict
+// where a draft can't be built: `nodes` must be an array of objects, `parameters` a record, `connections` a list.
+const Count = z.union([z.number(), z.string().regex(/^\d+$/).transform(Number)]);
+export const DraftReply = z.object({
+  name: z.string().nullish(),
+  nodes: z.array(z.object({ key: z.string().nullish(), type: z.string().nullish(), name: z.string().nullish(), parameters: z.record(z.string(), z.unknown()).nullish() })),
+  connections: z.array(z.object({ from: z.string().nullish(), to: z.string().nullish(), output: Count.nullish(), type: z.string().nullish() })).nullish(),
+  testData: z.array(z.unknown()).nullish(),
+});
+type Reply = z.infer<typeof DraftReply>;
 
+const INVALID_REPLY = 'The model did not return valid JSON. Try again or rephrase.';
+
+/** A reply as a draft, or what is wrong with it in plain words (zod's first three issues). */
+function parseReply(text: string): { ok: true; reply: Reply } | { ok: false; problems: string } {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(jsonOf(text));
+  } catch {
+    return { ok: false, problems: 'it is not valid JSON' };
+  }
+  const parsed = DraftReply.safeParse(raw);
+  if (parsed.success) return { ok: true, reply: parsed.data };
+  return { ok: false, problems: parsed.error.issues.slice(0, 3).map((i) => `${i.path.length ? `“${i.path.join('.')}”` : 'the reply'}: ${i.message}`).join('; ') };
+}
+
+/** The first reply that parses: one that doesn't is sent back once with what is wrong, and a second failure is an error. */
+async function parsedReply(model: string, messages: DraftMessage[], timeoutMs: number, started: number): Promise<{ text: string; reply: Reply }> {
+  const text = await askModel(model, messages, timeoutMs);
+  const first = parseReply(text);
+  if (first.ok) return { text, reply: first.reply };
+  const left = timeoutMs - (Date.now() - started);
+  if (left <= 0) throw new Error(INVALID_REPLY);
+  const again = await askModel(model, [...messages, { role: 'assistant', content: text }, { role: 'user', content: `That reply cannot be used: ${first.problems}. Reply again with the whole workflow as one JSON object matching the schema: "nodes" a list of {key, type, name, parameters} objects, "connections" a list of {from, to} objects.` }], left);
+  const second = parseReply(again);
+  if (!second.ok) throw new Error(INVALID_REPLY);
+  return { text: again, reply: second.reply };
+}
+
+const lastSegment = (type: string) => type.split('.').pop()!.toLowerCase();
+const plain = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * SB01: the one available type a made-up type can mean (`core.linear.linear` → the Linear plugin's `linear`): the same
+ * last segment or the same display name, and exactly one candidate. None or several: undefined.
+ */
+function nearType(type: string, byType: Map<string, NodeTypeInfo>): NodeTypeInfo | undefined {
+  const word = lastSegment(type);
+  const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const found = [...byType.values()].filter((t) => lastSegment(t.type) === word || squash(t.descriptor.displayName) === squash(word));
+  return found.length === 1 ? found[0] : undefined;
+}
+
+interface Assembled {
+  nodes: DraftNode[];
+  edges: FlowDraft['edges'];
+  dropped: string[];
+  left: DraftLeft[];
+  trigger: DraftNode | undefined;
+}
+
+/** The reply as validated nodes and edges: unknown types (or near-misses), unknown parameters and impossible connections handled, a manual trigger added when none. */
+function assemble(raw: Reply, byType: Map<string, NodeTypeInfo>, teams: readonly TeamBrief[], agents: readonly AgentBrief[]): Assembled {
   const dropped: string[] = [];
+  const left: DraftLeft[] = [];
   const nodes: DraftNode[] = [];
   const keys = new Set<string>();
-  for (const entry of raw.nodes ?? []) {
-    const n = entry as { key?: string; type?: string; name?: string; parameters?: Record<string, unknown> };
-    const info = n.type ? byType.get(n.type) : undefined;
+  for (const n of raw.nodes) {
+    // SB01: a type that is not in the catalog maps to the one available type it can mean.
+    const info = n.type ? (byType.get(n.type) ?? nearType(n.type, byType)) : undefined;
     if (!info || !n.key || keys.has(n.key)) {
       dropped.push(`node ${n.name ?? n.type ?? '?'} (${n.type ?? 'no type'})`);
+      if (n.type && !info) left.push({ node: n.name ?? n.type, kind: 'dropped', text: `“${n.name ?? n.type}”: the step type “${n.type}” is not available, so it was left out` });
       continue;
     }
     keys.add(n.key);
@@ -288,9 +353,8 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
 
   const infoOf = (key: string) => byType.get(nodes.find((n) => n.key === key)!.type)!;
   const edges: FlowDraft['edges'] = [];
-  for (const entry of raw.connections ?? []) {
-    const c = entry as { from?: string; to?: string; output?: number; type?: ConnectionType };
-    const type: ConnectionType = c.type ?? 'main';
+  for (const c of raw.connections ?? []) {
+    const type = (c.type ?? 'main') as ConnectionType;
     if (!c.from || !c.to || !keys.has(c.from) || !keys.has(c.to) || c.from === c.to) {
       dropped.push(`connection ${c.from} → ${c.to}`);
       continue;
@@ -319,7 +383,179 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
     nodes.unshift(trigger);
     for (const root of roots) edges.push([trigger.key, root.key, 0, 'main']);
   }
-  const testItems = (cleanTestItems(asItems(raw.testData), trigger, nodes) ?? sampleItems(trigger, nodes))?.slice(0, nodes.some((n) => AGENT_TYPES.has(n.type)) ? 1 : undefined);
-  const pinData = trigger && PINNED_TRIGGERS.has(trigger.type) && testItems ? { [trigger.key]: testItems } : undefined;
-  return { name: (raw.name ?? 'Generated workflow').slice(0, 80), nodes, edges, pinData, model, durationMs: Date.now() - started, dropped };
+  return { nodes, edges, dropped, left, trigger };
+}
+
+/** SB01: one part of a draft that is empty or unusable: `ask` is the line for the model, `left` the line for the person. */
+export interface EmptyPart {
+  node: string;
+  key: string;
+  field?: string;
+  /** `empty`: a list or value the step cannot work without; `other`: a shape or wiring problem. */
+  kind: 'empty' | 'other';
+  ask: string;
+  left: string;
+}
+
+const isBlank = (v: unknown): boolean =>
+  v === undefined || v === null || v === '' || (Array.isArray(v) && v.every(isBlank)) || (plain(v) && Object.values(v).every(isBlank));
+
+/** A row with nothing in it: every value blank, or an option still at its default (a rule's `field: "days"`, a Set row's type). */
+function rowEmpty(fields: PropertyDescriptor[] | undefined, row: unknown): boolean {
+  if (!plain(row)) return isBlank(row);
+  return Object.entries(row).every(([k, v]) => {
+    const f = fields?.find((x) => x.name === k);
+    if (f?.type === 'options' && v === f.default) return true;
+    return f?.type === 'fixedCollection' && f.groups ? collectionEmpty(f, v) : isBlank(v);
+  });
+}
+
+/** A fixedCollection's value with no usable row: missing, `{}`, or only empty rows. */
+function collectionEmpty(p: PropertyDescriptor, value: unknown): boolean {
+  if (isBlank(value)) return true;
+  if (!plain(value)) return false;
+  return Object.entries(value).every(([name, rows]) => (Array.isArray(rows) ? rows : [rows]).every((row) => rowEmpty(p.groups?.find((g) => g.name === name)?.values, row)));
+}
+
+/** How the parameter is written: the PARAMETER_FORMATS line for the node, else the descriptor's own shape. */
+function shapeOf(type: string, p: PropertyDescriptor): string {
+  const line = PARAMETER_FORMATS.split('\n').find((l) => l.startsWith('- ') && l.includes(type));
+  return line ? line.slice(line.indexOf(': ') + 2) : collectionShape(p);
+}
+
+/** What the person is told a step does without the list. */
+function without(type: string, p: PropertyDescriptor): string {
+  if (type === 'core.if' || type === 'core.filter') return 'no condition yet: it keeps every item';
+  if (type === 'core.set') return 'no fields yet: it sets nothing';
+  if (type === 'core.switch') return 'no routing rule yet: every item takes the fallback';
+  if (type === 'core.schedule') return 'no time yet: it never runs';
+  return `${p.displayName.toLowerCase()} is still empty`;
+}
+
+/**
+ * SB01: what a draft leaves empty or unusable, before it reaches the canvas. Generic: a visible fixedCollection that is
+ * required, or that the node ships with rows in (an If's conditions, a Set's fields, a Switch's rules, a schedule's
+ * rules), whose value is missing, `{}` or only empty rows. Plus the checks the editor's proposals get: the shape of each
+ * collection, wiring against an empty canvas and the hollow steps of a finished run (`hollowSteps`).
+ */
+export function emptyParts(draft: Pick<FlowDraft, 'nodes' | 'edges'>, byType: Map<string, NodeTypeInfo>): EmptyPart[] {
+  const parts: EmptyPart[] = [];
+  for (const n of draft.nodes) {
+    const descriptor = byType.get(n.type)?.descriptor;
+    if (!descriptor) continue;
+    const parameters = n.parameters ?? {};
+    const effective = withPropertyDefaults(descriptor.properties, parameters);
+    for (const p of descriptor.properties) {
+      if (p.type !== 'fixedCollection' || !p.groups?.length || !isPropertyVisible(p, effective)) continue;
+      if (!collectionEmpty(p, parameters[p.name])) continue;
+      if (!p.required && collectionEmpty(p, p.default)) continue;
+      parts.push({
+        node: n.name,
+        key: n.key,
+        field: p.name,
+        kind: 'empty',
+        ask: `“${n.name}” (${n.type}): ${p.name} is empty. Write ${n.type === 'core.if' || n.type === 'core.filter' ? 'the condition' : n.type === 'core.set' ? 'the fields' : 'what'} the request asks for, in this shape: ${shapeOf(n.type, p)}`,
+        left: `“${n.name}”: ${without(n.type, p)}`,
+      });
+    }
+  }
+  const workflow: Workflow = {
+    id: 'draft',
+    name: 'Draft',
+    nodes: draft.nodes.map((n) => ({ id: n.key, name: n.name, type: n.type, typeVersion: 1, position: [0, 0], parameters: n.parameters ?? {} })),
+    connections: draft.edges.map(([source, target, sourceIndex, type], i) => ({ id: `c${i}`, source, target, sourceIndex, targetIndex: 0, type })),
+  };
+  const empty: Workflow = { ...workflow, nodes: [], connections: [] };
+  const lookup = (type: string) => byType.get(type)?.descriptor;
+  for (const line of [...collectionWarnings(empty, workflow, lookup), ...structuralWarnings(empty, workflow, lookup)]) {
+    parts.push({ node: '', key: '', kind: 'other', ask: line, left: '' });
+  }
+  const flagged = new Set(parts.filter((p) => p.kind === 'empty').map((p) => p.key));
+  for (const hollow of hollowSteps(draft.nodes.map((n) => ({ name: n.name, type: n.type, parameters: n.parameters ?? {} })))) {
+    const n = draft.nodes.find((x) => x.name === hollow.node);
+    if (n && !flagged.has(n.key)) parts.push({ node: n.name, key: n.key, kind: 'empty', ask: `${hollow.problem}. Fill it as the request asks.`, left: `“${n.name}”: ${hollow.problem.replace(/^“[^”]*” /, '')}` });
+  }
+  return parts;
+}
+
+/** The line that sends a draft back: its first draft stays in the conversation, one line per empty part. */
+function sendBack(parts: EmptyPart[]): string {
+  return `That draft leaves parts empty or wrong:\n${parts.map((p) => `- ${p.ask}`).join('\n')}\nReply again with the complete workflow as one JSON object matching the schema, with every part above filled as the request asks. Keep everything else as it is.`;
+}
+
+/** The second draft stands in for the first only when it keeps every step type the first had. */
+function keepsTypes(first: Assembled, next: Assembled): boolean {
+  const count = (nodes: DraftNode[]) => nodes.reduce((m, n) => m.set(n.type, (m.get(n.type) ?? 0) + 1), new Map<string, number>());
+  const have = count(next.nodes);
+  return [...count(first.nodes)].every(([type, n]) => (have.get(type) ?? 0) >= n);
+}
+
+const READ_OPERATION = /^(get|getall|list|search|find|read|fetch|query)/i;
+
+/**
+ * SB01: where the test items are pinned. A webhook, form or manual trigger: on itself. An app trigger (a plugin's
+ * trigger node): on itself, since its output is the app's event. A schedule: on the app step after it that reads data,
+ * so a test runs on sample records instead of needing the app; a schedule's own item is only a time, so otherwise none.
+ */
+function pinTarget(draft: Assembled, byType: Map<string, NodeTypeInfo>): DraftNode | undefined {
+  const { trigger, nodes, edges } = draft;
+  if (!trigger) return undefined;
+  if (PINNED_TRIGGERS.has(trigger.type)) return trigger;
+  const info = byType.get(trigger.type);
+  if (info && info.pluginId !== 'core' && info.descriptor.kind === 'trigger') return trigger;
+  if (trigger.type !== 'core.schedule') return undefined;
+  return edges
+    .filter(([from, , , type]) => from === trigger.key && type === 'main')
+    .map(([, to]) => nodes.find((n) => n.key === to))
+    .find((n) => {
+      const step = n && byType.get(n.type);
+      return step && step.pluginId !== 'core' && step.descriptor.kind === 'action' && READ_OPERATION.test(String(n.parameters?.operation ?? step.descriptor.properties.find((p) => p.name === 'operation')?.default ?? ''));
+    });
+}
+
+/**
+ * `teams` and `agents`: the published agent teams and agents the caller can see, so a step that needs an agent runs one
+ * that fits, and a Run a Team or Run an Agent node gets a real one (by id, never a guess).
+ */
+export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: readonly TeamBrief[] = [], agents: readonly AgentBrief[] = []): Promise<FlowDraft> {
+  const types = registry.nodeTypes().filter((t) => t.available);
+  const byType = new Map(types.map((t) => [t.type, t]));
+  const teamsNote = byType.has('core.runTeam') && teams.length ? `\n\nPublished agent teams (core.runTeam: put the team's teamId in teamId, never its name):\n${describeTeams([...teams])}` : '';
+  const started = Date.now();
+  const timeoutMs = builderTimeoutMs();
+  const agentsNote = byType.has('core.messageAgent') && agents.length ? `\n\nYour agents (core.messageAgent: put the agent's agentId in agentId, never its name):\n${describeAgents(agents)}` : '';
+  const request = `Node catalog:\n${catalog(types)}${agentsNote}${teamsNote}\n\nBuild this workflow:\n${prompt}`;
+  // SB01: the first reply (sent back once when it does not parse), then the draft checked and sent back once.
+  const messages: DraftMessage[] = [{ role: 'user', content: request }];
+  const first = await parsedReply(model, messages, timeoutMs, started);
+  let reply = first.reply;
+  let draft = assemble(reply, byType, teams, agents);
+  const empty = emptyParts(draft, byType);
+  const budget = timeoutMs - (Date.now() - started);
+  if (empty.length && budget > 0) {
+    try {
+      const again = parseReply(await askModel(model, [...messages, { role: 'assistant', content: first.text }, { role: 'user', content: sendBack(empty) }], budget));
+      if (again.ok) {
+        const next = assemble(again.reply, byType, teams, agents);
+        // The second draft stands in only when it keeps the first one's steps and is no worse.
+        if (keepsTypes(draft, next) && emptyParts(next, byType).length <= empty.length) {
+          reply = again.reply;
+          draft = next;
+        }
+      }
+    } catch {
+      // The first draft stands: a failed send-back is no reason to lose it.
+    }
+  }
+  const { nodes, edges, dropped } = draft;
+  const left = mergeLeft(
+    draft.left,
+    emptyParts(draft, byType)
+      .filter((p) => p.kind === 'empty')
+      .map((p): DraftLeft => ({ node: p.node, field: p.field, kind: 'empty', text: p.left })),
+  );
+  const target = pinTarget(draft, byType);
+  const testItems = (cleanTestItems(asItems(reply.testData), target, nodes) ?? sampleItems(target, nodes))?.slice(0, nodes.some((n) => AGENT_TYPES.has(n.type)) ? 1 : undefined);
+  const pinData = target && testItems ? { [target.key]: testItems } : undefined;
+  return { name: (reply.name ?? 'Generated workflow').slice(0, 80), nodes, edges, pinData, model, durationMs: Date.now() - started, dropped, left };
 }

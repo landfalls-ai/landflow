@@ -2280,6 +2280,10 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   seconds while the run is live ([run-trace.md](run-trace.md#spend)). A call opens its model span.
 - **One call's view (SP07), built:** a model step's sheet in the Run Trace shows the call's composition, cache line and what changed since the previous call; sessions show cached tokens ([run-trace.md](run-trace.md#one-call)).
 
+## Spotlight wave sb1
+
+- **The first draft fills its collections (SB01), built**: the first draft asks Ollama for `format: "json"` with the schema in the system prompt (a schema-held reply left every list empty: 9 of 9 drafts), parses the reply with a schema (one send-back, then the error), checks the draft for empty lists (`emptyParts`) and sends it back once with a line for each, keeps what is still empty as `FlowDraft.left`, maps a near-miss step type to the one it can mean, and pins test items on an app trigger or on the app step that reads data after a schedule. Not built: the staged build (wave sb3).
+
 ## Practices (waves P1 and P2)
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided

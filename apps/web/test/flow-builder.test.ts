@@ -9,15 +9,18 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { startFakeModels } from './fake-ai-services';
 
 let answer = '{}';
+// SB01: replies to give first, one per call, before `answer` repeats.
+let queue: string[] = [];
 let slowMs = 0;
-const fake = await startFakeModels({ reply: () => ({ text: answer, ...(slowMs && { delayMs: slowMs }) }) });
+const fake = await startFakeModels({ reply: () => ({ text: queue.length ? queue.shift()! : answer, ...(slowMs && { delayMs: slowMs }) }) });
 const ENV = { LANDFLOW_DATA_DIR: mkdtempSync(join(tmpdir(), 'landflow-flow-builder-')), LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '', OLLAMA_URL: fake.url.replace(/\/v1$/, '') };
 const previousEnv = { ...process.env };
 Object.assign(process.env, ENV);
 
 const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
-const { buildFlow, builderTimeoutMs, jsonOf } = await import('@/lib/server/flow-builder');
+const { buildFlow, builderTimeoutMs, jsonOf, emptyParts } = await import('@/lib/server/flow-builder');
+const { defineNode, definePlugin } = await import('@landflow/sdk');
 registry.registerBuiltin(corePlugin);
 
 afterAll(async () => {
@@ -172,5 +175,154 @@ describe('AI builder test items on a webhook', () => {
     // Items that carry none of the fields read are dropped as noise, and the sample takes their place.
     answer = flow([{ subject: 'x' }]);
     expect((await buildFlow('take tickets by webhook')).pinData?.hook[0].json).toHaveProperty('ticketDescription');
+  });
+});
+
+// SB01: the first draft fills its collections.
+const chatCalls = () => fake.requests.filter((r) => r.path === '/api/chat');
+const mark = () => chatCalls().length;
+const byTypeOf = () => new Map(registry.nodeTypes().filter((t) => t.available).map((t) => [t.type, t]));
+
+registry.registerBuiltin(
+  definePlugin({
+    info: { id: 'sb01app', name: 'Tracker (test)', version: '1.0.0', language: 'typescript' },
+    nodes: [
+      defineNode({ description: { name: 'linear', displayName: 'Linear', version: 1, kind: 'action', inputs: [{ type: 'main' }], outputs: [{ type: 'main' }], properties: [{ name: 'operation', displayName: 'Operation', type: 'options', default: 'getAll', options: [{ name: 'Get all', value: 'getAll' }, { name: 'Create', value: 'create' }] }] }, async execute() { return [[]]; } }),
+      defineNode({ description: { name: 'issueEvent', displayName: 'Issue Event', version: 1, kind: 'trigger', inputs: [], outputs: [{ type: 'main' }], properties: [] }, async execute() { return [[]]; } }),
+    ],
+  }),
+);
+
+const ifReply = (condition: unknown[]) =>
+  JSON.stringify({
+    name: 'Orders',
+    nodes: [
+      { key: 'hook', type: 'core.webhook', name: 'Order in', parameters: { path: 'orders' } },
+      { key: 'check', type: 'core.if', name: 'Check total', parameters: { conditions: { condition }, combinator: 'and' } },
+      { key: 'vip', type: 'core.respondToWebhook', name: 'Reply', parameters: {} },
+    ],
+    connections: [{ from: 'hook', to: 'check' }, { from: 'check', to: 'vip', output: 0 }],
+    testData: [{ body: { total: 1500 } }],
+  });
+const FILLED = [{ left: '{{ $json.body.total }}', operator: 'gt', right: '1000' }];
+
+describe('SB01: the first draft is held in JSON mode, checked and sent back once', () => {
+  it('asks Ollama for json, with the schema in the system prompt', async () => {
+    answer = ifReply(FILLED);
+    const before = mark();
+    await buildFlow('branch on the total');
+    const body = chatCalls()[before].body;
+    expect(body.format).toBe('json');
+    expect(body.messages[0].content).toContain('matching this JSON schema');
+    expect(body.messages[0].content).toContain('"connections"');
+  });
+
+  it('sends an empty If back once with the line for it, and takes the filled second draft', async () => {
+    queue = [ifReply([]), ifReply(FILLED)];
+    const before = mark();
+    const flow = await buildFlow('branch on the total');
+    expect(chatCalls().length - before).toBe(2);
+    expect(flow.nodes.find((n) => n.key === 'check')!.parameters).toMatchObject({ conditions: { condition: FILLED } });
+    expect(flow.left?.filter((l) => l.kind === 'empty')).toEqual([]);
+    const second = chatCalls()[before + 1].body.messages;
+    const asked = second[second.length - 1].content;
+    expect(asked).toContain('“Check total”');
+    expect(asked).toContain('conditions');
+    expect(asked).toContain('core.if');
+    expect(second.at(-2).role).toBe('assistant');
+  });
+
+  it('keeps the first draft and lists the If as empty when the second is empty too', async () => {
+    queue = [ifReply([]), ifReply([])];
+    const before = mark();
+    const flow = await buildFlow('branch on the total');
+    expect(chatCalls().length - before).toBe(2);
+    expect(flow.left).toEqual([expect.objectContaining({ node: 'Check total', field: 'conditions', kind: 'empty', text: expect.stringContaining('Check total') })]);
+  });
+
+  it('makes one request for a draft with nothing empty', async () => {
+    answer = ifReply(FILLED);
+    const before = mark();
+    const flow = await buildFlow('branch on the total');
+    expect(chatCalls().length - before).toBe(1);
+    expect(flow.left).toEqual([]);
+  });
+
+  it('sends a reply without a nodes array back once, with the words of the parse', async () => {
+    queue = [JSON.stringify({ name: 'x', nodes: { a: 1 }, connections: [] }), ifReply(FILLED)];
+    const before = mark();
+    const flow = await buildFlow('branch on the total');
+    expect(chatCalls().length - before).toBe(2);
+    expect(flow.nodes).toHaveLength(3);
+    const second = chatCalls()[before + 1].body.messages;
+    expect(second.at(-1).content).toMatch(/nodes/);
+    queue = [JSON.stringify({ nodes: { a: 1 } }), JSON.stringify({ nodes: 'no' })];
+    await expect(buildFlow('branch on the total')).rejects.toThrow('The model did not return valid JSON. Try again or rephrase.');
+  });
+});
+
+describe('SB01: emptyParts', () => {
+  const node = (key: string, type: string, name: string, parameters: Record<string, unknown>) => ({ key, type, name, x: 0, y: 0, parameters });
+  const parts = (nodes: ReturnType<typeof node>[]) => emptyParts({ nodes, edges: [] }, byTypeOf());
+
+  it('lists a Switch with an empty rule, a schedule with no interval and a Set in manual mode with no fields', () => {
+    const found = parts([
+      node('s', 'core.switch', 'Route', { mode: 'rules', rules: { values: [{}] } }),
+      node('t', 'core.schedule', 'Every morning', { unit: 'rules' }),
+      node('u', 'core.set', 'Shape', { mode: 'manual' }),
+      node('v', 'core.set', 'Shape json', { mode: 'json', json: '{}' }),
+      node('i', 'core.if', 'Check', { conditions: { condition: [{ left: '{{ $json.a }}', operator: 'gt', right: '1' }] }, combinator: 'and' }),
+    ]).filter((p) => p.kind === 'empty');
+    expect(found.map((p) => `${p.node}:${p.field}`).sort()).toEqual(['Every morning:rule', 'Route:rules', 'Shape:fields']);
+    expect(found.find((p) => p.node === 'Route')!.ask).toContain('“Route” (core.switch): rules is empty');
+  });
+
+  it('does not list a rule row with a time, or an optional list nobody needs', () => {
+    expect(
+      parts([
+        node('t', 'core.schedule', 'Daily', { unit: 'rules', rule: { interval: [{ field: 'days', daysInterval: 1, triggerAtHour: 9, triggerAtMinute: 0 }] } }),
+        node('h', 'core.httpRequest', 'Call', { url: 'http://127.0.0.1:3402/x', method: 'POST' }),
+      ]).filter((p) => p.kind === 'empty'),
+    ).toEqual([]);
+  });
+});
+
+describe('SB01: near-miss types', () => {
+  const reply = (type: string) => JSON.stringify({ name: 'Linear', nodes: [{ key: 'a', type, name: 'Get issues', parameters: { operation: 'getAll' } }], connections: [], testData: [{ id: 'ISS-1' }] });
+
+  it('maps core.linear.linear to the one linear node', async () => {
+    answer = reply('core.linear.linear');
+    const flow = await buildFlow('get my Linear issues');
+    expect(flow.nodes.find((n) => n.name === 'Get issues')!.type).toBe('sb01app.linear');
+    expect(flow.dropped.join(' ')).not.toContain('core.linear.linear');
+  });
+
+  it('drops it and lists it when two types could be meant', async () => {
+    registry.registerBuiltin(definePlugin({ info: { id: 'sb01other', name: 'Other (test)', version: '1.0.0', language: 'typescript' }, nodes: [defineNode({ description: { name: 'linear', displayName: 'Linear too', version: 1, kind: 'action', inputs: [{ type: 'main' }], outputs: [{ type: 'main' }], properties: [] }, async execute() { return [[]]; } })] }));
+    answer = JSON.stringify({ name: 'Linear', nodes: [{ key: 'a', type: 'core.linear.linear', name: 'Get issues', parameters: {} }, { key: 'b', type: 'core.manualTrigger', name: 'Go' }], connections: [{ from: 'b', to: 'a' }] });
+    const flow = await buildFlow('get my Linear issues');
+    expect(flow.nodes.some((n) => n.name === 'Get issues')).toBe(false);
+    expect(flow.left).toContainEqual(expect.objectContaining({ node: 'Get issues', kind: 'dropped' }));
+    registry.remove('sb01other');
+  });
+});
+
+describe('SB01: test data for schedule and app triggers', () => {
+  const sched = { key: 't', type: 'core.schedule', name: 'Every day', parameters: { unit: 'rules', rule: { interval: [{ field: 'days', daysInterval: 1, triggerAtHour: 9, triggerAtMinute: 0 }] } } };
+  const flowOf = (nodes: unknown[], connections: unknown[]) => JSON.stringify({ name: 'Flow', nodes, connections, testData: [{ id: 'ISS-1', title: 'Crash' }, { id: 'ISS-2', title: 'Slow' }] });
+
+  it('pins the items on an app step that reads data after a schedule', async () => {
+    answer = flowOf([sched, { key: 'g', type: 'sb01app.linear', name: 'Get issues', parameters: { operation: 'getAll' } }], [{ from: 't', to: 'g' }]);
+    expect((await buildFlow('every day get the issues')).pinData).toEqual({ g: [{ json: { id: 'ISS-1', title: 'Crash' } }, { json: { id: 'ISS-2', title: 'Slow' } }] });
+  });
+
+  it('pins nothing after a schedule that goes to a Set', async () => {
+    answer = flowOf([sched, { key: 's', type: 'core.set', name: 'Stamp', parameters: { mode: 'manual', fields: { values: [{ name: 'a', type: 'string', value: 'b' }] } } }], [{ from: 't', to: 's' }]);
+    expect((await buildFlow('every day stamp')).pinData).toBeUndefined();
+  });
+
+  it('pins the items on an app trigger', async () => {
+    answer = flowOf([{ key: 'e', type: 'sb01app.issueEvent', name: 'New issue', parameters: {} }, { key: 's', type: 'core.set', name: 'Stamp', parameters: { mode: 'manual', fields: { values: [{ name: 'a', type: 'string', value: 'b' }] } } }], [{ from: 'e', to: 's' }]);
+    expect(Object.keys((await buildFlow('when an issue is created')).pinData ?? {})).toEqual(['e']);
   });
 });
