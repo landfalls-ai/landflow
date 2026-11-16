@@ -15,6 +15,7 @@ import { StatusSwap, StreamingText } from '../../ui/chat-motion';
 import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta, ShortReply } from '../../ui/chat';
 import { MAX_FIXES, approveDestinations, productionNote, publishToProduction, testUntilItRuns, undoApplied } from '../test-session'; // SB03:
 import { agentStep, runRow } from '../timeline';
+import { CredentialPicker } from './credential-picker'; // SB12:
 
 import { ProposalCard, ProposalRow } from './proposal';
 import { provisionalText } from '@/lib/shared/leaked-markup';
@@ -39,6 +40,10 @@ export function openNodeNamed(name: string) {
 function NeedRow({ itemId, need }: { itemId: string; need: Need }) {
   const busy = useAssistant((s) => s.pending || Boolean(s.testing));
   const mark = (state: 'done' | 'dismissed') => useAssistant.getState().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'needs' ? { ...p, need: { ...p.need, state } } : p)));
+  const workflowId = useEditor((s) => s.workflowId); // SB12:
+  // SB12: a credential row with the types a step accepts holds the picker; after a pick it reads "Using “name”" and is done.
+  const offer = need.what === 'credential' && Boolean(need.credentialTypes?.length);
+  const picked = (name: string) => useAssistant.getState().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'needs' ? { ...p, need: { ...p.need, state: 'done' as const, picked: name } } : p)));
   const goOn = () => {
     mark('done');
     void testUntilItRuns(need.goal);
@@ -60,9 +65,29 @@ function NeedRow({ itemId, need }: { itemId: string; need: Need }) {
           <span className="text-t2">{need.text}</span>
         </span>
       </div>
-      {need.state ? (
+      {/* SB12: the credentials that fit, nothing picked by itself */}
+      {offer && !need.state && need.credentialTypes && (
+        <>
+          <CredentialPicker workflowId={workflowId} nodeId={need.nodeId} node={need.node ?? ''} credentialTypes={need.credentialTypes} onPicked={(c) => picked(c.name)} />
+          {need.goal && (
+            <div className="pl-5">
+              <Button size="sm" variant="ghost" disabled={busy} onClick={goOn}>
+                Test again
+              </Button>
+            </div>
+          )}
+        </>
+      )}
+      {offer && need.state === 'done' && need.picked && need.goal && (
+        <div className="pl-5">
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => void testUntilItRuns(need.goal)}>
+            Test again
+          </Button>
+        </div>
+      )}
+      {offer && !need.state ? null : need.state ? (
         <p className="pl-5 text-[11.5px] text-t3">
-          {need.state === 'dismissed' ? 'Left for later.' : need.what === 'sends' || need.what === 'destination' ? yesText(need.destinations) : need.what === 'blocked' || need.what === 'address' ? 'Left for you to change.' : need.what === 'trigger' ? 'Trigger added.' : 'Testing again.'}
+          {need.picked ? `Using “${need.picked}”.` : need.state === 'dismissed' ? 'Left for later.' : need.what === 'sends' || need.what === 'destination' ? yesText(need.destinations) : need.what === 'blocked' || need.what === 'address' ? 'Left for you to change.' : need.what === 'trigger' ? 'Trigger added.' : 'Testing again.'}
         </p>
       ) : (
         <div className="flex flex-wrap gap-1.5 pl-5">

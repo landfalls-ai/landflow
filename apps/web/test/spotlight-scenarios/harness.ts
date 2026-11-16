@@ -210,10 +210,11 @@ interface Collected {
   done?: { steps: number; usage: { inputTokens: number; outputTokens: number } };
   error?: string;
   drafts: Array<Partial<AgentConfig>>;
+  offers: NonNullable<Outcome['offers']>; // SB12:
 }
 
 function collect(events: Array<{ event: string; data: any }>): Collected { // eslint-disable-line @typescript-eslint/no-explicit-any
-  const out: Collected = { text: '', tools: [], proposals: [], drafts: [] };
+  const out: Collected = { text: '', tools: [], proposals: [], drafts: [], offers: [] };
   for (const { data } of events) {
     switch (data.type) {
       case 'text':
@@ -228,6 +229,7 @@ function collect(events: Array<{ event: string; data: any }>): Collected { // es
       case 'draft':
         out.drafts.push(data.config);
         break;
+      case 'credential': out.offers.push({ node: data.node, credentialTypes: data.credentialTypes }); break; // SB12:
       case 'done':
         out.done = data;
         break;
@@ -500,7 +502,7 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
     } else if (scenario.via === 'chat' || scenario.via === 'session') {
       if (!canvas) throw new Error(`${scenario.id}: a chat scenario needs start.workflow`);
       const result = await chatOnce({ ask: scenario.ask, workflow: canvas, selected: idOf(canvas, scenario.start?.selected), runs: runsById(canvas, scenario.start?.runs), session: scenario.start?.session }, form, scripted, options);
-      Object.assign(outcome, { text: result.text, tools: result.tools, proposals: result.proposals, ...(result.error && { error: result.error }) });
+      Object.assign(outcome, { text: result.text, tools: result.tools, proposals: result.proposals, offers: result.offers, ...(result.error && { error: result.error }) }); // SB12:
       withDone(result);
       outcome.after = applyAsTheEditor(canvas, result.proposals, scenario.start?.autonomy);
       if (scenario.via === 'session') {
