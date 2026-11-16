@@ -364,3 +364,24 @@ export function drillQuery(view: AiView, target: { group: AiSpendGroup; key: str
 /** The rows of the group the sheet opened from, for its title. */
 export const drillLabel = (report: Pick<AiSpendReport, 'groups'> | undefined, target: { group: AiSpendGroup; key: string }): string =>
   report?.groups[target.group]?.find((r) => r.key === target.key)?.label ?? AI_GROUPS.find((g) => g.value === target.group)?.label ?? target.key;
+
+/**
+ * A row's link that only sets a filter (a person row's `/insights/ai?userId=<id>`) keeps the page's own view: period,
+ * range, group and the other filters stay, and the filter is added. Any other link is returned as it is.
+ */
+export function applyFilterHref(view: AiView, href: string): string {
+  if (!href.startsWith('/insights/ai?')) return href;
+  const set = new URLSearchParams(href.slice(href.indexOf('?') + 1));
+  const filters = { ...view.filters };
+  let touched = false;
+  for (const key of FILTER_KEYS) {
+    const value = set.get(key);
+    if (value) {
+      (filters as Record<string, string>)[key] = value;
+      touched = true;
+    }
+  }
+  if (!touched) return href;
+  const query = viewParams({ ...view, filters, drill: undefined }).toString();
+  return query ? `/insights/ai?${query}` : '/insights/ai';
+}

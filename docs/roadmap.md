@@ -2280,6 +2280,13 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   seconds while the run is live ([run-trace.md](run-trace.md#spend)). A call opens its model span.
 - **One call's view (SP07), built:** a model step's sheet in the Run Trace shows the call's composition, cache line and what changed since the previous call; sessions show cached tokens ([run-trace.md](run-trace.md#one-call)).
 
+## Token spend wave 13
+
+- **The AI page's trend, movers and drill-down (SP10), built:** the AI page gains 90 days and a custom range, ten groups
+  in a menu, filters as chips in the URL, a cost-or-tokens trend with the period before as a faint line and a stack of any
+  group's top 5, the biggest rises and falls, and a drill sheet from any row with the runs and calls behind it, "N runs you
+  can't open: $X", one call's composition and CSV ([llm-gateway.md](llm-gateway.md#the-ai-page)). Desktop only, as decided.
+
 ## Practices (waves P1 and P2)
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided

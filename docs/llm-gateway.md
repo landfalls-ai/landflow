@@ -444,6 +444,32 @@ for the period (24 hours, 7 days, 30 days) and shows, from top to bottom:
 - **Gateway**: a health dot, the models the gateway serves, and for admins the spend import's and the budgets sync's last
   runs, **Open LiteLLM** (its admin UI, in a new tab) and **Settings**. Without a gateway the card says so. Open LiteLLM comes only from Settings' UI address, `LANDFLOW_LLM_GATEWAY_UI_URL` or the server's `LANDFLOW_LLM_GATEWAY_URL`, never from a credential's Base URL; without one the card says to set it. Only admins see the gateway's error text; members get "The gateway is not answering".
 
+**The trend, the movers and the drill sheet (wave 13, SP10).** The period switch also has **90 days** and **Custom**
+(two dates, at most 400 days, none in the future; the page says why a range can't be asked yet). Above "Spend by" the
+page draws:
+
+- **The trend**: cost (or tokens: a switch) per day for the period, per hour for 24 hours, with the period before as a
+  faint dashed line (not for 24 hours or a range over 90 days). **By** stacks the columns by the top 5 of any group,
+  with "Other" in grey; the chart says whose spend it holds: **everyone's** for Person (D1), what you can see for any
+  other group. Hovering a day shows its numbers; the same numbers are a table for a screen reader.
+- **Movers**: the five biggest rises and the five biggest falls in cost against the period before, across every group
+  (never an "Another ...", "Other" or "No ..." row). A mover opens its runs.
+- **Spend by** lists all ten groups in a menu (project, goal, agent, workflow, person, model, source, credential,
+  surface, purpose). A person's name still links to the person filter (`/insights/ai?userId=<id>`), which now keeps the
+  period and the other filters.
+- **Filters** (project, agent, workflow, person, credential, model, purpose, source, surface) live in the page's URL and
+  show as chips; a chip's cross removes it. The period, range, group, stack and the open sheet are in the URL too, so Back
+  from a run lands on the same view.
+- **The drill sheet**: a click on a row (or its arrow) opens a sheet with the **runs** behind the number (costliest first;
+  **Show more** pages), a **Calls** tab, and **Download CSV** of the list. A run opens its Spend tab
+  (`/runs/<id>?tab=spend`, or the agent's session); a call opens its composition in the sheet, as in the Run Trace. What
+  you can't open is a line, "N runs you can't open: $X" (the sum only when calls are behind it): a count and a cost,
+  never a name, an id or any prompt text ([Who sees what](#the-ai-page) rule 3). "Another ..." and "Other" rows don't open.
+
+The trend and the sheet read `GET /api/insights/ai` (`compare=1`, `stack=<group>`, the filters, `period=custom&from&to`)
+and `GET /api/insights/ai/runs` and `.../calls` (`format=csv`). The faint line is asked as a second report for the days
+just before the range, since the report holds only the previous period's totals.
+
 **Who sees what.** Owners and admins see everything. Anyone else sees the calls of the workflows and agents they can open
 and their own calls in the page's totals and in every group but one; calls they may not see are in no total, and a
 project, goal, agent or workflow they can't read is "Another ...". The person list is the exception (the user's decision

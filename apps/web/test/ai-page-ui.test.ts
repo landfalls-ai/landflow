@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_VIEW,
+  applyFilterHref,
   drillable,
   drillQuery,
   fillDays,
@@ -139,6 +140,13 @@ describe('the view in the URL', () => {
   it('asks the sheet for one row of one group with the same period and filters', () => {
     const view: AiView = { ...DEFAULT_VIEW, period: '30d', filters: { projectId: 'prj_a' } };
     expect(drillQuery(view, { group: 'person', key: 'usr_ada' }, { order: 'cost' }).toString()).toBe('period=30d&projectId=prj_a&group=person&key=usr_ada&order=cost');
+  });
+
+  it('keeps the view when a person row’s link adds its filter, and leaves other links alone', () => {
+    const view: AiView = { ...DEFAULT_VIEW, period: '30d', group: 'person', filters: { projectId: 'prj_a' }, drill: { group: 'person', key: 'x' } };
+    expect(applyFilterHref(view, '/insights/ai?userId=usr_ada')).toBe('/insights/ai?period=30d&group=person&projectId=prj_a&userId=usr_ada');
+    expect(applyFilterHref(DEFAULT_VIEW, '/insights/ai?userId=usr_ada')).toBe('/insights/ai?userId=usr_ada');
+    expect(applyFilterHref(view, '/projects/prj_a')).toBe('/projects/prj_a');
   });
 
   it('opens a sheet from every row but "Another …" and the tail', () => {

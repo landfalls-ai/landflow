@@ -9,7 +9,7 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ChevronRight } from 'lucide-react';
 import { api } from '@/lib/client/api';
-import { AI_GROUPS, AI_PERIODS, drillLabel, drillable, fillDays, filterChips, parseView, previousRange, rangeDays, rangeProblem, reportQuery, rowModel, totalTokens, viewParams, viewReady, withoutFilter, type AiView } from '@/lib/client/ai-console';
+import { AI_GROUPS, AI_PERIODS, applyFilterHref, drillLabel, drillable, fillDays, filterChips, parseView, previousRange, rangeDays, rangeProblem, reportQuery, rowModel, totalTokens, viewParams, viewReady, withoutFilter, type AiView } from '@/lib/client/ai-console';
 import { formatCache, formatCost, formatTokens } from '@/lib/shared/ai-usage';
 import type { AiConsoleReport, AiConsoleRow, AiConsoleTotals, GatewayStatus } from '@/lib/shared/llm-gateway';
 import type { AiPageReport, AiSpendGroup, AiSpendPeriod, AiSpendPoint } from '@/lib/shared/ai-spend';
@@ -26,9 +26,9 @@ import { AiTrend } from './ai-trend';
 
 const REFRESH_MS = 60_000;
 
-function Label({ row }: { row: ReturnType<typeof rowModel> }) {
+function Label({ row, hrefFor }: { row: ReturnType<typeof rowModel>; hrefFor?: (href: string) => string }) {
   return row.href ? (
-    <Link href={row.href} className="text-t1 hover:text-ac hover:underline">
+    <Link href={hrefFor ? hrefFor(row.href) : row.href} className="text-t1 hover:text-ac hover:underline">
       {row.label}
     </Link>
   ) : (
@@ -44,7 +44,7 @@ function ShareBar({ percent }: { percent: number }) {
   );
 }
 
-export function SpendBy({ rows, label, onOpen }: { rows: AiConsoleRow[]; label: string; onOpen?: (row: AiConsoleRow) => void }) {
+export function SpendBy({ rows, label, onOpen, hrefFor }: { rows: AiConsoleRow[]; label: string; onOpen?: (row: AiConsoleRow) => void; hrefFor?: (href: string) => string }) {
   // SP10: a click on a row (not on a link in it) opens its runs; a button keeps that reachable by keyboard.
   const openable = (row: AiConsoleRow) => Boolean(onOpen) && drillable(row);
   const rowClick = (row: AiConsoleRow) => (e: React.MouseEvent) => {
@@ -70,7 +70,7 @@ export function SpendBy({ rows, label, onOpen }: { rows: AiConsoleRow[]; label: 
           {models.map((row) => (
             <tr key={row.key} onClick={rowClick(byKey.get(row.key)!)} className={cn('border-b border-hair last:border-0', openable(byKey.get(row.key)!) && 'cursor-pointer hover:bg-acdim')}>
               <td className="max-w-[320px] truncate px-4 py-2.5" title={row.label}>
-                <Label row={row} />
+                <Label row={row} hrefFor={hrefFor} />
               </td>
               <td className="px-3 py-2.5 text-right tabular-nums text-t1">{row.cost}</td>
               <td className="px-3 py-2.5 text-right tabular-nums text-t2" title={row.tokenDetail}>
@@ -101,7 +101,7 @@ export function SpendBy({ rows, label, onOpen }: { rows: AiConsoleRow[]; label: 
           <li key={row.key} onClick={rowClick(byKey.get(row.key)!)} className={cn('flex flex-col gap-1.5 px-4 py-3', openable(byKey.get(row.key)!) && 'cursor-pointer')}>
             <div className="flex items-baseline gap-3">
               <span className="min-w-0 flex-1 break-words text-[14px] font-medium">
-                <Label row={row} />
+                <Label row={row} hrefFor={hrefFor} />
               </span>
               <span className="text-[14px] font-semibold tabular-nums text-t1">{row.cost}</span>
             </div>
@@ -173,6 +173,9 @@ export function AiConsole() {
     },
     [router, pathname],
   );
+  // The sheet is a portal: it opens after mount, so a page loaded with `?drill=` matches the server's HTML.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   const today = localDay();
   const ready = viewReady(view, today);
   const key = reportQuery(view, { compare: true }).toString();
@@ -212,7 +215,9 @@ export function AiConsole() {
     return () => clearInterval(timer);
   }, [load]);
 
-  const shown = loaded?.key === key ? loaded.report : undefined;
+  // The last report stays on screen, dimmed, while a changed view loads (a switch doesn't empty the page).
+  const shown = loaded?.report;
+  const stale = Boolean(loaded) && loaded!.key !== key;
 
   // The faint line: the days just before the range, asked as a custom range (the report holds only the previous totals).
   const prevRange = shown && shown.period !== '24h' && rangeDays(shown.from, shown.to) <= 90 ? previousRange(shown.from, shown.to) : undefined;
@@ -240,7 +245,7 @@ export function AiConsole() {
         meta={shown && <span>Estimated from the price table · {shown.viewer.admin ? 'everything' : 'what you can open'}</span>}
         actions={<Segmented label="Period" options={AI_PERIODS} value={view.period} onChange={(period: AiSpendPeriod) => go({ ...view, period, drill: undefined })} />}
       />
-      <PageBody className="flex max-w-[1240px] flex-col gap-4">
+      <PageBody className={cn('flex max-w-[1240px] flex-col gap-4 transition-opacity', stale && 'opacity-60')} aria-busy={stale}>
         {error && <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
         {view.period === 'custom' && (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] text-t2" data-testid="ai-range">
@@ -293,13 +298,13 @@ export function AiConsole() {
             </div>
           </div>
           {shown && view.group === 'person' && <PeopleTotal totals={shown.peopleTotals} admin={shown.viewer.admin} />}
-          {shown ? <SpendBy rows={shown.groups[view.group]} label={label} onOpen={(row) => open(view.group, row.key)} /> : <div className="m-4 h-24 rounded-xl bg-acdim animate-pulse-soft" />}
+          {shown ? <SpendBy rows={shown.groups[view.group]} label={label} onOpen={(row) => open(view.group, row.key)} hrefFor={(href) => applyFilterHref(view, href)} /> : <div className="m-4 h-24 rounded-xl bg-acdim animate-pulse-soft" />}
         </Card>
         {shown && <CapsCard report={asConsole(shown)} onChanged={() => load()} />}
         {shown && <RequestsCard report={asConsole(shown)} onChanged={() => load()} />}
         <GatewayCard status={status} admin={Boolean(shown?.viewer.admin)} />
       </PageBody>
-      <AiDrill view={view} target={view.drill} title={view.drill ? drillLabel(shown, view.drill) : ''} chips={chips} onClose={() => go({ ...view, drill: undefined })} />
+      <AiDrill view={view} target={mounted ? view.drill : undefined} title={view.drill ? drillLabel(shown, view.drill) : ''} chips={chips} onClose={() => go({ ...view, drill: undefined })} />
     </>
   );
 }
