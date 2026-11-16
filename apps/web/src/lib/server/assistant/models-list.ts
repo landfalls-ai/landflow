@@ -32,7 +32,14 @@ export const forgetSpotlightModels = () => {
 
 const fingerprint = (value: string | undefined) => (value ? createHash('sha256').update(value).digest('hex').slice(0, 12) : '');
 
-/** The models this server offers Spotlight, local ones first. Cached for 60 seconds. */
+/** Where a model id comes from: `litellm/…`, `anthropic/…` and `openai/…` are cloud, a bare name is Ollama's (local). */
+export function describeSpotlightModel(id: string): SpotlightModel {
+  const prefix = /^(litellm|anthropic|openai)\//.exec(id)?.[1];
+  if (!prefix) return { id, label: id, source: 'ollama', local: true };
+  return { id, label: id.slice(prefix.length + 1), source: prefix === 'litellm' ? 'gateway' : (prefix as 'anthropic' | 'openai'), local: false };
+}
+
+/** The models this server offers Spotlight, local ones first. Cached for 60 seconds, and only when every source it asked answered. */
 export async function spotlightModels(): Promise<SpotlightModel[]> {
   const gateway = await gatewayConnection().catch(() => undefined);
   const anthropicKey = envString('ANTHROPIC_API_KEY');
@@ -46,24 +53,32 @@ export async function spotlightModels(): Promise<SpotlightModel[]> {
   };
 
   // Ollama: a bare name. The server's default is always listed, so Spotlight still has a model when Ollama is down.
-  const local = await modelOptions('ollama', {}).catch(() => []);
-  for (const m of local) if (!NOT_CHAT.test(m.model)) add({ id: m.model, label: m.model, source: 'ollama', local: true });
-  add({ id: DEFAULT_ASSISTANT_MODEL, label: DEFAULT_ASSISTANT_MODEL, source: 'ollama', local: true });
+  // A source that fails to answer leaves the list short, so the list is not cached (a picked model would be refused for a minute).
+  let complete = true;
+  const unanswered = () => {
+    complete = false;
+    return [];
+  };
+  // Ollama's own `capabilities` already left out the models that cannot chat (modelOptions), the name regex only when it sent none.
+  const local = await modelOptions('ollama', {}).catch(unanswered);
+  for (const m of local) add({ id: m.model, label: m.model, source: 'ollama', local: true });
+  // The default is listed as what it is: a LANDFLOW_BUILDER_MODEL of `anthropic/…` or `openai/…` is a cloud model.
+  add(describeSpotlightModel(DEFAULT_ASSISTANT_MODEL));
 
   if (gateway) {
-    const served = await gatewayModelOptions({ baseUrl: gateway.baseUrl, ...(gateway.apiKey && { apiKey: gateway.apiKey }) }, 'openai').catch(() => []);
+    const served = await gatewayModelOptions({ baseUrl: gateway.baseUrl, ...(gateway.apiKey && { apiKey: gateway.apiKey }) }, 'openai').catch(unanswered);
     for (const m of served) add({ id: `litellm/${m.model}`, label: m.model, source: 'gateway', local: false });
   }
   if (anthropicKey) {
-    for (const m of await modelOptions('anthropic', {}).catch(() => [])) add({ id: `anthropic/${m.model}`, label: m.label, source: 'anthropic', local: false });
+    for (const m of await modelOptions('anthropic', {}).catch(unanswered)) add({ id: `anthropic/${m.model}`, label: m.label, source: 'anthropic', local: false });
   }
   if (openAiKey) {
     // The server's key and base URL only: the models it lists, or none when the endpoint does not answer.
-    const listed = await openAiModels(openAiConnection({ apiKey: openAiKey, baseUrl: envString('OPENAI_BASE_URL') ?? '' })).catch(() => []);
+    const listed = await openAiModels(openAiConnection({ apiKey: openAiKey, baseUrl: envString('OPENAI_BASE_URL') ?? '' })).catch(unanswered);
     for (const m of listed.filter((m) => !NOT_CHAT.test(m.id)).sort((a, b) => a.id.localeCompare(b.id))) add({ id: `openai/${m.id}`, label: m.id, source: 'openai', local: false });
   }
 
-  cache = { key, at: Date.now(), models };
+  if (complete) cache = { key, at: Date.now(), models };
   return models;
 }
 

@@ -260,7 +260,7 @@ Each fix in the session is applied the same way, as before. An agent Spotlight c
 
 ### The model Spotlight uses
 
-The default is **Settings → AI → Spotlight** (`GET/PUT /api/settings/spotlight`, saved in `settings` under `spotlight`): the local model (`LANDFLOW_BUILDER_MODEL`, `qwen3-coder:30b`) until an admin saves another. The list is built from what the server is set up for, cached for 60 s (`lib/server/assistant/models-list.ts`): Ollama's pulled chat models (embedding models left out, the server's default always listed), `litellm/<model>` when the instance has an LLM gateway (Settings or `LANDFLOW_LLM_GATEWAY_URL`), `anthropic/…` only when the server has `ANTHROPIC_API_KEY`, `openai/…` only when it has `OPENAI_API_KEY` (the models its endpoint lists). Never a model reachable only through a member's own credential. The chat, build, design, agent and suggest routes check `model` against the list and answer 400 "Not a model this server offers: <name>" otherwise; a request with none uses the saved default while it is listed, else the server's own. The after-run suggestion chips send the session's pick too. The Agent architect dialog sends none, so it uses the default.
+The default is **Settings → AI → Spotlight** (`GET/PUT /api/settings/spotlight`, saved in `settings` under `spotlight`): the local model (`LANDFLOW_BUILDER_MODEL`, `qwen3-coder:30b`) until an admin saves another. The list is built from what the server is set up for, cached for 60 s, and only when every source it asked answered (a failed Ollama, gateway or provider listing is asked again on the next request, so a model you picked is not refused for a minute; `lib/server/assistant/models-list.ts`): Ollama's pulled chat models (a model whose `/api/tags` capabilities lack `completion` is left out; the name test for embedding, speech and rerank models applies only when Ollama sends no capabilities; the server's default is always listed, as local only when it is an Ollama model: a `LANDFLOW_BUILDER_MODEL` of `anthropic/…` or `openai/…` is listed as cloud), `litellm/<model>` when the instance has an LLM gateway (Settings or `LANDFLOW_LLM_GATEWAY_URL`), `anthropic/…` only when the server has `ANTHROPIC_API_KEY`, `openai/…` only when it has `OPENAI_API_KEY` (the models its endpoint lists). Never a model reachable only through a member's own credential. The chat, build, design, agent and suggest routes check `model` against the list and answer 400 "Not a model this server offers: <name>" otherwise; a request with none uses the saved default while it is listed, else the server's own. The after-run suggestion chips send the session's pick too. The Agent architect dialog sends none, so it uses the default.
 
 ## Ask about it
 
@@ -462,7 +462,7 @@ Shown on the card without sending the change back (cautions): a fix that hides a
 
 `model` overrides the default model, and must be one the server offers (400 "Not a model this server offers" otherwise; `GET /api/settings/spotlight` lists them):
 - a bare Ollama model name;
-- `anthropic/<model>` (uses `ANTHROPIC_API_KEY` or an `ant auth login` profile);
+- `anthropic/<model>` (listed, and so accepted, only when the server has `ANTHROPIC_API_KEY`: an instance that relies only on an `ant auth login` profile gets 400 for it here);
 - `openai/<model>` (uses the server's `OPENAI_API_KEY` and `OPENAI_BASE_URL`);
 - `litellm/<model>` (the instance's gateway, [llm-gateway.md](llm-gateway.md)).
 

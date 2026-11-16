@@ -13,6 +13,8 @@ import { startFakeLiteLlm } from './fake-litellm';
 
 // A fake Ollama: the model list (a chat model, a second one, an embedding model) and /api/chat, recording what it was asked.
 const asked: Array<{ path: string; model?: string }> = [];
+const DEFAULT_TAGS: Array<{ name: string; capabilities?: string[] }> = [{ name: 'qwen3-coder:30b', capabilities: ['completion', 'tools'] }, { name: 'llama3.2:3b', capabilities: ['completion'] }, { name: 'nomic-embed-text:latest', capabilities: ['embedding'] }];
+let tags = DEFAULT_TAGS;
 const ollama: Server = createServer((req, res) => {
   const chunks: Buffer[] = [];
   req.on('data', (c) => chunks.push(c as Buffer));
@@ -20,7 +22,7 @@ const ollama: Server = createServer((req, res) => {
     const path = (req.url ?? '/').split('?')[0];
     res.setHeader('content-type', 'application/json');
     if (path === '/api/tags') {
-      res.end(JSON.stringify({ models: [{ name: 'qwen3-coder:30b', capabilities: ['completion', 'tools'] }, { name: 'llama3.2:3b', capabilities: ['completion'] }, { name: 'nomic-embed-text:latest', capabilities: ['embedding'] }] }));
+      res.end(JSON.stringify({ models: tags }));
       return;
     }
     const body = chunks.length ? (JSON.parse(Buffer.concat(chunks).toString('utf8')) as { model?: string }) : {};
@@ -87,6 +89,7 @@ beforeEach(() => {
   forgetSpotlightModels();
   forgetGatewayModels();
   asked.length = 0;
+  tags = DEFAULT_TAGS;
   database().sqlite.exec("DELETE FROM settings WHERE key = 'spotlight'");
   delete process.env.ANTHROPIC_API_KEY;
   delete process.env.LANDFLOW_LLM_GATEWAY_URL;
@@ -121,6 +124,45 @@ describe('the models Spotlight may use', () => {
     const models = await spotlightModels();
     expect(models.filter((m) => m.source === 'anthropic').length).toBeGreaterThan(0);
     expect(models.every((m) => m.id.startsWith('anthropic/') || !m.id.includes('/') || m.id.startsWith('litellm/'))).toBe(true);
+  });
+});
+
+describe('the list is trustworthy', () => {
+  it('filters non-chat models by Ollama\'s capabilities when it sends them, the name only as the fallback (SB19-N4)', async () => {
+    tags = [{ name: 'qwen3-coder:30b', capabilities: ['completion', 'tools'] }, { name: 'bge-m3:latest', capabilities: ['embedding'] }, { name: 'tts-helper:7b', capabilities: ['completion'] }, { name: 'all-minilm-embed:latest' }, { name: 'plain-old:7b' }];
+    const ids = (await spotlightModels()).map((m) => m.id);
+    expect(ids).toEqual(['qwen3-coder:30b', 'tts-helper:7b', 'plain-old:7b']);
+  });
+
+  it('does not cache a list when a source did not answer: a gateway that fails once, then answers, is listed on the next request (IR-4)', async () => {
+    let fail = true;
+    const flaky = createServer((req, res) => {
+      if (fail) {
+        fail = false;
+        res.statusCode = 500;
+        res.end('{"error":"down"}');
+        return;
+      }
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ object: 'list', data: [{ id: 'claude-sonnet-5-5', object: 'model', owned_by: 'x' }] }));
+    });
+    await new Promise<void>((resolve) => flaky.listen(0, '127.0.0.1', resolve));
+    try {
+      process.env.LANDFLOW_LLM_GATEWAY_URL = `http://127.0.0.1:${(flaky.address() as AddressInfo).port}`;
+      process.env.LANDFLOW_LLM_GATEWAY_KEY = 'sk-fake-master';
+      expect((await spotlightModels()).some((m) => m.id.startsWith('litellm/'))).toBe(false);
+      expect(await resolveSpotlightModel('litellm/claude-sonnet-5-5')).toEqual({ model: 'litellm/claude-sonnet-5-5' });
+    } finally {
+      await new Promise<void>((resolve) => flaky.close(() => resolve()));
+    }
+  });
+
+  it('lists a default that is an anthropic/ or openai/ model as cloud, a bare name as local (IR-3)', async () => {
+    const { describeSpotlightModel } = await import('@/lib/server/assistant/models-list');
+    expect(describeSpotlightModel('anthropic/claude-sonnet-5-5')).toEqual({ id: 'anthropic/claude-sonnet-5-5', label: 'claude-sonnet-5-5', source: 'anthropic', local: false });
+    expect(describeSpotlightModel('openai/gpt-x')).toMatchObject({ source: 'openai', local: false });
+    expect(describeSpotlightModel('litellm/qwen3.8')).toMatchObject({ source: 'gateway', local: false });
+    expect(describeSpotlightModel('qwen3-coder:30b')).toMatchObject({ source: 'ollama', local: true });
   });
 });
 
