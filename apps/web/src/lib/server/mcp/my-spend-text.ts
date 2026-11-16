@@ -9,7 +9,11 @@ import { formatCost } from '../../shared/ai-usage';
 const count = (n: number) => n.toLocaleString('en-US');
 const unpriced = (t: AiSpendTotals) => (t.unpricedCalls > 0 ? `, ${t.unpricedCalls} not priced` : '');
 const totals = (t: AiSpendTotals) => `${formatCost(t.cost)} (${count(t.calls)} ${t.calls === 1 ? 'call' : 'calls'}, ${count(t.inputTokens)} in / ${count(t.outputTokens)} out tokens${unpriced(t)})`;
-const rows = (list: AiSpendRow[]) => (list.length === 0 ? ['  none'] : list.slice(0, 10).map((r) => `  ${r.label}: ${totals(r)}`));
+const SHOWN = 10;
+const rows = (list: AiSpendRow[]) =>
+  list.length === 0
+    ? ['  none']
+    : [...list.slice(0, SHOWN).map((r) => `  ${r.label}: ${totals(r)}`), ...(list.length > SHOWN ? [`  and ${list.length - SHOWN} more (all of them are in the JSON)`] : [])];
 const amount = (metric: 'cost' | 'tokens', n: number) => (metric === 'cost' ? formatCost(n) : `${count(Math.round(n))} tokens`);
 
 function capLine(cap: AiMySpend['caps'][number]): string {

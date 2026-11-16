@@ -930,6 +930,11 @@ test('a spend call past 3 s shows no spend', { options: OPTIONS }, async ($, on)
   await clock.advance(3001)
   await started
   expect(statuses.at(-1)).toBe('brain: on · 0 held')
+  // The slow answer arrives at 10 s: it is dropped, not stored and shown later.
+  await clock.advance(10_000)
+  await settled()
+  expect(statuses.join('|')).not.toMatch(/today/)
+  expect(statuses.at(-1)).toBe('brain: on · 0 held')
 })
 
 test('a spend body that is not JSON shows no spend', { options: OPTIONS }, async ($, on) => {

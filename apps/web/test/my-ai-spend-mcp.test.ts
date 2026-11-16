@@ -114,6 +114,23 @@ describe('the my_ai_spend tool', () => {
     expect(JSON.stringify(hers)).not.toContain('9999');
   });
 
+  it('ignores a user argument: the caller is the key’s person, never a name in the call', async () => {
+    const result = await call(await connect(alma, ['brain:read']), { userId: ada.id, user_id: ada.id, period: '30d' });
+    expect(result.isError).toBeFalsy();
+    const { spend } = JSON.parse(textOf(result));
+    expect(spend.today.cost).toBe(1.5);
+    expect(JSON.stringify(spend)).not.toContain('9999');
+  });
+
+  it('says how many by-model rows it left out of the text, while the JSON holds them all', async () => {
+    const many = await createUser({ email: 'many@sp14.test', name: 'Many', role: 'member', password: 'many-password-1' });
+    for (let i = 0; i < 12; i++) row({ user_id: many.id, cost: 0.1, model: `claude-many-${i}`, execution_id: `ex_many_${i}` });
+    const { text, spend } = JSON.parse(textOf(await call(await connect(many, ['brain:read']))));
+    expect(spend.byModel).toHaveLength(12);
+    expect(text).toContain('and 2 more');
+    expect(text.match(/claude-many-/g)).toHaveLength(10);
+  });
+
   it('takes the wire’s periods and refuses another', async () => {
     const client = await connect(alma, ['brain:read']);
     for (const period of ['24h', '7d', '30d', '90d']) expect(JSON.parse(textOf(await call(client, { period }))).spend.period).toBe(period);

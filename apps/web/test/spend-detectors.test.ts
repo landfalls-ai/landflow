@@ -387,4 +387,12 @@ describe('ai-cost on a local model', () => {
     call({ workflow: 'other', provider: 'ollama', model: 'qwen3-coder:8b', daysAgo: 5 });
     expect(DETECTOR_RUNS['ai-cost'](detectContext({}, database(), NOW - 29 * DAY)).filter((f) => f.proposal.target.id === 'wf_local')).toEqual([]);
   });
+  it('does suggest the same model when it was first used before the point judged', () => {
+    flow('qwen3-coder:30b');
+    many(20, () => ({ workflow: 'wf_local', provider: 'ollama', model: 'qwen3-coder:30b', input: 500, output: 40, daysAgo: 30 }));
+    call({ workflow: 'other', provider: 'ollama', model: 'qwen3-coder:8b', daysAgo: 31 });
+    const found = DETECTOR_RUNS['ai-cost'](detectContext({}, database(), NOW - 29 * DAY)).filter((f) => f.proposal.target.id === 'wf_local');
+    expect(found).toHaveLength(1);
+    expect(found[0].proposal.ops).toEqual([{ op: 'setParameters', node: 'Ask', parameters: { model: 'qwen3-coder:8b' } }]);
+  });
 });

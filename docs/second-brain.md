@@ -402,6 +402,7 @@ no hand-built MCP Server Trigger workflow:
 | `brain_suggest` | post a suggestion (source `analyst`, like `POST /api/proposals`) |
 | `brain_ask` | ask the brain a question (`question`, `about`), like `POST /api/brain/ask` |
 | `my_briefing` | the caller's own briefing (`day`) |
+| `my_ai_spend` | the caller's own AI spend and caps (`period`: `24h`, `7d`, `30d`, `90d`), as text and JSON; never anyone else's ([llm-gateway.md](llm-gateway.md)) |
 | `record_work` | save the caller's own work events, private |
 | `project_context` | the "Where this work fits" block of the project that lists a repository, or of a project you name (`repo`, `projectId`, `size`); the resource `project://{id}/context` is the full block ([connect-your-harness.md](connect-your-harness.md#project-context)) |
 
