@@ -124,6 +124,15 @@ describe('the stream', () => {
   });
 });
 
+describe('Create one', () => {
+  it('offers every type the step accepts, Header Auth among them', async () => {
+    const { allowedTypesFor } = await import('@/components/editor/spotlight/credential-picker');
+    const types = allowedTypesFor('core.httpRequest', ['oAuth2Api', 'httpBearerAuth', 'httpHeaderAuth']);
+    expect(types).toHaveLength(3);
+    expect(types.some((t) => t.endsWith('httpHeaderAuth'))).toBe(true);
+  });
+});
+
 describe('a pick', () => {
   it('sets what the slot needs to show, and only the row picked', async () => {
     const { useEditor } = await import('@/components/editor/store');
@@ -140,8 +149,8 @@ describe('a pick', () => {
     // Two credential rows in one reply: marking one leaves the other open.
     const need = (node: string) => ({ kind: 'needs' as const, need: { what: 'credential' as const, text: node, node, credentialTypes: ['httpHeaderAuth'] } });
     useAssistant.setState({ items: [{ id: 'r', role: 'assistant', parts: [need('One'), need('Two')] } as never] });
-    const index = 0;
-    useAssistant.getState().updateParts('r', (parts) => parts.map((p, at) => (at === index && p.kind === 'needs' ? { ...p, need: { ...p.need, state: 'done' as const, picked: 'Echo token' } } : p)));
+    const { markNeed } = await import('@/components/editor/spotlight/reply');
+    markNeed('r', 0, { state: 'done', picked: 'Echo token' });
     const parts = (useAssistant.getState().items[0] as { parts: Array<{ need: { state?: string } }> }).parts;
     expect(parts[0].need.state).toBe('done');
     expect(parts[1].need.state).toBeUndefined();

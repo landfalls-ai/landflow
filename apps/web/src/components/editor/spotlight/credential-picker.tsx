@@ -93,6 +93,11 @@ export function CredentialPickerView({
  * The picker of a "Needs you" credential row. `credentialTypes` are the step's credential slots (the node type's
  * `credentials` names); a credential of the step's type qualified with each is offered.
  */
+/** Every credential type a step accepts, qualified for the dialog: one presets it, several show its chooser (D2). */
+export function allowedTypesFor(type: string, slots: string[]): string[] {
+  return slots.map((slot) => qualifiedCredentialType(type, slot));
+}
+
 export function CredentialPicker({
   workflowId,
   nodeId,
@@ -121,7 +126,7 @@ export function CredentialPicker({
   const fitting = type ? new Set(credentialTypes.map((slot) => qualifiedCredentialType(type, slot))) : new Set<string>();
   const visible = all && scope ? all.filter((c) => scope.ids.has(c.id)) : all;
   const options: PickerOption[] = (visible ?? []).filter((c) => fitting.has(c.type)).map((c) => ({ id: c.id, name: c.name, type: c.type }));
-  const first = type && credentialTypes[0] ? qualifiedCredentialType(type, credentialTypes[0]) : undefined;
+  const allowed = type ? allowedTypesFor(type, credentialTypes) : [];
   const missingStep = !onCanvas && !nodeType;
 
   const use = () => {
@@ -143,9 +148,9 @@ export function CredentialPicker({
         disabled={missingStep}
         hint={missingStep ? `“${node}” is not on the canvas yet: apply the change, then pick.` : undefined}
       />
-      {creating && first && (
+      {creating && allowed.length > 0 && (
         <CredentialDialog
-          allowedTypes={[first]}
+          allowedTypes={allowed}
           {...(scope?.projectId && { projectId: scope.projectId })}
           onClose={() => setCreating(false)}
           onSaved={() => {
