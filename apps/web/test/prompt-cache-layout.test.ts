@@ -209,7 +209,7 @@ describe('the Anthropic request', () => {
     }
   });
 
-  it('matches base’s request when the layout is turned back to base’s shape (snapshot taken from base’s code)', async () => {
+  it('sends base’s request shape when the fake rewrites the new request back (compared with a literal derived by hand from base’s params)', async () => {
     const fake = await startFakeAnthropicCache(() => ({ content: [{ type: 'text', text: 'ok' }] }));
     fake.state.rewrite = toBase;
     try {
