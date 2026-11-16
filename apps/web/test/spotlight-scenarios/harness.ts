@@ -259,6 +259,8 @@ interface ChatCall {
   selected?: string;
   runs?: Record<string, RunDigest>;
   session?: 'fix' | 'review' | 'auto';
+  /** SB19: the model the picker sends. */
+  model?: string;
 }
 
 /**
@@ -278,7 +280,7 @@ async function chatOnce(call: ChatCall, form: Form, scripted: Scripted | undefin
   };
   if (form === 'live') {
     const route = await import('@/app/api/assistant/chat/route');
-    const response = await route.POST(post('/api/assistant/chat', { ...body, model: options.model ?? 'qwen3-coder:30b' }));
+    const response = await route.POST(post('/api/assistant/chat', { ...body, model: call.model ?? options.model ?? 'qwen3-coder:30b' /* SB19: */ }));
     if (!response.ok) return { ...collect([]), error: `chat ${response.status}`, calls: 0 };
     const collected = collect(await readSse(response));
     return { ...collected, calls: collected.done?.steps ?? 0 };
@@ -488,18 +490,19 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
 
     if (scenario.via === 'build') {
       const route = await import('@/app/api/ai/build/route');
-      const response = await route.POST(post('/api/ai/build', { prompt: scenario.ask, ...(model && { model }), ...(canvas?.id && { workflowId: canvas.id }) }));
+      const response = await route.POST(post('/api/ai/build', { prompt: scenario.ask, ...((scenario.start?.model ?? model) && { model: scenario.start?.model ?? model }), /* SB19: */ ...(canvas?.id && { workflowId: canvas.id }) }));
       const body = (await response.json()) as { draft?: Record<string, unknown>; error?: string };
       if (!response.ok || !body.draft) outcome.error = body.error ?? `build ${response.status}`;
       else {
         outcome.draft = body.draft;
         outcome.after = draftToWorkflow(body.draft as never);
         outcome.text = `Built ${(body.draft.nodes as unknown[]).length} nodes`;
+        outcome.model = typeof body.draft.model === 'string' ? body.draft.model : undefined; // SB19:
       }
       outcome.modelCalls = fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 1;
     } else if (scenario.via === 'chat' || scenario.via === 'session') {
       if (!canvas) throw new Error(`${scenario.id}: a chat scenario needs start.workflow`);
-      const result = await chatOnce({ ask: scenario.ask, workflow: canvas, selected: idOf(canvas, scenario.start?.selected), runs: runsById(canvas, scenario.start?.runs), session: scenario.start?.session }, form, scripted, options);
+      const result = await chatOnce({ ask: scenario.ask, workflow: canvas, selected: idOf(canvas, scenario.start?.selected), runs: runsById(canvas, scenario.start?.runs), session: scenario.start?.session, model: scenario.start?.model /* SB19: */ }, form, scripted, options);
       Object.assign(outcome, { text: result.text, tools: result.tools, proposals: result.proposals, ...(result.error && { error: result.error }) });
       withDone(result);
       outcome.after = applyAsTheEditor(canvas, result.proposals, scenario.start?.autonomy);
@@ -513,7 +516,7 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
       }
     } else if (scenario.via === 'design') {
       const route = await import('@/app/api/agents/design/route');
-      const response = await route.POST(post('/api/agents/design', { name: nameOfAsk(scenario.ask), description: scenario.ask, instructions: '', ...(canvas && { workflow: canvas.name }) }));
+      const response = await route.POST(post('/api/agents/design', { name: nameOfAsk(scenario.ask), description: scenario.ask, instructions: '', ...(canvas && { workflow: canvas.name }), ...(scenario.start?.model && { model: scenario.start.model }) /* SB19: */ }));
       const body = (await response.json()) as { agent?: { id: string; name: string; tools: AgentConfig['tools']; model?: AgentConfig['model'] }; error?: string };
       if (!body.agent) outcome.error = body.error ?? `design ${response.status}`;
       else outcome.agents.push(agentOf(body.agent as Partial<AgentConfig>));
@@ -557,8 +560,9 @@ export function failedChecks(scenario: Scenario, outcome: Outcome): string[] {
 
 /** The unit form's assertion: every check holds, and the run did not fail. Throws naming each failed check. */
 export function assertUnit(scenario: Scenario, outcome: Outcome): void {
+  // SB19: a scenario with a check `expects-error` is about the error (a refused model), so the error is not a failure.
   const failed = failedChecks(scenario, outcome);
-  if (outcome.error) failed.unshift(`ran without error (${outcome.error})`);
+  if (outcome.error && !scenario.checks.some((c) => c.id === 'expects-error')) failed.unshift(`ran without error (${outcome.error})`);
   if (failed.length) throw new Error(`${scenario.id} failed: ${failed.join('; ')}`);
 }
 

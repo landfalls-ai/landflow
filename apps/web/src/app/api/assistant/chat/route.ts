@@ -9,10 +9,11 @@ import type { Workflow } from '@landflow/engine';
 import { refsOf, runChat, tagMentions, type ChatEvent, type ChatState } from '@/lib/server/assistant/chat';
 import { takeCheckpoint } from '@/lib/server/assistant/checkpoints';
 import { errorText } from '@/lib/server/assistant/model';
+import { resolveSpotlightModel } from '@/lib/server/assistant/models-list'; // SB19:
 import { roster } from '@/lib/server/assistant/roster';
 import { allowedTypes, meteredWorkflowId } from '@/lib/server/assistant/scope';
 import { currentPrincipal } from '@/lib/server/auth/guard';
-import { handler, parseBody } from '@/lib/server/http';
+import { error, handler, parseBody } from '@/lib/server/http'; // SB19: error
 import { sseResponse } from '@/lib/server/sse';
 import { runDigestSchema, workflowSchema } from '@/lib/server/schemas';
 import { withOwnership } from '@/lib/server/projects';
@@ -67,6 +68,9 @@ export const POST = handler(async (request: Request) => {
   const parsed = await parseBody(request, Body);
   if (!parsed.ok) return parsed.response;
   const { workflow, workflowId, resume, mentions, ...rest } = parsed.data;
+  const picked = await resolveSpotlightModel(rest.model); // SB19: a model this server offers, else the Settings default
+  if ('error' in picked) return error(picked.error, 400); // SB19:
+  rest.model = picked.model; // SB19:
   const types = allowedTypes(workflowId);
   // The published agents and teams the caller can see: Spotlight runs one that fits a step, or proposes a new agent.
   const { agents, teams } = roster();

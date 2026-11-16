@@ -1217,6 +1217,24 @@ function paths(): Record<string, Record<string, Json>> {
     responses: { 200: reply('The settings', object({ settings: settingsDoc, jsonRender: { type: 'boolean' } })), 400: invalid, 403: errorRef('Not the owner (json-render)') },
   });
 
+  // SB19: the model Spotlight uses (docs/assistant.md, "The Spotlight panel").
+  const spotlightModelsDoc = object({ default: { type: 'string' }, models: array(object({ id: { type: 'string' }, label: { type: 'string' }, source: { type: 'string', enum: ['ollama', 'gateway', 'anthropic', 'openai'] }, local: { type: 'boolean' } }, ['id', 'label', 'source', 'local'])) }, ['default', 'models']);
+  add('get', '/api/settings/spotlight', {
+    tag: 'Settings',
+    id: 'getSpotlightModels',
+    summary: 'The model Spotlight uses, and the models the server offers it',
+    description: 'The list comes only from the server’s configuration: Ollama’s pulled chat models, `litellm/…` when the instance has a gateway, `anthropic/…` and `openai/…` only when the server has the key. Any reader.',
+    responses: { 200: reply('The default and the models', spotlightModelsDoc) },
+  });
+  add('put', '/api/settings/spotlight', {
+    tag: 'Settings',
+    id: 'setSpotlightModel',
+    summary: 'Set the model Spotlight uses by default',
+    description: 'Admins. A model the server does not offer is refused with 400 “Not a model this server offers: …”. The same check holds the `model` of the chat, build, design, agent and suggest routes.',
+    body: jsonBody(object({ model: { type: 'string', maxLength: 200 } }, ['model'])),
+    responses: { 200: reply('The default and the models', spotlightModelsDoc), 400: invalid, 403: errorRef('Not an admin') },
+  });
+
   // SP12: the caller's own AI spend, and the local models Settings lists (docs/llm-gateway.md, "The AI page").
   const spendTotals = { inputTokens: { type: 'integer' }, outputTokens: { type: 'integer' }, cacheReadTokens: { type: 'integer' }, cacheWriteTokens: { type: 'integer' }, cost: { type: 'number' }, calls: { type: 'integer' }, unpricedCalls: { type: 'integer' }, runs: { type: 'integer' } };
   const spendTotalsDoc = object(spendTotals, ['inputTokens', 'outputTokens', 'cost', 'calls', 'unpricedCalls', 'runs']);

@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { randomFace } from '@/lib/shared/faces';
 import { agentResources } from '@/lib/server/assistant/agent-resources';
 import { designAgent } from '@/lib/server/assistant/architect';
+import { resolveSpotlightModel } from '@/lib/server/assistant/models-list'; // SB19:
 import { allowedTypes } from '@/lib/server/assistant/scope';
 import { agentStore } from '@/lib/server/agents/store';
 import { isUsageCapError } from '@/lib/server/ai-usage';
@@ -27,16 +28,20 @@ const Body = z.object({
   // SB05: what the agent needs, from Spotlight's newAgent.
   tools: z.array(z.string().max(80)).max(8).optional(),
   knowledge: z.string().max(200).optional(),
+  // SB19: the model Spotlight picked (a model this server offers); absent, the Settings default.
+  model: z.string().max(100).optional(),
 });
 
 export const POST = handler(async (request: Request) => {
   const parsed = await parseBody(request, Body);
   if (!parsed.ok) return parsed.response;
+  const picked = await resolveSpotlightModel(parsed.data.model); // SB19:
+  if ('error' in picked) return error(picked.error, 400); // SB19:
   const actor = routeActor();
   const resources = await agentResources(actor);
   let design: Awaited<ReturnType<typeof designAgent>>;
   try {
-    design = await designAgent(parsed.data, { types: allowedTypes(undefined, actor), actor, resources, signal: request.signal });
+    design = await designAgent(parsed.data, { model: picked.model, types: allowedTypes(undefined, actor), actor, resources, signal: request.signal });
   } catch (caught) {
     // The caller's AI usage cap: say so, and create no agent (Spotlight shows the message on the step).
     if (isUsageCapError(caught)) return error(caught.message, 429);
