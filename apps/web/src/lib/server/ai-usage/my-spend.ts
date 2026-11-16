@@ -1,15 +1,16 @@
 /**
  * The You card on the AI page (docs/llm-gateway.md, "The AI page"): the caller's own AI spend, from their own rows only
  * (`ai_usage.user_id`), and their own user caps (their own set, or the default for everyone), never anyone else's
- * (docs/llm-gateway.md, "Who sees what", rule 5). Numbers and names only: no prompt text, no run contents.
+ * (docs/llm-gateway.md, "Who sees what", rule 5), each with the forecast card's own figure (`capForecaster`). Numbers and
+ * names only: no prompt text, no run contents.
  */
 import { database, type Database } from '../db';
 import { userCaps } from './alerts';
+import { capForecaster } from './forecast';
 import { aiUsageMeter } from './index';
 import { findPrice, priceOverrides } from './prices';
 import { CALL_PURPOSE_LABELS, isCallPurpose } from '../../shared/ai-call';
 import type { AiMySpend, AiSpendPeriod, AiSpendPoint, AiSpendRow, AiSpendTotals } from '../../shared/ai-spend';
-import type { AiConsoleCap } from '../../shared/llm-gateway';
 import type { ModelPrice } from '../../shared/ai-usage';
 
 const DAY_MS = 86_400_000;
@@ -146,8 +147,7 @@ export function mySpend(userId: string, period: AiSpendPeriod = '7d', now: numbe
     byModel: groupBy('model', (key) => key.slice(key.indexOf('/') + 1)),
     byPurpose: groupBy('purpose', (key) => (key === 'none' ? 'No purpose' : isCallPurpose(key) ? CALL_PURPOSE_LABELS[key] : key)),
     bySurface: groupBy('surface', (key) => (key === 'none' ? 'No surface' : key)),
-    caps: myCaps(userId, db),
-    // SP12: forecast (SP11) is wired at integration: each cap gets `forecast` (monthly) or `pace` (daily) there.
+    ...myCaps(userId, now, db),
   };
 }
 
@@ -180,14 +180,18 @@ function finish(rows: AiSpendRow[]): AiSpendRow[] {
   return shown;
 }
 
-/** The caller's own user caps only: their own set, or the default for everyone (docs/llm-gateway.md, "Who sees what", rule 5). */
-function myCaps(userId: string, db: Database): AiConsoleCap[] {
+/**
+ * The caller's own user caps only: their own set, or the default for everyone (docs/llm-gateway.md, "Who sees what",
+ * rule 5), each with the forecast card's figure for the same cap: `forecast` and `reachesOn` monthly, `pace` daily.
+ */
+function myCaps(userId: string, now: number, db: Database): Pick<AiMySpend, 'caps' | 'monthEnd'> {
   const pending = new Map(
     db
       .all<{ id: string; cap_id: string }>(`SELECT id, cap_id FROM ai_cap_requests WHERE requested_by = ? AND status IN ('pending', 'asking') ORDER BY created_at`, userId)
       .map((row) => [row.cap_id, row.id]),
   );
-  return userCaps(userId)
+  const forecaster = capForecaster(now, userId, db);
+  const caps = userCaps(userId)
     .map((cap) => {
       const requestId = pending.get(cap.id);
       return {
@@ -202,7 +206,9 @@ function myCaps(userId: string, db: Database): AiConsoleCap[] {
         link: cap.link,
         canRequest: true,
         ...(requestId && { pendingRequestId: requestId }),
+        ...forecaster.forecast(cap),
       };
     })
     .sort((a, b) => b.ratio - a.ratio);
+  return { caps, monthEnd: forecaster.monthEnd };
 }

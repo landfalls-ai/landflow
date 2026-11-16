@@ -160,6 +160,9 @@ function range(
   };
 }
 
+/** A column with no value: the report reads NULL and an empty text alike (`COALESCE(column, '')`). */
+const unset = (column: string) => `(${column} IS NULL OR ${column} = '')`;
+
 /** What this query selects: the SQL that narrows it, and the test that decides (the SQL is only a shortcut). */
 interface Selection {
   sql: Array<{ clause: string; params: SqlValue[] }>;
@@ -185,17 +188,26 @@ function selection(actor: Actor, query: AiSpendListQuery): Selection {
     ["workflow_id", query.workflowId],
     ["user_id", query.userId],
     ["credential_id", query.credentialId],
-    ["model", query.model],
-    ["surface", query.surface],
   ];
   for (const [column, value] of filters)
     if (value) sql.push({ clause: `${column} = ?`, params: [value] });
-  if (query.purpose)
-    sql.push(
-      query.purpose === "none"
-        ? { clause: "purpose IS NULL", params: [] }
-        : { clause: "purpose = ?", params: [query.purpose] },
-    );
+  // The report's own filter forms (spend-report.ts `source`): a model row's key (`provider/model`) or a bare model
+  // name, and `none` for a surface or a purpose that is not set.
+  if (query.model)
+    sql.push({
+      clause: "(model = ? OR provider || '/' || model = ?)",
+      params: [query.model, query.model],
+    });
+  for (const [column, value] of [
+    ["surface", query.surface],
+    ["purpose", query.purpose],
+  ] as const)
+    if (value)
+      sql.push(
+        value === "none"
+          ? { clause: unset(column), params: [] }
+          : { clause: `${column} = ?`, params: [value] },
+      );
   const sourceFilter = query.source;
   const projects = admin ? undefined : visibleProjectIds(actor);
   const projectOf = (row: Row) => {
@@ -232,7 +244,7 @@ function selection(actor: Actor, query: AiSpendListQuery): Selection {
   ): Selection => {
     if (key === "none")
       return {
-        sql: [{ clause: `${name} IS NULL`, params: [] }],
+        sql: [{ clause: unset(name), params: [] }],
         test: (r) => !r[name],
         everyone: false,
         allHidden: false,
@@ -259,7 +271,7 @@ function selection(actor: Actor, query: AiSpendListQuery): Selection {
   ): Selection =>
     none
       ? {
-          sql: [{ clause: `${name} IS NULL`, params: [] }],
+          sql: [{ clause: unset(name), params: [] }],
           test: (r) => !(r as unknown as Record<string, unknown>)[name],
           everyone: false,
           allHidden: false,
@@ -327,7 +339,7 @@ function selection(actor: Actor, query: AiSpendListQuery): Selection {
     case "goal": {
       if (key === "none")
         picked = {
-          sql: [{ clause: "goal_id IS NULL", params: [] }],
+          sql: [{ clause: unset("goal_id"), params: [] }],
           test: (r) => !r.goal_id,
           everyone: false,
           allHidden: false,

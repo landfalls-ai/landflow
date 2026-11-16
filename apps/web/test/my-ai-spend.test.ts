@@ -5,7 +5,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 const dataDir = mkdtempSync(join(tmpdir(), 'landflow-my-ai-spend-'));
 const previousEnv = { ...process.env };
@@ -16,6 +16,7 @@ const { enableTestAuth } = await import('@/lib/server/auth/test-bypass');
 const { database } = await import('@/lib/server/db');
 const { aiUsageMeter, saveAiCaps, savePriceOverrides } = await import('@/lib/server/ai-usage');
 const route = await import('@/app/api/insights/ai/me/route');
+const forecastRoute = await import('@/app/api/insights/ai/forecast/route');
 const { youModels } = await import('@/components/insights/my-ai-spend');
 
 type User = Awaited<ReturnType<typeof createUser>>;
@@ -106,6 +107,48 @@ describe('GET /api/insights/ai/me', () => {
     const benView = await get(ben);
     expect(benView.body.caps.map((c: { id: string }) => c.id)).toEqual([`user:${ben.id}:day:cost`]);
     expect(benView.body.today.cost).toBe(40);
+  });
+
+  it('gives each own cap the forecast card’s figure for the same cap: a monthly forecast and reachesOn, a daily pace', async () => {
+    const dana = await createUser({ email: 'dana@me.test', name: 'Dana', role: 'member', password: 'dana-password-1' });
+    // Ten days of $4 a day before today, so the month's P50 line has a run rate (some days may fall in last month).
+    const DAY = 86_400_000;
+    for (let i = 1; i <= 10; i++) {
+      const when = Date.now() - i * DAY;
+      row({ user_id: dana.id, cost: 4, at: new Date(when).toISOString(), day: aiUsageMeter().today(when) });
+    }
+    row({ user_id: dana.id, cost: 1 });
+    saveAiCaps({ credentials: {}, users: { [ben.id]: { name: 'Ben', dayCost: 77 }, [dana.id]: { name: 'Dana', monthCost: 30, dayCost: 50 } }, allUsers: { monthCost: 100 } });
+    aiUsageMeter().invalidateCaps();
+    // One clock for both reads: a daily cap's pace is by the minute of the day.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now());
+    try {
+      const { body } = await get(dana);
+      enableTestAuth(dana);
+      const forecast = await (await (forecastRoute.GET as (r: Request) => Promise<Response>)(new Request('http://x.test/api/insights/ai/forecast'))).json();
+      enableTestAuth();
+      const month = body.caps.find((c: { id: string }) => c.id === `user:${dana.id}:month:cost`);
+      const day = body.caps.find((c: { id: string }) => c.id === `user:${dana.id}:day:cost`);
+      const cardMonth = forecast.caps.find((c: { capId: string }) => c.capId === month.id);
+      const cardDay = forecast.caps.find((c: { capId: string }) => c.capId === day.id);
+      expect(month.forecast).toBeDefined();
+      expect(month.forecast).toEqual(cardMonth.forecast);
+      expect(month.reachesOn).toEqual(cardMonth.reachesOn);
+      expect(month.pace).toBeUndefined();
+      expect(day.forecast).toBeUndefined();
+      expect(typeof day.pace).toBe('number');
+      expect(day.pace).toBe(cardDay.pace);
+      expect(body.monthEnd).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(body.monthEnd.slice(0, 7)).toBe(forecast.month);
+      // Another person's rows never move Dana's figure.
+      expect(month.forecast.monthToDate).toBeLessThanOrEqual(41);
+    } finally {
+      vi.useRealTimers();
+      enableTestAuth();
+      saveAiCaps({ credentials: {}, users: { [ben.id]: { name: 'Ben', dayCost: 77 } }, allUsers: { monthCost: 100 } });
+      aiUsageMeter().invalidateCaps();
+    }
   });
 
   it('has no "equivalent" field, and refuses a period it does not know', async () => {

@@ -431,7 +431,10 @@ for the period (24 hours, 7, 30 or 90 days, or a custom range of up to 400 days)
   table (Settings → AI prices), as everywhere else; a cost the gateway reports is not used for these totals.
 - **You** (everyone; first on the page): your own AI spend today, this month and in the period, the models you used
   (one a local model nobody priced says "Not priced") and your own caps (your own set, or the default for everyone),
-  from `GET /api/insights/ai/me`. It holds only your rows and your caps; other people's caps stay private.
+  from `GET /api/insights/ai/me`. Each cap says where it is heading in the forecast card's words and figure ("Reaches its
+  limit on Nov 24", "Stays under its limit to Nov 30", a daily cap's pace): one function (`capForecaster` in
+  `lib/server/ai-usage/forecast.ts`) answers both cards. It holds only your rows and your caps; other people's caps stay
+  private.
 - **Spend by** project, goal, agent, workflow, person, model, source, credential, surface or purpose. Each row has its cost, tokens, calls and a bar for its share of
   the cost. A project row with no project on it counts under the workflow's or agent's home project; calls from no
   agent (workflows, Spotlight) are "No agent". The Goal grouping uses the goal each call was stamped with

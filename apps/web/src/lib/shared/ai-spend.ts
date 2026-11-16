@@ -209,8 +209,13 @@ export interface AiMySpend {
   byModel: AiSpendRow[];
   byPurpose: AiSpendRow[];
   bySurface: AiSpendRow[];
-  /** The caller's own user caps (their own set, or everyone's default), with a forecast once SP11's function is wired. */
+  /**
+   * The caller's own user caps (their own set, or everyone's default), each with the forecast card's figure for the same
+   * cap: `forecast` and `reachesOn` (the first day the P50 line reaches `max`) for a monthly cap, `pace` for a daily one.
+   */
   caps: Array<AiConsoleCap & { forecast?: AiForecast; pace?: number; reachesOn?: string }>;
+  /** The month's last day (`YYYY-MM-DD`, the instance's time zone): what a monthly cap's forecast runs to. */
+  monthEnd: string;
 }
 
 /** A local model seen in the last 30 days (SP12, `GET /api/settings/ai-prices/local`). */

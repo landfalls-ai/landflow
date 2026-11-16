@@ -7,14 +7,17 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client/api';
 import { capPeriodLabel, formatCapAmount, formatPercent, totalTokens } from '@/lib/client/ai-console';
+import { capOutlook } from '@/lib/client/ai-forecast';
 import { formatCost, formatTokens } from '@/lib/shared/ai-usage';
 import type { AiMySpend, AiSpendRow } from '@/lib/shared/ai-spend';
 import type { AiConsolePeriod } from '@/lib/shared/llm-gateway';
 import { Card } from '@/components/shell/page-header';
 import { SectionLabel } from '@/components/ui/inputs';
+import { cn } from '@/lib/utils';
 import { CapBar } from './ai-console-caps';
 
 const LIMIT = 5;
+const TONE = { ok: 'text-t3', near: 'text-warn', full: 'text-rd' } as const;
 
 const tokens = (row: Pick<AiSpendRow, 'inputTokens' | 'outputTokens'>) => `${formatTokens(totalTokens(row))} tokens`;
 
@@ -71,17 +74,26 @@ export function MyAiSpend({ period }: { period: AiConsolePeriod }) {
       )}
       {spend.caps.length > 0 && (
         <ul className="mt-3 flex flex-col gap-2.5 border-t border-hair pt-3">
-          {spend.caps.map((cap) => (
-            <li key={cap.id} className="flex flex-col gap-1">
-              <div className="flex flex-wrap items-baseline gap-x-3 text-[13px]">
-                <span className="text-t1">Your cap {capPeriodLabel(cap.period)}</span>
-                <span className="ml-auto tabular-nums text-t2">
-                  {formatCapAmount(cap, cap.used)} of {formatCapAmount(cap, cap.max)} · {formatPercent(cap.ratio)}
-                </span>
-              </div>
-              <CapBar cap={cap} />
-            </li>
-          ))}
+          {spend.caps.map((cap) => {
+            // The forecast card's own words for the same cap (SP11's forecast, the same figure).
+            const outlook = cap.forecast || cap.pace !== undefined ? capOutlook(cap, spend.monthEnd) : undefined;
+            return (
+              <li key={cap.id} className="flex flex-col gap-1">
+                <div className="flex flex-wrap items-baseline gap-x-3 text-[13px]">
+                  <span className="text-t1">Your cap {capPeriodLabel(cap.period)}</span>
+                  <span className="ml-auto tabular-nums text-t2">
+                    {formatCapAmount(cap, cap.used)} of {formatCapAmount(cap, cap.max)} · {formatPercent(cap.ratio)}
+                  </span>
+                </div>
+                <CapBar cap={cap} />
+                {outlook && (
+                  <span className={cn('text-[12px] tabular-nums', TONE[outlook.tone])} data-testid="you-cap-outlook">
+                    {outlook.text}
+                  </span>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
       {spend.today.calls === 0 && spend.month.calls === 0 && models.length === 0 && <p className="mt-2 text-[13px] text-t3">You have not made an AI call this month.</p>}

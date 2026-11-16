@@ -1221,16 +1221,18 @@ function paths(): Record<string, Record<string, Json>> {
   const spendTotals = { inputTokens: { type: 'integer' }, outputTokens: { type: 'integer' }, cacheReadTokens: { type: 'integer' }, cacheWriteTokens: { type: 'integer' }, cost: { type: 'number' }, calls: { type: 'integer' }, unpricedCalls: { type: 'integer' }, runs: { type: 'integer' } };
   const spendTotalsDoc = object(spendTotals, ['inputTokens', 'outputTokens', 'cost', 'calls', 'unpricedCalls', 'runs']);
   const spendRowDoc = object({ ...spendTotals, key: { type: 'string' }, label: { type: 'string' }, share: { type: 'number' }, unpriced: { type: 'boolean', description: 'A model with no price whose calls cost nothing (a local model nobody priced)' } }, ['key', 'label', 'share']);
+  // SP11's month-end forecast, for the forecast card's total and caps and the You card's own caps.
+  const forecastShape = object({ monthToDate: { type: 'number' }, p50: { type: 'number' }, low: { type: 'number' }, high: { type: 'number' }, early: { type: 'boolean' }, daysObserved: { type: 'integer' }, daysLeft: { type: 'integer' } }, ['monthToDate', 'p50', 'low', 'high', 'early', 'daysObserved', 'daysLeft']);
   add('get', '/api/insights/ai/me', {
     tag: 'Insights',
     id: 'getMyAiSpend',
     summary: 'Your own AI spend',
-    description: 'Only the caller’s own rows (today, this month, the period’s days, by model, purpose and surface) and the caller’s own user caps (their own set, or the default for everyone); never anyone else’s. No prompt text.',
+    description: 'Only the caller’s own rows (today, this month, the period’s days, by model, purpose and surface) and the caller’s own user caps (their own set, or the default for everyone), each with the forecast card’s figure for the same cap: a monthly cap’s `forecast` and `reachesOn`, a daily cap’s `pace`; never anyone else’s. No prompt text.',
     query: [{ name: 'period', description: '`24h`, `7d` (default), `30d` or `90d`', schema: { type: 'string', enum: ['24h', '7d', '30d', '90d'] } }],
     responses: {
       200: reply(
         'Your spend',
-        object({ today: spendTotalsDoc, month: spendTotalsDoc, period: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' }, series: array(object({ at: { type: 'string' }, cost: { type: 'number' }, inputTokens: { type: 'integer' }, outputTokens: { type: 'integer' }, calls: { type: 'integer' } })), byModel: array(spendRowDoc), byPurpose: array(spendRowDoc), bySurface: array(spendRowDoc), caps: array(object({ id: { type: 'string' }, subject: { type: 'string' }, period: { type: 'string', enum: ['day', 'month'] }, metric: { type: 'string', enum: ['tokens', 'cost'] }, max: { type: 'number' }, used: { type: 'number' }, ratio: { type: 'number' } })) }, ['today', 'month', 'series', 'byModel', 'byPurpose', 'bySurface', 'caps']),
+        object({ today: spendTotalsDoc, month: spendTotalsDoc, period: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' }, series: array(object({ at: { type: 'string' }, cost: { type: 'number' }, inputTokens: { type: 'integer' }, outputTokens: { type: 'integer' }, calls: { type: 'integer' } })), byModel: array(spendRowDoc), byPurpose: array(spendRowDoc), bySurface: array(spendRowDoc), caps: array(object({ id: { type: 'string' }, subject: { type: 'string' }, period: { type: 'string', enum: ['day', 'month'] }, metric: { type: 'string', enum: ['tokens', 'cost'] }, max: { type: 'number' }, used: { type: 'number' }, ratio: { type: 'number' }, forecast: forecastShape, pace: { type: 'number' }, reachesOn: { type: 'string', description: 'YYYY-MM-DD' } })), monthEnd: { type: 'string', description: 'YYYY-MM-DD: the month’s last day in the instance’s time zone, what a monthly cap’s forecast runs to' } }, ['today', 'month', 'series', 'byModel', 'byPurpose', 'bySurface', 'caps', 'monthEnd']),
       ),
       400: invalid,
     },
@@ -2553,7 +2555,6 @@ function paths(): Record<string, Record<string, Json>> {
     responses: { 200: reply('The agents', object({ agents: array({ type: 'object', additionalProperties: true }) }, ['agents'])), 404: notFound },
   });
   // SP11: the AI page's forecast and cache card
-  const forecastShape = object({ monthToDate: { type: 'number' }, p50: { type: 'number' }, low: { type: 'number' }, high: { type: 'number' }, early: { type: 'boolean' }, daysObserved: { type: 'integer' }, daysLeft: { type: 'integer' } }, ['monthToDate', 'p50', 'low', 'high', 'early', 'daysObserved', 'daysLeft']);
   add('get', '/api/insights/ai/forecast', {
     tag: 'Insights',
     id: 'aiForecast',

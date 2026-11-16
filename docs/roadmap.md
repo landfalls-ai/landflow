@@ -2336,8 +2336,17 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   `ollama_chat` rows ([observability.md](observability.md#8-token-and-cost-tracking)). The AI page's You card gives everyone their own
   spend and caps, and its Model group says "Not priced" and can rank by tokens ([llm-gateway.md](llm-gateway.md#the-ai-page)). By decision D5
   (2026-11-16) there is no "equivalent cost" for a local model: it costs $0 until someone prices it, and an unpriced one
-  is ranked by tokens. Equivalent cost is dropped, not postponed. Follow-ups: the You card leaves out by purpose and by
-  surface (the API returns them), and F's "by agent" and "most expensive runs" are not built.
+  is ranked by tokens. Equivalent cost is dropped, not postponed. The You card's caps carry SP11's forecast (the
+  forecast card's figure and words for the same cap, wired at integration). Follow-ups: the You card leaves out by
+  purpose and by surface (the API returns them), and F's "by agent" and "most expensive runs" are not built.
+- **Wave 13 join tests (integration), built**: `spend-local-price-join` (an imported `ollama_chat` row, a paired Landflow
+  row and Landflow's own Ollama call, priced once in Settings: the report's model row, "Not priced", Local models, the
+  You card and the rollup after a pass), `spend-forecast-join` (each own cap's figure and words equal on the forecast
+  card and the You card, as the person and as an owner, for a set cap and everyone's default) and `spend-report-join`
+  (for every group key and every filter a row can become, `none`, `provider/model` and `surface=none` included, the
+  runs and calls lists count the calls, cost and runs the report counts, owner and members, 24 hours, 7 and 30 days).
+  The last found the lists reading `model=provider/model` and `surface=none` as literal values (nothing listed); they
+  now take the report's filter forms.
 
 ## Practices (waves P1 and P2)
 

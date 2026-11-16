@@ -36,7 +36,7 @@ export function forecastNote(forecast: AiForecast, metric: 'cost' | 'tokens' = '
 export type CapOutlook = { tone: 'ok' | 'near' | 'full'; text: string };
 
 /** What a cap's forecast says: when it is reached, that it stays under, or today's pace. */
-export function capOutlook(cap: AiForecastCap, monthEnd: string): CapOutlook {
+export function capOutlook(cap: Pick<AiForecastCap, 'period' | 'metric' | 'max' | 'used' | 'forecast' | 'pace' | 'reachesOn'>, monthEnd: string): CapOutlook {
   if (cap.used >= cap.max) return { tone: 'full', text: 'Already at its limit' };
   if (cap.period === 'day') {
     const pace = cap.pace ?? 0;
