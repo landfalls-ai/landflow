@@ -2451,3 +2451,13 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   reload.
 - **Owed to a person:** the asks-first wording and the **Needs you** rows on a real phone, and whether "saved" should
   end autonomy at the first autosave rather than at the next open (decision D1 reads it at the next open).
+
+## Spotlight wave sb2
+
+- **SB09, changes that mean what they say, built (2026-11-16):** "retry 3 times" sets `retryOnFail` with `maxTries`
+  (the engine read the tries only with it: 0 of 3 right in sb1), settings are checked for range, an expression that
+  reads a field the step's input has no sample, pin or schema for is sent back once with the fields it has, a schedule
+  must parse and name the days the request named, an Authorization header read from the data is sent back, and a
+  credential with a hand-written header is a caution. After a run the host blocked, Spotlight makes no model call and
+  offers no suggestion, and a suggestion that moves a step's destination is advice with no chip
+  ([assistant.md](assistant.md#after-run-suggestions)). Left: the credential picker (SB12), asking which step (SB11).

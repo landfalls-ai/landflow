@@ -13,6 +13,8 @@ import type { NodeTypeInfo, Workflow } from '@/lib/shared/types';
 import { PARAMETER_FORMATS } from '../flow-builder';
 import { parseJsonReply } from '../nodes/structured';
 import { recordSuggestions, traceAssistant } from '../telemetry/assistant';
+import { needsPerson } from '@/lib/shared/run-check'; // SB09:
+import { destinationChanges } from './change-checks'; // SB09:
 import { assistantModel, modelLabel } from './model';
 import { registryLookup, validateOps } from './ops';
 import { availableTypes, catalogIndex, nodeContext, workflowOutline } from './research';
@@ -104,12 +106,14 @@ export function readSuggestions(reply: string, workflow: Workflow, types: NodeTy
     const { kind, title, detail, confidence, ops: rawOps } = entry.data;
     const validated = validateOps(workflow, rawOps, lookup);
     // A half-applicable change could leave the flow broken: all of it or none of it.
-    const complete = validated.ops.length > 0 && !validated.dropped.length;
+    // SB09: moving a step's destination because the host refused it is the httpbin incident (lesson 21): advice only, no chip, no "external" in the title.
+    const moves = destinationChanges(validated.ops, workflow);
+    const complete = validated.ops.length > 0 && !validated.dropped.length && !moves.length;
     const notes = [...validated.dropped, ...validated.ignored];
     suggestions.push({
       id: `sg_${nanoid(8)}`,
       kind,
-      title: title.slice(0, 120),
+      title: (moves.length && (/external|public/i.test(title) || /\b[a-z0-9-]+(\.[a-z0-9-]+)+\b/i.test(title)) ? 'Check where this step sends' : title).slice(0, 120), // SB09:
       detail,
       confidence: Math.min(1, Math.max(0, confidence > 1 ? confidence / 100 : confidence)),
       ops: complete ? validated.ops : [],
@@ -144,6 +148,12 @@ export async function suggestAfterRun(input: SuggestInput): Promise<SuggestResul
     if (TRIVIAL.has(node.type) && run.status === 'success') {
       setOutcome('skipped');
       return { suggestions: [], model: modelLabel(model), durationMs: Date.now() - started, skipped: `${node.type} has nothing to tune` };
+    }
+    // SB09: a host that blocks an address is for an admin to allow: no model call, nothing to offer (lesson 21).
+    const failure = run.error?.message ?? '';
+    if (/^\s*Blocked: /.test(failure) || needsPerson(failure) === 'blocked') {
+      setOutcome('skipped');
+      return { suggestions: [], model: modelLabel(model), durationMs: Date.now() - started, skipped: 'This host blocks that address: only an admin can allow it' };
     }
     const prompt = [
       workflowOutline(workflow),
