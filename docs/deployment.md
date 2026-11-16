@@ -794,6 +794,14 @@ above; the new ones are `landfall` node 7108/7208, `triage` node 7109/7209, `thr
 the `landflow-data` PVC first. Landfall, Triage, Threat Intel and Grafana need accounts of their own to do real work (credentials
 saved in Landflow), and the code runner and Mailpit have nothing to configure.
 
+Two things to know here. An agent's Ollama model has its own **Server URL**, prefilled with `http://127.0.0.1:11434`, which is the
+pod itself in a cluster: set it to `http://host.docker.internal:11434` (Spotlight and the second brain use `OLLAMA_URL`, which the
+overlay sets). And a 30B model on the Mac can starve the laptop for minutes while Spotlight builds a flow, so the overlay gives the
+host's liveness probe five minutes before it restarts the pod. Checked on this overlay, in headed Chrome as the owner: 22 plugins
+online, an invite emailed to Mailpit and accepted, a team project with a member, an Ollama agent chatted with and published, Python
+and JavaScript Code nodes run in the sandbox, Spotlight building and testing a flow on `qwen3-coder:30b` (3 min 30 s), the same
+model picked through the LiteLLM gateway, the AI page showing both, and the instance MCP server switched on (`tools/list`: 30 tools).
+
 The `:k8s-dev` tag keeps these apart from the Compose stack's `:dev` images.
 
 ### Deploy, use, scale
