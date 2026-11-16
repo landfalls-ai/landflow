@@ -743,6 +743,8 @@ diff, and overlays for the differences between clusters. A Helm chart would add 
 | `k8s/overlays/orbstack-ingress`, `orbstack-gateway-api` | the OrbStack overlay plus `gateway-ingress` or `gateway-httproute`, and `gateway-landflow-tokens`, for a Traefik in `landflow-ingress` |
 | `k8s/components/queue-mode` | optional, on top of `postgres`, `valkey` and `minio`: the host as two mains (`RollingUpdate`, the pod name as `LANDFLOW_INSTANCE_ID`, data in an `emptyDir`), a `landflow-worker` Deployment (`node worker.mjs`, `/healthz` probes, SIGTERM drain), PodDisruptionBudgets for both, and a Secret `landflow-queue` with dev-only values |
 | `k8s/components/minio` | optional: MinIO and a bucket-creating start script, for the binary store in queue mode |
+| `k8s/components/{landfall,triage,threat-intel,grafana,ai-sdk}` | one plugin each, same pattern as the base plugins; `orbstack` enables them |
+| `k8s/components/code-runner`, `mailpit`, `local-access` | the sandboxed code runner (with a NetworkPolicy that lets only the host in), Mailpit (SMTP sink and web UI), and LoadBalancer Services that publish the host, its MCP gateway and Mailpit's UI on localhost: "The whole thing on OrbStack" below |
 | `k8s/overlays/orbstack-queue` | the OrbStack overlay plus `postgres`, `valkey`, `minio` and `queue-mode`: "Queue mode on Kubernetes" below |
 | `k8s/examples/keda/` | KEDA `ScaledObject`s per broker, and `queue-workers.yaml` for the queue workers (not in any overlay): "Autoscaling with KEDA" below |
 | `k8s/examples/envoy-gateway/` | a `BackendTrafficPolicy` with long timeouts for the HTTPRoute, for Envoy Gateway |
@@ -768,6 +770,29 @@ docker --context orbstack buildx build --builder orbstack --load -f deploy/docke
 # … the same for text-toolkit (node, 7101/7201), py-insights (python, 7102/7202), messaging (node, 7104/7204),
 #   productivity (python, 7105/7205), google-workspace (go, 7106/7206), databases (go, 7107/7207)
 ```
+
+### The whole thing on OrbStack
+
+`overlays/orbstack` is the whole local Landflow: every plugin (the twelve in the base plus Browser, Agent Shell, Web Search,
+Landfall, Triage, Threat Intel, Grafana and AI SDK), the sandboxed code runner for Python and JavaScript Code nodes, Mailpit as the
+mail server, and the LiteLLM gateway and Ollama on the Mac. Sign-in is a password only: no identity provider, no OIDC, SAML or
+SCIM. The owner (`owner@landflow.test` / `landflow-dev-only`) invites people, and the invite email lands in Mailpit.
+
+| What | Where |
+|---|---|
+| Landflow | http://localhost:53000 (`components/local-access`: a LoadBalancer Service; OrbStack publishes it on the Mac) |
+| MCP gateway | http://localhost:54000/mcp |
+| Mailpit, every mail the host sends | http://localhost:58025 |
+| Code runner | `landflow-code-runner:7300` in the cluster, no route out (`components/code-runner`; the secret is the `code-runner-secret` key of the `landflow-host` Secret) |
+| LLM gateway | `http://host.docker.internal:54100` (the LiteLLM container of `compose.infra.yml`, profile `llm-gateway`, started first), with its development master key |
+
+The ports are the Compose stack's, so run one or the other. Build the images the overlay lists (the host and every plugin as
+above; the new ones are `landfall` node 7108/7208, `triage` node 7109/7209, `threat-intel` go 7110/7210, `ai-sdk` node 7115/7215,
+`grafana` node 7121/7221, `browser` from `plugins/browser/Dockerfile` 7112/7212, `agent-shell` node 7114/7214, `web-search` node
+7113/7213, and the runner from `deploy/docker/code-runner.Dockerfile` as `landflow/code-runner:k8s-dev`), then
+`kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack`. To start from an empty database scale the host to 0 and delete
+the `landflow-data` PVC first. Landfall, Triage, Threat Intel and Grafana need accounts of their own to do real work (credentials
+saved in Landflow), and the code runner and Mailpit have nothing to configure.
 
 The `:k8s-dev` tag keeps these apart from the Compose stack's `:dev` images.
 
