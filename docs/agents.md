@@ -662,13 +662,31 @@ persona-only. Its project context travels in the message (later work).
 
 ## Prompt cache
 
-Agents on an Anthropic model mark their system prompt and last tool as cache breakpoints (`cache_control: ephemeral`),
-so an agent loop that resends the same prefix on every iteration pays the cached-read price for it. It is always on for
-agents (it changes no answer); a prefix under the model's minimum length is simply not cached. The cached tokens show in
-the session's usage, the cost ledger prices them (Settings → AI prices has the cache read and write prices) and Run Trace
-shows them. Other chat model nodes are unchanged. OpenAI-compatible providers cache automatically on their side, and an
-agent deployed to kagent gets whatever its runtime does: kagent itself only reports `cachedInputTokens`, and has no
-response or semantic cache.
+Agents on an Anthropic model mark three cache breakpoints (`cache_control: ephemeral`), in the API's order: the last
+tool; the end of the **stable** part of the system prompt (the persona or instructions, the skills, the project block and
+the practices); and the last block of the conversation so far. So an agent loop that resends the same prefix on every
+iteration pays the cached-read price for it, and so does the history it has built up. The memory, the intro line
+(`You are "…"`) and the date line come after the second breakpoint, as the system prompt's second text block, so a new
+memory note or a new run's date no longer makes the stable part a miss. The text the model sees is the same as before
+(View prompt and the Run Trace's "What it saw" are unchanged). It is always on for agents (it changes no answer); a prefix
+under the model's minimum length is simply not cached.
+
+The cross-session memory is read once, at the start of a run. A `remember` during the run is saved as before and is in the
+conversation (the tool's result); it reaches the system prompt on the next run, and a run resumed after an approval reads
+it again. The call's `prefixHash` (the AI call's parts) is now the hash of the stable prefix: tools plus stable system.
+
+Measured on a local fake that simulates Anthropic's cache (5 minutes, 1,024-token minimum, 20-block lookback;
+`apps/web/test/prompt-cache-layout.test.ts`, which prints the numbers): a four-iteration run with one `remember`, then a
+second run four minutes later. Base's layout read 3,215 cache tokens on iterations 2 to 4 and paid 373 at the full input
+price, and the second run read 1,612; the new layout read 5,054 and paid 0 at full price on iterations 2 to 4, and 3,180
+on the second run. At Sonnet prices the first run went from $0.01541 to $0.00941 and the second from $0.00737 to
+$0.00208. Base's layout lost the whole cache on the iteration after a `remember`; the new layout does not. These are the
+fake's numbers, not Anthropic's.
+
+The cached tokens show in the session's usage, the cost ledger prices them (Settings → AI prices has the cache read and
+write prices) and Run Trace shows them. Other chat model nodes are unchanged. OpenAI-compatible providers cache
+automatically on their side, and an agent deployed to kagent gets whatever its runtime does: kagent itself only reports
+`cachedInputTokens`, and has no response or semantic cache.
 
 ## Response cache
 

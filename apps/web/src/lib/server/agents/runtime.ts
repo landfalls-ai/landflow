@@ -39,7 +39,7 @@ import { chooseTier } from '../../shared/agent-router';
 import { cacheKey, responseCache } from './response-cache';
 import { configHash, embedderFor, semanticCache } from './semantic-cache';
 import { agentModel } from './models';
-import { cleanPersona, personaPrompt } from '../../shared/persona';
+import { cleanPersona, personaPrompt, personaPromptParts } from '../../shared/persona';
 import { sawPersona } from '../../shared/what-it-saw-sections';
 import { agentStore, configOf } from './store';
 import type { MemberPause } from '../agent-teams/pause';
@@ -166,19 +166,17 @@ function systemPrompt(agent: Agent, config: AgentConfig, session: AgentSession, 
 // SP03: the same prompt with its segments, for the call's draft: persona, instructions, skills and the intro line are
 // `instructions`; then the project block, the practices, memory and the team's tool note, each its own part. The date
 // stamp is a `formatting` segment, which no part hash covers, so a new run's date doesn't change the instructions' hash.
-export function systemPromptParts(agent: Agent, config: AgentConfig, session: AgentSession, runCtx: RunContext, extra?: string): { text: string; segments: SystemSegment[] } {
-  let memory: string | undefined;
-  if (config.memory.crossSession) {
-    const notes = agentStore.memories(agent.id, session.userId);
-    memory = [
-      '## What you remember about this user',
-      notes.length ? notes.map((n) => `- ${n.text} (${n.at.slice(0, 10)})`).join('\n') : '(nothing yet)',
-      'Use the remember tool for durable facts worth knowing next time.',
-    ].join('\n');
-  }
+// SP19: the prompt is cut where it stops being stable (`cacheBreak`, a character index): the last segment before it is
+// marked `breakpoint`, so the provider's cache point sits after the project block and the practices, and the memory,
+// the intro line and the date stamp (which change between runs) come after it. `memoryText` is the memory read once at the
+// run's start (see `memoryBlock`); without it the notes are read now, as before.
+export function systemPromptParts(agent: Agent, config: AgentConfig, session: AgentSession, runCtx: RunContext, extra?: string, memoryText?: string): { text: string; segments: SystemSegment[]; cacheBreak: number } {
+  const memory = memoryText ?? memoryBlock(agent, config, session);
   // The date is the run's own, pinned at its start: a clock that moves on every model call defeats the provider's prompt cache.
   const now = new Date(runCtx.at);
-  const prompt = personaPrompt(config, { memory, now, ...(runCtx.text && { context: runCtx.text }) });
+  const parts = personaPromptParts(config, { memory, now, ...(runCtx.text && { context: runCtx.text }) });
+  const prompt = parts.stable + parts.volatile;
+  const cacheBreak = parts.stable.length;
   // Where the project block and the memory sit in the prompt: a probe with markers in their places (the persona text never holds a NUL).
   const probe = personaPrompt(config, { memory: memory && MEMORY_MARK, now, ...(runCtx.text && { context: CONTEXT_MARK }) });
   const marks: { at: number; mark: string; text: string; parts: SystemSegment[] }[] = [];
@@ -204,8 +202,29 @@ export function systemPromptParts(agent: Agent, config: AgentConfig, session: Ag
   }
   if (textAt < body.length) segments.push({ part: 'instructions', text: body.slice(textAt) });
   if (body !== prompt) segments.push({ part: 'formatting', text: stamp });
-  if (extra) segments.push({ part: 'toolNote', text: `\n\n${extra}` });
-  return { text: extra ? `${prompt}\n\n${extra}` : prompt, segments };
+  // SP19: cut at the break (a segment that spans it is split in two) and mark the last stable segment.
+  const cut: SystemSegment[] = [];
+  let at = 0;
+  for (const seg of segments) {
+    const end = at + seg.text.length;
+    if (at < cacheBreak && end > cacheBreak) {
+      cut.push({ part: seg.part, text: seg.text.slice(0, cacheBreak - at), breakpoint: true }, { part: seg.part, text: seg.text.slice(cacheBreak - at) });
+    } else cut.push(end === cacheBreak && seg.text ? { ...seg, breakpoint: true } : seg);
+    at = end;
+  }
+  if (extra) cut.push({ part: 'toolNote', text: `\n\n${extra}` });
+  return { text: extra ? `${prompt}\n\n${extra}` : prompt, segments: cut, cacheBreak };
+}
+
+/** SP19: the cross-session memory as the prompt shows it, read once at the run's start (a `remember` mid-run reaches the next run). */
+export function memoryBlock(agent: Agent, config: AgentConfig, session: AgentSession): string | undefined {
+  if (!config.memory.crossSession) return undefined;
+  const notes = agentStore.memories(agent.id, session.userId);
+  return [
+    '## What you remember about this user',
+    notes.length ? notes.map((n) => `- ${n.text} (${n.at.slice(0, 10)})`).join('\n') : '(nothing yet)',
+    'Use the remember tool for durable facts worth knowing next time.',
+  ].join('\n');
 }
 
 const CONTEXT_MARK = '\u0000project-block\u0000';
@@ -345,6 +364,8 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     recordRunPractices('delivered', runCtx.practices, { ...(runCtx.projectId && { projectId: runCtx.projectId }), ...(session.execution?.executionId && { executionId: session.execution.executionId }), agentId: agent.id, ...(currentActorId() && { userId: currentActorId() }) });
   }
   session.context = runCtx;
+  // SP19: the memory is read once for the run (a `remember` during it is in the conversation and reaches the prompt next run).
+  const runMemory = memoryBlock(agent, config, session);
   // PC13: the project's settings for agents, read once for the run (undefined: none on, the run is as it was).
   const rules = projectAgentRules(runCtx.projectId);
   const notAllowed = rules && !rules.agentAllowed(agent.id) ? agentNotAllowedMessage(config.name, rules.projectName) : undefined;
@@ -607,11 +628,11 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       let turn;
       try {
         // SP03: the prompt's parts go with the call (in memory only), for the split the meter's listener writes.
-        const system = systemPromptParts(agent, config, session, runCtx, toolNote);
+        const system = systemPromptParts(agent, config, session, runCtx, toolNote, runMemory);
         const messages = await hydrateToolImages({ helpers: storeHelpers(binaryScopeFor(ctx)), logger: { warn: (m: string) => logger.warn(m) } as never }, contextWindow(session.messages), { model, keep: keptToolImages(request, config.settings), mode: request.toolImages?.mode });
         const draft = agentDraft({ systemSegments: system.segments, tools: specs, messages, cache: model.provider === 'anthropic' });
         // An outer purpose wins (an evaluation run's calls stay `eval`); else this is an answer.
-        turn = await withCallNote({ purpose: currentCallNote().purpose ?? 'answer', iteration: iterations, draft }, () => model.generate({ system: system.text, messages, tools: specs, signal: request.signal }));
+        turn = await withCallNote({ purpose: currentCallNote().purpose ?? 'answer', iteration: iterations, draft }, () => model.generate({ system: system.text, systemCacheBreak: system.cacheBreak, messages, tools: specs, signal: request.signal }));
       } catch (error) {
         if (isUsageCapError(error)) {
           upsert({ id: entryId(), type: 'notice', message: `Stopped: ${error.message}.`, at: now() });

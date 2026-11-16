@@ -139,6 +139,28 @@ export function toAnthropicMessages(messages: AgentMessage[]): Anthropic.Beta.Be
   });
 }
 
+// SP19: the system as one block, or two when `at` marks where the stable part ends; the cache point sits on the first block, or on the only one.
+function systemBlocks(system: string, at?: number) {
+  const mark = { type: 'ephemeral' as const };
+  if (at === undefined || at <= 0 || at >= system.length) return [{ type: 'text' as const, text: system, cache_control: mark }];
+  return [{ type: 'text' as const, text: system.slice(0, at), cache_control: mark }, { type: 'text' as const, text: system.slice(at) }];
+}
+
+// SP19: a cache point on the conversation so far: the last content block of the last message (a text, tool_use or
+// tool_result block; never a thinking block, then the block before it, else none). Copies; the replayed raw blocks stay as they came.
+export function withMessageBreakpoint(messages: Anthropic.Beta.BetaMessageParam[]): Anthropic.Beta.BetaMessageParam[] {
+  const last = messages.at(-1);
+  if (!last) return messages;
+  const mark = { type: 'ephemeral' as const };
+  const blocks: Anthropic.Beta.BetaContentBlockParam[] = typeof last.content === 'string' ? (last.content ? [{ type: 'text', text: last.content }] : []) : [...(last.content as Anthropic.Beta.BetaContentBlockParam[])];
+  const at = blocks.findLastIndex((b) => b.type !== 'thinking' && b.type !== 'redacted_thinking');
+  if (at < 0) return messages;
+  const block = blocks[at]!;
+  if (block.type === 'text' && !block.text) return messages;
+  blocks[at] = { ...block, cache_control: mark } as Anthropic.Beta.BetaContentBlockParam;
+  return [...messages.slice(0, -1), { ...last, content: blocks } as Anthropic.Beta.BetaMessageParam];
+}
+
 /**
  * Anthropic's usage: `input_tokens` counts only the prompt after the last cache breakpoint; cache reads and writes are
  * reported next to it. `inputTokens` here is the whole prompt, with the cached parts alongside (priced separately).
@@ -155,7 +177,7 @@ export function anthropicUsage(usage: { input_tokens: number; output_tokens: num
 }
 
 /**
- * `promptCache` marks the system prompt and the last tool as cache breakpoints (Anthropic's `cache_control`), so an agent loop that
+ * `promptCache` marks the last tool, the stable part of the system prompt and the conversation's last block as cache breakpoints (Anthropic's `cache_control`), so an agent loop that
  * resends the same prefix on every iteration pays the cached-read price for it. Prompts under the model's minimum are simply not cached.
  */
 export function anthropicModel(options: { model: string; effort: Effort; maxTokens: number; fallback: boolean; apiKey?: string; baseUrl?: string; credentialId?: string; promptCache?: boolean; gateway?: 'litellm' }): LanguageModel {
@@ -191,13 +213,14 @@ export function anthropicModel(options: { model: string; effort: Effort; maxToke
     },
   };
 
-  async function call({ system, messages, tools, signal, onToken }: Parameters<LanguageModel['generate']>[0]): Promise<ProviderReply> {
+  async function call({ system, systemCacheBreak, messages, tools, signal, onToken }: Parameters<LanguageModel['generate']>[0]): Promise<ProviderReply> {
     let response: Anthropic.Beta.BetaMessage;
     const params = {
       model: options.model,
       max_tokens: options.maxTokens,
-      ...(system && { system: options.promptCache ? [{ type: 'text' as const, text: system, cache_control: { type: 'ephemeral' as const } }] : system }),
-      messages: toAnthropicMessages(messages),
+      // SP19: with a cache break the system goes as two blocks, the stable one holding the cache point; the conversation gets one too (3 of the 4 allowed).
+      ...(system && { system: options.promptCache ? systemBlocks(system, systemCacheBreak) : system }),
+      messages: options.promptCache ? withMessageBreakpoint(toAnthropicMessages(messages)) : toAnthropicMessages(messages),
       ...(tools.length && {
         tools: tools.map((tool: ToolSpec, index) => ({
           name: tool.name,
