@@ -587,3 +587,11 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - There is no history chart: progress is a count over the last 7 or 30 days.
 - The nightly "Goals that moved" covers the goals of the projects a person has a role in, five at most; an owner or admin
   gets the goals of their own projects, not every goal.
+
+## A call's composition in the Run Trace (wave 12, SP07)
+
+- A model step is matched to its call by model name, agent and node and a time window (1 second before the step to 2
+  after), not by an id, so two parallel steps on the same model and node can match each other's call.
+- The run's spend record holds its newest 500 calls; in a longer run an older step says it may be older than the record.
+- A step's split is read when its sheet opens and again when the step ends or its status moves; it is not live inside one
+  step.

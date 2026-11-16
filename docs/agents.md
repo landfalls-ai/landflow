@@ -473,7 +473,7 @@ agents. At most 200 sessions are kept per agent. Each one keeps:
 The **Sessions** tab lists them with a switch: **People** (the test chat, Telegram, Slack and Teams), **Automations**
 (schedules, workflows, other agents and the API) and **All**. It opens on People when there are any, otherwise on All.
 `GET /api/agents/:id/sessions?audience=people|automations` does the filtering, in the store, so it is the same for files
-and the database, and pages with `cursor` (**Show more** loads the next page). There is no Auto-refresh switch: new
+and the database, and pages with `cursor` (**Show more** loads the next page). An open session's header shows its tokens and, when the model reported them, how many were read from the prompt cache ("N cached"). There is no Auto-refresh switch: new
 sessions appear on their own every few seconds, except while the pointer is over the list or it is being scrolled.
 Only one run can be active per session.
 
