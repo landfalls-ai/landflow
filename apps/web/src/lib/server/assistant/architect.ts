@@ -77,7 +77,7 @@ export interface ArchitectInput {
   resources?: AgentResources;
   /** The project the agent is being built for (the route checked the caller's role): its goals go to the model as data. */
   projectId?: string;
-  /** The only tools the model is offered (designAgent's short attempt offers propose_agent alone); all of them when absent. */
+  /** The only tools the model is offered (designAgent's short attempt offers propose_design alone); all of them when absent. */
   only?: string[];
 }
 
@@ -153,7 +153,7 @@ const TOOLS: ToolSpec[] = [
         mission: { type: 'string', description: 'What it does for them' },
         whatIDo: { type: 'array', items: { type: 'string' }, description: 'Up to 3 short lines (under 80 characters) for its team card: "Triages new tickets"' },
         tones: { type: 'array', items: { type: 'string' }, description: '2–3 words: Precise, Friendly, Calm, Direct, Warm, Brief, Thorough, Patient, Formal, Empathetic' },
-        length: { type: 'string', enum: ['sentence', 'short', 'detailed'] },
+        length: { type: 'string', enum: ['sentence', 'paragraph', 'detailed'] },
         always: { type: 'array', items: { type: 'string' }, description: 'Rules, a sentence each' },
         never: { type: 'array', items: { type: 'string' } },
         instructions: { type: 'string', description: 'How it works, step by step, naming its tools' },
@@ -168,7 +168,7 @@ const TOOLS: ToolSpec[] = [
 ];
 
 /**
- * propose_agent with only plain strings, for designAgent's short attempt: qwen3-coder writes a tool call as XML, and
+ * propose_agent with only plain strings, for designAgent's short attempt and the dialog on Ollama models: qwen3-coder writes a tool call as XML, and
  * Ollama's parser fails on the nested arrays of objects propose_agent takes ("XML syntax error … unexpected EOF").
  * `fromDesign` turns it into propose_agent's arguments.
  */
@@ -205,7 +205,7 @@ const DESIGN_TOOL: ToolSpec = {
 /** SB06: the tools with propose_agent replaced by the flat propose_design. */
 const flatTools = (list: ToolSpec[]): ToolSpec[] => list.map((t) => (t.name === 'propose_agent' ? DESIGN_TOOL : t));
 
-const plain = (value: unknown) => (typeof value === 'string' ? value.replace(LEAKED_MARKUP, '').trim() : '');
+const plain = (value: unknown): string => (typeof value === 'string' ? value.replace(LEAKED_MARKUP, '').trim() : Array.isArray(value) ? value.filter((v) => typeof v === 'string').map((v) => plain(v)).filter(Boolean).join('\n') : '');
 
 /** propose_design's plain strings as propose_agent's arguments. */
 export function fromDesign(args: Record<string, unknown>): Record<string, unknown> {
@@ -216,7 +216,7 @@ export function fromDesign(args: Record<string, unknown>): Record<string, unknow
     ...list(args.nodeTools, /[,\n]/).filter((t) => !/^(none|no|n\/a|-)$/i.test(t)).map((nodeType) => ({ type: 'node', nodeType })),
   ];
   const none = /^(none|no|n\/a|-)$/i; // SB06:
-  const length = ({ short: 'sentence', medium: 'short', long: 'detailed', sentence: 'sentence', detailed: 'detailed' } as Record<string, string>)[plain(args.answerLength).toLowerCase()]; // SB06:
+  const length = ({ short: 'sentence', medium: 'paragraph', long: 'detailed', sentence: 'sentence', paragraph: 'paragraph', detailed: 'detailed' } as Record<string, string>)[plain(args.answerLength).toLowerCase()]; // SB06:
   tools.push(
     ...list(args.workflowTools, /[,\n]/).filter((id) => !none.test(id)).map((workflowId) => ({ type: 'workflow', workflowId })), // SB06:
     ...list(args.agentTools, /[,\n]/).filter((id) => !none.test(id)).map((agentId) => ({ type: 'agent', agentId })), // SB06:
@@ -356,7 +356,8 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
   set('tones', texts(parsed(args.tones), 24, 4, /[,;\n]/));
   set('always', texts(parsed(args.always), 200, 8, /\n/));
   set('never', texts(parsed(args.never), 200, 8, /\n/));
-  if (args.length === 'sentence' || args.length === 'short' || args.length === 'detailed') persona.length = args.length as AnswerLength;
+  if (args.length === 'sentence' || args.length === 'paragraph' || args.length === 'detailed') persona.length = args.length as AnswerLength;
+  else if (args.length === 'short') persona.length = 'paragraph'; // the old name for the middle value
 
   const tools: AgentToolConfig[] = [];
   const names = new Set<string>();
@@ -499,7 +500,7 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
     SYSTEM,
     `\nPlugins online and the nodes an agent can use from them (search_nodes for details):\n${catalogSummary(types)}`,
     input.projectId ? builderContextEntry(input.actor, { projectId: input.projectId }) : '', // PC10
-    draft ? `\nThe draft so far (propose_agent replaces it):\n${JSON.stringify({ ...draft, avatar: undefined }).slice(0, 6000)}` : '',
+    draft ? `\nThe draft so far (a new proposal replaces it):\n${JSON.stringify({ ...draft, avatar: undefined }).slice(0, 6000)}` : '',
   ].join('\n');
 
   let currentStep = 0;
@@ -630,7 +631,7 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
         }
         usage.inputTokens += turn.usage?.inputTokens ?? 0;
         usage.outputTokens += turn.usage?.outputTokens ?? 0;
-        const { text: reply, calls } = turn.toolCalls.length ? { text: turn.text, calls: turn.toolCalls } : recoverToolCalls(turn.text, new Set(offered.map((t) => t.name))); // SB06:
+        const { text: reply, calls } = turn.toolCalls.length ? { text: turn.text, calls: turn.toolCalls } : recoverToolCalls(turn.text, new Set([...offered.map((t) => t.name), 'propose_agent'])); // SB06:
         if (reply.trim()) {
           const shown = withoutRepeats(reply, said);
           said += `\n${reply}`;

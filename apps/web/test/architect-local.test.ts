@@ -4,6 +4,7 @@
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { LanguageModel, ModelTurn } from '@landflow/engine';
+import { agentConfigSchema } from '@/lib/server/agents/http';
 import type { NodeTypeInfo } from '@/lib/shared/types';
 
 const { corePlugin } = await import('@/lib/server/nodes');
@@ -94,6 +95,14 @@ describe('the Agent architect on a local model', () => {
     // Workflow and agent ids that don't exist are reported, not turned into tools.
     expect(draft.dropped.join(' ')).toContain('wf_nope');
     expect(draft.dropped.join(' ')).toContain('ag_nope');
+  });
+
+  it.each([['medium', 'paragraph'], ['short', 'sentence'], ['long', 'detailed']])('a %s answer length gives a draft the import accepts', async (answerLength, length) => {
+    const events = await ask(scripted('ollama', [{ toolCalls: [{ id: 'c1', name: 'propose_design', input: { name: 'Len', role: 'Tester', instructions: 'Test.', answerLength } }] }, { text: 'Drafted.' }]));
+    const draft = events.find((e) => e.type === 'draft');
+    if (draft?.type !== 'draft') throw new Error('no draft');
+    expect(draft.config.persona?.length).toBe(length);
+    expect(agentConfigSchema.safeParse(draft.config).success).toBe(true);
   });
 
   it('retries a parse error with the flat tool, whatever the provider, and a draft arrives', async () => {

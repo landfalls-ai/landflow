@@ -62,7 +62,7 @@ never values) and the persona templates. Then it proposes the whole agent (`prop
 the whole agent again, built on the draft so far.
 
 On a local (Ollama) model the architect proposes with the flat `propose_design` instead: the same agent with every value
-as plain text (name, audience, mission, Always and Never one rule per line, answer length `short`, `medium` or `long`,
+as plain text (name, audience, mission, Always and Never one rule per line, answer length `short`, `medium` or `long` (a sentence, a paragraph, detailed),
 node, workflow and agent tool ids comma-separated), because the nested arrays of `propose_agent` do not get through
 Ollama's tool-call parser (qwen3-coder's XML call fails with "XML syntax error"). The draft, its checks and the way you
 change it are the same. When any model's tool call cannot be parsed, the architect asks once more offering `propose_design`
