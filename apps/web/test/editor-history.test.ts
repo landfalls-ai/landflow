@@ -211,4 +211,15 @@ describe('undo / redo of the name, tags and settings', () => {
     expect(editor().storedMatchesSaved({ ...stored, active: true, updatedAt: 'v2' })).toBe(true);
     expect(editor().storedMatchesSaved({ ...stored, name: 'Changed elsewhere' })).toBe(false);
   });
+
+  it('carries a setWorkflowSettings proposal into the editor, and Undo restores the old settings', async () => {
+    const { applyOps } = await import('@/lib/shared/assistant-ops');
+    const result = applyOps(editor().toWorkflow(), [{ op: 'setWorkflowSettings', settings: { timeoutSeconds: 300 } }], () => undefined);
+    expect(result.applied).toHaveLength(1);
+    const undo = editor().replaceGraph(result.workflow);
+    expect(editor().toWorkflow().settings).toEqual({ timezone: 'UTC', timeoutSeconds: 300 });
+    expect(editor().dirty).toBe(true);
+    undo();
+    expect(editor().toWorkflow().settings).toEqual({ timezone: 'UTC' });
+  });
 });

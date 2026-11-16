@@ -306,6 +306,35 @@ async function getFile(ctx: IExecuteContext, api: ApiContext, credentials: Slack
   return new ItemWithFiles(file, { [property]: ref });
 }
 
+// SB10: what Send, Update and Get Permalink return (Slack's own answer without ok/response_metadata), so a later step reads `$json.ts`.
+const MESSAGE_SENT_SCHEMA: JsonObject = {
+  type: 'object',
+  properties: {
+    channel: { type: 'string', description: 'The id of the channel the message was posted in (C…)' },
+    ts: { type: 'string', description: 'The message timestamp: its id in the channel (use it as the thread_ts of a reply, or as Message Timestamp to update it)' },
+    message: { type: 'object', description: 'The message as Slack stored it: text, ts, user, blocks' },
+  },
+  required: ['channel', 'ts'],
+};
+const MESSAGE_UPDATED_SCHEMA: JsonObject = {
+  type: 'object',
+  properties: {
+    channel: { type: 'string', description: 'The id of the channel the message is in' },
+    ts: { type: 'string', description: 'The timestamp of the updated message' },
+    text: { type: 'string', description: 'The new text of the message' },
+    message: { type: 'object', description: 'The message as Slack stored it after the update' },
+  },
+  required: ['channel', 'ts'],
+};
+const PERMALINK_SCHEMA: JsonObject = {
+  type: 'object',
+  properties: {
+    channel: { type: 'string', description: 'The id of the channel the message is in' },
+    permalink: { type: 'string', description: 'The URL that opens the message in Slack' },
+  },
+  required: ['channel', 'permalink'],
+};
+
 /** Get: an activity item plus the message's full text. */
 const ACTIVITY_WITH_TEXT_SCHEMA: JsonObject = {
   ...ACTIVITY_ITEM_SCHEMA,
@@ -434,9 +463,9 @@ export const Slack = defineNode({
             idempotent: true,
             outputSchema: ACTIVITY_ITEM_SCHEMA,
           },
-          { name: 'Get Permalink', value: 'getPermalink', action: 'Get a message permalink', idempotent: true },
-          { name: 'Send', value: 'post', action: 'Send a message' },
-          { name: 'Update', value: 'update', action: 'Update a message' },
+          { name: 'Get Permalink', value: 'getPermalink', action: 'Get a message permalink', idempotent: true, outputSchema: PERMALINK_SCHEMA },
+          { name: 'Send', value: 'post', action: 'Send a message', outputSchema: MESSAGE_SENT_SCHEMA },
+          { name: 'Update', value: 'update', action: 'Update a message', outputSchema: MESSAGE_UPDATED_SCHEMA },
         ],
       },
       {

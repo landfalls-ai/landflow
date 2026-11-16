@@ -8,7 +8,8 @@ import { describe, expect, it } from 'vitest';
 import type { LanguageModel, ModelTurn, Workflow } from '@landflow/engine';
 import { call, checks, defineScenarios, scriptedModel, touchedNodes, type Outcome, type Scenario } from './spotlight-scenarios/scenario';
 import sb00 from './spotlight-scenarios/sb00';
-import { assertUnit, failedChecks, judge, liveEnabled, reportOf, runScenario, tables } from './spotlight-scenarios/harness';
+import sb01 from './spotlight-scenarios/sb01';
+import { assertUnit, failedChecks, judge, liveEnabled, outboundAllow, outboundEnv, reportOf, runScenario, tables } from './spotlight-scenarios/harness';
 
 const node = (id: string, name: string, parameters: Record<string, unknown> = {}) => ({ id, name, type: 'core.code', typeVersion: 1, position: [0, 0] as [number, number], parameters });
 const wf = (): Workflow => ({ id: 'wf_h', name: 'H', nodes: [node('a', 'A'), node('b', 'B'), node('c', 'C')], connections: [{ id: 'e1', type: 'main', source: 'a', sourceIndex: 0, target: 'b', targetIndex: 0 }], pinData: {}, settings: {} }) as Workflow;
@@ -289,5 +290,107 @@ describe('the scenario data directory (env.ts)', () => {
         for (const d of [stale, unknown, running, fresh, process.env.LANDFLOW_DATA_DIR]) fs.rmSync(d, { recursive: true, force: true });
       });`);
     expect(JSON.parse(r.stdout.trim().split('\n').pop()!)).toEqual({ stale: false, unknown: false, running: true, fresh: true });
+  });
+});
+
+// SB10 (carryover items 3, 4 and 5): the scorecard reads what happened.
+describe('the build checks read the draft', () => {
+  const check = (scenarios: Scenario[], id: string) => scenarios.flatMap((s) => s.checks).find((c) => c.id === id)!;
+  const slack = { id: 'n', name: 'Post', type: 'messaging.slack', typeVersion: 1, position: [0, 0] as [number, number], parameters: {} };
+  const build = (left: Array<{ kind: string }>, over: Partial<Outcome> = {}) =>
+    outcome({ text: 'Built 1 nodes', draft: { nodes: [{ key: 'n', type: 'messaging.slack', name: 'Post', parameters: {} }], left }, after: { id: 'd', name: 'D', nodes: [slack], connections: [] } as unknown as Workflow, ...over });
+
+  it('scores credentials-listed true when the draft’s left holds a credential item, false when it does not', () => {
+    const listed = check(sb00, 'credentials-listed');
+    expect(listed.judge(build([{ kind: 'credential' }]))).toBe(true);
+    expect(listed.judge(build([{ kind: 'empty' }]))).toBe(false);
+    expect(listed.judge(outcome({ text: 'Pick a credential for Slack', after: { id: 'd', name: 'D', nodes: [slack], connections: [] } as unknown as Workflow }))).toBe(true);
+  });
+
+  it('scores left-listed from draft.left, n/a when the draft lacks nothing', () => {
+    const listed = check(sb00, 'left-listed');
+    expect(listed.judge(build([{ kind: 'credential' }]))).toBe(true);
+    expect(listed.judge(build([]))).toBe('n/a');
+  });
+
+  it('scores sent-back-once n/a for one call with nothing empty, true for two calls, false for one call with an empty part', () => {
+    const sentBack = check(sb01, 'sent-back-once');
+    expect(sentBack.judge(outcome({ modelCalls: 1, draft: { left: [] } }))).toBe('n/a');
+    expect(sentBack.judge(outcome({ modelCalls: 2, draft: { left: [] } }))).toBe(true);
+    expect(sentBack.judge(outcome({ modelCalls: 1, draft: { left: [{ kind: 'empty' }] } }))).toBe(false);
+  });
+
+  it('reads a build’s model calls from draft.calls (the unit form: one call when nothing was empty, two after a send-back)', async () => {
+    // One at a time: each build points OLLAMA_URL at its own fake model.
+    const outcomes: Outcome[] = [];
+    for (const s of sb01.filter((x) => x.via === 'build' && x.script?.length)) outcomes.push(await runScenario(s, 'unit'));
+    expect(outcomes.length).toBeGreaterThan(0);
+    for (const o of outcomes) {
+      expect(typeof (o.draft as { calls?: number }).calls).toBe('number');
+      expect(o.modelCalls).toBe((o.draft as { calls: number }).calls);
+    }
+  });
+});
+
+describe('the outbound policy of a live run', () => {
+  it('leaves LANDFLOW_OUTBOUND_ALLOW unset unless the scenario says allowed, even with an echo server', () => {
+    expect(outboundAllow({}, 'live')).toBeUndefined();
+    expect(outboundAllow({ start: { outbound: 'blocked' } }, 'live')).toBeUndefined();
+    expect(outboundAllow({ start: { outbound: 'allowed' } }, 'live')).toBe('127.0.0.1,localhost');
+    expect(outboundAllow({ start: { outbound: 'allowed' } }, 'unit')).toBeUndefined();
+  });
+
+  it('gives a live run the policy outright: blocked has blockPrivate and no allow list, allowed lists loopback', async () => {
+    const { outboundPolicy } = await import('@/lib/server/net/safe-fetch');
+    const saved = { b: process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE, a: process.env.LANDFLOW_OUTBOUND_ALLOW };
+    const apply = (env: ReturnType<typeof outboundEnv>) => {
+      for (const [k, v] of Object.entries(env ?? {})) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+      return outboundPolicy();
+    };
+    try {
+      process.env.LANDFLOW_OUTBOUND_ALLOW = '10.0.0.0/8';
+      const blocked = apply(outboundEnv({ start: { outbound: 'blocked' } }, 'live'));
+      expect(blocked.blockPrivate).toBe(true);
+      expect(blocked.allow.length).toBe(0);
+      const allowed = apply(outboundEnv({ start: { outbound: 'allowed' } }, 'live'));
+      expect(allowed.blockPrivate).toBe(true);
+      expect(allowed.allow).toEqual(['127.0.0.1', 'localhost']);
+      expect(outboundEnv({}, 'unit')).toBeUndefined();
+    } finally {
+      if (saved.b === undefined) delete process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE; else process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE = saved.b;
+      if (saved.a === undefined) delete process.env.LANDFLOW_OUTBOUND_ALLOW; else process.env.LANDFLOW_OUTBOUND_ALLOW = saved.a;
+    }
+  });
+
+  it('is set on the SB03 scenarios: blocked for the blocked session, allowed for the others', async () => {
+    const sb03 = (await import('./spotlight-scenarios/sb03')).default;
+    for (const s of sb03) expect(s.start?.outbound, s.id).toBe(s.id === 'sb03-blocked-session' ? 'blocked' : 'allowed');
+  });
+
+  it('a live run of a blocked scenario blocks private addresses with no allow list, and puts back what was there', async () => {
+    const seen: Array<string | undefined> = [];
+    const blockSeen: Array<string | undefined> = [];
+    const previous = process.env.LANDFLOW_OUTBOUND_ALLOW;
+    process.env.LANDFLOW_OUTBOUND_ALLOW = '10.0.0.0/8';
+    const scenario: Scenario = { id: 'sb10-h-blocked', owner: 'SB10', job: 'fix', via: 'chat', title: 't', ask: 'a', start: { workflow: wf(), outbound: 'blocked' }, checks: [] };
+    // The live chat route needs a model; a stub fetch refuses at once (nothing is reached): only the environment during the run matters.
+    const original = fetch;
+    globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
+      seen.push(process.env.LANDFLOW_OUTBOUND_ALLOW);
+      blockSeen.push(process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE);
+      void args;
+      throw new Error('no model here');
+    }) as typeof fetch;
+    try {
+      await runScenario(scenario, 'live', { echo: { port: 3399, log: [] } });
+    } finally {
+      globalThis.fetch = original;
+    }
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((v) => v === undefined)).toBe(true);
+    expect(blockSeen.every((v) => v === 'true')).toBe(true);
+    expect(process.env.LANDFLOW_OUTBOUND_ALLOW).toBe('10.0.0.0/8');
+    if (previous === undefined) delete process.env.LANDFLOW_OUTBOUND_ALLOW;
+    else process.env.LANDFLOW_OUTBOUND_ALLOW = previous;
   });
 });

@@ -30,6 +30,7 @@ set a flow needs to land a change: the type is `github.github`, the other `produ
 
 Category Development, `usableAsTool: true`, not idempotent (the read operations are). Every operation takes **Owner** and **Repository**;
 parameters are read per item and every output item is paired with its input. Results are compact objects (not GitHub's full payloads).
+Pull Request → Create, Get, List Files and Comment, and Issue → Create and Comment, declare an `outputSchema` (one object per item, a description per field), so a later step reads `$json.number` or `$json.url` as the schema names it.
 
 | Resource | Operation | Parameters | Result |
 |---|---|---|---|

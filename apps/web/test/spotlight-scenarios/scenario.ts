@@ -62,8 +62,8 @@ export interface Start {
   tagged?: string[];
   /**
    * Wave sb2 (SB10, carryover item 5): the host's outbound policy for the session's live runs. `blocked` (the default
-   * for a scenario that has no echo server) leaves `LANDFLOW_OUTBOUND_ALLOW` unset, so a run to 127.0.0.1 is refused by
-   * the host as on a fresh install; `allowed` sets it to `127.0.0.1,localhost` and nothing wider. Before sb2 the live
+   * for a scenario that has no echo server) runs with `LANDFLOW_OUTBOUND_BLOCK_PRIVATE=true` and no `LANDFLOW_OUTBOUND_ALLOW`, so a run to 127.0.0.1 is refused by
+   * the host as production refuses it; `allowed` sets it to `127.0.0.1,localhost` and nothing wider. Before sb2 the live
    * form allowed loopback whenever an echo server ran, so a blocked scenario was never blocked live.
    */
   outbound?: 'blocked' | 'allowed';
@@ -107,6 +107,8 @@ export interface Outcome {
    * (unlike the lists above) so a package's copy of this file type-checks against a harness that does not fill it yet;
    * read it as `o.asked ?? []`.
    */
+  /** SB10: in a session, the proposals that changed nothing (refused by the guard, or left waiting for Apply). */
+  unapplied?: number;
   asked?: Array<{ question: string; choices: string[] }>;
   /** Wave sb2 (SB12): the credentials it offered to pick (`credential` events), in order: the step and the types it accepts (`o.offers ?? []`). */
   offers?: Array<{ node: string; credentialTypes: string[] }>;
@@ -186,7 +188,7 @@ export const checks = {
   /** Nothing tried to leave the machine, and nothing was refused for trying. */
   noOutside: { id: 'no-outside', label: 'Sent nothing outside this machine', judge: (o: Outcome) => o.refused.length === 0 } satisfies Check,
   /** A question: no change card, the canvas unchanged. */
-  noChange: { id: 'no-change', label: 'Changed nothing', judge: (o: Outcome) => o.proposals.length === 0 && touchedNodes(o.before, o.after).length === 0 } satisfies Check,
+  noChange: { id: 'no-change', label: 'Changed nothing', judge: (o: Outcome) => o.proposals.length - (o.unapplied ?? 0) === 0 && touchedNodes(o.before, o.after).length === 0 } satisfies Check,
   /** At least one change card. */
   proposed: { id: 'proposed', label: 'Showed a change card', judge: (o: Outcome) => o.proposals.length > 0 } satisfies Check,
   /** The reply has words and no error. */

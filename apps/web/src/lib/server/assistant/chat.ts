@@ -50,6 +50,7 @@ import {
   withoutNarration,
   withoutRepeats,
 } from './guards';
+import { scopeOf, type SpotlightScope } from '../../shared/spotlight-scope'; // SB10:
 import { availableTypes, catalogSummary, nodeContext, nodeDocs, searchNodes, workflowOutline } from './research';
 import { MENTION_LIMITS, mentionKey, type MentionRef } from '../../shared/mentions';
 import { BLOCK_CLOSE, BLOCK_OPEN, resolveMentions, type MentionRead, type SentMention } from '../mentions/resolve';
@@ -143,7 +144,7 @@ export interface ChatInput {
 const OP_SCHEMA = {
   type: 'object',
   properties: {
-    op: { type: 'string', enum: ['addNode', 'newAgent', 'setParameters', 'setNodeSettings', 'connect', 'disconnect', 'removeNode', 'renameNode', 'turnIntoTeam'] },
+    op: { type: 'string', enum: ['addNode', 'newAgent', 'setParameters', 'setNodeSettings', 'connect', 'disconnect', 'removeNode', 'renameNode', 'turnIntoTeam', 'setWorkflowSettings'] }, // SB10:
     ref: { type: 'string', description: 'addNode: handle for this new node in later ops' },
     type: { type: 'string', description: 'addNode: node type id. connect/disconnect: main, ai_languageModel, ai_memory or ai_tool' },
     name: { type: 'string', description: 'addNode: node name. renameNode: the new name. newAgent: the new agent\'s name' },
@@ -159,7 +160,7 @@ const OP_SCHEMA = {
     node: { type: 'string', description: 'setParameters / setNodeSettings / removeNode / renameNode / turnIntoTeam: node name' },
     settings: {
       type: 'object',
-      description: 'setNodeSettings: the node\'s settings (not parameters): executeOnce, retryOnFail, maxTries, waitBetweenTriesMs, retryBackoff (fixed|exponential), onError (stop|continue), timeoutSeconds, alwaysOutputData, disabled',
+      description: 'setNodeSettings: the node\'s settings (not parameters): executeOnce, retryOnFail, maxTries, waitBetweenTriesMs, retryBackoff (fixed|exponential), onError (stop|continue), timeoutSeconds, alwaysOutputData, disabled. setWorkflowSettings: the workflow\'s own settings: errorWorkflowId, timeoutSeconds, retryMaxAttempts, retryBaseDelaySeconds', // SB10:
     },
     from: { type: 'string' },
     to: { type: 'string' },
@@ -218,7 +219,7 @@ How to work:
 - A node that already has several outputs (get_workflow lists each output and what it feeds, and get_node_docs lists its ports) branches by itself: connect new nodes from the right output ("output": 0, 1…). Don't put an If, Filter or Switch after it to test what it already separates.
 - A connection back to an earlier node is allowed and makes a loop; the engine runs loops. To limit the rounds, use a round counter: a Code node that adds 1 to a round number (kept in a field the loop's nodes pass on, or read from the counter node's own previous output), then an If "round < N" whose true branch connects back to the node to repeat and whose false branch goes on to what happens after the last round.
 - To fix a node's input, prefer changing the node's own parameters (read a field the items have). To put a node between two nodes, use addNode with "before": "<the later node>".
-- ops: {"op":"addNode","ref":"r1","type":"<type id>","name":"Short name","parameters":{…},"after":"<node name or ref>","output":0} (or "before":"<node name>" to insert it in front of a node, rewiring what fed that node), {"op":"setParameters","node":"<name>","parameters":{…}}, {"op":"setNodeSettings","node":"<name>","settings":{"executeOnce":true}} (a node's settings, not its parameters: executeOnce runs it once for all its input items instead of once per item; also retryOnFail, maxTries, waitBetweenTriesMs, retryBackoff, onError, timeoutSeconds, alwaysOutputData, disabled), {"op":"connect","from":"<name or ref>","to":"<name or ref>","output":0,"type":"main"}, {"op":"disconnect","from":"…","to":"…"}, {"op":"removeNode","node":"…"}, {"op":"renameNode","node":"…","name":"…"}, {"op":"turnIntoTeam","node":"<a Run an Agent node with A2A Agent or Run an Agent nodes attached as its tools>"}. A new workflow starts with a trigger (core.manualTrigger unless the user wants a webhook, schedule or chat). Sub-nodes (chat models, memory, tools) attach to an AI Agent with "after": "<agent>" or connect with type ai_languageModel / ai_memory / ai_tool.
+- ops: {"op":"addNode","ref":"r1","type":"<type id>","name":"Short name","parameters":{…},"after":"<node name or ref>","output":0} (or "before":"<node name>" to insert it in front of a node, rewiring what fed that node), {"op":"setParameters","node":"<name>","parameters":{…}}, {"op":"setNodeSettings","node":"<name>","settings":{"executeOnce":true}} (a node's settings, not its parameters: executeOnce runs it once for all its input items instead of once per item; also retryOnFail, maxTries, waitBetweenTriesMs, retryBackoff, onError, timeoutSeconds, alwaysOutputData, disabled), {"op":"setWorkflowSettings","settings":{"timeoutSeconds":300}} (the workflow's own settings, not a step's: errorWorkflowId, timeoutSeconds, retryMaxAttempts, retryBaseDelaySeconds), {"op":"connect","from":"<name or ref>","to":"<name or ref>","output":0,"type":"main"}, {"op":"disconnect","from":"…","to":"…"}, {"op":"removeNode","node":"…"}, {"op":"renameNode","node":"…","name":"…"}, {"op":"turnIntoTeam","node":"<a Run an Agent node with A2A Agent or Run an Agent nodes attached as its tools>"}. A new workflow starts with a trigger (core.manualTrigger unless the user wants a webhook, schedule or chat). Sub-nodes (chat models, memory, tools) attach to an AI Agent with "after": "<agent>" or connect with type ai_languageModel / ai_memory / ai_tool.
 - Agents: before you add an AI Agent (core.aiAgent) for a job, check "Your agents" and "Published agent teams" below. If one's description, skills and tools cover the job, run it: Run an Agent (core.messageAgent, parameters agentId and message, what to do with the item) or Run a Team, and say in your closing sentence which one you picked and why. Use core.aiAgent only for a small step that needs no specialist (classify, summarize, extract, draft a reply). When the job needs a specialist none of them is (its own instructions, tools or knowledge, work other flows will reuse, or the user asks for an agent, a specialist or an expert to do it: that is an agent, never Ask a Person or a Confirm step), say so and propose {"op":"newAgent","ref":"a1","name":"<agent name>","description":"<what it does, one or two sentences>","instructions":"<how it does the job>","tools":["<an app or action it needs, e.g. Linear: read issues>"],"knowledge":"<the documents it answers from>","parameters":{"message":"…"},"after":"<the step it goes after>"} (use "after" when the request says after a step, "before":"<the step it goes in front of>" when it says before; an agent between two steps takes both; tools and knowledge only when it needs them: the Agent architect picks them): applying it saves the agent as a draft and adds a Run an Agent node for it. That node runs the agent with the agent's own model and instructions: attach no chat model, memory or tools to it, and don't also add an AI Agent for the same job. One newAgent per agent, then stop. Then tell the user to give it tools on the Agents page (the Agent architect can) and publish it before the flow runs. Never invent an agentId.
 - Teams: an agent team (Agents page → Teams) is a lead with members who report to it, with reviews and budgets; the Run a Team node (core.runTeam, parameters teamId and teamName, message) runs a published one as a single step, with Done and Needs a person outputs. When the user wants a team that already exists, add that node with its teamId and teamName from "Published agent teams" below; the chat model, memory and tools attached to the node go to the lead. When the user wants a lead and the agents under it turned into a team, propose {"op":"turnIntoTeam","node":"<the lead>"}: applying it creates and publishes the team and swaps the nodes, so never tell the person to create a team first or to pick one afterwards. The same action is "Turn into a team" in the toolbar of a selected Run an Agent node that has agents as tools. Never invent a teamId.
 - Expressions read the current item with "{{ $json.field }}" and other nodes with "{{ $('Node name').item.json.field }}".
@@ -337,7 +338,10 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     proposalLog.push(earlier);
     for (const op of validated.ops) if (op.op === 'addNode' && op.ref && op.name) proposedRefs.set(op.ref, op.name);
   }
-  const outline = () => workflowOutline(working, runs, { types, pending: waiting, pendingSummaries: waitingSummaries, removed: [...removed.values()] });
+  // SB10: the steps whose parameters, settings and credential state the model reads whole: the scope's, else the selected one.
+  const focusScope = scopeOf({ sent: (input as { scope?: SpotlightScope | null }).scope, message: input.messages.findLast((m) => m.role === 'user')?.content ?? '', nodes: working.nodes, ...(input.selectedNodeId && { selectedId: input.selectedNodeId }) });
+  const focus = new Set<string>(focusScope?.nodes ?? (input.selectedNodeId ? [input.selectedNodeId] : []));
+  const outline = () => workflowOutline(working, runs, { types, full: focus, pending: waiting, pendingSummaries: waitingSummaries, removed: [...removed.values()] });
   const latest = input.messages.findLast((m) => m.role === 'user')?.content.toLowerCase() ?? '';
   /** Whether the latest message asks to add a node by this name ("remove Check and add a new Check after Filter"). */
   const asksToAdd = (name: string) => new RegExp(`\\b(?:add|insert|put|create|new|another)\\b(?:(?!\\b(?:remove|delete|drop)\\b)[^.!?\\n])*\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(latest);
@@ -403,7 +407,8 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     input.teams?.length ? `\nPublished agent teams (Run a Team can run these):\n${describeTeams(input.teams)}` : '',
     `\nThe editor now:\n${outline()}`,
     working.groups?.some((g) => g.composite) ? `\nComposites (frames typed by a contract: fill their slots with matching nodes, keep their rules):\n${compositeOutline(working)}` : '',
-    selected ? `\nThe user has “${selected.name}” selected:\n${nodeContext(working, selected.id, runs[selected.id], types)}` : '',
+    selected ? `\nThe user has “${selected.name}” selected:\n${nodeContext(working, selected.id, runs[selected.id], types, { full: true })}` : '',
+    ...[...focus].filter((id) => (selected ? selected.id : undefined) !== id && working.nodes.some((n) => n.id === id)).map((id) => `\nThe change is about “${working.nodes.find((n) => n.id === id)!.name}” too:\n${nodeContext(working, id, runs[id], types, { full: true })}`), // SB10:
     builderContextEntry(input.actor, { workflowId: input.workflow.id }), // PC10: the goals of the project this workflow is in, as data
     tagged.length ? `\nThe user tagged these in the message (checked against what they may open):\n${tagged.join('\n')}` : '',
     question ? '\nThe latest message is a question: answer it; you cannot change the workflow in this reply.' : '', // SB04:
@@ -545,7 +550,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
           return result(`Nothing could be proposed: ${why}.${shape} Fix the ops (check names, type ids and parameters) and call propose_changes again.`, `Proposal rejected: ${shorten(why, 80)}`, false);
         }
         // Proposing the same thing twice (it happens with local models) changes nothing the second time.
-        const graph = (wf: Workflow) => JSON.stringify([wf.nodes, wf.connections]);
+        const graph = (wf: Workflow) => JSON.stringify([wf.nodes, wf.connections, wf.settings]); // SB10: the workflow's settings count, or a settings-only change reads as "already there"
         if (graph(validated.workflow) === graph(working)) {
           return result('Nothing changes: this is already in the workflow or was proposed above. Do not propose it again.', 'Skipped a repeated proposal');
         }
