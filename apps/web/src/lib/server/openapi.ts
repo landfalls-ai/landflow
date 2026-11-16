@@ -41,7 +41,7 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations' | 'Goals' | 'Practices' | 'Projects';
+  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations' | 'Goals' | 'Practices' | 'Projects' | 'Insights';
   id: string;
   summary: string;
   description?: string;
@@ -631,6 +631,60 @@ function paths(): Record<string, Record<string, Json>> {
     description: 'One call of `ai_usage`: tokens, cost, cache, its prompt split in tokens (`parts`, with who made the split), what changed against the call before it and a link to its run. Never prompt text. A call you can’t open answers 404.',
     pathParams: { id: 'The call id (`ai_usage.id`)' },
     responses: { 200: reply('The call', { type: 'object', additionalProperties: true }), 404: notFound },
+  });
+  // SP09:
+  add('get', '/api/insights/ai/runs', {
+    tag: 'Insights',
+    id: 'getAiSpendRuns',
+    summary: 'List the runs behind a spend number',
+    description: 'Runs (an execution, else an agent session) behind one row of the AI page, costliest or newest first, with their tokens, cost and a link to each run’s Spend tab. `group` and `key` pick one row of the AI page’s report (`other` is not a row: 400; `shared` lists nothing and counts everything as hidden); the report’s period and filters narrow it; `order` is `cost` or `recent`; `cursor` pages (50 a page); `format=csv` answers `text/csv` with the same columns, at most 10,000 rows. Only what the caller may open is listed; the rest is counted in `hidden` (runs, calls, cost: no names, no ids). Never prompt text. A filter or key the caller can’t read answers 404.',
+    query: [
+      { name: 'group', description: 'project, goal, agent, workflow, person, model, source, credential, surface or purpose', schema: { type: 'string' }, required: true },
+      { name: 'key', description: 'The row’s key (an id, `provider/model`, `none` or `shared`)', schema: { type: 'string' }, required: true },
+      { name: 'period', description: '24h, 7d (default), 30d, 90d or custom (custom needs `from` and `to`)', schema: { type: 'string' } },
+      { name: 'from', description: 'First day of a custom range, YYYY-MM-DD', schema: { type: 'string' } },
+      { name: 'to', description: 'Last day of a custom range, YYYY-MM-DD', schema: { type: 'string' } },
+      { name: 'projectId', description: 'Filter by project', schema: { type: 'string' } },
+      { name: 'agentId', description: 'Filter by agent', schema: { type: 'string' } },
+      { name: 'workflowId', description: 'Filter by workflow', schema: { type: 'string' } },
+      { name: 'userId', description: 'Filter by person', schema: { type: 'string' } },
+      { name: 'credentialId', description: 'Filter by credential', schema: { type: 'string' } },
+      { name: 'model', description: 'Filter by model name', schema: { type: 'string' } },
+      { name: 'purpose', description: 'Filter by call purpose (or `none`)', schema: { type: 'string' } },
+      { name: 'source', description: 'Filter by source key', schema: { type: 'string' } },
+      { name: 'surface', description: 'Filter by surface', schema: { type: 'string' } },
+      { name: 'order', description: '`cost` or `recent`', schema: { type: 'string' } },
+      { name: 'cursor', description: 'The previous page’s `next`', schema: { type: 'string' } },
+      { name: 'format', description: '`json` (default) or `csv`', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('List the runs behind a spend number', { type: 'object', additionalProperties: true }), 400: invalid, 404: notFound },
+  });
+  // SP09:
+  add('get', '/api/insights/ai/calls', {
+    tag: 'Insights',
+    id: 'getAiSpendCalls',
+    summary: 'List the model calls behind a spend number',
+    description: 'Model calls behind one row of the AI page, newest first (or dearest first), each opening with `GET /api/ai-calls/{id}`. `group` and `key` pick one row of the AI page’s report (`other` is not a row: 400; `shared` lists nothing and counts everything as hidden); the report’s period and filters narrow it; `order` is `cost` or `recent`; `cursor` pages (50 a page); `format=csv` answers `text/csv` with the same columns, at most 10,000 rows. Only what the caller may open is listed; the rest is counted in `hidden` (runs, calls, cost: no names, no ids). Never prompt text. A filter or key the caller can’t read answers 404.',
+    query: [
+      { name: 'group', description: 'project, goal, agent, workflow, person, model, source, credential, surface or purpose', schema: { type: 'string' }, required: true },
+      { name: 'key', description: 'The row’s key (an id, `provider/model`, `none` or `shared`)', schema: { type: 'string' }, required: true },
+      { name: 'period', description: '24h, 7d (default), 30d, 90d or custom (custom needs `from` and `to`)', schema: { type: 'string' } },
+      { name: 'from', description: 'First day of a custom range, YYYY-MM-DD', schema: { type: 'string' } },
+      { name: 'to', description: 'Last day of a custom range, YYYY-MM-DD', schema: { type: 'string' } },
+      { name: 'projectId', description: 'Filter by project', schema: { type: 'string' } },
+      { name: 'agentId', description: 'Filter by agent', schema: { type: 'string' } },
+      { name: 'workflowId', description: 'Filter by workflow', schema: { type: 'string' } },
+      { name: 'userId', description: 'Filter by person', schema: { type: 'string' } },
+      { name: 'credentialId', description: 'Filter by credential', schema: { type: 'string' } },
+      { name: 'model', description: 'Filter by model name', schema: { type: 'string' } },
+      { name: 'purpose', description: 'Filter by call purpose (or `none`)', schema: { type: 'string' } },
+      { name: 'source', description: 'Filter by source key', schema: { type: 'string' } },
+      { name: 'surface', description: 'Filter by surface', schema: { type: 'string' } },
+      { name: 'order', description: '`cost` or `recent`', schema: { type: 'string' } },
+      { name: 'cursor', description: 'The previous page’s `next`', schema: { type: 'string' } },
+      { name: 'format', description: '`json` (default) or `csv`', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('List the model calls behind a spend number', { type: 'object', additionalProperties: true }), 400: invalid, 404: notFound },
   });
   add('get', '/api/executions/{id}/events', {
     tag: 'Executions',
@@ -2733,6 +2787,8 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Conversations', description: 'A person’s own chats with Spotlight, the brain and the Agent architect, and their personal preferences: session only, owner only (docs/assistant.md#conversation-history)' },
       { name: 'Practices', description: 'Rules in the brain that connected agents follow: drafts, versions, approval by a person, waivers (docs/practices.md)' },
       { name: 'Projects', description: 'A project’s context block for a harness, found by repository or id (docs/connect-your-harness.md#project-context)' },
+      // SP09:
+      { name: 'Insights', description: 'The AI page’s spend: the runs and model calls behind a number, as JSON or CSV (docs/llm-gateway.md, “The AI page”)' },
       { name: 'MCP', description: 'Agents and MCP (docs/transports.md): Landflow-issued MCP tokens, tool grants, the JWKS, the plugin catalog (server.json, the registry API) and protected resource metadata' },
     ],
     security: [{ bearerAuth: [] }, { apiKeyHeader: [] }, { sessionCookie: [] }],

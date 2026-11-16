@@ -2289,6 +2289,11 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   model rows, with people per D1 ([llm-gateway.md](llm-gateway.md#the-ai-page)). Yesterday and today are read from the raw
   rows (always exact); the screens are SP10 to SP12. A model row's `unpricedCalls` counts a combination's calls when it has no
   price and no cost, so a gateway-costed call among unpriced ones of one model is not told apart.
+- **The runs and calls behind a number (SP09), built**: `GET /api/insights/ai/runs` and `GET /api/insights/ai/calls` list what is behind one row of the AI
+  page's report (a `group` and its `key`, over the report's period and filters), costliest or newest first, 50 a page
+  with a cursor, or as a CSV (`format=csv`, at most 10,000 rows, never prompt text). They list only what the viewer may
+  open (rule 3 of [llm-gateway.md](llm-gateway.md#the-ai-page) "Who sees what", run-spend.ts's own checks) and count
+  the rest in `hidden` (runs, calls, cost; no names, no ids). The screens that use them are SP10's.
 
 ## Practices (waves P1 and P2)
 
