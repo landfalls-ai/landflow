@@ -104,6 +104,15 @@ describe('checkConfig', () => {
     expect(r.errors[0]).toContain('LANDFLOW_CODE_RUNNER_SECRET');
     expect(JSON.stringify(r)).not.toContain('landflow-code-runner-dev-only');
   });
+  it('refuses the public development values of the LLM gateway (parts secret, master key) in production', () => {
+    const r = checkConfig({ ...good, LANDFLOW_LLM_GATEWAY_PARTS_SECRET: 'landflow-dev-parts-only', LANDFLOW_LLM_GATEWAY_ADMIN_KEY: 'sk-landflow-dev-master-only' });
+    expect(r.errors).toHaveLength(2);
+    expect(r.errors.join()).toContain('LANDFLOW_LLM_GATEWAY_PARTS_SECRET');
+    expect(r.errors.join()).toContain('LANDFLOW_LLM_GATEWAY_ADMIN_KEY');
+    expect(JSON.stringify(r)).not.toContain('landflow-dev-parts-only');
+    expect(checkConfig({ ...good, LANDFLOW_LLM_GATEWAY_PARTS_SECRET: 'a-secret-of-my-own' }).errors).toEqual([]);
+    expect(checkConfig({ LANDFLOW_LLM_GATEWAY_PARTS_SECRET: 'landflow-dev-parts-only' }).errors).toEqual([]);
+  });
   it('requires the public URL', () => {
     const { LANDFLOW_PUBLIC_URL: _, ...env } = good;
     expect(checkConfig(env).errors.join()).toContain('LANDFLOW_PUBLIC_URL');
