@@ -2527,6 +2527,14 @@ page that does not exist (an agent session's id, below).
   Landledger event, a weekday-aware baseline and muting one key ([SP23](#token-spend-wave-14)).
 - **Ask the brain's JSON form** (`POST /api/brain/ask` without `Accept: text/event-stream`) writes no purpose and no
   prompt split, where the streamed form the Brain page uses does (seen on the live host, 2026-11-17). Not a package yet.
+- **Left from the last pass of wave 14**: the `promptHash` comment ("of the whole prompt") in the s11 contract copies
+  (`apps/web/src/lib/shared/ai-call-parts.ts` line 76 is byte-identical to the contract, so the two change together later:
+  it should say the date stamp is left out); the spend-anomaly backtests read today's acknowledgement state, not the state
+  at the day judged. Three findings from the live checks: the AI page's Gateway card says "No models listed" while the
+  gateway is healthy and serving models (`llm-gateway/status.ts` turns a failed `client.models()` into an empty list with
+  no word, so the cause is not visible; it needs a look at the live call before a fix); `POST /api/workflows` ignores a
+  `projectId` in the body (only `?projectId=` puts the flow in a project; what wins when both are given is a decision, so
+  not a one-line fix). The JSON form of Ask the brain is the item above and in the limitations.
 - **Still owed, needing a vendor key (live checks never use one)**: the cache card and SP19's cache fixes on real
   Anthropic cache reads; a daily cap's pace line late in a host's day; a real Claude Code session with the landflow-brain
   status line (SP15 left it: a session would call a vendor).
