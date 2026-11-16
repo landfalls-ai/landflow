@@ -593,7 +593,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         for (const handle of dedicated.handles) newAgents.add(standInKey(handle)); // SB05:
         sent.add(asSent);
         const dropped = [...validated.dropped, ...validated.ignored, ...inventedNotes, ...standIns.notes];
-        const notes = `${dropped.length ? ` Left out: ${dropped.join('; ')}.` : ''}${placed.notes.length ? ` Placement: ${placed.notes.join('; ')}.` : ''}${repeated.length ? ` Not added again: ${repeated.join('; ')}.` : ''}`;
+        const notes = `${dropped.length ? ` Left out: ${dropped.map((d) => d.replace(/^Left out: /, '')).join('; ')}.` : ''}${placed.notes.length ? ` Placement: ${placed.notes.join('; ')}.` : ''}${repeated.length ? ` Not added again: ${repeated.join('; ')}.` : ''}`;
         const count = `${validated.ops.length} change${validated.ops.length === 1 ? '' : 's'}`;
         const shown = input.session
           ? result(`Recorded (${count}); ${input.session === 'auto' || input.autonomy === 'auto' ? 'Spotlight applies it when you finish' : 'it waits for the person to apply it, then Spotlight tests again'}.${notes} Don't list the changes again. If the message asks for something this doesn't cover yet, propose it now; otherwise stop with your one sentence.`, `Proposed ${count}`)

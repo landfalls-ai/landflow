@@ -77,6 +77,17 @@ describe('scopeOf', () => {
     }
     expect(scopeOf({ message: 'fix the 401 on this step', nodes, selectedId: 'http' })).toEqual({ kind: 'selected', nodes: ['http'] });
   });
+  it('reads "after X" that only locates a step as no insert', () => {
+    expect(scopeOf({ message: 'The step after Open status incident fails with 401, fix it', nodes })).toBeUndefined();
+    expect(scopeOf({ message: 'the call after Start returns 401', nodes, selectedId: 'http' })).toBeUndefined();
+    expect(scopeOf({ message: 'it breaks right after this, fix the URL', nodes, selectedId: 'http' })).toEqual({ kind: 'selected', nodes: ['http'] });
+    expect(scopeOf({ message: 'Remove duplicate items after Open status incident', nodes })).toEqual({ kind: 'insert', nodes: ['http'], side: 'after' });
+  });
+  it('does not read a step named with a common verb as an add', () => {
+    const named = [...nodes, { id: 'slack', name: 'Post to Slack' }];
+    expect(scopeOf({ message: 'Post to Slack fails with 401, fix it', nodes: named, selectedId: 'slack' })).toEqual({ kind: 'selected', nodes: ['slack'] });
+    expect(scopeOf({ message: 'use a different URL', nodes, selectedId: 'http' })).toEqual({ kind: 'selected', nodes: ['http'] });
+  });
   it("an insert is dropped when the message names another step too", () => {
     expect(scopeOf({ message: "Remove the Save to backlog step, then add a new Set after Open status incident", nodes })).toBeUndefined();
   });
@@ -92,6 +103,10 @@ describe('outsideScope', () => {
     const out = outsideScope([{ op: 'addNode', name: 'Extra', after: 'Open status incident' }, { op: 'setParameters', node: 'Open status incident' }], selected, graph, 'fix the 401');
     expect(out.map((o) => o.index)).toEqual([0]);
     expect(out[0].reason).toContain('outside what was asked');
+  });
+  it('puts a rewire to a step added outside the scope outside too', () => {
+    const ops = [{ op: 'addNode', ref: 'n', name: 'Extra', after: 'Save to backlog' }, { op: 'connect', from: 'n', to: 'Open status incident' }];
+    expect(outsideScope(ops, { kind: 'selected', nodes: ['http'] }, graph, 'add a step').map((o) => o.index)).toEqual([0, 1]);
   });
   it('lets a new step between the anchor and the step it fed, under insert', () => {
     const insert = { kind: 'insert' as const, nodes: ['http'], side: 'after' as const };
@@ -151,6 +166,13 @@ describe('the chat', () => {
     expect(proposals[0].ops).toEqual([wander[0]]);
     expect(proposals[0].dropped.filter((d) => d.startsWith('Left out')).length).toBe(2);
     expect(calls[0].system).toContain('Scope: Only “Open status incident”');
+  });
+
+  it('keeps a fix to the selected step when the message only locates it by position', async () => {
+    const fix = [{ op: 'setParameters', node: 'Open status incident', parameters: { url: 'http://127.0.0.1:3399/ok' } }];
+    const { proposals } = await run([propose('c1', fix), { text: 'Done.' }], { messages: [{ role: 'user', content: 'it breaks right after this, fix the URL' }] });
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0].ops).toEqual(fix);
   });
 
   it('shows the whole proposal when the chip was lifted (scope: null)', async () => {
