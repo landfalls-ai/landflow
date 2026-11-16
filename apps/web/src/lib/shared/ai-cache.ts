@@ -11,7 +11,7 @@ export interface AiCacheAgent {
   calls: number;
   hitRate?: number;
   missCalls: number;
-  /** Distinct runs (a session, else an execution, else one call) the cache line counts, and how many had at least one miss. */
+  /** Distinct runs (a session, else an execution; a call with neither is no run) the cache line counts, and how many had at least one miss. */
   runs: number;
   missRuns: number;
   missReasons: CacheLine['missReasons'];

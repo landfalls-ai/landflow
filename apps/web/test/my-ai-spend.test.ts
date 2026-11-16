@@ -15,6 +15,7 @@ const { createUser } = await import('@/lib/server/auth/users');
 const { enableTestAuth } = await import('@/lib/server/auth/test-bypass');
 const { database } = await import('@/lib/server/db');
 const { aiUsageMeter, saveAiCaps, savePriceOverrides } = await import('@/lib/server/ai-usage');
+const { getSettings, updateSettings } = await import('@/lib/server/settings');
 const route = await import('@/app/api/insights/ai/me/route');
 const forecastRoute = await import('@/app/api/insights/ai/forecast/route');
 const { youModels } = await import('@/components/insights/my-ai-spend');
@@ -172,6 +173,39 @@ describe('GET /api/insights/ai/me', () => {
     expect(body.series[0].at).toMatch(/T\d\d:00:00\.000Z$/);
     expect(body.series.reduce((sum: number, p: { cost: number }) => sum + p.cost, 0)).toBe(3);
     expect(body.byModel.reduce((sum: number, r: { cost: number }) => sum + r.cost, 0)).toBe(3);
+  });
+
+  it('folds the leading partial hour of the 24 hours into the first point, so the series equals the page totals', async () => {
+    const eve = await createUser({ email: 'eve@me.test', name: 'Eve', role: 'member', password: 'eve-password-1' });
+    const at = new Date(Date.now() - 23.9 * 3_600_000);
+    row({ user_id: eve.id, cost: 5, at: at.toISOString(), day: aiUsageMeter().today(at.getTime()) });
+    row({ user_id: eve.id, cost: 1 });
+    const { body } = await get(eve, '?period=24h');
+    const total = body.series.reduce((sum: number, p: { cost: number }) => sum + p.cost, 0);
+    expect(body.byModel.reduce((sum: number, r: { cost: number }) => sum + r.cost, 0)).toBe(6);
+    expect(total).toBe(6);
+    expect(body.series.reduce((sum: number, p: { calls: number }) => sum + p.calls, 0)).toBe(2);
+  });
+
+  it("counts the report's days for 7d in a zone with daylight saving, just after midnight in the week after spring forward", async () => {
+    const zone = getSettings().timezone;
+    updateSettings({ timezone: 'America/Los_Angeles' });
+    const gus = await createUser({ email: 'gus@me.test', name: 'Gus', role: 'member', password: 'gus-password-1' });
+    // 2026-03-12 00:30 in Los Angeles: the clocks went forward on 2026-03-08. The 7 days are 6 to 12 March.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.parse('2026-03-12T07:30:00.000Z'));
+    try {
+      row({ user_id: gus.id, cost: 1, day: '2026-03-05', at: '2026-03-05T20:00:00.000Z' });
+      row({ user_id: gus.id, cost: 2, day: '2026-03-06', at: '2026-03-06T20:00:00.000Z' });
+      row({ user_id: gus.id, cost: 4, day: '2026-03-12', at: '2026-03-12T07:00:00.000Z' });
+      const { body } = await get(gus, '?period=7d');
+      expect(body.from).toBe('2026-03-06');
+      expect(body.series.map((p: { at: string }) => p.at)).toEqual(['2026-03-06', '2026-03-07', '2026-03-08', '2026-03-09', '2026-03-10', '2026-03-11', '2026-03-12']);
+      expect(body.byModel.reduce((sum: number, r: { cost: number }) => sum + r.cost, 0)).toBe(6);
+    } finally {
+      vi.useRealTimers();
+      updateSettings({ timezone: zone });
+    }
   });
 
   it('ranks models for the You card: cost first, then tokens', () => {

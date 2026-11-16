@@ -2585,6 +2585,7 @@ function paths(): Record<string, Record<string, Json>> {
       { name: 'period', description: 'The period', schema: { type: 'string', enum: ['24h', '7d', '30d', '90d', 'custom'], default: '7d' } },
       { name: 'from', description: 'A custom range’s first day (YYYY-MM-DD)', schema: { type: 'string', format: 'date' } },
       { name: 'to', description: 'A custom range’s last day (YYYY-MM-DD)', schema: { type: 'string', format: 'date' } },
+      ...['projectId', 'agentId', 'workflowId', 'userId', 'credentialId', 'model', 'purpose', 'source', 'surface'].map((name) => ({ name, description: `Narrows the card as it narrows the report (a workflow, agent, project or credential the caller can’t read is 404)`, schema: { type: 'string' } })),
     ],
     responses: {
       200: reply('The cache card', object({ period: { type: 'string' }, cache: { type: 'object', additionalProperties: true }, agents: array({ type: 'object', additionalProperties: true }), agentNode: object({ calls: { type: 'integer' }, uncachedTokens: { type: 'integer' } }, ['calls', 'uncachedTokens']), reasonsPartial: { type: 'boolean' }, truncated: { type: 'boolean' } }, ['period', 'cache', 'agents', 'agentNode', 'reasonsPartial', 'truncated'])),

@@ -334,7 +334,7 @@ export function AiConsole() {
         <AiForecastCard /> {/* SP11: */}
         {shown && <CapsCard report={asConsole(shown)} onChanged={() => load()} />}
         {shown && <RequestsCard report={asConsole(shown)} onChanged={() => load()} />}
-        <AiCacheCard period={view.period} from={view.from} to={view.to} /> {/* SP11: */}
+        <AiCacheCard query={reportQuery(view).toString()} ready={ready} /> {/* SP11: */}
         <GatewayCard status={status} admin={Boolean(shown?.viewer.admin)} />
       </PageBody>
       <AiDrill view={view} target={mounted ? view.drill : undefined} title={view.drill ? drillLabel(shown, view.drill) : ''} chips={chips} onClose={() => go({ ...view, drill: undefined })} />

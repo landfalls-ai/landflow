@@ -459,8 +459,8 @@ for the period (24 hours, 7, 30 or 90 days, or a custom range of up to 400 days)
   today spread over 24 hours). Cost caps are in dollars, a monthly token cap in tokens. A member sees their own user cap,
   the caps of workflows and agents they can open and the budgets of their projects, never another person's cap or a
   credential's. The method is `forecastMonth` in `lib/shared/ai-forecast.ts`, worded as Landledger's forecast.
-- **Prompt cache** (below the requests): over the period (the page's own, 90 days or a custom range too), the share of the prompt that came from the provider's cache,
-  the dollars it saved, the number of misses and in how many runs they happened (each call is grouped by its own session, else its execution, so independent runs never count as one session) and the five agents with the most uncached input, each with its hit rate and
+- **Prompt cache** (below the requests): over the period (the page's own, 90 days or a custom range too) and the page's filters (every one applies, by the report's own rules; an id you can't read is a 404), the share of the prompt that came from the provider's cache,
+  the dollars it saved, the number of misses and in how many runs they happened (each call is grouped by its own session, else its execution, so independent runs never count as one session; a call with neither, such as a gateway call, is no run) and the five agents with the most uncached input, each with its hit rate and
   why it missed (the same reasons as the Run Trace's Spend tab). It counts the calls the Run Trace's cache line counts:
   Anthropic and OpenAI calls, and any call that reports cache tokens. When the period holds calls of the AI Agent node,
   which asks for no cache, the card says so with their size. It holds numbers only, never prompt text, and follows

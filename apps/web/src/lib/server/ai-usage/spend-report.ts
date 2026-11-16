@@ -92,7 +92,7 @@ const addDays = (day: string, n: number) => dayOfUtc(utcOf(day) + n * DAY_MS);
 const spanDays = (from: string, to: string) => Math.round((utcOf(to) - utcOf(from)) / DAY_MS) + 1;
 const validDay = (day: unknown): day is string => typeof day === 'string' && DAY.test(day) && dayOfUtc(utcOf(day)) === day;
 
-interface Range {
+export interface Range {
   hours: boolean;
   /** Days: `YYYY-MM-DD`; hours: ISO times. Both ends inclusive. */
   from: string;
@@ -697,10 +697,31 @@ function checkReadable(actor: Actor, filters: AiSpendFilters) {
   }
 }
 
+/** The filters as the report takes them: an empty one is no filter. */
+const cleanFilters = (given: AiSpendFilters | undefined): AiSpendFilters =>
+  Object.fromEntries(Object.entries(given ?? {}).filter(([, value]) => typeof value === 'string' && value !== '')) as AiSpendFilters;
+
+/**
+ * The report's own filter rules over raw `ai_usage` rows, for the cache card (cache-report.ts): the SQL for `range`
+ * (an unreadable workflow, agent, project or credential answers 404 first, as in the report) and the test for the
+ * project filter, which resolves a row with no project to its home project. Every filter applies.
+ */
+export function usageFilter(actor: Actor, given: AiSpendFilters | undefined, range: Range) {
+  const filters = cleanFilters(given);
+  checkReadable(actor, filters);
+  const src = source(range, false, filters);
+  const ctx = context(actor, filters);
+  return {
+    where: src.where,
+    params: src.params,
+    keep: (row: { project_id: string | null; workflow_id: string | null; agent_id: string | null }) =>
+      !filters.projectId ||
+      ctx.projectOf({ project_id: row.project_id ?? '', workflow_id: row.workflow_id ?? '', agent_id: row.agent_id ?? '' } as Record<Key, string>) === filters.projectId,
+  };
+}
+
 export function aiSpendReport(actor: Actor, query: AiSpendQuery, now = Date.now()): AiSpendReport {
-  const filters: AiSpendFilters = Object.fromEntries(
-    Object.entries(query.filters ?? {}).filter(([, value]) => typeof value === 'string' && value !== ''),
-  ) as AiSpendFilters;
+  const filters = cleanFilters(query.filters);
   const range = currentRange(query, now);
   checkReadable(actor, filters);
 

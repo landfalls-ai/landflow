@@ -381,6 +381,23 @@ describe('the cache card', () => {
     expect(report.missRuns).toBe(1);
   });
 
+  it('counts a call with no session and no execution as no run, and finds no miss in a write then a read', () => {
+    const before = aiCacheReport(owner, '24h', NOW);
+    // Two gateway rows, same model, no session and no execution: a write, then a read.
+    row({ atMs: t(3), id: 'au_fc_gw_1', user_id: owner.id, input_tokens: 10_000, cache_write_tokens: 8000 });
+    row({ atMs: t(2), id: 'au_fc_gw_2', user_id: owner.id, input_tokens: 10_000, cache_read_tokens: 8000 });
+    try {
+      const after = aiCacheReport(owner, '24h', NOW);
+      expect(after.cache.missCalls).toBe(before.cache.missCalls);
+      expect(after.runs).toBe(before.runs);
+      expect(after.missRuns).toBe(before.missRuns);
+      expect(after.cache.readTokens).toBe(before.cache.readTokens + 8000);
+    } finally {
+      database().delete('ai_usage', { id: 'au_fc_gw_1' });
+      database().delete('ai_usage', { id: 'au_fc_gw_2' });
+    }
+  });
+
   it('lists the agents by uncached input with their miss reasons, and counts the AI Agent node', () => {
     const report = aiCacheReport(member, '24h', NOW);
     const support = report.agents.find((a) => a.key === readableAgent.id)!;
@@ -420,5 +437,34 @@ describe('the cache card', () => {
     expect((await get(`period=custom&from=${today}&to=${today}`)).status).toBe(200);
     expect((await get('period=custom')).status).toBe(400);
     expect((await get('period=custom&from=2020-01-01&to=2026-01-01')).status).toBe(400);
+  });
+
+  it("narrows by the page's filters with the report's rules, as the card over only those rows", async () => {
+    const overrides = priceOverrides();
+    const price = (c: { provider: string; model: string }) => findPrice(c.provider, c.model, overrides);
+    const found = database().all<Parameters<typeof callOf>[0]>("SELECT * FROM ai_usage WHERE agent_id = ? AND at >= ? AND (provider IN ('anthropic','openai') OR cache_read_tokens + cache_write_tokens > 0)", readableAgent.id, new Date(NOW - DAY).toISOString());
+    const parts = partsOf(found);
+    const expected = cacheLine(found.map((r) => ({ ...callOf(r, price, parts.has(r.id), true), sessionId: r.session_id ?? r.execution_id ?? r.id })), parts, price);
+    const filtered = aiCacheReport(owner, '24h', NOW, {}, { agentId: readableAgent.id });
+    expect(filtered.cache).toEqual(expected);
+    expect(filtered.cache.missCalls).toBe(1);
+    // The AI Agent node's calls have no agent: filtered out, not shown from the unfiltered period.
+    expect(filtered.agentNode.calls).toBe(0);
+    expect(aiCacheReport(owner, '24h', NOW).agentNode.calls).toBe(3);
+    // The project filter resolves a row with no project to its home project, as the report does.
+    expect(aiCacheReport(owner, '24h', NOW, {}, { projectId: mineProject }).agentNode.calls).toBe(2);
+    // `provider/model`, `none` and the empty filter read as they do in the report.
+    expect(aiCacheReport(owner, '24h', NOW, {}, { model: 'anthropic/claude-sonnet-5-5' }).agentNode.calls).toBe(3);
+    expect(aiCacheReport(owner, '24h', NOW, {}, { model: 'ollama/qwen3-coder:30b' }).agentNode.calls).toBe(0);
+    expect(aiCacheReport(owner, '24h', NOW, {}, { surface: 'none' }).agentNode.calls).toBe(3);
+    expect(aiCacheReport(owner, '24h', NOW, {}, { purpose: 'answer' }).cache.missCalls).toBe(1);
+    expect(aiCacheReport(owner, '24h', NOW, {}, { userId: other.id }).agentNode.calls).toBe(1);
+    const get = (query: string) => as(member, () => cacheRoute.GET(new Request(`http://x.test/api/insights/ai/cache?${query}`), { params: Promise.resolve({}) } as never));
+    const viaRoute = await (await get(`period=24h&workflowId=${wfMine}`)).json();
+    expect(viaRoute.agentNode.calls).toBe(2);
+    // An id the viewer can't read is a 404 as in the report, and an unknown filter value is no confirmation either.
+    expect((await get(`period=24h&workflowId=${wfTheirs}`)).status).toBe(404);
+    expect((await get(`period=24h&agentId=${hiddenAgent.id}`)).status).toBe(404);
+    expect((await get('period=24h&purpose=nonsense')).status).toBe(400);
   });
 });

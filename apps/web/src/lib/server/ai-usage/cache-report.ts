@@ -13,11 +13,10 @@ import { aiUsageMeter } from './index';
 import { visibleRow } from './forecast';
 import { findPrice, priceOverrides } from './prices';
 import { cacheLine, callOf, partsOf } from './run-spend';
-import { currentRange } from './spend-report';
-import type { AiSpendPeriod } from '../../shared/ai-spend';
+import { currentRange, usageFilter } from './spend-report';
+import type { AiSpendFilters, AiSpendPeriod } from '../../shared/ai-spend';
 import { uncachedInput } from '../../shared/run-spend';
 
-const DAY_MS = 86_400_000;
 const PARTS_KEPT_DAYS = 30;
 const MAX_ROWS = 20_000;
 const TOP_AGENTS = 5;
@@ -35,14 +34,18 @@ const NOT_CHAT = ['embed', 'cache-embed', 'rerank'];
 /** One call's own run: its session, else its execution, else itself, so `cacheLine` never chains calls of different runs. */
 const runKey = (row: UsageRow) => (row.session_id ? `s:${row.session_id}` : row.execution_id ? `e:${row.execution_id}` : `u:${row.id}`);
 
-/** `cacheLine` over `calls` with each call grouped by its own run, plus how many runs had at least one miss, of how many counted. */
+/**
+ * `cacheLine` over `calls` with each call grouped by its own run, plus how many runs had at least one miss, of how many
+ * counted. A call with neither a session nor an execution (a gateway call) can't miss across calls and is no run.
+ */
 function runsLine(calls: SpendCall[], keys: string[], parts: Parameters<typeof cacheLine>[1], price: Parameters<typeof cacheLine>[2]) {
   const keyed = calls.map((c, i) => ({ ...c, sessionId: keys[i] }));
   const byRun = new Map<string, SpendCall[]>();
   for (const c of keyed) byRun.set(c.sessionId!, [...(byRun.get(c.sessionId!) ?? []), c]);
   let runs = 0;
   let missRuns = 0;
-  for (const group of byRun.values()) {
+  for (const [key, group] of byRun) {
+    if (key.startsWith('u:')) continue;
     if (!group.some((c) => !(c.purpose && NOT_CHAT.includes(c.purpose)) && (c.provider === 'anthropic' || c.provider === 'openai' || c.cacheReadTokens + c.cacheWriteTokens > 0))) continue;
     runs += 1;
     if (cacheLine(group, parts, price).missCalls > 0) missRuns += 1;
@@ -50,19 +53,21 @@ function runsLine(calls: SpendCall[], keys: string[], parts: Parameters<typeof c
   return { line: cacheLine(keyed, parts, price), runs, missRuns };
 }
 
-/** The cache card's numbers for `actor`, over the AI page's period (a custom one takes `range`'s days). */
-export function aiCacheReport(actor: Actor, period: AiSpendPeriod, now = Date.now(), range: { from?: string; to?: string } = {}): AiCacheReport {
+/**
+ * The cache card's numbers for `actor`, over the AI page's period (a custom one takes `range`'s days) and the page's
+ * filters, which narrow it by the report's own rules (an unreadable id answers 404).
+ */
+export function aiCacheReport(actor: Actor, period: AiSpendPeriod, now = Date.now(), range: { from?: string; to?: string } = {}, filters: AiSpendFilters = {}): AiCacheReport {
   const meter = aiUsageMeter();
   const today = meter.today(now);
   // The AI page's own range (90 days and custom ones too; a bad custom range answers 400).
   const span = currentRange({ period, ...range }, now);
   const first = period === '24h' ? today : span.from;
-  const where = period === '24h' ? 'at >= ?' : 'day >= ? AND day <= ?';
-  const bounds = period === '24h' ? [new Date(now - DAY_MS).toISOString()] : [span.from, span.to];
-  const found = database().all<UsageRow>(`SELECT ${COLUMNS} FROM ai_usage WHERE ${where} AND ${CANDIDATE} ORDER BY at DESC, id DESC LIMIT ${MAX_ROWS + 1}`, ...bounds);
+  const narrow = usageFilter(actor, filters, span);
+  const found = database().all<UsageRow>(`SELECT ${COLUMNS} FROM ai_usage WHERE ${narrow.where} AND ${CANDIDATE} ORDER BY at DESC, id DESC LIMIT ${MAX_ROWS + 1}`, ...narrow.params);
   const truncated = found.length > MAX_ROWS;
   const sees = visibleRow(actor);
-  const rows = found.slice(0, MAX_ROWS).filter(sees);
+  const rows = found.slice(0, MAX_ROWS).filter((row) => sees(row) && narrow.keep(row));
 
   const admin = isInstanceAdmin(actor);
   const readable = new Map<string, boolean>();

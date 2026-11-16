@@ -614,6 +614,8 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - A call through the LLM gateway counts in the cache card's hit rate only when it reports cache tokens (it is provider
   `litellm`, so it is not counted by its provider name); a gateway call that reports none is left out, not counted as a miss.
 - The card counts at most 20,000 calls of a period (the newest) and says when it left some out.
+- "Misses in N of M runs" counts sessions and executions only: a gateway call with neither is no run, and a miss across
+  the calls of one gateway client session is not seen.
 - The forecast is a straight line from the last 7 complete days: it does not know a weekend, a launch or a plan to stop a
   flow, and a day's σ from 7 values is itself rough, which is why a month's first week says "early". The band is a 10th to
   90th percentile range of a normal approximation, not a promise; a daily cap's pace is spread evenly over 24 hours, so it

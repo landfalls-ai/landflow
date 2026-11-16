@@ -9,6 +9,7 @@ import { userCaps } from './alerts';
 import { capForecaster } from './forecast';
 import { aiUsageMeter } from './index';
 import { findPrice, priceOverrides } from './prices';
+import { currentRange } from './spend-report';
 import { CALL_PURPOSE_LABELS, isCallPurpose } from '../../shared/ai-call';
 import type { AiMySpend, AiSpendPeriod, AiSpendPoint, AiSpendRow, AiSpendTotals } from '../../shared/ai-spend';
 import type { ModelPrice } from '../../shared/ai-usage';
@@ -47,9 +48,10 @@ export function mySpend(userId: string, period: AiSpendPeriod = '7d', now: numbe
   const meter = aiUsageMeter();
   const overrides = priceOverrides(db);
   const today = meter.today(now);
-  const days = PERIOD_DAYS[period] ?? 7;
   const kept: AiSpendPeriod = PERIOD_DAYS[period] ? period : '7d';
-  const fromDay = meter.today(now - (days - 1) * DAY_MS);
+  // The report's own day window (`currentRange`), so the You card and the page count the same days in any time zone.
+  const range = currentRange({ period: kept }, now);
+  const fromDay = range.hours ? today : range.from;
   const monthStart = `${today.slice(0, 7)}-01`;
   // 24h is a rolling 24 hours by `at` (like the AI page's own 24h); the day periods are days by the `day` column.
   const rolling = kept === '24h';
@@ -102,16 +104,17 @@ export function mySpend(userId: string, period: AiSpendPeriod = '7d', now: numbe
     const hour = 3_600_000;
     const last = Math.floor(now / hour) * hour;
     const first = last - 23 * hour;
+    // The window is the page's 24h, `now - 24h` on; its leading partial hour folds into the first point.
     const rows = db.all<{ at: string; input_tokens: number; output_tokens: number; cache_read_tokens: number | null; cost: number; }>(
       'SELECT at, input_tokens, output_tokens, cache_read_tokens, cost FROM ai_usage WHERE user_id = ? AND at >= ? AND at <= ?',
       userId,
-      new Date(first).toISOString(),
+      fromAt,
       toAt,
     );
     const points: AiSpendPoint[] = [];
     for (let i = 0; i < 24; i++) points.push({ at: new Date(first + i * hour).toISOString(), cost: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, calls: 0 });
     for (const row of rows) {
-      const index = Math.floor((Date.parse(row.at) - first) / hour);
+      const index = Math.max(0, Math.floor((Date.parse(row.at) - first) / hour));
       const point = points[index];
       if (!point) continue;
       point.cost += Number(row.cost ?? 0);
@@ -129,8 +132,7 @@ export function mySpend(userId: string, period: AiSpendPeriod = '7d', now: numbe
     const rows = db.all<Sums & { day: string }>(`SELECT day, ${SUMS} FROM ai_usage WHERE user_id = ? AND day >= ? AND day <= ? GROUP BY day`, userId, fromDay, today);
     const byDay = new Map(rows.map((r) => [r.day, r]));
     const points: AiSpendPoint[] = [];
-    for (let i = days - 1; i >= 0; i--) {
-      const at = meter.today(now - i * DAY_MS);
+    for (const at of range.buckets) {
       const row = byDay.get(at);
       points.push({ at, cost: round(Number(row?.cost ?? 0)), inputTokens: Number(row?.input ?? 0), outputTokens: Number(row?.output ?? 0), cacheReadTokens: Number(row?.cache_read ?? 0), calls: Number(row?.calls ?? 0) });
     }

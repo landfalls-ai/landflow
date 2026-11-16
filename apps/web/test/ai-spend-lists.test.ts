@@ -27,6 +27,7 @@ const { enableTestAuth } = await import("@/lib/server/auth/test-bypass");
 const projects = await import("@/lib/server/projects");
 const { database } = await import("@/lib/server/db");
 const { aiUsageMeter } = await import("@/lib/server/ai-usage");
+const { getSettings, updateSettings } = await import("@/lib/server/settings");
 const { routePolicy } = await import("@/lib/server/auth/policy");
 const runsRoute = await import("@/app/api/insights/ai/runs/route");
 const callsRoute = await import("@/app/api/insights/ai/calls/route");
@@ -725,5 +726,25 @@ describe("GET /api/insights/ai/calls", () => {
       )
     ).body as AiSpendCallsPage;
     expect(outside.calls).toEqual([]);
+  });
+
+  it("counts the report's days for 7d in a zone with daylight saving, just after midnight in the week after spring forward", async () => {
+    const zone = getSettings().timezone;
+    updateSettings({ timezone: "America/Los_Angeles" });
+    // 2026-03-12 00:30 in Los Angeles: five days after the clocks went forward on 2026-03-08.
+    vi.setSystemTime(Date.parse("2026-03-12T07:30:00.000Z"));
+    try {
+      expect(aiUsageMeter().today()).toBe("2026-03-12");
+      // The seven days are 6 to 12 March; "now minus 6 x 24 h" lands on 5 March, one day too many.
+      for (const [id, day] of [["au_dst_5", "2026-03-05"], ["au_dst_6", "2026-03-06"], ["au_dst_12", "2026-03-12"]])
+        usage({ id, day, at: `${day}T20:00:00.000Z`, user_id: owner.id, model: "dst-model" });
+      const page = (await calls({ group: "person", key: owner.id, period: "7d", model: "dst-model" }, owner)).body as AiSpendCallsPage;
+      expect(page.calls.map((c) => c.usageId).sort()).toEqual(["au_dst_12", "au_dst_6"]);
+      // A custom range ending after today is the report's 400 here too.
+      expect((await calls({ group: "person", key: owner.id, period: "custom", from: "2026-03-10", to: "2026-03-13" }, owner)).status).toBe(400);
+    } finally {
+      updateSettings({ timezone: zone });
+      vi.setSystemTime(BASE + 3_600_000);
+    }
   });
 });

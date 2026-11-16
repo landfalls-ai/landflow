@@ -32,7 +32,6 @@ import { isCallPurpose } from "../../shared/ai-call";
 import {
   AI_SPEND_CSV_MAX_ROWS,
   AI_SPEND_GROUPS,
-  AI_SPEND_MAX_DAYS,
   AI_SPEND_PAGE_SIZE,
   AI_SPEND_PERIODS,
   type AiSpendCall,
@@ -43,13 +42,12 @@ import {
   type AiSpendRunsPage,
 } from "../../shared/ai-spend";
 import { emptySpendTotals } from "../../shared/run-spend";
-import { aiUsageMeter } from "./index";
 import { canOpenCall, canOpenRun } from "./run-spend";
+import { currentRange } from "./spend-report";
 import { findPrice, priceOverrides } from "./prices";
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const DAY_MS = 86_400_000;
-const PERIOD_DAYS = { "24h": 1, "7d": 7, "30d": 30, "90d": 90 } as const;
 const round = (n: number) => Math.round(n * 1e8) / 1e8;
 const text = z.string().trim().min(1).max(300);
 
@@ -139,25 +137,12 @@ function range(
         new Date(now).toISOString(),
       ],
     };
-  const meter = aiUsageMeter();
-  if (query.period === "custom") {
-    const from = query.from as string;
-    const to = query.to as string;
-    // A range longer than the rows are kept answers 400, as the report's does.
-    if ((Date.parse(to) - Date.parse(from)) / DAY_MS + 1 > AI_SPEND_MAX_DAYS)
-      throw new SpendListError(
-        `A custom range spans at most ${AI_SPEND_MAX_DAYS} days`,
-        400,
-      );
-    return { clause: "day >= ? AND day <= ?", params: [from, to] };
-  }
-  return {
-    clause: "day >= ? AND day <= ?",
-    params: [
-      meter.today(now - (PERIOD_DAYS[query.period] - 1) * DAY_MS),
-      meter.today(now),
-    ],
-  };
+  // The report's own days (a bad or too long custom range, or one ending after today, is a 400 as there).
+  const { from, to } = currentRange(
+    { period: query.period, from: query.from, to: query.to },
+    now,
+  );
+  return { clause: "day >= ? AND day <= ?", params: [from, to] };
 }
 
 /** A column with no value: the report reads NULL and an empty text alike (`COALESCE(column, '')`). */
