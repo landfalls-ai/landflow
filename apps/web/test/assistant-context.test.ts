@@ -121,6 +121,21 @@ describe('the chat', () => {
     expect(calls[0].system as string).toContain('httpHeaderAuth: not set');
   });
 
+  it('caps the parameter text of all the steps given whole at 24 000 characters, the selected step first (SB10-N8)', async () => {
+    const { model, calls } = scripted([{ text: 'ok' }]);
+    const big = (id: string, name: string, ch: string) => ({ id, name, type: 'core.code', typeVersion: 1, position: [0, 0] as [number, number], parameters: { mode: 'each', codeEach: ch.repeat(8000), notes: ch.repeat(8000) } });
+    const wf: Workflow = { ...flow(), nodes: [...flow().nodes, big('d', 'Step D', 'd'), big('e', 'Step E', 'e'), big('f', 'Step F', 'f')] };
+    wf.nodes[1] = big('b', 'Parse triage', 'b');
+    await runChat({ messages: [{ role: 'user', content: 'change Step D, Step E and Step F' }], workflow: wf, selectedNodeId: 'b', scope: { kind: 'tagged', nodes: ['d', 'e', 'f'] }, model, types, onEvent: () => undefined } as never);
+    const system = calls[0].system as string;
+    const count = (ch: string) => system.split('\n').filter((l) => l.startsWith('Parameters: ')).reduce((n, l) => n + (l.match(new RegExp(ch, 'g'))?.length ?? 0), 0);
+    expect(count('b')).toBeGreaterThan(11_000); // the selected step first, up to 12 000
+    expect(count('d')).toBeGreaterThan(9_000);
+    expect(count('b') + count('d') + count('e') + count('f')).toBeLessThanOrEqual(24_000);
+    expect(count('f')).toBe(0);
+    expect(system).toContain('more characters');
+  });
+
   it('offers setWorkflowSettings in its tools and gives a proposal for { timeoutSeconds: 300 }', async () => {
     const propose = TOOLS.find((t) => t.name === 'propose_changes')!;
     expect(JSON.stringify(propose.inputSchema)).toContain('setWorkflowSettings');

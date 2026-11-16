@@ -94,7 +94,7 @@ A bubble that ends in “…” fills the box to finish; a complete question or 
 
 **What the model reads about the steps it edits.** The selected step, and every step in the change's scope (the steps tagged,
 named with "only", or the one a new step goes after), come with their parameters whole (a string up to 8 000 characters,
-all of them up to 12 000, then "… (N more characters)"), their settings (`retryOnFail`, `maxTries`, `waitBetweenTriesMs`,
+all of them up to 12 000, and 24 000 across every step given whole in one prompt, the selected step first, then "… (N more characters)"), their settings (`retryOnFail`, `maxTries`, `waitBetweenTriesMs`,
 `retryBackoff`, `onError`, `timeoutSeconds`, `executeOnce`, `alwaysOutputData`, `disabled`: only those set, else
 "defaults") and each credential slot the step shows for its parameters: `httpHeaderAuth: set (“Echo token”)` or
 `httpHeaderAuth: not set`, names only, never an id or a value. In the outline those steps keep 2 000 characters of

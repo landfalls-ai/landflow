@@ -490,7 +490,7 @@ async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, fi
     if (quiet >= 8) assistant.testing?.abort();
   }, 25);
   try {
-    await testUntilItRuns(scenario.ask, { publishAgents: true, autonomy });
+    await testUntilItRuns(echoed(scenario.ask, options), { publishAgents: true, autonomy });
   } finally {
     clearInterval(watch);
   }

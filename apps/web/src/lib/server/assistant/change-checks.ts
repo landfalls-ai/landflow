@@ -135,7 +135,7 @@ export function expressionMisses(ops: AssistantOp[], before: Workflow, after: Wo
     ops.some((o) => {
       if (o.op !== 'setParameters' && o.op !== 'addNode' && o.op !== 'renameNode') return false;
       const target = opTarget(o);
-      return target === n.name || target === n.id || (o.op === 'addNode' && (o.name ?? o.type) === n.name);
+      return target === n.name || target === n.id || (o.op === 'addNode' && (o.name ?? o.type) === n.name) || (o.op === 'renameNode' && o.name === n.name); // a rename names the old name; the workflow after it has the new one
     });
   for (const op of ops) {
     const set = parametersOf(op, after);

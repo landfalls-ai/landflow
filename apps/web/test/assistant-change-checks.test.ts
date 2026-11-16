@@ -136,6 +136,14 @@ describe('expressions against the step input', () => {
     expect(expressionMisses(ops, wf, apply(ops, wf).workflow, { runs })).toEqual([]);
   });
 
+  it('is silent when a feeder is renamed in the same proposal: the op names the old name, the workflow the new one (SB09-N2)', () => {
+    const wf = flow();
+    const ops: AssistantOp[] = [{ op: 'renameNode', node: 'Triage', name: 'Shape' } as AssistantOp, set({ body: '{{ $json.summary }}' })];
+    const after = apply(ops, wf).workflow;
+    expect(after.nodes.some((n) => n.name === 'Shape')).toBe(true);
+    expect(expressionMisses(ops, wf, after, { runs })).toEqual([]);
+  });
+
   it('checks $(\'Name\').item.json reads against that step', () => {
     const wf = flow();
     const ops = [set({ body: "{{ $('Triage').item.json.owner }}" })];

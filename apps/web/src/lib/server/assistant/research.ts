@@ -179,7 +179,7 @@ function describeRun(run: RunDigest): string {
 }
 
 /** SB10: the node's parameters whole: each string up to 8 000 characters, the text up to 12 000, then "… (N more characters)". */
-function fullParameters(parameters: Record<string, unknown>): string {
+function fullParameters(parameters: Record<string, unknown>, limit = 12000): string {
   const cut = (value: unknown): unknown =>
     typeof value === 'string' && value.length > 8000
       ? `${value.slice(0, 8000)}… (${value.length - 8000} more characters)`
@@ -189,8 +189,11 @@ function fullParameters(parameters: Record<string, unknown>): string {
           ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, cut(v)]))
           : value;
   const text = JSON.stringify(cut(parameters));
-  return text.length > 12000 ? `${text.slice(0, 12000)}… (${text.length - 12000} more characters)` : text;
+  return text.length > limit ? `${text.slice(0, limit)}… (${text.length - limit} more characters)` : text;
 }
+
+/** SB10: the parameter text of all the steps given whole in one prompt is capped, the selected step first. */
+export const FOCUS_PARAMETER_CHARS = 24_000;
 
 const SETTINGS = ['retryOnFail', 'maxTries', 'waitBetweenTriesMs', 'retryBackoff', 'onError', 'timeoutSeconds', 'executeOnce', 'alwaysOutputData', 'disabled'] as const;
 
@@ -215,14 +218,17 @@ function settingsAndCredentials(node: WorkflowNode, info: NodeTypeInfo | undefin
  * A node, its docs (with what's visible for its parameters), its neighbours and its last run. With `full` (SB10: the
  * steps in scope) the parameters are given whole and the node's settings and credential state follow them.
  */
-export function nodeContext(workflow: Workflow, nodeId: string, run: RunDigest | undefined, types: NodeTypeInfo[] = availableTypes(), options: { full?: boolean } = {}): string {
+export function nodeContext(workflow: Workflow, nodeId: string, run: RunDigest | undefined, types: NodeTypeInfo[] = availableTypes(), options: { full?: boolean; budget?: { left: number } } = {}): string {
   const node = nodeById(workflow, nodeId);
   if (!node) return `No node with id ${nodeId}.`;
   const info = types.find((t) => t.type === node.type);
   const { upstream, downstream } = neighbours(workflow, nodeId);
+  // With a `budget` (the characters left for every step of one prompt), this step takes what it needs from it, at most 12 000.
+  const whole = options.full ? fullParameters(node.parameters, Math.min(12000, Math.max(0, options.budget?.left ?? 12000))) : undefined;
+  if (whole && options.budget) options.budget.left -= whole.length;
   return [
     `Node “${node.name}” (${node.type})${node.disabled ? ' [disabled]' : ''}${node.onError === 'continue' ? ' [continues on error]' : ''}`,
-    `Parameters: ${options.full ? fullParameters(node.parameters) : json(node.parameters, 2000)}`,
+    `Parameters: ${whole ?? json(node.parameters, 2000)}`,
     ...(options.full ? settingsAndCredentials(node, info) : []),
     `Upstream: ${upstream.join(', ') || 'none'}. Downstream: ${downstream.join(', ') || 'none'}.`,
     run ? `Last run:\n${describeRun(run)}` : 'Not run yet.',

@@ -54,7 +54,7 @@ import {
   withoutNarration,
   withoutRepeats,
 } from './guards';
-import { availableTypes, catalogSummary, nodeContext, nodeDocs, searchNodes, workflowOutline } from './research';
+import { availableTypes, catalogSummary, FOCUS_PARAMETER_CHARS, nodeContext, nodeDocs, searchNodes, workflowOutline } from './research';
 import { MENTION_LIMITS, mentionKey, type MentionRef } from '../../shared/mentions';
 import { BLOCK_CLOSE, BLOCK_OPEN, resolveMentions, type MentionRead, type SentMention } from '../mentions/resolve';
 import type { Actor } from '../projects/access';
@@ -468,6 +468,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
   // not be read is named and nothing more, so the model does not make up what it holds.
   const unread = (input.tagged?.reads ?? []).filter((r) => !r.ok).map((r) => r.label.replace(/^Couldn't read /, ''));
   const tagged = [input.tagged?.block ?? '', unread.length ? `Not readable (tell the user if it matters): ${unread.join(', ')}` : ''].filter(Boolean);
+  const focusBudget = { left: FOCUS_PARAMETER_CHARS }; // SB10 (N8): one budget for the parameter text of the selected step and the steps in scope
   const system = [
     SYSTEM,
     `\nApps and plugins this workflow can use (search_nodes for the rest):\n${catalogSummary(types)}`,
@@ -475,8 +476,8 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     input.teams?.length ? `\nPublished agent teams (Run a Team can run these):\n${describeTeams(input.teams)}` : '',
     `\nThe editor now:\n${outline()}`,
     working.groups?.some((g) => g.composite) ? `\nComposites (frames typed by a contract: fill their slots with matching nodes, keep their rules):\n${compositeOutline(working)}` : '',
-    selected ? `\nThe user has “${selected.name}” selected:\n${nodeContext(working, selected.id, runs[selected.id], types, { full: true })}` : '',
-    ...[...focus].filter((id) => (selected ? selected.id : undefined) !== id && working.nodes.some((n) => n.id === id)).map((id) => `\nThe change is about “${working.nodes.find((n) => n.id === id)!.name}” too:\n${nodeContext(working, id, runs[id], types, { full: true })}`), // SB10:
+    selected ? `\nThe user has “${selected.name}” selected:\n${nodeContext(working, selected.id, runs[selected.id], types, { full: true, budget: focusBudget })}` : '',
+    ...[...focus].filter((id) => (selected ? selected.id : undefined) !== id && working.nodes.some((n) => n.id === id)).map((id) => `\nThe change is about “${working.nodes.find((n) => n.id === id)!.name}” too:\n${nodeContext(working, id, runs[id], types, { full: true, budget: focusBudget })}`), // SB10:
     builderContextEntry(input.actor, { workflowId: input.workflow.id }), // PC10: the goals of the project this workflow is in, as data
     tagged.length ? `\nThe user tagged these in the message (checked against what they may open):\n${tagged.join('\n')}` : '',
     question ? '\nThe latest message is a question: answer it; you cannot change the workflow in this reply.' : '', // SB04:
