@@ -18,7 +18,7 @@ import { useEditor } from '../store';
 import { isPhone } from '@/lib/client/use-phone';
 import { lastOutcomeOf, lastRunOf, openNeedOf, stepsOf, stoppedAtOf, titleOf } from '../timeline';
 import { Composer, focusSpotlight } from './composer';
-import { AutonomousExplainer, AutonomousSwitch, useAutonomousExplainer } from './proposal';
+import { AsksFirstNote, AutonomousExplainer, AutonomousSwitch, useAutonomousExplainer } from './proposal';
 import { Timeline } from './timeline-view';
 import { useAskParam } from './ask-param';
 import { ModeChip } from '../../spotlight/mode-chip';
@@ -462,7 +462,9 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
             <AutonomousSwitch explainer={explainer} />
           </div>
           {explainer.note && <AutonomousExplainer onClose={explainer.close} className="mx-3 mb-2.5 shadow-none" />}
+          <AsksFirstNote />
         </div>
+        <AsksFirstNote className="border-b border-hair pt-1.5 md:hidden" />
         {/* Phone, folded: the step Spotlight is on, and Review and Apply when a change waits. */}
         {folded && latest && (
           <p className="flex items-center gap-1.5 truncate px-3 py-1.5 text-[12px] text-t2 md:hidden">

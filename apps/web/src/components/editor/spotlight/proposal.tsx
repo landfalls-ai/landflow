@@ -8,6 +8,8 @@ import { Button } from '../../ui/button';
 import { Collapsible } from '../../ui/chat-motion';
 import { Segmented } from '../../ui/segmented';
 import { useAutonomous } from '../autonomous';
+import { autonomyOf, useAutonomyFacts } from '../spotlight-autonomy'; // SB04:
+import { useEditor } from '../store'; // SB04:
 import { applyChanges, sendFeedback, undos, useAssistant, type Proposal } from '../assistant';
 import { LeftOut, OpsDiff, Warnings } from '../suggestions-card';
 import { EXPLAINER_KEY, cardFolded, explainerDue, isNewestUndo, undoGroup } from './states';
@@ -187,6 +189,7 @@ export function AutonomousSwitch({ compact, explainer }: { compact?: boolean; ex
   const { on, set } = useAutonomous();
   const own = useAutonomousExplainer();
   const { note, close } = explainer ?? own;
+  // SB04: the switch is the person's choice, but on a saved or published workflow Spotlight asks first anyway (decision D1).
   return (
     <div className="relative shrink-0">
       <Segmented
@@ -216,5 +219,21 @@ export function AutonomousSwitch({ compact, explainer }: { compact?: boolean; ex
       />
       {note && !explainer && <AutonomousExplainer onClose={close} className="fixed inset-x-3 bottom-3 z-50" />}
     </div>
+  );
+}
+
+/**
+ * SB04: on a saved or published workflow Spotlight asks first even with the switch on (decision D1). One quiet line in the
+ * panel's flow (under the switch's row on a desktop, under the header on a phone), so it covers nothing.
+ */
+export function AsksFirstNote({ className }: { className?: string }) {
+  const { on } = useAutonomous();
+  const workflowId = useEditor((st) => st.workflowId);
+  const asksFirst = useAutonomyFacts(() => autonomyOf(workflowId) === 'asks-first') && Boolean(workflowId);
+  if (!on || !asksFirst) return null;
+  return (
+    <p role="note" className={cn('px-3 pb-1.5 text-[11.5px] leading-snug text-t3', className)}>
+      Spotlight acts alone only while it builds a new draft. This workflow is saved, so it asks first.
+    </p>
   );
 }

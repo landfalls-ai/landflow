@@ -25,11 +25,24 @@ export const KIND_META: Record<SuggestionKind, { label: string; tone: Tone }> = 
 /** What applying a change would leave dangling. */
 export function Warnings({ warnings }: { warnings?: string[] }) {
   if (!warnings?.length) return null;
+  // SB04: "Waits for you: removes “X”" is why Spotlight did not apply it alone, not something the change leaves undone.
+  const waits = warnings.filter((w) => w.startsWith('Waits for you'));
+  const left = warnings.filter((w) => !w.startsWith('Waits for you'));
   return (
-    <div className="flex items-start gap-1.5 text-[11px] leading-snug text-warn">
-      <TriangleAlert className="mt-px size-3 shrink-0" />
-      <span>Leaves {warnings.join('; ')}.</span>
-    </div>
+    <>
+      {waits.length > 0 && (
+        <div className="flex items-start gap-1.5 text-[11px] leading-snug text-warn">
+          <TriangleAlert className="mt-px size-3 shrink-0" />
+          <span>{waits.join('; ')}.</span>
+        </div>
+      )}
+      {left.length > 0 && (
+        <div className="flex items-start gap-1.5 text-[11px] leading-snug text-warn">
+          <TriangleAlert className="mt-px size-3 shrink-0" />
+          <span>Leaves {left.join('; ')}.</span>
+        </div>
+      )}
+    </>
   );
 }
 

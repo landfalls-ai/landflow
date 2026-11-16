@@ -11,7 +11,6 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BaseEdge, Handle, Position, type Edge, type EdgeProps, type Node, type NodeProps } from '@xyflow/react';
-import { TriangleAlert } from 'lucide-react';
 import { create } from 'zustand';
 import { buildSteps, planOf, stepProgress, mergeTrace, visibleGhosts, type BuildStep, type GhostNode, type Plan } from '@/lib/shared/build-steps';
 import { nodeColor } from '@/lib/client/node-style';
@@ -22,10 +21,11 @@ import { Button } from '../ui/button';
 import { NodeIcon } from '../ui/icon';
 import { edgePath, useLane } from '../canvas/edge-path';
 import { applyChanges, editorLookup, sendFeedback, undos, useAssistant, useWorking, type AssistantTurn, type ChatItem, type Proposal } from './assistant';
-import { useAutonomous } from './autonomous';
-import { LeftOut } from './suggestions-card';
+import { holdsForClick, useAutonomous } from './autonomous';
+import { LeftOut, Warnings } from './suggestions-card';
 import { MOTION_MS, ghostFade } from './spotlight/states';
 import { handleId, useEditor } from './store';
+import { useAutonomyFacts } from './spotlight-autonomy';
 
 /** How long a step takes to tick off once the plan is there. */
 const STEP_MS = 520;
@@ -142,6 +142,10 @@ export function LiveSteps({ live, trace, durationMs }: { live: Live; trace?: Act
   const decide = (state: 'applied' | 'dismissed') => {
     for (const { itemId, proposal } of live.proposals) useAssistant.getState().setProposalState(itemId, proposal.id, state);
   };
+  // Re-render when what holdsForClick reads changes (the switch, the published read arriving, the workflow opening).
+  useAutonomyFacts((s) => s.workflows);
+  useAutonomyFacts((s) => s.switchOn);
+  useEditor((s) => s.workflowId);
   const apply = () => {
     const label = live.proposals.length === 1 ? live.proposals[0].proposal.summary : `${live.proposals.length} changes`;
     // Each proposal keeps the one Undo, so the row it folds into can offer it.
@@ -156,15 +160,11 @@ export function LiveSteps({ live, trace, durationMs }: { live: Live; trace?: Act
     <div className="space-y-2">
       {/* The plan's steps once there are some, else what the chat stream says it did (with times): one trace line while it works. */}
       <ActivityTrace steps={mergeTrace(trace, steps)} live={streaming || !all} durationMs={durationMs} />
-      {ready && warnings.length > 0 && (
-        <p className="flex items-start gap-1.5 text-[11px] leading-snug text-warn">
-          <TriangleAlert className="mt-px size-3 shrink-0" /> Leaves {warnings.join('; ')}.
-        </p>
-      )}
+      {ready && <Warnings warnings={warnings} />}
       {ready && dropped > 0 && (
         <LeftOut reasons={live.proposals.flatMap((p) => p.proposal.dropped)} />
       )}
-      {ready && all && !autonomous && (
+      {ready && all && (!autonomous || holdsForClick(live.proposals.map((p) => p.proposal))) && ( // SB04: a saved workflow, or a change that needs a click, shows Apply even with the switch on
         <div className="flex items-center gap-1.5">
           <Button size="sm" variant="primary" onClick={apply}>
             Apply
