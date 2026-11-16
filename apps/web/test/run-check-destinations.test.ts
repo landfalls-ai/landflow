@@ -3,7 +3,7 @@
  * `needsPerson` reads the block before the credential rules; `destinationsOf` says where each sending step reaches.
  */
 import { describe, expect, it } from 'vitest';
-import { NO_ADDRESS, destinationsOf, hostOf, isUnreadHost, needsPerson, urlHost } from '@/lib/shared/run-check';
+import { NO_ADDRESS, yesText, destinationsOf, hostOf, isUnreadHost, needsPerson, urlHost } from '@/lib/shared/run-check';
 
 describe('a blocked run', () => {
   it('is the person’s, whatever the status code says', () => {
@@ -50,8 +50,9 @@ describe('destinationsOf', () => {
     expect(urlHost('//evil.com/x')).toMatchObject({ hostname: 'evil.com' }); // protocol-relative: a host, not a path
     expect(hostOf('//evil.com/x')).toBe('evil.com');
     expect(hostOf('=https://evil.com/{{ $json.id }}')).toBe('evil.com');
-    expect(hostOf('https://{{ $json.u }}@evil.com/x')).toBe('evil.com');
-    expect(hostOf('https://user:{{ $json.pw }}@evil.com/x')).toBe('evil.com');
+    // An expression in the user name: the host is shown, but it can move at run time, so it asks every run.
+    expect(hostOf('https://{{ $json.u }}@evil.com/x')).toBe('evil.com{{ … }}');
+    expect(hostOf('https://user:{{ $json.pw }}@evil.com/x')).toBe('evil.com{{ … }}');
     expect(hostOf('https://{{ $json.host }}/x')).toBe('{{ … }}');
     expect(isUnreadHost('evil.com{{ … }}')).toBe(true);
   });
@@ -61,6 +62,22 @@ describe('destinationsOf', () => {
     expect(hostOf('https://evil.com?@good.com/x')).toBe('evil.com');
     expect(hostOf('https://good.com:443/x')).toBe('good.com');
     expect(hostOf('not a url')).toBe('{{ … }}');
+  });
+
+  it('an "@" inside an expression is no user-name break, and "=" with spaces is still an expression URL', () => {
+    expect(hostOf("https://good.com{{ '@evil.com' }}")).toBe('good.com{{ … }}');
+    expect(hostOf("https://good.com{{'@evil.com'}}")).toBe('good.com{{ … }}');
+    expect(urlHost("https://good.com{{'@evil.com'}}")).toBe('unreadable');
+    expect(hostOf('= https://evil.com/{{ x }}')).toBe('evil.com');
+    expect(hostOf('=  https://evil.com/x')).toBe('evil.com');
+    expect(urlHost('= https://evil.com/x')).toMatchObject({ hostname: 'evil.com' });
+    expect(isUnreadHost(hostOf('https://{{ $json.u }}@good.com/x'))).toBe(true);
+  });
+
+  it('a yes on an expression destination says it covers the next run only', () => {
+    expect(yesText(['{{ … }}'])).toMatch(/next run only/);
+    expect(yesText(['{{ … }}'])).not.toMatch(/^You said yes: tests of this workflow/);
+    expect(yesText(['127.0.0.1:3399'])).toBe('You said yes: tests of this workflow run for real to 127.0.0.1:3399.');
   });
 
   it('an app node that writes is its type and operation', () => {

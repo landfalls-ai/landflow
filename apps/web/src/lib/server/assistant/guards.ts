@@ -6,7 +6,7 @@ import type { ToolCall } from '@landflow/engine';
 import type { AssistantOp } from '@/lib/shared/assistant-ops';
 import { withAgentId, type AgentBrief } from '@/lib/shared/agent-brief';
 import { withTeamId, type TeamBrief } from '@/lib/shared/agent-teams';
-import { givenKept, urlHost } from '@/lib/shared/run-check';
+import { AT_IN_EXPRESSION, givenKept, lastAtOutside, urlHost, withoutEquals } from '@/lib/shared/run-check';
 import type { PropertyDescriptor, Workflow } from '@/lib/shared/types';
 
 const shorten = (value: string, max = 60) => (value.length > max ? `${value.slice(0, max - 1)}…` : value);
@@ -133,7 +133,7 @@ function mentionsHost(text: string, host: string): boolean {
  * when the value is a whole expression or the host itself is one (the literal part ends before the host does).
  */
 function literalHostOf(raw: string): string | undefined {
-  const value = raw.replace(/^\s*=/, ''); // an n8n-style expression: "=https://…"
+  const value = withoutEquals(raw); // an n8n-style expression: "=https://…"
   const at = value.indexOf('{{');
   const prefix = value.slice(0, at);
   if (prefix.includes('\\')) return UNREADABLE;
@@ -145,7 +145,8 @@ function literalHostOf(raw: string): string | undefined {
   };
   // An expression in the user name ("{{ user }}@evil.com", "user:{{ pw }}@evil.com"): the host is what follows the last "@".
   const whole = /^[^/?#]*/.exec(value.replace(/^\s*[a-z][a-z0-9+.-]*:\/\//i, ''))![0];
-  const lastAt = whole.lastIndexOf('@');
+  const lastAt = lastAtOutside(whole);
+  if (lastAt === AT_IN_EXPRESSION) return UNREADABLE; // an "@" inside an expression may be anything
   if (lastAt >= 0 && !whole.slice(lastAt + 1).includes('{{')) return hostOfAuthority(whole.slice(lastAt + 1));
   if (!authority) return undefined; // the whole host is an expression
   // A "/", "?" or "#" ended the authority before the expression: the host is all literal.

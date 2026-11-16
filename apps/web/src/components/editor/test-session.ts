@@ -316,9 +316,9 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       // An agent Spotlight is still designing (./new-agent.ts): the run needs it saved and pointed at first.
       await agentsSettled();
       if (signal.aborted) return; // stopped while an agent was being designed: no run
-      // SB03: every run, not only the first: a destination the person never said yes to (a fix may have brought it in) stops the session.
-      if (ran) {
-        const last = lastApplied.at(-1);
+      // SB03: before every real run, the first too (the wait above can change a URL): a destination the person never said yes to stops the session.
+      {
+        const last = ran ? lastApplied.at(-1) : undefined;
         const need = destinationNeed(goal, false, last && { item: last.item, proposals: last.proposals });
         if (need) {
           ask(need);

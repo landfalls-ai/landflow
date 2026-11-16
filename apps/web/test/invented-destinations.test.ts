@@ -95,8 +95,16 @@ describe('a URL is judged by the host a fetch would reach (review fixes)', () =>
     '=https://evil.com/{{ $json.id }}',
     'https://{{ $json.u }}@evil.com/x',
     'https://user:{{ $json.pw }}@evil.com/x',
+    "https://good.com{{ '@evil.com' }}",
+    "https://good.com{{'@evil.com'}}",
+    '= https://evil.com/{{ $json.id }}',
   ])('clears %s', (url) => {
     expect(cleared(url)).toBe(true);
+  });
+
+  it('names the host of an "=" URL with a space, and an "@" in an expression as unreadable', () => {
+    expect(withoutInventedIds(set({ url: '= https://evil.com/{{ $json.id }}' }), k).invented[0]).toContain('a host nobody gave (evil.com)');
+    expect(withoutInventedIds(set({ url: "https://good.com{{'@evil.com'}}" }), k).invented[0]).toContain('an address that cannot be read');
   });
 
   it('says a backslash URL cannot be read, and an evil.com one names its host', () => {

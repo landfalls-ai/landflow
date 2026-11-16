@@ -150,23 +150,45 @@ export const NO_ADDRESS = 'an address not filled in yet';
  * so "https://evil.com\@good.com/" goes to evil.com, but a person never means that), an expression in the host, or one that
  * does not parse. `undefined` when the text names no URL at all.
  */
-export function urlHost(value: string): { host: string; hostname: string } | 'unreadable' | undefined {
-  const text = value.trim().replace(/^=/, '');
+/** `lastAtOutside` said the last "@" sits inside an expression: the host cannot be told. */
+export const AT_IN_EXPRESSION = -2;
+
+/** The index of the last "@" of `text` that is outside `{{ }}`; -1 when there is none, `AT_IN_EXPRESSION` when the last "@" is inside one. */
+export function lastAtOutside(text: string): number {
+  let inside = false;
+  let last = -1;
+  let lastInside = false;
+  for (let i = 0; i < text.length; i++) {
+    if (!inside && text.startsWith('{{', i)) (inside = true, i++);
+    else if (inside && text.startsWith('}}', i)) (inside = false, i++);
+    else if (text[i] === '@') (last = i, lastInside = inside);
+  }
+  return lastInside ? AT_IN_EXPRESSION : last;
+}
+
+/** Strips an n8n-style "=" in front of an expression value (with the space around it). */
+export const withoutEquals = (value: string) => value.trim().replace(/^=\s*/, '');
+
+export function urlHost(value: string): { host: string; hostname: string; expression?: true } | 'unreadable' | undefined {
+  const text = withoutEquals(value);
   if (!text || /^\/(?!\/)/.test(text)) return undefined; // a path: no host ("//host/x" is a protocol-relative URL)
   const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(text);
   if (text.includes('\\')) return 'unreadable';
   const afterScheme = hasScheme ? text.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '') : text.replace(/^\/\//, '');
   const authority = /^[^/?#]*/.exec(afterScheme)![0];
   let readable = text;
+  let userinfoExpression = false;
   if (authority.includes('{{')) {
     // An expression in the user name ("{{ user }}@evil.com"): the host is what follows the last "@", when that is literal.
-    const at = authority.lastIndexOf('@');
+    // The host can still move at run time ("/", "?", "#" or "@" in the value), so it is shown but asks every run.
+    const at = lastAtOutside(authority);
     if (at < 0 || authority.slice(at + 1).includes('{{')) return 'unreadable';
     readable = `http://${afterScheme.slice(at + 1)}`;
+    userinfoExpression = true;
   } else if (text.startsWith('//')) readable = `http:${text}`;
   try {
     const url = new URL(readable === text && !hasScheme ? `http://${text}` : readable);
-    return url.host ? { host: url.host, hostname: url.hostname } : 'unreadable';
+    return url.host ? { host: url.host, hostname: url.hostname, ...(userinfoExpression && { expression: true as const }) } : 'unreadable';
   } catch {
     return hasScheme ? 'unreadable' : undefined;
   }
@@ -174,13 +196,19 @@ export function urlHost(value: string): { host: string; hostname: string } | 'un
 
 /** `host:port` of a URL; "{{ … }}" when the host is an expression or the URL cannot be read, `NO_ADDRESS` when it is empty. */
 export function hostOf(url: string): string {
-  if (!url.trim().replace(/^=/, '').trim()) return NO_ADDRESS;
+  if (!withoutEquals(url)) return NO_ADDRESS;
   const parsed = urlHost(url);
-  if (parsed && parsed !== 'unreadable') return parsed.host;
+  if (parsed && parsed !== 'unreadable') return parsed.expression ? `${parsed.host}${UNREAD_HOST}` : parsed.host;
   // What is literal in front of the expression stays visible ("evil.com{{ … }}"), so the person sees where it may go.
-  const literal = url.trim().replace(/^=/, '').replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split('{{')[0];
+  const literal = withoutEquals(url).replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split('{{')[0];
   const shown = url.includes('{{') && !literal.includes('\\') ? /^[^/?#\s]*/.exec(literal)![0].slice(0, 60) : '';
   return `${shown}${UNREAD_HOST}`;
+}
+
+/** What a card says after a yes to a sending test: an expression destination's yes covers the next run only. */
+export function yesText(destinations: readonly string[] | undefined): string {
+  if (destinations?.some(isUnreadHost)) return `You said yes for the next run only: it runs for real to ${destinations.join(', ')}, and the next test asks again.`;
+  return `You said yes: tests of this workflow run for real${destinations?.length ? ` to ${destinations.join(', ')}` : ''}.`;
 }
 
 /** Whether a destination is an expression or an unreadable URL ("{{ … }}", maybe with its literal start): it asks every run. */

@@ -250,6 +250,22 @@ describe('an expression destination asks every time (review fixes)', () => {
     expect(needs().at(-1)?.nodes).toContain('Notify VIP');
   });
 
+  it('a URL that changes while the agents settle is asked about before the first run', async () => {
+    noteOpened(WF, 0);
+    yes();
+    let release!: () => void;
+    agentsGate = new Promise<void>((r) => (release = r));
+    const session = testUntilItRuns(goal);
+    await Promise.resolve();
+    useEditor.getState().updateNode('b', { parameters: { method: 'POST', url: 'http://evil.example:9/x' } }); // e.g. an older proposal card applied
+    release();
+    agentsGate = undefined;
+    await session;
+    expect(run).not.toHaveBeenCalled();
+    expect(needs().map((n) => n.what)).toContain('destination');
+    expect(needs().at(-1)?.destinations).toEqual(['evil.example:9']);
+  });
+
   it('a step deleted and added back under the same name asks again', async () => {
     noteOpened(WF, 0);
     yes();

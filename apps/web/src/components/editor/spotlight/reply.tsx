@@ -22,6 +22,7 @@ import { swapState } from './swap';
 import { OPEN_CAPS_HREF, errorActions, type ErrorAction } from './states';
 import { can } from '@/lib/shared/auth';
 import { useViewer } from '../../auth/viewer';
+import { yesText } from '@/lib/shared/run-check';
 
 export type Reply = Extract<ChatItem, { role: 'assistant' }>;
 
@@ -61,7 +62,7 @@ function NeedRow({ itemId, need }: { itemId: string; need: Need }) {
       </div>
       {need.state ? (
         <p className="pl-5 text-[11.5px] text-t3">
-          {need.state === 'dismissed' ? 'Left for later.' : need.what === 'sends' || need.what === 'destination' ? `You said yes: tests of this workflow run for real${need.destinations?.length ? ` to ${need.destinations.join(', ')}` : ''}.` : need.what === 'blocked' || need.what === 'address' ? 'Left for you to change.' : need.what === 'trigger' ? 'Trigger added.' : 'Testing again.'}
+          {need.state === 'dismissed' ? 'Left for later.' : need.what === 'sends' || need.what === 'destination' ? yesText(need.destinations) : need.what === 'blocked' || need.what === 'address' ? 'Left for you to change.' : need.what === 'trigger' ? 'Trigger added.' : 'Testing again.'}
         </p>
       ) : (
         <div className="flex flex-wrap gap-1.5 pl-5">
