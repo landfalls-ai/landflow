@@ -1060,7 +1060,7 @@ export interface DiffLine {
  * A parameter's value as a person reads it: a Set's `{"values":[{"name":"tagged","value":true}]}` is `tagged = true`,
  * a list of items is their values, an object its first keys. JSON only for what has no shape to read.
  */
-export function readableValue(value: unknown, depth = 0, whole = false): string {
+export function readableValue(value: unknown, depth = 0, whole = false): string { // SB08: `whole` shows values whole, for the diff
   if (value === null || value === undefined) return 'empty';
   if (typeof value !== 'object') return String(value);
   if (depth > 3 && !whole) return JSON.stringify(value);
@@ -1206,9 +1206,11 @@ function field(key: string, label: string, before: string | undefined, after: st
  * each touched step's parameters (named as the node panel names them), settings, credentials and wires, the old and the
  * new value whole, and how many steps stay as they are. Pure: the card calls it with the canvas and the proposal's ops.
  */
-export function diffOps(before: Workflow, ops: AssistantOp[], lookup?: DescriptorLookup): ChangeDiff {
+export function diffOps(before: Workflow, ops: AssistantOp[] | AssistantOp[][], lookup?: DescriptorLookup): ChangeDiff {
   const find = lookup ?? (() => undefined);
-  const after = applyOps(before, ops, find).workflow;
+  // Ops grouped by proposal chain the way Apply does: one `applyOps` per proposal (its own refs), each on the last result.
+  const groups: AssistantOp[][] = ops.length > 0 && Array.isArray(ops[0]) ? (ops as AssistantOp[][]) : [ops as AssistantOp[]];
+  const after = groups.reduce((wf, g) => applyOps(wf, g, find).workflow, before);
   const wasById = new Map(before.nodes.map((n) => [n.id, n]));
   const nowById = new Map(after.nodes.map((n) => [n.id, n]));
   const nameOf = (id: string) => nowById.get(id)?.name ?? wasById.get(id)?.name ?? id;

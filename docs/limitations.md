@@ -632,4 +632,4 @@ items still open (its "Wave 6" section); this page is the short list to check be
   empty), so one that ran on Ollama is not listed under Local models until a new call of that model arrives; it is
   still priced by model name.
 - The AI page's **You** card covers 24 hours, 7, 30 or 90 days; with a custom range on the page it is not shown.
-- The change diff on a proposal card compares values as text: a Code step's source is shown whole, not parsed, and an expression (`{{ … }}`) is shown as written, not as it resolves. A list of named values (a Set's fields) is shown as its first three, then "+N more". A change Spotlight applies alone (a new draft) has no waiting card, so its row keeps the one-line list, and a row from an earlier visit has no diff.
+- The change diff on a proposal card compares values as text: a Code step's source is shown whole, not parsed, and an expression (`{{ … }}`) is shown as written, not as it resolves. A change Spotlight applies alone (a new draft) has no waiting card, so its row keeps the one-line list, and a row from an earlier visit has no diff.

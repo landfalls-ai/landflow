@@ -93,9 +93,16 @@ describe('diffOps', () => {
     const p1: AssistantOp[] = [{ op: 'addNode', ref: 'n', type: 'core.noOp', name: 'Pause', before: 'Save to backlog' }];
     const p2: AssistantOp[] = [{ op: 'setNodeSettings', node: 'Pause', settings: { retryOnFail: true } }, { op: 'renameNode', node: 'Pause', name: 'Hold' }];
     expect(diffOps(triage, p2, lookup).steps).toHaveLength(0);
-    const chained = diffOps(triage, [...p1, ...p2], lookup);
+    const chained = diffOps(triage, [p1, p2], lookup);
     expect(chained.steps.find((s) => s.node === 'Hold')).toBeTruthy();
     expect(chained.untouched).toBe(9);
+  });
+
+  it('proposals that reuse a ref, or add unnamed steps of one type, each show their added step', () => {
+    const a = diffOps(triage, [[{ op: 'addNode', ref: 'r1', type: 'core.noOp', name: 'Pause', before: 'Save to backlog' }], [{ op: 'addNode', ref: 'r1', type: 'core.noOp', name: 'Wait more', before: 'Save to backlog' }]], lookup);
+    expect(a.steps.filter((s) => s.kind === 'added').map((s) => s.node).sort()).toEqual(['Pause', 'Wait more']);
+    const b = diffOps(triage, [[{ op: 'addNode', type: 'core.noOp', before: 'Save to backlog' }], [{ op: 'addNode', type: 'core.noOp', before: 'Save to backlog' }]], lookup);
+    expect(b.steps.filter((s) => s.kind === 'added')).toHaveLength(2);
   });
 
   it('counts the steps no op touches: 8 of the 9 of Bug triage', () => {

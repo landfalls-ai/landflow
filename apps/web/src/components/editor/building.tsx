@@ -140,8 +140,8 @@ export function LiveSteps({ live, trace, durationMs }: { live: Live; trace?: Act
   const dropped = live.proposals.reduce((n, p) => n + p.proposal.dropped.length, 0);
   const warnings = live.proposals.flatMap((p) => p.proposal.warnings);
   const canvas = useCanvas(); // SB08: the canvas the waiting card is read against
-  // The proposals chain, as Apply does: a later one may name a step an earlier one adds, so one diff of all their ops.
-  const allOps = useMemo(() => live.proposals.flatMap((p) => p.proposal.ops), [live.proposals]);
+  // The proposals chain, as Apply does: a later one may name a step an earlier one adds, so one diff, one `applyOps` per proposal as Apply does.
+  const allOps = useMemo(() => live.proposals.map((p) => p.proposal.ops), [live.proposals]);
 
   const decide = (state: 'applied' | 'dismissed') => {
     for (const { itemId, proposal } of live.proposals) useAssistant.getState().setProposalState(itemId, proposal.id, state);

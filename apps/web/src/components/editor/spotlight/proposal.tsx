@@ -33,10 +33,15 @@ export function undoProposal(proposalId: string): void {
  * A change waiting for Apply (autonomous mode off). Apply folds the card into its one-line row, with a tick, while the
  * ghosts on the canvas become the real nodes (`GhostNodeView`); Undo opens it again and the nodes go back to ghosts.
  */
+/** SB08: reads the canvas only while the card waits, so a folded card does not re-render on a node drag. */
+function WaitingDiff({ proposal }: { proposal: Proposal }) {
+  const canvas = useCanvas();
+  return <ChangeDiff before={canvas} ops={proposal.ops} id={proposal.id} />;
+}
+
 export function ProposalCard({ itemId, proposal }: { itemId: string; proposal: Proposal }) {
   const decide = (state: 'applied' | 'dismissed' | 'undone') => useAssistant.getState().setProposalState(itemId, proposal.id, state);
   const applied = cardFolded(proposal.state);
-  const canvas = useCanvas(); // SB08:
   // Re-read on each render (the subscription): the newest undo is the only one that is safe to use.
   const canUndo = useAssistant((s) => s.items.length) >= 0 && isNewestUndo(undos, proposal.id);
   const apply = () => {
@@ -64,7 +69,7 @@ export function ProposalCard({ itemId, proposal }: { itemId: string; proposal: P
       </div>
       <Collapsible open={!applied}>
         <div className="space-y-2 pt-2">
-          <ChangeDiff before={applied ? undefined : canvas} ops={proposal.ops} id={proposal.id} settled={applied} /> {/* SB08: */}
+          {applied ? <ChangeDiff ops={proposal.ops} id={proposal.id} settled /> : <WaitingDiff proposal={proposal} />} {/* SB08: */}
           <Warnings warnings={proposal.warnings} />
           <LeftOut reasons={proposal.dropped} />
           <div className="flex items-center gap-1.5">

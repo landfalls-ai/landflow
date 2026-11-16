@@ -107,7 +107,7 @@ function StepBlock({ step }: { step: StepDiff }) {
  * leaves as they are. `open` is whether it starts open (a waiting card) or folded (an applied row). With `id` (the
  * proposal) and `settled` (it is applied), the diff the card showed while it waited is shown, since the canvas has it now.
  */
-export function ChangeDiff({ before, ops, open = true, id, settled }: { before?: Workflow; ops: AssistantOp[]; open?: boolean; id?: string | string[]; settled?: boolean }) {
+export function ChangeDiff({ before, ops, open = true, id, settled }: { before?: Workflow; ops: AssistantOp[] | AssistantOp[][]; open?: boolean; id?: string | string[]; settled?: boolean }) {
   const [on, setOn] = useState(open);
   const ids = id === undefined ? [] : Array.isArray(id) ? id : [id];
   const computed = useMemo(() => (settled || !before ? undefined : diffOps(before, ops, editorLookup())), [settled, before, ops]);
