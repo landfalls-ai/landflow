@@ -527,6 +527,14 @@ items still open (its "Wave 6" section); this page is the short list to check be
   day. They run on the leader only, so a stopped host asks for nothing until it is back (a missed wake-up is not replayed).
 - A February 29 wake-up schedule can be refused as `This schedule never fires` (the search looks 366 days ahead). A request for a run that was made before a task was reassigned stays open and answers 409 on Approve until someone denies it. With more than one host process, a run with a quiet step longer than 10 minutes can be marked failed by another process, and its later result is dropped. A run whose session was deleted settles as `Landflow restarted before the run finished`.
 
+## Token spend wave 13
+
+- **Runs and calls behind a number** read `ai_usage` with plain SQL over the period (the daily rollup has no run ids), so
+  a very wide range of a busy instance scans every row of it. A call with no execution and no agent session (a
+  Spotlight or brain call) is a call, never a run: it is in the calls list and in no run. A run whose calls the viewer
+  can open only in part is listed with those calls; the rest are in `hidden.calls` and `hidden.cost`, not
+  `hidden.runs`. The key `other` (the tail past 50) can't be opened: filter by another group to reach it.
+
 ## Practices (waves P1 and P2)
 
 - Practices reach the Claude Code mod, MCP clients, Landflow agents (PR06) and Landflow agents on kagent through the

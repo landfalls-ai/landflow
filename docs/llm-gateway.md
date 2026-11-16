@@ -444,6 +444,15 @@ for the period (24 hours, 7 days, 30 days) and shows, from top to bottom:
 - **Gateway**: a health dot, the models the gateway serves, and for admins the spend import's and the budgets sync's last
   runs, **Open LiteLLM** (its admin UI, in a new tab) and **Settings**. Without a gateway the card says so. Open LiteLLM comes only from Settings' UI address, `LANDFLOW_LLM_GATEWAY_UI_URL` or the server's `LANDFLOW_LLM_GATEWAY_URL`, never from a credential's Base URL; without one the card says to set it. Only admins see the gateway's error text; members get "The gateway is not answering".
 
+**Runs and calls behind a number.** A row of the report opens the runs and the calls behind it
+(`GET /api/insights/ai/runs`, `GET /api/insights/ai/calls`, [api.md](reference/api.md)): the report's period and
+filters plus the row's `group` and `key`. A run is an execution, else an agent session (an agent loop of five calls is
+one run); a run lists its tokens, cost, first call and a link to its Spend tab (or the agent's Sessions tab). Only what
+the viewer may open is listed (rule 3 below); what they can't is counted in `hidden`, with no names and no ids, and a
+filter or key naming something they can't read answers 404. `shared` ("Another ...") lists nothing; `other` can't be
+opened. `format=csv` downloads the same columns as `text/csv`, quoted per RFC 4180, with the hidden total as the last
+line and a note when it was cut at 10,000 rows. Neither holds prompt text.
+
 **Who sees what.** Owners and admins see everything. Anyone else sees the calls of the workflows and agents they can open
 and their own calls in the page's totals and in every group but one; calls they may not see are in no total, and a
 project, goal, agent or workflow they can't read is "Another ...". The person list is the exception (the user's decision
@@ -518,4 +527,4 @@ stores prompt text. These columns show on screens from wave 12; wave 11 only rec
   Slack answer never applies, see above).
 - Several cap-raise flows: one per instance.
 - Asking about a credential's caps (an admin sets those directly).
-- **The AI page:** charts over time (it shows the totals of the period), and an export of the report.
+- **The AI page:** charts over time (it shows the totals of the period); the report has no export, but the runs and calls behind a row do (CSV).
