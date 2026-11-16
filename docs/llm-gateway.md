@@ -76,7 +76,7 @@ name in an agent, or use the OpenAI Chat Model node, whose list comes from the g
 
 **Spotlight and the brain.** `litellm/<model>` as the model override, or `LANDFLOW_BUILDER_MODEL=litellm/qwen3-coder:30b`, uses the
 instance's gateway, resolved at call time, over the OpenAI-compatible path. With no gateway: "No LLM gateway: set one in Settings
-→ AI → LLM gateway, or LANDFLOW_LLM_GATEWAY_URL".
+→ AI → LLM gateway, or LANDFLOW_LLM_GATEWAY_URL". `litellm/<model>` also appears in Spotlight's model list ([assistant.md](assistant.md#the-model-spotlight-uses)) whenever a gateway is set, so a person can pick it in the header or an admin can make it the default; the first draft goes through it too.
 
 **Who is calling.** Every call through a gateway sends ids (never names or emails):
 

@@ -2451,3 +2451,7 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   reload.
 - **Owed to a person:** the asks-first wording and the **Needs you** rows on a real phone, and whether "saved" should
   end autonomy at the first autosave rather than at the next open (decision D1 reads it at the next open).
+
+## Spotlight wave sb2
+
+- **SB19, the model Spotlight uses, built:** a default in Settings → AI → Spotlight, a per-tab pick in the panel's desktop header, only models the server is configured for (Ollama, the gateway, the server's own keys), local the default. Every Spotlight call counts under token spend, the first draft and the after-run suggestion included (the draft used a bare `fetch` to Ollama and wrote nothing). The chat, build, design, agent and suggest routes refuse an unlisted model with 400. Docs: [assistant.md](assistant.md#the-model-spotlight-uses). Left: a per-person default; a picker on a phone.
