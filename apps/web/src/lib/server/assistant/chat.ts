@@ -16,6 +16,7 @@ import type { NodeTypeInfo, PropertyDescriptor, Workflow } from '@/lib/shared/ty
 import { compositeOutline } from '../composites';
 import { PARAMETER_FORMATS } from '../flow-builder';
 import { askKind } from '@/lib/shared/ask-kind'; // SB04:
+import { namedNodes, outsideScope, scopeLabel, scopeOf, type SpotlightScope } from '@/lib/shared/spotlight-scope'; // SB07: (namedNodes: SB11)
 import { assistantScope, isUsageCapError, runInUsageScope, type UsageScope } from '../ai-usage';
 import { recordSuggestions, traceAssistant } from '../telemetry/assistant';
 import { outcomeOf } from '../telemetry/metrics';
@@ -23,6 +24,11 @@ import { failSpan } from '../telemetry/spans';
 import { saveCheckpoint } from './checkpoints';
 import { assistantModel, errorText, modelLabel } from './model';
 import { withParseRetry } from './parse-retry'; // SB05:
+import { authHeaderProblems, cronProblems, expressionMisses, retryProblems } from './change-checks'; // SB09:
+import { ASK_CHOICES_MAX, ASK_CHOICES_MIN, ASK_CHOICE_MAX_CHARS, ASK_USER_TOOL, requestAcrossAsk, type AskEvent, type CredentialOfferEvent } from '../../shared/spotlight-wire'; // SB11: (CredentialOfferEvent: SB12; requestAcrossAsk: SB09 × SB11)
+import { claimsAChange } from './guards'; // SB12:
+import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol'; // SB12:
+import { needsPerson } from '@/lib/shared/run-check'; // SB12:
 import { redundantBranches, registryLookup, validateOps, withoutRepeatedAdds } from './ops';
 import {
   APPLY_REQUEST,
@@ -48,7 +54,7 @@ import {
   withoutNarration,
   withoutRepeats,
 } from './guards';
-import { availableTypes, catalogSummary, nodeContext, nodeDocs, searchNodes, workflowOutline } from './research';
+import { availableTypes, catalogSummary, FOCUS_PARAMETER_CHARS, nodeContext, nodeDocs, searchNodes, workflowOutline } from './research';
 import { MENTION_LIMITS, mentionKey, type MentionRef } from '../../shared/mentions';
 import { BLOCK_CLOSE, BLOCK_OPEN, resolveMentions, type MentionRead, type SentMention } from '../mentions/resolve';
 import type { Actor } from '../projects/access';
@@ -78,8 +84,10 @@ export type ChatEvent =
   | { type: 'thinking'; step: number; text: string }
   | { type: 'tool'; name: string; label: string; ok: boolean; id: string; step: number; durationMs: number; detail?: string }
   | { type: 'proposal'; id: string; summary: string; ops: AssistantOp[]; dropped: string[]; warnings: string[] }
+  | AskEvent // SB11:
   | { type: 'done'; model: string; durationMs: number; steps: number; usage: { inputTokens: number; outputTokens: number }; costUsd?: number; local: boolean }
-  | { type: 'error'; message: string; kind: ChatErrorKind; checkpoint?: string; step?: number };
+  | { type: 'error'; message: string; kind: ChatErrorKind; checkpoint?: string; step?: number }
+  | CredentialOfferEvent; // SB12:
 
 /** What a chat keeps to be continued after an error: the messages with the tool results so far, and what the guards remember. */
 export interface ChatState {
@@ -97,6 +105,8 @@ export interface ChatInput {
   messages: ChatTurn[];
   workflow: Workflow;
   selectedNodeId?: string;
+  /** SB07: the scope the editor sent for this message (the chip); `null` means the person lifted it (no scope); absent means derive one. */
+  scope?: SpotlightScope | null;
   /** Last main run of each node, by node id. */
   runs?: Record<string, RunDigest>;
   model?: string | LanguageModel;
@@ -139,7 +149,7 @@ export interface ChatInput {
 const OP_SCHEMA = {
   type: 'object',
   properties: {
-    op: { type: 'string', enum: ['addNode', 'newAgent', 'setParameters', 'setNodeSettings', 'connect', 'disconnect', 'removeNode', 'renameNode', 'turnIntoTeam'] },
+    op: { type: 'string', enum: ['addNode', 'newAgent', 'setParameters', 'setNodeSettings', 'connect', 'disconnect', 'removeNode', 'renameNode', 'turnIntoTeam', 'setWorkflowSettings'] }, // SB10:
     ref: { type: 'string', description: 'addNode: handle for this new node in later ops' },
     type: { type: 'string', description: 'addNode: node type id. connect/disconnect: main, ai_languageModel, ai_memory or ai_tool' },
     name: { type: 'string', description: 'addNode: node name. renameNode: the new name. newAgent: the new agent\'s name' },
@@ -155,7 +165,7 @@ const OP_SCHEMA = {
     node: { type: 'string', description: 'setParameters / setNodeSettings / removeNode / renameNode / turnIntoTeam: node name' },
     settings: {
       type: 'object',
-      description: 'setNodeSettings: the node\'s settings (not parameters): executeOnce, retryOnFail, maxTries, waitBetweenTriesMs, retryBackoff (fixed|exponential), onError (stop|continue), timeoutSeconds, alwaysOutputData, disabled',
+      description: 'setNodeSettings: the node\'s settings (not parameters): executeOnce, retryOnFail, maxTries, waitBetweenTriesMs, retryBackoff (fixed|exponential), onError (stop|continue), timeoutSeconds, alwaysOutputData, disabled. setWorkflowSettings: the workflow\'s own settings: errorWorkflowId, timeoutSeconds, retryMaxAttempts, retryBaseDelaySeconds', // SB10:
     },
     from: { type: 'string' },
     to: { type: 'string' },
@@ -196,6 +206,19 @@ export const TOOLS: ToolSpec[] = [
       required: ['summary', 'ops'],
     },
   },
+  // SB11: a question back, one tap to answer; never needs the autonomous switch.
+  {
+    name: ASK_USER_TOOL,
+    description: `Ask the person one question when you cannot go on without their answer: several steps could be the one they mean and the request names none (and none is selected), or a value only they know (a channel, a table, an id, a recipient) is missing and has no default. Give ${ASK_CHOICES_MIN} to ${ASK_CHOICES_MAX} short choices, each what the person would type. Never for anything search_nodes, get_workflow or get_run_data answers, and never together with propose_changes: ask, then stop.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: 'One short question, at most 300 characters.' },
+        choices: { type: 'array', items: { type: 'string' }, minItems: ASK_CHOICES_MIN, maxItems: ASK_CHOICES_MAX, description: `${ASK_CHOICES_MIN} to ${ASK_CHOICES_MAX} distinct short answers (at most ${ASK_CHOICE_MAX_CHARS} characters), like the step names or channel names to pick from.` },
+      },
+      required: ['question', 'choices'],
+    },
+  },
 ];
 
 const SYSTEM = `You are the Landflow assistant inside the workflow editor. Landflow is an n8n-like automation tool: nodes joined by connections, JSON items flowing left to right.
@@ -214,20 +237,21 @@ How to work:
 - A node that already has several outputs (get_workflow lists each output and what it feeds, and get_node_docs lists its ports) branches by itself: connect new nodes from the right output ("output": 0, 1…). Don't put an If, Filter or Switch after it to test what it already separates.
 - A connection back to an earlier node is allowed and makes a loop; the engine runs loops. To limit the rounds, use a round counter: a Code node that adds 1 to a round number (kept in a field the loop's nodes pass on, or read from the counter node's own previous output), then an If "round < N" whose true branch connects back to the node to repeat and whose false branch goes on to what happens after the last round.
 - To fix a node's input, prefer changing the node's own parameters (read a field the items have). To put a node between two nodes, use addNode with "before": "<the later node>".
-- ops: {"op":"addNode","ref":"r1","type":"<type id>","name":"Short name","parameters":{…},"after":"<node name or ref>","output":0} (or "before":"<node name>" to insert it in front of a node, rewiring what fed that node), {"op":"setParameters","node":"<name>","parameters":{…}}, {"op":"setNodeSettings","node":"<name>","settings":{"executeOnce":true}} (a node's settings, not its parameters: executeOnce runs it once for all its input items instead of once per item; also retryOnFail, maxTries, waitBetweenTriesMs, retryBackoff, onError, timeoutSeconds, alwaysOutputData, disabled), {"op":"connect","from":"<name or ref>","to":"<name or ref>","output":0,"type":"main"}, {"op":"disconnect","from":"…","to":"…"}, {"op":"removeNode","node":"…"}, {"op":"renameNode","node":"…","name":"…"}, {"op":"turnIntoTeam","node":"<a Run an Agent node with A2A Agent or Run an Agent nodes attached as its tools>"}. A new workflow starts with a trigger (core.manualTrigger unless the user wants a webhook, schedule or chat). Sub-nodes (chat models, memory, tools) attach to an AI Agent with "after": "<agent>" or connect with type ai_languageModel / ai_memory / ai_tool.
+- ops: {"op":"addNode","ref":"r1","type":"<type id>","name":"Short name","parameters":{…},"after":"<node name or ref>","output":0} (or "before":"<node name>" to insert it in front of a node, rewiring what fed that node), {"op":"setParameters","node":"<name>","parameters":{…}}, {"op":"setNodeSettings","node":"<name>","settings":{"executeOnce":true}} (a node's settings, not its parameters: executeOnce runs it once for all its input items instead of once per item; also retryOnFail, maxTries, waitBetweenTriesMs, retryBackoff, onError, timeoutSeconds, alwaysOutputData, disabled), {"op":"setWorkflowSettings","settings":{"timeoutSeconds":300}} (the workflow's own settings, not a step's: errorWorkflowId, timeoutSeconds, retryMaxAttempts, retryBaseDelaySeconds), {"op":"connect","from":"<name or ref>","to":"<name or ref>","output":0,"type":"main"}, {"op":"disconnect","from":"…","to":"…"}, {"op":"removeNode","node":"…"}, {"op":"renameNode","node":"…","name":"…"}, {"op":"turnIntoTeam","node":"<a Run an Agent node with A2A Agent or Run an Agent nodes attached as its tools>"}. A new workflow starts with a trigger (core.manualTrigger unless the user wants a webhook, schedule or chat). Sub-nodes (chat models, memory, tools) attach to an AI Agent with "after": "<agent>" or connect with type ai_languageModel / ai_memory / ai_tool.
 - Agents: before you add an AI Agent (core.aiAgent) for a job, check "Your agents" and "Published agent teams" below. If one's description, skills and tools cover the job, run it: Run an Agent (core.messageAgent, parameters agentId and message, what to do with the item) or Run a Team, and say in your closing sentence which one you picked and why. Use core.aiAgent only for a small step that needs no specialist (classify, summarize, extract, draft a reply). When the job needs a specialist none of them is (its own instructions, tools or knowledge, work other flows will reuse, or the user asks for an agent, a specialist or an expert to do it: that is an agent, never Ask a Person or a Confirm step), say so and propose {"op":"newAgent","ref":"a1","name":"<agent name>","description":"<what it does, one or two sentences>","instructions":"<how it does the job>","tools":["<an app or action it needs, e.g. Linear: read issues>"],"knowledge":"<the documents it answers from>","parameters":{"message":"…"},"after":"<the step it goes after>"} (use "after" when the request says after a step, "before":"<the step it goes in front of>" when it says before; an agent between two steps takes both; tools and knowledge only when it needs them: the Agent architect picks them): applying it saves the agent as a draft and adds a Run an Agent node for it. That node runs the agent with the agent's own model and instructions: attach no chat model, memory or tools to it, and don't also add an AI Agent for the same job. One newAgent per agent, then stop. Then tell the user to give it tools on the Agents page (the Agent architect can) and publish it before the flow runs. Never invent an agentId.
 - Teams: an agent team (Agents page → Teams) is a lead with members who report to it, with reviews and budgets; the Run a Team node (core.runTeam, parameters teamId and teamName, message) runs a published one as a single step, with Done and Needs a person outputs. When the user wants a team that already exists, add that node with its teamId and teamName from "Published agent teams" below; the chat model, memory and tools attached to the node go to the lead. When the user wants a lead and the agents under it turned into a team, propose {"op":"turnIntoTeam","node":"<the lead>"}: applying it creates and publishes the team and swaps the nodes, so never tell the person to create a team first or to pick one afterwards. The same action is "Turn into a team" in the toolbar of a selected Run an Agent node that has agents as tools. Never invent a teamId.
 - Expressions read the current item with "{{ $json.field }}" and other nodes with "{{ $('Node name').item.json.field }}".
 - Never make up ids, channels, email addresses, URLs or keys the user didn't give: leave those parameters empty and say the user fills them in.
-- A tool attached to an agent: a value the agent should choose when it calls the tool (a branch, a file path, an issue or pull request number, a message) is the expression {{ $fromAI('<parameter name>', '<what it is>', 'string' | 'number' | 'boolean') }}, never a bare $fromAI; fixed values (the owner, the repository, a channel) are set plainly. Credentials are the person's to pick: never set one, name the one to pick in your closing sentence.
-- After proposing, say in one sentence what it does and what the user still has to do (click Apply, pick a credential, run it). Nothing is applied yet: never say the change was applied or made. Don't repeat the ops in prose.
+- A tool attached to an agent: a value the agent should choose when it calls the tool (a branch, a file path, an issue or pull request number, a message) is the expression {{ $fromAI('<parameter name>', '<what it is>', 'string' | 'number' | 'boolean') }}, never a bare $fromAI; fixed values (the owner, the repository, a channel) are set plainly. Credentials are the person's to pick, on the reply: never set one and never name a credential to use; say which step needs one.
+- After proposing, say in one sentence what it does and what the user still has to do (click Apply, pick a credential, run it). Nothing is applied yet: never say the change was applied, made, set or updated, a change exists only as the card. When you change nothing, say why in one sentence. Don't repeat the ops in prose.
 - When asked whether a test run's result does what the user asked for, read the output of the last step with get_run_data and compare it with the request: if it falls short (wrong items, a filter that keeps everything, fields missing), propose the change; if it does what was asked, say so in one sentence and propose nothing.
 - A question about the flow or a run (why, what, how…) is answered from the workflow and the run data in at most two sentences, naming the cause; propose nothing unless the message asks for a change.
 - When a message reports a failed test run, read the failing node's run data with get_run_data, find the cause and propose the smallest change that fixes it, without asking first. Say the cause in one clause of at most 12 words ("“Triage Ticket” got an empty message."). Fix the failing node or what feeds it, never something else, and never by removing a node and adding the same one back. If only the user can fix it (a credential, an id, an account), say what to do in one sentence and propose nothing.
+- Ask when it is not clear (ask_user): when several steps could be the one the request means and it names none, or a value only the person knows (a channel, a table, an id, a recipient) is missing and has no default. Ask one question with 2 to 4 short choices that are what the person would type, then stop: never ask and propose in the same step, and never ask what search_nodes, get_workflow or get_run_data can tell you.
 - When no change is needed, just answer. Write for a phone: at most two short sentences (about 25 words), no headings or lists unless asked. Start with the result or the answer. Never describe what you are about to do or what you looked at ("Let me…", "I'll…", "Looking at…", "The error indicates…").
 - A parameter that get_node_docs shows with "stored as …" (a collection or fixed collection) is written exactly in that shape: the group names, the field names and, for a field with options, one of the listed values. Never a flat list, never a field or option value the docs don't list.
 - Chat models, memory and tools are sub-nodes: attach them to the agent with a connection of type ai_languageModel, ai_memory or ai_tool (addNode "after": "<agent>" does it), never as a normal step after the agent. Don't pin test data on a trigger unless asked.
-- If the user names a model, a provider or a value you can't set (a model that isn't in the docs' options, a credential), say so in your closing sentence rather than silently picking another; a node that needs a credential gets none from you: name it.
+- If the user names a model, a provider or a value you can't set (a model that isn't in the docs' options, a credential), say so in your closing sentence rather than silently picking another; a node that needs a credential gets none from you: say which step needs one, never name a credential to use.
 - Use only node types from the catalog below and search_nodes; anything else is not installed, offline or not allowed in this workflow.
 
 ${PARAMETER_FORMATS}`;
@@ -282,6 +306,46 @@ function coalesced(send: (text: string) => void): { push: (delta: string) => voi
 /** One line of what a tool call did, for the trace: the query, a count, what was read. Never a result body or a secret. */
 const detailOf = (text: string | undefined) => (text === undefined ? undefined : shorten(text, 300));
 
+/** SB11: why an ask_user call is not valid, or undefined. */
+function askProblem(args: Record<string, unknown>): string | undefined {
+  const question = typeof args.question === 'string' ? args.question.trim() : '';
+  const choices = Array.isArray(args.choices) ? args.choices.map((c) => (typeof c === 'string' ? c.trim() : '')) : [];
+  return !question || question.length > 300 ? 'the question must be 1 to 300 characters' : choices.length < ASK_CHOICES_MIN || choices.length > ASK_CHOICES_MAX ? `give ${ASK_CHOICES_MIN} to ${ASK_CHOICES_MAX} choices` : choices.some((c) => !c || c.length > ASK_CHOICE_MAX_CHARS) ? `each choice must be 1 to ${ASK_CHOICE_MAX_CHARS} characters` : new Set(choices.map((c) => c.toLowerCase())).size !== choices.length ? 'the choices must differ' : undefined;
+}
+
+/**
+ * SB12 (decision D2): the steps a change leaves needing a credential (a slot required, visible for its parameters, not set),
+ * each as an offer: the step and the credential types it accepts. Never an id or a value: the person picks on the reply.
+ */
+function credentialOffers(before: Workflow, after: Workflow, lookup: ReturnType<typeof registryLookup>): Array<Omit<CredentialOfferEvent, 'type' | 'step'>> {
+  const out: Array<Omit<CredentialOfferEvent, 'type' | 'step'>> = [];
+  for (const node of after.nodes) {
+    const was = before.nodes.find((n) => n.id === node.id);
+    if (was && JSON.stringify(was.parameters) === JSON.stringify(node.parameters)) continue;
+    const d = lookup(node.type);
+    if (!d) continue;
+    const types = (d.credentials ?? []).filter((c) => c.required && isPropertyVisible(c, withPropertyDefaults(d.properties, node.parameters)) && !node.credentials?.[c.name]).map((c) => c.name);
+    if (types.length) out.push({ node: node.name, ...(was && { nodeId: node.id }), credentialTypes: types, text: `“${node.name}” needs a credential: pick one or create one.` });
+  }
+  return out;
+}
+
+/** SB12: a step whose last run failed for a credential, and the credential types it accepts now. */
+function failedForCredential(workflow: Workflow, runs: Record<string, RunDigest>, selectedId: string | undefined, lookup: ReturnType<typeof registryLookup>): Omit<CredentialOfferEvent, 'type' | 'step'> | undefined {
+  const failed = (id: string) => {
+    const error = runs[id]?.error;
+    return error ? needsPerson(`${error.message} ${error.description ?? ''}`) === 'credential' : false;
+  };
+  const node = (selectedId && failed(selectedId) ? workflow.nodes.find((n) => n.id === selectedId) : undefined) ?? workflow.nodes.find((n) => failed(n.id));
+  const d = node && lookup(node.type);
+  if (!node || !d) return undefined;
+  const all = d.credentials ?? [];
+  // None visible for the step's parameters (an HTTP step with `authentication: none`): offer every slot; a pick sets what shows it.
+  const shown = all.filter((c) => isPropertyVisible(c, withPropertyDefaults(d.properties, node.parameters)));
+  const types = (shown.length ? shown : all).map((c) => c.name);
+  return types.length ? { node: node.name, nodeId: node.id, credentialTypes: types, text: `“${node.name}” needs a credential: pick one or create one.` } : undefined;
+}
+
 /** The chat: Spotlight's model calls count in AI usage (surface `spotlight`) and under the caller's caps. */
 export function runChat(input: ChatInput): Promise<void> {
   const workflowId = input.workflow.id && input.workflow.id !== 'draft' ? input.workflow.id : undefined;
@@ -295,7 +359,8 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
   const question = input.session !== 'fix' && input.session !== 'review' && askKind(input.messages.findLast((m) => m.role === 'user')?.content ?? '') === 'question';
   if (question && input.session === 'auto') input = { ...input, session: undefined };
   /** SB04: a question is offered every tool except the one that changes the workflow. */
-  const tools = question ? TOOLS.filter((t) => t.name !== 'propose_changes') : TOOLS;
+  const testSession = input.session === 'fix' || input.session === 'review'; // SB11: a test session goes on by itself and asks through its own "Needs you" rows
+  const tools = (question ? TOOLS.filter((t) => t.name !== 'propose_changes') : TOOLS).filter((t) => !(testSession && t.name === ASK_USER_TOOL)); // SB11:
   const { onEvent, runs = {} } = input;
   const trace = input.trace === true;
   const types = input.types ?? availableTypes();
@@ -333,8 +398,16 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     proposalLog.push(earlier);
     for (const op of validated.ops) if (op.op === 'addNode' && op.ref && op.name) proposedRefs.set(op.ref, op.name);
   }
-  const outline = () => workflowOutline(working, runs, { types, pending: waiting, pendingSummaries: waitingSummaries, removed: [...removed.values()] });
-  const latest = input.messages.findLast((m) => m.role === 'user')?.content.toLowerCase() ?? '';
+  // SB07: what the request may change: the selected, tagged or named steps, or where a new step goes. A test-and-fix session has its own rules.
+  // (`input.workflow.id` is the metered id, 'draft' when unsaved, so the tag's own workflow is not compared: `scopeOf` keeps the ids on this canvas.)
+  const taggedIds = (input.tagged?.reads ?? []).flatMap((r) => (r.ok && r.ref.type === 'node' ? [r.ref.id] : []));
+  // SB09 × SB11: what was asked: the latest message, or across a question back the message before it with the answer ("Morning").
+  const request = requestAcrossAsk(input.messages);
+  const askScope = input.session === 'fix' || input.session === 'review' ? undefined : scopeOf({ sent: input.scope, message: request, nodes: working.nodes, selectedId: input.selectedNodeId, taggedIds });
+  // SB10: the steps whose parameters, settings and credential state the model reads whole: the scope's (SB07's), else the selected one.
+  const focus = new Set<string>(askScope?.nodes ?? (input.selectedNodeId ? [input.selectedNodeId] : []));
+  const outline = () => workflowOutline(working, runs, { types, full: focus, pending: waiting, pendingSummaries: waitingSummaries, removed: [...removed.values()] });
+  const latest = request.toLowerCase();
   /** Whether the latest message asks to add a node by this name ("remove Check and add a new Check after Filter"). */
   const asksToAdd = (name: string) => new RegExp(`\\b(?:add|insert|put|create|new|another)\\b(?:(?!\\b(?:remove|delete|drop)\\b)[^.!?\\n])*\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(latest);
   /** A node this proposal adds back after a pending proposal removed it: by name, or by type unless the latest message names the type; not when it asks for one by that name. */
@@ -353,13 +426,23 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
   let failedSentBack = false;
   /** Whether a proposal that set a duration in the wrong unit was sent back. */
   let unitsSentBack = false;
+  let checksSent = false; // SB09:
+  const checkNotes: string[] = []; // SB09:
   let proposed = proposalLog.length > 0;
   /** Whether a fix request that proposed nothing was sent back for a proposal. */
   let pressed = false;
   /** A fix that missed the failing step was sent back once. */
   let offTargetSent = false;
   let keptSent = false; // SB03:
+  let scopeSent = false; // SB07:
+  let askedUser = false; // SB11:
+  let badAsks = 0; // SB11:
+  let destinationSent = false; // SB11: a made-up channel, table or recipient was sent back to ask (once)
+  let severalSent: number | undefined; // SB11: the step it was sent back in (every proposal of that step is)
   let applyRetried = false;
+  /** SB12: why the last proposal was refused or sent back, for a reply with nothing to say; and the steps already offered a credential. */
+  let lastReason: string | undefined;
+  const offered = new Set<string>();
   /** The ops of each proposal so far, as sent: a model may send the same one again and again. */
   const sent = new Set<string>(input.resume?.sent);
   /** What the user and the editor said, for telling a given id from a made-up one. */
@@ -385,6 +468,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
   // not be read is named and nothing more, so the model does not make up what it holds.
   const unread = (input.tagged?.reads ?? []).filter((r) => !r.ok).map((r) => r.label.replace(/^Couldn't read /, ''));
   const tagged = [input.tagged?.block ?? '', unread.length ? `Not readable (tell the user if it matters): ${unread.join(', ')}` : ''].filter(Boolean);
+  const focusBudget = { left: FOCUS_PARAMETER_CHARS }; // SB10 (N8): one budget for the parameter text of the selected step and the steps in scope
   const system = [
     SYSTEM,
     `\nApps and plugins this workflow can use (search_nodes for the rest):\n${catalogSummary(types)}`,
@@ -392,12 +476,34 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     input.teams?.length ? `\nPublished agent teams (Run a Team can run these):\n${describeTeams(input.teams)}` : '',
     `\nThe editor now:\n${outline()}`,
     working.groups?.some((g) => g.composite) ? `\nComposites (frames typed by a contract: fill their slots with matching nodes, keep their rules):\n${compositeOutline(working)}` : '',
-    selected ? `\nThe user has “${selected.name}” selected:\n${nodeContext(working, selected.id, runs[selected.id], types)}` : '',
+    selected ? `\nThe user has “${selected.name}” selected:\n${nodeContext(working, selected.id, runs[selected.id], types, { full: true, budget: focusBudget })}` : '',
+    ...[...focus].filter((id) => (selected ? selected.id : undefined) !== id && working.nodes.some((n) => n.id === id)).map((id) => `\nThe change is about “${working.nodes.find((n) => n.id === id)!.name}” too:\n${nodeContext(working, id, runs[id], types, { full: true, budget: focusBudget })}`), // SB10:
     builderContextEntry(input.actor, { workflowId: input.workflow.id }), // PC10: the goals of the project this workflow is in, as data
     tagged.length ? `\nThe user tagged these in the message (checked against what they may open):\n${tagged.join('\n')}` : '',
     question ? '\nThe latest message is a question: answer it; you cannot change the workflow in this reply.' : '', // SB04:
+    askScope && !question ? `\nScope: ${scopeLabel(askScope, working.nodes)}. Change only that (and, for a new step, put it there${askScope.kind === 'selected' ? '; a request about the whole workflow, like its time limit, is setWorkflowSettings' : ''}); say in one sentence if the request needs more.` : '', // SB07: (SB07 × SB10: the selection allows the workflow's settings)
     input.session === 'auto' ? `\n${AUTO}` : input.session ? `\n${sessionText(input.autonomy ?? 'asks-first')}` : '',
   ].join('\n');
+
+  /**
+   * SB11: the names of the steps that fit when the proposal edits an existing step of a kind several steps share, the request has no
+   * scope (SB07's `askScope`), names no step and nothing is selected; else undefined. "All"/"both"/"every"/"each" is a choice already made.
+   */
+  const severalFit = (ops: AssistantOp[]): string[] | undefined => {
+    const latestRaw = request;
+    if (askScope || input.selectedNodeId || namedNodes(latestRaw, working.nodes).length || /\b(?:all|both|every|each)\b/i.test(latestRaw)) return undefined;
+    const edited = ops.flatMap((op) => (op.op === 'setParameters' || op.op === 'setNodeSettings' ? [nodeByName(String((op as { node?: unknown }).node ?? ''))] : [])).filter((n): n is NonNullable<typeof n> => n !== undefined && !waiting.has(n.id)); // only steps that existed before this reply
+    const first = edited[0];
+    if (!first) return undefined;
+    // A settings change (retry, timeout, on error) fits every step that calls out; a parameters change, every step of the same type.
+    const calls = (type: string) => !type.startsWith('core.') || /^core\.(?:httpRequest|aiAgent|messageAgent|runTeam|a2aAgent|mcp\w*|sendEmail)$/.test(type) || Boolean(types.find((t) => t.type === type)?.descriptor.credentials?.length);
+    const settings = ops.some((op) => op.op === 'setNodeSettings');
+    const fits = working.nodes.filter((n) => !waiting.has(n.id) && (settings ? calls(n.type) && calls(first.type) : n.type === first.type));
+    if (fits.length < 2) return undefined;
+    // A short name (under three letters, which `namedNodes` skips) the message spells exactly is a name given.
+    if (fits.some((n) => n.name.trim().length < 3 && new RegExp(`(?<![\\p{L}\\p{N}])${n.name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'u').test(latestRaw))) return undefined;
+    return fits.map((n) => n.name);
+  };
 
   /** The step now running, for the tool events. */
   let currentStep = 0;
@@ -407,6 +513,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     // `shownOk`: how the step looks to the person. A change sent back to the model to complete is an error to the model
     // but not a failure to show: Spotlight is still working on it ("Reworked the change").
     const result = (content: string, label: string, ok = true, shownOk = ok): ToolResult => {
+      if (/^(?:Nothing (?:could be proposed|changes)|Not shown)/.test(content)) lastReason = content; // SB12:
       onEvent({ type: 'tool', name: call.name, label, ok: shownOk, id: `t_${nanoid(8)}`, step: currentStep, durationMs: Date.now() - toolStarted, ...(detailOf(detail) && { detail: detailOf(detail) }) });
       return { id: call.id, name: call.name, content, ...(!ok && { isError: true }) };
     };
@@ -469,15 +576,33 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         if (standIns.notes.length && Array.isArray(teamed) && !teamed.length) {
           return result(`Nothing changes: ${standIns.notes.join('; ')}. If everything the latest message asks for is proposed, stop and say in one line what the cards do.`, 'Skipped a stand-in for the new agent');
         }
-        const { ops: proposedOps, invented: inventedNotes, values } = withoutInventedIds(teamed, known(), typeText, (op) => (op.op === 'addNode' ? String(op.type ?? '') : nodeByName(String(op.node ?? ''))?.type));
+        const { ops: proposedOps, invented: inventedNotes, values, destinations: destinationNotes } = withoutInventedIds(teamed, known(), typeText, (op) => (op.op === 'addNode' ? String(op.type ?? '') : nodeByName(String(op.node ?? ''))?.type));
         for (const value of values) invented.add(value);
-        const validated = validateOps(working, proposedOps, lookup);
+        let validated = validateOps(working, proposedOps, lookup); // SB07: let
         const back = addedBack(validated.ops);
         if (back.length) {
           return result(
             `Nothing changes: ${back.join(', ')} ${back.length === 1 ? 'is' : 'are'} removed by a pending proposal because the user asked; don't add ${back.length === 1 ? 'it' : 'them'}, or a node doing the same job, back. If everything the latest message asks for is proposed, stop and say in one line what the cards do.`,
             'Skipped adding back a removed node',
           );
+        }
+        // SB07: a change outside the scope goes back once, then is left out and listed.
+        const outside = askScope ? outsideScope(validated.ops, askScope, working, request) : [];
+        if (askScope && outside.length) {
+          const label = scopeLabel(askScope, working.nodes);
+          if (!scopeSent) {
+            scopeSent = true;
+            return result(`Not shown: ${outside.map((o) => o.reason).join('\n')}.\nThe scope of this request is: ${label}. Change only that, then propose again.`, 'Outside what was asked');
+          }
+          const gone = new Set(outside.map((o) => o.index));
+          const prev = validated;
+          validated = validateOps(working, prev.ops.filter((_, i) => !gone.has(i)), lookup);
+          // Parts that failed the first check are not lost with the ops that passed it.
+          validated.dropped.unshift(...prev.dropped);
+          validated.ignored.unshift(...prev.ignored);
+          // `ignored`, not `dropped`: a dropped part would send the whole proposal back as failed.
+          validated.ignored.push(...outside.map((o) => `Left out: ${o.reason}`));
+          if (!validated.ops.length) return result(`Not shown: every change was outside what was asked (${label}). Say so in one sentence.`, 'Outside what was asked');
         }
         // A fix must touch the step that failed or what feeds it, and must change something.
         const wasted = input.session === 'fix' && !offTargetSent ? wastedFix(validated.ops, working, selected ? selected.id : undefined) : undefined;
@@ -494,6 +619,22 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         if (kept) {
           keptSent = true;
           return result(`Not shown: ${kept} Only the person can change that: say so in one sentence.`, 'Kept what the person gave');
+        }
+        // SB11: a channel, table, recipient or destination id (`channelId`, `dataTableId`) nobody gave (a plain id is left for the person to fill in): ask once instead of leaving it empty.
+        if (!testSession && !destinationSent && !askedUser) {
+          const missing = destinationNotes;
+          if (missing.length) {
+            destinationSent = true;
+            return result(`Not shown: ${missing.join('; ')}. The request does not say which: ask_user for it with 2 to 4 likely choices (or propose again without it to leave it for the person).`, 'Asked for a missing destination instead of leaving it empty', true, false);
+          }
+        }
+        // SB11: an edit of one of several steps of its kind, with no scope and no step named: ask which, once.
+        if (!testSession && (severalSent === undefined || severalSent === currentStep) && !askedUser) {
+          const several = severalFit(validated.ops);
+          if (several) {
+            severalSent = currentStep;
+            return result(`Several steps fit (${several.map((n) => `“${n}”`).join(', ')}): ask_user which one instead of picking. The request names none and none is selected.`, 'Asked which step instead of picking', true, false);
+          }
         }
         if (!validated.ops.length && repeated.length && !validated.dropped.length) {
           return result(`Nothing changes: ${repeated.join('; ')}. Connect from it with another propose_changes call if something is still missing.`, 'Skipped a repeated proposal');
@@ -515,7 +656,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
           return result(`Nothing could be proposed: ${why}.${shape} Fix the ops (check names, type ids and parameters) and call propose_changes again.`, `Proposal rejected: ${shorten(why, 80)}`, false);
         }
         // Proposing the same thing twice (it happens with local models) changes nothing the second time.
-        const graph = (wf: Workflow) => JSON.stringify([wf.nodes, wf.connections]);
+        const graph = (wf: Workflow) => JSON.stringify([wf.nodes, wf.connections, wf.settings]); // SB10: the workflow's settings count, or a settings-only change reads as "already there"
         if (graph(validated.workflow) === graph(working)) {
           return result('Nothing changes: this is already in the workflow or was proposed above. Do not propose it again.', 'Skipped a repeated proposal');
         }
@@ -536,6 +677,19 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
           unitsSentBack = true;
           return result(`Not shown yet: ${slips.join('; ')}. Call propose_changes again with the numbers in the field's unit.`, 'Reworked the change', false, true);
         }
+        // SB09: a change that means what its card says: retry settings in range and on, expressions that read fields the step's input has, a schedule that parses and names the days asked, no Authorization header read from the data. Back once, then shown with the lines on the card.
+        // retryProblems reads the ops after apply, so its range and contradiction lines are normally caught earlier by the `dropped` send-back; it stays for ops that reach here unchanged.
+        const checkLines = [
+          ...retryProblems(validated.ops, working, validated.workflow, { latest }),
+          ...expressionMisses(validated.ops, working, validated.workflow, { runs, lookup, latest }),
+          ...cronProblems(validated.ops, working, validated.workflow, { latest }),
+          ...authHeaderProblems(validated.ops, working, validated.workflow, { latest }, 'data'),
+        ];
+        if (checkLines.length && !checksSent) {
+          checksSent = true;
+          return result(`Not shown yet: ${checkLines.join('; ')}. Call propose_changes again with that fixed.`, 'Reworked the change', false, true);
+        }
+        checkNotes.push(...checkLines);
         // A change with parts that failed (a type that doesn't exist, a connection to a node it never added) goes back once:
         // shown as it is, it could remove a node without adding the one meant to replace it.
         if (validated.dropped.length && !failedSentBack) {
@@ -559,6 +713,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
             true,
           );
         }
+        const heldFrom = working; // SB12:
         hold(summary, validated.workflow);
         proposalLog.push({ summary, ops: validated.ops });
         for (const op of validated.ops) if (op.op === 'addNode' && op.ref && op.name) proposedRefs.set(op.ref, op.name);
@@ -566,15 +721,41 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         for (const handle of dedicated.handles) newAgents.add(standInKey(handle)); // SB05:
         sent.add(asSent);
         const dropped = [...validated.dropped, ...validated.ignored, ...inventedNotes, ...standIns.notes];
-        const notes = `${dropped.length ? ` Left out: ${dropped.join('; ')}.` : ''}${placed.notes.length ? ` Placement: ${placed.notes.join('; ')}.` : ''}${repeated.length ? ` Not added again: ${repeated.join('; ')}.` : ''}`;
+        const notes = `${dropped.length ? ` Left out: ${dropped.map((d) => d.replace(/^Left out: /, '')).join('; ')}.` : ''}${placed.notes.length ? ` Placement: ${placed.notes.join('; ')}.` : ''}${repeated.length ? ` Not added again: ${repeated.join('; ')}.` : ''}`;
         const count = `${validated.ops.length} change${validated.ops.length === 1 ? '' : 's'}`;
         const shown = input.session
           ? result(`Recorded (${count}); ${input.session === 'auto' || input.autonomy === 'auto' ? 'Spotlight applies it when you finish' : 'it waits for the person to apply it, then Spotlight tests again'}.${notes} Don't list the changes again. If the message asks for something this doesn't cover yet, propose it now; otherwise stop with your one sentence.`, `Proposed ${count}`)
           : result(`Shown to the user as a card with an Apply button (${count}); nothing changes until they click it.${notes} Don't list the changes again, ask whether to apply them, or say they are applied. If the latest message asks for something this doesn't cover yet, propose it now (the nodes above are in the workflow for you to connect to); if it's all proposed, stop and say in one line what the cards do.`, `Proposed ${count}`);
-        onEvent({ type: 'proposal', id: `pr_${nanoid(8)}`, summary, ops: validated.ops, dropped, warnings: [...validated.warnings, ...validated.cautions] });
+        onEvent({ type: 'proposal', id: `pr_${nanoid(8)}`, summary, ops: validated.ops, dropped, warnings: [...validated.warnings, ...validated.cautions, ...checkNotes.splice(0)] });
+        // SB12: a step the change leaves needing a credential is offered to the person to pick; Spotlight sets none.
+        for (const offer of credentialOffers(heldFrom, validated.workflow, lookup)) {
+          if (offered.has(offer.node)) continue;
+          offered.add(offer.node);
+          onEvent({ type: 'credential', ...offer, step: currentStep });
+        }
         proposed = true;
         recordSuggestions(['proposal']);
         return shown;
+      }
+      case ASK_USER_TOOL: { // SB11:
+        const question = typeof args.question === 'string' ? args.question.trim() : '';
+        const choices = Array.isArray(args.choices) ? args.choices.map((c) => (typeof c === 'string' ? c.trim() : '')) : [];
+        const bad = askProblem(args);
+        detail = question;
+        if (bad) {
+          badAsks++;
+          if (badAsks === 1) return result(`Not asked: ${bad}. Call ask_user again with a valid question, or go on without asking.`, 'Question rejected', false);
+          // The second bad call ends the reply with the question as plain words.
+          askedUser = true;
+          const shownText = shorten(question || 'I need to know which one you mean. Say it in your own words.', 300);
+          onEvent(trace ? { type: 'text', text: shownText, step: currentStep } : { type: 'text', text: shownText });
+          return result('Not asked: the question was not valid twice. The reply ends here.', 'Question shown as text', false, true);
+        }
+        const done = result('Asked the person. Stop here; their answer is the next message.', `Asked: ${shorten(question, 60)}`);
+        onEvent({ type: 'ask', question, choices, step: currentStep });
+        onEvent(trace ? { type: 'text', text: question, step: currentStep } : { type: 'text', text: question });
+        askedUser = true;
+        return done;
       }
       default:
         return result(`Unknown tool ${call.name}`, `Unknown tool ${call.name}`, false);
@@ -636,7 +817,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         const proposing = !question && (proposed || calls.some((call) => call.name === 'propose_changes')); // SB04:
         // Whether this step is sent back to the model (a fix that proposed nothing; a card announced and never made): then it is not the reply.
         const pressNow = !calls.length && input.session === 'fix' && !proposed && !pressed && !PERSON_ONLY.test(text);
-        const applyNow = !question && !calls.length && !input.session && !proposed && !waiting.size && APPLY_REQUEST.test(text);
+        const applyNow = !question && !calls.length && !input.session && !proposed && !waiting.size && (APPLY_REQUEST.test(text) || claimsAChange(text)); // SB12:
         const continues = calls.length > 0 || pressNow || (applyNow && !applyRetried);
         /** Text a step sends: its checked text is the reply when it is the last step, else part of the trace. */
         const say = (shown: string, last = !continues) => {
@@ -658,7 +839,11 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
           }
         }
         // The deltas of a last step that the guards left nothing of: an empty `text` clears them.
-        if (trace && !continues && !sentText) onEvent({ type: 'text', text: '', step: currentStep });
+        // SB12: never an empty reply: one line says what the card shows, or why nothing changed.
+        if (trace && !continues && !sentText) {
+          const because = lastReason?.replace(/^(?:Nothing could be proposed|Nothing changes|Not shown yet|Not shown): ?/, '').split(/\.(?:\s|$)/)[0].trim();
+          onEvent({ type: 'text', text: proposed ? 'The card shows the change.' : question ? 'I couldn’t find that in the workflow or its runs.' : `Nothing changed, because ${because || 'the model gave no answer'}.`, step: currentStep });
+        }
         history.push({ role: 'assistant', text, toolCalls: calls, ...(turn.raw && { raw: turn.raw }) });
         finished = !calls.length;
         // Local models describe a fix without proposing it; a test-and-fix session needs the proposal.
@@ -675,7 +860,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
             applyRetried = true;
             finished = false;
             say('(No change card was created, so there is nothing to apply yet. Trying again.)', false);
-            history.push({ role: 'user', content: 'You told me to click Apply, but no proposal exists: nothing was shown to me. Call propose_changes now with the change, or say plainly that you are not changing anything.' });
+            history.push({ role: 'user', content: APPLY_REQUEST.test(text) ? 'You told me to click Apply, but no proposal exists: nothing was shown to me. Call propose_changes now with the change, or say plainly that you are not changing anything.' : 'You said a change was made, but no proposal exists: nothing was changed or shown to me. Call propose_changes now with the change, or say plainly that you are not changing anything.' }); // SB12:
             continue;
           }
           say('(Still no change card: nothing was proposed, so there is nothing to apply.)', true);
@@ -683,10 +868,17 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         if (finished) break;
         const results: ToolResult[] = [];
         let progress = false;
+        const held = (call: ToolCall): ToolResult => {
+          onEvent({ type: 'tool', name: call.name, label: 'Held the change: asked first', ok: true, id: `t_${nanoid(8)}`, step: currentStep, durationMs: 0 });
+          return { id: call.id, name: call.name, content: 'Not shown: you asked the person a question in this step. Ask first, propose after the answer.', isError: true };
+        };
+        // SB11: a valid question in this step: the change in the same step is dropped (the trace lists it) and the model is not called again.
+        const asking = calls.some((c) => c.name === ASK_USER_TOOL && !testSession && !askProblem(c.input ?? {}));
         for (const call of calls) {
           const shownBefore = waitingSummaries.length;
           // SB04: a propose_changes call (recovered from text) in the answer to a question shows no card.
-          const outcome: ToolResult = question && call.name === 'propose_changes' ? { id: call.id, name: call.name, content: 'Not offered: this is a question.', isError: true } : await execute(call);
+          // SB11: asking is not offered in a test session, and a change in the same step as a question is held back: ask first.
+          const outcome: ToolResult = question && call.name === 'propose_changes' ? { id: call.id, name: call.name, content: 'Not offered: this is a question.', isError: true } : testSession && call.name === ASK_USER_TOOL ? { id: call.id, name: call.name, content: 'Not offered: this session goes on by itself.', isError: true } : asking && call.name === 'propose_changes' ? held(call) : await execute(call);
           span.addEvent('assistant.tool', { 'gen_ai.tool.name': call.name, 'landflow.outcome': outcome.isError ? 'error' : 'ok' });
           results.push(outcome);
           // Progress is a new proposal, or a result this reply hasn't had yet.
@@ -696,6 +888,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         }
         stalled = progress ? 0 : stalled + 1;
         history.push({ role: 'tool', results });
+        if (askedUser) { finished = true; break; } // SB11: the reply ends with the question; the answer is the next message
       }
     } catch (caught) {
       // Not a model failure (those returned above): a tool or the host failed.
@@ -717,6 +910,14 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
       }
       if (trace) onEvent({ type: 'text', text, step: steps });
       else onEvent({ type: 'text', text });
+    }
+    // SB12: a reply that proposes nothing, about a step whose last run failed for a credential: offer the credentials to pick.
+    if (!proposed && !question && !askedUser && !input.session) {
+      const failing = failedForCredential(working, runs, input.selectedNodeId, lookup);
+      if (failing && !offered.has(failing.node)) {
+        offered.add(failing.node);
+        onEvent({ type: 'credential', ...failing, ...(trace && { step: steps }) });
+      }
     }
     span.setAttribute('landflow.assistant.steps', steps);
     const costUsd = scope.tree.calls ? Math.round(scope.tree.cost * 1e8) / 1e8 : undefined;

@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { BellRing, Braces, Building2, ChevronLeft, ChevronRight, CircleDollarSign, Cpu, Gauge, GitBranch, KeyRound, Landmark, Layers, Network, Plug, Route, ScrollText, ShieldCheck, SlidersHorizontal, Users, Vault } from 'lucide-react';
+import { BellRing, Braces, Building2, ChevronLeft, ChevronRight, CircleDollarSign, Cpu, Gauge, GitBranch, KeyRound, Landmark, Layers, Network, Plug, Route, ScrollText, Sparkles, ShieldCheck, SlidersHorizontal, Users, Vault } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { can, type Action } from '@/lib/shared/auth';
 import { useViewer } from '@/components/auth/viewer';
@@ -19,6 +19,7 @@ import { GeneralSettings } from '@/components/settings/general-settings';
 import { GovernanceSettings } from '@/components/settings/governance-settings';
 import { LlmGatewayCard } from '@/components/settings/llm-gateway-settings';
 import { McpSettings } from '@/components/settings/mcp-settings';
+import { SpotlightSettings } from '@/components/settings/spotlight-settings';
 import { SecuritySettings } from '@/components/settings/security-settings';
 import { SourceControlSettings } from '@/components/settings/source-control-settings';
 import { UsersSettings } from '@/components/settings/users-settings';
@@ -35,6 +36,7 @@ const SECTIONS: readonly { id: string; label: string; icon: typeof Braces; hint:
   { id: 'ai-prices', label: 'AI prices', icon: CircleDollarSign, hint: 'What a token costs, per model' },
   { id: 'ai-caps', label: 'AI caps', icon: Gauge, hint: 'Daily and monthly limits' },
   { id: 'llm-gateway', label: 'LLM gateway', icon: Route, hint: 'LiteLLM, backstop budgets' },
+  { id: 'spotlight', label: 'Spotlight', icon: Sparkles, hint: 'The model Spotlight uses' },
   { id: 'mcp', label: 'MCP', icon: Plug, hint: 'Let coding agents build workflows' },
   { id: 'users', label: 'Users', icon: Users, hint: 'Invite people, change roles', role: 'users:manage' },
   { id: 'api-keys', label: 'API keys', icon: KeyRound, hint: 'For scripts, CI and the CLI' },
@@ -57,6 +59,7 @@ const BODIES: Record<string, () => React.ReactNode> = {
   'ai-prices': () => <AiPricesSettings />,
   'ai-caps': () => <AiCapsSettings />,
   'llm-gateway': () => <LlmGatewayCard />,
+  spotlight: () => <SpotlightSettings />,
   mcp: () => <McpSettings />,
   users: () => <UsersSettings />,
   'api-keys': () => <ApiKeysSettings />,
@@ -70,7 +73,7 @@ const BODIES: Record<string, () => React.ReactNode> = {
   transports: () => <TransportsSettings />,
 };
 
-/** /settings (#general, #company, #variables, #alerts, #environments, #source-control, #users, #api-keys, #security, #audit, #governance, #external-secrets, #ai-prices, #ai-caps, #llm-gateway, #mcp, #workers, #transports; the old #api and ?section=api open the API reference on Developers, in five groups): instance settings. */
+/** /settings (#general, #company, #variables, #alerts, #environments, #source-control, #users, #api-keys, #security, #audit, #governance, #external-secrets, #ai-prices, #ai-caps, #llm-gateway, #spotlight, #mcp, #workers, #transports; the old #api and ?section=api open the API reference on Developers, in five groups): instance settings. */
 export default function SettingsPage() {
   const viewer = useViewer();
   const router = useRouter();

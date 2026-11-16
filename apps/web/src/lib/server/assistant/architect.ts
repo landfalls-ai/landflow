@@ -741,7 +741,8 @@ export function designRequest(spec: AgentSpec): string {
     `What it does: ${spec.description || '(see the instructions)'}`,
     spec.instructions && `How: ${spec.instructions}`,
     spec.tools?.length && `It needs: ${spec.tools.join('; ')}.`, // SB05:
-    spec.knowledge && `It answers from: ${spec.knowledge}: give it a knowledge base (list_knowledge_bases; say so if none fits).`, // SB05:
+    spec.knowledge && // SB05:
+      `It answers from: ${spec.knowledge}: give it a knowledge base (list_knowledge_bases; say so if none fits).`,
     'Pick its model (list_models: a local one), the tools it needs from the plugins online (search_nodes), and a knowledge base if it works from documents (list_knowledge_bases). Keep the name.',
   ]
     .filter(Boolean)

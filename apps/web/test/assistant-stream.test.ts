@@ -103,7 +103,8 @@ describe('the chat stream', () => {
   it('never leaves a reply of deltas alone: the last step always ends with a text event', async () => {
     const { model } = streaming([{ tokens: ['<think>hmm</think>'] }]);
     const events = await chat(model);
-    expect(events.filter((e) => e.type === 'text')).toEqual([{ type: 'text', text: '', step: 1 }]);
+    // SB12: never empty: a question the model left with no words gets one line.
+    expect(events.filter((e) => e.type === 'text')).toEqual([{ type: 'text', text: 'I couldn’t find that in the workflow or its runs.', step: 1 }]);
   });
 
   it('keeps the older events without trace', async () => {

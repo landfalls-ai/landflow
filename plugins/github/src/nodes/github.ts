@@ -157,6 +157,68 @@ const simplifyComment = (comment: JsonObject): JsonObject => ({
   createdAt: comment.created_at,
 });
 
+// SB10: what the pull request and issue operations return (one item each, read from simplifyPull, simplifyComment and the
+// issue and file mappings below), so a later step reads `$json.number` or `$json.url`, not a guess.
+const prop = (type: string | string[], description: string) => ({ type, description });
+const PULL_REQUEST_SCHEMA: JsonObject = {
+  type: 'object',
+  properties: {
+    number: prop('number', 'The pull request number'),
+    title: prop('string', 'The pull request title'),
+    state: prop('string', 'open or closed'),
+    draft: prop('boolean', 'Whether it is still a draft'),
+    merged: prop('boolean', 'Whether it has been merged'),
+    mergeable: prop(['boolean', 'null'], 'Whether it merges cleanly; null while GitHub is still working it out'),
+    body: prop(['string', 'null'], 'The description, null when empty'),
+    author: prop(['string', 'null'], 'The login of the person who opened it'),
+    head: prop(['string', 'null'], 'The branch the changes are on'),
+    headSha: prop(['string', 'null'], 'The commit the head branch points at'),
+    base: prop(['string', 'null'], 'The branch it merges into'),
+    url: prop('string', 'Link to the pull request on GitHub'),
+    commits: prop(['number', 'null'], 'Number of commits'),
+    changedFiles: prop(['number', 'null'], 'Number of files it changes'),
+    additions: prop(['number', 'null'], 'Lines added'),
+    deletions: prop(['number', 'null'], 'Lines removed'),
+  },
+  required: ['number', 'title', 'state', 'url'],
+};
+const PULL_FILE_SCHEMA: JsonObject = {
+  type: 'object',
+  properties: {
+    path: prop('string', 'The file\'s path in the repository'),
+    status: prop('string', 'added, modified, removed or renamed'),
+    additions: prop('number', 'Lines added in this file'),
+    deletions: prop('number', 'Lines removed in this file'),
+    changes: prop('number', 'Lines added plus removed'),
+    previousPath: prop(['string', 'null'], 'The old path of a renamed file, else null'),
+    sha: prop('string', 'The blob\'s sha'),
+    patch: prop(['string', 'null'], 'The diff of the file; null for a binary or very large file'),
+  },
+  required: ['path', 'status', 'additions', 'deletions'],
+};
+const COMMENT_SCHEMA: JsonObject = {
+  type: 'object',
+  properties: {
+    id: prop('number', 'The comment\'s id'),
+    body: prop('string', 'The comment\'s text'),
+    author: prop(['string', 'null'], 'The login of the commenter'),
+    url: prop('string', 'Link to the comment on GitHub'),
+    createdAt: prop('string', 'When it was created (ISO 8601)'),
+  },
+  required: ['id', 'body', 'url'],
+};
+const ISSUE_CREATED_SCHEMA: JsonObject = {
+  type: 'object',
+  properties: {
+    number: prop('number', 'The new issue\'s number'),
+    title: prop('string', 'The issue title'),
+    state: prop('string', 'open'),
+    url: prop('string', 'Link to the new issue on GitHub'),
+    labels: prop('array', 'The names of its labels'),
+  },
+  required: ['number', 'title', 'url'],
+};
+
 const names = (value: string) =>
   value
     .split(',')
@@ -265,10 +327,10 @@ export const GitHub = defineNode({
         default: 'create',
         displayOptions: show(['pullRequest']),
         options: [
-          { name: 'Comment', value: 'comment', description: 'Add a comment to the conversation', action: 'Comment on a pull request' },
-          { name: 'Create', value: 'create', description: 'Open a pull request (a draft by default)', action: 'Create a pull request' },
-          { name: 'Get', value: 'get', action: 'Get a pull request', idempotent: true },
-          { name: 'List Files', value: 'listFiles', description: 'The files a pull request changes', action: 'List the files of a pull request', idempotent: true },
+          { name: 'Comment', value: 'comment', description: 'Add a comment to the conversation', action: 'Comment on a pull request', outputSchema: COMMENT_SCHEMA },
+          { name: 'Create', value: 'create', description: 'Open a pull request (a draft by default)', action: 'Create a pull request', outputSchema: PULL_REQUEST_SCHEMA },
+          { name: 'Get', value: 'get', action: 'Get a pull request', idempotent: true, outputSchema: PULL_REQUEST_SCHEMA },
+          { name: 'List Files', value: 'listFiles', description: 'The files a pull request changes', action: 'List the files of a pull request', idempotent: true, outputSchema: PULL_FILE_SCHEMA },
           { name: 'Merge', value: 'merge', description: 'Merge a ready (not draft) pull request into its base branch', action: 'Merge a pull request' },
         ],
       },
@@ -280,8 +342,8 @@ export const GitHub = defineNode({
         default: 'create',
         displayOptions: show(['issue']),
         options: [
-          { name: 'Comment', value: 'comment', description: 'Add a comment to an issue', action: 'Comment on an issue' },
-          { name: 'Create', value: 'create', action: 'Create an issue' },
+          { name: 'Comment', value: 'comment', description: 'Add a comment to an issue', action: 'Comment on an issue', outputSchema: COMMENT_SCHEMA },
+          { name: 'Create', value: 'create', action: 'Create an issue', outputSchema: ISSUE_CREATED_SCHEMA },
         ],
       },
       // The default resource's operation comes last: parameter defaults are keyed by name, last one wins.

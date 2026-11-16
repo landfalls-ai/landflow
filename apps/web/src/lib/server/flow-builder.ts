@@ -13,6 +13,8 @@ import { outputFields } from './assistant/research';
 import { assistantModel } from './assistant/model';
 import { anthropicModel } from './nodes/models';
 import { ollamaUrl } from './config';
+import { withCallNote } from './ai-usage/call-context'; // SB19:
+import { plainDraft } from './ai-usage/drafts'; // SB19:
 // SB01: the draft's reply held to a schema, checked for empty parts and sent back once.
 import { z } from 'zod';
 import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
@@ -40,6 +42,8 @@ export interface FlowDraft {
   dropped: string[];
   /** SB01: what the draft still lacks for the person (empty fields after one send-back, types that could not be kept). */
   left?: DraftLeft[];
+  /** SB10: how many model calls the draft took: 1, or 2 when the first draft was sent back once. */
+  calls?: number;
 }
 
 const DEFAULT_MODEL = process.env.LANDFLOW_BUILDER_MODEL ?? 'qwen3-coder:30b';
@@ -201,59 +205,40 @@ type DraftMessage = { role: 'user' | 'assistant'; content: string };
 const SYSTEM_WITH_SCHEMA = `${SYSTEM}\n\nAnswer with one JSON object and nothing else (no prose, no code fence), matching this JSON schema:\n${JSON.stringify(SCHEMA)}`;
 
 /**
- * The draft as text from Ollama's chat API. SB01: `format: 'json'`, not the schema: with the whole catalog in the prompt a
- * model held to the schema wrote empty objects where `parameters` is a bare object (every If with no condition). The
- * schema is in the system prompt instead, as for the providers.
+ * SB19: the draft as text from the model, whichever it is: a bare Ollama name, `anthropic/<model>`, `openai/<model>` or
+ * `litellm/<model>`, all through the model adapters so each call is counted in AI usage (the route opens the scope) with
+ * `purpose: 'answer'`. Ollama is asked for `format: 'json'` (SB01: not the schema, since with the whole catalog in the
+ * prompt a model held to the schema wrote empty objects where `parameters` is a bare object); the schema is in the system
+ * prompt instead, as for the providers, and jsonOf() takes the object out of the reply. `timeoutMs` is the build's own
+ * bound (600 s by default), passed as the call's signal; the Ollama adapter still caps one call at 300 s.
  */
-async function draftWithOllama(model: string, messages: DraftMessage[], timeoutMs: number): Promise<string> {
-  const response = await fetch(`${ollamaUrl()}/api/chat`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    signal: AbortSignal.timeout(timeoutMs),
-    body: JSON.stringify({
-      model,
-      stream: false,
-      format: 'json',
-      options: { temperature: 0.2 },
-      messages: [{ role: 'system', content: SYSTEM_WITH_SCHEMA }, ...messages],
-    }),
-  }).catch((e: Error) => {
-    // A timeout means Ollama answered too slowly, not that it is down: say so, and what to change.
-    if (e.name === 'TimeoutError') {
-      throw new Error(`${model} on Ollama at ${ollamaUrl()} did not finish the draft within ${builderTimeoutMs() / 1000} s (LANDFLOW_BUILDER_TIMEOUT_SECONDS). The model may be slow or still loading: raise it, or set a faster LANDFLOW_BUILDER_MODEL`);
-    }
-    throw new Error(`Could not reach Ollama at ${ollamaUrl()}: ${e.message}`);
-  });
-  if (!response.ok) throw new Error(`Ollama returned ${response.status}: ${(await response.text()).slice(0, 200)}`);
-  const body = (await response.json()) as { message?: { content?: string } };
-  return body.message?.content ?? '{}';
+/** The Ollama adapter caps one call at 300 s and reports that as "Cannot reach Ollama at …" with the timeout as its description. */
+export function adapterTimedOut(error: unknown): boolean {
+  const { message, description } = error as { message?: string; description?: string };
+  return /^Cannot reach Ollama/.test(message ?? '') && /timeout|timed out/i.test(description ?? '');
 }
 
-/**
- * The draft as text from `anthropic/<model>` or `openai/<model>` through the model adapters: the server's
- * ANTHROPIC_API_KEY (or `ant auth login`), or OPENAI_API_KEY and OPENAI_BASE_URL. These have no schema-held format here,
- * so the schema goes in the system prompt and jsonOf() takes the object out of the reply.
- */
-async function draftWithProvider(model: string, messages: DraftMessage[], timeoutMs: number): Promise<string> {
+async function askModel(model: string, messages: DraftMessage[], timeoutMs: number): Promise<string> {
   const [provider, ...rest] = model.split('/');
   // A whole draft needs more room than the assistant's 4096 tokens; non-streaming, so ~16000 keeps under SDK timeouts.
   // `fallback`: a refused draft is retried server-side on another model (Anthropic's `fallbacks: "default"`).
   const llm = provider === 'anthropic' ? anthropicModel({ model: rest.join('/'), effort: 'medium', maxTokens: 16_000, fallback: true }) : assistantModel(model);
+  const signal = AbortSignal.timeout(timeoutMs);
+  const wire = messages.map((m) => (m.role === 'user' ? { role: 'user' as const, content: m.content } : { role: 'assistant' as const, text: m.content, toolCalls: [] }));
   try {
-    const turn = await llm.generate({ system: SYSTEM_WITH_SCHEMA, messages: messages.map((m) => (m.role === 'user' ? { role: 'user' as const, content: m.content } : { role: 'assistant' as const, text: m.content, toolCalls: [] })), tools: [], responseFormat: 'json', signal: AbortSignal.timeout(timeoutMs) });
+    const turn = await withCallNote({ purpose: 'answer', draft: plainDraft({ system: SYSTEM_WITH_SCHEMA, messages: wire }) }, () => llm.generate({ system: SYSTEM_WITH_SCHEMA, messages: wire, tools: [], responseFormat: 'json', signal }));
     if (turn.stopReason === 'refusal') throw new Error(`${model} declined to draft this workflow: ${turn.text}`);
-    return turn.text;
+    return turn.text || '{}';
   } catch (e) {
-    if ((e as Error).name === 'TimeoutError' || (e as Error).name === 'AbortError') {
-      throw new Error(`${model} did not finish the draft within ${builderTimeoutMs() / 1000} s (LANDFLOW_BUILDER_TIMEOUT_SECONDS): raise it`);
+    // The build's own bound ran out, or the Ollama adapter's own 300 s cap did (it wraps the timeout as "Cannot reach Ollama"):
+    // the model was slow, not unreachable. Say so, and what to change.
+    if (signal.aborted || adapterTimedOut(e)) {
+      const where = provider === 'anthropic' || provider === 'openai' || provider === 'litellm' ? model : `${model} on Ollama at ${ollamaUrl()}`;
+      if (!signal.aborted) throw new Error(`${where} did not finish the draft within 300 s (the Ollama adapter's cap for one call; LANDFLOW_BUILDER_TIMEOUT_SECONDS cannot raise it). The model may be slow or still loading: set a faster LANDFLOW_BUILDER_MODEL or pick another model in Spotlight`);
+      throw new Error(`${where} did not finish the draft within ${builderTimeoutMs() / 1000} s (LANDFLOW_BUILDER_TIMEOUT_SECONDS). The model may be slow or still loading: raise it, or set a faster LANDFLOW_BUILDER_MODEL`);
     }
     throw e;
   }
-}
-
-/** SB01: the one place a draft's model call is made (the first request and each send-back). */
-function askModel(model: string, messages: DraftMessage[], timeoutMs: number): Promise<string> {
-  return /^(anthropic|openai)\//.test(model) ? draftWithProvider(model, messages, timeoutMs) : draftWithOllama(model, messages, timeoutMs);
 }
 
 /** The JSON object in a model's reply: the whole text, or what a code fence or prose around it holds. */
@@ -553,8 +538,10 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
   let draft = assemble(reply, byType, teams, agents);
   const empty = emptyParts(draft, byType);
   const budget = timeoutMs - (Date.now() - started);
+  let calls = 1; // SB10:
   if (empty.length && budget > 0) {
     try {
+      calls = 2; // SB10:
       const again = parseReply(await askModel(model, [...messages, { role: 'assistant', content: first.text }, { role: 'user', content: sendBack(empty) }], budget));
       if (again.ok) {
         const next = assemble(again.reply, byType, teams, agents);
@@ -578,5 +565,5 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
   const target = pinTarget(draft, byType);
   const testItems = (cleanTestItems(asItems(reply.testData), target, nodes) ?? sampleItems(target, nodes))?.slice(0, nodes.some((n) => AGENT_TYPES.has(n.type)) ? 1 : undefined);
   const pinData = target && testItems ? { [target.key]: testItems } : undefined;
-  return { name: (reply.name ?? 'Generated workflow').slice(0, 80), nodes, edges, pinData, model, durationMs: Date.now() - started, dropped, left };
+  return { name: (reply.name ?? 'Generated workflow').slice(0, 80), nodes, edges, pinData, model, durationMs: Date.now() - started, dropped, left, calls };
 }

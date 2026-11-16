@@ -61,6 +61,13 @@ beforeAll(async () => {
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
       const unauthorized = (req.url ?? '').startsWith('/secure') && req.headers.authorization !== 'Bearer eval-token';
+      // `?fail=NNN` answers with that status (SB03's scenarios describe a 404, 500 or 503 from the step's destination).
+      const fail = Number(new URL(req.url ?? '/', 'http://x').searchParams.get('fail'));
+      if (fail >= 400 && fail < 600) {
+        res.writeHead(fail, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: `status ${fail}` }));
+        return;
+      }
       res.writeHead(unauthorized ? 401 : 200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(unauthorized ? { error: 'unauthorized' } : { ok: true, received: Buffer.concat(chunks).toString('utf8') }));
     });

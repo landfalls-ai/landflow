@@ -15,13 +15,17 @@ import { teamFromLead } from '@/lib/shared/turn-into-team';
 import type { ActivityKind, ActivityStep } from '@/lib/shared/activity';
 import type { NodeRun } from '@/lib/shared/types';
 import type { MentionRef } from '@/lib/shared/mentions';
+import { askedLine, type AskEvent, type AskPart } from '@/lib/shared/spotlight-wire'; // SB11: (askedLine: SB09 × SB11)
 import type { ReplyInfo } from '../ui/chat';
+import type { CredentialNeedFields, CredentialOfferEvent } from '@/lib/shared/spotlight-wire'; // SB12:
 import { useEditor } from './store';
+import { pickedModel } from './spotlight-model'; // SB19:
 import { emptyStored, withEarlier, type Stored } from './spotlight-history';
 
 import { saveAgentFor, type AgentPlace } from './new-agent';
 import { saveTeamFor } from './turn-into-team';
 import { defaultCollapsed } from './spotlight/states';
+import type { SpotlightScope } from '@/lib/shared/spotlight-scope'; // SB07:
 
 const freshKept = (): { id?: string; stored: Stored } => ({ stored: emptyStored() });
 
@@ -203,7 +207,7 @@ export const useSuggestions = create<SuggestionsState>((set, get) => ({
     const update = (patch: Partial<SuggestionEntry>) =>
       set((s) => ({ entries: { ...s.entries, [key]: { ...(s.entries[key] ?? { status: 'loading', handled: {} }), ...patch } } }));
     update({ status: 'loading', error: undefined, handled: {} });
-    api<SuggestResult>('/api/assistant/suggest', { method: 'POST', json: { workflow: editor.toWorkflow(), workflowId: editor.workflowId, nodeId, run: digestRun(run) } })
+    api<SuggestResult>('/api/assistant/suggest', { method: 'POST', json: { workflow: editor.toWorkflow(), workflowId: editor.workflowId, nodeId, run: digestRun(run), ...pickedModel() /* SB19 (IR-2): the session's pick, as the chat sends it */ } })
       .then((result) => update({ status: 'done', result }))
       .catch((e: Error) => update({ status: 'error', error: e.message }));
   },
@@ -251,7 +255,7 @@ export interface Proposal {
  * Something only the person can do before Spotlight tests on (docs/assistant.md#test-and-fix): pick a credential, pick
  * an agent, add a trigger, or say a test may send for real. Its row has the button that does it and one that goes on.
  */
-export interface Need {
+export interface Need extends CredentialNeedFields { // SB12:
   what: 'credential' | 'agent' | 'trigger' | 'sends' | 'destination' | 'blocked' | 'address'; // SB03:
   text: string;
   /** `sends` and `destination`: where the test would send; the yes is kept for these (SB03). */
@@ -314,7 +318,8 @@ export type ReplyPart =
   | { kind: 'run'; run: TestRun }
   | { kind: 'needs'; need: Need }
   | { kind: 'outcome'; outcome: Outcome }
-  | ({ kind: 'action' } & ReplyAction);
+  | ({ kind: 'action' } & ReplyAction)
+  | AskPart; // SB11: a question back with its choices
 
 /**
  * `testId`: the test-and-fix session the turn belongs to; Spotlight folds a finished session into one line.
@@ -362,8 +367,10 @@ export type StreamEvent =
   | { type: 'thinking'; step: number; text: string }
   | { type: 'tool'; name: string; label: string; ok: boolean; id?: string; step?: number; durationMs?: number; detail?: string }
   | ({ type: 'proposal' } & Omit<Proposal, 'state'>)
+  | AskEvent // SB11:
   | { type: 'done'; model: string; durationMs: number; steps: number; usage?: { inputTokens: number; outputTokens: number }; costUsd?: number; local?: boolean }
-  | { type: 'error'; message: string; kind?: 'model' | 'cap' | 'stalled' | 'internal'; checkpoint?: string; step?: number };
+  | { type: 'error'; message: string; kind?: 'model' | 'cap' | 'stalled' | 'internal'; checkpoint?: string; step?: number }
+  | CredentialOfferEvent; // SB12:
 
 /** What kind of trace row a tool call is. */
 export function toolKind(name: string): ActivityKind {
@@ -422,6 +429,8 @@ export function applyStreamEvent(turn: AssistantTurn, event: StreamEvent, now: n
       const { type: _type, ...proposal } = event;
       return { ...turn, parts: [...turn.parts, { kind: 'proposal', proposal }] };
     }
+    case 'ask': // SB11: the question and its chips; the question's words arrive as the reply's text
+      return { ...turn, parts: [...turn.parts, { kind: 'ask', ask: { question: event.question, choices: event.choices } }] };
     case 'done':
       return {
         ...turn,
@@ -431,6 +440,9 @@ export function applyStreamEvent(turn: AssistantTurn, event: StreamEvent, now: n
       };
     case 'error':
       return { ...turn, steps: settleModel(turn, now, 'failed'), error: event.message, ...(event.checkpoint && { checkpoint: event.checkpoint }), ...(event.kind && { errorKind: event.kind }), ...(event.step !== undefined && { errorStep: event.step }) };
+    // SB12: a step that needs a credential: a "Needs you" row with the picker (decision D2), never one set by Spotlight.
+    case 'credential':
+      return { ...turn, parts: [...turn.parts, { kind: 'needs', need: { what: 'credential', text: event.text, node: event.node, ...(event.nodeId && { nodeId: event.nodeId }), credentialTypes: event.credentialTypes } }] };
   }
 }
 
@@ -439,6 +451,8 @@ export interface SendOptions {
   mentions?: KeptMention[];
   /** Leave the selected node out of the context (its chip was removed). */
   withoutSelection?: boolean;
+  /** SB07: the scope the composer showed as a chip; `null` when the person lifted it. Not sent with a test-and-fix session's `fix` or `review`. */
+  scope?: SpotlightScope | null;
   /** Sent by a test-and-fix session: shown as a note, not as something the user typed. */
   auto?: boolean;
   /** The node to put in the context as if selected (the one a test run failed at). */
@@ -550,6 +564,8 @@ interface AssistantState {
   setProposalState(itemId: string, proposalId: string, state: 'applied' | 'dismissed' | 'undone', skipped?: number): void;
   /** Change the parts of one reply (a test-and-fix session adds and updates its runs; buttons record what was chosen). */
   updateParts(itemId: string, fn: (parts: ReplyPart[]) => ReplyPart[]): void;
+  /** SB11: a chip of a question back: marks it picked, then sends it as a typed message (not `auto`, no session). */
+  answerAsk(itemId: string, choice: string): Promise<void>;
 }
 
 /** What the model sees of earlier turns: the text, plus a note of each proposal and whether it was applied. */
@@ -561,6 +577,7 @@ function historyOf(items: ChatItem[]) {
         if (part.kind === 'text') return part.text;
         if (part.kind === 'proposal') return `[Proposed “${part.proposal.summary}”: ${part.proposal.state ?? 'not applied yet'}]`;
         if (part.kind === 'run' && part.run.state !== 'running') return `[Test run ${part.run.round} ${part.run.state}: ${part.run.summary ?? ''}]`;
+        if (part.kind === 'ask') return askedLine(part.ask.choices); // SB09 × SB11: the next message is the answer, the server reads the request across it
         return '';
       })
       .filter(Boolean)
@@ -663,9 +680,11 @@ export const useAssistant = create<AssistantState>((set, get) => ({
           runs: runDigests(),
           ...(pending.length && { pending }),
           ...(options.mentions?.length && { mentions: { refs: options.mentions } }),
+          ...(options.scope !== undefined && options.session !== 'fix' && options.session !== 'review' && { scope: options.scope }), // SB07:
           ...(options.session && { session: options.session }),
           ...(options.session && options.autonomy && { autonomy: options.autonomy }),
           ...(options.resume && { resume: options.resume }),
+          ...pickedModel(), // SB19:
         },
         (_event, data) => {
           const event = data as StreamEvent;
@@ -724,6 +743,21 @@ export const useAssistant = create<AssistantState>((set, get) => ({
 
   updateParts(itemId, fn) {
     set((s) => ({ items: s.items.map((item) => (item.id === itemId && item.role === 'assistant' ? { ...item, parts: fn(item.parts) } : item)) }));
+  },
+
+  async answerAsk(itemId, choice) { // SB11:
+    if (get().pending) return;
+    get().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'ask' && !p.ask.answered ? { ...p, ask: { ...p.ask, answered: choice } } : p)));
+    // SB07 × SB11 (the integrator's line): a choice that is a step's name is the scope of the change that follows.
+    const step = useEditor.getState().nodes.find((n) => n.data.wf.name === choice);
+    await get().send(choice, step ? { scope: { kind: 'only', nodes: [step.id] } } : {});
+    // SB11 (N3): the send failed (a cap, a dropped connection) before anything came back: the question is open again, so the chips work.
+    const last = get().items.at(-1);
+    if (last && last.role === 'assistant' && last.id !== itemId && last.error && !last.parts.length) {
+      // The failed pair (the answer and its empty, errored reply) goes too, so the history the next answer sends still reads the question straight before it.
+      set((s) => ({ items: s.items.filter((item) => item.id !== last.id && !(item.role === 'user' && item.id === s.items.at(-2)?.id)) }));
+      get().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'ask' && p.ask.answered === choice ? { ...p, ask: { ...p.ask, answered: undefined } } : p)));
+    }
   },
 }));
 

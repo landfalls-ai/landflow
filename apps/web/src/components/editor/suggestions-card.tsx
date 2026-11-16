@@ -14,6 +14,7 @@ import { Button } from '../ui/button';
 import { Switch } from '../ui/inputs';
 import { applyChanges, editorLookup, readAutoSuggest, suggestionKey, useSuggestions, writeAutoSuggest, type Suggestion, type SuggestionKind } from './assistant';
 import { useEditor } from './store';
+import { ChangeDiff, useCanvas } from './change-diff'; // SB08:
 
 export const KIND_META: Record<SuggestionKind, { label: string; tone: Tone }> = {
   fix: { label: 'Fix', tone: 'danger' },
@@ -82,6 +83,13 @@ export function OpsDiff({ ops, className }: { ops: Suggestion['ops']; className?
   );
 }
 
+/** SB08: the after-run suggestion's diff, read against this canvas. */
+function SuggestionDiff({ ops, applied }: { ops: Suggestion['ops']; applied: boolean }) {
+  const canvas = useCanvas();
+  // Applied, the canvas holds the change: the lines of its ops say what it did.
+  return applied ? <OpsDiff ops={ops} /> : <ChangeDiff before={canvas} ops={ops} />;
+}
+
 function SuggestionRow({ suggestion, state, onApply, onDismiss }: { suggestion: Suggestion; state?: 'applied' | 'dismissed'; onApply: () => void; onDismiss: () => void }) {
   const meta = KIND_META[suggestion.kind];
   return (
@@ -96,7 +104,7 @@ function SuggestionRow({ suggestion, state, onApply, onDismiss }: { suggestion: 
         </span>
       </div>
       {suggestion.detail && <p className="text-[12px] leading-relaxed text-t2">{suggestion.detail}</p>}
-      {suggestion.ops.length > 0 && <OpsDiff ops={suggestion.ops} />}
+      {suggestion.ops.length > 0 && <SuggestionDiff ops={suggestion.ops} applied={state === 'applied'} />}{/* SB08: */}
       <Warnings warnings={suggestion.warnings} />
       {!suggestion.ops.length && suggestion.dropped?.length ? (
         <LeftOut reasons={suggestion.dropped} label="Advice only: the change the model proposed doesn’t fit this workflow." />

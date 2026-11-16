@@ -117,14 +117,22 @@ const WORKFLOW_SETTINGS: Record<keyof WorkflowSettingsPatch, 'string' | 'number'
   retryBaseDelaySeconds: 'number',
 };
 
+// SB09: what a node's settings may be (the engine ignores or mishandles the rest): out of range is dropped and named by the caller.
+const NODE_RANGES: Record<string, (value: number) => boolean> = {
+  maxTries: (v) => Number.isInteger(v) && v >= 1 && v <= 10,
+  waitBetweenTriesMs: (v) => Number.isInteger(v) && v >= 0 && v <= 60_000,
+  timeoutSeconds: (v) => v >= 0.1 && v <= 86_400,
+};
+const NODE_RANGE_WORDS: Record<string, string> = { maxTries: 'a whole number from 1 to 10', waitBetweenTriesMs: 'a whole number from 0 to 60000 milliseconds', timeoutSeconds: '0.1 to 86400 seconds' };
+
 /** The settings of `raw` that `allowed` names, with the right types; undefined when none is left. */
-function settingsOf<T>(raw: unknown, allowed: Record<string, 'boolean' | 'number' | 'string' | 'onError' | 'backoff'>): T | undefined {
+function settingsOf<T>(raw: unknown, allowed: Record<string, 'boolean' | 'number' | 'string' | 'onError' | 'backoff'>, ranges?: Record<string, (value: number) => boolean>): T | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     const kind = allowed[key];
     if (kind === 'boolean' && typeof value === 'boolean') out[key] = value;
-    else if (kind === 'number' && typeof value === 'number' && Number.isFinite(value) && value >= 0) out[key] = value;
+    else if (kind === 'number' && typeof value === 'number' && Number.isFinite(value) && value >= 0 && (ranges?.[key]?.(value) ?? true)) out[key] = value; // SB09: a node setting's range
     else if (kind === 'string' && typeof value === 'string' && value.trim()) out[key] = value.trim();
     else if (kind === 'onError' && (value === 'stop' || value === 'continue')) out[key] = value;
     else if (kind === 'backoff' && (value === 'fixed' || value === 'exponential')) out[key] = value;
@@ -749,10 +757,19 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
 
       case 'setNodeSettings': {
         const node = find(op.node);
-        const settings = settingsOf<NodeSettingsPatch>(op.settings, NODE_SETTINGS);
+        // SB09: ranges, then retry means retry: tries above 1 (or a backoff or a wait) turn retryOnFail on, and retryOnFail false with tries above 1 contradicts itself.
+        const settings = settingsOf<NodeSettingsPatch>(op.settings, NODE_SETTINGS, NODE_RANGES);
+        const outOfRange = node ? Object.entries(op.settings).filter(([key, value]) => NODE_RANGES[key] && typeof value === 'number' && (settings as Record<string, unknown> | undefined)?.[key] === undefined) : [];
+        for (const [key, value] of outOfRange) dropped.push(`“${node?.name}”: ${key} ${value} is out of range (use ${NODE_RANGE_WORDS[key]})`);
         if (!node || !settings) {
-          dropped.push(node ? `settings of “${node.name}”: nothing to change` : `settings: no node “${op.node}”`);
+          if (!outOfRange.length) dropped.push(node ? `settings of “${node.name}”: nothing to change` : `settings: no node “${op.node}”`);
           break;
+        }
+        if (settings.retryOnFail === false && (settings.maxTries ?? 0) > 1) {
+          dropped.push(`“${node.name}”: maxTries ${settings.maxTries} with retryOnFail false contradict each other (turn retry on, or leave the tries out)`);
+          delete settings.maxTries;
+        } else if (settings.retryOnFail === undefined && ((settings.maxTries ?? 0) > 1 || settings.retryBackoff || settings.waitBetweenTriesMs !== undefined)) {
+          settings.retryOnFail = true;
         }
         wf = { ...wf, nodes: wf.nodes.map((n) => (n.id === node.id ? { ...n, ...settings } : n)) };
         applied.push({ op: 'setNodeSettings', node: handle(node), settings });
@@ -1060,22 +1077,22 @@ export interface DiffLine {
  * A parameter's value as a person reads it: a Set's `{"values":[{"name":"tagged","value":true}]}` is `tagged = true`,
  * a list of items is their values, an object its first keys. JSON only for what has no shape to read.
  */
-export function readableValue(value: unknown, depth = 0): string {
+export function readableValue(value: unknown, depth = 0, whole = false): string { // SB08: `whole` shows values whole, for the diff
   if (value === null || value === undefined) return 'empty';
   if (typeof value !== 'object') return String(value);
-  if (depth > 3) return JSON.stringify(value);
+  if (depth > 3 && !whole) return JSON.stringify(value);
   if (Array.isArray(value)) {
     if (!value.length) return 'none';
     const named = value.every((v) => v && typeof v === 'object' && !Array.isArray(v) && 'name' in v);
-    const shown = value.slice(0, 3).map((v) => (named ? `${String((v as Record<string, unknown>).name)} = ${readableValue((v as Record<string, unknown>).value ?? (v as Record<string, unknown>).type, depth + 1)}` : readableValue(v, depth + 1)));
-    return shown.join(', ') + (value.length > 3 ? ` +${value.length - 3} more` : '');
+    const shown = (whole ? value : value.slice(0, 3)).map((v) => (named ? `${String((v as Record<string, unknown>).name)} = ${readableValue((v as Record<string, unknown>).value ?? (v as Record<string, unknown>).type, depth + 1, whole)}` : readableValue(v, depth + 1, whole)));
+    return shown.join(', ') + (!whole && value.length > 3 ? ` +${value.length - 3} more` : '');
   }
   const entries = Object.entries(value as Record<string, unknown>);
   if (!entries.length) return 'empty';
   // A wrapper with one key (`values`, `conditions`, `options`): what it holds.
-  if (entries.length === 1) return readableValue(entries[0][1], depth + 1);
-  const shown = entries.slice(0, 3).map(([key, inner]) => `${key}: ${readableValue(inner, depth + 1)}`);
-  return shown.join(', ') + (entries.length > 3 ? ` +${entries.length - 3} more` : '');
+  if (entries.length === 1) return readableValue(entries[0][1], depth + 1, whole);
+  const shown = (whole ? entries : entries.slice(0, 3)).map(([key, inner]) => `${key}: ${readableValue(inner, depth + 1, whole)}`);
+  return shown.join(', ') + (!whole && entries.length > 3 ? ` +${entries.length - 3} more` : '');
 }
 
 const preview = (value: unknown) => {
@@ -1142,6 +1159,154 @@ export function describeOps(ops: AssistantOp[], lookup?: DescriptorLookup): Diff
         return { sign: '~', text: `workflow settings: ${Object.entries(op.settings).map(([key, value]) => `${key} = ${preview(value)}`).join(', ')}` };
     }
   });
+}
+
+// SB08: a real diff before Apply: what each touched step was and what it becomes.
+export interface FieldDiff {
+  key: string;
+  label: string;
+  /** What was there; none for a step the change adds. */
+  before?: string;
+  /** What it becomes; none for a value that goes away. */
+  after?: string;
+  /** Over 120 characters on either side, or with a line break: the card folds it behind "Show all". */
+  long: boolean;
+}
+
+export interface StepDiff {
+  /** The step's name after the change (the old one is `was` for a rename). */
+  node: string;
+  kind: 'added' | 'changed' | 'removed' | 'renamed';
+  was?: string;
+  fields: FieldDiff[];
+  /** "→ A → B" for a connection that appears, "− A → B" for one that goes. */
+  wires: string[];
+}
+
+export interface ChangeDiff {
+  steps: StepDiff[];
+  /** Steps of the workflow no op touches. */
+  untouched: number;
+  /** Workflow settings that change. */
+  workflow?: FieldDiff[];
+}
+
+const SETTING_LABELS: Record<string, string> = {
+  retryOnFail: 'Retry on fail',
+  maxTries: 'Max tries',
+  waitBetweenTriesMs: 'Wait between tries (ms)',
+  retryBackoff: 'Retry backoff',
+  onError: 'On error',
+  timeoutSeconds: 'Timeout (seconds)',
+  alwaysOutputData: 'Always output data',
+  executeOnce: 'Execute once',
+  disabled: 'Disabled',
+};
+const WORKFLOW_SETTING_LABELS: Record<string, string> = {
+  errorWorkflowId: 'Error workflow',
+  timeoutSeconds: 'Timeout (seconds)',
+  retryMaxAttempts: 'Retry attempts',
+  retryBaseDelaySeconds: 'Retry delay (seconds)',
+};
+
+const sameValue = (a: unknown, b: unknown) => JSON.stringify(a === '' ? null : (a ?? null)) === JSON.stringify(b === '' ? null : (b ?? null));
+const settingText = (value: unknown) => (value === undefined || value === null ? 'default' : typeof value === 'boolean' ? (value ? 'on' : 'off') : String(value));
+const flagText = (value: unknown) => (typeof value === 'boolean' || value === undefined ? (value ? 'on' : 'off') : String(value));
+
+function field(key: string, label: string, before: string | undefined, after: string | undefined): FieldDiff {
+  const text = `${before ?? ''}${after ?? ''}`;
+  return { key, label, ...(before !== undefined && { before }), ...(after !== undefined && { after }), long: (before?.length ?? 0) > 120 || (after?.length ?? 0) > 120 || /\n/.test(text) };
+}
+
+/**
+ * What `ops` would change in `before`, per step and value, read by applying them (`applyOps`, the same rules as Apply):
+ * each touched step's parameters (named as the node panel names them), settings, credentials and wires, the old and the
+ * new value whole, and how many steps stay as they are. Pure: the card calls it with the canvas and the proposal's ops.
+ */
+export function diffOps(before: Workflow, ops: AssistantOp[] | AssistantOp[][], lookup?: DescriptorLookup): ChangeDiff {
+  const find = lookup ?? (() => undefined);
+  // Ops grouped by proposal chain the way Apply does: one `applyOps` per proposal (its own refs), each on the last result.
+  const groups: AssistantOp[][] = ops.length > 0 && Array.isArray(ops[0]) ? (ops as AssistantOp[][]) : [ops as AssistantOp[]];
+  const after = groups.reduce((wf, g) => applyOps(wf, g, find).workflow, before);
+  const wasById = new Map(before.nodes.map((n) => [n.id, n]));
+  const nowById = new Map(after.nodes.map((n) => [n.id, n]));
+  const nameOf = (id: string) => nowById.get(id)?.name ?? wasById.get(id)?.name ?? id;
+  const edgeKey = (c: WorkflowConnection) => `${c.type}|${c.source}:${c.sourceIndex}|${c.target}:${c.targetIndex}`;
+  const wasEdges = new Set(before.connections.map(edgeKey));
+  const nowEdges = new Set(after.connections.map(edgeKey));
+  const appeared = after.connections.filter((c) => !wasEdges.has(edgeKey(c)));
+  const gone = before.connections.filter((c) => !nowEdges.has(edgeKey(c)));
+  const isAdded = (id: string) => !wasById.has(id) && nowById.has(id);
+  const arrow = (c: WorkflowConnection) => `${nameOf(c.source)} → ${nameOf(c.target)}${c.type !== 'main' ? ` (${c.type.replace('ai_', '')})` : ''}`;
+
+  /** Wires by the step they are shown under. */
+  const wires = new Map<string, string[]>();
+  const show = (id: string, text: string) => wires.set(id, [...(wires.get(id) ?? []), text]);
+  for (const c of appeared) show(isAdded(c.target) ? c.target : c.source, `→ ${arrow(c)}`);
+  for (const c of gone) {
+    if (!nowById.has(c.source) || !nowById.has(c.target)) continue;
+    // A connection an added step now sits in is shown under that step.
+    const between = after.nodes.find((n) => isAdded(n.id) && after.connections.some((e) => e.source === c.source && e.target === n.id) && after.connections.some((e) => e.source === n.id && e.target === c.target));
+    show(between?.id ?? c.source, `− ${arrow(c)}`);
+  }
+
+  const steps: StepDiff[] = [];
+  const fieldsOf = (was: WorkflowNode | undefined, now: WorkflowNode): FieldDiff[] => {
+    const descriptor = find(now.type);
+    const props = descriptor?.properties ?? [];
+    const defaults = was || !descriptor ? {} : defaultParameters(descriptor);
+    const keys = [...new Set([...props.map((p) => p.name), ...Object.keys(was?.parameters ?? {}), ...Object.keys(now.parameters)])].filter((k) => k in (was?.parameters ?? {}) || k in now.parameters);
+    const out: FieldDiff[] = [];
+    for (const key of keys) {
+      const a = was?.parameters[key] ?? (was ? undefined : defaults[key]);
+      const b = now.parameters[key];
+      if (sameValue(a, b)) continue;
+      const prop = props.find((p) => p.name === key);
+      const label = prop?.displayName ?? key;
+      // An option reads as its name, as the node panel shows it ("None → Generic Credential Type").
+      const shown = (v: unknown) => (v !== null && typeof v !== 'object' ? prop?.options?.find((o) => 'value' in o && o.value === v)?.name : undefined) ?? readableValue(v, 0, true);
+      out.push(field(key, label, was ? shown(a) : undefined, b === undefined ? 'empty' : shown(b)));
+    }
+    for (const key of Object.keys(SETTING_LABELS)) {
+      const a = (was as unknown as Record<string, unknown> | undefined)?.[key];
+      const b = (now as unknown as Record<string, unknown>)[key];
+      if (sameValue(a, b)) continue;
+      const render = typeof (a ?? b) === 'boolean' || key === 'retryOnFail' ? flagText : settingText;
+      out.push(field(`setting.${key}`, SETTING_LABELS[key], was ? render(a) : undefined, render(b)));
+    }
+    for (const type of new Set([...Object.keys(was?.credentials ?? {}), ...Object.keys(now.credentials ?? {})])) {
+      const a = was?.credentials?.[type]?.name;
+      const b = now.credentials?.[type]?.name;
+      if (a === b) continue;
+      out.push(field(`credential.${type}`, `Credential (${type})`, was ? (a ?? 'none') : undefined, b ?? 'none'));
+    }
+    return out;
+  };
+
+  for (const now of after.nodes) {
+    const was = wasById.get(now.id);
+    const w = wires.get(now.id) ?? [];
+    if (!was) {
+      steps.push({ node: now.name, kind: 'added', fields: fieldsOf(undefined, now), wires: w });
+      continue;
+    }
+    const fields = fieldsOf(was, now);
+    const renamed = was.name !== now.name;
+    if (!renamed && !fields.length && !w.length) continue;
+    steps.push({ node: now.name, kind: renamed ? 'renamed' : 'changed', ...(renamed && { was: was.name }), fields, wires: w });
+  }
+  for (const was of before.nodes) {
+    if (!nowById.has(was.id)) steps.push({ node: was.name, kind: 'removed', fields: [], wires: wires.get(was.id) ?? [] });
+  }
+
+  const touched = steps.filter((s) => s.kind !== 'added').length;
+  const flow: FieldDiff[] = [];
+  for (const key of Object.keys(WORKFLOW_SETTING_LABELS)) {
+    const a = (before.settings as Record<string, unknown> | undefined)?.[key];
+    const b = (after.settings as Record<string, unknown> | undefined)?.[key];
+    if (!sameValue(a, b)) flow.push(field(`workflow.${key}`, WORKFLOW_SETTING_LABELS[key], settingText(a), settingText(b)));
+  }
+  return { steps, untouched: Math.max(0, before.nodes.length - touched), ...(flow.length && { workflow: flow }) };
 }
 
 /**

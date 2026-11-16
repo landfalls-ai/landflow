@@ -2062,6 +2062,28 @@ and gateway rows without cache numbers. These wait, each with its reason:
 - **Long unwrapped doc lines** (`llm-gateway.md`, `projects-and-goals.md`, `run-trace.md`, `agents.md`): cosmetic, there
   is no formatter, and rewrapping whole files is not done; a change rewraps the lines it edits.
 
+## Company backbone: left open from the Spotlight wave sb1 reviews (2026-11-16)
+
+Wave sb2 took sb1's one-step half (scope, changes that mean what they say, context, the diff, asking, credentials, the
+model) and fixed the protocol-relative URL host the guard kept. These wait for wave sb3, each with the package that owns
+the code:
+
+- **A new agent's tools and knowledge** (sb1 live: tools kept 0 of 3, knowledge base 0 of 3, fed on to the reply 1 of 3,
+  Linear added as a main step with an invalid operation): SB16 (agents anywhere, D5) and SB17 (the agent brief) decide
+  how a new agent's tools and knowledge reach the architect and the canvas; sb2 only placed it (SB07's insert scope).
+- **The architect's tool choice** (the PR reviewer's least privilege 0 of 3; Slack and `run_an_agent` added unasked) and
+  **the dialog reopening the previous conversation**: SB17 owns the brief, its evals and the dialog's start.
+- **"Test and fix" and the "Run it for real" card are lost on reload**: SB18 owns `test-session.ts` and the session's
+  start; a kept conversation does not keep a session's turns by design ([limitations](limitations.md)).
+- **"Stopped · It runs, but doesn't do all you asked yet" after a right fix** (the review too strict) and **"Run it for
+  real" re-entering `testUntilItRuns`** (the fix budget, `startNodes`, `lastApplied` and `tried` reset; each round
+  still needs the person's click, so nothing runs alone): SB18 owns the session's verdict, the review and its loop.
+- **`https://x` and `http://x` share one yes to send** (`run-check.ts` `destinationsOf` keys a destination by host):
+  the same host, so no new destination; SB18 owns the yes ([limitations](limitations.md)).
+- **The Linear/Slack first draft** reads `$json.lastRun` before the Set that defines it, turns "every morning" into
+  weekdays 9:00 and assumes `$json.issues` in Slack: the first draft's prompt and checks are SB13/SB14's (the staged
+  build); SB09's `change-checks.ts` (`expressionMisses`, `cronProblems`) is written to be reused there.
+
 ## Runs: one list (B20, 2026-11-14)
 
 Closed from the wave 1 page review: X2 (Executions, Runs and Search runs are one page, **Runs** at `/runs`, the old URLs redirect), P-ex-1 (no ID or Mode column), P-ex-2 (Stop all only while a run runs), P-ex-3 (repeated failures fold into one row), P-ex-4 (two re-run words), P-runs-1 (one search box with Status and Workflow chips, the rest under More filters) and P-cmp-1 (compare with fewer than two runs goes back to the list). See [the Runs list](run-trace.md#the-runs-list).
@@ -2451,3 +2473,63 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   reload.
 - **Owed to a person:** the asks-first wording and the **Needs you** rows on a real phone, and whether "saved" should
   end autonomy at the first autosave rather than at the next open (decision D1 reads it at the next open).
+
+## Spotlight wave sb2
+
+- **SB07, scope lock, built:** a request about one step carries a scope (the selected step, steps tagged with @, steps named with "only", or the step a new one goes after or before); the composer shows it as a chip (**Only “X”**, **New step after “X”**) whose × lifts it, the prompt says it, and `propose_changes` sends a change outside it back once and then leaves it out and lists it (finding 2.4; carryover item 3's "only the asked node" and item 2's placement half). Docs: [assistant.md](assistant.md#the-builder-chat). Left: asking "which step?" (SB11), what the model reads about the scope's steps (SB10).
+- **SB09, changes that mean what they say, built (2026-11-16):** "retry 3 times" sets `retryOnFail` with `maxTries`
+  (the engine read the tries only with it: 0 of 3 right in sb1), settings are checked for range, an expression that
+  reads a field the step's input has no sample, pin or schema for is sent back once with the fields it has, a schedule
+  must parse and name the days the request named, an Authorization header read from the data is sent back, and a
+  credential with a hand-written header is a caution. After a run the host blocked, Spotlight makes no model call and
+  offers no suggestion, and a suggestion that moves a step's destination is advice with no chip
+  ([assistant.md](assistant.md#after-run-suggestions)). Left: the credential picker (SB12), asking which step (SB11).
+- **SB10, the model sees what it edits, and the scorecard reads what happened, built:** the chat's model gets the whole
+  parameters, the settings and the credential state (names only) of the selected step and of every step in the change's
+  scope, and the outline gives those steps 2 000 characters (finding 2.8: a long Code step lost its tail); it is offered
+  `setWorkflowSettings` (a settings-only proposal is no longer read as "already there"); a node's docs list the output
+  fields of the operation its parameters select, and Linear issue create, add link and comment create, Slack send,
+  update and get permalink, and GitHub pull request and issue writes declare an `outputSchema` (finding 1.4). The
+  scorecard: a blocked scenario's live run is blocked (`start.outbound`, the policy set outright), SB03's flows hit the echo server and a session's "changed nothing" ignores refused or waiting cards, builds' "credentials named", "said what is
+  left" and "sent back once" read the draft (`draft.left`, `draft.calls`), and the outcome names the model. Docs:
+  [assistant.md](assistant.md#the-builder-chat). Left: the live scorecard's before and after side by side (the run is slow; its numbers go with the merge report), and the schemas of the
+  rest of GitHub, Slack and Linear.
+- **SB08, a real diff before Apply, built (2026-11-16):** finding 2.3 (the card printed the new value cut at 64 characters): the waiting card, the proposal row and the after-run suggestion show per step each parameter, setting, credential and wire old → new, long text behind **Show all**, and "N other steps untouched" (`diffOps`, `change-diff.tsx`). Docs: [assistant.md](assistant.md#fold-apply-and-errors).
+- **SB11, Spotlight asks when it is not clear, built:** finding 2.5 and the "retry 3 times" with nothing selected: an
+  `ask_user` tool (one question, 2 to 4 choices as chips, *or type your own answer*) for several steps that fit or a
+  channel, table or id that is missing; asking never needs the switch (decision D1), is not offered in a test session,
+  ends the reply with no further model call, and a backstop sends back a change to one of several steps of a kind with
+  none named or selected (a settings change fits every step that calls out). Live on the local model: "it should retry 3
+  times" asks which step 3 of 3 (0 of 3 before). Docs: [assistant.md](assistant.md#the-builder-chat). A made-up destination in a typed proposal is also sent back once to ask: the destination parameters `channel`, `table`, `to`, `cc`, `email`, `owner`, `repo`, `repository`, `team`, `project`, `board` and `sheet`, and the destination ids `channelId`, `dataTableId` and the like (`sheetId`, `boardId`, `projectId`, `teamId`, `chatId`, `repoId`: a key of the form channel, table, dataTable, sheet, board, project, team, chat or repo followed by `Id` or `Ids`; Slack's channel and a Data Table's table are these)
+  (not a plain id, not a URL host, not in a test session). Left: "post the summary to Slack" with no channel asked first 1 of 3
+  live (qwen3-coder:30b) before the send-back covered `channelId`: the live scorecard does register `messaging.slack` (`prepareLive`), and its
+  `channelId` was an id the guard cleared and listed, not a destination it sent back; re-run live (3 runs) after this fix, so open. The chips are not kept in a stored conversation.
+- **SB12, never empty, never a false claim, credentials offered, built:** a reply that the guards left empty says one
+  line (*The card shows the change.* or *Nothing changed, because …*), a change claimed with no card is sent back once
+  (`claimsAChange`), and a step that needs a credential gets a **Needs you** row with the credentials you may use, **Use
+  it** and **Create one**, with nothing picked by Spotlight (decision D2; the `credential` chat event). Docs:
+  [assistant.md](assistant.md#the-builder-chat).
+- **SB19, the model Spotlight uses, built:** a default in Settings → AI → Spotlight, a per-tab pick in the panel's desktop header, only models the server is configured for (Ollama, the gateway, the server's own keys), local the default. Every Spotlight call counts under token spend, the first draft and the after-run suggestion included (the draft used a bare `fetch` to Ollama and wrote nothing). The chat, build, design, agent and suggest routes refuse an unlisted model with 400. Docs: [assistant.md](assistant.md#the-model-spotlight-uses). Left: a per-person default; a picker on a phone.
+- **Live checks (wave sb2, run before the merge on a4e2899d)**: a production-profile host (CSP enforced, `local-only.cjs`),
+  headed Chrome at 1440×900, local Ollama `qwen3-coder:30b`, an echo server for every address. The scorecard, 3 runs for
+  the scenarios this wave owns or moved and 1 for the rest, against sb1's record and the base read with sb2's readings:
+  the 401 fix with the step selected right 3 of 3 (sb1 1 of 3), autonomous 3 of 3 (0 of 3), the vague retry 3 of 3 (0 of
+  3, it now asks); every SB07, SB09, SB11, SB12 and SB19 scenario's own checks 3 of 3; SB03's blocked and no-change
+  readings 3 of 3 once the harness read what happened (SB10). In the browser: the chip "Only “Open status incident”", a
+  card touching only that step, the diff open and the credential row with nothing chosen, 3 of 3 each; picking a made-up
+  "Echo token", Apply and run reached the echo server with auth, and Undo took it back. "It should retry 3 times" with
+  two HTTP steps asked which step 3 of 3, and the chip's answer changed only that step. With the host blocking local
+  addresses, the run was blocked 3 of 3 with no suggestion and no change; sb1's incident replay stopped at "Needs you ·
+  This host blocks …" with both HTTP steps intact and nothing sent. "Send the whole order" gave a card 3 of 3. Picking
+  `litellm/qwen3-coder:30b` (the local gateway to Ollama) named it in the reply and showed under Spotlight on the AI page;
+  a reload went back to the default; a first draft is now counted. Every Spotlight and architect call had its
+  `ai_call_parts` row. No request left the machine. The gateway pick ran on the development profile, since the production
+  profile refuses the gateway's development key. The two fix rounds after a4e2899d (neighbour wording, the failed answer,
+  the models cache, the focus budget) are covered by tests and Opus's last review, not the browser.
+- **Left after sb2's live checks (for sb3):** the retry backoff fix (0 of 3 in every column), "every morning" (1 of 3), a
+  one-line change in long code (0 of 3), asking for a Slack channel live (0 of 3, not re-run since the `channelId`
+  send-back), sb03's new-destination row (0 of 3, also on the base); a 401 fix once proposed
+  `Authorization: Bearer {{ $cred('my-api-key') }}`, a credential name nobody has, which the made-up value check does
+  not catch yet; one click on a credential row's radio did nothing before Apply (the label works; unconfirmed). The
+  phone Execute/Debug pill overlap is the same on main (a phone follow-up). Not Spotlight: after runs the host logged
+  "the brain's run failed: NOT NULL constraint failed: brain_facts.subject_type" 6 times.

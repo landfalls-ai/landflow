@@ -7,6 +7,7 @@ import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { agentWiringWarnings, applyOps, collectionWarnings, credentialWarnings, parseOps, structuralWarnings, swallowWarnings, wiringWarnings, type AssistantOp, type DescriptorLookup } from '@/lib/shared/assistant-ops';
 import type { NodeTypeInfo, Workflow } from '@/lib/shared/types';
 import { newCompositeErrors, serverCompositeLookup } from '../composites';
+import { authHeaderProblems } from './change-checks'; // SB09:
 import { availableTypes, mainOutputs } from './research';
 
 export function registryLookup(types: NodeTypeInfo[] = availableTypes()): DescriptorLookup {
@@ -48,6 +49,7 @@ export function validateOps(workflow: Workflow, raw: unknown, lookup: Descriptor
     cautions: [
       ...wiring.purpose,
       ...swallowWarnings(result.applied),
+      ...authHeaderProblems(result.applied, workflow, result.workflow, {}, 'credential'), // SB09: a credential and a hand-written Authorization header
       ...credentialWarnings(workflow, result.workflow, lookup, (c, parameters, d) => isPropertyVisible(c, withPropertyDefaults(d.properties, parameters))),
     ],
     workflow: result.workflow,

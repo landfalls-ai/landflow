@@ -52,11 +52,13 @@ export function withEarlierRefs(ops: unknown, refs: Map<string, string>): unknow
 
 
 /** The chat's tool names: what a tool call recovered from text may name. */
-export const TOOL_NAMES: ReadonlySet<string> = new Set(['search_nodes', 'get_node_docs', 'get_workflow', 'get_run_data', 'propose_changes']);
+export const TOOL_NAMES: ReadonlySet<string> = new Set(['search_nodes', 'get_node_docs', 'get_workflow', 'get_run_data', 'propose_changes', 'ask_user']); // SB11:
 
 // SB02: ids, and the destinations (a channel, a table, an owner, an address, a URL) a person names; a model makes both up.
 const ID_PARAMETER = /^id$|[a-z]Ids?$/;
 const DESTINATION_PARAMETER = /^(channel|table|owner|repository|repo|email|to|cc|team|project|board|sheet)$/;
+/** An id that names a destination (a Slack `channelId`, a Data Table's `dataTableId`): the chat asks for it, where a plain id (`id`, `modelId`, `userId`) is cleared and listed. */
+const DESTINATION_ID_PARAMETER = /^(?:channel|table|dataTable|sheet|board|project|team|chat|repo)Ids?$/;
 const URL_PARAMETER = /^(url|baseUrl|webhookUrl)$/;
 
 const KIND = 'table|channel|sheet|repo|repository|project|board|team';
@@ -128,6 +130,9 @@ function mentionsHost(text: string, host: string): boolean {
   return new RegExp(`(?:^|[^a-z0-9.-])${escaped}(?![a-z0-9-])`, 'i').test(text);
 }
 
+/** A URL's scheme and the slashes after it, or the slashes alone of a protocol-relative URL ("//host/…"). */
+const SCHEME_AND_SLASHES = /^\s*(?:[a-z][a-z0-9+.-]*:)?\/\/+/i;
+
 /**
  * The host a URL with expressions in it names in its literal start ("https://x.com/users/{{ $json.id }}" → "x.com"); undefined
  * when the value is a whole expression or the host itself is one (the literal part ends before the host does).
@@ -137,14 +142,15 @@ function literalHostOf(raw: string): string | undefined {
   const at = value.indexOf('{{');
   const prefix = value.slice(0, at);
   if (prefix.includes('\\')) return UNREADABLE;
-  const rest = prefix.replace(/^\s*[a-z][a-z0-9+.-]*:\/\//i, '');
+  // A scheme, or none ("//evil.com/…", protocol-relative): what follows the slashes is the authority either way.
+  const rest = prefix.replace(SCHEME_AND_SLASHES, '');
   const authority = /^[^/?#]*/.exec(rest)![0];
   const hostOfAuthority = (text: string) => {
     const parsed = urlHost(text);
     return parsed === 'unreadable' ? UNREADABLE : parsed?.hostname;
   };
   // An expression in the user name ("{{ user }}@evil.com", "user:{{ pw }}@evil.com"): the host is what follows the last "@".
-  const whole = /^[^/?#]*/.exec(value.replace(/^\s*[a-z][a-z0-9+.-]*:\/\//i, ''))![0];
+  const whole = /^[^/?#]*/.exec(value.replace(SCHEME_AND_SLASHES, ''))![0];
   const lastAt = lastAtOutside(whole);
   if (lastAt === AT_IN_EXPRESSION) return UNREADABLE; // an "@" inside an expression may be anything
   if (lastAt >= 0 && !whole.slice(lastAt + 1).includes('{{')) return hostOfAuthority(whole.slice(lastAt + 1));
@@ -166,9 +172,11 @@ function literalHostOf(raw: string): string | undefined {
  * plausible ones. Those parameters are left out, so the user fills them in. `typeText` gives the node type's properties
  * for an op (defaults and fixed options are known), `typeOf` the node type of an op (an existing node's too, for its app's name). A URL is judged by its host: a path on a host somebody gave is kept.
  */
-export function withoutInventedIds(ops: unknown, known: string, typeText: (op: Record<string, unknown>) => string = () => '', typeOf: (op: Record<string, unknown>) => string | undefined = (op) => (op.op === 'addNode' ? String(op.type ?? '') : undefined)): { ops: unknown; invented: string[]; values: string[] } {
-  if (!Array.isArray(ops)) return { ops, invented: [], values: [] };
+export function withoutInventedIds(ops: unknown, known: string, typeText: (op: Record<string, unknown>) => string = () => '', typeOf: (op: Record<string, unknown>) => string | undefined = (op) => (op.op === 'addNode' ? String(op.type ?? '') : undefined)): { ops: unknown; invented: string[]; values: string[]; destinations: string[] } {
+  if (!Array.isArray(ops)) return { ops, invented: [], values: [], destinations: [] };
   const invented: string[] = [];
+  /** The notes (a subset of `invented`) about a channel, table, recipient or id-named destination nobody gave: the chat asks for these instead of leaving them empty (SB11). */
+  const destinations: string[] = [];
   const values: string[] = [];
   const appNames = (op: Record<string, unknown>) => (typeOf(op) ?? '').toLowerCase().split('.');
   const clean = (op: Record<string, unknown>, node: unknown, parameters: unknown) => {
@@ -195,7 +203,9 @@ export function withoutInventedIds(ops: unknown, known: string, typeText: (op: R
         if (!host || (host !== UNREADABLE && (mentionsHost(known, host) || mentionsHost(typeText(op), host)))) continue;
         invented.push(hostNote(key, node, host));
       } else {
-        invented.push(`${key} of “${String(node)}”: ${isId ? 'an id' : `a ${key}`} nobody gave, left for the user to fill in`);
+        const note = `${key} of “${String(node)}”: ${isId ? 'an id' : `a ${key}`} nobody gave, left for the user to fill in`;
+        invented.push(note);
+        if (DESTINATION_PARAMETER.test(key) || DESTINATION_ID_PARAMETER.test(key)) destinations.push(note);
       }
       delete out[key];
       values.push(value);
@@ -209,7 +219,7 @@ export function withoutInventedIds(ops: unknown, known: string, typeText: (op: R
     if (o.op === 'setParameters') return { ...o, parameters: clean(o, o.node, o.parameters) };
     return op;
   });
-  return { ops: cleaned, invented, values };
+  return { ops: cleaned, invented, values, destinations };
 }
 
 const UNIT_MS = { ms: 1, s: 1000, min: 60_000, h: 3_600_000 } as const;
@@ -589,6 +599,16 @@ const JSON_LINE = /^[ \t]*\{[^\n]*\}[ \t]*(?:\n|$)/gm;
 export function withoutApplyRequests(text: string): string {
   const prose = text.replace(JSON_LINE, '').replace(/\n{3,}/g, '\n\n').trim();
   return dropSentences(prose, (sentence) => APPLY_REQUEST.test(sentence)) ?? prose;
+}
+
+// SB12: the words of a change claimed with no card ("I've set the retry to 3", "The step now retries"), not a question and not a plan.
+export const CHANGE_CLAIM = /\bI(?:'ve| have) (?:just |now )?(?:set|changed|added|updated|fixed|removed|connected)\b|\b(?:has|have) been (?:set|changed|added|updated)\b|\bnow (?:retries|posts|sends|reads|uses)\b|\bis now (?:set|connected|configured)\b/i;
+
+// SB12: whether the text says a change was made. A sentence that asks, or says what would, could or will happen, is not a claim.
+export function claimsAChange(text: string): boolean {
+  return text
+    .split(/(?<=[.!?])\s+|\n+/)
+    .some((sentence) => CHANGE_CLAIM.test(sentence) && !/\?\s*$|\b(?:would|could|will|should|might)\b/i.test(sentence));
 }
 
 /**

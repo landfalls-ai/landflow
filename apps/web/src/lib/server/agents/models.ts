@@ -67,7 +67,8 @@ export async function modelOptions(provider: ModelProvider, options: { credentia
   if (!response.ok) throw new Error(`Ollama at ${base} answered ${response.status}`);
   const data = (await response.json()) as { models: Array<{ name: string; details?: { parameter_size?: string }; capabilities?: string[] }> };
   return data.models
-    .filter((m) => !NOT_CHAT.test(m.name) && (!m.capabilities || m.capabilities.includes('completion')))
+    // Ollama's own `capabilities` say whether a model chats; the name regex is the fallback for a server that does not send them.
+    .filter((m) => (m.capabilities ? m.capabilities.includes('completion') : !NOT_CHAT.test(m.name)))
     .map((m) => ({
       provider,
       model: m.name,

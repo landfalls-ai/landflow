@@ -255,4 +255,24 @@ describe('Credentials', () => {
     for (const o of ops.filter((x) => x.value === 'getManySince')) expect(o.outputSchema).toBe(ACTIVITY_ITEM_SCHEMA);
     expect((ops.find((o) => o.value === 'get')!.outputSchema as JsonObject).required).toContain('text');
   });
+
+  // SB10: the write operations name what they return, and the fake's item has every required field.
+  it('declares an output schema on Create issue, Add link and Create comment that the items fit', async () => {
+    const operations = Linear.description.properties.filter((p) => p.name === 'operation');
+    const schemaOf = (resource: string, operation: string) =>
+      operations.find((p) => (p.displayOptions?.show?.resource as string[] | undefined)?.includes(resource))!.options!.find((o) => o.value === operation)!.outputSchema as JsonObject;
+    const cases: Array<[string, string, JsonObject]> = [
+      ['issue', 'create', { resource: 'issue', operation: 'create', teamId: 'team-1', title: 'Fix export' }],
+      ['issue', 'addLink', { resource: 'issue', operation: 'addLink', issueId: 'ENG-1', url: 'https://example.com/x' }],
+      ['comment', 'create', { resource: 'comment', operation: 'create', issueId: 'ENG-1', body: 'Shipped' }],
+    ];
+    for (const [resource, operation, parameters] of cases) {
+      const schema = schemaOf(resource, operation);
+      expect(schema, `${resource}.${operation}`).toBeDefined();
+      for (const [name, p] of Object.entries(schema.properties as Record<string, { description?: string }>)) expect(p.description, `${operation}.${name}`).toBeTruthy();
+      const response = await call(parameters);
+      const item = jsonOf(response)[0];
+      for (const key of schema.required as string[]) expect(item, `${operation}: ${key}`).toHaveProperty(key);
+    }
+  });
 });

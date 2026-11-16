@@ -5,7 +5,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { startFakeModels, type FakeReply } from './fake-ai-services';
 
 let answer = '{}';
@@ -92,6 +92,30 @@ describe('AI builder timeout', () => {
     } finally {
       slowMs = 0;
       delete process.env.LANDFLOW_BUILDER_TIMEOUT_SECONDS;
+    }
+  });
+});
+
+describe('AI builder, the Ollama adapter\'s 300 s cap', () => {
+  it('says the model was slow (not unreachable) when the adapter\'s own cap fires before the build\'s bound', async () => {
+    answer = draft([]);
+    const real = globalThis.fetch;
+    vi.stubGlobal('fetch', (url: string | URL | Request, init?: RequestInit) => (String(url).endsWith('/api/chat') ? Promise.reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError')) : real(url, init)));
+    try {
+      await expect(buildFlow('anything', 'slow-model')).rejects.toThrow(/slow-model on Ollama at .* did not finish the draft within 300 s \(the Ollama adapter's cap/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('still says unreachable for a refused connection', async () => {
+    answer = draft([]);
+    const real = globalThis.fetch;
+    vi.stubGlobal('fetch', (url: string | URL | Request, init?: RequestInit) => (String(url).endsWith('/api/chat') ? Promise.reject(new TypeError('fetch failed')) : real(url, init)));
+    try {
+      await expect(buildFlow('anything', 'slow-model')).rejects.toThrow(/Cannot reach Ollama/);
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 });
