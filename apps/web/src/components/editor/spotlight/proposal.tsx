@@ -64,7 +64,7 @@ export function ProposalCard({ itemId, proposal }: { itemId: string; proposal: P
       </div>
       <Collapsible open={!applied}>
         <div className="space-y-2 pt-2">
-          <ChangeDiff before={canvas} ops={proposal.ops} id={proposal.id} settled={applied} /> {/* SB08: */}
+          <ChangeDiff before={applied ? undefined : canvas} ops={proposal.ops} id={proposal.id} settled={applied} /> {/* SB08: */}
           <Warnings warnings={proposal.warnings} />
           <LeftOut reasons={proposal.dropped} />
           <div className="flex items-center gap-1.5">
@@ -110,7 +110,6 @@ export function ProposalRow({ proposal, fix }: { proposal: Proposal; fix: boolea
   const latest = useAssistant((s) => s.items.length) >= 0 && isNewestUndo(undos, proposal.id);
   const verb = proposal.state === 'applied' ? (fix ? 'Fixed' : 'Done') : proposal.state === 'dismissed' ? 'Not applied' : proposal.state === 'undone' ? 'Undone' : 'Applying';
   const undo = () => undoProposal(proposal.id);
-  const canvas = useCanvas(); // SB08:
   return (
     <div className="animate-in">
       <div className="flex items-start gap-1">
@@ -138,7 +137,7 @@ export function ProposalRow({ proposal, fix }: { proposal: Proposal; fix: boolea
       {open && (
         <div className="mt-1.5 space-y-1.5 pl-5">
           <p className="text-[12px] leading-snug text-t2">{proposal.summary}</p>
-          {hasDiff(proposal.id) ? <ChangeDiff before={canvas} ops={proposal.ops} id={proposal.id} settled open={false} /> : <OpsDiff ops={proposal.ops} />} {/* SB08: */}
+          {hasDiff(proposal.id) ? <ChangeDiff ops={proposal.ops} id={proposal.id} settled open={false} /> : <OpsDiff ops={proposal.ops} />} {/* SB08: */}
           <Warnings warnings={proposal.warnings} />
           {proposal.dropped.length > 0 && <p className="text-[11px] text-t3">Left out: {proposal.dropped.join('; ')}</p>}
         </div>

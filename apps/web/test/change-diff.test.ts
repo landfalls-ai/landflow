@@ -7,7 +7,7 @@ import { createElement } from 'react';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { NodeDescriptor, Workflow } from '@landflow/engine';
-import { diffOps, type DescriptorLookup } from '@/lib/shared/assistant-ops';
+import { diffOps, type AssistantOp, type DescriptorLookup } from '@/lib/shared/assistant-ops';
 import { corePlugin } from '@/lib/server/nodes';
 import { registry } from '@/lib/server/plugins/registry';
 import { registryLookup } from '@/lib/server/assistant/ops';
@@ -75,6 +75,27 @@ describe('diffOps', () => {
 
     const renamed = diffOps(triage, [{ op: 'renameNode', node: 'Is P0?', name: 'Urgent?' }], lookup);
     expect(renamed.steps[0]).toMatchObject({ node: 'Urgent?', kind: 'renamed', was: 'Is P0?' });
+  });
+
+  it('a change in the 5th key of an object or the 5th field of a Set shows different text on each side', () => {
+    const obj = (e: number) => ({ a: 1, b: 2, c: 3, d: 4, e });
+    const wf: Workflow = { ...triage, nodes: triage.nodes.map((n) => (n.name === 'Open status incident' ? { ...n, parameters: { ...n.parameters, body: obj(5), headers: { values: [1, 2, 3, 4, 5].map((i) => ({ name: `f${i}`, value: i })) } } } : n)) };
+    const diff = diffOps(wf, [{ op: 'setParameters', node: 'Open status incident', parameters: { body: obj(6), headers: { values: [1, 2, 3, 4, 5].map((i) => ({ name: `f${i}`, value: i === 5 ? 60 : i })) } } }], lookup);
+    const fields = diff.steps[0].fields;
+    expect(fields).toHaveLength(2);
+    for (const f of fields) expect(f.before).not.toBe(f.after);
+    const body = fields.find((f) => f.key === 'body')!;
+    expect(body.after).toContain('e: 6');
+    expect(body.after).not.toContain('more');
+  });
+
+  it('chained proposals: one that names a step an earlier one adds is shown, not dropped', () => {
+    const p1: AssistantOp[] = [{ op: 'addNode', ref: 'n', type: 'core.noOp', name: 'Pause', before: 'Save to backlog' }];
+    const p2: AssistantOp[] = [{ op: 'setNodeSettings', node: 'Pause', settings: { retryOnFail: true } }, { op: 'renameNode', node: 'Pause', name: 'Hold' }];
+    expect(diffOps(triage, p2, lookup).steps).toHaveLength(0);
+    const chained = diffOps(triage, [...p1, ...p2], lookup);
+    expect(chained.steps.find((s) => s.node === 'Hold')).toBeTruthy();
+    expect(chained.untouched).toBe(9);
   });
 
   it('counts the steps no op touches: 8 of the 9 of Bug triage', () => {

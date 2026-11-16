@@ -4,7 +4,7 @@
  * and the new one plain, a long text folded to two lines with "Show all", and how many steps stay as they are. Read from
  * the proposal's ops and the canvas they apply to (`diffOps`), not from the model's words.
  */
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { diffOps, type AssistantOp, type ChangeDiff as Diff, type FieldDiff, type StepDiff } from '@/lib/shared/assistant-ops';
@@ -25,9 +25,10 @@ export const hasDiff = (id: string) => shown.has(id);
 
 /** The canvas as a workflow, re-read when a node or a connection changes. */
 export function useCanvas(): Workflow {
-  useEditor((s) => s.nodes);
-  useEditor((s) => s.edges);
-  return useEditor.getState().toWorkflow();
+  const nodes = useEditor((s) => s.nodes);
+  const edges = useEditor((s) => s.edges);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- toWorkflow reads the nodes and edges
+  return useMemo(() => useEditor.getState().toWorkflow(), [nodes, edges]);
 }
 
 /** One changed value: "label: old → new", a long one folded to two lines until "Show all". */
@@ -106,14 +107,16 @@ function StepBlock({ step }: { step: StepDiff }) {
  * leaves as they are. `open` is whether it starts open (a waiting card) or folded (an applied row). With `id` (the
  * proposal) and `settled` (it is applied), the diff the card showed while it waited is shown, since the canvas has it now.
  */
-export function ChangeDiff({ before, ops, open = true, id, settled }: { before: Workflow; ops: AssistantOp[]; open?: boolean; id?: string; settled?: boolean }) {
+export function ChangeDiff({ before, ops, open = true, id, settled }: { before?: Workflow; ops: AssistantOp[]; open?: boolean; id?: string | string[]; settled?: boolean }) {
   const [on, setOn] = useState(open);
-  let diff: Diff | undefined;
-  if (id && settled) diff = shown.get(id);
-  else {
-    diff = diffOps(before, ops, editorLookup());
-    if (id) shown.set(id, diff);
-  }
+  const ids = id === undefined ? [] : Array.isArray(id) ? id : [id];
+  const computed = useMemo(() => (settled || !before ? undefined : diffOps(before, ops, editorLookup())), [settled, before, ops]);
+  const diff: Diff | undefined = settled ? shown.get(ids[0]) : computed;
+  // Remembered once the card shows it (not in render): the canvas holds the change after Apply.
+  useEffect(() => {
+    if (computed) for (const i of ids) shown.set(i, computed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [computed, ids.join('|')]);
   if (!diff) return null;
   const { steps, untouched, workflow } = diff;
   const count = steps.length + (workflow?.length ? 1 : 0);
@@ -122,7 +125,7 @@ export function ChangeDiff({ before, ops, open = true, id, settled }: { before: 
       <button type="button" aria-expanded={on} onClick={() => setOn((o) => !o)} className="flex w-full items-center gap-1 text-left text-t2 max-md:min-h-11">
         <ChevronRight className={cn('size-3 shrink-0 text-t3 transition-transform motion-reduce:transition-none', on && 'rotate-90')} />
         <span className="font-semibold text-t1">{count === 0 ? 'No step changes' : `${count} ${count === 1 ? 'change' : 'changes'}`}</span>
-        {!on && <span className="text-t3">· {untouched === 0 ? 'no other step' : `${untouched} other step${untouched === 1 ? '' : 's'} untouched`}</span>}
+        {!on && <span className="text-t3">· {untouched === 0 ? 'no other step changes' : `${untouched} other step${untouched === 1 ? '' : 's'} untouched`}</span>}
       </button>
       {on && (
         <div className="mt-1 space-y-1.5">

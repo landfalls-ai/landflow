@@ -1060,22 +1060,22 @@ export interface DiffLine {
  * A parameter's value as a person reads it: a Set's `{"values":[{"name":"tagged","value":true}]}` is `tagged = true`,
  * a list of items is their values, an object its first keys. JSON only for what has no shape to read.
  */
-export function readableValue(value: unknown, depth = 0): string {
+export function readableValue(value: unknown, depth = 0, whole = false): string {
   if (value === null || value === undefined) return 'empty';
   if (typeof value !== 'object') return String(value);
-  if (depth > 3) return JSON.stringify(value);
+  if (depth > 3 && !whole) return JSON.stringify(value);
   if (Array.isArray(value)) {
     if (!value.length) return 'none';
     const named = value.every((v) => v && typeof v === 'object' && !Array.isArray(v) && 'name' in v);
-    const shown = value.slice(0, 3).map((v) => (named ? `${String((v as Record<string, unknown>).name)} = ${readableValue((v as Record<string, unknown>).value ?? (v as Record<string, unknown>).type, depth + 1)}` : readableValue(v, depth + 1)));
-    return shown.join(', ') + (value.length > 3 ? ` +${value.length - 3} more` : '');
+    const shown = (whole ? value : value.slice(0, 3)).map((v) => (named ? `${String((v as Record<string, unknown>).name)} = ${readableValue((v as Record<string, unknown>).value ?? (v as Record<string, unknown>).type, depth + 1, whole)}` : readableValue(v, depth + 1, whole)));
+    return shown.join(', ') + (!whole && value.length > 3 ? ` +${value.length - 3} more` : '');
   }
   const entries = Object.entries(value as Record<string, unknown>);
   if (!entries.length) return 'empty';
   // A wrapper with one key (`values`, `conditions`, `options`): what it holds.
-  if (entries.length === 1) return readableValue(entries[0][1], depth + 1);
-  const shown = entries.slice(0, 3).map(([key, inner]) => `${key}: ${readableValue(inner, depth + 1)}`);
-  return shown.join(', ') + (entries.length > 3 ? ` +${entries.length - 3} more` : '');
+  if (entries.length === 1) return readableValue(entries[0][1], depth + 1, whole);
+  const shown = (whole ? entries : entries.slice(0, 3)).map(([key, inner]) => `${key}: ${readableValue(inner, depth + 1, whole)}`);
+  return shown.join(', ') + (!whole && entries.length > 3 ? ` +${entries.length - 3} more` : '');
 }
 
 const preview = (value: unknown) => {
@@ -1243,7 +1243,7 @@ export function diffOps(before: Workflow, ops: AssistantOp[], lookup?: Descripto
       const b = now.parameters[key];
       if (sameValue(a, b)) continue;
       const label = props.find((p) => p.name === key)?.displayName ?? key;
-      out.push(field(key, label, was ? readableValue(a) : undefined, b === undefined ? 'empty' : readableValue(b)));
+      out.push(field(key, label, was ? readableValue(a, 0, true) : undefined, b === undefined ? 'empty' : readableValue(b, 0, true)));
     }
     for (const key of Object.keys(SETTING_LABELS)) {
       const a = (was as unknown as Record<string, unknown> | undefined)?.[key];

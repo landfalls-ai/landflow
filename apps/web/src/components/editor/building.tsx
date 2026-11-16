@@ -140,6 +140,8 @@ export function LiveSteps({ live, trace, durationMs }: { live: Live; trace?: Act
   const dropped = live.proposals.reduce((n, p) => n + p.proposal.dropped.length, 0);
   const warnings = live.proposals.flatMap((p) => p.proposal.warnings);
   const canvas = useCanvas(); // SB08: the canvas the waiting card is read against
+  // The proposals chain, as Apply does: a later one may name a step an earlier one adds, so one diff of all their ops.
+  const allOps = useMemo(() => live.proposals.flatMap((p) => p.proposal.ops), [live.proposals]);
 
   const decide = (state: 'applied' | 'dismissed') => {
     for (const { itemId, proposal } of live.proposals) useAssistant.getState().setProposalState(itemId, proposal.id, state);
@@ -164,7 +166,7 @@ export function LiveSteps({ live, trace, durationMs }: { live: Live; trace?: Act
       <ActivityTrace steps={mergeTrace(trace, steps)} live={streaming || !all} durationMs={durationMs} />
       {ready && <Warnings warnings={warnings} />}
       {/* SB08: what Apply changes, per step: the old value and the new one, open while the card waits */}
-      {ready && all && (!autonomous || holdsForClick(live.proposals.map((p) => p.proposal))) && live.proposals.map(({ proposal }) => <ChangeDiff key={proposal.id} before={canvas} ops={proposal.ops} id={proposal.id} />)}
+      {ready && all && (!autonomous || holdsForClick(live.proposals.map((p) => p.proposal))) && <ChangeDiff before={canvas} ops={allOps} id={live.proposals.map((p) => p.proposal.id)} />}
       {ready && dropped > 0 && (
         <LeftOut reasons={live.proposals.flatMap((p) => p.proposal.dropped)} />
       )}
