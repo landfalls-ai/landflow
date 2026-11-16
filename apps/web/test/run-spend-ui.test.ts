@@ -114,6 +114,17 @@ describe('the Spend refresh and the span of a call', () => {
     expect(rows.map((r) => r.spanId)).toEqual(['run/model:0', undefined]);
   });
 
+  it('opens the span a call ended, for back-to-back calls of one model', () => {
+    const mk = (spans: Array<[string, string, string]>) => ({
+      spans: Object.fromEntries(spans.map(([id, startedAt, endedAt]) => [id, { id, kind: 'model', name: 'claude-sonnet-4-6', startedAt, endedAt, caller: agent }])),
+    }) as never;
+    const c = (at: string) => call(1, { model: 'claude-sonnet-4-6', agentId: 'ag1', at });
+    const two = mk([['a', '2026-11-16T10:00:00.000Z', '2026-11-16T10:00:05.000Z'], ['b', '2026-11-16T10:00:05.400Z', '2026-11-16T10:00:10.000Z']]);
+    expect(matchCallToSpan(c('2026-11-16T10:00:05.010Z'), two)).toBe('a');
+    const three = mk([['a', '2026-11-16T10:00:00.000Z', '2026-11-16T10:00:04.000Z'], ['b', '2026-11-16T10:00:04.300Z', '2026-11-16T10:00:08.000Z'], ['c', '2026-11-16T10:00:08.500Z', '2026-11-16T10:00:12.000Z']]);
+    expect(['10:00:04.010', '10:00:08.010', '10:00:12.010'].map((t) => matchCallToSpan(c(`2026-11-16T${t}Z`), three))).toEqual(['a', 'b', 'c']);
+  });
+
   it('draws a time as a button only when a span was found', () => {
     const html = renderToStaticMarkup(createElement(SpendBody, { spend: { ...demo, calls: [call(1, { at: '2026-11-16T10:00:01.200Z', model: 'claude-sonnet-4-6' }), call(2, { at: '2026-11-16T12:00:00.000Z', model: 'claude-sonnet-4-6' })] }, open: () => {}, model: journal }));
     expect(html.match(/aria-label="Open the call at/g)).toHaveLength(1);

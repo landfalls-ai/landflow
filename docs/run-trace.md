@@ -667,7 +667,7 @@ while the run is live. Tokens, models and cost are what happened in the run, nev
 - **Calls**: time, purpose, model, tokens and cost, the latest 20 (Show all lists the rest); a time opens the call's
   model span in the detail sheet. A call's `spanId` is the OpenTelemetry id, the Run Trace's spans have journal ids, so
   `matchCallToSpan` (`lib/client/run-spend.ts`) finds the span: same model name, the call's time within a second before
-  and two after the span, the same agent, the nearest time on a tie. A call with no such span shows its time as plain
+  and two after the span, the same agent, the span whose end is nearest on a tie (a call is recorded when it ends). A call with no such span shows its time as plain
   text. The tab reads once more when the run ends, and a failed read has a Try again button.
 
 The answer holds sizes, counts and names only: no prompt text is shown or stored for spend.
