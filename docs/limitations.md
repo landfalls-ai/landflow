@@ -600,3 +600,16 @@ items still open (its "Wave 6" section); this page is the short list to check be
   `model` span per loop step, so its calls in the Spend tab show their time as plain text and have no sheet with their
   composition; `GET /api/ai-calls/:id` answers for them. The sheet opens for the AI Agent node's model sub-node, a plugin
   node's `model` record and the harness mod's requests (found by the wave 12 join test `spend-trace-join`).
+
+## Token spend wave 13
+
+- The AI page's cache card says why a call missed only for calls whose prompt split is still kept (30 days); over a longer
+  period it says so ("Miss reasons cover the last 30 days at most"). The "below the minimum" reason uses one 1,024-token
+  minimum for every model, the lowest among current Claude models; a model with a higher minimum may need more.
+- A call through the LLM gateway counts in the cache card's hit rate only when it reports cache tokens (it is provider
+  `litellm`, so it is not counted by its provider name); a gateway call that reports none is left out, not counted as a miss.
+- The card counts at most 20,000 calls of a period (the newest) and says when it left some out.
+- The forecast is a straight line from the last 7 complete days: it does not know a weekend, a launch or a plan to stop a
+  flow, and a day's σ from 7 values is itself rough, which is why a month's first week says "early". The band is a 10th to
+  90th percentile range of a normal approximation, not a promise; a daily cap's pace is spread evenly over 24 hours, so it
+  swings early in the day. Until the daily rollup merges it reads the call rows by day.

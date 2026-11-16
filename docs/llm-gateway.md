@@ -439,6 +439,24 @@ for the period (24 hours, 7 days, 30 days) and shows, from top to bottom:
 - **Caps**: every cap that has a period (a workflow's daily caps, an agent's guardrails, Settings → AI caps), what it has
   used and where it is set. The bar is the accent colour below 80%, amber from 80% and red at 100%. Admins also see the
   budget the gateway holds as a backstop for a person's or an agent's dollar cap, when the budgets sync is on.
+- **Forecast to month end** (above the caps): where this month's spend is heading, as money: "$410 to $520 by Nov 30",
+  the most likely figure in words, and each cap or budget the viewer may see with "Reaches its limit on Nov 24" or "Stays
+  under its limit to Nov 30". It always covers the month, whatever the period above. The method: month to date (the
+  month's days up to and including today) plus the mean of the last 7 complete days times the days left (the middle,
+  P50), with a band of 1.2816 standard deviations of those 7 days times the square root of the days left either side
+  (a 10th to 90th percentile range), the low end never below month to date. With fewer than 7 complete days of data it says
+  **early** and uses the days there are. The date is the first day the P50 line reaches the limit; "Already at its limit"
+  when it is over, and none when it stays under. The total is what the viewer can see; each monthly cap is forecast from
+  its own subject's days (a person, an agent, a credential or a project), and a daily cap shows today's pace (used so far
+  today spread over 24 hours). Cost caps are in dollars, a monthly token cap in tokens. A member sees their own user cap,
+  the caps of workflows and agents they can open and the budgets of their projects, never another person's cap or a
+  credential's. The method is `forecastMonth` in `lib/shared/ai-forecast.ts`, worded as Landledger's forecast.
+- **Prompt cache** (below the requests): over the period, the share of the prompt that came from the provider's cache,
+  the dollars it saved, the number of misses and the five agents with the most uncached input, each with its hit rate and
+  why it missed (the same reasons as the Run Trace's Spend tab). It counts the calls the Run Trace's cache line counts:
+  Anthropic and OpenAI calls, and any call that reports cache tokens. When the period holds calls of the AI Agent node,
+  which asks for no cache, the card says so with their size. It holds numbers only, never prompt text, and follows
+  "Who sees what" below.
 - **Requests**: cap-raise requests of the last 30 days (a member's own; every one for admins), with the decision and
   "In LiteLLM: updated, skipped or failed". A member can withdraw an open one.
 - **Gateway**: a health dot, the models the gateway serves, and for admins the spend import's and the budgets sync's last
@@ -463,7 +481,7 @@ installs and publishes the flow. Admins change caps where they are set (the link
 
 **A project's budget** is a cap too: `project:<id>:month:cost`, listed for the project's members, with the link to the project's AI budget settings. Its editors who are not its admins see **Ask for more** while the cap-raise flow is on; an approved request sets the budget's amount, settles the month's open incidents as raised by the approver, and its `gateway` is `skipped` (a project has no LiteLLM backstop). The cost alerts watch it like the other caps. See [AI budget](projects-and-goals.md#ai-budget).
 
-The page reads `GET /api/insights/ai` and `GET /api/llm-gateway/status` ([reference/api.md](reference/api.md)) and
+The page reads `GET /api/insights/ai`, `GET /api/insights/ai/forecast`, `GET /api/insights/ai/cache` and `GET /api/llm-gateway/status` ([reference/api.md](reference/api.md)) and
 refreshes every minute while the tab is visible.
 
 ## What each call was for

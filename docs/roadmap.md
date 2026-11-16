@@ -2280,6 +2280,17 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   seconds while the run is live ([run-trace.md](run-trace.md#spend)). A call opens its model span.
 - **One call's view (SP07), built:** a model step's sheet in the Run Trace shows the call's composition, cache line and what changed since the previous call; sessions show cached tokens ([run-trace.md](run-trace.md#one-call)).
 
+## Token spend wave 13
+
+- **The cache card and the forecast to month end (SP11), built**: the AI page gains a **Forecast to month end** card (the
+  month's total as a range, "$410 to $520 by Nov 30", the most likely figure in words, "early" under 7 days of data, and
+  each cap or budget the viewer may see with the day the P50 line reaches its limit or "stays under"; a daily cap shows
+  today's pace) and a **Prompt cache** card (hit rate, dollars saved, misses, the five agents with the most uncached input
+  with why they missed, and the AI Agent node's uncached calls). `forecastMonth` (`lib/shared/ai-forecast.ts`) is the one
+  method; SP23 alerts on it and SP12's My AI spend takes it for its own caps. Until the daily rollup (SP08) merges the
+  forecast reads `ai_usage` by day through one function (`dayRows` in `lib/server/ai-usage/forecast.ts`).
+  Live check: owner and member views on a seeded month, light and dark, in the report's deviations.
+
 ## Practices (waves P1 and P2)
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided
