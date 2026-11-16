@@ -12,6 +12,7 @@ import { Button } from '../ui/button';
 import { NodeIcon } from '../ui/icon';
 import { Input, SectionLabel } from '../ui/inputs';
 import { DataView } from '../run/data-view';
+import { useEditLock } from './edit-lock';
 import { NodeCredentials } from '../credentials/node-credentials';
 import { ParamForm } from './param-form';
 import { NodeSettingsPane } from './node-settings';
@@ -106,6 +107,7 @@ export function NodePanel() {
   const workflowId = useEditor((s) => s.workflowId);
   const workflowActive = useEditor((s) => s.active);
   const dirty = useEditor((s) => s.dirty);
+  const readOnly = useEditLock((s) => s.readOnly);
   // Saved but not published yet: the trigger URL still serves the published version.
   const unpublished = usePublication((s) => (s.workflowId === workflowId ? (s.status?.unpublishedChanges ?? false) : false));
   const [tab, setTab] = useState<'parameters' | 'settings'>('parameters');
@@ -382,10 +384,13 @@ export function NodePanel() {
                   <TriggerUrl type={wf.type} parameters={wf.parameters} active={workflowActive} dirty={dirty || unpublished} nodeId={openNodeId} />
                   {credentialRequirements.length ? (
                     <NodeCredentials
+                      key={openNodeId}
                       nodeType={wf.type}
                       workflowId={workflowId || undefined}
                       requirements={credentialRequirements}
                       value={wf.credentials}
+                      readOnly={readOnly}
+                      publishPending={workflowActive && (dirty || unpublished)}
                       onChange={(credentials) => update({ credentials })}
                     />
                   ) : null}
