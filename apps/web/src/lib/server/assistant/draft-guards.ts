@@ -7,7 +7,7 @@
 import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { mergeLeft, type DraftLeft } from '@/lib/shared/draft-left';
 import type { NodeTypeInfo } from '@/lib/shared/types';
-import type { FlowDraft } from '../flow-builder';
+import { pinsOnTrigger, type FlowDraft } from '../flow-builder';
 import { withoutInventedIds } from './guards';
 
 export type GuardedDraft = FlowDraft & { left?: DraftLeft[] };
@@ -66,8 +66,10 @@ export function guardDraft(draft: GuardedDraft, ctx: DraftGuardContext): Guarded
       edges = edges.filter(([from, to]) => from !== gone.key && to !== gone.key);
       nodes = nodes.filter((n) => n !== gone);
       if (pinData?.[gone.key]) {
+        // The pin moves to the kept trigger only where a pin on that trigger is what the builder would have made: a schedule's
+        // own item is only a time, and the dropped trigger's sample (a webhook's body) would not be what it puts out.
         const { [gone.key]: items, ...rest } = pinData;
-        pinData = { [keep.key]: items, ...rest };
+        pinData = pinsOnTrigger(keep.type, ctx.byType(keep.type)) ? { [keep.key]: items, ...rest } : rest;
       }
       removed.add(gone.name);
       mine.push({ node: gone.name, kind: 'dropped', text: `“${gone.name}”: a flow starts from one trigger, so it was left out and “${keep.name}” kept` });

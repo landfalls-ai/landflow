@@ -7,6 +7,8 @@ import { nanoid } from 'nanoid';
 import type { BuiltFlow } from '../ai-builder';
 import { testDraft, useAutonomous } from '../autonomous';
 import { draft as draftCall, useAssistant, type ChatItem } from '../assistant';
+import { autonomyOf } from '../spotlight-autonomy';
+import { useEditor } from '../store';
 import type { Reply } from './reply';
 
 export async function draftWholeFlow(message: string, build: (prompt: string, signal?: AbortSignal) => Promise<BuiltFlow>): Promise<void> {
@@ -17,7 +19,8 @@ export async function draftWholeFlow(message: string, build: (prompt: string, si
   const abort = (draftCall.request = new AbortController());
   try {
     const flow = await build(message, abort.signal);
-    const auto = useAutonomous.getState().on;
+    // The same rule testDraft applies: "Testing it now" only where Spotlight does test the draft by itself.
+    const auto = useAutonomous.getState().on && autonomyOf(useEditor.getState().workflowId) === 'auto';
     // SB02: what the guards left for the person (the full summary is wave sb3's).
     const skipped = flow.left.length ? ` Left for you: ${flow.left.slice(0, 3).map((l) => l.text).join('; ')}${flow.left.length > 3 ? ` (and ${flow.left.length - 3} more)` : ''}.` : '';
     const pinned = flow.pinned ? ' Test data is pinned on the trigger.' : '';

@@ -45,7 +45,7 @@ function NeedRow({ itemId, need }: { itemId: string; need: Need }) {
   const primary =
     need.what === 'sends' || need.what === 'destination'
       ? { label: 'Run it for real', act: () => (approveDestinations(useEditor.getState().workflowId, need.destinations ?? []), goOn()) } // SB03:
-      : need.what === 'blocked'
+      : need.what === 'blocked' || need.what === 'address'
         ? { label: 'Open the step', act: () => need.node && openNodeNamed(need.node) }
         : need.what === 'trigger'
         ? { label: 'Add a manual trigger', act: () => applyChanges([{ ops: [{ op: 'addNode', type: 'core.manualTrigger', name: 'Start', ...(firstStep() && { before: firstStep() }) }], kind: 'proposal' }], 'Added a manual trigger', { quiet: true }) && goOn() }
@@ -61,7 +61,7 @@ function NeedRow({ itemId, need }: { itemId: string; need: Need }) {
       </div>
       {need.state ? (
         <p className="pl-5 text-[11.5px] text-t3">
-          {need.state === 'dismissed' ? 'Left for later.' : need.what === 'sends' || need.what === 'destination' ? `You said yes: tests of this workflow run for real${need.destinations?.length ? ` to ${need.destinations.join(', ')}` : ''}.` : need.what === 'blocked' ? 'Left for you to change.' : need.what === 'trigger' ? 'Trigger added.' : 'Testing again.'}
+          {need.state === 'dismissed' ? 'Left for later.' : need.what === 'sends' || need.what === 'destination' ? `You said yes: tests of this workflow run for real${need.destinations?.length ? ` to ${need.destinations.join(', ')}` : ''}.` : need.what === 'blocked' || need.what === 'address' ? 'Left for you to change.' : need.what === 'trigger' ? 'Trigger added.' : 'Testing again.'}
         </p>
       ) : (
         <div className="flex flex-wrap gap-1.5 pl-5">

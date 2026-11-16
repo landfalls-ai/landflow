@@ -56,6 +56,8 @@ describe('the timeline', () => {
     expect(titleOf({ ...base, testing: true, fixingName: 'Triage', designing: 'Contract Reviewer' })).toBe('Designing “Contract Reviewer”');
     expect(titleOf({ ...base, testing: true, fixingName: 'Triage' })).toBe('Fixing “Triage”');
     expect(titleOf({ ...base, testing: true })).toBe('Testing the flow');
+    expect(titleOf({ ...base, testing: true, waitingForApply: true, fixingName: 'Triage' })).toBe('Needs you: apply the fix?');
+    expect(titleOf({ ...base, needs: 'address' })).toBe('Needs you: fill in an address');
     expect(titleOf({ ...base, lastRun: 'passed' })).toBe('Passed');
     expect(titleOf({ ...base, lastRun: 'failed' })).toBe('Stopped');
     expect(titleOf({ ...base, lastRun: 'failed', stoppedAt: 'Post to Slack' })).toBe('Stopped at “Post to Slack”');

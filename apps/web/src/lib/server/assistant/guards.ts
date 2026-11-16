@@ -6,7 +6,7 @@ import type { ToolCall } from '@landflow/engine';
 import type { AssistantOp } from '@/lib/shared/assistant-ops';
 import { withAgentId, type AgentBrief } from '@/lib/shared/agent-brief';
 import { withTeamId, type TeamBrief } from '@/lib/shared/agent-teams';
-import { givenKept } from '@/lib/shared/run-check';
+import { givenKept, urlHost } from '@/lib/shared/run-check';
 import type { PropertyDescriptor, Workflow } from '@/lib/shared/types';
 
 const shorten = (value: string, max = 60) => (value.length > max ? `${value.slice(0, max - 1)}…` : value);
@@ -59,17 +59,22 @@ const ID_PARAMETER = /^id$|[a-z]Ids?$/;
 const DESTINATION_PARAMETER = /^(channel|table|owner|repository|repo|email|to|cc|team|project|board|sheet)$/;
 const URL_PARAMETER = /^(url|baseUrl|webhookUrl)$/;
 
+const KIND = 'table|channel|sheet|repo|repository|project|board|team';
+
 /**
  * Whether a plain word ("bugs") the person's text merely contains was named as that destination: a word like that is in
  * most asks ("get the new bugs … save each bug to a table"), so it counts only after a naming cue or in quotes.
- * A value with a "#", "@", ".", "/", "_", "-" or a digit is specific enough that finding it is the answer.
+ * A value with a "#", "@", ".", "/", "_", "-" or a digit is specific enough that finding it is the answer. The word for the
+ * kind ("channel") and the app's own name (`app`: "slack" for "post it to Slack") are never a name.
  */
-function namedAs(value: string, known: string): boolean {
+function namedAs(value: string, known: string, app: readonly string[] = []): boolean {
   if (/[#@./_\-\d]/.test(value) || !/^[\w ]+$/.test(value)) return known.toLowerCase().includes(value.toLowerCase());
+  // The word for the kind of thing ("channel") or the app's own name ("slack" for "post it to Slack") is no name of one.
+  if (new RegExp(`^(?:${KIND})$`, 'i').test(value.trim()) || app.includes(value.trim().toLowerCase())) return false;
   const word = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const kind = 'table|channel|sheet|repo|repository|project|board|team';
+  const kind = KIND;
   const quote = '["\'“‘`]';
-  const cue = `(?:called|named|${kind}|owner|into|in|to|on|for|from|at)`;
+  const cue = `(?:called|named|${kind}|owner|into|in|to|on|at|by|with|as)`;
   return [
     `${quote}${word}${quote}`,
     `\\b${cue}\\s+(?:(?:the|a|an|our|my|your|this|that)\\s+)?["'“‘\`#@]?${word}\\b`,
@@ -79,30 +84,43 @@ function namedAs(value: string, known: string): boolean {
   ].some((pattern) => new RegExp(pattern, 'i').test(known));
 }
 
-/** The type of the property `name` in a node type's properties JSON (nested ones too); undefined when it has none. */
+/**
+ * The type of the property `name` in a node type's properties JSON: the top-level property first (a nested one of the same
+ * name, such as a collection's `to`, is another property); undefined when it has none.
+ */
 function propertyType(json: string, name: string): string | undefined {
   if (!json) return undefined;
   try {
-    const find = (list: unknown): string | undefined => {
-      if (!Array.isArray(list)) return undefined;
-      for (const p of list as Array<{ name?: string; type?: string; values?: unknown; options?: unknown }>) {
-        if (p?.name === name && typeof p.type === 'string') return p.type;
-        const inner = find(p?.values) ?? find(p?.options);
+    const list = JSON.parse(json) as unknown;
+    const own = (items: unknown) => (Array.isArray(items) ? (items as Array<{ name?: string; type?: string }>).find((p) => p?.name === name && typeof p.type === 'string')?.type : undefined);
+    const nested = (items: unknown): string | undefined => {
+      if (!Array.isArray(items)) return undefined;
+      for (const p of items as Array<{ values?: unknown; options?: unknown }>) {
+        const inner = own(p?.values) ?? own(p?.options) ?? nested(p?.values) ?? nested(p?.options);
         if (inner) return inner;
       }
       return undefined;
     };
-    return find(JSON.parse(json));
+    return own(list) ?? nested(list);
   } catch {
     return undefined;
   }
 }
 
-/** The host of a URL a model wrote ("https://httpbin.org/post" → "httpbin.org"); undefined when it names none. */
+/** Said of a URL's host that cannot be read: it is no host anybody gave. */
+const UNREADABLE = 'an address that cannot be read';
+
+/**
+ * The host name of a URL a model wrote ("https://httpbin.org/post" → "httpbin.org"), parsed with `new URL`:
+ * "https://evil.com#@good.com/" and "https://evil.com?@good.com/" are evil.com, as a fetch reads them. UNREADABLE for a
+ * backslash ("https://evil.com\@good.com/") or a URL that does not parse; undefined when it names none.
+ */
 function hostOf(value: string): string | undefined {
-  const match = /^\s*(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[^/@\s]*@)?(\[[^\]]+\]|[^/\s:?#]+)/i.exec(value);
-  return match?.[1].toLowerCase();
+  const parsed = urlHost(value);
+  return parsed === 'unreadable' ? UNREADABLE : parsed?.hostname;
 }
+
+const hostNote = (key: string, node: unknown, host: string) => `${key} of “${String(node)}”: ${host === UNREADABLE ? 'an address that cannot be read' : `a host nobody gave (${host})`}, left for the user to fill in`;
 
 /** Whether `text` names `host` as a whole host: "example.com" is not in "myexample.com" or "api.example.com". */
 function mentionsHost(text: string, host: string): boolean {
@@ -116,8 +134,15 @@ function mentionsHost(text: string, host: string): boolean {
  */
 function literalHostOf(value: string): string | undefined {
   const prefix = value.slice(0, value.indexOf('{{'));
+  if (prefix.includes('\\')) return UNREADABLE;
   const rest = prefix.replace(/^\s*[a-z][a-z0-9+.-]*:\/\//i, '');
-  return /^[^/\s?#]+[/?#]/.test(rest) ? hostOf(rest) : undefined;
+  const authority = /^[^/?#]*/.exec(rest)![0];
+  if (!authority) return undefined;
+  // The expression sits in the authority itself ("https://evil.com{{ $json.path }}"): the literal part names the host unless
+  // it stops where the host goes on ("api.{{ env }}.com", "user:{{ pw }}@host").
+  if (authority.length === rest.length && /[.:@_-]$/.test(authority)) return undefined;
+  const parsed = urlHost(authority);
+  return parsed === 'unreadable' ? UNREADABLE : parsed?.hostname;
 }
 
 /**
@@ -130,6 +155,7 @@ export function withoutInventedIds(ops: unknown, known: string, typeText: (op: R
   if (!Array.isArray(ops)) return { ops, invented: [], values: [] };
   const invented: string[] = [];
   const values: string[] = [];
+  const appNames = (op: Record<string, unknown>) => String(op.type ?? '').toLowerCase().split('.');
   const clean = (op: Record<string, unknown>, node: unknown, parameters: unknown) => {
     if (!parameters || typeof parameters !== 'object') return parameters;
     const out = { ...(parameters as Record<string, unknown>) };
@@ -139,8 +165,8 @@ export function withoutInventedIds(ops: unknown, known: string, typeText: (op: R
       if (value.includes('{{')) {
         // An expression is kept, but a URL that starts with a literal host nobody gave is judged like a plain one.
         const host = !isId && URL_PARAMETER.test(key) ? literalHostOf(value) : undefined;
-        if (!host || mentionsHost(known, host) || mentionsHost(typeText(op), host)) continue;
-        invented.push(`${key} of “${String(node)}”: a host nobody gave (${host}), left for the user to fill in`);
+        if (!host || (host !== UNREADABLE && (mentionsHost(known, host) || mentionsHost(typeText(op), host)))) continue;
+        invented.push(hostNote(key, node, host));
         delete out[key];
         values.push(value);
         continue;
@@ -148,11 +174,11 @@ export function withoutInventedIds(ops: unknown, known: string, typeText: (op: R
       if (!isId && !DESTINATION_PARAMETER.test(key) && !URL_PARAMETER.test(key)) continue;
       // A property that is not text ("to" is the end of a date window on a dateTime) is no destination.
       if (!isId && propertyType(typeText(op), key) !== undefined && propertyType(typeText(op), key) !== 'string') continue;
-      if (typeText(op).includes(JSON.stringify(value)) || (isId || URL_PARAMETER.test(key) ? known.includes(value) : namedAs(value, known))) continue;
+      if (typeText(op).includes(JSON.stringify(value)) || (isId || URL_PARAMETER.test(key) ? known.includes(value) : namedAs(value, known, appNames(op)))) continue;
       if (!isId && URL_PARAMETER.test(key)) {
         const host = hostOf(value);
-        if (!host || mentionsHost(known, host) || mentionsHost(typeText(op), host)) continue;
-        invented.push(`${key} of “${String(node)}”: a host nobody gave (${host}), left for the user to fill in`);
+        if (!host || (host !== UNREADABLE && (mentionsHost(known, host) || mentionsHost(typeText(op), host)))) continue;
+        invented.push(hostNote(key, node, host));
       } else {
         invented.push(`${key} of “${String(node)}”: ${isId ? 'an id' : `a ${key}`} nobody gave, left for the user to fill in`);
       }
@@ -477,7 +503,7 @@ export function withoutRepeats(text: string, earlier: string): string {
 }
 
 /** A reply that says only the person can fix it: a credential, an account, a key, an id. */
-export const PERSON_ONLY = /\b(credential|api key|access token|sign in|log in|permission|blocked|outbound|not allowed to reach)s?\b/i; // SB03: blocked|outbound|not allowed to reach
+export const PERSON_ONLY = /\b(credential|api key|access token|sign in|log in|permission|blocked by (?:this|the) host|blocked by (?:this|the) outbound policy|outbound|not allowed to reach)s?\b/i; // SB03: the host's outbound policy, in its words (a bare "blocked" is also what a stuck step is)
 
 /** The model saying what it is about to do or what it looked at, before the answer. */
 const NARRATION = /^(?:let me|let's|i'll|i will|i need to|i'm going to|now i|now,? let|first,|next,|looking at|based on|i can see|i see that|to fix this|the user (?:wants|needs|asked))\b/i;

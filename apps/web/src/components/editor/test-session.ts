@@ -13,7 +13,7 @@
 import { nanoid } from 'nanoid';
 import { toast } from 'sonner';
 import { opsTitle } from '@/lib/shared/assistant-ops';
-import { checkRun, destinationsOf, givenKept, hollowSteps, hostOf, multipliedSteps, needsPerson, sameFailure, type CheckedRun, type RunVerdict } from '@/lib/shared/run-check';
+import { checkRun, destinationsOf, givenKept, hollowSteps, hostOf, multipliedSteps, needsPerson, NO_ADDRESS, sameFailure, UNREAD_HOST, type CheckedRun, type RunVerdict } from '@/lib/shared/run-check';
 import { applyChanges, fixedNodes, ownRun, runDigests, undos, useAssistant, type Need, type Outcome, type ReplyPart } from './assistant';
 import { nextRound } from './timeline';
 import { agentsSettled } from './new-agent';
@@ -30,10 +30,19 @@ export const MAX_FIXES = 4;
  */
 export const sendsAllowed = new Map<string, Set<string>>();
 
-/** Record the person's yes for these destinations of a workflow. */
+/** A yes for an expression destination holds for one run only: an expression can be anything the next time. */
+const approvedOnce = new Set<string>();
+
+/**
+ * Record the person's yes for these destinations of a workflow. An expression destination ("{{ … }}") is never kept: its
+ * yes covers the run that follows, and it asks again before the next one (contracts/sb1/needs-you.md).
+ */
 export function approveDestinations(workflowId: string, destinations: string[]): void {
   const set = sendsAllowed.get(workflowId) ?? new Set<string>();
-  for (const destination of destinations) set.add(destination);
+  for (const destination of destinations) {
+    if (destination === UNREAD_HOST) approvedOnce.add(`${workflowId} ${destination}`);
+    else if (destination !== NO_ADDRESS) set.add(destination);
+  }
   sendsAllowed.set(workflowId, set);
 }
 
@@ -41,7 +50,7 @@ export function approveDestinations(workflowId: string, destinations: string[]):
 function unapproved(): Array<{ node: string; destination: string }> {
   const { nodes, workflowId } = useEditor.getState();
   const allowed = sendsAllowed.get(workflowId);
-  return destinationsOf(nodes.filter((n) => !n.data.wf.disabled).map((n) => ({ name: n.data.wf.name, type: n.data.wf.type, parameters: n.data.wf.parameters }))).filter((d) => !allowed?.has(d.destination));
+  return destinationsOf(nodes.filter((n) => !n.data.wf.disabled).map((n) => ({ name: n.data.wf.name, type: n.data.wf.type, parameters: n.data.wf.parameters }))).filter((d) => !allowed?.has(d.destination) && !approvedOnce.has(`${workflowId} ${d.destination}`));
 }
 
 const quoted = (names: string[]) => names.slice(0, 2).map((n) => `“${n}”`).join(' and ') + (names.length > 2 ? ` and ${names.length - 2} more` : '');
@@ -54,6 +63,9 @@ const listed = (items: string[]) => items.slice(0, 2).join(' and ') + (items.len
 function destinationNeed(goal: string | undefined, first: boolean, fix?: { item: string; proposals: string[] }): Need | undefined {
   const open = unapproved();
   if (!open.length) return undefined;
+  // A step with no address yet is not a destination to say yes to: the person fills it in, before any run.
+  const empty = [...new Set(open.filter((d) => d.destination === NO_ADDRESS).map((d) => d.node))];
+  if (empty.length) return { what: 'address', node: empty[0], text: `${quoted(empty)} ${empty.length === 1 ? 'sends' : 'send'} to ${NO_ADDRESS}: open ${empty.length === 1 ? 'the step' : 'it'} and fill it in.`, ...(goal && { goal }) };
   const nodes = [...new Set(open.map((d) => d.node))];
   const destinations = [...new Set(open.map((d) => d.destination))];
   return first
@@ -154,7 +166,7 @@ function beforeTesting(goal: string | undefined): Need | undefined {
 function blockedHost(node: string | undefined, error: string | undefined): string {
   const step = node ? useEditor.getState().nodes.find((n) => n.data.wf.name === node) : undefined;
   const fromUrl = step && typeof step.data.wf.parameters.url === 'string' ? hostOf(step.data.wf.parameters.url) : undefined;
-  return fromUrl && fromUrl !== '{{ … }}' ? fromUrl : (/Blocked: (\S+)/.exec(error ?? '')?.[1] ?? 'that address');
+  return fromUrl && fromUrl !== UNREAD_HOST && fromUrl !== NO_ADDRESS ? fromUrl : (/Blocked: (\S+)/.exec(error ?? '')?.[1] ?? 'that address');
 }
 
 /** A failed run only the person can fix, as a row with the button that does it. */
@@ -292,6 +304,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       ran = true;
       const runItem = say([{ kind: 'run', run: { round, state: 'running' } }], testId);
       const result = await runOnce(signal);
+      approvedOnce.clear(); // a yes for an expression destination covered that run only
       if ('stopped' in result) {
         // The run that didn't happen gives way to why.
         useAssistant.setState((s) => ({ items: s.items.filter((item) => item.id !== runItem) }));
@@ -354,7 +367,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
           : `Test run ${round} had no errors: ${result.summary}.${outputOf(result.node)} Does that do what I asked for: “${goal}”? Check each part of what I asked against it. If not, fix it; if it does, start your reply with "Yes," and say so in one sentence.${before}`;
       if (!failed) reviewedAt = fixes; // SB03:
       useAssistant.setState({ fixing: failed ? nodeId : undefined });
-      await useAssistant.getState().send(request, { auto: true, fresh: true, session: failed ? 'fix' : 'review', withoutSelection: true, testId, ...(nodeId && { nodeId }) });
+      await useAssistant.getState().send(request, { auto: true, fresh: true, session: failed ? 'fix' : 'review', autonomy, withoutSelection: true, testId, ...(nodeId && { nodeId }) });
       useAssistant.setState({ fixing: undefined });
       if (signal.aborted) return;
       const reply = useAssistant.getState().items.at(-1);
@@ -447,6 +460,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     // A bug must not end a session in silence.
     if (!signal.aborted) say([{ kind: 'text', text: `Testing stopped: ${(e as Error).message}` }]);
   } finally {
+    approvedOnce.clear();
     // Over: the conversation comes back from the side with the outcome.
     if (useAssistant.getState().testing === abort) useAssistant.setState({ testing: undefined, testingId: undefined, fixing: undefined });
   }

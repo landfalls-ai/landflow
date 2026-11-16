@@ -501,12 +501,15 @@ const READ_OPERATION = /^(get|getall|list|search|find|read|fetch|query)/i;
  * trigger node): on itself, since its output is the app's event. A schedule: on the app step after it that reads data,
  * so a test runs on sample records instead of needing the app; a schedule's own item is only a time, so otherwise none.
  */
+/** Whether test data is pinned on the trigger itself (a webhook, form or manual trigger, or an app's own trigger). */
+export function pinsOnTrigger(type: string, info: NodeTypeInfo | undefined): boolean {
+  return PINNED_TRIGGERS.has(type) || Boolean(info && info.pluginId !== 'core' && info.descriptor.kind === 'trigger');
+}
+
 function pinTarget(draft: Assembled, byType: Map<string, NodeTypeInfo>): DraftNode | undefined {
   const { trigger, nodes, edges } = draft;
   if (!trigger) return undefined;
-  if (PINNED_TRIGGERS.has(trigger.type)) return trigger;
-  const info = byType.get(trigger.type);
-  if (info && info.pluginId !== 'core' && info.descriptor.kind === 'trigger') return trigger;
+  if (pinsOnTrigger(trigger.type, byType.get(trigger.type))) return trigger;
   if (trigger.type !== 'core.schedule') return undefined;
   return edges
     .filter(([from, , , type]) => from === trigger.key && type === 'main')

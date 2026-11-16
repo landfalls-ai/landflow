@@ -79,6 +79,7 @@ const { applyChanges, undos, useAssistant } = await import('@/components/editor/
 const { approveDestinations, publishToProduction, sendsAllowed, testUntilItRuns } = await import('@/components/editor/test-session');
 const { afterReply, holdsForClick, typedSession, useAutonomous } = await import('@/components/editor/autonomous');
 const { autonomyOf, useAutonomyFacts } = await import('@/components/editor/spotlight-autonomy');
+const { draftWholeFlow } = await import('@/components/editor/spotlight/draft-flow');
 
 afterAll(async () => {
   await fake.close();
@@ -346,6 +347,27 @@ describe('the draft join: SB01’s send-back and SB02’s guards in one answer',
     expect(left.length).toBeLessThanOrEqual(DRAFT_LEFT_LIMIT);
   });
 
+  it('a dropped trigger’s test data is not moved onto a schedule: no pin, since a schedule’s own item is only a time', async () => {
+    const withData = JSON.stringify({
+      name: 'Morning orders',
+      nodes: [
+        { key: 'go', type: 'core.manualTrigger', name: 'Run by hand', parameters: {} },
+        { key: 'sch', type: 'core.schedule', name: 'Every morning', parameters: { unit: 'rules', rule: { interval: [{ field: 'days', daysInterval: 1, triggerAtHour: 9, triggerAtMinute: 0 }] } } },
+        { key: 'vip', type: 'core.httpRequest', name: 'Fetch orders', parameters: { method: 'GET', url: 'http://127.0.0.1:3399/orders' } },
+      ],
+      connections: [
+        { from: 'go', to: 'vip' },
+        { from: 'sch', to: 'vip' },
+      ],
+      testData: [{ id: 1 }],
+    });
+    queue.length = 0;
+    queue.push({ text: withData });
+    const { draft } = (await (await buildRoute.POST(post('/api/ai/build', { prompt: 'Every morning at 9, fetch the orders from http://127.0.0.1:3399/orders' }))).json()) as Answer & { draft: { pinData?: Record<string, unknown> } };
+    expect(draft.nodes.filter((n) => n.type === 'core.manualTrigger' || n.type === 'core.schedule').map((n) => n.name)).toEqual(['Every morning']);
+    expect(Object.keys(draft.pinData ?? {})).toEqual([]);
+  });
+
   it('keeps SB01’s empty items for a step SB02 keeps', async () => {
     queue.length = 0;
     // The model leaves the If empty twice: SB01 says so, SB02 keeps the step and adds its own items.
@@ -489,5 +511,29 @@ describe('the new agent join: SB05’s hints reach SB06’s flat tool', () => {
     const body = (await res.json()) as Designed;
     expect(body.designed).toBe(true);
     expect(body.agent.tools).toEqual([expect.objectContaining({ type: 'node', nodeType: 'linear.issues' })]);
+  });
+});
+
+describe('the draft reply says it tests only where Spotlight does (review fixes)', () => {
+  const built = { name: 'Orders', nodes: 3, left: [], pinned: false, model: 'm', durationMs: 1 };
+  const said = () => useAssistant.getState().items.flatMap((i) => (i.role === 'assistant' ? i.parts.flatMap((p) => (p.kind === 'text' ? [p.text] : [])) : [])).join(' ');
+
+  it('a draft on a workflow that was saved before is not "Testing it now" even with the switch on', async () => {
+    useAssistant.getState().reset();
+    useAutonomous.setState({ on: true });
+    useAutonomyFacts.setState({ switchOn: true, workflows: { wf_draft_saved: { bornEmpty: false, published: false } } });
+    useEditor.setState({ workflowId: 'wf_draft_saved' });
+    await draftWholeFlow('Post big orders', async () => built as never);
+    expect(said()).toContain('Built “Orders”');
+    expect(said()).not.toContain('Testing it now');
+  });
+
+  it('a brand-new draft with the switch on says it', async () => {
+    useAssistant.getState().reset();
+    useAutonomyFacts.setState({ switchOn: true, workflows: { wf_draft_new: { bornEmpty: true, published: false } } });
+    useEditor.setState({ workflowId: 'wf_draft_new' });
+    await draftWholeFlow('Post big orders', async () => built as never);
+    expect(said()).toContain('Testing it now');
+    useAssistant.getState().reset();
   });
 });

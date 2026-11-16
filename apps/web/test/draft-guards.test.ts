@@ -128,7 +128,14 @@ describe('one trigger', () => {
     expect(out.nodes.map((n) => n.key)).toEqual(['s', 'a']);
     expect(out.edges).toEqual([main('s', 'a')]);
     expect(out.left!.filter((l) => l.kind === 'dropped')).toHaveLength(1);
-    expect(Object.keys(out.pinData ?? {})).toEqual(['s']);
+    // A schedule's own item is only a time: the manual trigger's pin is not moved onto it.
+    expect(Object.keys(out.pinData ?? {})).toEqual([]);
+  });
+
+  it('moves the pin of the dropped trigger to a kept one that holds a pin (a manual trigger), and not to a schedule', () => {
+    const out = guardDraft({ ...two(), pinData: { s: [{ json: { q: 1 } }] } }, ctx('run it by hand, fetch the page'));
+    expect(out.nodes.map((n) => n.key)).toEqual(['m', 'a']);
+    expect(Object.keys(out.pinData ?? {})).toEqual(['m']);
   });
 
   it('keeps the first when the prompt names none, wiring its steps', () => {

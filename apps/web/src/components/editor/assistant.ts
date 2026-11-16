@@ -252,7 +252,7 @@ export interface Proposal {
  * an agent, add a trigger, or say a test may send for real. Its row has the button that does it and one that goes on.
  */
 export interface Need {
-  what: 'credential' | 'agent' | 'trigger' | 'sends' | 'destination' | 'blocked'; // SB03:
+  what: 'credential' | 'agent' | 'trigger' | 'sends' | 'destination' | 'blocked' | 'address'; // SB03:
   text: string;
   /** `sends` and `destination`: where the test would send; the yes is kept for these (SB03). */
   destinations?: string[];
@@ -443,6 +443,8 @@ export interface SendOptions {
   fresh?: boolean;
   /** A test-and-fix session's request: for a fix (a reply that proposes nothing is sent back once), or a review. */
   session?: 'fix' | 'review' | 'auto';
+  /** What Spotlight may do alone in that session, so the assistant words its reply right (the server's default is asks-first). */
+  autonomy?: 'auto' | 'asks-first';
   /** The test-and-fix session the request belongs to. */
   testId?: string;
   /** Carry on from the checkpoint of a reply that failed after some steps, instead of starting the reply over. */
@@ -658,6 +660,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
           ...(pending.length && { pending }),
           ...(options.mentions?.length && { mentions: { refs: options.mentions } }),
           ...(options.session && { session: options.session }),
+          ...(options.session && options.autonomy && { autonomy: options.autonomy }),
           ...(options.resume && { resume: options.resume }),
         },
         (_event, data) => {

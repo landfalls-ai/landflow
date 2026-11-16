@@ -73,6 +73,7 @@ export interface ChangeOp {
   from?: string;
   to?: string;
   type?: string;
+  settings?: object;
 }
 
 /** The canvas before the change: node ids and names, and its connections. */
@@ -82,8 +83,9 @@ export interface ChangeGraph {
 }
 
 /**
- * Why a change needs the person's click even where Spotlight may act alone: it removes an existing step, or it
- * disconnects one so that it is left without any main input (and the same change does not connect it again). Empty
+ * Why a change needs the person's click even where Spotlight may act alone: it removes an existing step, turns one off
+ * (a step the goal does not name is no less the person's), or it disconnects one so that it is left without any main
+ * input (and the same change does not connect it again). Empty
  * when nothing needs a click. Each reason is a short clause for the card: "removes “Notify VIP”".
  */
 export function needsAClick(ops: readonly ChangeOp[], before: ChangeGraph): string[] {
@@ -94,6 +96,9 @@ export function needsAClick(ops: readonly ChangeOp[], before: ChangeGraph): stri
     if (op.op === 'removeNode') {
       const node = find(op.node);
       if (node) reasons.push(`removes “${node.name}”`);
+    } else if (op.op === 'setNodeSettings' && (op.settings as { disabled?: boolean } | undefined)?.disabled === true) {
+      const node = find(op.node);
+      if (node) reasons.push(`turns off “${node.name}”`);
     } else if (op.op === 'disconnect' && isMain(op.type)) {
       const source = find(op.from);
       const target = find(op.to);

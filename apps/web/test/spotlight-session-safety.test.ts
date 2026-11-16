@@ -164,6 +164,67 @@ describe('a destination', () => {
   });
 });
 
+describe('an address not filled in yet (review fixes)', () => {
+  it('is a Needs-you row that opens the step, before any run, not "it sends to {{ … }}"', async () => {
+    useEditor.getState().updateNode('b', { parameters: { method: 'POST', url: '' } });
+    yes();
+    await testUntilItRuns(goal);
+    expect(needs().map((n) => n.what)).toEqual(['address']);
+    expect(needs()[0].node).toBe('Notify VIP');
+    expect(needs()[0].text).toBe('“Notify VIP” sends to an address not filled in yet: open the step and fill it in.');
+    expect(needs()[0].text).not.toContain('{{');
+    expect(run).not.toHaveBeenCalled();
+  });
+});
+
+describe('the session sends its autonomy with each request (review fixes)', () => {
+  const failedThenFix = async () => {
+    yes();
+    runs = [{ 'Notify VIP': { error: 'HTTP 500 Internal Server Error' } }];
+    replies = [{ text: 'Nothing to change.' }];
+    await testUntilItRuns(goal);
+    return send.mock.calls.map((c) => (c[1] as { autonomy?: string }).autonomy);
+  };
+
+  it('asks-first on a saved workflow, auto on a brand-new draft', async () => {
+    noteOpened(WF, 3);
+    expect(await failedThenFix()).toEqual(['asks-first']);
+    send.mockClear();
+    sendsAllowed.clear();
+    useAssistant.getState().reset();
+    noteOpened('wf_orders_new', 0);
+    useEditor.getState().load({ ...flow(), id: 'wf_orders_new' }, []);
+    useEditor.setState({ nodeTypes });
+    approveDestinations('wf_orders_new', ['127.0.0.1:3399']);
+    runs = [{ 'Notify VIP': { error: 'HTTP 500 Internal Server Error' } }];
+    replies = [{ text: 'Nothing to change.' }];
+    await testUntilItRuns(goal);
+    expect(send.mock.calls.map((c) => (c[1] as { autonomy?: string }).autonomy)).toEqual(['auto']);
+  });
+});
+
+describe('an expression destination asks every time (review fixes)', () => {
+  it('is never kept in sendsAllowed: the yes covers one run, and the next asks again', async () => {
+    noteOpened(WF, 0);
+    useEditor.getState().updateNode('b', { parameters: { method: 'POST', url: '={{ $json.url }}' } });
+    yes();
+    await testUntilItRuns(goal);
+    expect(needs().map((n) => n.what)).toEqual(['sends']);
+    expect(needs()[0].destinations).toEqual(['{{ … }}']);
+    approveDestinations(WF, ['{{ … }}']);
+    expect([...(sendsAllowed.get(WF) ?? [])]).toEqual(['127.0.0.1:3399']);
+    runs = [{ 'Notify VIP': { items: 1 }, 'Notify Standard': { items: 1 } }];
+    const firstRow = useAssistant.getState().items.find((i) => i.role === 'assistant' && i.parts.some((p) => p.kind === 'needs'))!.id;
+    await testUntilItRuns(goal);
+    expect(run).toHaveBeenCalledTimes(1);
+    await testUntilItRuns(goal);
+    expect(run).toHaveBeenCalledTimes(1);
+    const rows = useAssistant.getState().items.filter((i) => i.role === 'assistant' && i.parts.some((p) => p.kind === 'needs'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).not.toBe(firstRow); // asked again, a new row
+  });
+});
+
 describe('what a fix may not do', () => {
   it('a fix removing a step the goal names is not applied; the outcome card says what and why', async () => {
     noteOpened(WF, 0);

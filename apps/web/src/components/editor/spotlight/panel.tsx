@@ -239,6 +239,7 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
     drafting,
     testing,
     pending,
+    ...(testing && waiting > 0 && { waitingForApply: true }),
     fixingName,
     designing,
     hasItems: items.length > 0,
@@ -320,7 +321,7 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
   const folded = collapsed && !(dragH !== undefined && dragH > barPx + 8);
   const sheet = dragH !== undefined ? `${dragH}px` : collapsed ? (barPx ? `${barPx}px` : 'auto') : phoneHeight === 'peek' ? '34dvh' : '52dvh';
   // One set of colours: violet while it works, amber when it needs you, green when it passed; a stop is neutral.
-  const icon = busy ? (
+  const icon = busy && !(testing && waiting > 0) ? (
     <Loader2 className="size-3.5 shrink-0 animate-spin text-viz-7" />
   ) : need || bar.needsYou ? (
     <Hand className="size-3.5 shrink-0 text-warn" />

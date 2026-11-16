@@ -129,6 +129,10 @@ describe('needsAClick', () => {
     expect(needsAClick([{ op: 'removeNode', node: 'Notify VIP' }], graph)).toEqual(['removes “Notify VIP”']);
     expect(needsAClick([{ op: 'disconnect', from: 'Check total', to: 'Notify VIP' }], graph)).toEqual(['leaves “Notify VIP” without its input']);
   });
+  it('names turning a step off (a step the goal does not name is no less the person\'s), and not turning one on', () => {
+    expect(needsAClick([{ op: 'setNodeSettings', node: 'Notify VIP', settings: { disabled: true } }], graph)).toEqual(['turns off “Notify VIP”']);
+    expect(needsAClick([{ op: 'setNodeSettings', node: 'Notify VIP', settings: { disabled: false } }, { op: 'setNodeSettings', node: 'Notify VIP', settings: { retryOnFail: true } as never }], graph)).toEqual([]);
+  });
   it('asks nothing when the step is connected again, when it has another input, or when a node is added before another', () => {
     expect(needsAClick([{ op: 'disconnect', from: 'Check total', to: 'Notify VIP' }, { op: 'connect', from: 'Start', to: 'Notify VIP' }], graph)).toEqual([]);
     expect(needsAClick([{ op: 'disconnect', from: 'Check total', to: 'Notify VIP' }], { ...graph, connections: [...graph.connections, { source: 'a', target: 'c' }] })).toEqual([]);

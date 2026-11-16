@@ -119,6 +119,8 @@ export interface ChatInput {
    * `auto`: a message the person typed in autonomous mode, whose proposals Spotlight applies and tests as it ends.
    */
   session?: 'fix' | 'review' | 'auto';
+  /** What Spotlight may do alone in a test-and-fix session (`spotlight-autonomy`); `asks-first` (the default) waits for the person's Apply. */
+  autonomy?: 'auto' | 'asks-first';
   signal?: AbortSignal;
   onEvent: (event: ChatEvent) => void;
   /**
@@ -230,10 +232,16 @@ How to work:
 
 ${PARAMETER_FORMATS}`;
 
-const SESSION = 'This message comes from Spotlight\'s test-and-fix session: it applies your proposal and runs the workflow again by itself. Never ask the user to click Apply or to run it. A run blocked by the host\'s outbound policy, a credential or an account is the person\'s to fix: propose nothing and say what they must do. Never change a URL, channel, address or id the person gave, and never remove a step they asked for.'; // SB03:
+const NEVER_CHANGE = 'A run blocked by the host\'s outbound policy, a credential or an account is the person\'s to fix: propose nothing and say what they must do. Never change a URL, channel, address or id the person gave, and never remove a step they asked for.'; // SB03:
+
+/** A test-and-fix session's message, by what Spotlight may do alone: `auto` applies the proposal, `asks-first` shows it as a card and waits for Apply. */
+const sessionText = (autonomy: 'auto' | 'asks-first') =>
+  autonomy === 'auto'
+    ? `This message comes from Spotlight's test-and-fix session: it applies your proposal and runs the workflow again by itself (a change that removes or turns off a step waits for the person's Apply). Never ask the user to click Apply or to run it. ${NEVER_CHANGE}`
+    : `This message comes from Spotlight's test-and-fix session: your proposal is shown to the person as a card, and the session runs the workflow again only once they have applied it. Do not say it is applied or will apply itself, and do not ask them to click anything: the card says it. ${NEVER_CHANGE}`;
 
 /** Autonomous mode: what the person asked is applied and tested as soon as the reply ends (components/editor/autonomous.ts). */
-const AUTO = 'Autonomous mode: Spotlight applies your proposal as soon as you finish, then tests the flow. A run blocked by the host\'s outbound policy, a credential or an account is the person\'s to fix: propose nothing and say what they must do. Never change a URL, channel, address or id the person gave, and never remove a step they asked for. Never mention Apply, cards or running it. End with one sentence: what changed, then only what the person must do (pick a credential, fill in a value). A new agent you propose is designed and published by Spotlight: say only "Created the agent “<name>” for <job>."';
+const AUTO = 'Autonomous mode: Spotlight applies your proposal as soon as you finish, then tests the flow. A run blocked by the host\'s outbound policy, a credential or an account is the person\'s to fix: propose nothing and say what they must do. Never change a URL, channel, address or id the person gave unless they ask for it in this message, and never remove a step they asked for. Never mention Apply, cards or running it. End with one sentence: what changed, then only what the person must do (pick a credential, fill in a value). A new agent you propose is designed and published by Spotlight: say only "Created the agent “<name>” for <job>."';
 
 const shorten = (value: string, max = 60) => (value.length > max ? `${value.slice(0, max - 1)}…` : value);
 
@@ -388,7 +396,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     builderContextEntry(input.actor, { workflowId: input.workflow.id }), // PC10: the goals of the project this workflow is in, as data
     tagged.length ? `\nThe user tagged these in the message (checked against what they may open):\n${tagged.join('\n')}` : '',
     question ? '\nThe latest message is a question: answer it; you cannot change the workflow in this reply.' : '', // SB04:
-    input.session === 'auto' ? `\n${AUTO}` : input.session ? `\n${SESSION}` : '',
+    input.session === 'auto' ? `\n${AUTO}` : input.session ? `\n${sessionText(input.autonomy ?? 'asks-first')}` : '',
   ].join('\n');
 
   /** The step now running, for the tool events. */
@@ -561,7 +569,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         const notes = `${dropped.length ? ` Left out: ${dropped.join('; ')}.` : ''}${placed.notes.length ? ` Placement: ${placed.notes.join('; ')}.` : ''}${repeated.length ? ` Not added again: ${repeated.join('; ')}.` : ''}`;
         const count = `${validated.ops.length} change${validated.ops.length === 1 ? '' : 's'}`;
         const shown = input.session
-          ? result(`Recorded (${count}); Spotlight applies it when you finish.${notes} Don't list the changes again. If the message asks for something this doesn't cover yet, propose it now; otherwise stop with your one sentence.`, `Proposed ${count}`)
+          ? result(`Recorded (${count}); ${input.session === 'auto' || input.autonomy === 'auto' ? 'Spotlight applies it when you finish' : 'it waits for the person to apply it, then Spotlight tests again'}.${notes} Don't list the changes again. If the message asks for something this doesn't cover yet, propose it now; otherwise stop with your one sentence.`, `Proposed ${count}`)
           : result(`Shown to the user as a card with an Apply button (${count}); nothing changes until they click it.${notes} Don't list the changes again, ask whether to apply them, or say they are applied. If the latest message asks for something this doesn't cover yet, propose it now (the nodes above are in the workflow for you to connect to); if it's all proposed, stop and say in one line what the cards do.`, `Proposed ${count}`);
         onEvent({ type: 'proposal', id: `pr_${nanoid(8)}`, summary, ops: validated.ops, dropped, warnings: [...validated.warnings, ...validated.cautions] });
         proposed = true;

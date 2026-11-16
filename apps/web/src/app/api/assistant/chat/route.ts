@@ -57,6 +57,8 @@ const Body = z.object({
     .optional(),
   /** From Spotlight's test-and-fix session: a request for a fix to a failed run, or whether a run did what was asked. */
   session: z.enum(['fix', 'review', 'auto']).optional(),
+  /** What Spotlight may do alone in that session: with `auto` it applies the fix itself, else (the default) the person's Apply is waited for. */
+  autonomy: z.enum(['auto', 'asks-first']).optional(),
   /** Continue a reply that failed after some steps, from the checkpoint its `error` event gave. */
   resume: z.object({ checkpoint: z.string().max(64) }).optional(),
 });

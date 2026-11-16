@@ -3,7 +3,7 @@
  * `needsPerson` reads the block before the credential rules; `destinationsOf` says where each sending step reaches.
  */
 import { describe, expect, it } from 'vitest';
-import { destinationsOf, hostOf, needsPerson } from '@/lib/shared/run-check';
+import { NO_ADDRESS, destinationsOf, hostOf, needsPerson } from '@/lib/shared/run-check';
 
 describe('a blocked run', () => {
   it('is the person’s, whatever the status code says', () => {
@@ -37,6 +37,21 @@ describe('destinationsOf', () => {
     expect(hostOf('https://{{ $json.host }}/x')).toBe('{{ … }}');
     expect(hostOf('https://api.example.net/{{ $json.id }}')).toBe('api.example.net');
     expect(hostOf('https://user:pw@Api.Example.net:8443/x?y=1')).toBe('api.example.net:8443');
+  });
+
+  it('an empty URL is "an address not filled in yet", a URL with a backslash or a literal host and an expression is read as unknown', () => {
+    expect(hostOf('')).toBe(NO_ADDRESS);
+    expect(hostOf('  ')).toBe(NO_ADDRESS);
+    expect(hostOf('http://evil.example\\@127.0.0.1:3400/')).toBe('{{ … }}');
+    expect(hostOf('https://evil.com\\@good.com/x')).toBe('{{ … }}');
+    expect(hostOf('https://evil.com{{ $json.path }}')).toBe('{{ … }}');
+  });
+
+  it('reads the host as a fetch does: after # and ? the host has ended', () => {
+    expect(hostOf('https://evil.com#@good.com/x')).toBe('evil.com');
+    expect(hostOf('https://evil.com?@good.com/x')).toBe('evil.com');
+    expect(hostOf('https://good.com:443/x')).toBe('good.com');
+    expect(hostOf('not a url')).toBe('{{ … }}');
   });
 
   it('an app node that writes is its type and operation', () => {

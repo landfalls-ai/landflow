@@ -76,3 +76,59 @@ describe('made-up destinations', () => {
     expect(r.invented).toEqual([]);
   });
 });
+
+describe('a URL is judged by the host a fetch would reach (review fixes)', () => {
+  const k = 'send it to https://good.com and http://127.0.0.1:3400/ (the local one)';
+  const cleared = (url: string) => parametersOf(withoutInventedIds(set({ url }), k)).url === undefined;
+
+  it.each([
+    'https://evil.com\\@good.com/x',
+    'https://evil.com#@good.com/x',
+    'https://evil.com?@good.com/x',
+    'http://evil.example\\@127.0.0.1:3400/',
+    'https://evil.com{{ $json.path }}',
+    'https://user@evil.com{{ $json.path }}',
+    'https://evil.com:8443{{ $json.path }}',
+  ])('clears %s', (url) => {
+    expect(cleared(url)).toBe(true);
+  });
+
+  it('says a backslash URL cannot be read, and an evil.com one names its host', () => {
+    expect(withoutInventedIds(set({ url: 'https://evil.com\\@good.com/x' }), k).invented[0]).toContain('an address that cannot be read');
+    expect(withoutInventedIds(set({ url: 'https://evil.com#@good.com/x' }), k).invented[0]).toContain('a host nobody gave (evil.com)');
+  });
+
+  it('keeps the hosts somebody gave, with userinfo, a port and an expression after them', () => {
+    expect(cleared('https://good.com/x?y=1#z')).toBe(false);
+    expect(cleared('http://127.0.0.1:3400/hook')).toBe(false);
+    expect(cleared('https://good.com{{ $json.path }}')).toBe(false);
+    expect(cleared('https://api.{{ $json.env }}.com/x')).toBe(false);
+  });
+});
+
+describe('namedAs cues and the kind or app word (review fixes)', () => {
+  const add = (parameters: Record<string, unknown>, type = 'messaging.slack') => [{ op: 'addNode', type, name: 'Tell', parameters }];
+  const kept = (parameters: Record<string, unknown>, text: string, type?: string) => (withoutInventedIds(add(parameters, type), text).ops as Array<{ parameters: Record<string, unknown> }>)[0].parameters;
+
+  it('"for" and "from" are no naming cue', () => {
+    expect(kept({ channel: 'leads' }, 'post a summary for leads')).toEqual({});
+    expect(kept({ channel: 'alerts' }, 'read from alerts every day')).toEqual({});
+    expect(kept({ channel: 'alerts' }, 'post it with alerts')).toEqual({ channel: 'alerts' });
+    expect(kept({ channel: 'ops' }, 'post it as ops')).toEqual({ channel: 'ops' });
+    expect(kept({ channel: 'ops' }, 'handled by ops')).toEqual({ channel: 'ops' });
+  });
+
+  it('the app\'s name or the kind word is no channel', () => {
+    expect(kept({ channel: 'slack' }, 'post a summary to Slack')).toEqual({});
+    expect(kept({ channel: 'channel' }, 'post to the channel')).toEqual({});
+    expect(kept({ channel: 'triage' }, 'post a summary to triage')).toEqual({ channel: 'triage' });
+  });
+});
+
+describe('propertyType looks at the top-level property first (review fixes)', () => {
+  it('a text "to" on the node is judged although a collection inside has a "to" that is a dateTime', () => {
+    const typeText = () => JSON.stringify([{ name: 'filters', type: 'collection', values: [{ name: 'to', type: 'dateTime' }] }, { name: 'to', type: 'string' }]);
+    const r = withoutInventedIds([{ op: 'setParameters', node: 'Mail', parameters: { to: 'made.up@nowhere.test' } }], 'send a mail', typeText);
+    expect(r.invented).toHaveLength(1);
+  });
+});

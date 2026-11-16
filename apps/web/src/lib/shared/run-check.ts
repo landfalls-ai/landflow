@@ -139,13 +139,36 @@ export function destinationsOf(steps: CheckedStep[]): Array<{ node: string; dest
   });
 }
 
-/** `host:port` of a URL, or "{{ … }}" when the host is an expression (or nothing is there to read). */
+/** What a destination is called when its host is an expression or a URL that cannot be read: it asks before every run. */
+export const UNREAD_HOST = '{{ … }}';
+/** What an empty URL is called: not a destination to say yes to, but something to fill in (a Needs-you row). */
+export const NO_ADDRESS = 'an address not filled in yet';
+
+/**
+ * The host of a plain-text URL, parsed as the fetch would read it (`new URL`): `host` is `host:port` (the port only when it
+ * is not the scheme's own), `hostname` the name alone. `'unreadable'` for a URL with a backslash (browsers read `\` as `/`,
+ * so "https://evil.com\@good.com/" goes to evil.com, but a person never means that), an expression in the host, or one that
+ * does not parse. `undefined` when the text names no URL at all.
+ */
+export function urlHost(value: string): { host: string; hostname: string } | 'unreadable' | undefined {
+  const text = value.trim().replace(/^=/, '');
+  if (!text) return undefined;
+  const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(text);
+  if (text.includes('\\')) return 'unreadable';
+  if (/^[^/?#]*\{\{/.test(hasScheme ? text.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '') : text)) return 'unreadable';
+  try {
+    const url = new URL(hasScheme ? text : `http://${text}`);
+    return url.host ? { host: url.host, hostname: url.hostname } : 'unreadable';
+  } catch {
+    return hasScheme ? 'unreadable' : undefined;
+  }
+}
+
+/** `host:port` of a URL; "{{ … }}" when the host is an expression or the URL cannot be read, `NO_ADDRESS` when it is empty. */
 export function hostOf(url: string): string {
-  const text = url.trim().replace(/^=/, '');
-  const match = /^(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[^/?#@]*@)?([^/?#]*)/i.exec(text);
-  const authority = match?.[1] ?? '';
-  if (!authority || authority.includes('{{')) return '{{ … }}';
-  return authority.toLowerCase();
+  if (!url.trim().replace(/^=/, '').trim()) return NO_ADDRESS;
+  const parsed = urlHost(url);
+  return parsed && parsed !== 'unreadable' ? parsed.host : UNREAD_HOST;
 }
 
 /** What a person gives that a fix may not change: a URL, an email address, a channel, an id. */
