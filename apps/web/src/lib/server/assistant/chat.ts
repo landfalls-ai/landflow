@@ -22,12 +22,14 @@ import { outcomeOf } from '../telemetry/metrics';
 import { failSpan } from '../telemetry/spans';
 import { saveCheckpoint } from './checkpoints';
 import { assistantModel, errorText, modelLabel } from './model';
+import { withParseRetry } from './parse-retry'; // SB05:
 import { redundantBranches, registryLookup, validateOps, withoutRepeatedAdds } from './ops';
 import {
   APPLY_REQUEST,
   PERSON_ONLY,
   asNewAgents,
   opsArgument,
+  placedAsAsked, // SB05:
   recoverToolCalls,
   standInKey,
   givenValuesKept, // SB03:
@@ -140,6 +142,9 @@ const OP_SCHEMA = {
     type: { type: 'string', description: 'addNode: node type id. connect/disconnect: main, ai_languageModel, ai_memory or ai_tool' },
     name: { type: 'string', description: 'addNode: node name. renameNode: the new name. newAgent: the new agent\'s name' },
     description: { type: 'string', description: 'newAgent: what the new agent does, one or two sentences' },
+    // SB05: what the new agent needs, for the Agent architect that designs it.
+    tools: { type: 'array', items: { type: 'string' }, description: 'newAgent: the apps or actions it needs, e.g. "Linear: read issues" (at most 8)' },
+    knowledge: { type: 'string', description: 'newAgent: the documents it answers from, e.g. "our product docs"' },
     instructions: { type: 'string', description: 'newAgent: the new agent\'s instructions: how it does the job' },
     parameters: { type: 'object', description: 'addNode / setParameters: parameter values (merged)' },
     after: { type: 'string', description: 'addNode: existing node name or ref to wire the new node after' },
@@ -208,7 +213,7 @@ How to work:
 - A connection back to an earlier node is allowed and makes a loop; the engine runs loops. To limit the rounds, use a round counter: a Code node that adds 1 to a round number (kept in a field the loop's nodes pass on, or read from the counter node's own previous output), then an If "round < N" whose true branch connects back to the node to repeat and whose false branch goes on to what happens after the last round.
 - To fix a node's input, prefer changing the node's own parameters (read a field the items have). To put a node between two nodes, use addNode with "before": "<the later node>".
 - ops: {"op":"addNode","ref":"r1","type":"<type id>","name":"Short name","parameters":{…},"after":"<node name or ref>","output":0} (or "before":"<node name>" to insert it in front of a node, rewiring what fed that node), {"op":"setParameters","node":"<name>","parameters":{…}}, {"op":"setNodeSettings","node":"<name>","settings":{"executeOnce":true}} (a node's settings, not its parameters: executeOnce runs it once for all its input items instead of once per item; also retryOnFail, maxTries, waitBetweenTriesMs, retryBackoff, onError, timeoutSeconds, alwaysOutputData, disabled), {"op":"connect","from":"<name or ref>","to":"<name or ref>","output":0,"type":"main"}, {"op":"disconnect","from":"…","to":"…"}, {"op":"removeNode","node":"…"}, {"op":"renameNode","node":"…","name":"…"}, {"op":"turnIntoTeam","node":"<a Run an Agent node with A2A Agent or Run an Agent nodes attached as its tools>"}. A new workflow starts with a trigger (core.manualTrigger unless the user wants a webhook, schedule or chat). Sub-nodes (chat models, memory, tools) attach to an AI Agent with "after": "<agent>" or connect with type ai_languageModel / ai_memory / ai_tool.
-- Agents: before you add an AI Agent (core.aiAgent) for a job, check "Your agents" and "Published agent teams" below. If one's description, skills and tools cover the job, run it: Run an Agent (core.messageAgent, parameters agentId and message, what to do with the item) or Run a Team, and say in your closing sentence which one you picked and why. Use core.aiAgent only for a small step that needs no specialist (classify, summarize, extract, draft a reply). When the job needs a specialist none of them is (its own instructions, tools or knowledge, work other flows will reuse, or the user asks for an agent, a specialist or an expert to do it: that is an agent, never Ask a Person or a Confirm step), say so and propose {"op":"newAgent","ref":"a1","name":"<agent name>","description":"<what it does, one or two sentences>","instructions":"<how it does the job>","parameters":{"message":"…"},"before":"<the step it goes in front of>"} ("after" to add it after a step): applying it saves the agent as a draft and adds a Run an Agent node for it. That node runs the agent with the agent's own model and instructions: attach no chat model, memory or tools to it, and don't also add an AI Agent for the same job. One newAgent per agent, then stop. Then tell the user to give it tools on the Agents page (the Agent architect can) and publish it before the flow runs. Never invent an agentId.
+- Agents: before you add an AI Agent (core.aiAgent) for a job, check "Your agents" and "Published agent teams" below. If one's description, skills and tools cover the job, run it: Run an Agent (core.messageAgent, parameters agentId and message, what to do with the item) or Run a Team, and say in your closing sentence which one you picked and why. Use core.aiAgent only for a small step that needs no specialist (classify, summarize, extract, draft a reply). When the job needs a specialist none of them is (its own instructions, tools or knowledge, work other flows will reuse, or the user asks for an agent, a specialist or an expert to do it: that is an agent, never Ask a Person or a Confirm step), say so and propose {"op":"newAgent","ref":"a1","name":"<agent name>","description":"<what it does, one or two sentences>","instructions":"<how it does the job>","tools":["<an app or action it needs, e.g. Linear: read issues>"],"knowledge":"<the documents it answers from>","parameters":{"message":"…"},"after":"<the step it goes after>"} (use "after" when the request says after a step, "before":"<the step it goes in front of>" when it says before; an agent between two steps takes both; tools and knowledge only when it needs them: the Agent architect picks them): applying it saves the agent as a draft and adds a Run an Agent node for it. That node runs the agent with the agent's own model and instructions: attach no chat model, memory or tools to it, and don't also add an AI Agent for the same job. One newAgent per agent, then stop. Then tell the user to give it tools on the Agents page (the Agent architect can) and publish it before the flow runs. Never invent an agentId.
 - Teams: an agent team (Agents page → Teams) is a lead with members who report to it, with reviews and budgets; the Run a Team node (core.runTeam, parameters teamId and teamName, message) runs a published one as a single step, with Done and Needs a person outputs. When the user wants a team that already exists, add that node with its teamId and teamName from "Published agent teams" below; the chat model, memory and tools attached to the node go to the lead. When the user wants a lead and the agents under it turned into a team, propose {"op":"turnIntoTeam","node":"<the lead>"}: applying it creates and publishes the team and swaps the nodes, so never tell the person to create a team first or to pick one afterwards. The same action is "Turn into a team" in the toolbar of a selected Run an Agent node that has agents as tools. Never invent a teamId.
 - Expressions read the current item with "{{ $json.field }}" and other nodes with "{{ $('Node name').item.json.field }}".
 - Never make up ids, channels, email addresses, URLs or keys the user didn't give: leave those parameters empty and say the user fills them in.
@@ -287,7 +292,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
   const trace = input.trace === true;
   const types = input.types ?? availableTypes();
   const lookup = registryLookup(types);
-  const model = assistantModel(input.model);
+  const model = withParseRetry(assistantModel(input.model)); // SB05:
   const started = Date.now();
   /** The workflow plus what is proposed and waiting (earlier replies, then this one): later proposals build on it. */
   let working = input.workflow;
@@ -441,9 +446,16 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         // A node already proposed and waiting is used, not added again.
         const { ops: fresh, repeated } = withoutRepeatedAdds(working, waiting, ops);
         const typeOfNode = (name: string) => nodeByName(name)?.type;
-        const dedicated = asNewAgents(fresh, typeOfNode, newAgents);
-        for (const handle of dedicated.handles) newAgents.add(standInKey(handle));
-        const standIns = withoutAgentStandIns(withAgentIds(withTeamIds(dedicated.ops, input.teams ?? [], typeOfNode), input.agents ?? [], typeOfNode), newAgents, (type) => types.find((t) => t.type === type)?.descriptor.kind);
+        // SB05: a new agent's handles count as proposed only once its proposal is held (below), so a send-back leaves them out.
+        const kindOf = (type: string) => types.find((t) => t.type === type)?.descriptor.kind;
+        const converted = asNewAgents(fresh, typeOfNode, newAgents, kindOf, (type) => types.find((t) => t.type === type)?.descriptor.displayName);
+        const nameOfId = (id: string) => working.nodes.find((n) => n.id === id)?.name ?? id;
+        const placed = placedAsAsked(converted.ops, latest, working.nodes.map((n) => n.name), (name) => {
+          const id = working.nodes.find((n) => n.name === name)?.id;
+          return working.connections.filter((c) => c.type === 'main' && c.source === id).map((c) => nameOfId(c.target));
+        });
+        const dedicated = { ...converted, ops: placed.ops, notes: converted.notes };
+        const standIns = withoutAgentStandIns(withAgentIds(withTeamIds(dedicated.ops, input.teams ?? [], typeOfNode), input.agents ?? [], typeOfNode), new Set([...newAgents, ...dedicated.handles.map(standInKey)]), kindOf);
         standIns.notes.unshift(...dedicated.notes);
         const teamed = standIns.ops;
         if (standIns.notes.length && Array.isArray(teamed) && !teamed.length) {
@@ -542,9 +554,10 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         proposalLog.push({ summary, ops: validated.ops });
         for (const op of validated.ops) if (op.op === 'addNode' && op.ref && op.name) proposedRefs.set(op.ref, op.name);
         for (const op of validated.ops) if (op.op === 'addNode' && op.newAgent) for (const name of [op.newAgent.name, op.name]) if (name) newAgents.add(standInKey(name));
+        for (const handle of dedicated.handles) newAgents.add(standInKey(handle)); // SB05:
         sent.add(asSent);
         const dropped = [...validated.dropped, ...validated.ignored, ...inventedNotes, ...standIns.notes];
-        const notes = `${dropped.length ? ` Left out: ${dropped.join('; ')}.` : ''}${repeated.length ? ` Not added again: ${repeated.join('; ')}.` : ''}`;
+        const notes = `${dropped.length ? ` Left out: ${dropped.join('; ')}.` : ''}${placed.notes.length ? ` Placement: ${placed.notes.join('; ')}.` : ''}${repeated.length ? ` Not added again: ${repeated.join('; ')}.` : ''}`;
         const count = `${validated.ops.length} change${validated.ops.length === 1 ? '' : 's'}`;
         const shown = input.session
           ? result(`Recorded (${count}); Spotlight applies it when you finish.${notes} Don't list the changes again. If the message asks for something this doesn't cover yet, propose it now; otherwise stop with your one sentence.`, `Proposed ${count}`)

@@ -1,5 +1,5 @@
 /**
- * POST { name, description, instructions, workflow?, after?, before? } — the agent Spotlight proposes (`newAgent`,
+ * POST { name, description, instructions, workflow?, after?, before?, tools?, knowledge? } — the agent Spotlight proposes (`newAgent`,
  * docs/assistant.md#agents-and-teams), designed by the Agent architect: a model this host has (a local one first), the
  * tools it needs from the plugins online and a knowledge base when it works from documents. Saved as a draft; the
  * editor publishes it in autonomous mode. Answers `{ agent, needs, missing, dropped, designed }`, or 429 with the cap's
@@ -24,6 +24,9 @@ const Body = z.object({
   workflow: z.string().max(200).optional(),
   after: z.string().max(200).optional(),
   before: z.string().max(200).optional(),
+  // SB05: what the agent needs, from Spotlight's newAgent.
+  tools: z.array(z.string().max(80)).max(8).optional(),
+  knowledge: z.string().max(200).optional(),
 });
 
 export const POST = handler(async (request: Request) => {
