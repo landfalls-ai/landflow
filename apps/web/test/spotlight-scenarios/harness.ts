@@ -10,7 +10,8 @@
 import './env';
 import { createRequire } from 'node:module';
 import { nanoid } from 'nanoid';
-import { definePlugin, defineNode } from '@landflow/sdk';
+import { definePlugin, defineNode, type PropertyDescriptor } from '@landflow/sdk';
+import { Linear } from '../../../../plugins/linear/src/nodes/linear'; // SB10: the unit form's Linear stand-in carries its real operations
 import type { ModelTurn, NodeRun, Workflow } from '@landflow/engine';
 import { applyOps, type AssistantOp, type RunDigest } from '@/lib/shared/assistant-ops';
 import { needsAClick, type Autonomy } from '@/components/editor/spotlight-autonomy';
@@ -34,6 +35,15 @@ export interface RunOptions {
 
 export const ECHO_PORT = 3399;
 
+/**
+ * SB10 (carryover item 5): `LANDFLOW_OUTBOUND_ALLOW` for a scenario's live runs. Only `start.outbound: 'allowed'` lets
+ * loopback through (127.0.0.1 and localhost, nothing wider); the default and `blocked` leave it unset, so the host refuses
+ * a run to 127.0.0.1 as on a fresh install. Before sb2 the live form allowed it whenever an echo server ran.
+ */
+export function outboundAllow(scenario: Pick<Scenario, 'start'>, form: Form): string | undefined {
+  return form === 'live' && scenario.start?.outbound === 'allowed' ? '127.0.0.1,localhost' : undefined;
+}
+
 /** The live form runs only when LANDFLOW_INTEGRATION names `spotlight`. */
 export const liveEnabled = (env: Record<string, string | undefined> = process.env): boolean => (env.LANDFLOW_INTEGRATION ?? '').split(',').map((s) => s.trim()).includes('spotlight');
 
@@ -53,7 +63,7 @@ function refusedNow(): string[] {
 // ---------------------------------------------------------------------------
 
 /** Stand-ins for the Slack and Linear nodes (their plugins are separate processes): the properties the scenarios touch. */
-function stand(plugin: string, name: string, displayName: string, properties: string[]) {
+function stand(plugin: string, name: string, displayName: string, properties: string[], real: PropertyDescriptor[] = []) {
   return definePlugin({
     info: { id: plugin, name: `${displayName} (stand-in)`, version: '0.0.0', language: 'typescript' },
     nodes: [
@@ -66,7 +76,7 @@ function stand(plugin: string, name: string, displayName: string, properties: st
           kind: 'action',
           inputs: [{ type: 'main' }],
           outputs: [{ type: 'main' }],
-          properties: properties.map((p) => ({ name: p, displayName: p, type: 'string' as const, default: '' })),
+          properties: [...properties.filter((p) => !real.some((r) => r.name === p)).map((p) => ({ name: p, displayName: p, type: 'string' as const, default: '' })), ...real],
         },
         async execute() {
           return [[{ json: {} }]];
@@ -87,7 +97,8 @@ export function prepare(options: { live?: boolean } = {}): void {
   registry.registerBuiltin(corePlugin);
   if (!options.live && !process.env.LANDFLOW_SPOTLIGHT_PLUGINS) {
     registry.registerBuiltin(stand('messaging', 'slack', 'Slack', ['authentication', 'resource', 'operation', 'channelId', 'text', 'blocksUi', 'otherOptions']));
-    registry.registerBuiltin(stand('linear', 'linear', 'Linear', ['authentication', 'resource', 'operation', 'since', 'returnAll', 'limit', 'activityOptions']));
+    // SB10: Linear's own `resource` and `operation` properties (with each operation's `outputSchema`), so a scenario's prompt shows the real fields.
+    registry.registerBuiltin(stand('linear', 'linear', 'Linear', ['authentication', 'resource', 'operation', 'since', 'returnAll', 'limit', 'activityOptions'], Linear.description.properties.filter((p) => p.name === 'resource' || p.name === 'operation')));
   }
   // The agent the evaluation's chat flow ("my Support triage agent") picks: made-up, published.
   if (!agentStore.list().some((a) => a.published?.config.name === 'Support triage')) {
@@ -207,7 +218,7 @@ interface Collected {
   text: string;
   tools: string[];
   proposals: Outcome['proposals'];
-  done?: { steps: number; usage: { inputTokens: number; outputTokens: number } };
+  done?: { steps: number; model?: string; usage: { inputTokens: number; outputTokens: number } };
   error?: string;
   drafts: Array<Partial<AgentConfig>>;
 }
@@ -473,7 +484,10 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
   const previousOllama = process.env.OLLAMA_URL;
   let fake: FakeModels | undefined;
   const previousAllow = process.env.LANDFLOW_OUTBOUND_ALLOW;
-  if (form === 'live' && options.echo) process.env.LANDFLOW_OUTBOUND_ALLOW = '127.0.0.1,localhost';
+  // SB10: blocked unless the scenario says allowed (it was allowed whenever an echo server ran).
+  const allow = outboundAllow(scenario, form);
+  if (allow) process.env.LANDFLOW_OUTBOUND_ALLOW = allow;
+  else if (form === 'live') delete process.env.LANDFLOW_OUTBOUND_ALLOW;
   try {
     // The product reaches for Ollama itself in these (the builder, the agent designer, the architect): a fake one answers the script.
     if (form === 'unit' && scenario.via !== 'chat' && scenario.via !== 'session') {
@@ -483,6 +497,7 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
     const model = form === 'live' ? (options.model ?? 'qwen3-coder:30b') : undefined;
     const withDone = (c: Collected & { calls: number }) => {
       outcome.modelCalls = c.calls;
+      if (c.done?.model) outcome.model = c.done.model; // SB10:
       outcome.tokens = { input: c.done?.usage.inputTokens ?? 0, output: c.done?.usage.outputTokens ?? 0 };
     };
 
@@ -496,7 +511,9 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
         outcome.after = draftToWorkflow(body.draft as never);
         outcome.text = `Built ${(body.draft.nodes as unknown[]).length} nodes`;
       }
-      outcome.modelCalls = fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 1;
+      // SB10 (carryover item 4): the calls the draft took (`draft.calls`), live and unit; the fake's count only when the route sent none.
+      outcome.modelCalls = typeof body.draft?.calls === 'number' ? body.draft.calls : fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 1;
+      if (typeof body.draft?.model === 'string') outcome.model = body.draft.model;
     } else if (scenario.via === 'chat' || scenario.via === 'session') {
       if (!canvas) throw new Error(`${scenario.id}: a chat scenario needs start.workflow`);
       const result = await chatOnce({ ask: scenario.ask, workflow: canvas, selected: idOf(canvas, scenario.start?.selected), runs: runsById(canvas, scenario.start?.runs), session: scenario.start?.session }, form, scripted, options);

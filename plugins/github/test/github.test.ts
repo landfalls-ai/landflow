@@ -471,6 +471,29 @@ describe('Errors', () => {
     expect(response.outputs[0].map((i) => i.pairedItem)).toEqual([{ item: 0 }, { item: 1 }]);
   });
 
+  // SB10: the pull request and issue operations name what they return, and the fake's items have every required field.
+  it('declares an output schema on the pull request and issue operations that the items fit', async () => {
+    fake.refs.set('feature', fake.refs.get('main')!);
+    const operationsOf = (resource: string) => GitHub.description.properties.find((p) => p.name === 'operation' && (p.displayOptions?.show?.resource as string[] | undefined)?.includes(resource))!.options!;
+    const schemaOf = (resource: string, operation: string) => operationsOf(resource).find((o) => o.value === operation)!.outputSchema as JsonObject;
+    const cases: Array<[string, string, JsonObject]> = [
+      ['pullRequest', 'create', { title: 'Docs', head: 'feature', base: 'main' }],
+      ['pullRequest', 'get', { pullNumber: 1 }],
+      ['pullRequest', 'listFiles', { pullNumber: 1, limit: 2 }],
+      ['pullRequest', 'comment', { pullNumber: 1, commentBody: 'Looks good' }],
+      ['issue', 'create', { title: 'Bug' }],
+      ['issue', 'comment', { issueNumber: 1, commentBody: 'Seen' }],
+    ];
+    for (const [resource, operation, parameters] of cases) {
+      const schema = schemaOf(resource, operation);
+      expect(schema, `${resource}.${operation}`).toBeDefined();
+      for (const [name, p] of Object.entries(schema.properties as Record<string, { description?: string }>)) expect(p.description, `${operation}.${name}`).toBeTruthy();
+      const response = await call({ resource, operation, ...parameters });
+      expect(response.error, `${resource}.${operation}`).toBeUndefined();
+      for (const item of jsonOf(response)) for (const key of schema.required as string[]) expect(item, `${resource}.${operation}: ${key}`).toHaveProperty(key);
+    }
+  });
+
   it('refuses an unknown operation, and offers no delete', async () => {
     expect((await call({ resource: 'issue', operation: 'merge', issueNumber: 1 })).error?.message).toBe('Operation "merge" is not available for resource "issue"');
     expect((await call({ resource: 'repository', operation: 'delete' })).error?.message).toBe('Operation "delete" is not available for resource "repository"');

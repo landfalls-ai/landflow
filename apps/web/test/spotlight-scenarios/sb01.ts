@@ -21,7 +21,12 @@ const collectionsFilled: Check = {
   },
 };
 const noEmptyLeft: Check = { id: 'left-no-empty', label: 'Nothing is left empty', judge: (o) => !((o.draft?.left as Array<{ kind: string }> | undefined) ?? []).some((l) => l.kind === 'empty') };
-const sentBack: Check = { id: 'sent-back-once', label: 'The draft was sent back once', judge: (o) => o.modelCalls === 2 };
+// SB10 (carryover item 4): `draft.calls` is 2 when the first draft was sent back; 1 with nothing empty needed no send-back ('n/a').
+const sentBack: Check = {
+  id: 'sent-back-once',
+  label: 'The draft was sent back once',
+  judge: (o) => (o.modelCalls === 1 && !((o.draft?.left as Array<{ kind: string }> | undefined) ?? []).some((l) => l.kind === 'empty') ? 'n/a' : o.modelCalls === 2),
+};
 
 const ASK = 'When a webhook receives an order, if body.total is over 1000 POST the whole order with vip: true to http://127.0.0.1:3402/vip, otherwise POST the order to http://127.0.0.1:3402/standard, then respond with ok';
 const http = (url: string, body?: string) => ({ url, method: 'POST', ...(body && { bodyType: 'json', body }) });

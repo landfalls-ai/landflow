@@ -80,6 +80,16 @@ A bubble that ends in “…” fills the box to finish; a complete question or 
 
 **Goals.** When the workflow lives in a project, the model also gets that project's compact "Where this work fits" block (goal chain, brief) as one more system entry marked as background data, not instruction; a workflow in no project gets nothing. The [Agent architect](agents.md#agent-architect) gets the same for the project named in its request (`projectId`; the route answers 404 when you have no role in it). See [projects-and-goals.md](projects-and-goals.md#repositories-and-harnesses).
 
+**What the model reads about the steps it edits.** The selected step, and every step in the change's scope (the steps tagged,
+named with "only", or the one a new step goes after), come with their parameters whole (a string up to 8 000 characters,
+all of them up to 12 000, then "… (N more characters)"), their settings (`retryOnFail`, `maxTries`, `waitBetweenTriesMs`,
+`retryBackoff`, `onError`, `timeoutSeconds`, `executeOnce`, `alwaysOutputData`, `disabled`: only those set, else
+"defaults") and each credential slot the step shows for its parameters: `httpHeaderAuth: set (“Echo token”)` or
+`httpHeaderAuth: not set`, names only, never an id or a value. In the outline those steps keep 2 000 characters of
+parameters and the others 300, so a one-line change to a long Code step is written back whole (finding 2.8). A node's docs
+list the output fields of the operation its parameters select (`resource` and `operation`: Linear issue → create names
+`url`, `identifier`), then of the node as a whole.
+
 Each message sends the conversation so far, the current workflow (`toWorkflow()`, saved or not), the selected node and a digest of every node's last main run. Proposals from earlier replies that are still waiting (neither applied nor dismissed) go with it as `pending` (summary and ops, at most 20; the route validates the shape and the server checks the ops against the workflow). The server runs a tool-calling loop per message. It goes on while a step makes progress (a new proposal, or a tool result not seen before in this reply), up to **20 model calls** (`MAX_STEPS`), and stops early, with a note that the last steps only repeated, when two steps in a row add nothing. Only the ceiling gives "Stopped after 20 steps":
 
 | Tool | What it returns | Activity line |
@@ -396,6 +406,7 @@ Proposals use `lib/shared/assistant-ops.ts`. A node reference is a node **name**
 | `turnIntoTeam` | `node` | a Run an Agent node with agents attached as tools becomes one Run a Team node; applying it saves the team ([agent-teams.md](agent-teams.md#turn-into-a-team)) |
 | `setNodeSettings` | `node`, `settings` | A node's settings, not its parameters: `retryOnFail`, `maxTries`, `waitBetweenTriesMs`, `retryBackoff` (`fixed` or `exponential`), `onError`, `timeoutSeconds`, `alwaysOutputData`, `disabled`. Other keys are dropped. The [second brain](second-brain.md) uses it for retries |
 | `setWorkflowSettings` | `settings` | `errorWorkflowId`, `timeoutSeconds`, `retryMaxAttempts`, `retryBaseDelaySeconds`; other keys are dropped |
+The chat offers this op too (its op list and the system prompt name it): a time limit for the whole workflow ("stop it if it runs longer than 5 minutes") is `{"op":"setWorkflowSettings","settings":{"timeoutSeconds":300}}`, not a step's `timeoutSeconds`. A change that only touches the workflow's settings is a proposal like any other.
 
 `applyOps(workflow, ops, lookup)` is pure: workflow in, workflow out. It is also the validator. Validation follows the same rules as the flow builder:
 - unknown types, unknown nodes and impossible connections are **dropped with a reason**;
@@ -451,6 +462,13 @@ credentials named, no junk nodes, only the asked node changed, the right change,
 tried to leave this machine. Collections are judged by a heuristic (a condition, field, rule or schedule list with nothing in
 it counts as empty); "runs right with the pinned data" is judged on what the draft sends, not by running it. How to run it and
 what the variables do: [development.md](development.md#spotlight-scorecard).
+
+Where the scorecard once read the wrong thing, it now reads what happened. A live session runs with the host's outbound
+policy of a fresh install (loopback refused) unless the scenario sets `start.outbound: 'allowed'`, which allows
+`127.0.0.1,localhost` and nothing wider; `sb03-blocked-session` is `blocked`, the other SB03 scenarios `allowed`. A build's
+checks read the draft, not the one-line summary: "credentials named" is a `credential` item in `draft.left`, "said what is
+left" is `draft.left` having items (not applicable when the draft lacks nothing), and "sent back once" is `draft.calls`
+(2) rather than a count of model calls (not applicable for one call and no empty part).
 
 ## Code
 

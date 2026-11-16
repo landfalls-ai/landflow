@@ -40,6 +40,8 @@ export interface FlowDraft {
   dropped: string[];
   /** SB01: what the draft still lacks for the person (empty fields after one send-back, types that could not be kept). */
   left?: DraftLeft[];
+  /** SB10: how many model calls the draft took: 1, or 2 when the first draft was sent back once. */
+  calls?: number;
 }
 
 const DEFAULT_MODEL = process.env.LANDFLOW_BUILDER_MODEL ?? 'qwen3-coder:30b';
@@ -553,8 +555,10 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
   let draft = assemble(reply, byType, teams, agents);
   const empty = emptyParts(draft, byType);
   const budget = timeoutMs - (Date.now() - started);
+  let calls = 1; // SB10:
   if (empty.length && budget > 0) {
     try {
+      calls = 2; // SB10:
       const again = parseReply(await askModel(model, [...messages, { role: 'assistant', content: first.text }, { role: 'user', content: sendBack(empty) }], budget));
       if (again.ok) {
         const next = assemble(again.reply, byType, teams, agents);
@@ -578,5 +582,5 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
   const target = pinTarget(draft, byType);
   const testItems = (cleanTestItems(asItems(reply.testData), target, nodes) ?? sampleItems(target, nodes))?.slice(0, nodes.some((n) => AGENT_TYPES.has(n.type)) ? 1 : undefined);
   const pinData = target && testItems ? { [target.key]: testItems } : undefined;
-  return { name: (reply.name ?? 'Generated workflow').slice(0, 80), nodes, edges, pinData, model, durationMs: Date.now() - started, dropped, left };
+  return { name: (reply.name ?? 'Generated workflow').slice(0, 80), nodes, edges, pinData, model, durationMs: Date.now() - started, dropped, left, calls };
 }

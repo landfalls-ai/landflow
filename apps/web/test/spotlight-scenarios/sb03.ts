@@ -33,7 +33,7 @@ export default defineScenarios([
     via: 'session',
     title: 'A run the host blocks is Needs you: no fix, nothing changed',
     ask,
-    start: { workflow: webhookFlow(), autonomy: 'auto', session: 'auto', approvedDestinations: ['127.0.0.1:3400'], sessionRuns: [{ 'Notify VIP': { error: blocked } }] },
+    start: { workflow: webhookFlow(), autonomy: 'auto', session: 'auto', approvedDestinations: ['127.0.0.1:3400'], sessionRuns: [{ 'Notify VIP': { error: blocked } }], outbound: 'blocked' }, // SB10:
     script: [{ text: 'Only the host’s admin can allow that address.' }],
     checks: [checks.needs('blocked'), checks.noChange, { id: 'kept-the-flow', label: 'Both HTTP steps keep their local URLs', judge: keptTheFlow }, checks.noOutside],
     live: { runs: 3 },
@@ -45,7 +45,7 @@ export default defineScenarios([
     via: 'session',
     title: 'A fix that removes both HTTP steps is not applied',
     ask,
-    start: { workflow: webhookFlow(), autonomy: 'asks-first', session: 'fix', approvedDestinations: ['127.0.0.1:3400'], sessionRuns: [{ 'Notify VIP': { error: 'HTTP 500 Internal Server Error' } }] },
+    start: { workflow: webhookFlow(), autonomy: 'asks-first', session: 'fix', approvedDestinations: ['127.0.0.1:3400'], sessionRuns: [{ 'Notify VIP': { error: 'HTTP 500 Internal Server Error' } }], outbound: 'allowed' }, // SB10:
     script: [
       call('propose_changes', { summary: 'Removed the HTTP steps', ops: [{ op: 'removeNode', node: 'Notify VIP' }, { op: 'removeNode', node: 'Notify Standard' }] }),
       { text: 'Only you can change that.' },
@@ -62,7 +62,7 @@ export default defineScenarios([
     title: 'A fix that points a step at another local host:port is asked again',
     // No URL in the ask: a URL the person gave is theirs to change (sb03-fix-removes-steps), so this fix would not be shown.
     ask: 'Tell the desk about big orders: Notify VIP for a total over 500, Notify Standard for the rest, then respond.',
-    start: { workflow: webhookFlow(), autonomy: 'auto', session: 'auto', approvedDestinations: ['127.0.0.1:3400'], sessionRuns: [{ 'Notify VIP': { error: 'HTTP 404 Not Found' } }] },
+    start: { workflow: webhookFlow(), autonomy: 'auto', session: 'auto', approvedDestinations: ['127.0.0.1:3400'], sessionRuns: [{ 'Notify VIP': { error: 'HTTP 404 Not Found' } }], outbound: 'allowed' }, // SB10:
     // The first reply is the ask's (nothing to change yet); the session's fix after the 404 moves the step that failed.
     script: [{ text: 'I will test it.' }, call('propose_changes', { summary: 'Set the url', ops: [{ op: 'setParameters', node: 'Notify VIP', parameters: { url: 'http://127.0.0.1:3500/vip' } }] }), { text: 'Changed the address.' }],
     checks: [checks.needs('destination'), checks.noOutside],
@@ -75,7 +75,7 @@ export default defineScenarios([
     via: 'session',
     title: 'An asks-first session shows the fix and waits for Apply',
     ask: 'Retry the VIP post three times.',
-    start: { workflow: webhookFlow(), autonomy: 'asks-first', session: 'fix', approvedDestinations: ['127.0.0.1:3400'], sessionRuns: [{ 'Notify VIP': { error: 'HTTP 503 Service Unavailable' } }] },
+    start: { workflow: webhookFlow(), autonomy: 'asks-first', session: 'fix', approvedDestinations: ['127.0.0.1:3400'], sessionRuns: [{ 'Notify VIP': { error: 'HTTP 503 Service Unavailable' } }], outbound: 'allowed' }, // SB10:
     // The same card twice: for the ask, and as the session's fix after the 503, which waits for Apply.
     script: [
       call('propose_changes', { summary: 'Retry the VIP post', ops: [{ op: 'setNodeSettings', node: 'Notify VIP', settings: { retryOnFail: true, maxTries: 3 } }] }),

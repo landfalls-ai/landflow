@@ -64,6 +64,8 @@ Publishing the workflow registers a webhook through the API; unpublishing, chang
 | **Project Update → Get Many Changed Since** | Project updates posted or edited after Since | Activity items with `cursor` |
 | **User → Get Many** | `users`: id, name, displayName, `email` (lowercase), active, admin, guest, team names; deactivated users only with Include Deactivated | one item per user |
 
+Issue → Create and Add Link and Comment → Create declare an `outputSchema` for the item above (with a description per field), as the reads do, so MCP tools and Spotlight name `url` and `identifier` instead of guessing.
+
 **Since / cursor.** Since is an ISO 8601 time (a date alone is UTC; empty is the last 24 hours). Every item's `cursor` is its own `updatedAt`
 (ISO), so the next run passes the last item's `cursor` as Since. Linear can only list **newest first** (`orderBy: updatedAt`), so the node reads
 all pages (`first: 50`, `after` = `pageInfo.endCursor`, until `hasNextPage` is false, at most 5,000 records) and sorts oldest first itself. With a Limit,

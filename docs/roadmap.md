@@ -2451,3 +2451,16 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   reload.
 - **Owed to a person:** the asks-first wording and the **Needs you** rows on a real phone, and whether "saved" should
   end autonomy at the first autosave rather than at the next open (decision D1 reads it at the next open).
+
+## Spotlight wave sb2
+
+- **SB10, the model sees what it edits, and the scorecard reads what happened, built:** the chat's model gets the whole
+  parameters, the settings and the credential state (names only) of the selected step and of every step in the change's
+  scope, and the outline gives those steps 2 000 characters (finding 2.8: a long Code step lost its tail); it is offered
+  `setWorkflowSettings` (a settings-only proposal is no longer read as "already there"); a node's docs list the output
+  fields of the operation its parameters select, and Linear issue create, add link and comment create, Slack send,
+  update and get permalink, and GitHub pull request and issue writes declare an `outputSchema` (finding 1.4). The
+  scorecard: a blocked scenario's live run is blocked (`start.outbound`), builds' "credentials named", "said what is
+  left" and "sent back once" read the draft (`draft.left`, `draft.calls`), and the outcome names the model. Docs:
+  [assistant.md](assistant.md#the-builder-chat). Left: live scorecard numbers before and after, and the schemas of the
+  rest of GitHub, Slack and Linear.

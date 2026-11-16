@@ -18,6 +18,39 @@ import { DEFAULT_BASE_URL, graphql, pickCredentials, type ApiContext, type Linea
 export const MAX_FETCH = 5000;
 const PAGE_SIZE = 50;
 
+// SB10: what the write operations return (one item: the record Linear created), so a later step reads `$json.url`, not a guess.
+const field = (type: string | string[], description: string) => ({ type, description });
+const ISSUE_CREATED_SCHEMA: JsonObject = {
+  type: 'object',
+  properties: {
+    id: field('string', 'Linear\'s id of the new issue'),
+    identifier: field('string', 'The issue\'s short key, such as ENG-123'),
+    title: field('string', 'The issue\'s title'),
+    url: field('string', 'Link to the new issue in Linear'),
+  },
+  required: ['id', 'identifier', 'title', 'url'],
+};
+const LINK_ADDED_SCHEMA: JsonObject = {
+  type: 'object',
+  properties: {
+    id: field('string', 'Linear\'s id of the new link attachment'),
+    url: field('string', 'The attached URL'),
+    title: field('string', 'The link\'s title (the URL when none was given)'),
+    subtitle: field(['string', 'null'], 'The link\'s subtitle, null when none was given'),
+  },
+  required: ['id', 'url', 'title'],
+};
+const COMMENT_CREATED_SCHEMA: JsonObject = {
+  type: 'object',
+  properties: {
+    id: field('string', 'Linear\'s id of the new comment'),
+    url: field('string', 'Link to the comment in Linear'),
+    body: field('string', 'The comment\'s text'),
+    createdAt: field('string', 'When it was created (ISO 8601)'),
+  },
+  required: ['id', 'url', 'body', 'createdAt'],
+};
+
 // --- credentials ----------------------------------------------------------------------------------------------------
 
 const viewerTest = async (data: LinearCredentials, ctx: { http: ApiContext['http'] }) => {
@@ -188,7 +221,7 @@ export const Linear = defineNode({
         default: 'create',
         displayOptions: { show: { resource: ['comment'] } },
         options: [
-          { name: 'Create', value: 'create', description: 'Comment on an issue', action: 'Create a comment' },
+          { name: 'Create', value: 'create', description: 'Comment on an issue', action: 'Create a comment', outputSchema: COMMENT_CREATED_SCHEMA },
           { name: 'Get Many Changed Since', value: 'getManySince', description: 'Comments created or edited after a time, oldest first, as activity items', action: 'Get comments changed since', idempotent: true, outputSchema: ACTIVITY_ITEM_SCHEMA },
         ],
       },
@@ -221,8 +254,8 @@ export const Linear = defineNode({
         default: 'getManySince',
         displayOptions: { show: { resource: ['issue'] } },
         options: [
-          { name: 'Add Link', value: 'addLink', description: 'Attach a URL to an issue', action: 'Add a link to an issue' },
-          { name: 'Create', value: 'create', description: 'Create an issue in a team', action: 'Create an issue' },
+          { name: 'Add Link', value: 'addLink', description: 'Attach a URL to an issue', action: 'Add a link to an issue', outputSchema: LINK_ADDED_SCHEMA },
+          { name: 'Create', value: 'create', description: 'Create an issue in a team', action: 'Create an issue', outputSchema: ISSUE_CREATED_SCHEMA },
           { name: 'Get', value: 'get', description: 'One issue as an activity item, with its description and comments as text', action: 'Get an issue', idempotent: true, outputSchema: ACTIVITY_WITH_TEXT_SCHEMA },
           { name: 'Get Many Changed Since', value: 'getManySince', description: 'Issues created or updated after a time, oldest first, as activity items', action: 'Get issues changed since', idempotent: true, outputSchema: ACTIVITY_ITEM_SCHEMA },
         ],

@@ -36,6 +36,8 @@ function hollow(value: unknown): boolean {
 }
 
 const draftNodes = (o: Outcome) => o.after?.nodes ?? [];
+/** SB10: what a build's draft says it still lacks (`FlowDraft.left`). */
+const draftLeft = (o: Outcome) => (o.draft?.left as Array<{ kind: string }> | undefined) ?? [];
 const typesOf = (o: Outcome) => draftNodes(o).map((n) => n.type);
 
 const rightTypes = (expected: string[]): Check => ({
@@ -79,7 +81,11 @@ const idsAsked: Check = {
 const credentialsListed: Check = {
   id: 'credentials-listed',
   label: 'Credentials named as still to pick',
-  judge: (o) => (draftNodes(o).some((n) => /^(messaging|linear)\./.test(n.type)) ? /credential|sign in|connect/i.test(o.text) : 'n/a'),
+  // SB10 (carryover item 3): a build's summary line is "Built N nodes", so a build is read from the draft's `left` (a `credential` item), else from the text.
+  judge: (o) => {
+    if (!draftNodes(o).some((n) => /^(messaging|linear)\./.test(n.type))) return 'n/a';
+    return o.draft ? draftLeft(o).some((l) => l.kind === 'credential') : /credential|sign in|connect/i.test(o.text);
+  },
 };
 
 const noJunk: Check = {
@@ -96,7 +102,8 @@ const noJunk: Check = {
 const leftListed: Check = {
   id: 'left-listed',
   label: 'Said what is left',
-  judge: (o) => /left|still|need|pick|set up|assum|empty|choose/i.test(o.text) && o.text.length > 40,
+  // SB10 (carryover item 3): a build reads the draft's `left` ('n/a' when the draft lacks nothing); anything else reads the text.
+  judge: (o) => (o.draft ? (draftLeft(o).length > 0 ? true : 'n/a') : /left|still|need|pick|set up|assum|empty|choose/i.test(o.text) && o.text.length > 40),
 };
 
 /** `$json.a.b` paths an expression reads. */

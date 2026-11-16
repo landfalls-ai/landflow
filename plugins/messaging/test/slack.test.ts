@@ -1,6 +1,6 @@
 /** Slack node and the slackApi credential against a fake Web API. */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import type { JsonObject } from '@landflow/sdk';
+import type { JsonObject, PropertyDescriptor } from '@landflow/sdk';
 import { Slack } from '../src/nodes/slack';
 import { jsonOf, loadOptions, run, startFakeApi, testCredentials, type FakeApi, type FakeRequest } from './helpers';
 
@@ -159,6 +159,23 @@ describe('Slack message', () => {
     expect(api.requests[2]).toMatchObject({ method: 'GET', path: '/chat.getPermalink' });
     expect(api.requests[2].query.get('message_ts')).toBe('1.2');
     expect(jsonOf(link)).toEqual([{ channel: 'C001', permalink: 'https://acme.slack.com/archives/C001/p1.2' }]);
+  });
+
+  // SB10: Send, Update and Get Permalink name what they return, and the fake's item has every required field.
+  it('declares an output schema on Send, Update and Get Permalink that the items fit', async () => {
+    const operations: PropertyDescriptor = Slack.description.properties.find((p) => p.name === 'operation' && (p.displayOptions?.show?.resource as string[] | undefined)?.includes('message'))!;
+    const cases: Array<[string, JsonObject]> = [
+      ['post', { text: 'hi' }],
+      ['update', { ts: '1.2', text: 'new' }],
+      ['getPermalink', { ts: '1.2' }],
+    ];
+    for (const [operation, extra] of cases) {
+      const schema = operations.options!.find((o) => o.value === operation)!.outputSchema as JsonObject;
+      expect(schema, operation).toBeDefined();
+      for (const [name, p] of Object.entries(schema.properties as Record<string, { description?: string }>)) expect(p.description, `${operation}.${name}`).toBeTruthy();
+      const item = jsonOf(await call({ resource: 'message', operation, channelId: 'C001', ...extra }))[0];
+      for (const key of schema.required as string[]) expect(item, `${operation}: ${key}`).toHaveProperty(key);
+    }
   });
 
   it('maps ok:false to node errors with hints', async () => {
