@@ -30,17 +30,18 @@ export const MAX_FIXES = 4;
  */
 export const sendsAllowed = new Map<string, Set<string>>();
 
-/** A yes for an expression destination holds for one run only: an expression can be anything the next time. */
+/** A yes for an expression destination holds for one run only, and for the steps the row named. */
 const approvedOnce = new Set<string>();
 
 /**
  * Record the person's yes for these destinations of a workflow. An expression destination ("{{ … }}") is never kept: its
  * yes covers the run that follows, and it asks again before the next one (contracts/sb1/needs-you.md).
  */
-export function approveDestinations(workflowId: string, destinations: string[]): void {
+export function approveDestinations(workflowId: string, destinations: string[], nodes: readonly string[] = []): void {
   const set = sendsAllowed.get(workflowId) ?? new Set<string>();
   for (const destination of destinations) {
-    if (destination === UNREAD_HOST) approvedOnce.add(`${workflowId} ${destination}`);
+    // Per step, the ones the row listed: a step added after the row was shown is asked about on its own.
+    if (destination === UNREAD_HOST) for (const node of nodes) approvedOnce.add(`${workflowId} ${node} ${destination}`);
     else if (destination !== NO_ADDRESS) set.add(destination);
   }
   sendsAllowed.set(workflowId, set);
@@ -50,7 +51,7 @@ export function approveDestinations(workflowId: string, destinations: string[]):
 function unapproved(): Array<{ node: string; destination: string }> {
   const { nodes, workflowId } = useEditor.getState();
   const allowed = sendsAllowed.get(workflowId);
-  return destinationsOf(nodes.filter((n) => !n.data.wf.disabled).map((n) => ({ name: n.data.wf.name, type: n.data.wf.type, parameters: n.data.wf.parameters }))).filter((d) => !allowed?.has(d.destination) && !approvedOnce.has(`${workflowId} ${d.destination}`));
+  return destinationsOf(nodes.filter((n) => !n.data.wf.disabled).map((n) => ({ name: n.data.wf.name, type: n.data.wf.type, parameters: n.data.wf.parameters }))).filter((d) => !allowed?.has(d.destination) && !approvedOnce.has(`${workflowId} ${d.node} ${d.destination}`));
 }
 
 const quoted = (names: string[]) => names.slice(0, 2).map((n) => `“${n}”`).join(' and ') + (names.length > 2 ? ` and ${names.length - 2} more` : '');
@@ -69,8 +70,8 @@ function destinationNeed(goal: string | undefined, first: boolean, fix?: { item:
   const nodes = [...new Set(open.map((d) => d.node))];
   const destinations = [...new Set(open.map((d) => d.destination))];
   return first
-    ? { what: 'sends', node: nodes[0], destinations, text: `A test runs ${quoted(nodes)} for real: ${nodes.length === 1 ? 'it sends' : 'they send'} to ${listed(destinations)}.`, ...(goal && { goal }) }
-    : { what: 'destination', node: nodes[0], destinations, text: `${quoted(nodes)} now ${nodes.length === 1 ? 'sends' : 'send'} to ${listed(destinations)}, which you haven't approved.`, ...(fix && { fix }), ...(goal && { goal }) };
+    ? { what: 'sends', node: nodes[0], nodes, destinations, text: `A test runs ${quoted(nodes)} for real: ${nodes.length === 1 ? 'it sends' : 'they send'} to ${listed(destinations)}.`, ...(goal && { goal }) }
+    : { what: 'destination', node: nodes[0], nodes, destinations, text: `${quoted(nodes)} now ${nodes.length === 1 ? 'sends' : 'send'} to ${listed(destinations)}, which you haven't approved.`, ...(fix && { fix }), ...(goal && { goal }) };
 }
 
 /** Take back what a fix applied (newest first; proposals of one apply share one undo, which runs once). */
@@ -460,7 +461,6 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     // A bug must not end a session in silence.
     if (!signal.aborted) say([{ kind: 'text', text: `Testing stopped: ${(e as Error).message}` }]);
   } finally {
-    approvedOnce.clear();
     // Over: the conversation comes back from the side with the outcome.
     if (useAssistant.getState().testing === abort) useAssistant.setState({ testing: undefined, testingId: undefined, fixing: undefined });
   }

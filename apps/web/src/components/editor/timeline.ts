@@ -179,6 +179,11 @@ export interface PanelState {
   hasItems: boolean;
 }
 
+/** Whether the running session waits for the person's Apply: a card of a reply it asked for is open. Another open card (an autonomous change held for a click) is not its wait. */
+export function sessionWaitsForApply(items: ChatItem[], testingId: string | undefined): boolean {
+  return Boolean(testingId) && items.some((item) => item.role === 'assistant' && item.testId === testingId && item.parts.some((p) => p.kind === 'proposal' && !p.proposal.state));
+}
+
 /** The panel's header: what Spotlight is doing, or how the last session ended. */
 export function titleOf(state: PanelState): string {
   if (state.drafting) return 'Drafting the flow';

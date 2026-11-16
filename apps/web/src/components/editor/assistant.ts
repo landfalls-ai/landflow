@@ -258,6 +258,8 @@ export interface Need {
   destinations?: string[];
   /** `destination`: the fix whose change it was, to undo (SB03). */
   fix?: { item: string; proposals: string[] };
+  /** `sends` and `destination`: every step the row names; a yes to an expression destination covers these only. */
+  nodes?: string[];
   /** The node it is about, to open. */
   node?: string;
   /** The session's goal, to test on with. */

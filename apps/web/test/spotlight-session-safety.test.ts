@@ -211,8 +211,15 @@ describe('an expression destination asks every time (review fixes)', () => {
     await testUntilItRuns(goal);
     expect(needs().map((n) => n.what)).toEqual(['sends']);
     expect(needs()[0].destinations).toEqual(['{{ … }}']);
-    approveDestinations(WF, ['{{ … }}']);
+    approveDestinations(WF, ['{{ … }}'], needs()[0].nodes);
     expect([...(sendsAllowed.get(WF) ?? [])]).toEqual(['127.0.0.1:3399']);
+    // A step added after the row was shown is not covered by its yes: it is asked about on its own, and nothing runs.
+    useEditor.getState().updateNode('c', { parameters: { method: 'POST', url: '={{ $json.other }}' } });
+    await testUntilItRuns(goal);
+    expect(run).not.toHaveBeenCalled();
+    expect(needs().at(-1)?.nodes).toEqual(['Notify Standard']);
+    // Its own yes runs both once; the next test asks again.
+    approveDestinations(WF, ['{{ … }}'], needs().at(-1)?.nodes);
     runs = [{ 'Notify VIP': { items: 1 }, 'Notify Standard': { items: 1 } }];
     const firstRow = useAssistant.getState().items.find((i) => i.role === 'assistant' && i.parts.some((p) => p.kind === 'needs'))!.id;
     await testUntilItRuns(goal);

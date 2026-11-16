@@ -44,7 +44,7 @@ function NeedRow({ itemId, need }: { itemId: string; need: Need }) {
   };
   const primary =
     need.what === 'sends' || need.what === 'destination'
-      ? { label: 'Run it for real', act: () => (approveDestinations(useEditor.getState().workflowId, need.destinations ?? []), goOn()) } // SB03:
+      ? { label: 'Run it for real', act: () => (approveDestinations(useEditor.getState().workflowId, need.destinations ?? [], need.nodes ?? (need.node ? [need.node] : [])), goOn()) } // SB03:
       : need.what === 'blocked' || need.what === 'address'
         ? { label: 'Open the step', act: () => need.node && openNodeNamed(need.node) }
         : need.what === 'trigger'

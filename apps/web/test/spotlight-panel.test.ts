@@ -15,7 +15,7 @@ vi.mock('@/components/editor/assistant', async (original) => ({
 const { fixedNodes, ownRun, spotlightOwnsRun, useAssistant } = await import('@/components/editor/assistant');
 const { useEditor } = await import('@/components/editor/store');
 const { afterReply, useAutonomous } = await import('@/components/editor/autonomous');
-const { agentStep, lastRunOf, stepsOf, titleOf } = await import('@/components/editor/timeline');
+const { agentStep, lastRunOf, sessionWaitsForApply, stepsOf, titleOf } = await import('@/components/editor/timeline');
 type ChatItem = import('@/components/editor/assistant').ChatItem;
 
 const session: ChatItem[] = [
@@ -48,6 +48,17 @@ describe('the timeline', () => {
     expect(steps[1]).toMatchObject({ icon: 'failed', nodeName: 'Post to Slack' });
     expect(steps[3]).toMatchObject({ agentId: 'ag_1' });
     expect(lastRunOf(session)).toMatchObject({ state: 'passed' });
+  });
+
+  it('a held card of an autonomous typed change is not the session\'s wait: the title stays Testing/Fixing', () => {
+    const held = { id: 'r0', role: 'assistant' as const, parts: [{ kind: 'proposal' as const, proposal: { id: 'p0', summary: 'Remove X', ops: [], dropped: [], warnings: [] } }] };
+    const sessionCard = { ...held, id: 'r1', testId: 't1', parts: [{ kind: 'proposal' as const, proposal: { id: 'p1', summary: 'Fix', ops: [], dropped: [], warnings: [] } }] };
+    const base = { drafting: false, testing: true, pending: false, hasItems: true };
+    expect(sessionWaitsForApply([held] as never, 't1')).toBe(false);
+    expect(titleOf({ ...base, ...(sessionWaitsForApply([held] as never, 't1') && { waitingForApply: true }) })).toBe('Testing the flow');
+    expect(titleOf({ ...base, fixingName: 'Triage', ...(sessionWaitsForApply([held] as never, 't1') && { waitingForApply: true }) })).toBe('Fixing “Triage”');
+    expect(sessionWaitsForApply([held, sessionCard] as never, 't1')).toBe(true);
+    expect(sessionWaitsForApply([held, { ...sessionCard, parts: [{ ...sessionCard.parts[0], proposal: { ...sessionCard.parts[0].proposal, state: 'dismissed' } }] }] as never, 't1')).toBe(false);
   });
 
   it('says what Spotlight is doing in the header', () => {
