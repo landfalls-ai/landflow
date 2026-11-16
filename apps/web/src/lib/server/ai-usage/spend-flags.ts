@@ -176,7 +176,7 @@ export function pruneFlags(beforeDay: string, db: Database = database()) {
 
 export const amountOf = (metric: 'cost' | 'tokens', value: number): string => (metric === 'cost' ? formatCost(value) : `${formatTokens(Math.round(value))} tokens`);
 
-const SURFACE_WORDS: Record<string, string> = { spotlight: 'Spotlight', architect: 'Agent architect', brain: 'Ask the brain', '': 'workflow and agent runs' };
+const SURFACE_WORDS: Record<string, string> = { spotlight: 'Spotlight', architect: 'Agent architect', brain: 'Ask the brain', 'agent-test': 'agent tests', '': 'workflow and agent runs' };
 export const surfaceWord = (surface: string): string => SURFACE_WORDS[surface] ?? surface;
 
 /** "$12.40 against a usual $5.00 a day over 10 observed days". */
@@ -254,7 +254,8 @@ const dayBefore = (day: string, days: number) => new Date(Date.parse(`${day}T00:
 export function titleOf(flag: SpendFlag): string {
   if (flag.kind === 'forecast') {
     const cap = flag.capMax === undefined ? 'its monthly cap' : `its ${amountOf(flag.metric, flag.capMax)} monthly cap`;
-    return `${flag.label} is on course to reach ${cap}${flag.reachesOn ? ` around ${flag.reachesOn}` : ''}`;
+    const title = `${flag.label} is on course to reach ${cap}${flag.reachesOn ? ` around ${flag.reachesOn}` : ''}`;
+    return title.charAt(0).toUpperCase() + title.slice(1);
   }
   return `Unusual AI spend: ${flag.label} used ${amountOf(flag.metric, flag.value)} on ${flag.day}`;
 }

@@ -393,6 +393,14 @@ describe('Needs you', () => {
   });
 });
 
+describe('the words', () => {
+  it('names the agent-test surface and starts a forecast title with a capital', () => {
+    expect(flags.surfaceWord('agent-test')).toBe('agent tests');
+    const flag = { kind: 'forecast', label: 'user “Mia Member”', metric: 'cost', capMax: 20, reachesOn: '2026-11-20' } as unknown as Parameters<typeof flags.titleOf>[0];
+    expect(flags.titleOf(flag)).toMatch(/^User “Mia Member” is on course to reach/);
+  });
+});
+
 describe('the brain’s detector', () => {
   it('is registered and names the agent or workflow, never a person', () => {
     expect(DETECTORS).toContain('spend-anomaly');
