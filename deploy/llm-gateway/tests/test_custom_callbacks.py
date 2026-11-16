@@ -200,7 +200,8 @@ class Fake:
                 elif self.path == "/api/chat":
                     out = {"model": "m", "created_at": "2026-01-01T00:00:00Z", "message": {"role": "assistant", "content": "hi"}, "done": True, "prompt_eval_count": 40, "eval_count": 2}
                 elif self.path == "/v1/messages/count_tokens":
-                    out = {"input_tokens": 5 + len(json.dumps(request.get("messages"))) // 4}
+                    fake.counts.append({"key": self.headers.get("x-api-key"), "tools": request.get("tools"), "system": request.get("system")})
+                    out = {"input_tokens": 5 + len(json.dumps([request.get("messages"), request.get("tools"), request.get("system")])) // 4}
                 elif self.path == "/v1/messages":
                     out = {"id": "msg_1", "type": "message", "role": "assistant", "model": "claude-x", "content": [{"type": "text", "text": "hi"}], "stop_reason": "end_turn", "usage": {"input_tokens": 40, "output_tokens": 1}}
                 else:
@@ -214,6 +215,7 @@ class Fake:
                 self.end_headers()
                 self.wfile.write(raw)
 
+        self.counts = []
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.base = "http://127.0.0.1:%d" % self.server.server_address[1]
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
@@ -296,6 +298,28 @@ class RealLiteLLM(unittest.TestCase):
         self.assertEqual(body["method"], "provider")
         self.assertIn("instructions", body["parts"])
 
+    def test_router_deployment_key_is_used_on_the_messages_path(self):
+        from litellm import Router
+        from litellm.proxy import proxy_server
+
+        os.environ["ANTHROPIC_API_KEY"] = "env-key"
+        router = Router(model_list=[{"model_name": "claude-x", "litellm_params": {"model": "anthropic/claude-x", "api_key": "deployment-key", "api_base": self.fake.base}}])
+        previous = getattr(proxy_server, "llm_router", None)
+        proxy_server.llm_router = router
+        try:
+            body = self.drive(
+                router.aanthropic_messages(
+                    model="claude-x", system="You are Claude Code.", tools=[{"name": "bash", "description": "run", "input_schema": {"type": "object"}}], messages=[{"role": "user", "content": "hello"}], max_tokens=5
+                )
+            )
+        finally:
+            proxy_server.llm_router = previous
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+        self.assertEqual(body["method"], "provider")
+        self.assertTrue(self.fake.counts)
+        self.assertEqual({c["key"] for c in self.fake.counts}, {"deployment-key"})
+        self.assertTrue(any(c["tools"] for c in self.fake.counts))
+
     def test_system_is_not_counted_twice_on_the_native_path(self):
         kwargs = {"model": "claude-x", "system": "SYS", "messages": [{"role": "user", "content": "hi"}], "input": [{"role": "system", "content": "SYS"}, {"role": "user", "content": "hi"}]}
         segments, _, _ = cc.split_request(kwargs)
@@ -356,10 +380,30 @@ class Resilience(unittest.TestCase):
         cb.wait_idle()
         self.assertEqual(len(calls), 2)
 
-    def test_anthropic_tools_make_it_an_estimate(self):
+    def test_anthropic_tools_go_through_the_tools_field_and_stay_exact(self):
         sent = Sent()
+        asked = []
+
+        def count(base, key, model, text, tools=None, system=None):
+            asked.append({"tools": tools, "system": system})
+            return 10
+
         kwargs = {**ANTHROPIC, "litellm_params": {"custom_llm_provider": "anthropic", "api_key": "k"}}
-        finish(callback(sent, anthropic_count=lambda b, k, m, t: 10), kwargs, {"id": "msg_9", "usage": {"prompt_tokens": 900}})
+        finish(callback(sent, anthropic_count=count), kwargs, {"id": "msg_9", "usage": {"prompt_tokens": 900}})
+        self.assertEqual(json.loads(sent.calls[0][1])["method"], "provider")
+        self.assertTrue(any(a["tools"] and [t["name"] for t in a["tools"]] == ["read_file", "bash"] for a in asked))
+        self.assertTrue(any(a["system"] for a in asked))
+
+    def test_env_key_is_not_sent_to_a_custom_base(self):
+        sent = Sent()
+        keys = []
+        os.environ["ANTHROPIC_API_KEY"] = "env-key"
+        try:
+            kwargs = {**ANTHROPIC, "litellm_params": {"custom_llm_provider": "anthropic", "api_base": "http://other.test/v1/messages"}}
+            finish(callback(sent, anthropic_count=lambda b, k, m, t, **kw: keys.append(k) or 10), kwargs, {"id": "msg_8", "usage": {"prompt_tokens": 900}})
+        finally:
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+        self.assertEqual(keys, [])
         self.assertEqual(json.loads(sent.calls[0][1])["method"], "estimate")
 
 
@@ -426,7 +470,7 @@ class Callback(unittest.TestCase):
         sent = Sent()
         asked = []
 
-        def count(base, key, model, text):
+        def count(base, key, model, text, **kw):
             asked.append((base, key, model))
             return 10 + len(text) // 4
 

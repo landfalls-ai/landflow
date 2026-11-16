@@ -357,8 +357,10 @@ images), counts each part with the model's own tokenizer, and posts the result t
 - **How each model is counted**: an Ollama model with its own vocabulary (read once from Ollama's `/api/show`, a byte-level
   BPE with the `qwen2` or `llama-bpe` pre-tokenizer: `tokenizer`); an OpenAI model with `tiktoken` (`cl100k_base` or
   `o200k_base`, bundled with LiteLLM so it works offline: `tokenizer`); a Claude model with Anthropic's count endpoint
-  and the deployment's own key (`provider`; a call with tool definitions is an `estimate`, because the endpoint is asked each
-  part as message text), else an estimate (characters ÷ 4: `estimate`). Images are estimated
+  and the deployment's own key (`provider`; tool definitions go through the endpoint's `tools` field and the system prompt
+  through `system`). The key is the model's `api_key`, read from the gateway's router when LiteLLM's log of a `/v1/messages`
+  call lacks it; `ANTHROPIC_API_KEY` is used only when the model has no custom `api_base`, so it is never sent to another
+  host. Without a key, or when a count fails, the split is an estimate (characters ÷ 4: `estimate`). Images are estimated
   (1,600 each), which makes the call an `estimate`. A call carries the weakest method used.
 - **Hashes** are made as Landflow's own are (see above), under a key derived from the shared secret instead of the
   instance's encryption key, so gateway hashes compare with each other, never with Landflow's.

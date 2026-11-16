@@ -59,7 +59,8 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - The gateway's split ([llm-gateway.md](llm-gateway.md#the-gateways-split)) is numbers and hashes only, but kagent's own
   traces are not Landflow's to change: its Helm values keep `captureContent: true`, so kagent's spans carry prompt text.
 - A Claude model is counted with Anthropic's count endpoint only with the deployment's own key in the gateway (an
-  `api_key` on the model or `ANTHROPIC_API_KEY`); without it the split is an estimate.
+  `api_key` on the model, or `ANTHROPIC_API_KEY` for a model with no custom `api_base`); without it, or for a call with
+  images, the split is an estimate.
 - Gateway hashes never compare with Landflow's own (a different key), and at the gateway a date line in a system prompt is
   part of `instructions`, so Claude Code's own system prompt, which carries its environment, changes the instructions hash
   between sessions. A kagent agent's persona prompt has no date, so its hash is stable.

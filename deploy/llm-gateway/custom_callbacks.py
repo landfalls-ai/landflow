@@ -18,9 +18,11 @@ import hmac
 import json
 import logging
 import os
+import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 try:  # LiteLLM's own base class; tests that import this file without the image still see the module.
@@ -259,6 +261,14 @@ def part_texts(segments):
 
 # ---------------------------------------------------------------------------------------------------------------------
 # Counting.
+
+
+def _anthropic_tool(tool):
+    """A tool in Anthropic's shape (an OpenAI-shaped one, from /v1/chat/completions, is converted)."""
+    fn = tool.get("function") if isinstance(tool, dict) and isinstance(tool.get("function"), dict) else None
+    if fn is None:
+        return tool
+    return {"name": fn.get("name"), "description": fn.get("description") or "", "input_schema": fn.get("parameters") or {"type": "object", "properties": {}}}
 
 
 def strip_base(base, suffixes):
@@ -512,7 +522,7 @@ class LandflowParts(CustomLogger):
         try:
             model, provider = self._model_of(kwargs)
             texts = part_texts(segments)
-            counts, method = self._count(kwargs, model, provider, texts, images)
+            counts, method = self._count(kwargs, model, provider, texts, images, segments)
             hashes = hash_segments(segments, images, hash_key(secret), names)
             body = build_body(request_id, model, provider, method, input_tokens, counts, hashes)
             self.send(url, secret, body)
@@ -529,7 +539,7 @@ class LandflowParts(CustomLogger):
             model = model[len(provider) + 1 :]
         return model, provider
 
-    def _count(self, kwargs, model, provider, texts, images):
+    def _count(self, kwargs, model, provider, texts, images, segments=()):
         """({part: tokens}, method). Falls back to an estimate for the whole call when the model's counter is missing."""
         params = kwargs.get("litellm_params") if isinstance(kwargs.get("litellm_params"), dict) else {}
         counter = None
@@ -542,14 +552,13 @@ class LandflowParts(CustomLogger):
                 counter = self._cached("tiktoken:" + openai_encoding(model), lambda: TiktokenCounter(openai_encoding(model)))
                 method = "tokenizer"
             elif provider == "anthropic":
-                counted = self._anthropic_counts(params, model, texts)
+                counted = self._anthropic_counts(params, model, texts, segments)
                 if counted is not None:
                     if images:
                         counted["images"] = images * IMAGE_TOKENS
-                    # The count endpoint is asked for each part as user-message text, so tool definitions (which it
-                    # would count in its own `tools` format) are only approximate: the call is then an estimate.
-                    exact = not images and "toolDefinitions" not in texts
-                    return counted, "provider" if exact else "estimate"
+                    # Tool definitions go through the endpoint's `tools` field and the system prompt through `system`,
+                    # so only images (estimated) make the call an estimate.
+                    return counted, "estimate" if images else "provider"
         except Exception as error:
             self._warn_once("count:%s:%s" % (provider, type(error).__name__), "landflow parts: no counter for %s (%s)" % (provider or "unknown", type(error).__name__))
             counter = None
@@ -597,26 +606,81 @@ class LandflowParts(CustomLogger):
         with urllib.request.urlopen(request, timeout=20) as response:
             return json.loads(response.read())
 
-    def _anthropic_counts(self, params, model, texts):
-        key = params.get("api_key") or os.environ.get("ANTHROPIC_API_KEY")
+    @staticmethod
+    def _deployment_params(params):
+        """The router's own `litellm_params` for the deployment that served the call (the proxy logs a `/v1/messages` call
+        without the deployment's api_key). None when there is no proxy router or the lookup fails."""
+        try:
+            module = sys.modules.get("litellm.proxy.proxy_server")
+            router = getattr(module, "llm_router", None)
+            info = params.get("model_info") if isinstance(params.get("model_info"), dict) else {}
+            if router is None or not info.get("id"):
+                return None
+            deployment = router.get_deployment(model_id=info["id"])
+            found = getattr(deployment, "litellm_params", None)
+            if found is None and isinstance(deployment, dict):
+                found = deployment.get("litellm_params")
+            if found is None:
+                return None
+            get = found.get if isinstance(found, dict) else lambda name: getattr(found, name, None)
+            return {"api_key": get("api_key"), "api_base": get("api_base")}
+        except Exception:
+            return None
+
+    @staticmethod
+    def _secret(value):
+        if isinstance(value, str) and value.startswith("os.environ/"):
+            return os.environ.get(value[len("os.environ/") :])
+        return value if isinstance(value, str) and value else None
+
+    def _anthropic_credentials(self, params):
+        """(key, base). The deployment's own key; ANTHROPIC_API_KEY only when the call goes to Anthropic's own base, so the
+        environment's key is never sent to another host."""
+        key = self._secret(params.get("api_key"))
+        base = params.get("api_base")
+        if not key or not base:
+            found = self._deployment_params(params) or {}
+            key = key or self._secret(found.get("api_key"))
+            base = base or found.get("api_base")
+        base = strip_base(base or "", ANTHROPIC_PATHS)
+        if not key and (not base or urllib.parse.urlsplit(base).hostname == "api.anthropic.com"):
+            key = os.environ.get("ANTHROPIC_API_KEY")
+        base = base or strip_base(os.environ.get("ANTHROPIC_API_BASE") or "https://api.anthropic.com", ANTHROPIC_PATHS)
+        return key, base
+
+    def _anthropic_counts(self, params, model, texts, segments=()):
+        key, base = self._anthropic_credentials(params)
         if not key:
             return None
-        base = strip_base(params.get("api_base") or os.environ.get("ANTHROPIC_API_BASE") or "https://api.anthropic.com", ANTHROPIC_PATHS)
-        # One request per part: the part alone as a user message, less the count of the stub message every request needs
-        # (asked once per model; a failure is remembered for a while).
+        # One request per part: a message part alone as a user message, the system prompt in `system` and the tool
+        # definitions in `tools`, each less the count of the stub message every request needs (asked once per model; a
+        # failure is remembered for a while). A message part is one token short of the stub's "x", so it gets that back.
         stub = self._cached("anthropic-stub:%s:%s" % (base, model), lambda: self._anthropic_count(base, key, model, "x"))
         if stub is None:
             return None
+        tools = []
+        for segment in segments:
+            if segment["part"] == "toolDefinitions":
+                tools.append(_anthropic_tool(json.loads(segment["text"])))
         counts = {}
         for part, text in texts.items():
-            counts[part] = max(0, self._anthropic_count(base, key, model, text) - stub)
+            if part == "toolDefinitions" and tools:
+                counts[part] = max(0, self._anthropic_count(base, key, model, "x", tools=tools) - stub)
+            elif part == "instructions":
+                counts[part] = max(0, self._anthropic_count(base, key, model, "x", system=text) - stub)
+            else:
+                counts[part] = max(0, self._anthropic_count(base, key, model, text) - stub + 1)
         return counts
 
     @staticmethod
-    def _anthropic_count_http(base, key, model, text):
-        body = json.dumps({"model": model, "messages": [{"role": "user", "content": text or "x"}]}).encode("utf-8")
+    def _anthropic_count_http(base, key, model, text, tools=None, system=None):
+        payload = {"model": model, "messages": [{"role": "user", "content": text or "x"}]}
+        if tools:
+            payload["tools"] = tools
+        if system:
+            payload["system"] = system
         request = urllib.request.Request(
-            base + "/v1/messages/count_tokens", data=body, headers={"content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01"}, method="POST"
+            base + "/v1/messages/count_tokens", data=json.dumps(payload).encode("utf-8"), headers={"content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01"}, method="POST"
         )
         with urllib.request.urlopen(request, timeout=20) as response:
             return int(json.loads(response.read())["input_tokens"])
@@ -629,6 +693,19 @@ class LandflowParts(CustomLogger):
                 self._post(url, raw, {"content-type": "application/json", "x-landflow-signature": sign(secret, raw)})
                 return True
             except urllib.error.HTTPError as error:
+                if error.code == 429 and attempt < 2:  # rate limited: wait as long as Landflow says (at most 5 s), then retry
+                    try:
+                        wait = min(5.0, max(0.5, float(error.headers.get("Retry-After") or 0.5 * (attempt + 1))))
+                    except Exception:
+                        wait = 0.5 * (attempt + 1)
+                    try:
+                        self._sleep(wait)
+                    except Exception:
+                        return False
+                    continue
+                if error.code == 429:
+                    self._warn_once("drop:429", "landflow parts: dropped a split after 3 tries (Landflow rate-limited the gateway; raise LANDFLOW_RATE_LIMIT_PUBLIC)")
+                    return False
                 if 400 <= error.code < 500:  # a refusal (wrong secret, off, bad body) does not change on retry
                     self._warn_once("http:%d" % error.code, "landflow parts: Landflow answered %d; dropping splits (check LANDFLOW_PARTS_SECRET and that the host has LANDFLOW_LLM_GATEWAY_PARTS_SECRET)" % error.code)
                     return False
