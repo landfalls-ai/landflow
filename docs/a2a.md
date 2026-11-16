@@ -684,6 +684,7 @@ gone, a push to main asked of a person and run or refused by the answer, read-on
 - Landflow doesn't serve A2A itself: other agents can't call a Landflow agent over A2A yet (they can call its tools over
   MCP).
 - Push notifications (A2A webhooks) and the gRPC and REST bindings aren't used; long tasks are streamed or polled.
+- The spend of a kagent agent's calls is imported from the gateway's spend log, and with the gateway's callback on, so is the split of each prompt into parts ([llm-gateway.md](llm-gateway.md#the-gateways-split)).
 - An agent on kagent doesn't get cross-session memory, guardrails or usage limits, and its skills are in its system
   prompt and `load_skill` rather than kagent skills. Its Claude Code plugins come from GitHub marketplaces only (a
   marketplace on the host or behind a URL has no commit to pin). Landflow

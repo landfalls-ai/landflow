@@ -22,6 +22,7 @@ import { projectIdOfTeam, type AiRuntime, type IngestStatus } from '../../shared
 import { hashKey, spendLogTime, type Fetcher, type LiteLlmSpendLog } from './client';
 import { adminClient, gatewayConnection, gatewaySettings, ingestStatus, saveIngestStatus } from './settings';
 import { serverKeyHash } from './call';
+import { attachWaitingParts } from './parts-receiver';
 
 const PAGE_SIZE = 500;
 const MAX_PAGES = 200;
@@ -180,7 +181,12 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
   const spend = typeof row.spend === 'number' && Number.isFinite(row.spend) && row.spend > 0 ? row.spend : 0;
   if (input + output + count(row.total_tokens) === 0 && spend === 0) return false;
   // Imported before, or a call Landflow's meter counted (it keeps the response id the server's gateway gave it).
-  if (db.get('SELECT 1 AS found FROM ai_usage WHERE gateway_request_id = ?', requestId)) return false;
+  const before = db.get<{ id: string }>('SELECT id FROM ai_usage WHERE gateway_request_id = ?', requestId);
+  if (before) {
+    // SP21: Landflow's meter may have written this row before the gateway's split arrived (and wrote no split of its own).
+    attachWaitingParts(before.id, requestId, db);
+    return false;
+  }
   // A call with no response id is paired by its call id only on the server's own key: only the server holds it and
   // Landflow mints its call ids, so nobody can reuse one. Any other key's holder can, so its rows are always imported.
   // One Landflow row takes one spend row. Nothing the caller sends (the `in-process` metadata) and no credential's key
@@ -190,6 +196,8 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
     const counted = db.get<Record<string, SqlValue>>("SELECT * FROM ai_usage WHERE call_id = ? AND source = 'landflow' AND gateway_key_hash = ? AND gateway_request_id IS NULL", callId, serverKey);
     if (counted) {
       db.upsert('ai_usage', { ...counted, gateway_request_id: requestId });
+      // SP21: a gateway split that arrived first waits under the request id; Landflow's own split for the call wins.
+      attachWaitingParts(String(counted.id), requestId, db);
       return false;
     }
   }
@@ -228,6 +236,8 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
     gateway_cost: spend,
   });
   if (!done) return false;
+  // SP21: a gateway split that arrived before this row waits under the request id.
+  attachWaitingParts(`au_ll_${hash}`, requestId, db);
   recordUsage(
     {
       id: `ue_ll_${hash}`,

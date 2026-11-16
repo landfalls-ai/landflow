@@ -362,6 +362,56 @@ keyed by the call's `ai_usage` row. It holds token counts, hashes and tool names
 - **Kept 30 days**, `LANDFLOW_AI_CALL_PARTS_RETENTION_DAYS` ([configuration](reference/configuration.md)); pruned with
   the usage rows, at most hourly.
 
+### The gateway's split
+
+Calls that kagent's agents and Claude Code make go through the gateway, not through Landflow, so Landflow never builds
+their prompts. The gateway sees each request, so it counts the parts there and sends Landflow only numbers and hashes.
+`deploy/llm-gateway/custom_callbacks.py` is a LiteLLM callback (`litellm_settings.callbacks:
+custom_callbacks.proxy_handler_instance`). After a response it splits the request into the same parts as above (system
+prompt → instructions, tool definitions, earlier turns → conversation so far, tool results, the last user message,
+images), counts each part with the model's own tokenizer, and posts the result to `POST /api/gateway-parts`.
+
+- **What is sent**: the gateway's response id (the spend log's `request_id`, which is how Landflow pairs it with the
+  imported spend row), the model and provider, how it was counted, the reported input tokens, each part's tokens, `formatting` (the
+  provider's reported input minus what was counted), keyed hashes (`promptHash`, `prefixHash`, one per part) and tool
+  names. **What is never sent**: any prompt text, tool arguments or results, images. The route refuses a body with any other
+  key or a string over 200 characters, and the callback never logs text.
+- **How each model is counted**: an Ollama model with its own vocabulary (read once from Ollama's `/api/show`, a byte-level
+  BPE with the `qwen2` or `llama-bpe` pre-tokenizer: `tokenizer`); an OpenAI model with `tiktoken` (`cl100k_base` or
+  `o200k_base`, bundled with LiteLLM so it works offline: `tokenizer`); a Claude model with Anthropic's count endpoint
+  and the deployment's own key (`provider`; tool definitions go through the endpoint's `tools` field and the system prompt
+  through `system`). The key is the model's `api_key`, read from the gateway's router when LiteLLM's log of a `/v1/messages`
+  call lacks it; `ANTHROPIC_API_KEY` is used only when the model has no custom `api_base`, so it is never sent to another
+  host. Without a key, or when a count fails, the split is an estimate (characters ÷ 4: `estimate`). Images are estimated
+  (1,600 each), which makes the call an `estimate`. A call carries the weakest method used.
+- **Hashes** are made as Landflow's own are (see above), under a key derived from the shared secret instead of the
+  instance's encryption key, so gateway hashes compare with each other, never with Landflow's.
+- **Turning it on.** Set the same secret on both sides: `LANDFLOW_LLM_GATEWAY_PARTS_SECRET` on the host and
+  `LANDFLOW_PARTS_SECRET` in the gateway (`deploy/.env.example` has a development value; compose passes the host's value
+  through, and `LANDFLOW_LLM_GATEWAY_PARTS_URL` changes the default `http://host.docker.internal:3000/api/gateway-parts`).
+  Compose mounts the file at `/app/custom_callbacks.py`. In the Kubernetes example the file is in the `llm-gateway-config`
+  ConfigMap (a copy at `deploy/k8s/examples/llm-gateway/custom_callbacks.py`, which a test keeps equal) and mounted the
+  same way; add `LANDFLOW_PARTS_SECRET` to the `llm-gateway-keys` Secret (see the kustomization). Either one unset: the
+  callback does nothing, and the host answers 404. A host that does not have the secret (a plain `pnpm dev`) answers 404 to
+  a gateway that has it: the callback does not retry a 4xx and warns once per status, so it costs one log line, not one
+  per call. In a cluster the host is not at `host.docker.internal`: set `LANDFLOW_PARTS_URL` in the gateway to the host's
+  Service URL (`http://<service>.<namespace>.svc:3000/api/gateway-parts`); the example's value is for OrbStack compose.
+- **The post** is signed (`x-landflow-signature: t=<unix seconds>,v1=<HMAC-SHA-256 of "<t>.<body>">`; 300 s window), sent
+  after the response so it never slows a call, retried twice (a 4xx is never retried), then dropped with a warning
+  (once per cause, not per call). Counting and posting run on the callback's own four threads with a queue of 64: a slow
+  or unreachable Landflow or Ollama makes it drop splits, never hold LiteLLM's threads. A cache hit is no model call:
+  nothing is sent. The route is public, the signature is the credential; it is in the public rate-limit group
+  `gateway-parts` (`LANDFLOW_RATE_LIMIT_PUBLIC`, per address), so a gateway busier than that limit loses the surplus.
+  LiteLLM logs `api_base` as the full request URL; the callback strips `/api/chat` or `/v1/messages` to reach
+  `/api/show` and `/v1/messages/count_tokens`, and remembers a failed tokenizer load for five minutes (the call is then an
+  estimate).
+- **Whose split wins.** One row per call (`ai_call_parts`, `source = 'gateway'`). A Landflow split of the same call wins in
+  every order: the host ignores a gateway post whose call already has a Landflow split, and the spend import drops a
+  waiting gateway split when it takes over a Landflow row that has one, otherwise it fills the split's `usage_id`.
+  Whichever of the split and the imported row comes first, the other finds it. Like all parts, they are for display, never for money,
+  caps or attribution.
+- Its tests run in the pinned LiteLLM image with no network: see [development.md](development.md#verification).
+
 ## The AI page
 
 Runs → Insights → **AI** (`/insights/ai`) is the one place to see AI spend and how near each cap is. It has a switch

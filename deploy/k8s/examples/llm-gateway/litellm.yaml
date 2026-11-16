@@ -44,6 +44,10 @@ spec:
             - { name: LITELLM_TELEMETRY_DISABLED, value: "true" }
             - { name: LITELLM_LOG, value: INFO }
             - { name: STORE_MODEL_IN_DB, value: "False" }
+            # The gateway's split of each call (docs/llm-gateway.md, "The gateway's split"): off until the Secret has
+            # LANDFLOW_PARTS_SECRET (the host's LANDFLOW_LLM_GATEWAY_PARTS_SECRET).
+            - { name: LANDFLOW_PARTS_URL, value: "http://host.docker.internal:3000/api/gateway-parts" }
+            - { name: LANDFLOW_PARTS_SECRET, valueFrom: { secretKeyRef: { name: llm-gateway-keys, key: LANDFLOW_PARTS_SECRET, optional: true } } }
           envFrom:
             - secretRef: { name: llm-gateway-keys }
           ports:
@@ -61,6 +65,7 @@ spec:
             limits: { memory: 2Gi }
           volumeMounts:
             - { name: config, mountPath: /app/config.yaml, subPath: config.yaml, readOnly: true }
+            - { name: config, mountPath: /app/custom_callbacks.py, subPath: custom_callbacks.py, readOnly: true }
       volumes:
         - name: config
           configMap: { name: llm-gateway-config }

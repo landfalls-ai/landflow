@@ -179,6 +179,7 @@ still works.
 | `LANDFLOW_LLM_GATEWAY_UI_URL` | `<gateway>/ui` | LiteLLM's admin UI, linked for admins from the AI page and Settings |
 | `LANDFLOW_LLM_GATEWAY_INGEST_SECONDS` | `300` | how often the leader imports from the gateway's spend log the calls Landflow did not meter itself (agents outside Landflow, other clients, and Landflow's own calls made outside a usage scope) (30 to 86400) |
 | `LANDFLOW_LLM_GATEWAY_SYNC_SECONDS` | `600` | how often the leader reconciles LiteLLM's teams, customers and key budgets with Landflow's projects, people and caps, when the sync is on (60 to 86400) |
+| `LANDFLOW_LLM_GATEWAY_PARTS_SECRET` *(secret)* | – | the shared secret the gateway's callback (`deploy/llm-gateway/custom_callbacks.py`, its `LANDFLOW_PARTS_SECRET`) signs its split of each call with; set, `POST /api/gateway-parts` accepts the split of calls kagent's agents and Claude Code make (numbers and hashes, never text); unset, the route answers 404 ([llm-gateway.md](../llm-gateway.md#the-gateways-split)) |
 
 ## Observability
 

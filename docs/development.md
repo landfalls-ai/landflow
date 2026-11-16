@@ -170,6 +170,8 @@ for p in go-crypto google-workspace databases threat-intel; do (cd plugins/$p &&
 plugins/py-insights/.venv/bin/python -m unittest discover -s sdks/python/tests
 (cd plugins/py-insights && .venv/bin/python -m unittest discover -s tests)
 (cd plugins/productivity && .venv/bin/python -m unittest discover -s tests)
+# the LLM gateway's callback, in the pinned LiteLLM image (by digest; no network)
+docker --context orbstack run --rm --network none -e LITELLM_LOCAL_MODEL_COST_MAP=True -v "$PWD/deploy/llm-gateway:/w" -w /w --entrypoint python ghcr.io/berriai/litellm:v1.108.2-lts@sha256:d8b4ac356743d647a13bb93f45b941fcd5f5354122cfd205948a1b192790389d -m unittest discover -s tests
 deploy/scripts/smoke.sh code                       # the dockerised code runner: health + network/file-system isolation
 ```
 

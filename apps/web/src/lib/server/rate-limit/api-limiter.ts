@@ -29,6 +29,8 @@ const PUBLIC_GROUPS: Array<[group: string, prefix: string]> = [
   ['chat', '/chat'],
   ['mcp', '/mcp'],
   ['waiting', '/api/waiting'],
+  // Unauthenticated (signed by the gateway's secret): each request still costs a body read and an HMAC.
+  ['gateway-parts', '/api/gateway-parts'],
 ];
 
 const under = (path: string, prefix: string) => path === prefix || path.startsWith(`${prefix}/`);

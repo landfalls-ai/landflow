@@ -54,6 +54,23 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - `node_id` is the innermost node, so a model sub-node's call names the sub-node, not the Agent node it belongs to. A per-node spend view must roll sub-nodes up to their root.
 - `landflow.ai.usage_id` is set on the call's own span only when OpenTelemetry's context manager is on; a plugin node's model record has no span of its own, so it is set on none. A plugin node's tokens carry the purpose `none` and it adds no `landflow.ai.cost` point.
 
+## The gateway's split (wave 12)
+
+- The gateway's split ([llm-gateway.md](llm-gateway.md#the-gateways-split)) is numbers and hashes only, but kagent's own
+  traces are not Landflow's to change: its Helm values keep `captureContent: true`, so kagent's spans carry prompt text.
+- A Claude model is counted with Anthropic's count endpoint only with the deployment's own key in the gateway (an
+  `api_key` on the model, or `ANTHROPIC_API_KEY` for a model with no custom `api_base`); without it, or for a call with
+  images, the split is an estimate.
+- Gateway hashes never compare with Landflow's own (a different key), and at the gateway a date line in a system prompt is
+  part of `instructions`, so Claude Code's own system prompt, which carries its environment, changes the instructions hash
+  between sessions. A kagent agent's persona prompt has no date, so its hash is stable.
+- Only Ollama models with a `qwen2` or `llama-bpe` vocabulary, OpenAI models and Claude models are counted; any other
+  model's split is an estimate.
+- The landflow-harness mod's `turn.step` events carry no response id (Claude Code does not expose one to a mod), so the Run
+  Trace cannot open a Claude Code step's call by id; the gateway's split pairs with the imported spend row instead.
+- A gateway split that arrives and never finds a spend row (the import is off, or reads later) waits unpaired until the
+  30-day prune.
+
 ## Projects and goals
 
 - **One company per instance** ([projects-and-goals.md](projects-and-goals.md#the-mission)): the mission and company name are

@@ -67,6 +67,9 @@ export const PUBLIC_ROUTES = [
   // What Claude Code agents on kagent report through the landflow-harness mod: the unguessable trace id Landflow sent
   // with the request is the credential (lib/server/a2a/agent-trace.ts).
   '/api/agent-trace',
+  // The LLM gateway's split of a model call (numbers and hashes, never text): signed with LANDFLOW_LLM_GATEWAY_PARTS_SECRET,
+  // which the route checks; it answers 404 while the secret is unset (lib/server/llm-gateway/parts-receiver.ts).
+  '/api/gateway-parts',
 ] as const;
 
 /** `/api/auth` routes that need a signed-in user. */
