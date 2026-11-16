@@ -8,8 +8,8 @@ import { trace } from '@opentelemetry/api';
 import type { LanguageModel } from '@landflow/engine';
 import { isUsageCapError } from '../ai-usage';
 
-/** The error Ollama gives for a tool call it could not parse (the same test as the architect's loop). */
-export const PARSE_ERROR = /XML syntax error|tool call|unexpected end|Ollama error 500/i;
+/** The error Ollama gives for a tool call it could not parse. Narrower than the architect's loop: no bare "tool call", which hosted models' errors also say. */
+export const PARSE_ERROR = /XML syntax error|unexpected end|Ollama error 500/i;
 
 export function withParseRetry(model: LanguageModel): LanguageModel {
   return {

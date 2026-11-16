@@ -18,6 +18,7 @@ const sample = (): Workflow => ({
 
 const agentOp = { op: 'newAgent', ref: 'docs', name: 'Docs Answerer', description: 'Answers questions from our docs and looks up Linear issues.', instructions: 'Answer from the docs; look up Linear issues when asked.', tools: ['Linear: read issues'], knowledge: 'our product docs', parameters: { message: '{{ $json.question }}' }, after: 'Sample question' };
 const newAgents = (o: Parameters<Check['judge']>[0]) => o.proposals.flatMap((p) => p.ops).filter((op) => op.op === 'addNode' && 'newAgent' in op && op.newAgent);
+const before = (o: Parameters<Check['judge']>[0]) => (sole(o) as undefined | { before?: string })?.before;
 const sole = (o: Parameters<Check['judge']>[0]) => newAgents(o)[0] as undefined | { after?: string; newAgent?: { tools?: string[]; knowledge?: string } };
 
 export default defineScenarios([
@@ -39,6 +40,7 @@ export default defineScenarios([
       { id: 'one-proposal', label: 'One change card', judge: (o) => o.proposals.length === 1 },
       { id: 'one-new-agent', label: 'One new agent, not a stand-in', judge: (o) => newAgents(o).length === 1 && !JSON.stringify(o.proposals).includes('core.aiAgent') },
       { id: 'placed-after', label: 'Placed after Sample question', judge: (o) => sole(o)?.after === 'Sample question' },
+      { id: 'reaches-reply', label: 'Fed on to Reply, not a dead-end branch', judge: (o) => before(o) === 'Reply' },
       { id: 'tool-kept', label: 'Names a Linear tool', judge: (o) => (sole(o)?.newAgent?.tools ?? []).some((t) => /linear/i.test(t)) },
       { id: 'knowledge-kept', label: 'Says what it answers from', judge: (o) => Boolean(sole(o)?.newAgent?.knowledge) },
     ],

@@ -23,4 +23,9 @@ describe('the design route', () => {
     const res = await post({ name: 'A', tools: Array.from({ length: 9 }, (_, i) => `t${i}`) });
     expect(res.status).toBe(400);
   });
+  it('refuses a tool over 80 characters and knowledge over 200', async () => {
+    expect((await post({ name: 'A', tools: ['x'.repeat(81)] })).status).toBe(400);
+    expect((await post({ name: 'A', knowledge: 'k'.repeat(201) })).status).toBe(400);
+    expect((await post({ name: 'A', tools: ['x'.repeat(80)], knowledge: 'k'.repeat(200) })).status).toBe(201);
+  });
 });

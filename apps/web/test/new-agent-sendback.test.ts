@@ -79,6 +79,18 @@ describe('a new agent survives a send-back', () => {
   });
 });
 
+describe('placedAsAsked in a chat', () => {
+  it('an agent written with "after" alone ends up between Sample question and Reply, and the note is not in "Left out"', async () => {
+    const proposals = await ask('add an agent after Sample question that answers from our docs and can look up Linear issues', [
+      propose('c1', [{ ...agentOp }]),
+      { text: 'Adds the Docs Answerer agent.' },
+    ]);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0].ops[0]).toMatchObject({ op: 'addNode', after: 'Sample question', before: 'Reply' });
+    expect(proposals[0].dropped.join(' ')).not.toContain('placed');
+  });
+});
+
 describe('placedAsAsked', () => {
   const names = ['Start', 'Sample question', 'Reply'];
   const next = (name: string) => ({ Start: ['Sample question'], 'Sample question': ['Reply'] } as Record<string, string[]>)[name] ?? [];
@@ -110,6 +122,27 @@ describe('placedAsAsked', () => {
     const { ops, notes } = placedAsAsked([{ op: 'newAgent', name: 'Docs', before: 'Start' }], 'Add an agent AFTER "Sample question"', names, next) as { ops: Array<Record<string, unknown>>; notes: string[] };
     expect(ops[0]).toMatchObject({ after: 'Sample question', before: 'Reply' });
     expect(notes).toHaveLength(1);
+  });
+  it('puts an agent written with "after" alone in front of the one step that step feeds (no dead-end branch)', () => {
+    const out = placedAsAsked([{ op: 'newAgent', name: 'Docs', instructions: 'x', after: 'Sample question' }], 'add an agent after Sample question that answers from our docs', names, next).ops as Array<Record<string, unknown>>;
+    expect(out[0]).toMatchObject({ after: 'Sample question', before: 'Reply' });
+    const wired = validateOps(flow(), [{ ...out[0], op: 'addNode', type: 'core.noOp', newAgent: { name: 'Docs' } }], lookup()).workflow;
+    expect(wired.connections.some((c) => c.source === 'b' && wired.nodes.find((n) => n.id === c.target)!.name === 'Reply')).toBe(false);
+  });
+  it('leaves "after" alone when the step feeds nothing or several, or another op connects the agent onward', () => {
+    const op = { op: 'newAgent', name: 'Docs', after: 'Reply' };
+    expect((placedAsAsked([op], 'add an agent after Reply', names, next) as { ops: unknown[] }).ops).toEqual([op]);
+    const many = (n: string) => (n === 'Sample question' ? ['Reply', 'Start'] : []);
+    const op2 = { op: 'newAgent', name: 'Docs', after: 'Sample question' };
+    expect((placedAsAsked([op2], 'add an agent after Sample question', names, many) as { ops: unknown[] }).ops).toEqual([op2]);
+    const ops = [op2, { op: 'connect', from: 'Docs', to: 'Reply' }];
+    expect((placedAsAsked(ops, 'add an agent after Sample question', names, next) as { ops: unknown[] }).ops).toEqual(ops);
+  });
+  it('matches a handle on word boundaries, and a plural "agents"', () => {
+    const ops = [{ op: 'newAgent', name: 'a', before: 'Reply' }];
+    expect((placedAsAsked(ops, 'add a step, then set it up after Start', names, next) as { ops: unknown[] }).ops).toEqual(ops);
+    const out = placedAsAsked([{ op: 'newAgent', name: 'Docs', before: 'Reply' }], 'add two agents after Start', names, next).ops as Array<Record<string, unknown>>;
+    expect(out[0]).toMatchObject({ after: 'Start' });
   });
   it('keeps "before" when the message says before, or the op has an after already', () => {
     const before = [{ op: 'newAgent', name: 'Docs', before: 'Reply' }];

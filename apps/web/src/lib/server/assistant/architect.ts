@@ -9,7 +9,6 @@
 import { nanoid } from 'nanoid';
 import { withCallNote } from '../ai-usage/call-context'; // SP03:
 import { plainDraft } from '../ai-usage/drafts'; // SP03:
-import { PARSE_ERROR } from './parse-retry';
 import { defaultParameters, isPropertyVisible } from '@landflow/protocol';
 import type { AgentMessage, LanguageModel, ToolCall, ToolResult, ToolSpec } from '@landflow/engine';
 import type { AgentConfig, AgentPersona, AgentTemplate, AgentToolConfig, AnswerLength } from '@/lib/shared/agents';
@@ -595,7 +594,7 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
         try {
           // Ollama answers 500 when it can't parse the tool call qwen3-coder wrote ("XML syntax error", sometimes with no detail): ask once more.
           turn = await generate().catch((error: unknown) => {
-            if (input.signal?.aborted || !PARSE_ERROR.test(String((error as Error)?.message ?? error))) throw error;
+            if (input.signal?.aborted || !/XML syntax error|tool call|unexpected end|Ollama error 500/i.test(String((error as Error)?.message ?? error))) throw error;
             span.addEvent('assistant.retry', { 'landflow.reason': String((error as Error)?.message ?? error).slice(0, 200) });
             return generate();
           });

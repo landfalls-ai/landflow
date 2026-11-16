@@ -110,7 +110,9 @@ text: qwen3-coder writes tool calls as XML, and Ollama's parser fails on `propos
 (*XML syntax error … unexpected EOF*). If that proposes nothing, the architect gets the full conversation with its
 tools. If neither does, the agent is what Spotlight gave, on the first model. The draft keeps Spotlight's name, gets a
 face, and is saved in your project; tool-call markup a model leaks into a value (`<parameter=0>`) is dropped.
-Spotlight's request also carries the apps the agent needs (`tools`, "It needs: Linear: read issues.") and the documents it answers from (`knowledge`, which asks for a knowledge base, or for a mention of none that fits); the brief puts the node types matching the tool hints first.
+Spotlight's request also carries the apps the agent needs (`tools`, "It needs: Linear: read issues.") and the documents
+it answers from (`knowledge`, which asks for a knowledge base, or for a mention of none that fits); the brief puts the
+node types matching the tool hints first.
 
 The avatar, colour and team you change in the dialog stay through later drafts. **Create agent** makes a draft agent
 from it (`POST /api/agents/import`); finish the open items on its page. The architect never creates or

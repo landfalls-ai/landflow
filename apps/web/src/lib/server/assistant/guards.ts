@@ -274,14 +274,27 @@ export function placedAsAsked(ops: unknown, message: string, nodeNames: string[]
   const notes: string[] = [];
   const out = ops.map((op) => {
     const o = op as Record<string, unknown>;
-    if (!o || !(o.op === 'newAgent' || (o.op === 'addNode' && o.newAgent)) || typeof o.before !== 'string' || o.after !== undefined) return op;
-    if (said(whole, 'before', o.before)) return op;
+    if (!o || !(o.op === 'newAgent' || (o.op === 'addNode' && o.newAgent))) return op;
+    const hasBefore = typeof o.before === 'string';
+    const afterOnly = typeof o.after === 'string' && o.before === undefined;
+    if (!hasBefore && !afterOnly) return op;
+    if (hasBefore && o.after !== undefined) return op;
+    if (hasBefore && said(whole, 'before', o.before as string)) return op;
     const mine = [o.name, o.ref].filter((h): h is string => typeof h === 'string' && !!h.trim()).map((h) => h.toLowerCase());
-    const named = clauses.filter((c) => /\bagent\b/.test(c) || mine.some((h) => c.includes(h)));
+    const named = clauses.filter((c) => /\bagents?\b/.test(c) || mine.some((h) => new RegExp(`(?<![\\w-])${escapeRegExp(h)}(?![\\w-])`).test(c)));
     const after = names.find((n) => named.some((c) => said(c, 'after', n)));
     if (!after) return op;
+    if (afterOnly) {
+      // The model wrote `after: X` alone: the agent would hang off X as a dead-end branch. Put it in front of the one step X feeds.
+      if (o.after !== after) return op;
+      const feeds = next(after);
+      const onward = ops.some((x) => x !== op && x && typeof x === 'object' && (x as Record<string, unknown>).op === 'connect' && mine.includes(String((x as Record<string, unknown>).from ?? '').toLowerCase()));
+      if (feeds.length !== 1 || onward) return op;
+      notes.push(`placed “${String(o.name ?? 'the agent')}” between “${after}” and “${feeds[0]}”, as asked`);
+      return { ...o, before: feeds[0] };
+    }
     const feeds = next(after);
-    if (feeds.includes(o.before)) return op; // already after it: `before` keeps the agent between the two
+    if (feeds.includes(o.before as string)) return op; // already after it: `before` keeps the agent between the two
     const { before: _before, ...rest } = o;
     notes.push(`placed “${String(o.name ?? 'the agent')}” after “${after}”, as asked`);
     return { ...rest, after, ...(feeds.length === 1 && { before: feeds[0] }) };
