@@ -6,6 +6,7 @@ import type { ToolCall } from '@landflow/engine';
 import type { AssistantOp } from '@/lib/shared/assistant-ops';
 import { withAgentId, type AgentBrief } from '@/lib/shared/agent-brief';
 import { withTeamId, type TeamBrief } from '@/lib/shared/agent-teams';
+import { givenKept } from '@/lib/shared/run-check';
 import type { PropertyDescriptor, Workflow } from '@/lib/shared/types';
 
 const shorten = (value: string, max = 60) => (value.length > max ? `${value.slice(0, max - 1)}…` : value);
@@ -332,7 +333,7 @@ export function withoutRepeats(text: string, earlier: string): string {
 }
 
 /** A reply that says only the person can fix it: a credential, an account, a key, an id. */
-export const PERSON_ONLY = /\b(credential|api key|access token|sign in|log in|permission)s?\b/i;
+export const PERSON_ONLY = /\b(credential|api key|access token|sign in|log in|permission|blocked|outbound|not allowed to reach)s?\b/i; // SB03: blocked|outbound|not allowed to reach
 
 /** The model saying what it is about to do or what it looked at, before the answer. */
 const NARRATION = /^(?:let me|let's|i'll|i will|i need to|i'm going to|now i|now,? let|first,|next,|looking at|based on|i can see|i see that|to fix this|the user (?:wants|needs|asked))\b/i;
@@ -375,6 +376,14 @@ export function wastedFix(ops: AssistantOp[], workflow: Workflow, failingId: str
     return refs.some((ref) => typeof ref === 'string' && near.has(byRef(ref)?.id ?? ''));
   });
   return touches ? undefined : `the run failed at “${failing.name}”, and this change touches neither it nor what feeds it.`;
+}
+
+/**
+ * SB03: why a session's fix would drop a step the request names or change a URL, address, channel or id the person
+ * gave, or `undefined`. `given` is what the person wrote; only they can change those.
+ */
+export function givenValuesKept(ops: AssistantOp[], workflow: Workflow, given: string): string | undefined {
+  return givenKept(ops, workflow.nodes, given);
 }
 
 export const APPLY_REQUEST = /\bclick (?:on )?(?:the )?["“]?apply\b|\bapply (?:this|that|the|these|those|my)(?: \w+)? (?:change|fix|proposal)e?s?\b|\b(?:run|test) (?:the workflow|it) again\b/i;

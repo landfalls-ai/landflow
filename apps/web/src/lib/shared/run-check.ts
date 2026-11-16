@@ -83,7 +83,8 @@ export function multipliedSteps(run: CheckedRun, steps: Array<CheckedStep & { id
 }
 
 /** Something only a person can give the flow, read from a failed run's error. */
-export type PersonNeed = 'credential' | 'agent' | 'trigger';
+// SB03: 'blocked' (the host's outbound policy refused the destination).
+export type PersonNeed = 'credential' | 'agent' | 'trigger' | 'blocked';
 
 /**
  * A failed run that a fix can't help: a credential that isn't picked or is refused, an agent or team that isn't chosen,
@@ -91,6 +92,8 @@ export type PersonNeed = 'credential' | 'agent' | 'trigger';
  */
 export function needsPerson(error: string | undefined): PersonNeed | undefined {
   if (!error) return undefined;
+  // SB03: a policy block is the person's (or an admin's) to resolve, and it is not a credential problem even as a 403.
+  if (/^\s*Blocked: |OutboundBlockedError|\bBlocked: \S+ resolves to /.test(error)) return 'blocked';
   if (/no start node|no trigger/i.test(error)) return 'trigger';
   if (/no (agent|team) (selected|chosen|picked)|agentId is required|teamId is required|pick an agent|pick a team/i.test(error)) return 'agent';
   if (/credential/i.test(error) && /no |not |missing|select|choose|pick/i.test(error)) return 'credential';
@@ -106,17 +109,74 @@ export const sameFailure = (summary: string) =>
     .replace(/\s+/g, ' ')
     .trim();
 
+/** Whether a test run of this step sends or changes things outside the flow (the heuristic of `sendingSteps`). */
+function sends(step: CheckedStep): boolean {
+  const writes = /^(send|post|create|update|delete|remove|upload|write|publish|comment|add|merge|archive|reply|invite|insert|upsert|append|move|close|assign|execute|trigger)/i;
+  const p = step.parameters;
+  if (step.type === 'core.httpRequest') return String(p.method ?? 'GET').toUpperCase() !== 'GET';
+  if (/email|smtp/i.test(step.type) && !/trigger|read/i.test(step.type)) return true;
+  return typeof p.operation === 'string' && writes.test(p.operation);
+}
+
 /**
  * Steps that reach outside the flow when they run: an HTTP call that isn't a GET, or an app operation that sends,
  * posts, creates, changes or deletes. A test run executes them for real, so Spotlight asks first. A heuristic: a
  * node can read and still be listed, and one without an operation that writes isn't.
  */
 export function sendingSteps(steps: CheckedStep[]): string[] {
-  const writes = /^(send|post|create|update|delete|remove|upload|write|publish|comment|add|merge|archive|reply|invite|insert|upsert|append|move|close|assign|execute|trigger)/i;
-  return steps.flatMap((step) => {
-    const p = step.parameters;
-    if (step.type === 'core.httpRequest') return String(p.method ?? 'GET').toUpperCase() === 'GET' ? [] : [step.name];
-    if (/email|smtp/i.test(step.type) && !/trigger|read/i.test(step.type)) return [step.name];
-    return typeof p.operation === 'string' && writes.test(p.operation) ? [step.name] : [];
+  return steps.filter(sends).map((step) => step.name);
+}
+
+/**
+ * Where each sending step reaches (SB03, contracts/sb1/needs-you.md): an HTTP Request's `host:port` (an expression host
+ * is "{{ … }}", which always needs a yes) and, for an app node that writes, `<node type> <operation>`.
+ */
+export function destinationsOf(steps: CheckedStep[]): Array<{ node: string; destination: string }> {
+  return steps.filter(sends).map((step) => {
+    if (step.type === 'core.httpRequest') return { node: step.name, destination: hostOf(String(step.parameters.url ?? '')) };
+    const operation = typeof step.parameters.operation === 'string' ? step.parameters.operation : '';
+    return { node: step.name, destination: `${step.type}${operation ? ` ${operation}` : ''}` };
   });
+}
+
+/** `host:port` of a URL, or "{{ … }}" when the host is an expression (or nothing is there to read). */
+export function hostOf(url: string): string {
+  const text = url.trim().replace(/^=/, '');
+  const match = /^(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[^/?#@]*@)?([^/?#]*)/i.exec(text);
+  const authority = match?.[1] ?? '';
+  if (!authority || authority.includes('{{')) return '{{ … }}';
+  return authority.toLowerCase();
+}
+
+/** What a person gives that a fix may not change: a URL, an email address, a channel, an id. */
+const GIVEN_VALUE = /^(?:https?:\/\/\S+|\S+@\S+\.\S+|[#@][\w.-]+|[\w-]{8,})$/i;
+
+/**
+ * Why a session's fix must not be applied: it removes a step the request names, or changes a URL, address, channel or
+ * id the person gave (SB03). Pure, so the session (client) and the chat (server) share it. `nodes` is the workflow
+ * before the fix; `given` is what the person wrote (the goal, the description, their messages).
+ */
+export function givenKept(
+  ops: ReadonlyArray<{ op: string; node?: string; parameters?: Record<string, unknown> }>,
+  nodes: ReadonlyArray<{ id: string; name: string; parameters: Record<string, unknown> }>,
+  given: string,
+): string | undefined {
+  if (!given.trim()) return undefined;
+  const text = given.toLowerCase();
+  const find = (ref: string | undefined) => (ref ? nodes.find((n) => n.name === ref || n.id === ref) : undefined);
+  for (const op of ops) {
+    const node = find(op.node);
+    if (!node) continue;
+    if (op.op === 'removeNode' && node.name.trim().length >= 3 && text.includes(node.name.trim().toLowerCase())) {
+      return `the fix wanted to remove “${node.name}”, which you asked for.`;
+    }
+    if (op.op === 'setParameters' && op.parameters) {
+      for (const [key, next] of Object.entries(op.parameters)) {
+        const current = node.parameters[key];
+        if (typeof current !== 'string' || !GIVEN_VALUE.test(current.trim()) || JSON.stringify(next) === JSON.stringify(current)) continue;
+        if (text.includes(current.trim().toLowerCase())) return `the fix wanted to change ${key} of “${node.name}” from ${current.trim()}, which you gave.`;
+      }
+    }
+  }
+  return undefined;
 }
