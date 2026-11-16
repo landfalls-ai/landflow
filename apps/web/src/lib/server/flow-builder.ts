@@ -212,6 +212,12 @@ const SYSTEM_WITH_SCHEMA = `${SYSTEM}\n\nAnswer with one JSON object and nothing
  * prompt instead, as for the providers, and jsonOf() takes the object out of the reply. `timeoutMs` is the build's own
  * bound (600 s by default), passed as the call's signal; the Ollama adapter still caps one call at 300 s.
  */
+/** The Ollama adapter caps one call at 300 s and reports that as "Cannot reach Ollama at …" with the timeout as its description. */
+export function adapterTimedOut(error: unknown): boolean {
+  const { message, description } = error as { message?: string; description?: string };
+  return /^Cannot reach Ollama/.test(message ?? '') && /timeout|timed out/i.test(description ?? '');
+}
+
 async function askModel(model: string, messages: DraftMessage[], timeoutMs: number): Promise<string> {
   const [provider, ...rest] = model.split('/');
   // A whole draft needs more room than the assistant's 4096 tokens; non-streaming, so ~16000 keeps under SDK timeouts.
@@ -224,9 +230,11 @@ async function askModel(model: string, messages: DraftMessage[], timeoutMs: numb
     if (turn.stopReason === 'refusal') throw new Error(`${model} declined to draft this workflow: ${turn.text}`);
     return turn.text || '{}';
   } catch (e) {
-    // The build's own bound ran out: the model was slow, not unreachable. Say so, and what to change.
-    if (signal.aborted) {
+    // The build's own bound ran out, or the Ollama adapter's own 300 s cap did (it wraps the timeout as "Cannot reach Ollama"):
+    // the model was slow, not unreachable. Say so, and what to change.
+    if (signal.aborted || adapterTimedOut(e)) {
       const where = provider === 'anthropic' || provider === 'openai' || provider === 'litellm' ? model : `${model} on Ollama at ${ollamaUrl()}`;
+      if (!signal.aborted) throw new Error(`${where} did not finish the draft within 300 s (the Ollama adapter's cap for one call; LANDFLOW_BUILDER_TIMEOUT_SECONDS cannot raise it). The model may be slow or still loading: set a faster LANDFLOW_BUILDER_MODEL or pick another model in Spotlight`);
       throw new Error(`${where} did not finish the draft within ${builderTimeoutMs() / 1000} s (LANDFLOW_BUILDER_TIMEOUT_SECONDS). The model may be slow or still loading: raise it, or set a faster LANDFLOW_BUILDER_MODEL`);
     }
     throw e;
