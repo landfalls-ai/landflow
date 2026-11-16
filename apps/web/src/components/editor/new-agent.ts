@@ -10,6 +10,7 @@ import { api } from '@/lib/client/api';
 import type { NewAgentSpec } from '@/lib/shared/assistant-ops';
 import { useAssistant, type AgentProgress } from './assistant';
 import { useEditor } from './store';
+import { pickedModel } from './spotlight-model'; // SB19:
 
 /** Where the agent's step sits, for the architect's request. */
 export interface AgentPlace {
@@ -44,7 +45,7 @@ export function saveAgentFor(nodeId: string, spec: NewAgentSpec, place: AgentPla
   const task = (async () => {
     progress({ state: 'designing' });
     try {
-      const { agent, needs, missing, designed } = await api<Designed>('/api/agents/design', { method: 'POST', json: { ...spec, ...place } });
+      const { agent, needs, missing, designed } = await api<Designed>('/api/agents/design', { method: 'POST', json: { ...spec, ...place, ...pickedModel() /* SB19 */ } });
       const node = useEditor.getState().nodes.find((n) => n.id === nodeId)?.data.wf;
       if (node) useEditor.getState().updateNode(nodeId, { parameters: { ...node.parameters, agentId: agent.id } });
       let published = false;

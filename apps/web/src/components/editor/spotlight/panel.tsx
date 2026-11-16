@@ -21,6 +21,7 @@ import { Composer, focusSpotlight } from './composer';
 import { AsksFirstNote, AutonomousExplainer, AutonomousSwitch, useAutonomousExplainer } from './proposal';
 import { Timeline } from './timeline-view';
 import { useAskParam } from './ask-param';
+import { ModelPicker } from './model-picker'; // SB19:
 import { ModeChip } from '../../spotlight/mode-chip';
 import { showBrainInstead } from '../../spotlight/context';
 
@@ -465,6 +466,8 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
             <ModeChip mode={{ kind: 'build', workflowId: keep.workflowId ?? '', name: workflowName }} switchTo={{ label: 'Ask the brain instead', run: showBrainInstead }} />
             <AutonomousSwitch explainer={explainer} />
           </div>
+          {/* SB19: the model for this session; desktop only, a phone uses the default. */}
+          <ModelPicker />
           {explainer.note && <AutonomousExplainer onClose={explainer.close} className="mx-3 mb-2.5 shadow-none" />}
           <AsksFirstNote />
         </div>

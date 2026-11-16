@@ -15,7 +15,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
   { id: 'workspace', label: 'Workspace', sections: ['general', 'company', 'variables', 'alerts', 'environments', 'source-control'] },
   { id: 'people', label: 'People & access', sections: ['users', 'api-keys', 'security', 'audit'] },
   { id: 'governance', label: 'Governance', sections: ['governance', 'external-secrets'] },
-  { id: 'ai', label: 'AI', sections: ['ai-prices', 'ai-caps', 'llm-gateway', 'mcp'] },
+  { id: 'ai', label: 'AI', sections: ['ai-prices', 'ai-caps', 'llm-gateway', 'spotlight', 'mcp'] },
   { id: 'infrastructure', label: 'Infrastructure', sections: ['workers', 'transports'] },
 ];
 
