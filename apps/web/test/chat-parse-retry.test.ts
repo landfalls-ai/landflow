@@ -1,9 +1,12 @@
 /** SB05: an Ollama tool-call parse error ends no reply: the step is asked once more, with the same request. */
-import { beforeAll, describe, expect, it } from 'vitest';
+import { trace } from '@opentelemetry/api';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { LanguageModel, ModelTurn, Workflow } from '@landflow/engine';
 import type { NodeTypeInfo } from '@/lib/shared/types';
+import { NodeOperationError } from '@landflow/sdk';
 import { corePlugin } from '@/lib/server/nodes';
 import { registry } from '@/lib/server/plugins/registry';
+import { isParseError, withParseRetry } from '@/lib/server/assistant/parse-retry';
 import { runChat, type ChatEvent } from '@/lib/server/assistant/chat';
 
 let types: NodeTypeInfo[];
@@ -41,7 +44,8 @@ async function run(steps: Array<Partial<ModelTurn> | Error>, extra: { signal?: A
 
 describe('the chat retries a tool-call parse error once', () => {
   it('shows the card of the second try, with no error', async () => {
-    const { events, calls } = await run([new Error('Ollama error: XML syntax error on line 1: unexpected EOF'), good]);
+    // the adapter's real shape (nodes/models.ts): the message is short, Ollama's words are in the description
+    const { events, calls } = await run([new NodeOperationError('Ollama error', { description: 'XML syntax error on line 1: unexpected EOF' }), good]);
     expect(events.filter((e) => e.type === 'proposal')).toHaveLength(1);
     expect(events.some((e) => e.type === 'error')).toBe(false);
     expect(calls.length).toBe(3); // the failed call, the retry, the closing turn
@@ -60,8 +64,15 @@ describe('the chat retries a tool-call parse error once', () => {
     expect(calls).toHaveLength(1);
   });
 
-  it('does not retry a usage cap', async () => {
-    const cap = Object.assign(new Error('Your monthly AI usage cap is reached (tool call)'), { name: 'UsageCapError' });
+  it('asks once for a 500 that says what it was (out of memory)', async () => {
+    const { calls, events } = await run([new Error('Ollama error 500: out of memory'), good]);
+    expect(calls).toHaveLength(1);
+    expect(events.some((e) => e.type === 'error')).toBe(true);
+  });
+
+  it('does not retry a usage cap, even when its message matches the parse pattern', async () => {
+    const cap = Object.assign(new Error('Your monthly AI usage cap is reached (XML syntax error)'), { name: 'UsageCapError' });
+    expect(isParseError(cap)).toBe(true); // only isUsageCapError keeps it from being retried
     const { calls, events } = await run([cap, good]);
     expect(calls).toHaveLength(1);
     expect(events.some((e) => e.type === 'error')).toBe(true);
@@ -70,5 +81,20 @@ describe('the chat retries a tool-call parse error once', () => {
   it('does not retry another error', async () => {
     const { calls } = await run([new Error('connection refused'), good]);
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe('the retry is recorded', () => {
+  it('writes the message and the description, cut to 200, in the span event', async () => {
+    const events: Array<[string, Record<string, unknown>]> = [];
+    const spy = vi.spyOn(trace, 'getActiveSpan').mockReturnValue({ addEvent: (n: string, a: Record<string, unknown>) => events.push([n, a]) } as never);
+    const steps: Array<Error | ModelTurn> = [new NodeOperationError('Ollama error', { description: `XML syntax error ${'x'.repeat(300)}` }), { text: 'ok', toolCalls: [], stopReason: 'stop' }];
+    const wrapped = withParseRetry({ provider: 'ollama', model: 'm', async generate() { const n = steps.shift()!; if (n instanceof Error) throw n; return n; } });
+    await wrapped.generate({ system: '', messages: [], tools: [] } as never);
+    spy.mockRestore();
+    const reason = String(events[0][1]['landflow.reason']);
+    expect(events[0][0]).toBe('assistant.retry');
+    expect(reason.startsWith('Ollama error XML syntax error')).toBe(true);
+    expect(reason).toHaveLength(200);
   });
 });

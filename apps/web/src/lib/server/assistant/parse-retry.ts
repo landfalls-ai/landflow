@@ -16,9 +16,12 @@ export const PARSE_ERROR = /XML syntax error|unexpected end/i;
  * bare "Ollama error 500" with no detail at all. A 500 that says what it was (out of memory) is not retried.
  */
 export function isParseError(caught: unknown): boolean {
-  const message = String((caught as Error)?.message ?? caught);
-  const description = String((caught as { description?: unknown })?.description ?? '');
+  const { message, description } = errorTexts(caught);
   return PARSE_ERROR.test(`${message} ${description}`) || (/^Ollama error 500$/i.test(message.trim()) && !description.trim());
+}
+
+function errorTexts(caught: unknown) {
+  return { message: String((caught as Error)?.message ?? caught), description: String((caught as { description?: unknown })?.description ?? '') };
 }
 
 export function withParseRetry(model: LanguageModel): LanguageModel {
@@ -29,7 +32,8 @@ export function withParseRetry(model: LanguageModel): LanguageModel {
         return await model.generate(input);
       } catch (caught) {
         if (input.signal?.aborted || isUsageCapError(caught) || !isParseError(caught)) throw caught;
-        trace.getActiveSpan()?.addEvent('assistant.retry', { 'landflow.reason': String((caught as Error)?.message ?? caught).slice(0, 200) });
+        const { message, description } = errorTexts(caught);
+        trace.getActiveSpan()?.addEvent('assistant.retry', { 'landflow.reason': `${message} ${description}`.trim().slice(0, 200) });
         return model.generate(input);
       }
     },
