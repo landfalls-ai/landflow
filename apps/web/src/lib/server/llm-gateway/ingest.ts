@@ -15,6 +15,7 @@ import { createHash } from 'node:crypto';
 import { envInt } from '../config';
 import { database, type Database, type SqlValue } from '../db';
 import { aiUsageMeter } from '../ai-usage';
+import { markSpendDays } from '../ai-usage/rollup'; // SP08:
 import { dayOf, recordUsage } from '../usage/ledger';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
@@ -121,6 +122,8 @@ export async function importSpend(options: ImportOptions = {}): Promise<IngestSt
   /** The end of the last chunk that was read to an empty page: nothing older than it is unread. */
   let doneUpTo: number | undefined;
   let stalled = false;
+  // SP08: the days of the rows this pass wrote, so a late one marks its rolled-up day for the next rollup pass.
+  const importedDays = new Set<string>();
 
   try {
     // LiteLLM caps only the advertised total (`total_is_capped`); the data is never cut, so page until a page is empty.
@@ -135,7 +138,7 @@ export async function importSpend(options: ImportOptions = {}): Promise<IngestSt
           break;
         }
         for (const row of reply.data) {
-          if (importRow(row, { db, meter, ownKeyHash, serverKey, now })) imported++;
+          if (importRow(row, { db, meter, ownKeyHash, serverKey, now, days: importedDays })) imported++;
           else skipped++;
         }
       }
@@ -149,6 +152,12 @@ export async function importSpend(options: ImportOptions = {}): Promise<IngestSt
   } catch (cause) {
     error = (cause as Error).message || 'The gateway could not be read';
     logger.warn('llm gateway: the spend import failed', { error });
+  }
+
+  // SP08: today and yesterday are recomputed every pass; an older day is marked.
+  if (imported) {
+    const yesterday = meter.today(now - 86_400_000);
+    markSpendDays([...importedDays].filter((day) => day < yesterday), db);
   }
 
   // Only chunks read to the end move the mark; a failed or stalled run keeps what it had.
@@ -168,7 +177,7 @@ export async function importSpend(options: ImportOptions = {}): Promise<IngestSt
 }
 
 /** One spend row into `ai_usage` (and the usage ledger); false when it is skipped. */
-function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<typeof aiUsageMeter>; ownKeyHash?: string; serverKey?: string; now: number }): boolean {
+function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<typeof aiUsageMeter>; ownKeyHash?: string; serverKey?: string; now: number; days?: Set<string> }): boolean {
   const { db, meter } = ctx;
   // A spend row is named by LiteLLM's request id, the response's id (the gateway's, not the caller's). The call id
   // (`x-litellm-call-id`) is not enough: a caller may send its own, so two rows can share one.
@@ -236,6 +245,7 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
     gateway_cost: spend,
   });
   if (!done) return false;
+  ctx.days?.add(dayOf(at)); // SP08:
   // SP21: a gateway split that arrived before this row waits under the request id.
   attachWaitingParts(`au_ll_${hash}`, requestId, db);
   recordUsage(

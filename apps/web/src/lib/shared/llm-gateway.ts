@@ -273,8 +273,9 @@ export interface CapRaiseSetup {
 // The AI page (GET /api/insights/ai)
 // ---------------------------------------------------------------------------
 
-export type AiConsolePeriod = '24h' | '7d' | '30d';
-export type AiConsoleGroup = 'project' | 'goal' | 'agent' | 'person' | 'model' | 'source'; // PC09: goal
+// SP08: the same literals as AI_SPEND_PERIODS and AI_SPEND_GROUPS in ai-spend.ts (this file keeps no imports; test/ai-spend-report.test.ts checks they are equal), so the page's components take an AiPageReport.
+export type AiConsolePeriod = '24h' | '7d' | '30d' | '90d' | 'custom';
+export type AiConsoleGroup = 'project' | 'goal' | 'agent' | 'workflow' | 'person' | 'model' | 'source' | 'credential' | 'surface' | 'purpose'; // PC09: goal
 
 /** Tokens, estimated cost and calls (the same shape as lib/shared/ai-usage.ts AiUsageTotals, repeated so this file has no imports). */
 export interface AiConsoleTotals {

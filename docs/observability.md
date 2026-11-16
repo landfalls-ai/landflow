@@ -524,6 +524,12 @@ the call may start, then prices and records what it used.
   `LANDFLOW_AI_USAGE_RETENTION_DAYS` (default 400; the old `AI_USAGE_RETENTION_DAYS` still works). An execution record carries its own totals per model
   (`aiUsage`), earlier segments included when it resumed after a wait; sub-executions keep their
   own. Calls outside executions and agents (the editor assistant, the AI builder) are counted too, through the assistant's own scope, with the `surface` (Spotlight, the Agent architect or the brain) in the row. The `ai.call` ledger event's `attrs` also carry `purpose`, `nodeId`, `sessionId`, `iteration` and `usageId` when set, next to the keys it always had.
+- **Daily rollup** (SP08, migration 2902): `ai_usage_daily` holds one row per day and combination of project, goal, agent,
+  workflow, user, credential, surface, purpose, provider, model, source and runtime (`''` for none) with the summed tokens,
+  cost, calls and distinct runs. The leader's "AI spend rollup" service rewrites today, yesterday and every day a late spend
+  import marked dirty (the `meta` key `ai_spend_dirty_days`) every 10 minutes, through `delete` and `upsert` calls in one
+  transaction, and prunes it at `LANDFLOW_AI_USAGE_RETENTION_DAYS` like `ai_usage` itself. The AI page reads it for the
+  days before yesterday ([llm-gateway.md](llm-gateway.md#the-ai-page)).
 - **Where it shows**: the execution view (tokens, cost and calls per model), Insights (a cost
   column and the period's total), an agent's Abilities → Guardrails (today and this month), and
   `GET /api/insights/ai-usage` (totals, per model, per day; `group=workflow|agent`).

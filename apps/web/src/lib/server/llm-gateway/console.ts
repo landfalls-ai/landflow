@@ -7,156 +7,31 @@
  * person group is the exception (the user's decision D1, 2026-11-15): every member sees every person's spend by name,
  * from every row of the period, in `peopleTotals`. Other people's caps stay private (`capsFor`).
  */
-import { agentStore } from '../agents/store';
 import { watchedCaps } from '../ai-usage/alerts';
 import { getUser } from '../auth/users';
+import { aiSpendReport, type AiSpendQuery } from '../ai-usage/spend-report';
 import { database } from '../db';
 import { productionWorkflowById } from '../publish';
-import { canResource, isInstanceAdmin, projectRole, visibleIds, visibleProjectIds } from '../projects/access';
+import { canResource, isInstanceAdmin, projectRole } from '../projects/access';
 import type { Actor } from '../projects/access';
-import { getGoal } from '../goals/store';
-import { visibleGoals } from '../goals/views';
-import { getProject, homeProjectId } from '../projects/store';
-import { aiUsageMeter } from '../ai-usage';
-import { store } from '../store';
 import {
   backstopBudget,
   parseCapId,
   type AiConsoleCap,
-  type AiConsoleGroup,
   type AiConsolePeriod,
-  type AiConsoleReport,
-  type AiConsoleRow,
-  type AiConsoleTotals,
   type CapRaiseRequest,
   type CapRaiseSetup,
   type CapRaiseStatus,
   type GatewayBudget,
 } from '../../shared/llm-gateway';
+import type { AiPageReport } from '../../shared/ai-spend';
 import { gatewaySettings } from './settings';
 
 const DAY_MS = 86_400_000;
-const GROUP_LIMIT = 50;
-const PERIOD_DAYS: Record<AiConsolePeriod, number> = { '24h': 1, '7d': 7, '30d': 30 };
-
-interface UsageRow {
-  project_id: string | null;
-  goal_id: string | null;
-  agent_id: string | null;
-  user_id: string | null;
-  workflow_id: string | null;
-  provider: string;
-  model: string;
-  source: string | null;
-  runtime: string | null;
-  input: number | null;
-  output: number | null;
-  cache_read: number | null;
-  cache_write: number | null;
-  cost: number | null;
-  calls: number | null;
-}
-
-const emptyTotals = (): AiConsoleTotals => ({ inputTokens: 0, outputTokens: 0, cost: 0, calls: 0 });
-
-function add(into: AiConsoleTotals, row: UsageRow) {
-  into.inputTokens += Number(row.input ?? 0);
-  into.outputTokens += Number(row.output ?? 0);
-  const read = Number(row.cache_read ?? 0);
-  const write = Number(row.cache_write ?? 0);
-  if (read) into.cacheReadTokens = (into.cacheReadTokens ?? 0) + read;
-  if (write) into.cacheWriteTokens = (into.cacheWriteTokens ?? 0) + write;
-  into.cost += Number(row.cost ?? 0);
-  into.calls += Number(row.calls ?? 0);
-}
-
-const SOURCE_LABELS: Record<string, string> = {
-  'landflow:landflow': 'Landflow',
-  'litellm:kagent': 'kagent',
-  'litellm:claude': 'Claude Code on kagent',
-  'litellm:other': 'Other clients of the gateway',
-};
-
-/**
- * `landflow:landflow`, or `litellm:<kagent|claude|other>`: a row without a source is Landflow's own, and so is an
- * imported row of runtime `landflow` (a call Landflow made outside a usage scope on the server's gateway key).
- */
-export function sourceKey(source: string | null | undefined, runtime: string | null | undefined): string {
-  if (source !== 'litellm' || runtime === 'landflow') return 'landflow:landflow';
-  return runtime === 'kagent' || runtime === 'claude' ? `litellm:${runtime}` : 'litellm:other';
-}
-
-function periodRange(period: AiConsolePeriod, now: number): { from: string; to: string; clause: string; params: string[] } {
-  const to = new Date(now).toISOString();
-  if (period === '24h') {
-    const from = new Date(now - DAY_MS).toISOString();
-    return { from, to, clause: 'at >= ? AND at <= ?', params: [from, to] };
-  }
-  const meter = aiUsageMeter();
-  const day = meter.today(now - (PERIOD_DAYS[period] - 1) * DAY_MS);
-  return { from: day, to, clause: 'day >= ? AND day <= ?', params: [day, meter.today(now)] };
-}
-
-/** The rows of the period, summed per distinct combination of the columns the groups need (a few hundred at most). */
-function usageRows(period: AiConsolePeriod, now: number): { rows: UsageRow[]; from: string; to: string } {
-  const range = periodRange(period, now);
-  const rows = database().all<UsageRow>(
-    `SELECT project_id, goal_id, agent_id, user_id, workflow_id, provider, model, source, runtime,
-       COALESCE(SUM(input_tokens), 0) AS input, COALESCE(SUM(output_tokens), 0) AS output,
-       COALESCE(SUM(cache_read_tokens), 0) AS cache_read, COALESCE(SUM(cache_write_tokens), 0) AS cache_write,
-       COALESCE(SUM(cost), 0) AS cost, COUNT(*) AS calls
-     FROM ai_usage WHERE ${range.clause}
-     GROUP BY project_id, goal_id, agent_id, user_id, workflow_id, provider, model, source, runtime`,
-    ...range.params,
-  );
-  return { rows, from: range.from, to: range.to };
-}
+/** SP08: the report's own rules (periods, groups, filters, visibility) live in ai-usage/spend-report.ts; `sourceKey` is kept here for its callers. */
+export { sourceKey } from '../ai-usage/spend-report';
 
 const userLabel = (id: string) => getUser(id)?.name || getUser(id)?.email || 'Someone';
-
-/**
- * A person's label in the person group, which every member sees (D1): the name. A person with no name, or whose name is
- * their email address (as a sign-in without a display name leaves it), shows the email to admins and to themselves, and as
- * "Unnamed person" to everyone else: a member never sees another person's email here.
- */
-function personLabel(id: string, viewer: { id: string }, admin: boolean): string {
-  const user = getUser(id);
-  if (!user) return 'Someone';
-  const name = user.name?.trim();
-  if (admin || id === viewer.id) return name || user.email || 'Someone';
-  return name && !name.includes('@') ? name : 'Unnamed person';
-}
-
-/** Sorted by cost then tokens, each with its share, the tail beyond 50 rolled into "Other". */
-function finish(groups: Map<string, AiConsoleRow>, total: AiConsoleTotals): AiConsoleRow[] {
-  const byCost = total.cost > 0;
-  const whole = byCost ? total.cost : total.inputTokens + total.outputTokens;
-  const sorted = [...groups.values()].sort((a, b) => b.cost - a.cost || b.inputTokens + b.outputTokens - (a.inputTokens + a.outputTokens) || a.label.localeCompare(b.label));
-  const shareOf = (row: AiConsoleTotals) => (whole > 0 ? (byCost ? row.cost : row.inputTokens + row.outputTokens) / whole : 0);
-  const out = sorted.slice(0, GROUP_LIMIT).map((row) => ({ ...row, share: shareOf(row) }));
-  if (sorted.length > GROUP_LIMIT) {
-    const rest = emptyTotals();
-    for (const row of sorted.slice(GROUP_LIMIT)) {
-      rest.inputTokens += row.inputTokens;
-      rest.outputTokens += row.outputTokens;
-      rest.cost += row.cost;
-      rest.calls += row.calls;
-      if (row.cacheReadTokens) rest.cacheReadTokens = (rest.cacheReadTokens ?? 0) + row.cacheReadTokens;
-      if (row.cacheWriteTokens) rest.cacheWriteTokens = (rest.cacheWriteTokens ?? 0) + row.cacheWriteTokens;
-    }
-    out.push({ ...rest, key: 'other', label: 'Other', share: shareOf(rest) });
-  }
-  return out;
-}
-
-function bump(groups: Map<string, AiConsoleRow>, key: string, label: string, row: UsageRow, href?: string) {
-  let entry = groups.get(key);
-  if (!entry) {
-    entry = { ...emptyTotals(), key, label, share: 0, ...(href && { href }) };
-    groups.set(key, entry);
-  }
-  add(entry, row);
-}
 
 function openRequestIds(userId: string): Map<string, string> {
   const rows = database().all<{ id: string; cap_id: string }>(`SELECT id, cap_id FROM ai_cap_requests WHERE requested_by = ? AND status IN ('pending', 'asking') ORDER BY created_at`, userId);
@@ -284,83 +159,20 @@ function capsFor(actor: Actor, admin: boolean): AiConsoleCap[] {
   return caps.sort((a, b) => b.ratio - a.ratio);
 }
 
-export function aiConsoleReport(actor: Actor, period: AiConsolePeriod, now = Date.now()): AiConsoleReport {
+/**
+ * The AI page's report: `aiSpendReport`'s totals, groups, series, previous period and `peopleTotals` (SP08), with the
+ * caps, requests, viewer and cap-raise set-up of this page, every key it had before keeping its meaning.
+ * `query` is a period (`'24h'`, `'7d'`, `'30d'`) or a full query (90 days, a custom range, filters, `compare`, `stack`).
+ */
+export function aiConsoleReport(actor: Actor, query: AiConsolePeriod | AiSpendQuery, now = Date.now()): AiPageReport {
   const admin = isInstanceAdmin(actor);
-  const { rows, from, to } = usageRows(period, now);
-  const workflows = admin ? undefined : visibleIds(actor, 'workflow', store.listWorkflows().map((w) => w.id));
-  const agents = admin ? undefined : visibleIds(actor, 'agent', agentStore.list().map((a) => a.id));
-  const projects = admin ? undefined : visibleProjectIds(actor);
-  const visibleRows = admin
-    ? rows
-    : rows.filter((row) => row.user_id === actor.id || Boolean(row.workflow_id && workflows?.has(row.workflow_id)) || Boolean(row.agent_id && agents?.has(row.agent_id)));
-
-  // One lookup per distinct goal: the goal if the viewer sees it, null if not, undefined if it is gone.
-  const goals = new Map<string, { id: string; title: string } | null | undefined>();
-  const goalFor = (id: string) => {
-    if (!goals.has(id)) {
-      const goal = getGoal(id);
-      goals.set(id, goal && (visibleGoals(actor, [goal], projects)[0] ?? null));
-    }
-    return goals.get(id);
-  };
-
-  const totals = emptyTotals();
-  // SP20: the person group covers every row, whoever the viewer is (D1).
-  const peopleTotals = emptyTotals();
-  const groups: Record<AiConsoleGroup, Map<string, AiConsoleRow>> = { project: new Map(), goal: new Map(), agent: new Map(), person: new Map(), model: new Map(), source: new Map() };
-  for (const row of rows) {
-    add(peopleTotals, row);
-    if (!row.user_id) bump(groups.person, 'none', 'No person', row);
-    else bump(groups.person, row.user_id, personLabel(row.user_id, actor, admin), row);
-  }
-  for (const row of visibleRows) {
-    add(totals, row);
-    const projectId = row.project_id || (row.workflow_id ? homeProjectId('workflow', row.workflow_id) : row.agent_id ? homeProjectId('agent', row.agent_id) : undefined);
-    const project = projectId ? getProject(projectId) : undefined;
-    if (!project) bump(groups.project, 'none', 'No project', row);
-    else if (projects && !projects.has(project.id)) bump(groups.project, 'shared', 'Another project', row);
-    else bump(groups.project, project.id, project.name, row);
-
-    if (!row.goal_id) bump(groups.goal, 'none', 'No goal', row);
-    else {
-      const goal = goalFor(row.goal_id);
-      if (goal === undefined) bump(groups.goal, row.goal_id, 'Deleted goal', row);
-      else if (goal === null) bump(groups.goal, 'shared', 'Another goal', row);
-      else bump(groups.goal, goal.id, goal.title, row);
-    }
-
-    const agent = row.agent_id ? agentStore.get(row.agent_id) : undefined;
-    if (!row.agent_id) bump(groups.agent, 'none', 'No agent', row);
-    else if (agents && !agents.has(row.agent_id)) bump(groups.agent, 'shared', 'Another agent', row);
-    else bump(groups.agent, row.agent_id, agent?.name ?? 'Deleted agent', row, agent ? `/agents/${row.agent_id}` : undefined);
-
-    bump(groups.model, `${row.provider}/${row.model}`, row.model, row);
-    const key = sourceKey(row.source, row.runtime);
-    bump(groups.source, key, SOURCE_LABELS[key] ?? key, row);
-  }
-
-  // The same model through two providers keeps one row each: name the provider when labels collide.
-  const modelLabels = new Map<string, number>();
-  for (const entry of groups.model.values()) modelLabels.set(entry.label, (modelLabels.get(entry.label) ?? 0) + 1);
-  for (const [key, entry] of groups.model) if ((modelLabels.get(entry.label) ?? 0) > 1) entry.label = `${entry.label} (${key.slice(0, key.indexOf('/'))})`;
-
+  const report = aiSpendReport(actor, typeof query === 'string' ? { period: query } : query, now);
   return {
-    period,
-    from,
-    to,
-    totals,
-    peopleTotals,
-    groups: {
-      project: finish(groups.project, totals),
-      goal: finish(groups.goal, totals),
-      agent: finish(groups.agent, totals),
-      person: finish(groups.person, peopleTotals),
-      model: finish(groups.model, totals),
-      source: finish(groups.source, totals),
-    },
+    ...report,
     caps: capsFor(actor, admin),
     requests: requestsFor(actor, admin, now),
     viewer: { admin, userId: actor.id },
+    // SP08: the cap-raise set-up stays this report's, as the cap cards read it.
     capRaise: capRaiseSetup(),
   };
 }

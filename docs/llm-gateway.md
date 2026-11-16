@@ -425,16 +425,18 @@ images), counts each part with the model's own tokenizer, and posts the result t
 ## The AI page
 
 Runs → Insights → **AI** (`/insights/ai`) is the one place to see AI spend and how near each cap is. It has a switch
-for the period (24 hours, 7 days, 30 days) and shows, from top to bottom:
+for the period (24 hours, 7, 30 or 90 days, or a custom range of up to 400 days) and shows, from top to bottom:
 
 - **Totals**: the estimated cost, the tokens (in and out, and cached) and the calls. Cost comes from Landflow's own price
   table (Settings → AI prices), as everywhere else; a cost the gateway reports is not used for these totals.
-- **Spend by** project, goal, agent, person, model or source. Each row has its cost, tokens, calls and a bar for its share of
+- **Spend by** project, goal, agent, workflow, person, model, source, credential, surface or purpose. Each row has its cost, tokens, calls and a bar for its share of
   the cost. A project row with no project on it counts under the workflow's or agent's home project; calls from no
   agent (workflows, Spotlight) are "No agent". The Goal grouping uses the goal each call was stamped with
   ([what a goal costs](projects-and-goals.md#what-a-goal-costs)): "No goal" when there is none, "Another goal" for one
   you can't see. Sources are "Landflow" (calls Landflow made), "kagent", "Claude Code on
-  kagent" and "Other clients of the gateway" (the last three come from the spend import, once it has run). Each list
+  kagent" and "Other clients of the gateway" (the last three come from the spend import, once it has run). Workflows are named (a link when you can read them, "Another workflow" when not, "No workflow"); credentials by their
+  name when you can read them, else "Another credential" (never an id); a surface is "Spotlight", "Agent architect",
+  "Ask the brain" or "Runs and agents"; a purpose is its name or "No purpose". Each list
   holds the top 50; the rest add up as "Other". On a phone each row is a card; desktop shows a table.
 - **Caps**: every cap that has a period (a workflow's daily caps, an agent's guardrails, Settings → AI caps), what it has
   used and where it is set. The bar is the accent colour below 80%, amber from 80% and red at 100%. Admins also see the
@@ -454,6 +456,21 @@ their email address, is "Unnamed person" to a member, who never sees another per
 themselves, see the email. Spend views never show prompt text or run contents. A member sees only their own user cap
 and the caps of workflows and agents they can open; credential caps and the gateway's address, keys and sync detail
 are for admins. The page never shows a key.
+
+**The report behind the page** (`GET /api/insights/ai`, SP08). Besides the totals and the ten groups it holds a daily
+series (hourly for 24 hours; days with no calls are zeros), optionally split by one group (`stack=<group>`: its top 5 by
+cost and "Other"), the previous period of the same length (`compare=1`; a custom range over 90 days has none) with each row's
+previous cost and tokens and the biggest movers, and `runs`: distinct runs (an execution, else an agent session), counted
+on the raw rows, so one run across two models is one run in the total and one in each model row. A model row is flagged
+`unpriced` when the price table has no price for it and its calls cost nothing (a local model nobody priced). Filters
+(`projectId`, `agentId`, `workflowId`, `userId`, `credentialId`, `model`, `purpose`, `source`, `surface`) narrow every number;
+a filter on a project, agent, workflow or credential you can't read answers 404. Under a filter by project, agent, workflow
+or credential the person group holds the filtered rows you can see; under any other filter it keeps every row that matches
+(D1). **Day periods read a daily rollup** (`ai_usage_daily`, one row per day and combination of the grouping columns): a
+leader service rewrites today, yesterday and every day a late import marked, every 10 minutes, in one transaction of row
+calls; days older than yesterday are read from it, yesterday and today from the raw rows (always exact), and 24 hours from
+the raw rows by hour. The rollup is kept as long as `ai_usage` (`LANDFLOW_AI_USAGE_RETENTION_DAYS`, default 400), so it is
+for speed, not for a longer memory. A person's row links to the person filter (`/insights/ai?userId=<id>`).
 
 **Ask for more.** A member sees **Ask for more** on their own user cap and on the caps of workflows and agents they can
 edit. It asks for a new maximum above the current one and a reason, and sends it to `POST /api/ai/cap-requests` (see
@@ -518,4 +535,4 @@ stores prompt text. These columns show on screens from wave 12; wave 11 only rec
   Slack answer never applies, see above).
 - Several cap-raise flows: one per instance.
 - Asking about a credential's caps (an admin sets those directly).
-- **The AI page:** charts over time (it shows the totals of the period), and an export of the report.
+- **The AI page:** charts over time, the previous period, filters and the new groups are in the report (`GET /api/insights/ai`) but not yet on the screen (wave 13's SP10 to SP12 build them), and there is no export of the report.
