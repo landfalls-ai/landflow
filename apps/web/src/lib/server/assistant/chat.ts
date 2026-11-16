@@ -436,9 +436,15 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         const { ops: fresh, repeated } = withoutRepeatedAdds(working, waiting, ops);
         const typeOfNode = (name: string) => nodeByName(name)?.type;
         // SB05: a new agent's handles count as proposed only once its proposal is held (below), so a send-back leaves them out.
-        const converted = asNewAgents(fresh, typeOfNode, newAgents);
-        const dedicated = { ...converted, ops: placedAsAsked(converted.ops, latest, working.nodes.map((n) => n.name)).ops };
-        const standIns = withoutAgentStandIns(withAgentIds(withTeamIds(dedicated.ops, input.teams ?? [], typeOfNode), input.agents ?? [], typeOfNode), new Set([...newAgents, ...dedicated.handles.map(standInKey)]), (type) => types.find((t) => t.type === type)?.descriptor.kind);
+        const kindOf = (type: string) => types.find((t) => t.type === type)?.descriptor.kind;
+        const converted = asNewAgents(fresh, typeOfNode, newAgents, kindOf, (type) => types.find((t) => t.type === type)?.descriptor.displayName);
+        const nameOfId = (id: string) => working.nodes.find((n) => n.id === id)?.name ?? id;
+        const placed = placedAsAsked(converted.ops, latest, working.nodes.map((n) => n.name), (name) => {
+          const id = working.nodes.find((n) => n.name === name)?.id;
+          return working.connections.filter((c) => c.type === 'main' && c.source === id).map((c) => nameOfId(c.target));
+        });
+        const dedicated = { ...converted, ops: placed.ops, notes: [...converted.notes, ...placed.notes] };
+        const standIns = withoutAgentStandIns(withAgentIds(withTeamIds(dedicated.ops, input.teams ?? [], typeOfNode), input.agents ?? [], typeOfNode), new Set([...newAgents, ...dedicated.handles.map(standInKey)]), kindOf);
         standIns.notes.unshift(...dedicated.notes);
         const teamed = standIns.ops;
         if (standIns.notes.length && Array.isArray(teamed) && !teamed.length) {

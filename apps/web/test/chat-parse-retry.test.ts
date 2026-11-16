@@ -44,7 +44,7 @@ describe('the chat retries a tool-call parse error once', () => {
     const { events, calls } = await run([new Error('Ollama error: XML syntax error on line 1: unexpected EOF'), good]);
     expect(events.filter((e) => e.type === 'proposal')).toHaveLength(1);
     expect(events.some((e) => e.type === 'error')).toBe(false);
-    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls.length).toBe(3); // the failed call, the retry, the closing turn
     expect((calls[0] as { messages: unknown[] }).messages).toEqual((calls[1] as { messages: unknown[] }).messages);
   });
 

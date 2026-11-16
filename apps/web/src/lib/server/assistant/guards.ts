@@ -204,7 +204,7 @@ export function withoutAgentStandIns(ops: unknown, agents: ReadonlySet<string>, 
  * agent: a newAgent the Agent architect designs on a local model, with the tools and knowledge base it needs. One with an
  * Ollama chat model stays, as a small inline step. Its sub-nodes go with withoutAgentStandIns, given the names returned.
  */
-export function asNewAgents(ops: unknown, typeOf: (name: string) => string | undefined = () => undefined, already: ReadonlySet<string> = new Set()): { ops: unknown; names: string[]; handles: string[]; notes: string[] } {
+export function asNewAgents(ops: unknown, typeOf: (name: string) => string | undefined = () => undefined, already: ReadonlySet<string> = new Set(), kindOf: (type: string) => string | undefined = () => undefined, displayName: (type: string) => string | undefined = () => undefined): { ops: unknown; names: string[]; handles: string[]; notes: string[] } {
   if (!Array.isArray(ops)) return { ops, names: [], handles: [], notes: [] };
   const handles = (o: Record<string, unknown>) => [o.ref, o.name].filter((h): h is string => typeof h === 'string');
   const added = new Map<string, string>();
@@ -233,10 +233,15 @@ export function asNewAgents(ops: unknown, typeOf: (name: string) => string | und
     const instructions = said(p.systemMessage) ?? said(p.prompt) ?? '';
     // SB05: the tool nodes it had (attached by `after` or an ai_tool connection) become the new agent's tool hints.
     const mine = handles(o);
+    // Only a sub-node placed `after` the agent is a tool: any other node placed after it is the next step of the flow.
+    const nameOf = (x: Record<string, unknown>) => String((typeof x.type === 'string' && displayName(x.type)) || x.name || x.type);
     const toolNames = [...new Set(ops.flatMap((t) => {
       const x = t as Record<string, unknown>;
-      if (x?.op === 'addNode' && typeof x.type === 'string' && x.type !== LOCAL && !/chatmodel|memory/i.test(x.type) && mine.includes(String(x.after))) return [String(x.name ?? x.type)];
-      if (x?.op === 'connect' && x.type === 'ai_tool' && mine.includes(String(x.to))) return [String(added.has(String(x.from)) ? (ops.map((n) => n as Record<string, unknown>).find((n) => n.op === 'addNode' && handles(n).includes(String(x.from)))?.name ?? x.from) : x.from)];
+      if (x?.op === 'addNode' && typeof x.type === 'string' && x.type !== LOCAL && !/chatmodel|memory/i.test(x.type) && kindOf(x.type) === 'subnode' && mine.includes(String(x.after))) return [nameOf(x)];
+      if (x?.op === 'connect' && x.type === 'ai_tool' && mine.includes(String(x.to))) {
+        const node = ops.map((n) => n as Record<string, unknown>).find((n) => n.op === 'addNode' && handles(n).includes(String(x.from)));
+        return [String(node ? nameOf(node) : x.from)];
+      }
       return [];
     }))].slice(0, 8).map((t) => t.slice(0, 80));
     return {
@@ -253,25 +258,33 @@ export function asNewAgents(ops: unknown, typeOf: (name: string) => string | und
 }
 
 /**
- * SB05: a new agent (a `newAgent`, or the addNode it became) placed `before` a step with no `after`, when the message says
- * "after <that step or another>" for a node in the flow, goes after it instead. A message that says "before <X>" keeps it.
+ * SB05: a new agent (a `newAgent`, or the addNode it became) placed `before` a step with no `after`, when the clause that
+ * names the agent says "after <a step in the flow>", goes after that step instead. A message that says "before <X>" keeps
+ * it. `next` gives the steps a step feeds on the main path: when X already feeds the `before` step the op is left alone;
+ * otherwise `after: X` is set, with `before: Y` when X feeds exactly one step Y, so the agent sits between them and its
+ * answer still reaches Y.
  */
-export function placedAsAsked(ops: unknown, message: string, nodeNames: string[]): { ops: unknown; notes: string[] } {
+export function placedAsAsked(ops: unknown, message: string, nodeNames: string[], next: (name: string) => string[] = () => []): { ops: unknown; notes: string[] } {
   if (!Array.isArray(ops)) return { ops, notes: [] };
-  const text = message.toLowerCase();
+  const whole = message.toLowerCase();
   const quote = `["“”'‘’]?`;
-  const said = (word: 'after' | 'before', name: string) => new RegExp(`\\b${word}\\s+(?:the\\s+)?(?:(?:step|node)\\s+)?${quote}${escapeRegExp(name.toLowerCase())}${quote}(?![\\w-])`).test(text);
+  const said = (text: string, word: 'after' | 'before', name: string) => new RegExp(`\\b${word}\\s+(?:the\\s+)?(?:(?:step|node)\\s+)?${quote}${escapeRegExp(name.toLowerCase())}${quote}(?![\\w-])`).test(text);
   const names = [...nodeNames].sort((a, b) => b.length - a.length);
+  const clauses = whole.split(/[.;,!?\n]|\balso\b|\bthen\b|\band\b(?=\s+(?:put|add|place|insert|make)\b)/);
   const notes: string[] = [];
   const out = ops.map((op) => {
     const o = op as Record<string, unknown>;
     if (!o || !(o.op === 'newAgent' || (o.op === 'addNode' && o.newAgent)) || typeof o.before !== 'string' || o.after !== undefined) return op;
-    if (said('before', o.before)) return op;
-    const after = names.find((n) => said('after', n));
+    if (said(whole, 'before', o.before)) return op;
+    const mine = [o.name, o.ref].filter((h): h is string => typeof h === 'string' && !!h.trim()).map((h) => h.toLowerCase());
+    const named = clauses.filter((c) => /\bagent\b/.test(c) || mine.some((h) => c.includes(h)));
+    const after = names.find((n) => named.some((c) => said(c, 'after', n)));
     if (!after) return op;
+    const feeds = next(after);
+    if (feeds.includes(o.before)) return op; // already after it: `before` keeps the agent between the two
     const { before: _before, ...rest } = o;
     notes.push(`placed “${String(o.name ?? 'the agent')}” after “${after}”, as asked`);
-    return { ...rest, after };
+    return { ...rest, after, ...(feeds.length === 1 && { before: feeds[0] }) };
   });
   return { ops: out, notes };
 }

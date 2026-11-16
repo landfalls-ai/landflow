@@ -10,6 +10,7 @@ import { corePlugin } from '@/lib/server/nodes';
 import { registry } from '@/lib/server/plugins/registry';
 import { runChat, type ChatEvent } from '@/lib/server/assistant/chat';
 import { asNewAgents, placedAsAsked, withoutAgentStandIns } from '@/lib/server/assistant/guards';
+import { registryLookup, validateOps } from '@/lib/server/assistant/ops';
 import { designBrief, designRequest } from '@/lib/server/assistant/architect';
 
 let types: NodeTypeInfo[];
@@ -55,7 +56,7 @@ async function ask(message: string, turns: Array<Partial<ModelTurn>>) {
 const agentOp = { op: 'newAgent', ref: 'docs', name: 'Docs Answerer', description: 'Answers from the docs', instructions: 'Answer from the docs.', tools: ['Linear: read issues'], knowledge: 'our docs', after: 'Sample question' };
 
 describe('a new agent survives a send-back', () => {
-  it('keeps a newAgent when its first proposal is sent back for a connection to a node never added', async () => {
+  it('keeps a newAgent when its first proposal is sent back for a connection to a node never added (a regression test)', async () => {
     const proposals = await ask('add an agent after Sample question that answers from our docs', [
       propose('c1', [agentOp, { op: 'connect', from: 'ghost', to: 'Reply' }]),
       propose('c2', [agentOp]),
@@ -80,25 +81,49 @@ describe('a new agent survives a send-back', () => {
 
 describe('placedAsAsked', () => {
   const names = ['Start', 'Sample question', 'Reply'];
-  it('puts an agent after the step the message says "after"', () => {
-    const { ops } = placedAsAsked([{ op: 'newAgent', name: 'Docs', before: 'Reply' }], 'add an agent after Sample question that answers from our docs', names) as { ops: Array<Record<string, unknown>> };
-    expect(ops[0]).toMatchObject({ after: 'Sample question' });
-    expect(ops[0]).not.toHaveProperty('before');
+  const next = (name: string) => ({ Start: ['Sample question'], 'Sample question': ['Reply'] } as Record<string, string[]>)[name] ?? [];
+  const lookup = () => registryLookup(registry.nodeTypes());
+  /** The main edges of the flow after the ops, as "from>to" by node name. */
+  const edges = (ops: unknown[]) => {
+    const wf = validateOps(flow(), ops, lookup()).workflow;
+    const nameOf = (id: string) => wf.nodes.find((n) => n.id === id)!.name;
+    return wf.connections.filter((c) => c.type === 'main').map((c) => `${nameOf(c.source)}>${nameOf(c.target)}`).sort();
+  };
+  const addNode = (extra: Record<string, unknown>) => ({ op: 'addNode', type: 'core.noOp', name: 'Docs', newAgent: { name: 'Docs' }, ...extra });
+  it('keeps a "before" that already puts the agent after the step named (Sample question feeds Reply)', () => {
+    const ops = [addNode({ before: 'Reply' })];
+    const out = placedAsAsked(ops, 'add an agent after Sample question that answers from our docs', names, next).ops as unknown[];
+    expect(out).toEqual(ops);
+    expect(edges(out)).toEqual(['Docs>Reply', 'Sample question>Docs', 'Start>Sample question']);
   });
-  it('does the same for the addNode a newAgent became', () => {
-    const { ops } = placedAsAsked([{ op: 'addNode', type: 'core.messageAgent', name: 'Docs', before: 'Reply', newAgent: { name: 'Docs' } }], 'Add an agent AFTER "Sample question"', names) as { ops: Array<Record<string, unknown>> };
-    expect(ops[0]).toMatchObject({ after: 'Sample question' });
-    expect(ops[0]).not.toHaveProperty('before');
+  it('puts the agent after the step named and in front of what that step feeds, when "before" is another step', () => {
+    const out = placedAsAsked([addNode({ before: 'Sample question' })], 'add an agent after Sample question', names, next).ops as Array<Record<string, unknown>>;
+    expect(out[0]).toMatchObject({ after: 'Sample question', before: 'Reply' });
+    expect(edges(out)).toEqual(['Docs>Reply', 'Sample question>Docs', 'Start>Sample question']);
+  });
+  it('uses "after" alone when the step named feeds nothing', () => {
+    const out = placedAsAsked([{ op: 'newAgent', name: 'Docs', before: 'Start' }], 'add an agent after Reply', names, next).ops as Array<Record<string, unknown>>;
+    expect(out[0]).toMatchObject({ after: 'Reply' });
+    expect(out[0]).not.toHaveProperty('before');
+  });
+  it('does the same for the newAgent op, quoted and in any case', () => {
+    const { ops, notes } = placedAsAsked([{ op: 'newAgent', name: 'Docs', before: 'Start' }], 'Add an agent AFTER "Sample question"', names, next) as { ops: Array<Record<string, unknown>>; notes: string[] };
+    expect(ops[0]).toMatchObject({ after: 'Sample question', before: 'Reply' });
+    expect(notes).toHaveLength(1);
   });
   it('keeps "before" when the message says before, or the op has an after already', () => {
     const before = [{ op: 'newAgent', name: 'Docs', before: 'Reply' }];
-    expect((placedAsAsked(before, 'add an agent before Reply', names) as { ops: unknown[] }).ops).toEqual(before);
+    expect((placedAsAsked(before, 'add an agent before Reply', names, next) as { ops: unknown[] }).ops).toEqual(before);
     const both = [{ op: 'newAgent', name: 'Docs', before: 'Reply', after: 'Start' }];
-    expect((placedAsAsked(both, 'add an agent after Sample question', names) as { ops: unknown[] }).ops).toEqual(both);
+    expect((placedAsAsked(both, 'add an agent after Sample question', names, next) as { ops: unknown[] }).ops).toEqual(both);
   });
   it('leaves it alone when the step named is not in the flow', () => {
     const ops = [{ op: 'newAgent', name: 'Docs', before: 'Reply' }];
-    expect((placedAsAsked(ops, 'add an agent after Nowhere', names) as { ops: unknown[] }).ops).toEqual(ops);
+    expect((placedAsAsked(ops, 'add an agent after Nowhere', names, next) as { ops: unknown[] }).ops).toEqual(ops);
+  });
+  it('ignores an "after X" in a clause that is not about the agent', () => {
+    const ops = [{ op: 'newAgent', name: 'Docs', before: 'Reply' }];
+    expect((placedAsAsked(ops, 'after Start runs, post to Slack; also put an agent in front of Reply', names, next) as { ops: unknown[] }).ops).toEqual(ops);
   });
 });
 
@@ -118,7 +143,17 @@ describe('newAgent carries tools and knowledge', () => {
     ];
     const out = asNewAgents(ops, () => undefined).ops as Array<Record<string, unknown>>;
     expect(out[0]).toMatchObject({ op: 'newAgent', tools: ['Linear issues'] });
-    expect(withoutAgentStandIns(out, new Set(['helper'])).ops).toBeTruthy();
+  });
+  it('counts a sub-node placed after the agent as a tool, not a main-flow step', () => {
+    const ops = [
+      { op: 'addNode', ref: 'ag', type: 'core.aiAgent', name: 'Helper', parameters: { systemMessage: 'Help.' }, after: 'Sample question' },
+      { op: 'addNode', ref: 't', type: 'linear.issues', name: 'Issues', after: 'ag' },
+      { op: 'addNode', type: 'core.slack', name: 'Notify team', after: 'ag' },
+      { op: 'addNode', type: 'core.httpRequest', name: 'Post result', after: 'Helper' },
+    ];
+    const kindOf = (type: string) => (type === 'linear.issues' ? 'subnode' : 'regular');
+    const out = asNewAgents(ops, () => undefined, new Set(), kindOf, (type) => (type === 'linear.issues' ? 'Linear' : undefined)).ops as Array<Record<string, unknown>>;
+    expect(out[0]).toMatchObject({ op: 'newAgent', tools: ['Linear'] });
   });
   it('the architect request names both and still asks for no questions', () => {
     const request = designRequest({ name: 'Docs', description: 'd', instructions: 'i', tools: ['Linear: read issues'], knowledge: 'our docs' });
