@@ -3,50 +3,43 @@
  * the rollup equals the raw sums, its upkeep, periods, the previous period, filters, visibility, distinct runs, unpriced
  * models, and the old `GET /api/insights/ai` keys. Run under `TZ=Pacific/Kiritimati` and `TZ=America/Los_Angeles` too.
  */
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { Workflow } from "@landflow/engine";
-import {
-  AI_SPEND_GROUPS,
-  AI_SPEND_PERIODS,
-  type AiPageReport,
-  type AiSpendGroup,
-} from "@/lib/shared/ai-spend";
-import type { AiConsoleGroup, AiConsolePeriod } from "@/lib/shared/llm-gateway";
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Workflow } from '@landflow/engine';
+import { AI_SPEND_GROUPS, AI_SPEND_PERIODS, type AiPageReport, type AiSpendGroup } from '@/lib/shared/ai-spend';
+import type { AiConsoleGroup, AiConsolePeriod } from '@/lib/shared/llm-gateway';
 
-const dataDir = mkdtempSync(join(tmpdir(), "landflow-ai-spend-"));
+const dataDir = mkdtempSync(join(tmpdir(), 'landflow-ai-spend-'));
 const previousEnv = { ...process.env };
 Object.assign(process.env, {
   LANDFLOW_DATA_DIR: dataDir,
-  LANDFLOW_REGISTRY_GRPC_PORT: "off",
-  LANDFLOW_SCAN_ON_START: "false",
-  LANDFLOW_PLUGINS: "",
-  LANDFLOW_AUDIT_OUTBOX: "off",
+  LANDFLOW_REGISTRY_GRPC_PORT: 'off',
+  LANDFLOW_SCAN_ON_START: 'false',
+  LANDFLOW_PLUGINS: '',
+  LANDFLOW_AUDIT_OUTBOX: 'off',
 });
 
-const { store } = await import("@/lib/server/store");
-const { createUser } = await import("@/lib/server/auth/users");
-const { enableTestAuth } = await import("@/lib/server/auth/test-bypass");
-const projects = await import("@/lib/server/projects");
-const { database, MIGRATIONS, migrateSqlite } = await import("@/lib/server/db");
-const { aiUsageMeter } = await import("@/lib/server/ai-usage");
-const { runRollup, markSpendDays, rollupDay } =
-  await import("@/lib/server/ai-usage/rollup");
-const { aiSpendReport } = await import("@/lib/server/ai-usage/spend-report");
-const { aiConsoleReport } = await import("@/lib/server/llm-gateway/console");
-const { credentials } = await import("@/lib/server/credentials/vault");
-const { registry } = await import("@/lib/server/plugins/registry");
-const { corePlugin } = await import("@/lib/server/nodes");
+const { store } = await import('@/lib/server/store');
+const { createUser } = await import('@/lib/server/auth/users');
+const { enableTestAuth } = await import('@/lib/server/auth/test-bypass');
+const projects = await import('@/lib/server/projects');
+const { database, MIGRATIONS, migrateSqlite } = await import('@/lib/server/db');
+const { aiUsageMeter } = await import('@/lib/server/ai-usage');
+const { runRollup, markSpendDays, rollupDay } = await import('@/lib/server/ai-usage/rollup');
+const { aiSpendReport } = await import('@/lib/server/ai-usage/spend-report');
+const { aiConsoleReport } = await import('@/lib/server/llm-gateway/console');
+const { credentials } = await import('@/lib/server/credentials/vault');
+const { registry } = await import('@/lib/server/plugins/registry');
+const { corePlugin } = await import('@/lib/server/nodes');
 registry.registerBuiltin(corePlugin);
-const { savePriceOverrides } = await import("@/lib/server/ai-usage/prices");
-const route = await import("@/app/api/insights/ai/route");
+const { savePriceOverrides } = await import('@/lib/server/ai-usage/prices');
+const route = await import('@/app/api/insights/ai/route');
 
 // The page's own types are the contract's literals (a compile-time check: this block fails to type-check if they differ).
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
-const periodsMatch: Same<AiConsolePeriod, (typeof AI_SPEND_PERIODS)[number]> =
-  true;
+const periodsMatch: Same<AiConsolePeriod, (typeof AI_SPEND_PERIODS)[number]> = true;
 const groupsMatch: Same<AiConsoleGroup, AiSpendGroup> = true;
 
 type User = Awaited<ReturnType<typeof createUser>>;
@@ -57,12 +50,7 @@ let counter = 0;
 const meter = () => aiUsageMeter();
 const DAY_MS = 86_400_000;
 const addDays = (day: string, n: number) =>
-  new Date(
-    Date.UTC(+day.slice(0, 4), +day.slice(5, 7) - 1, +day.slice(8, 10)) +
-      n * DAY_MS,
-  )
-    .toISOString()
-    .slice(0, 10);
+  new Date(Date.UTC(+day.slice(0, 4), +day.slice(5, 7) - 1, +day.slice(8, 10)) + n * DAY_MS).toISOString().slice(0, 10);
 const today = () => meter().today(Date.now());
 const daysAgo = (n: number) => addDays(today(), -n);
 
@@ -70,14 +58,14 @@ const daysAgo = (n: number) => addDays(today(), -n);
 function row(fields: Record<string, unknown> & { daysAgo?: number }) {
   const { daysAgo: back = 0, ...rest } = fields;
   const day = daysAgo(back);
-  database().insertNew("ai_usage", {
+  database().insertNew('ai_usage', {
     id: `sp08-${++counter}`,
     call_id: `sp08-call-${counter}`,
     at: back === 0 ? new Date().toISOString() : `${day}T12:00:00.000Z`,
     day,
-    provider: "anthropic",
-    model: "claude-sonnet-5-5",
-    operation: "chat",
+    provider: 'anthropic',
+    model: 'claude-sonnet-5-5',
+    operation: 'chat',
     input_tokens: 100,
     output_tokens: 50,
     cache_read_tokens: 10,
@@ -87,10 +75,7 @@ function row(fields: Record<string, unknown> & { daysAgo?: number }) {
   });
 }
 
-const as = async <T>(
-  user: User | undefined,
-  fn: () => T | Promise<T>,
-): Promise<T> => {
+const as = async <T>(user: User | undefined, fn: () => T | Promise<T>): Promise<T> => {
   enableTestAuth(user);
   try {
     return await fn();
@@ -98,65 +83,61 @@ const as = async <T>(
     enableTestAuth();
   }
 };
-const reportAs = (user: User, query: Parameters<typeof aiSpendReport>[1]) =>
-  as(user, () => aiSpendReport(user, query));
-const sumBy = <T>(items: T[], pick: (t: T) => number) =>
-  items.reduce((n, t) => n + pick(t), 0);
+const reportAs = (user: User, query: Parameters<typeof aiSpendReport>[1]) => as(user, () => aiSpendReport(user, query));
+const sumBy = <T>(items: T[], pick: (t: T) => number) => items.reduce((n, t) => n + pick(t), 0);
 
-let credId = "";
-let wfMine = "";
-let wfTheirs = "";
-let projectOpen = "";
-let projectClosed = "";
+let credId = '';
+let wfMine = '';
+let wfTheirs = '';
+let projectOpen = '';
+let projectClosed = '';
 
 beforeAll(async () => {
   admin = await createUser({
-    email: "ada@spend.test",
-    name: "Ada Admin",
-    role: "owner",
-    password: "ada-password-1",
+    email: 'ada@spend.test',
+    name: 'Ada Admin',
+    role: 'owner',
+    password: 'ada-password-1',
   });
   alpha = await createUser({
-    email: "alma@spend.test",
-    name: "Alma Alpha",
-    role: "member",
-    password: "alma-password-1",
+    email: 'alma@spend.test',
+    name: 'Alma Alpha',
+    role: 'member',
+    password: 'alma-password-1',
   });
   beta = await createUser({
-    email: "ben@spend.test",
-    name: "Ben Beta",
-    role: "member",
-    password: "ben-password-1",
+    email: 'ben@spend.test',
+    name: 'Ben Beta',
+    role: 'member',
+    password: 'ben-password-1',
   });
-  projectOpen = projects.createTeamProject({ name: "Open Project" }).id;
-  projectClosed = projects.createTeamProject({ name: "Closed Project" }).id;
-  projects.setMember(projectOpen, alpha.id, "editor");
-  projects.setMember(projectClosed, beta.id, "editor");
-  wfMine = "wf_sp08_mine";
-  wfTheirs = "wf_sp08_theirs";
+  projectOpen = projects.createTeamProject({ name: 'Open Project' }).id;
+  projectClosed = projects.createTeamProject({ name: 'Closed Project' }).id;
+  projects.setMember(projectOpen, alpha.id, 'editor');
+  projects.setMember(projectClosed, beta.id, 'editor');
+  wfMine = 'wf_sp08_mine';
+  wfTheirs = 'wf_sp08_theirs';
   store.saveWorkflow({
     id: wfMine,
-    name: "Mine flow",
+    name: 'Mine flow',
     nodes: [],
     connections: [],
   } as unknown as Workflow);
   store.saveWorkflow({
     id: wfTheirs,
-    name: "Their flow",
+    name: 'Their flow',
     nodes: [],
     connections: [],
   } as unknown as Workflow);
-  projects.setHomeProject("workflow", wfMine, projectOpen);
-  projects.setHomeProject("workflow", wfTheirs, projectClosed);
+  projects.setHomeProject('workflow', wfMine, projectOpen);
+  projects.setHomeProject('workflow', wfTheirs, projectClosed);
   credId = credentials.create({
-    name: "Team key",
-    type: "core.openAiApi",
-    data: { apiKey: "sk-test" },
+    name: 'Team key',
+    type: 'core.openAiApi',
+    data: { apiKey: 'sk-test' },
   }).id;
-  projects.setHomeProject("credential", credId, projectClosed);
-  savePriceOverrides([
-    { provider: "ollama", model: "llama-priced", input: 0.1, output: 0.2 },
-  ]);
+  projects.setHomeProject('credential', credId, projectClosed);
+  savePriceOverrides([{ provider: 'ollama', model: 'llama-priced', input: 0.1, output: 0.2 }]);
 
   // A spread of rows over 12 days: workflows, credentials, surfaces, purposes, sources, people and models.
   for (let back = 0; back < 12; back++) {
@@ -174,16 +155,16 @@ beforeAll(async () => {
       user_id: beta.id,
       project_id: projectClosed,
       credential_id: credId,
-      purpose: "judge",
+      purpose: 'judge',
       cost: 2,
-      model: "claude-opus-4-1",
+      model: 'claude-opus-4-1',
       execution_id: `ex-b-${back}`,
     });
     row({
       daysAgo: back,
       user_id: alpha.id,
-      surface: "spotlight",
-      purpose: "answer",
+      surface: 'spotlight',
+      purpose: 'answer',
       cost: 0.5,
       session_id: `sess-${back}`,
     });
@@ -193,33 +174,33 @@ beforeAll(async () => {
     row({
       workflow_id: wfMine,
       user_id: alpha.id,
-      execution_id: "ex-loop",
-      model: i % 2 ? "claude-haiku-4-5" : "claude-sonnet-5-5",
+      execution_id: 'ex-loop',
+      model: i % 2 ? 'claude-haiku-4-5' : 'claude-sonnet-5-5',
       cost: 0.1,
     });
   // Local models: one nobody priced, one with an override.
   row({
-    provider: "ollama",
-    model: "qwen3-coder:30b",
+    provider: 'ollama',
+    model: 'qwen3-coder:30b',
     cost: 0,
     user_id: alpha.id,
     workflow_id: wfMine,
-    execution_id: "ex-local",
+    execution_id: 'ex-local',
   });
   row({
-    provider: "ollama",
-    model: "llama-priced",
+    provider: 'ollama',
+    model: 'llama-priced',
     cost: 0,
     user_id: alpha.id,
     workflow_id: wfMine,
-    execution_id: "ex-local2",
+    execution_id: 'ex-local2',
   });
   // A gateway row of another client.
   row({
-    source: "litellm",
-    runtime: "claude",
-    provider: "litellm",
-    model: "claude-sonnet-5-5",
+    source: 'litellm',
+    runtime: 'claude',
+    provider: 'litellm',
+    model: 'claude-sonnet-5-5',
     cost: 3,
     daysAgo: 3,
   });
@@ -228,31 +209,26 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  for (const key of Object.keys(process.env))
-    if (!(key in previousEnv)) delete process.env[key];
+  for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
   Object.assign(process.env, previousEnv);
 });
 
-describe("types and constants", () => {
-  it("the page types are the contract literals", () => {
+describe('types and constants', () => {
+  it('the page types are the contract literals', () => {
     expect(periodsMatch && groupsMatch).toBe(true);
     expect(AI_SPEND_GROUPS).toHaveLength(10);
   });
 });
 
-describe("the rollup", () => {
-  it("equals the raw sums for every group and for the series (older days read the rollup)", async () => {
-    const report = await reportAs(admin, { period: "30d" });
+describe('the rollup', () => {
+  it('equals the raw sums for every group and for the series (older days read the rollup)', async () => {
+    const report = await reportAs(admin, { period: '30d' });
     const from = daysAgo(29);
-    const raw = (sql: string) =>
-      database().all<{ key: string | null; cost: number; calls: number }>(
-        sql,
-        from,
-      );
+    const raw = (sql: string) => database().all<{ key: string | null; cost: number; calls: number }>(sql, from);
     const check = (
       group: AiSpendGroup,
       rows: Array<{ key: string | null; cost: number; calls: number }>,
-      norm: (k: string | null) => string = (k) => k || "none",
+      norm: (k: string | null) => string = (k) => k || 'none',
     ) => {
       const wanted = new Map(rows.map((r) => [norm(r.key), r]));
       for (const out of report.groups[group]) {
@@ -267,34 +243,21 @@ describe("the rollup", () => {
       );
     };
     for (const [group, column] of [
-      ["workflow", "workflow_id"],
-      ["person", "user_id"],
-      ["credential", "credential_id"],
-      ["surface", "surface"],
-      ["purpose", "purpose"],
+      ['workflow', 'workflow_id'],
+      ['person', 'user_id'],
+      ['credential', 'credential_id'],
+      ['surface', 'surface'],
+      ['purpose', 'purpose'],
     ] as const) {
-      check(
-        group,
-        raw(
-          `SELECT ${column} AS key, SUM(cost) AS cost, COUNT(*) AS calls FROM ai_usage WHERE day >= ? GROUP BY ${column}`,
-        ),
-      );
+      check(group, raw(`SELECT ${column} AS key, SUM(cost) AS cost, COUNT(*) AS calls FROM ai_usage WHERE day >= ? GROUP BY ${column}`));
     }
-    check(
-      "model",
-      raw(
-        `SELECT provider || '/' || model AS key, SUM(cost) AS cost, COUNT(*) AS calls FROM ai_usage WHERE day >= ? GROUP BY provider, model`,
-      ),
-    );
+    check('model', raw(`SELECT provider || '/' || model AS key, SUM(cost) AS cost, COUNT(*) AS calls FROM ai_usage WHERE day >= ? GROUP BY provider, model`));
     const daily = database().all<{
       day: string;
       cost: number;
       calls: number;
       input: number;
-    }>(
-      "SELECT day, SUM(cost) AS cost, COUNT(*) AS calls, SUM(input_tokens) AS input FROM ai_usage WHERE day >= ? GROUP BY day",
-      from,
-    );
+    }>('SELECT day, SUM(cost) AS cost, COUNT(*) AS calls, SUM(input_tokens) AS input FROM ai_usage WHERE day >= ? GROUP BY day', from);
     expect(report.series).toHaveLength(30);
     expect(report.series[29].at).toBe(today());
     expect(report.series[0].at).toBe(from);
@@ -311,117 +274,113 @@ describe("the rollup", () => {
     });
   });
 
-  it("a rolled-up day differs from nothing: a changed raw row shows after the day is recomputed", async () => {
+  it('a rolled-up day differs from nothing: a changed raw row shows after the day is recomputed', async () => {
     const day = daysAgo(8);
-    const before = (await reportAs(admin, { period: "30d" })).totals.cost;
-    database().insertNew("ai_usage", {
-      id: "sp08-late",
+    const before = (await reportAs(admin, { period: '30d' })).totals.cost;
+    database().insertNew('ai_usage', {
+      id: 'sp08-late',
       at: `${day}T10:00:00.000Z`,
       day,
-      provider: "anthropic",
-      model: "claude-sonnet-5-5",
-      operation: "chat",
+      provider: 'anthropic',
+      model: 'claude-sonnet-5-5',
+      operation: 'chat',
       input_tokens: 10,
       output_tokens: 10,
       cost: 7,
     });
-    expect((await reportAs(admin, { period: "30d" })).totals.cost).toBeCloseTo(
-      before,
-      6,
-    );
+    expect((await reportAs(admin, { period: '30d' })).totals.cost).toBeCloseTo(before, 6);
     rollupDay(day);
-    expect((await reportAs(admin, { period: "30d" })).totals.cost).toBeCloseTo(
-      before + 7,
-      6,
-    );
+    expect((await reportAs(admin, { period: '30d' })).totals.cost).toBeCloseTo(before + 7, 6);
   });
 
-  it("a late imported row marks its day dirty and the next pass fixes it", async () => {
+  it('a late imported row marks its day dirty and the next pass fixes it', async () => {
     const day = daysAgo(6);
-    const before = (await reportAs(admin, { period: "30d" })).totals.cost;
-    database().insertNew("ai_usage", {
-      id: "sp08-late2",
+    const before = (await reportAs(admin, { period: '30d' })).totals.cost;
+    database().insertNew('ai_usage', {
+      id: 'sp08-late2',
       at: `${day}T10:00:00.000Z`,
       day,
-      provider: "litellm",
-      model: "x",
-      operation: "chat",
+      provider: 'litellm',
+      model: 'x',
+      operation: 'chat',
       input_tokens: 10,
       output_tokens: 10,
       cost: 5,
-      source: "litellm",
-      runtime: "kagent",
+      source: 'litellm',
+      runtime: 'kagent',
     });
     markSpendDays([day]);
-    expect(
-      database().get<{ value: string }>(
-        "SELECT value FROM meta WHERE key = 'ai_spend_dirty_days'",
-      )?.value,
-    ).toContain(day);
+    expect(database().get<{ value: string }>("SELECT value FROM meta WHERE key = 'ai_spend_dirty_days'")?.value).toContain(day);
     expect(runRollup()).toContain(day);
-    expect((await reportAs(admin, { period: "30d" })).totals.cost).toBeCloseTo(
-      before + 5,
-      6,
-    );
-    expect(
-      database().get(
-        "SELECT 1 AS found FROM meta WHERE key = ?",
-        "ai_spend_dirty_days",
-      ),
-    ).toBeUndefined();
+    expect((await reportAs(admin, { period: '30d' })).totals.cost).toBeCloseTo(before + 5, 6);
+    expect(database().get('SELECT 1 AS found FROM meta WHERE key = ?', 'ai_spend_dirty_days')).toBeUndefined();
   });
 
-  it("writes only through row-level calls", () => {
+  it('a pass after a gap of days still fixes the day of the last pass', () => {
+    const day = daysAgo(0);
+    runRollup();
+    expect(database().get<{ value: string }>("SELECT value FROM meta WHERE key = 'ai_spend_rolled_through'")?.value).toBe(day);
+    const sum = () => database().get<{ cost: number }>('SELECT COALESCE(SUM(cost), 0) AS cost FROM ai_usage_daily WHERE day = ?', day)!.cost;
+    const before = sum();
+    // A call recorded after the day's last pass, with no dirty mark, and the host off for days after.
+    database().insertNew('ai_usage', {
+      id: 'sp08-gap',
+      at: `${day}T10:00:00.000Z`,
+      day,
+      provider: 'anthropic',
+      model: 'claude-sonnet-5-5',
+      operation: 'chat',
+      input_tokens: 1,
+      output_tokens: 1,
+      cost: 11,
+    });
+    expect(sum()).toBeCloseTo(before, 6);
+    runRollup(Date.now() + 4 * 86_400_000);
+    expect(sum()).toBeCloseTo(before + 11, 6);
+    database().delete('ai_usage', { id: 'sp08-gap' });
+    rollupDay(day);
+    database().upsert('meta', { key: 'ai_spend_rolled_through', value: day });
+  });
+
+  it('writes only through row-level calls', () => {
     const ops: Array<{ op: string; table: string }> = [];
-    const stop = database().observe((batch) =>
-      ops.push(...batch.map((o) => ({ op: o.op, table: o.table }))),
-    );
+    const stop = database().observe((batch) => ops.push(...batch.map((o) => ({ op: o.op, table: o.table }))));
     markSpendDays([daysAgo(2)]);
     runRollup();
     stop();
     expect(ops.length).toBeGreaterThan(0);
     const kinds = new Set(ops.map((o) => o.op));
-    expect(kinds).toContain("upsert");
-    expect(kinds).toContain("delete");
-    for (const kind of kinds)
-      expect(["upsert", "delete", "deleteBefore", "insert"]).toContain(kind);
-    expect(
-      ops.filter((o) => o.table === "ai_usage_daily").length,
-    ).toBeGreaterThan(0);
+    expect(kinds).toContain('upsert');
+    expect(kinds).toContain('delete');
+    for (const kind of kinds) expect(['upsert', 'delete', 'deleteBefore', 'insert']).toContain(kind);
+    expect(ops.filter((o) => o.table === 'ai_usage_daily').length).toBeGreaterThan(0);
   });
 
-  it("prunes days older than the retention", () => {
-    const old = "2020-01-01";
-    database().upsert("ai_usage_daily", {
+  it('prunes days older than the retention', () => {
+    const old = '2020-01-01';
+    database().upsert('ai_usage_daily', {
       day: old,
-      project_id: "",
-      goal_id: "",
-      agent_id: "",
-      workflow_id: "",
-      user_id: "",
-      credential_id: "",
-      surface: "",
-      purpose: "",
-      provider: "p",
-      model: "m",
-      source: "",
-      runtime: "",
+      project_id: '',
+      goal_id: '',
+      agent_id: '',
+      workflow_id: '',
+      user_id: '',
+      credential_id: '',
+      surface: '',
+      purpose: '',
+      provider: 'p',
+      model: 'm',
+      source: '',
+      runtime: '',
       calls: 1,
     });
     runRollup();
-    expect(
-      database().get(
-        "SELECT 1 AS found FROM ai_usage_daily WHERE day = ?",
-        old,
-      ),
-    ).toBeUndefined();
+    expect(database().get('SELECT 1 AS found FROM ai_usage_daily WHERE day = ?', old)).toBeUndefined();
   });
 
-  it("migration 2902 backfills the rollup from rows already there", () => {
-    const { DatabaseSync } = process.getBuiltinModule(
-      "node:sqlite",
-    ) as typeof import("node:sqlite");
-    const sqlite = new DatabaseSync(":memory:");
+  it('migration 2902 backfills the rollup from rows already there', () => {
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite');
+    const sqlite = new DatabaseSync(':memory:');
     migrateSqlite(
       sqlite,
       MIGRATIONS.filter((m) => m.version < 2902),
@@ -429,54 +388,22 @@ describe("the rollup", () => {
     const insert = sqlite.prepare(
       `INSERT INTO ai_usage (id, at, day, provider, model, operation, input_tokens, output_tokens, cost, execution_id, session_id, workflow_id) VALUES (?, ?, ?, 'anthropic', 'm', 'chat', ?, ?, ?, ?, ?, ?)`,
     );
-    insert.run(
-      "a",
-      "2026-11-01T10:00:00Z",
-      "2026-11-01",
-      10,
-      5,
-      1,
-      "ex1",
-      null,
-      "wf",
-    );
-    insert.run(
-      "b",
-      "2026-11-01T11:00:00Z",
-      "2026-11-01",
-      20,
-      5,
-      2,
-      "ex1",
-      null,
-      "wf",
-    );
-    insert.run(
-      "c",
-      "2026-11-01T12:00:00Z",
-      "2026-11-01",
-      1,
-      1,
-      0.5,
-      null,
-      "s1",
-      null,
-    );
+    insert.run('a', '2026-11-01T10:00:00Z', '2026-11-01', 10, 5, 1, 'ex1', null, 'wf');
+    insert.run('b', '2026-11-01T11:00:00Z', '2026-11-01', 20, 5, 2, 'ex1', null, 'wf');
+    insert.run('c', '2026-11-01T12:00:00Z', '2026-11-01', 1, 1, 0.5, null, 's1', null);
     expect(migrateSqlite(sqlite)).toEqual([2902]);
-    const rows = sqlite
-      .prepare("SELECT * FROM ai_usage_daily ORDER BY workflow_id")
-      .all() as Array<Record<string, unknown>>;
+    const rows = sqlite.prepare('SELECT * FROM ai_usage_daily ORDER BY workflow_id').all() as Array<Record<string, unknown>>;
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({
-      workflow_id: "",
+      workflow_id: '',
       calls: 1,
       runs: 1,
       cost: 0.5,
-      user_id: "",
-      purpose: "",
+      user_id: '',
+      purpose: '',
     });
     expect(rows[1]).toMatchObject({
-      workflow_id: "wf",
+      workflow_id: 'wf',
       calls: 2,
       runs: 1,
       input_tokens: 30,
@@ -486,22 +413,20 @@ describe("the rollup", () => {
   });
 });
 
-describe("periods and previous period", () => {
-  it("90d and custom ranges read the rollup; a bad custom range is a 400", async () => {
-    const ninety = await reportAs(admin, { period: "90d" });
+describe('periods and previous period', () => {
+  it('90d and custom ranges read the rollup; a bad custom range is a 400', async () => {
+    const ninety = await reportAs(admin, { period: '90d' });
     expect(ninety.series).toHaveLength(90);
     expect(ninety.from).toBe(daysAgo(89));
     const custom = await reportAs(admin, {
-      period: "custom",
+      period: 'custom',
       from: daysAgo(10),
       to: daysAgo(5),
     });
-    expect(custom.series.map((p) => p.at)).toEqual(
-      [10, 9, 8, 7, 6, 5].map(daysAgo),
-    );
+    expect(custom.series.map((p) => p.at)).toEqual([10, 9, 8, 7, 6, 5].map(daysAgo));
     expect(custom.totals.calls).toBeGreaterThan(0);
     const one = await reportAs(admin, {
-      period: "custom",
+      period: 'custom',
       from: daysAgo(3),
       to: daysAgo(3),
     });
@@ -511,64 +436,35 @@ describe("periods and previous period", () => {
         () => 0,
         (e: { status?: number }) => e.status,
       );
-    expect(
-      await bad({ period: "custom", from: daysAgo(500), to: daysAgo(1) }),
-    ).toBe(400);
-    expect(
-      await bad({ period: "custom", from: daysAgo(1), to: daysAgo(5) }),
-    ).toBe(400);
+    expect(await bad({ period: 'custom', from: daysAgo(500), to: daysAgo(1) })).toBe(400);
+    expect(await bad({ period: 'custom', from: daysAgo(1), to: daysAgo(5) })).toBe(400);
     expect(
       await bad({
-        period: "custom",
+        period: 'custom',
         from: daysAgo(1),
         to: addDays(today(), 2),
       }),
     ).toBe(400);
-    expect(
-      await bad({ period: "custom", from: "2026-13-40", to: daysAgo(1) }),
-    ).toBe(400);
-    expect(await bad({ period: "custom" })).toBe(400);
+    expect(await bad({ period: 'custom', from: '2026-13-40', to: daysAgo(1) })).toBe(400);
+    expect(await bad({ period: 'custom' })).toBe(400);
     // The same through the route (the schema).
-    const get = async (qs: string) =>
-      (route.GET as (r: Request) => Promise<Response>)(
-        new Request(`http://x.test/api/insights/ai?${qs}`),
-      );
-    expect(
-      (
-        await as(admin, () =>
-          get(`period=custom&from=${daysAgo(500)}&to=${daysAgo(1)}`),
-        )
-      ).status,
-    ).toBe(400);
-    expect(
-      (
-        await as(admin, () =>
-          get(`period=custom&from=${daysAgo(5)}&to=${daysAgo(10)}`),
-        )
-      ).status,
-    ).toBe(400);
-    expect(
-      (
-        await as(admin, () =>
-          get(
-            `period=custom&from=${daysAgo(10)}&to=${daysAgo(5)}&compare=1&stack=model`,
-          ),
-        )
-      ).status,
-    ).toBe(200);
+    const get = async (qs: string) => (route.GET as (r: Request) => Promise<Response>)(new Request(`http://x.test/api/insights/ai?${qs}`));
+    expect((await as(admin, () => get(`period=custom&from=${daysAgo(500)}&to=${daysAgo(1)}`))).status).toBe(400);
+    expect((await as(admin, () => get(`period=custom&from=${daysAgo(5)}&to=${daysAgo(10)}`))).status).toBe(400);
+    expect((await as(admin, () => get(`period=custom&from=${daysAgo(10)}&to=${daysAgo(5)}&compare=1&stack=model`))).status).toBe(200);
   });
 
-  it("24h reads raw rows by hour", async () => {
-    const report = await reportAs(admin, { period: "24h" });
+  it('24h reads raw rows by hour', async () => {
+    const report = await reportAs(admin, { period: '24h' });
     expect(report.series.length).toBeGreaterThanOrEqual(24);
     expect(report.series[0].at).toMatch(/T\d\d:00:00\.000Z$/);
     expect(report.totals.calls).toBe(sumBy(report.series, (p) => p.calls));
   });
 
-  it("compares with the previous period of the same length", async () => {
-    const report = await reportAs(admin, { period: "7d", compare: true });
+  it('compares with the previous period of the same length', async () => {
+    const report = await reportAs(admin, { period: '7d', compare: true });
     const prior = database().get<{ cost: number; calls: number }>(
-      "SELECT SUM(cost) AS cost, COUNT(*) AS calls FROM ai_usage WHERE day >= ? AND day <= ?",
+      'SELECT SUM(cost) AS cost, COUNT(*) AS calls FROM ai_usage WHERE day >= ? AND day <= ?',
       daysAgo(13),
       daysAgo(7),
     );
@@ -577,14 +473,13 @@ describe("periods and previous period", () => {
     const workflow = report.groups.workflow.find((r) => r.key === wfTheirs);
     expect(workflow?.previous?.calls).toBeGreaterThan(0);
     expect(report.movers.length).toBeGreaterThan(0);
-    for (const m of report.movers)
-      expect(["none", "shared", "other"]).not.toContain(m.key);
-    expect((await reportAs(admin, { period: "7d" })).previous).toBeUndefined();
+    for (const m of report.movers) expect(['none', 'shared', 'other']).not.toContain(m.key);
+    expect((await reportAs(admin, { period: '7d' })).previous).toBeUndefined();
     // A custom range over 90 days has no previous period.
     expect(
       (
         await reportAs(admin, {
-          period: "custom",
+          period: 'custom',
           from: daysAgo(100),
           to: daysAgo(1),
           compare: true,
@@ -594,7 +489,7 @@ describe("periods and previous period", () => {
     expect(
       (
         await reportAs(admin, {
-          period: "custom",
+          period: 'custom',
           from: daysAgo(10),
           to: daysAgo(1),
           compare: true,
@@ -603,86 +498,68 @@ describe("periods and previous period", () => {
     ).toBeDefined();
   });
 
-  it("stacks the series by a group, top 5 and Other", async () => {
-    const report = await reportAs(admin, { period: "7d", stack: "model" });
-    expect(report.stack?.group).toBe("model");
+  it('stacks the series by a group, top 5 and Other', async () => {
+    const report = await reportAs(admin, { period: '7d', stack: 'model' });
+    expect(report.stack?.group).toBe('model');
     expect(report.stack?.points).toHaveLength(7);
-    const sum = sumBy(report.stack?.points ?? [], (p) =>
-      sumBy(p.cost, (c) => c),
-    );
+    const sum = sumBy(report.stack?.points ?? [], (p) => sumBy(p.cost, (c) => c));
     expect(sum).toBeCloseTo(report.totals.cost, 6);
-    expect(report.stack?.scope).toBe("visible");
-    expect(
-      (await reportAs(alpha, { period: "7d", stack: "person" })).stack?.scope,
-    ).toBe("everyone");
+    expect(report.stack?.scope).toBe('visible');
+    expect((await reportAs(alpha, { period: '7d', stack: 'person' })).stack?.scope).toBe('everyone');
   });
 });
 
-describe("filters", () => {
-  it("narrow the report", async () => {
+describe('filters', () => {
+  it('narrow the report', async () => {
     const byWorkflow = await reportAs(admin, {
-      period: "30d",
+      period: '30d',
       filters: { workflowId: wfTheirs },
     });
     expect(byWorkflow.groups.workflow.map((r) => r.key)).toEqual([wfTheirs]);
     const byModel = await reportAs(admin, {
-      period: "30d",
-      filters: { model: "claude-opus-4-1" },
+      period: '30d',
+      filters: { model: 'claude-opus-4-1' },
     });
-    expect(byModel.groups.model.map((r) => r.key)).toEqual([
-      "anthropic/claude-opus-4-1",
-    ]);
+    expect(byModel.groups.model.map((r) => r.key)).toEqual(['anthropic/claude-opus-4-1']);
     expect(
       (
         await reportAs(admin, {
-          period: "30d",
-          filters: { model: "anthropic/claude-opus-4-1" },
+          period: '30d',
+          filters: { model: 'anthropic/claude-opus-4-1' },
         })
       ).totals.calls,
     ).toBe(byModel.totals.calls);
-    expect(
-      (
-        await reportAs(admin, { period: "30d", filters: { purpose: "judge" } })
-      ).groups.purpose.map((r) => r.key),
-    ).toEqual(["judge"]);
-    expect(
-      (
-        await reportAs(admin, { period: "30d", filters: { purpose: "none" } })
-      ).groups.purpose.map((r) => r.key),
-    ).toEqual(["none"]);
+    expect((await reportAs(admin, { period: '30d', filters: { purpose: 'judge' } })).groups.purpose.map((r) => r.key)).toEqual(['judge']);
+    expect((await reportAs(admin, { period: '30d', filters: { purpose: 'none' } })).groups.purpose.map((r) => r.key)).toEqual(['none']);
     expect(
       (
         await reportAs(admin, {
-          period: "30d",
-          filters: { surface: "spotlight" },
+          period: '30d',
+          filters: { surface: 'spotlight' },
         })
       ).groups.surface.map((r) => r.key),
-    ).toEqual(["spotlight"]);
+    ).toEqual(['spotlight']);
     expect(
       (
         await reportAs(admin, {
-          period: "30d",
-          filters: { source: "litellm:claude" },
+          period: '30d',
+          filters: { source: 'litellm:claude' },
         })
       ).totals.calls,
     ).toBe(1);
     expect(
       (
         await reportAs(admin, {
-          period: "30d",
-          filters: { source: "landflow:landflow" },
+          period: '30d',
+          filters: { source: 'landflow:landflow' },
         })
       ).groups.source.map((r) => r.key),
-    ).toEqual(["landflow:landflow"]);
-    expect(
-      (
-        await reportAs(admin, { period: "30d", filters: { userId: beta.id } })
-      ).groups.person.map((r) => r.key),
-    ).toEqual([beta.id]);
+    ).toEqual(['landflow:landflow']);
+    expect((await reportAs(admin, { period: '30d', filters: { userId: beta.id } })).groups.person.map((r) => r.key)).toEqual([beta.id]);
     expect(
       (
         await reportAs(admin, {
-          period: "30d",
+          period: '30d',
           filters: { projectId: projectClosed },
         })
       ).groups.workflow.map((r) => r.key),
@@ -690,194 +567,113 @@ describe("filters", () => {
     expect(
       (
         await reportAs(admin, {
-          period: "30d",
+          period: '30d',
           filters: { credentialId: credId },
         })
       ).totals.calls,
     ).toBeGreaterThan(0);
   });
 
-  it("a filter on a workflow, agent, project or credential the member cannot read is a 404", async () => {
-    const status = (filters: Parameters<typeof aiSpendReport>[1]["filters"]) =>
-      reportAs(alpha, { period: "7d", filters }).then(
+  it('a filter on a workflow, agent, project or credential the member cannot read is a 404', async () => {
+    const status = (filters: Parameters<typeof aiSpendReport>[1]['filters']) =>
+      reportAs(alpha, { period: '7d', filters }).then(
         () => 200,
         (e: { status?: number }) => e.status,
       );
     expect(await status({ workflowId: wfTheirs })).toBe(404);
     expect(await status({ projectId: projectClosed })).toBe(404);
-    expect(await status({ agentId: "ag_not_theirs" })).toBe(404);
+    expect(await status({ agentId: 'ag_not_theirs' })).toBe(404);
     expect(await status({ credentialId: credId })).toBe(404);
     expect(await status({ workflowId: wfMine })).toBe(200);
     expect(await status({ projectId: projectOpen })).toBe(200);
     const response = await as(alpha, () =>
-      (route.GET as (r: Request) => Promise<Response>)(
-        new Request(`http://x.test/api/insights/ai?workflowId=${wfTheirs}`),
-      ),
+      (route.GET as (r: Request) => Promise<Response>)(new Request(`http://x.test/api/insights/ai?workflowId=${wfTheirs}`)),
     );
     expect(response.status).toBe(404);
   });
 });
 
-describe("a member (D1)", () => {
-  it("sees every person by name over every row, other groups as Another ..., totals of what they see", async () => {
-    const report = await reportAs(alpha, { period: "7d" });
-    const people = Object.fromEntries(
-      report.groups.person.map((r) => [r.label, r.cost]),
-    );
-    expect(Object.keys(people)).toEqual(
-      expect.arrayContaining(["Alma Alpha", "Ben Beta"]),
-    );
-    expect(sumBy(report.groups.person, (r) => r.cost)).toBeCloseTo(
-      report.peopleTotals.cost,
-      6,
-    );
+describe('a member (D1)', () => {
+  it('sees every person by name over every row, other groups as Another ..., totals of what they see', async () => {
+    const report = await reportAs(alpha, { period: '7d' });
+    const people = Object.fromEntries(report.groups.person.map((r) => [r.label, r.cost]));
+    expect(Object.keys(people)).toEqual(expect.arrayContaining(['Alma Alpha', 'Ben Beta']));
+    expect(sumBy(report.groups.person, (r) => r.cost)).toBeCloseTo(report.peopleTotals.cost, 6);
     expect(report.peopleTotals.cost).toBeGreaterThan(report.totals.cost);
     const wf = report.groups.workflow.map((r) => r.label);
-    expect(wf).toContain("Mine flow");
-    expect(wf).not.toContain("Their flow");
-    expect(report.groups.workflow.find((r) => r.key === wfMine)?.href).toBe(
-      `/workflows/${wfMine}`,
-    );
-    expect(report.groups.person.find((r) => r.key === alpha.id)?.href).toBe(
-      `/insights/ai?userId=${alpha.id}`,
-    );
-    expect(report.groups.credential.map((r) => r.label)).not.toContain(
-      "Team key",
-    );
-    expect(sumBy(report.groups.workflow, (r) => r.cost)).toBeCloseTo(
-      report.totals.cost,
-      6,
-    );
+    expect(wf).toContain('Mine flow');
+    expect(wf).not.toContain('Their flow');
+    expect(report.groups.workflow.find((r) => r.key === wfMine)?.href).toBe(`/workflows/${wfMine}`);
+    expect(report.groups.person.find((r) => r.key === alpha.id)?.href).toBe(`/insights/ai?userId=${alpha.id}`);
+    expect(report.groups.credential.map((r) => r.label)).not.toContain('Team key');
+    expect(sumBy(report.groups.workflow, (r) => r.cost)).toBeCloseTo(report.totals.cost, 6);
     const text = JSON.stringify(report);
-    expect(text).not.toContain("ben@spend.test");
+    expect(text).not.toContain('ben@spend.test');
     expect(text).not.toContain(credId);
     // An admin sees the credential by name.
-    expect(
-      (await reportAs(admin, { period: "7d" })).groups.credential.map(
-        (r) => r.label,
-      ),
-    ).toContain("Team key");
+    expect((await reportAs(admin, { period: '7d' })).groups.credential.map((r) => r.label)).toContain('Team key');
   });
 
-  it("ben sees Another workflow for what is not his and his own credential by name", async () => {
-    const report = await reportAs(beta, { period: "7d" });
-    expect(report.groups.workflow.map((r) => r.label)).toContain("Their flow");
-    expect(report.groups.credential.map((r) => r.label)).toContain("Team key");
-    const alma = await reportAs(alpha, { period: "7d" });
-    expect(alma.groups.surface.map((r) => r.label)).toEqual(
-      expect.arrayContaining(["Spotlight"]),
-    );
-    expect(alma.groups.purpose.map((r) => r.label)).toEqual(
-      expect.arrayContaining(["Answer"]),
-    );
+  it('ben sees Another workflow for what is not his and his own credential by name', async () => {
+    const report = await reportAs(beta, { period: '7d' });
+    expect(report.groups.workflow.map((r) => r.label)).toContain('Their flow');
+    expect(report.groups.credential.map((r) => r.label)).toContain('Team key');
+    const alma = await reportAs(alpha, { period: '7d' });
+    expect(alma.groups.surface.map((r) => r.label)).toEqual(expect.arrayContaining(['Spotlight']));
+    expect(alma.groups.purpose.map((r) => r.label)).toEqual(expect.arrayContaining(['Answer']));
   });
 
-  it("labels the groups", async () => {
-    const report = await reportAs(admin, { period: "30d" });
-    expect(report.groups.surface.map((r) => r.label)).toEqual(
-      expect.arrayContaining(["Spotlight", "Runs and agents"]),
-    );
-    expect(report.groups.purpose.map((r) => r.label)).toEqual(
-      expect.arrayContaining(["Judge", "No purpose"]),
-    );
-    expect(report.groups.workflow.map((r) => r.label)).toEqual(
-      expect.arrayContaining(["Mine flow", "No workflow"]),
-    );
-    expect(report.groups.credential.map((r) => r.label)).toContain(
-      "No credential",
-    );
-    expect(report.groups.source.map((r) => r.label)).toContain(
-      "Claude Code on kagent",
-    );
+  it('labels the groups', async () => {
+    const report = await reportAs(admin, { period: '30d' });
+    expect(report.groups.surface.map((r) => r.label)).toEqual(expect.arrayContaining(['Spotlight', 'Runs and agents']));
+    expect(report.groups.purpose.map((r) => r.label)).toEqual(expect.arrayContaining(['Judge', 'No purpose']));
+    expect(report.groups.workflow.map((r) => r.label)).toEqual(expect.arrayContaining(['Mine flow', 'No workflow']));
+    expect(report.groups.credential.map((r) => r.label)).toContain('No credential');
+    expect(report.groups.source.map((r) => r.label)).toContain('Claude Code on kagent');
   });
 });
 
-describe("runs and unpriced models", () => {
-  it("counts distinct runs: an agent loop of 5 calls is 1 run, and one run across two models is 1 in the totals", async () => {
+describe('runs and unpriced models', () => {
+  it('counts distinct runs: an agent loop of 5 calls is 1 run, and one run across two models is 1 in the totals', async () => {
     const report = await reportAs(admin, {
-      period: "7d",
+      period: '7d',
       filters: { workflowId: wfMine },
     });
     const loop = database().get<{ runs: number }>(
-      "SELECT COUNT(DISTINCT execution_id) AS runs FROM ai_usage WHERE workflow_id = ? AND day >= ? AND execution_id IS NOT NULL",
+      'SELECT COUNT(DISTINCT execution_id) AS runs FROM ai_usage WHERE workflow_id = ? AND day >= ? AND execution_id IS NOT NULL',
       wfMine,
       daysAgo(6),
     );
     expect(report.totals.runs).toBe(Number(loop?.runs));
     expect(report.totals.runs).toBeLessThan(report.totals.calls);
-    const models = report.groups.model.filter((m) =>
-      ["anthropic/claude-haiku-4-5", "anthropic/claude-sonnet-5-5"].includes(
-        m.key,
-      ),
-    );
+    const models = report.groups.model.filter((m) => ['anthropic/claude-haiku-4-5', 'anthropic/claude-sonnet-5-5'].includes(m.key));
     expect(models).toHaveLength(2);
     // ex-loop ran on both models: counted once in each model row, once in the total.
-    expect(sumBy(report.groups.model, (m) => m.runs)).toBe(
-      report.totals.runs + 1,
-    );
-    const loopOnly = database().all(
-      "SELECT DISTINCT execution_id FROM ai_usage WHERE execution_id = 'ex-loop'",
-    );
+    expect(sumBy(report.groups.model, (m) => m.runs)).toBe(report.totals.runs + 1);
+    const loopOnly = database().all("SELECT DISTINCT execution_id FROM ai_usage WHERE execution_id = 'ex-loop'");
     expect(loopOnly).toHaveLength(1);
   });
 
-  it("flags a model with no price and no cost, and not a priced one", async () => {
-    const report = await reportAs(admin, { period: "7d" });
-    expect(
-      report.groups.model.find((m) => m.key === "ollama/qwen3-coder:30b")
-        ?.unpriced,
-    ).toBe(true);
-    expect(
-      report.groups.model.find((m) => m.key === "ollama/llama-priced")
-        ?.unpriced,
-    ).toBeUndefined();
-    expect(
-      report.groups.model.find((m) => m.key === "anthropic/claude-sonnet-5-5")
-        ?.unpriced,
-    ).toBeUndefined();
+  it('flags a model with no price and no cost, and not a priced one', async () => {
+    const report = await reportAs(admin, { period: '7d' });
+    expect(report.groups.model.find((m) => m.key === 'ollama/qwen3-coder:30b')?.unpriced).toBe(true);
+    expect(report.groups.model.find((m) => m.key === 'ollama/llama-priced')?.unpriced).toBeUndefined();
+    expect(report.groups.model.find((m) => m.key === 'anthropic/claude-sonnet-5-5')?.unpriced).toBeUndefined();
     expect(report.totals.unpricedCalls).toBeGreaterThanOrEqual(1);
   });
 });
 
-describe("the old report", () => {
-  it("GET /api/insights/ai?period=7d keeps every key it had", async () => {
-    const response = await as(admin, () =>
-      (route.GET as (r: Request) => Promise<Response>)(
-        new Request("http://x.test/api/insights/ai?period=7d"),
-      ),
-    );
+describe('the old report', () => {
+  it('GET /api/insights/ai?period=7d keeps every key it had', async () => {
+    const response = await as(admin, () => (route.GET as (r: Request) => Promise<Response>)(new Request('http://x.test/api/insights/ai?period=7d')));
     expect(response.status).toBe(200);
-    const body = (await response.json()) as AiPageReport &
-      Record<string, unknown>;
-    for (const key of [
-      "period",
-      "from",
-      "to",
-      "totals",
-      "peopleTotals",
-      "groups",
-      "caps",
-      "requests",
-      "viewer",
-      "capRaise",
-    ])
-      expect(body).toHaveProperty(key);
-    for (const group of [
-      "project",
-      "goal",
-      "agent",
-      "person",
-      "model",
-      "source",
-    ])
-      expect(Array.isArray(body.groups[group as AiSpendGroup])).toBe(true);
-    for (const key of ["inputTokens", "outputTokens", "cost", "calls"])
-      expect(body.totals).toHaveProperty(key);
+    const body = (await response.json()) as AiPageReport & Record<string, unknown>;
+    for (const key of ['period', 'from', 'to', 'totals', 'peopleTotals', 'groups', 'caps', 'requests', 'viewer', 'capRaise']) expect(body).toHaveProperty(key);
+    for (const group of ['project', 'goal', 'agent', 'person', 'model', 'source']) expect(Array.isArray(body.groups[group as AiSpendGroup])).toBe(true);
+    for (const key of ['inputTokens', 'outputTokens', 'cost', 'calls']) expect(body.totals).toHaveProperty(key);
     expect(body.viewer).toEqual({ admin: true, userId: admin.id });
-    expect(Object.keys(body.groups).sort()).toEqual(
-      [...AI_SPEND_GROUPS].sort(),
-    );
-    const old = await as(admin, () => aiConsoleReport(admin, "7d"));
+    expect(Object.keys(body.groups).sort()).toEqual([...AI_SPEND_GROUPS].sort());
+    const old = await as(admin, () => aiConsoleReport(admin, '7d'));
     expect(old.totals.calls).toBe(body.totals.calls);
   });
 });
