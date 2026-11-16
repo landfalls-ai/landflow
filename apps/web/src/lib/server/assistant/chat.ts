@@ -379,7 +379,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
   let keptSent = false; // SB03:
   let askedUser = false; // SB11:
   let badAsks = 0; // SB11:
-  let severalSent = false; // SB11:
+  let severalSent: number | undefined; // SB11: the step it was sent back in (every proposal of that step is)
   let applyRetried = false;
   /** The ops of each proposal so far, as sent: a model may send the same one again and again. */
   const sent = new Set<string>(input.resume?.sent);
@@ -435,7 +435,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     const calls = (type: string) => !type.startsWith('core.') || /^core\.(?:httpRequest|aiAgent|messageAgent|runTeam|a2aAgent|mcp\w*|sendEmail)$/.test(type) || Boolean(types.find((t) => t.type === type)?.descriptor.credentials?.length);
     const settings = ops.some((op) => op.op === 'setNodeSettings');
     const fits = working.nodes.filter((n) => (settings ? calls(n.type) && calls(first.type) : n.type === first.type));
-    if (fits.length < 2 || fits.every((n) => edited.some((e) => e.id === n.id))) return undefined;
+    if (fits.length < 2) return undefined;
     // A short name (under three letters, which `namedNodes` skips) the message spells exactly is a name given.
     if (fits.some((n) => n.name.trim().length < 3 && new RegExp(`(?<![\\p{L}\\p{N}])${n.name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'u').test(latestRaw))) return undefined;
     return fits.map((n) => n.name);
@@ -538,10 +538,10 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
           return result(`Not shown: ${kept} Only the person can change that: say so in one sentence.`, 'Kept what the person gave');
         }
         // SB11: an edit of one of several steps of its kind, with no scope and no step named: ask which, once.
-        if (!testSession && !severalSent && !askedUser) {
+        if (!testSession && (severalSent === undefined || severalSent === currentStep) && !askedUser) {
           const several = severalFit(validated.ops);
           if (several) {
-            severalSent = true;
+            severalSent = currentStep;
             return result(`Several steps fit (${several.map((n) => `“${n}”`).join(', ')}): ask_user which one instead of picking. The request names none and none is selected.`, 'Asked which step instead of picking', true, false);
           }
         }

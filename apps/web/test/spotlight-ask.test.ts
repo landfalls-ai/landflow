@@ -126,6 +126,14 @@ describe('the backstop: several steps fit', () => {
     }
   });
 
+  it('a change to every one of them, with none asked for by "all", is sent back too', async () => {
+    const both = { text: '', toolCalls: [...retry('Open status incident').toolCalls!, ...retry('Read Linear bugs').toolCalls!], stopReason: 'tool_use' as const };
+    const { events, calls } = await chat('it should retry 3 times', [both, call('ask_user', { question: 'Which step?', choices: CHOICES }), { text: 'UNUSED' }]);
+    expect(events.some((e) => e.type === 'ask')).toBe(true);
+    expect(events.some((e) => e.type === 'proposal')).toBe(false);
+    expect(calls).toHaveLength(2);
+  });
+
   it('a test session is never sent back', async () => {
     const { events } = await chat('Fix “Open status incident”: it failed with 401.', [retry('Open status incident'), { text: 'Done.' }], { session: 'fix', selectedNodeId: 'b' });
     expect(events.filter((e) => e.type === 'proposal')).toHaveLength(1);
