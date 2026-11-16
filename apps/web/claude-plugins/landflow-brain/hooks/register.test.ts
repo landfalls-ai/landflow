@@ -935,6 +935,14 @@ test('a spend call past 3 s shows no spend', { options: OPTIONS }, async ($, on)
   await settled()
   expect(statuses.join('|')).not.toMatch(/today/)
   expect(statuses.at(-1)).toBe('brain: on · 0 held')
+  // One more turn renders the status again: the late value is still not there (the next call also times out at 3 s).
+  const next = turn($, 't1')
+  await clock.advance(3001)
+  await next
+  await clock.advance(10_000)
+  await settled()
+  expect(statuses.join('|')).not.toMatch(/today/)
+  expect(statuses.at(-1)).toBe('brain: on · 0 held')
 })
 
 test('a spend body that is not JSON shows no spend', { options: OPTIONS }, async ($, on) => {
