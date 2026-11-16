@@ -429,42 +429,51 @@ for the period (24 hours, 7, 30 or 90 days, or a custom range of up to 400 days)
 
 - **Totals**: the estimated cost, the tokens (in and out, and cached) and the calls. Cost comes from Landflow's own price
   table (Settings → AI prices), as everywhere else; a cost the gateway reports is not used for these totals.
-- **You** (everyone; first on the page): your own AI spend today, this month and in the period, the models you used
-  (one a local model nobody priced says "Not priced") and your own caps (your own set, or the default for everyone),
-  from `GET /api/insights/ai/me`. Each cap says where it is heading in the forecast card's words and figure ("Reaches its
+- **You** (everyone; first on the page): your own AI spend today, this month and in the period, the models you used (one
+  a local model nobody priced says "Not priced") and your own caps (your own set, or the default for everyone), from
+  `GET /api/insights/ai/me`. Each cap says where it is heading in the forecast card's words and figure ("Reaches its
   limit on Nov 24", "Stays under its limit to Nov 30", a daily cap's pace): one function (`capForecaster` in
   `lib/server/ai-usage/forecast.ts`) answers both cards. It holds only your rows and your caps; other people's caps stay
   private.
-- **Spend by** project, goal, agent, workflow, person, model, source, credential, surface or purpose. Each row has its cost, tokens, calls and a bar for its share of
-  the cost. A project row with no project on it counts under the workflow's or agent's home project; calls from no
-  agent (workflows, Spotlight) are "No agent". The Goal grouping uses the goal each call was stamped with
-  ([what a goal costs](projects-and-goals.md#what-a-goal-costs)): "No goal" when there is none, "Another goal" for one
-  you can't see. Sources are "Landflow" (calls Landflow made), "kagent", "Claude Code on
-  kagent" and "Other clients of the gateway" (the last three come from the spend import, once it has run). A model with no price whose calls cost nothing is marked "Not priced" (a local model nobody priced); a **Sort by tokens** switch for the Model group ranks by tokens, and admins get **Set a price**, a link to Settings → AI prices. Workflows are named (a link when you can read them, "Another workflow" when not, "No workflow"); credentials by their
+- **Spend by** project, goal, agent, workflow, person, model, source, credential, surface or purpose. Each row has its
+  cost, tokens, calls and a bar for its share of the cost. A project row with no project on it counts under the
+  workflow's or agent's home project; calls from no agent (workflows, Spotlight) are "No agent". The Goal grouping uses
+  the goal each call was stamped with ([what a goal costs](projects-and-goals.md#what-a-goal-costs)): "No goal" when
+  there is none, "Another goal" for one you can't see. Sources are "Landflow" (calls Landflow made), "kagent", "Claude
+  Code on kagent" and "Other clients of the gateway" (the last three come from the spend import, once it has run). A
+  model with no price whose calls cost nothing is marked "Not priced" (a local model nobody priced); a **Sort by
+  tokens** switch for the Model group ranks by tokens, and admins get **Set a price**, a link to Settings → AI prices.
+  Workflows are named (a link when you can read them, "Another workflow" when not, "No workflow"); credentials by their
   name when you can read them, else "Another credential" (never an id); a surface is "Spotlight", "Agent architect",
-  "Ask the brain" or "Runs and agents"; a purpose is its name or "No purpose". Each list
-  holds the top 50; the rest add up as "Other". On a phone each row is a card; desktop shows a table.
+  "Ask the brain" or "Runs and agents"; a purpose is its name or "No purpose". Each list holds the top 50; the rest add
+  up as "Other". On a phone each row is a card; desktop shows a table. The AI page's wave 13 parts (trend, movers, drill
+  sheet, forecast and cache cards, You card) are made for desktop; on a phone the page keeps its earlier row cards and
+  never scrolls sideways.
 - **Caps**: every cap that has a period (a workflow's daily caps, an agent's guardrails, Settings → AI caps), what it has
   used and where it is set. The bar is the accent colour below 80%, amber from 80% and red at 100%. Admins also see the
   budget the gateway holds as a backstop for a person's or an agent's dollar cap, when the budgets sync is on.
 - **Forecast to month end** (above the caps): where this month's spend is heading, as money: "$410 to $520 by Nov 30",
-  the most likely figure in words, and each cap or budget the viewer may see with "Reaches its limit on Nov 24" or "Stays
-  under its limit to Nov 30". It always covers the month, whatever the period above. The method: month to date (the
-  month's days up to and including today) plus the mean of the last 7 complete days times the days left (the middle,
-  P50), with a band of 1.2816 standard deviations of those 7 days times the square root of the days left either side
-  (a 10th to 90th percentile range), the low end never below month to date. With fewer than 7 complete days of data it says
-  **early** and uses the days there are. The date is the first day the P50 line reaches the limit; "Already at its limit"
-  when it is over, and none when it stays under. The total is what the viewer can see; each monthly cap is forecast from
-  its own subject's days (a person, an agent, a credential or a project), and a daily cap shows today's pace (used so far
-  today spread over 24 hours). Cost caps are in dollars, a monthly token cap in tokens. A member sees their own user cap,
-  the caps of workflows and agents they can open and the budgets of their projects, never another person's cap or a
-  credential's. The method is `forecastMonth` in `lib/shared/ai-forecast.ts`, worded as Landledger's forecast.
-- **Prompt cache** (below the requests): over the period (the page's own, 90 days or a custom range too) and the page's filters (every one applies, by the report's own rules; an id you can't read is a 404), the share of the prompt that came from the provider's cache,
-  the dollars it saved, the number of misses and in how many runs they happened (each call is grouped by its own session, else its execution, so independent runs never count as one session; a call with neither, such as a gateway call, is no run) and the five agents with the most uncached input, each with its hit rate and
-  why it missed (the same reasons as the Run Trace's Spend tab). It counts the calls the Run Trace's cache line counts:
-  Anthropic and OpenAI calls, and any call that reports cache tokens. When the period holds calls of the AI Agent node,
-  which asks for no cache, the card says so with their size. It holds numbers only, never prompt text, and follows
-  "Who sees what" below.
+  the most likely figure in words, and each cap or budget the viewer may see with "Reaches its limit on Nov 24" or
+  "Stays under its limit to Nov 30". It always covers the month, whatever the period above. The method: month to date
+  (the month's days up to and including today) plus the mean of the last 7 complete days times the days left (the
+  middle, P50), with a band of 1.2816 standard deviations of those 7 days times the square root of the days left either
+  side (a 10th to 90th percentile range), the low end never below month to date. With fewer than 7 complete days of data
+  it says **early** and uses the days there are. The date is the first day the P50 line reaches the limit; "Already at
+  its limit" when it is over, and none when it stays under. The total is what the viewer can see; each monthly cap is
+  forecast from its own subject's days (a person, an agent, a credential or a project), and a daily cap shows today's
+  pace (used so far today spread over 24 hours). Cost caps are in dollars, a monthly token cap in tokens. A member sees
+  their own user cap, the caps of workflows and agents they can open and the budgets of their projects, never another
+  person's cap or a credential's. The method is `forecastMonth` in `lib/shared/ai-forecast.ts`, worded as Landledger's
+  forecast.
+- **Prompt cache** (below the requests): over the period (the page's own, 90 days or a custom range too) and the page's
+  filters (every one applies, by the report's own rules; an id you can't read is a 404), the share of the prompt that
+  came from the provider's cache, the dollars it saved, the number of misses and in how many runs they happened (each
+  call is grouped by its own session, else its execution, so independent runs never count as one session; a call with
+  neither, such as a gateway call, is no run) and the five agents with the most uncached input, each with its hit rate
+  and why it missed (the same reasons as the Run Trace's Spend tab). It counts the calls the Run Trace's cache line
+  counts: Anthropic and OpenAI calls, and any call that reports cache tokens. When the period holds calls of the AI
+  Agent node, which asks for no cache, the card says so with their size. It holds numbers only, never prompt text, and
+  follows "Who sees what" below.
 - **Requests**: cap-raise requests of the last 30 days (a member's own; every one for admins), with the decision and
   "In LiteLLM: updated, skipped or failed". A member can withdraw an open one.
 - **Gateway**: a health dot, the models the gateway serves, and for admins the spend import's and the budgets sync's last
@@ -477,7 +486,10 @@ one run); a run lists its tokens, cost, first call and a link to its Spend tab (
 the viewer may open is listed (rule 3 below); what they can't is counted in `hidden`, with no names and no ids, and a
 filter or key naming something they can't read answers 404. `shared` ("Another ...") lists nothing; `other` can't be
 opened. `format=csv` downloads the same columns as `text/csv`, quoted per RFC 4180, with the hidden total as the last
-line and a note when it was cut at 10,000 rows. Neither holds prompt text.
+line and a note when it was cut at 10,000 rows. Neither holds prompt text. Under a project, agent, workflow or
+credential filter a person row holds only the rows you can see (as `peopleTotals` does); under any other filter it holds
+every row that matches.
+
 **The trend, the movers and the drill sheet (wave 13, SP10).** The period switch also has **90 days** and **Custom**
 (two dates, at most 400 days, none in the future; the page says why a range can't be asked yet). Above "Spend by" the
 page draws:
@@ -492,13 +504,14 @@ page draws:
   surface, purpose). A person's name still links to the person filter (`/insights/ai?userId=<id>`), which now keeps the
   period and the other filters.
 - **Filters** (project, agent, workflow, person, credential, model, purpose, source, surface) live in the page's URL and
-  show as chips; a chip's cross removes it. The period, range, group, stack and the open sheet are in the URL too, so Back
-  from a run lands on the same view.
-- **The drill sheet**: a click on a row (or its arrow) opens a sheet with the **runs** behind the number (costliest first;
-  **Show more** pages), a **Calls** tab, and **Download CSV** of the list. A run opens its Spend tab
+  show as chips; a chip's cross removes it. The period, range, group, stack and the open sheet are in the URL too, so
+  Back from a run lands on the same view.
+- **The drill sheet**: a click on a row (or its arrow) opens a sheet with the **runs** behind the number (costliest
+  first; **Show more** pages), a **Calls** tab, and **Download CSV** of the list. A run opens its Spend tab
   (`/runs/<id>?tab=spend`, or the agent's session); a call opens its composition in the sheet, as in the Run Trace. What
   you can't open is a line, "N runs you can't open: $X" (the sum only when calls are behind it): a count and a cost,
-  never a name, an id or any prompt text ([Who sees what](#the-ai-page) rule 3). "Another ..." and "Other" rows don't open.
+  never a name, an id or any prompt text ([Who sees what](#the-ai-page) rule 3). "Another ..." and "Other" rows don't
+  open.
 
 The trend and the sheet read `GET /api/insights/ai` (`compare=1`, `stack=<group>`, the filters, `period=custom&from&to`)
 and `GET /api/insights/ai/runs` and `.../calls` (`format=csv`). The faint line is asked as a second report for the days
@@ -517,19 +530,20 @@ are for admins. The page never shows a key.
 
 **The report behind the page** (`GET /api/insights/ai`, SP08). Besides the totals and the ten groups it holds a daily
 series (hourly for 24 hours; days with no calls are zeros), optionally split by one group (`stack=<group>`: its top 5 by
-cost and "Other"), the previous period of the same length (`compare=1`; a custom range over 90 days has none) with each row's
-previous cost and tokens and the biggest movers, and `runs`: distinct runs (an execution, else an agent session), counted
-on the raw rows, so one run across two models is one run in the total and one in each model row. A model row is flagged
-`unpriced` when the price table has no price for it and its calls cost nothing (a local model nobody priced). Filters
-(`projectId`, `agentId`, `workflowId`, `userId`, `credentialId`, `model`, `purpose`, `source`, `surface`) narrow every number;
-a filter on a project, agent, workflow or credential you can't read answers 404. Under a filter by project, agent, workflow
-or credential the person group holds the filtered rows you can see; under any other filter it keeps every row that matches
-(D1). **Day periods read a daily rollup** (`ai_usage_daily`, one row per day and combination of the grouping columns): a
-leader service rewrites today, yesterday, every day a late import marked and every day since its last pass (so a host
-that was off for days loses nothing), every 10 minutes, a week of days at a time with the event loop free between the
-steps, each day in one transaction of row calls; days older than yesterday are read from it, yesterday and today from the raw rows (always exact), and 24 hours from
-the raw rows by hour. The rollup is kept as long as `ai_usage` (`LANDFLOW_AI_USAGE_RETENTION_DAYS`, default 400), so it is
-for speed, not for a longer memory. A person's row links to the person filter (`/insights/ai?userId=<id>`).
+cost and "Other"), the previous period of the same length (`compare=1`; a custom range over 90 days has none) with each
+row's previous cost and tokens and the biggest movers, and `runs`: distinct runs (an execution, else an agent session),
+counted on the raw rows, so one run across two models is one run in the total and one in each model row. A model row is
+flagged `unpriced` when the price table has no price for it and its calls cost nothing (a local model nobody priced).
+Filters (`projectId`, `agentId`, `workflowId`, `userId`, `credentialId`, `model`, `purpose`, `source`, `surface`) narrow
+every number; a filter on a project, agent, workflow or credential you can't read answers 404. Under a filter by
+project, agent, workflow or credential the person group holds the filtered rows you can see; under any other filter it
+keeps every row that matches (D1). **Day periods read a daily rollup** (`ai_usage_daily`, one row per day and
+combination of the grouping columns): a leader service rewrites today, yesterday, every day a late import marked and
+every day since its last pass (so a host that was off for days loses nothing), every 10 minutes, a week of days at a
+time with the event loop free between the steps, each day in one transaction of row calls; days older than yesterday are
+read from it, yesterday and today from the raw rows (always exact), and 24 hours from the raw rows by hour. The rollup
+is kept as long as `ai_usage` (`LANDFLOW_AI_USAGE_RETENTION_DAYS`, default 400), so it is for speed, not for a longer
+memory. A person's row links to the person filter (`/insights/ai?userId=<id>`).
 
 **Ask for more.** A member sees **Ask for more** on their own user cap and on the caps of workflows and agents they can
 edit. It asks for a new maximum above the current one and a reason, and sends it to `POST /api/ai/cap-requests` (see
@@ -539,8 +553,10 @@ installs and publishes the flow. Admins change caps where they are set (the link
 
 **A project's budget** is a cap too: `project:<id>:month:cost`, listed for the project's members, with the link to the project's AI budget settings. Its editors who are not its admins see **Ask for more** while the cap-raise flow is on; an approved request sets the budget's amount, settles the month's open incidents as raised by the approver, and its `gateway` is `skipped` (a project has no LiteLLM backstop). The cost alerts watch it like the other caps. See [AI budget](projects-and-goals.md#ai-budget).
 
-The page reads `GET /api/insights/ai`, `GET /api/insights/ai/forecast`, `GET /api/insights/ai/cache` and `GET /api/llm-gateway/status` ([reference/api.md](reference/api.md)) and
-refreshes every minute while the tab is visible.
+The page reads `GET /api/insights/ai`, `GET /api/insights/ai/forecast`, `GET /api/insights/ai/cache`, `GET
+/api/insights/ai/me` (the You card), `GET /api/insights/ai/runs` and `GET /api/insights/ai/calls` (the drill sheet) and
+`GET /api/llm-gateway/status` ([reference/api.md](reference/api.md)) and refreshes every minute while the tab is
+visible.
 
 ## What each call was for
 
@@ -594,4 +610,6 @@ stores prompt text. These columns show on screens from wave 12; wave 11 only rec
   Slack answer never applies, see above).
 - Several cap-raise flows: one per instance.
 - Asking about a credential's caps (an admin sets those directly).
-- **The AI page:** the report itself has no export, but the runs and calls behind a row do (CSV); the page is desktop only.
+- **The AI page:** the report itself has no export, but the runs and calls behind a row do (CSV). The AI page's wave 13
+  parts (trend, movers, drill sheet, forecast and cache cards, You card) are made for desktop; on a phone the page keeps
+  its earlier row cards and never scrolls sideways.

@@ -503,16 +503,15 @@ the call may start, then prices and records what it used.
 
 **Insights → AI** (`/insights/ai`) shows this spend by project, agent, person, model and source, with the caps and how near each is, including calls imported from the LLM gateway's spend log ([llm-gateway.md](llm-gateway.md#the-ai-page)).
 
-- **Prices** (`lib/server/ai-usage/prices.ts`): USD per million input and output tokens. Built-in
-  defaults are the Anthropic and OpenAI list prices; Ollama and other local models cost $0.
-  **Settings → AI prices** (`GET/PUT /api/settings/ai-prices`) overrides any model, Ollama
-  included. A model id matches exactly, else by the longest prefix (`claude-sonnet-4-6` prices
-  `claude-sonnet-4-6-20260101`); a `vendor/` prefix (OpenRouter style) is ignored, and an
-  OpenAI-compatible server's model falls back to the other providers' prices. Unknown models cost
-  $0. Costs are estimates: batch prices aren't modelled. **Local models** (Ollama through Landflow as `ollama`, or
-  through the LLM gateway, which logs `ollama_chat`) cost $0 until priced: **Settings → AI prices → Local models**
-  (`GET /api/settings/ai-prices/local`) lists each model seen in 30 days with its calls and tokens and an inline
-  "Set a price". One price (`ollama/<model>`) covers both provider names, never a hosted provider's or a built-in. A price
+- **Prices** (`lib/server/ai-usage/prices.ts`): USD per million input and output tokens. Built-in defaults are the
+  Anthropic and OpenAI list prices; Ollama and other local models cost $0. **Settings → AI prices** (`GET/PUT
+  /api/settings/ai-prices`) overrides any model, Ollama included. A model id matches exactly, else by the longest prefix
+  (`claude-sonnet-4-6` prices `claude-sonnet-4-6-20260101`); a `vendor/` prefix (OpenRouter style) is ignored, and an
+  OpenAI-compatible server's model falls back to the other providers' prices. Unknown models cost $0. Costs are
+  estimates: batch prices aren't modelled. **Local models** (Ollama through Landflow as `ollama`, or through the LLM
+  gateway, which logs `ollama_chat`) cost $0 until priced: **Settings → AI prices → Local models** (`GET
+  /api/settings/ai-prices/local`) lists each model seen in 30 days with its calls and tokens and an inline "Set a
+  price". One price (`ollama/<model>`) covers both provider names, never a hosted provider's or a built-in. A price
   applies from the moment it is saved; recorded calls keep the cost they had (no repricing). There is no "equivalent
   cost" for a local model.
 - **Cached tokens**: a price also has **cache read** and **cache write** columns (USD per million;
@@ -529,14 +528,14 @@ the call may start, then prices and records what it used.
   `LANDFLOW_AI_USAGE_RETENTION_DAYS` (default 400; the old `AI_USAGE_RETENTION_DAYS` still works). An execution record carries its own totals per model
   (`aiUsage`), earlier segments included when it resumed after a wait; sub-executions keep their
   own. Calls outside executions and agents (the editor assistant, the AI builder) are counted too, through the assistant's own scope, with the `surface` (Spotlight, the Agent architect or the brain) in the row. The `ai.call` ledger event's `attrs` also carry `purpose`, `nodeId`, `sessionId`, `iteration` and `usageId` when set, next to the keys it always had.
-- **Daily rollup** (SP08, migration 2902): `ai_usage_daily` holds one row per day and combination of project, goal, agent,
-  workflow, user, credential, surface, purpose, provider, model, source and runtime (`''` for none) with the summed tokens,
-  cost, calls and distinct runs. The leader's "AI spend rollup" service rewrites today, yesterday, every day a late spend
-  import marked dirty (the `meta` key `ai_spend_dirty_days`) and every day since its last pass (the `meta` key
-  `ai_spend_rolled_through`, capped at the retention, so a host that was off for days loses nothing) every 10 minutes, a
-  week of days at a time with the event loop free between the steps (`runRollupInBatches`), through `delete` and `upsert`
-  calls in one transaction per day, and prunes it at `LANDFLOW_AI_USAGE_RETENTION_DAYS` like `ai_usage` itself. The AI page reads it for the
-  days before yesterday ([llm-gateway.md](llm-gateway.md#the-ai-page)).
+- **Daily rollup** (SP08, migration 2902): `ai_usage_daily` holds one row per day and combination of project, goal,
+  agent, workflow, user, credential, surface, purpose, provider, model, source and runtime (`''` for none) with the
+  summed tokens, cost, calls and distinct runs. The leader's "AI spend rollup" service rewrites today, yesterday, every
+  day a late spend import marked dirty (the `meta` key `ai_spend_dirty_days`) and every day since its last pass (the
+  `meta` key `ai_spend_rolled_through`, capped at the retention, so a host that was off for days loses nothing) every 10
+  minutes, a week of days at a time with the event loop free between the steps (`runRollupInBatches`), through `delete`
+  and `upsert` calls in one transaction per day, and prunes it at `LANDFLOW_AI_USAGE_RETENTION_DAYS` like `ai_usage`
+  itself. The AI page reads it for the days before yesterday ([llm-gateway.md](llm-gateway.md#the-ai-page)).
 - **Where it shows**: the execution view (tokens, cost and calls per model), Insights (a cost
   column and the period's total), an agent's Abilities → Guardrails (today and this month), and
   `GET /api/insights/ai-usage` (totals, per model, per day; `group=workflow|agent`).

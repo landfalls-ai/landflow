@@ -603,25 +603,31 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 ## Token spend wave 13
 
-- **Runs and calls behind a number** read `ai_usage` with plain SQL over the period (the daily rollup has no run ids), so
-  a very wide range of a busy instance scans every row of it. A call with no execution and no agent session (a
+- **Distinct runs scan the raw rows.** The rollup speeds the sums, but a count of distinct runs is read from `ai_usage`
+  itself over the whole range (the report's `runs`, twice with `compare=1`, and the runs and calls lists), so a 90 or 400
+  day range of a busy instance returns many rows into the server's memory. A follow-up is in
+  [roadmap.md](roadmap.md#token-spend-wave-13).
+- **Runs and calls behind a number** read `ai_usage` with plain SQL over the period (the daily rollup has no run ids),
+  so a very wide range of a busy instance scans every row of it. A call with no execution and no agent session (a
   Spotlight or brain call) is a call, never a run: it is in the calls list and in no run. A run whose calls the viewer
-  can open only in part is listed with those calls; the rest are in `hidden.calls` and `hidden.cost`, not
-  `hidden.runs`. The key `other` (the tail past 50) can't be opened: filter by another group to reach it.
-- The AI page's cache card says why a call missed only for calls whose prompt split is still kept (30 days); over a longer
-  period it says so ("Miss reasons cover the last 30 days at most"). The "below the minimum" reason uses one 1,024-token
-  minimum for every model, the lowest among current Claude models; a model with a higher minimum may need more.
+  can open only in part is listed with those calls; the rest are in `hidden.calls` and `hidden.cost`, not `hidden.runs`.
+  The key `other` (the tail past 50) can't be opened: filter by another group to reach it.
+- The AI page's cache card says why a call missed only for calls whose prompt split is still kept (30 days); over a
+  longer period it says so ("Miss reasons cover the last 30 days at most"). The "below the minimum" reason uses one
+  1,024-token minimum for every model, the lowest among current Claude models; a model with a higher minimum may need
+  more.
 - A call through the LLM gateway counts in the cache card's hit rate only when it reports cache tokens (it is provider
-  `litellm`, so it is not counted by its provider name); a gateway call that reports none is left out, not counted as a miss.
+  `litellm`, so it is not counted by its provider name); a gateway call that reports none is left out, not counted as a
+  miss.
 - The card counts at most 20,000 calls of a period (the newest) and says when it left some out.
 - "Misses in N of M runs" counts sessions and executions only: a gateway call with neither is no run, and a miss across
   the calls of one gateway client session is not seen.
-- The forecast is a straight line from the last 7 complete days: it does not know a weekend, a launch or a plan to stop a
-  flow, and a day's σ from 7 values is itself rough, which is why a month's first week says "early". The band is a 10th to
-  90th percentile range of a normal approximation, not a promise; a daily cap's pace is spread evenly over 24 hours, so it
-  swings early in the day. It reads the call rows by day, not the daily rollup.
-- A price for a local model applies from the moment it is saved. Calls recorded before keep the cost they had (usually $0):
-  there is no repricing of old rows.
+- The forecast is a straight line from the last 7 complete days: it does not know a weekend, a launch or a plan to stop
+  a flow, and a day's σ from 7 values is itself rough, which is why a month's first week says "early". The band is a
+  10th to 90th percentile range of a normal approximation, not a promise; a daily cap's pace is spread evenly over 24
+  hours, so it swings early in the day. It reads the call rows by day, not the daily rollup.
+- A price for a local model applies from the moment it is saved. Calls recorded before keep the cost they had (usually
+  $0): there is no repricing of old rows.
 - Gateway rows imported before wave 13 do not say which provider the gateway ran them on (`ai_usage.gateway_provider` is
   empty), so one that ran on Ollama is not listed under Local models until a new call of that model arrives; it is
   still priced by model name.

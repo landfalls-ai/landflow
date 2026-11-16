@@ -1227,7 +1227,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Insights',
     id: 'getMyAiSpend',
     summary: 'Your own AI spend',
-    description: 'Only the caller’s own rows (today, this month, the period’s days, by model, purpose and surface) and the caller’s own user caps (their own set, or the default for everyone), each with the forecast card’s figure for the same cap: a monthly cap’s `forecast` and `reachesOn`, a daily cap’s `pace`; never anyone else’s. No prompt text.',
+    description: 'Only the caller’s own rows (today, this month, the period’s days, or hours for 24h, by model, purpose and surface) and the caller’s own user caps (their own set, or the default for everyone), each with the forecast card’s figure for the same cap: a monthly cap’s `forecast` and `reachesOn`, a daily cap’s `pace`; never anyone else’s. No prompt text.',
     query: [{ name: 'period', description: '`24h`, `7d` (default), `30d` or `90d`', schema: { type: 'string', enum: ['24h', '7d', '30d', '90d'] } }],
     responses: {
       200: reply(
