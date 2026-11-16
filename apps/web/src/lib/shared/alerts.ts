@@ -12,7 +12,7 @@ export type AlertChannelKind = 'email' | 'slack' | 'webhook' | 'telegram' | 'tea
  * The rest belong to rules of another kind (`AlertRuleKind`): `failureRate`, `pluginOffline` (and its recovery),
  * `costThreshold` and `evaluationScore`.
  */
-export type AlertEvent = 'failed' | 'timedOut' | 'retriesExhausted' | 'waiting' | 'failureRate' | 'pluginOffline' | 'pluginOnline' | 'costThreshold' | 'evaluationScore';
+export type AlertEvent = 'failed' | 'timedOut' | 'retriesExhausted' | 'waiting' | 'failureRate' | 'pluginOffline' | 'pluginOnline' | 'costThreshold' | 'costForecast' | 'spendAnomaly' | 'evaluationScore'; // SP23: costForecast, spendAnomaly
 
 /**
  * What a rule watches. `runs` (the default): single runs that failed or waited too long (the `events`);
@@ -123,7 +123,14 @@ export interface AlertRule {
    */
   plugins?: { ids?: string[]; graceSeconds: number; notifyRecovery: boolean };
   /** `cost`: alert once per period when usage reaches this share of any cap (default 80). */
-  cost?: { thresholdPercent: number };
+  cost?: {
+    thresholdPercent: number;
+    // SP23: a forecast over a cap and unusual spend go through the rule too; absent = on.
+    forecast?: boolean;
+    anomalies?: boolean;
+    /** Landledger flags agent and model spikes itself: no channel alert for those two dimensions here. Absent = off. */
+    landledgerHandlesAgentModel?: boolean;
+  };
   /** `evaluation`: a metric (none = every metric) whose average fell below `below` (0–1 scores) or by more than `dropPercent` % against the run before. */
   evaluation?: { metric?: string; below?: number; dropPercent?: number };
   /** Made by a workflow's Settings → "Notify on failure": the workflow it belongs to. */

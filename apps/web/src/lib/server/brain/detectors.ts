@@ -25,6 +25,7 @@ import { percentile } from '../usage/query';
 import { overlapFindings } from './overlap';
 import type { NewProposal } from './proposals';
 import { practiceDrift } from './practice-drift'; // PR09:
+import { spendAnomalyFindings } from './spend-anomaly'; // SP23:
 import { fingerprintOf } from './proposals';
 import { agentLoops, cacheMisses, contextBloat, fatToolResults, repeatedCalls, unusedTools } from './spend-detectors'; // SP13:
 
@@ -914,6 +915,7 @@ export const DETECTOR_RUNS: Record<BuiltinDetectorId, (ctx: DetectContext) => Fi
   'cache-misses': cacheMisses, // SP13:
   'repeated-calls': repeatedCalls, // SP13:
   'agent-loops': agentLoops, // SP13:
+  'spend-anomaly': spendAnomalyFindings, // SP23:
 };
 
 export function detectContext(quiet: Partial<Record<DetectorId, number>> = {}, db: Database = database(), now = Date.now()): DetectContext {

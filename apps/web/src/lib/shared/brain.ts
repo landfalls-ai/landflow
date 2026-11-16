@@ -209,6 +209,7 @@ export const DETECTORS = [
   'cache-misses', // SP13:
   'repeated-calls', // SP13:
   'agent-loops', // SP13:
+  'spend-anomaly', // SP23:
 ] as const;
 
 /** A detector built into Landflow (lib/server/brain/detectors.ts). */
@@ -256,6 +257,7 @@ export const DETECTOR_LABELS: Record<BuiltinDetectorId, string> = {
   'cache-misses': 'Cache misses', // SP13:
   'repeated-calls': 'Repeated calls', // SP13:
   'agent-loops': 'Agent loops', // SP13:
+  'spend-anomaly': 'Unusual AI spend', // SP23:
 };
 
 /** A detector's name: a built-in one's label, or a flow detector's workflow name (`name`, or the suggestion's label). */

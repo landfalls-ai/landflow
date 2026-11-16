@@ -2602,6 +2602,16 @@ function paths(): Record<string, Record<string, Json>> {
       ),
     },
   });
+  // SP23: acknowledge a forecast-over-a-cap or unusual-spend flag
+  add('post', '/api/insights/ai/flags/{id}/ack', {
+    tag: 'Insights',
+    id: 'acknowledgeAiSpendFlag',
+    summary: 'Acknowledge a forecast or unusual-spend flag',
+    description:
+      'Needs the `executions:write` scope or a session. Anyone in the flag’s audience (the person it is about; the editors of the agent or workflow; a project’s admins; owners and admins, who also hear model and credential flags) clears it from Needs you for everyone; the answer says who and when. A caller outside the audience gets 404. Acknowledging again changes nothing. Audited as `ai.spend.acknowledged`. A day whose value doubles after it opens again.',
+    pathParams: { id: 'The flag id (`flagId` of a `spend` item in `GET /api/runs/needs-you`)' },
+    responses: { 200: reply('Acknowledged', object({ id: { type: 'string' }, acknowledgedBy: { type: 'string' }, acknowledgedAt: { type: 'string' } }, ['id'])), 404: notFound },
+  });
   add('get', '/api/insights/ai/cache', {
     tag: 'Insights',
     id: 'aiCache',

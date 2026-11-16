@@ -22,6 +22,7 @@ import { getBudget, listBudgets } from '../budgets/store';
 import { getProject } from '../projects/store';
 import { projectCapId } from '../../shared/project-budget';
 import { aiUsageMeter, type AiUsageMeter } from './index';
+import { amountOf, baselineSentence, flagHref, listFlags, noteAlerted, type SpendFlag } from './spend-flags'; // SP23:
 
 /** One cap with a period, and what it has used in the current one. */
 export interface WatchedCap {
@@ -143,6 +144,77 @@ export function costNotice(rule: Pick<AlertRule, 'id' | 'name'>, cap: WatchedCap
 
 type Send = (rule: AlertRule, notice: AlertNotice) => Promise<void>;
 
+// SP23: forecasts over a cap and unusual spend, from the flags `anomalies.ts` stores (docs/llm-gateway.md#forecasts-and-unusual-spend).
+
+const LANDLEDGER_SENTENCE = 'Landflow flags this too; Landledger flags agent and model spikes as well, in its console and webhooks';
+const DAY_MS = 86_400_000;
+
+/** What the alert says about one flag: the figure, the baseline, the score, the distinct runs, and an Open link to the AI page at the day. */
+export function spendNotice(rule: Pick<AlertRule, 'id' | 'name'>, flag: SpendFlag, today: string): AlertNotice {
+  const link = `${publicUrl()}${flagHref(flag, today)}`;
+  if (flag.kind === 'forecast') {
+    return customNotice({
+      event: 'costForecast',
+      rule,
+      about: { id: flag.key, name: `AI usage: ${flag.label}` },
+      subject: `AI cost: ${flag.label} is forecast to reach its monthly ${flag.metric === 'cost' ? 'cost' : 'token'} cap${flag.reachesOn ? ` around ${flag.reachesOn}` : ''}`,
+      facts: [
+        { label: 'Cap', value: `${flag.label}, ${amountOf(flag.metric, flag.capMax ?? 0)} per month` },
+        { label: 'So far this month', value: amountOf(flag.metric, flag.value) },
+        { label: 'Forecast for the month', value: `${amountOf(flag.metric, flag.p50 ?? 0)} (the middle of the forecast)` },
+        ...(flag.reachesOn ? [{ label: 'Reaches the cap around', value: flag.reachesOn }] : []),
+        { label: 'What happens', value: 'Nothing yet: this is a heads-up before the cap. Raise the cap or slow the work down' },
+      ],
+      link,
+    });
+  }
+  const agentOrModel = flag.dimension === 'agent' || flag.dimension === 'model';
+  return customNotice({
+    event: 'spendAnomaly',
+    rule,
+    about: { id: flag.key, name: `AI usage: ${flag.label}` },
+    subject: `Unusual AI spend: ${flag.label} used ${amountOf(flag.metric, flag.value)} on ${flag.day}`,
+    facts: [
+      { label: 'Spent', value: `${amountOf(flag.metric, flag.value)} on ${flag.day}${flag.day === today ? ' so far' : ''}` },
+      { label: 'Baseline', value: baselineSentence(flag) },
+      { label: 'Score', value: flag.score ? `${flag.score} (3.5 or more is unusual)` : 'No score: the baseline was flat, so a big enough jump counts' },
+      { label: 'Runs', value: String(flag.runs) },
+      ...(flag.surfaces.length ? [{ label: 'Made up of', value: flag.surfaces.join(', ') }] : []),
+      ...(agentOrModel ? [{ label: 'Also', value: LANDLEDGER_SENTENCE }] : []),
+    ],
+    link,
+  });
+}
+
+/** Alert once per cap and month on a forecast over the cap, and once per dimension, key and day on unusual spend (again when the day's value doubles). */
+async function checkSpendFlags(rule: AlertRule, now: number, today: string, send: Send): Promise<void> {
+  const cost = rule.cost;
+  if (cost?.forecast !== false) {
+    for (const flag of listFlags('forecast', `${today.slice(0, 7)}-01`)) {
+      if (flag.acknowledgedAt) continue;
+      const key = `forecast:${flag.key}:${flag.day.slice(0, 7)}`;
+      if (alertStore.state(rule.id, key)) continue;
+      alertStore.setState(rule.id, key, { value: flag.value, at: new Date(now).toISOString() }, new Date(now + 33 * DAY_MS).toISOString());
+      noteAlerted(flag.id, flag.value);
+      await send(rule, spendNotice(rule, flag, today));
+    }
+  }
+  if (cost?.anomalies !== false) {
+    const yesterday = new Date(Date.parse(`${today}T00:00:00Z`) - DAY_MS).toISOString().slice(0, 10);
+    for (const flag of listFlags('anomaly', yesterday)) {
+      if (flag.acknowledgedAt) continue;
+      // Landledger flags agent and model spikes in its own console and webhooks: with the option on, those two stay out of the channels (Needs you and the inbox still show them).
+      if (cost?.landledgerHandlesAgentModel && (flag.dimension === 'agent' || flag.dimension === 'model')) continue;
+      const key = `anomaly:${flag.dimension}:${flag.key}:${flag.day}`;
+      const sent = alertStore.state<{ value: number }>(rule.id, key);
+      if (sent && !(flag.value >= 2 * Number(sent.data.value))) continue;
+      alertStore.setState(rule.id, key, { value: flag.value, at: new Date(now).toISOString() }, new Date(now + 3 * DAY_MS).toISOString());
+      noteAlerted(flag.id, flag.value);
+      await send(rule, spendNotice(rule, flag, today));
+    }
+  }
+}
+
 /** Alert, once per period, on every cap that reached a cost rule's threshold. */
 export async function checkCosts(now: number, send: Send, meter: AiUsageMeter = aiUsageMeter()): Promise<void> {
   const rules = alertStore.rules().filter((rule) => rule.kind === 'cost' && rule.enabled && rule.channelIds.length);
@@ -151,8 +223,11 @@ export async function checkCosts(now: number, send: Send, meter: AiUsageMeter = 
   const today = meter.today(now);
   for (const rule of rules) {
     const threshold = rule.cost?.thresholdPercent ?? DEFAULT_COST_THRESHOLD_PERCENT;
-    for (const state of alertStore.states(rule.id, 'cost:')) {
-      if (state.expiresAt && Date.parse(state.expiresAt) <= now) alertStore.clearState(rule.id, state.key);
+    // SP23: the forecast and unusual-spend states lapse the same way.
+    for (const prefix of ['cost:', 'forecast:', 'anomaly:']) {
+      for (const state of alertStore.states(rule.id, prefix)) {
+        if (state.expiresAt && Date.parse(state.expiresAt) <= now) alertStore.clearState(rule.id, state.key);
+      }
     }
     for (const cap of caps) {
       if (!(cap.used > 0) || (cap.used / cap.max) * 100 < threshold) continue;
@@ -162,6 +237,7 @@ export async function checkCosts(now: number, send: Send, meter: AiUsageMeter = 
       alertStore.setState(rule.id, key, { used: cap.used, max: cap.max, at: new Date(now).toISOString() }, new Date(now + (cap.period === 'day' ? 2 : 33) * 86_400_000).toISOString());
       await send(rule, costNotice(rule, cap, threshold));
     }
+    await checkSpendFlags(rule, now, today, send); // SP23:
   }
 }
 

@@ -159,6 +159,8 @@ const VERB: Record<AlertEvent, string> = {
   pluginOffline: 'Plugin offline',
   pluginOnline: 'Plugin back online',
   costThreshold: 'AI cost',
+  costForecast: 'AI cost forecast', // SP23:
+  spendAnomaly: 'Unusual AI spend', // SP23:
   evaluationScore: 'Evaluation score',
 };
 

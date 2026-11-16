@@ -11,8 +11,8 @@ import { store } from '../store';
 import { openWaitSpan } from './decisions';
 import { checksSinceAsync, spanStartAsync } from './store';
 
-/** `gate`: a Run report waits for a person to accept its failed checks or send the work back. `budget` (PC14): a project's AI budget warning or stop. */
-export type NeedsYouKind = 'approval' | 'form' | 'question' | 'gate' | 'check' | 'budget' | 'task';
+/** `gate`: a Run report waits for a person to accept its failed checks or send the work back. `budget` (PC14): a project's AI budget warning or stop. `spend` (SP23): a forecast over a cap or unusual AI spend. */
+export type NeedsYouKind = 'approval' | 'form' | 'question' | 'gate' | 'check' | 'budget' | 'task' | 'spend'; // SP23: spend
 
 export interface NeedsYouItem {
   executionId: string;
@@ -39,6 +39,10 @@ export interface NeedsYouItem {
   taskRunId?: string;
   taskRunStatus?: 'requested' | 'waiting';
   canDecide?: boolean;
+  // SP23: a `spend` item's fields (ai-usage/spend-flags.ts); its executionId, workflowId and workflowName are ''.
+  flagId?: string;
+  flagKind?: 'anomaly' | 'forecast';
+  canAcknowledge?: boolean;
 }
 
 const DAY_MS = 86_400_000;

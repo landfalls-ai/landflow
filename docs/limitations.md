@@ -606,6 +606,26 @@ items still open (its "Wave 6" section); this page is the short list to check be
   composition; `GET /api/ai-calls/:id` answers for them. The sheet opens for the AI Agent node's model sub-node, a plugin
   node's `model` record and the harness mod's requests (found by the wave 12 join test `spend-trace-join`).
 
+## Token spend wave 14
+
+- **Unusual spend is checked for today and yesterday only**, every 10 minutes, against the 14 days before each. A day
+  older than that is never flagged after the fact, and a host that was off for days flags nothing for the days it missed.
+- **The baseline is a median over observed days, not a model**: no weekday or weekend pattern, no launch or planned
+  burst. A weekly rhythm (a heavy Monday) can look unusual on Mondays; the half-the-median and score rules soften that, the
+  smallest jump (`LANDFLOW_AI_ANOMALY_MIN_USD`, 100,000 tokens for unpriced keys) is the lever. There is no per-key
+  setting to mute one.
+- **A key is judged on tokens only when none of its 15 days has a cost.** A key that is priced on some days and unpriced
+  on others is judged on cost.
+- **The forecast flag is the AI page's forecast**: a straight line from the last 7 complete days, with the same
+  limits. One flag per cap and month; a cap that is exceeded later in the month is the threshold alert's.
+- **An acknowledged flag stays acknowledged for the day** unless the day's value doubles; there is no "snooze" and no
+  per-person acknowledgement (it clears for everyone).
+- **Landledger's anomalies are not read**: Landflow does not ask Landledger what it flagged, and Landledger's trigger has
+  no `cost.anomaly` event. The option "Landledger alerts on agent and model spikes" is a promise the person makes about
+  Landledger's own alerting, not a check.
+- A member's inbox never holds a person's or a model's unusual day (the inbox names no person); they see their own in
+  Needs you, and the owners and admins see everything there.
+
 ## Token spend wave 13
 
 - **Distinct runs scan the raw rows.** The rollup speeds the sums, but a count of distinct runs is read from `ai_usage`

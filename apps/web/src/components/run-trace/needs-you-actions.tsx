@@ -7,7 +7,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { decideTaskRun, refreshNeedsYou, type NeedsYouRow } from '@/lib/client/run-trace';
+import { acknowledgeSpendFlag, decideTaskRun, refreshNeedsYou, type NeedsYouRow } from '@/lib/client/run-trace';
 import { fetchBudget, formatUsd, runIncidentAction } from '@/lib/client/project-budget-api';
 import type { ProjectBudgetView } from '@/lib/shared/project-budget';
 import { Dialog } from '../ui/dialog';
@@ -15,11 +15,13 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/inputs';
 import { cn } from '@/lib/utils';
 
-export type NeedsYouActionId = 'resume' | 'raise' | 'dismiss' | 'open' | 'approve' | 'deny'; // PC20: approve, deny
+export type NeedsYouActionId = 'resume' | 'raise' | 'dismiss' | 'open' | 'approve' | 'deny' | 'acknowledge'; // PC20: approve, deny; SP23: acknowledge
 export type NeedsYouAction = { id: NeedsYouActionId; label: string };
 
 /** What a viewer may do from a row; [] for every kind that is not a project item. */
-export function actionsFor(row: Pick<NeedsYouRow, 'kind' | 'incidentKind' | 'canRaise' | 'canResume' | 'taskRunStatus' | 'canDecide'>): NeedsYouAction[] {
+export function actionsFor(row: Pick<NeedsYouRow, 'kind' | 'incidentKind' | 'canRaise' | 'canResume' | 'taskRunStatus' | 'canDecide'> & { canAcknowledge?: boolean }): NeedsYouAction[] {
+  // SP23: AI spend: Acknowledge (it leaves the list for everyone), and Open (the AI page at the day).
+  if (row.kind === 'spend') return [...(row.canAcknowledge ? [{ id: 'acknowledge' as const, label: 'Acknowledge' }] : []), { id: 'open', label: 'Open' }];
   // PC20: a task's run: Approve and Deny for one who may decide a requested run, else open the task; a waiting run opens its session.
   if (row.kind === 'task') {
     if (row.taskRunStatus === 'waiting') return [{ id: 'open', label: 'Open session' }];
@@ -220,6 +222,41 @@ export function TaskActions({
         <p role="alert" className="mt-1.5 text-[12px] text-rd">
           {error}
         </p>
+      )}
+    </div>
+  );
+}
+
+/** The buttons of one AI spend item (SP23): Acknowledge clears it for everyone, Open shows the AI page at the day. */
+export function SpendActions({ row, className }: { row: Pick<NeedsYouRow, 'kind' | 'flagId' | 'canAcknowledge' | 'href'>; className?: string }) {
+  const [busy, setBusy] = useState(false);
+  const actions = actionsFor(row);
+  const acknowledge = async () => {
+    if (!row.flagId) return;
+    setBusy(true);
+    try {
+      await acknowledgeSpendFlag(row.flagId);
+      toast.success('Acknowledged');
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+      refreshNeedsYou();
+    }
+  };
+  const tall = 'max-md:min-h-[44px]';
+  return (
+    <div className={cn('flex flex-wrap gap-2', className)}>
+      {actions.map((a) =>
+        a.id === 'open' ? (
+          <Link key={a.id} href={row.href ?? '/insights/ai'} className={cn('inline-flex h-7 items-center rounded-[10px] border border-hair bg-wl px-3 text-[12.5px] font-medium text-t1 hover:border-ac', tall)}>
+            {a.label}
+          </Link>
+        ) : (
+          <Button key={a.id} size="sm" variant="outline" className={tall} loading={busy} disabled={busy} onClick={() => void acknowledge()}>
+            {a.label}
+          </Button>
+        ),
       )}
     </div>
   );
