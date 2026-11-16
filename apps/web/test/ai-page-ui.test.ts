@@ -24,6 +24,7 @@ import {
   stackColor,
   stackColumns,
   stackScopeNote,
+  tipLeft,
   trendPoints,
   viewParams,
   viewReady,
@@ -84,6 +85,23 @@ describe('the trend', () => {
     const stacked = renderToStaticMarkup(createElement(AiTrend, { report: { series, stack, from: '2026-11-03', to: '2026-11-04', period: 'custom' }, metric: 'cost', stack: 'person', onMetric: () => {}, onStack: () => {} }));
     expect(stacked).toContain('Ada');
     expect(stacked).toContain('Everyone’s spend, by person.');
+  });
+});
+
+describe('a report from a host that answers the old shape', () => {
+  it('draws no trend and no movers instead of throwing', () => {
+    const old = { period: '7d', from: '2026-11-10', to: '2026-11-16' } as never;
+    expect(() => renderToStaticMarkup(createElement(AiTrend, { report: old, metric: 'cost', onMetric: () => {}, onStack: () => {} }))).not.toThrow();
+    expect(renderToStaticMarkup(createElement(AiMovers, { movers: undefined as never }))).toBe('');
+  });
+});
+
+describe('the trend tooltip', () => {
+  it('stays inside the chart whatever its width, and at the left edge when the chart is narrower than it', () => {
+    for (const tip of [150, 200, 260]) for (const x of [0, 40, 180, 300, 374]) expect(tipLeft(x, tip, 374) + tip).toBeLessThanOrEqual(374);
+    expect(tipLeft(300, 260, 374)).toBe(114);
+    expect(tipLeft(10, 150, 374)).toBe(22);
+    expect(tipLeft(10, 260, 200)).toBe(0);
   });
 });
 

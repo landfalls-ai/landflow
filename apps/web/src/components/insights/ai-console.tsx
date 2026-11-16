@@ -176,7 +176,6 @@ export function Totals({ report }: { report?: AiConsoleReport }) {
   );
 }
 
-const localDay = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const asConsole = (r: AiPageReport) => r as AiConsoleReport;
 
 export function AiConsole() {
@@ -196,12 +195,14 @@ export function AiConsole() {
   // The sheet is a portal: it opens after mount, so a page loaded with `?drill=` matches the server's HTML.
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-  const today = localDay();
-  const ready = viewReady(view, today);
   const key = reportQuery(view, { compare: true }).toString();
   const fullQuery = reportQuery(view, { compare: true, stack: true }).toString();
 
   const [loaded, setLoaded] = useState<{ key: string; report: AiPageReport }>();
+  // The instance's day, from the report (not the browser's: they can differ near midnight, and SSR has no browser day).
+  // Until a report has come, no "not in the future" check: the server answers 400 for a day after today.
+  const today = loaded?.report.today;
+  const ready = viewReady(view, today);
   const [previous, setPrevious] = useState<{ key: string; series: AiSpendPoint[] }>();
   // SP12: the model group's "Sort by tokens".
   const [byTokens, setByTokens] = useState(false);
@@ -239,7 +240,8 @@ export function AiConsole() {
 
   // The last report stays on screen, dimmed, while a changed view loads (a switch doesn't empty the page).
   const shown = loaded?.report;
-  const stale = Boolean(loaded) && loaded!.key !== key;
+  // While the range can't be asked (Custom without two good dates) nothing loads: the problem is shown, not a wait.
+  const stale = Boolean(loaded) && loaded!.key !== key && ready;
 
   // The faint line: the days just before the range, asked as a custom range (the report holds only the previous totals).
   const prevRange = shown && shown.period !== '24h' && rangeDays(shown.from, shown.to) <= 90 ? previousRange(shown.from, shown.to) : undefined;
@@ -279,7 +281,7 @@ export function AiConsole() {
               To
               <Input type="date" value={view.to ?? ''} max={today} onChange={(e) => go({ ...view, to: e.target.value || undefined, drill: undefined })} className="h-8 w-[150px]" />
             </label>
-            <span className={problem ? 'text-warn' : 'text-t3'}>{problem ?? 'At most 400 days.'}</span>
+            <span className={problem ? 'text-warn' : 'text-t3'} role={problem ? 'alert' : undefined}>{problem ?? 'At most 400 days.'}</span>
           </div>
         )}
         {chips.length > 0 && (
@@ -307,7 +309,7 @@ export function AiConsole() {
         ) : (
           ready && <div className="h-[260px] rounded-[14px] bg-acdim animate-pulse-soft" />
         )}
-        {shown && <AiMovers movers={shown.movers} onOpen={(row) => open(row.group, row.key)} />}
+        {shown && <AiMovers movers={shown.movers ?? []} onOpen={(row) => open(row.group, row.key)} />}
         <Card className="overflow-hidden p-0">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-hair px-4 py-2.5">
             <SectionLabel>Spend by</SectionLabel>
@@ -328,8 +330,8 @@ export function AiConsole() {
               </Select>
             </div>
           </div>
-          {shown && view.group === 'person' && <PeopleTotal totals={shown.peopleTotals} admin={shown.viewer.admin} />}
-          {shown ? <SpendBy rows={shown.groups[view.group]} label={label} onOpen={(row) => open(view.group, row.key)} hrefFor={(href) => applyFilterHref(view, href)} admin={shown.viewer.admin} byTokens={view.group === 'model' && byTokens} /> : <div className="m-4 h-24 rounded-xl bg-acdim animate-pulse-soft" />}
+          {shown?.peopleTotals && view.group === 'person' && <PeopleTotal totals={shown.peopleTotals} admin={shown.viewer.admin} />}
+          {shown ? <SpendBy rows={shown.groups?.[view.group] ?? []} label={label} onOpen={(row) => open(view.group, row.key)} hrefFor={(href) => applyFilterHref(view, href)} admin={shown.viewer.admin} byTokens={view.group === 'model' && byTokens} /> : <div className="m-4 h-24 rounded-xl bg-acdim animate-pulse-soft" />}
         </Card>
         <AiForecastCard /> {/* SP11: */}
         {shown && <CapsCard report={asConsole(shown)} onChanged={() => load()} />}

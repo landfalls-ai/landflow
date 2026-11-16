@@ -775,6 +775,7 @@ export function aiSpendReport(actor: Actor, query: AiSpendQuery, now = Date.now(
     period: query.period,
     from: range.from,
     to: range.to,
+    today: aiUsageMeter().today(now),
     filters,
     totals: totalsOf(current.total),
     peopleTotals: totalsOf(current.people),

@@ -218,6 +218,12 @@ describe('types and constants', () => {
     expect(periodsMatch && groupsMatch).toBe(true);
     expect(AI_SPEND_GROUPS).toHaveLength(10);
   });
+
+  it("says the instance's day now, for the page's own range check (not the browser's)", () => {
+    const now = Date.parse('2026-11-16T23:30:00.000Z');
+    expect(aiSpendReport(admin, { period: '7d' }, now).today).toBe(meter().today(now));
+    expect(aiSpendReport(admin, { period: '24h' }, now).today).toBe(meter().today(now));
+  });
 });
 
 describe('the rollup', () => {

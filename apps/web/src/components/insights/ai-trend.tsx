@@ -5,8 +5,8 @@
  * group's top 5 and "Other". Plain SVG from the theme tokens (light and dark); the numbers are also a table for a screen
  * reader. The person stack is everyone's spend, any other group what the viewer can see, and the chart says which.
  */
-import { useEffect, useRef, useState } from 'react';
-import { AI_GROUPS, fillDays, pointLabel, stackColor, stackColumns, stackScopeNote, trendPoints, trendValue, type TrendMetric } from '@/lib/client/ai-console';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { AI_GROUPS, fillDays, pointLabel, stackColor, stackColumns, stackScopeNote, tipLeft, trendPoints, trendValue, type TrendMetric } from '@/lib/client/ai-console';
 import type { AiSpendGroup, AiSpendPoint, AiSpendReport } from '@/lib/shared/ai-spend';
 import { Segmented } from '@/components/ui/segmented';
 import { Select } from '@/components/ui/inputs';
@@ -36,6 +36,9 @@ export function AiTrend({
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [hover, setHover] = useState<number>();
+  // The tooltip's own width (it is 150 to 260 px), so it is kept inside the chart whatever its labels.
+  const tipBox = useRef<HTMLDivElement>(null);
+  const [tipWidth, setTipWidth] = useState(0);
   useEffect(() => {
     const element = box.current;
     if (!element) return;
@@ -44,7 +47,9 @@ export function AiTrend({
     return () => observer.disconnect();
   }, []);
 
-  const series = report.period === '24h' ? report.series : fillDays(report.series, report.from, report.to);
+  // SP10: an older host answers no series or stack; nothing to draw is better than a crash.
+  const reported = report.series ?? [];
+  const series = report.period === '24h' ? reported : fillDays(reported, report.from, report.to);
   const line = trendPoints(series, metric);
   const previous = previousSeries && report.period !== '24h' ? trendPoints(previousSeries, metric) : [];
   const stacked = report.stack && report.stack.group === stack ? report.stack : undefined;
@@ -69,6 +74,7 @@ export function AiTrend({
   };
 
   const tip = hover === undefined ? undefined : hover;
+  useLayoutEffect(() => setTipWidth(tipBox.current?.offsetWidth ?? 0), [tip, metric, stack, width]);
   const none = n === 0 || max === 0;
 
   return (
@@ -144,8 +150,9 @@ export function AiTrend({
         )}
         {tip !== undefined && n > 0 && width > 0 && (
           <div
+            ref={tipBox}
             className="pointer-events-none absolute top-0 z-10 min-w-[150px] max-w-[260px] rounded-lg border border-hair bg-sf px-2.5 py-1.5 text-[12px] shadow-pop"
-            style={{ left: Math.min(Math.max(0, MARGIN.left + cx(tip) + 12), Math.max(0, width - 200)) }}
+            style={{ left: tipLeft(MARGIN.left + cx(tip), tipWidth || 260, width) }}
             role="status"
           >
             <p className="font-semibold text-t1">{pointLabel(at(tip), true)}</p>

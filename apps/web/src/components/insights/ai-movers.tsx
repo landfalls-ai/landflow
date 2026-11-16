@@ -40,7 +40,7 @@ function MoverList({ title, rows, tone, onOpen }: { title: string; rows: MoverRo
 }
 
 export function AiMovers({ movers, onOpen }: { movers: AiSpendReport['movers']; onOpen?: (row: MoverRow) => void }) {
-  const { rises, falls } = moverLists(movers);
+  const { rises, falls } = moverLists(movers ?? []);
   if (rises.length === 0 && falls.length === 0) return null;
   return (
     <section className="overflow-hidden rounded-[14px] border border-hair bg-sf" data-testid="ai-movers" aria-label="Movers">

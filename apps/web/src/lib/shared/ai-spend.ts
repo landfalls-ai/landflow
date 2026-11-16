@@ -89,6 +89,8 @@ export interface AiSpendReport {
   /** The range's first and last day for day periods (`YYYY-MM-DD`), ISO times for 24h. */
   from: string;
   to: string;
+  /** The instance's day now (its time zone), so the page's "not in the future" check agrees with the report's. */
+  today: string;
   filters: AiSpendFilters;
   /** What the viewer can see (visibility rule 2). */
   totals: AiSpendTotals;

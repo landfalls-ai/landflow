@@ -1,4 +1,8 @@
-/** Pure helpers for the AI page (components/insights/ai-console*.tsx): formatting, sorting and the near-cap colour. */
+/**
+ * Pure helpers for the AI page (components/insights/ai-console*.tsx, ai-trend.tsx, ai-movers.tsx, ai-drill.tsx): formatting,
+ * sorting and the near-cap colour; and, from wave 13 (the `// SP10:` blocks), the view in the URL, the trend's points and
+ * stacks, the movers, the custom range's checks and the drill sheet's labels.
+ */
 import { formatCost, formatTokens } from '../shared/ai-usage';
 import { AI_SPEND_GROUPS, AI_SPEND_MAX_DAYS, AI_SPEND_PERIODS, type AiSpendFilters, type AiSpendGroup, type AiSpendHidden, type AiSpendPeriod, type AiSpendPoint, type AiSpendReport, type AiSpendRow, type AiSpendStack } from '../shared/ai-spend';
 import type { AiConsoleCap, AiConsoleRow, AiConsoleTotals, CapRaiseStatus, GatewayHealth } from '../shared/llm-gateway';
@@ -171,6 +175,9 @@ export function rangeProblem(from: string | undefined, to: string | undefined, t
   if (today && to > today) return 'The last day can’t be in the future.';
   return undefined;
 }
+
+/** The tooltip's left edge: right of the pointer, but never past the chart's right edge (the tooltip is `tipWidth` wide). */
+export const tipLeft = (pointerX: number, tipWidth: number, chartWidth: number): number => Math.min(Math.max(0, pointerX + 12), Math.max(0, chartWidth - tipWidth));
 
 /** The days of the same length just before a day range, for the faint line (nothing for an hour range). */
 export function previousRange(from: string, to: string): { from: string; to: string } | undefined {
