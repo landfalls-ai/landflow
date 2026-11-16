@@ -12,9 +12,13 @@ Nothing here reaches a vendor: the post, the Ollama /api/show and Anthropic's co
 import asyncio
 import hashlib
 import hmac
+import http.server
 import json
 import os
+import threading
+import time
 import unittest
+import urllib.error
 
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 import custom_callbacks as cc  # noqa: E402
@@ -69,11 +73,9 @@ def finish(cb, kwargs, response):
 
     async def go():
         await cb.async_log_success_event(kwargs, response, 0, 1)
-        await asyncio.sleep(0)
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, lambda: None)
 
     run(go())
+    cb.wait_idle()
 
 
 OPENAI = {
@@ -179,6 +181,188 @@ class Hashes(unittest.TestCase):
         self.assertEqual(v1, "v1=" + hmac.new(SECRET.encode(), b'1700000000.{"a":1}', hashlib.sha256).hexdigest())
 
 
+class Fake:
+    """A loopback server standing in for Ollama and Anthropic (works under --network none). Records the paths asked."""
+
+    def __init__(self):
+        self.paths = []
+        fake = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                request = json.loads(self.rfile.read(int(self.headers.get("content-length", 0))) or b"{}")
+                fake.paths.append(self.path)
+                if self.path == "/api/show":
+                    out = {"model_info": {"tokenizer.ggml.tokens": FIXTURE["tokens"], "tokenizer.ggml.merges": FIXTURE["merges"], "tokenizer.ggml.pre": FIXTURE["pre"]}}
+                elif self.path == "/api/chat":
+                    out = {"model": "m", "created_at": "2026-01-01T00:00:00Z", "message": {"role": "assistant", "content": "hi"}, "done": True, "prompt_eval_count": 40, "eval_count": 2}
+                elif self.path == "/v1/messages/count_tokens":
+                    out = {"input_tokens": 5 + len(json.dumps(request.get("messages"))) // 4}
+                elif self.path == "/v1/messages":
+                    out = {"id": "msg_1", "type": "message", "role": "assistant", "model": "claude-x", "content": [{"type": "text", "text": "hi"}], "stop_reason": "end_turn", "usage": {"input_tokens": 40, "output_tokens": 1}}
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                raw = json.dumps(out).encode()
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.base = "http://127.0.0.1:%d" % self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+
+
+class RealLiteLLM(unittest.TestCase):
+    """The callback driven by LiteLLM itself (real kwargs, real api_base shapes) against a loopback fake provider."""
+
+    # LiteLLM registers one logger per class for the life of the process, so one instance serves every test here.
+    @classmethod
+    def setUpClass(cls):
+        import litellm
+
+        cls.litellm = litellm
+        cls.loop = asyncio.new_event_loop()  # LiteLLM's logging worker binds to the first loop it sees
+        cls.cb = callback(Sent())
+        litellm.callbacks = [cls.cb]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.litellm.callbacks = []
+        cls.loop.close()
+
+    def setUp(self):
+        self.fake = Fake()
+        self.sent = Sent()
+        self.cb._post = self.sent
+        self.cb._counters = {}
+
+    def tearDown(self):
+        self.fake.close()
+
+    def drive(self, coro):
+        async def go():
+            await coro
+            for _ in range(100):  # LiteLLM logs after the response, on a task of its own
+                await asyncio.sleep(0.05)
+                if self.sent.calls:
+                    break
+
+        self.loop.run_until_complete(go())
+        self.cb.wait_idle()
+        self.assertEqual(len(self.sent.calls), 1, "the callback posted nothing")
+        return json.loads(self.sent.calls[0][1])
+
+    def test_ollama_chat_uses_the_tokenizer(self):
+        body = self.drive(self.litellm.acompletion(model="ollama_chat/m", api_base=self.fake.base, messages=[{"role": "system", "content": "SYS prompt"}, {"role": "user", "content": "hello"}]))
+        self.assertIn("/api/show", self.fake.paths)
+        self.assertNotIn("/api/chat/api/show", self.fake.paths)
+        self.assertEqual(body["method"], "tokenizer")
+        self.assertIn("instructions", body["parts"])
+
+    def test_ollama_base_from_the_environment(self):
+        os.environ["OLLAMA_API_BASE"] = self.fake.base
+        try:
+            body = self.drive(self.litellm.acompletion(model="ollama_chat/m", messages=[{"role": "user", "content": "hello"}]))
+        finally:
+            os.environ.pop("OLLAMA_API_BASE", None)
+        self.assertEqual(body["method"], "tokenizer")
+        self.assertEqual(set(p for p in self.fake.paths if p != "/api/chat"), {"/api/show"})
+
+    def test_anthropic_shaped_request_to_an_ollama_model_keeps_its_system_prompt(self):
+        body = self.drive(
+            self.litellm.anthropic_messages(model="ollama_chat/m", api_base=self.fake.base, system="You are Claude Code, a careful agent.", messages=[{"role": "user", "content": "hello"}], max_tokens=5)
+        )
+        self.assertIn("instructions", body["parts"])
+        self.assertIn("instructions", body["partHashes"])
+        self.assertEqual(body["method"], "tokenizer")
+
+    def test_native_anthropic_counts_through_the_endpoint_and_system_once(self):
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        body = self.drive(
+            self.litellm.anthropic_messages(model="claude-x", custom_llm_provider="anthropic", api_base=self.fake.base, api_key="k", system="You are Claude Code.", messages=[{"role": "user", "content": "hello"}], max_tokens=5)
+        )
+        self.assertIn("/v1/messages/count_tokens", self.fake.paths)
+        self.assertNotIn("/v1/messages/v1/messages/count_tokens", self.fake.paths)
+        self.assertEqual(body["method"], "provider")
+        self.assertIn("instructions", body["parts"])
+
+    def test_system_is_not_counted_twice_on_the_native_path(self):
+        kwargs = {"model": "claude-x", "system": "SYS", "messages": [{"role": "user", "content": "hi"}], "input": [{"role": "system", "content": "SYS"}, {"role": "user", "content": "hi"}]}
+        segments, _, _ = cc.split_request(kwargs)
+        self.assertEqual([s["text"] for s in segments if s["part"] == "instructions"], ["SYS"])
+
+
+class Resilience(unittest.TestCase):
+    def test_strip_base(self):
+        self.assertEqual(cc.strip_base("http://h:11434/api/chat", cc.OLLAMA_PATHS), "http://h:11434")
+        self.assertEqual(cc.strip_base("http://h:11434/", cc.OLLAMA_PATHS), "http://h:11434")
+        self.assertEqual(cc.strip_base("https://x/v1/messages", cc.ANTHROPIC_PATHS), "https://x")
+
+    def test_a_failed_vocabulary_load_is_not_repeated(self):
+        sent = Sent()
+        shown = []
+
+        def show(base, model):
+            shown.append(model)
+            raise urllib.error.URLError("down")
+
+        kwargs = {**OPENAI, "model": "q", "litellm_params": {"custom_llm_provider": "ollama_chat", "api_base": "http://h:11434/api/chat"}, "messages": [{"role": "user", "content": "Hello"}]}
+        cb = callback(sent, show=show)
+        for n in range(3):
+            finish(cb, kwargs, {"id": "c%d" % n, "usage": {"prompt_tokens": 20}})
+        self.assertEqual(shown, ["q"])
+        self.assertEqual(len(sent.calls), 3)
+        self.assertEqual(json.loads(sent.calls[2][1])["method"], "estimate")
+
+    def test_client_errors_are_not_retried(self):
+        calls = []
+
+        def post(url, raw, headers):
+            calls.append(1)
+            raise urllib.error.HTTPError(url, 404, "nf", {}, None)
+
+        cb = callback(post)
+        finish(cb, OPENAI, RESPONSE)
+        finish(cb, OPENAI, RESPONSE)
+        self.assertEqual(len(calls), 2)
+
+    def test_a_full_queue_drops(self):
+        gate = threading.Event()
+        calls = []
+
+        def post(url, raw, headers):
+            gate.wait(5)
+            calls.append(1)
+
+        cb = callback(post)
+        cb.max_pending = 2
+
+        async def go():
+            for n in range(5):
+                await cb.async_log_success_event(OPENAI, {**RESPONSE, "id": "c%d" % n}, 0, 1)
+
+        run(go())
+        gate.set()
+        cb.wait_idle()
+        self.assertEqual(len(calls), 2)
+
+    def test_anthropic_tools_make_it_an_estimate(self):
+        sent = Sent()
+        kwargs = {**ANTHROPIC, "litellm_params": {"custom_llm_provider": "anthropic", "api_key": "k"}}
+        finish(callback(sent, anthropic_count=lambda b, k, m, t: 10), kwargs, {"id": "msg_9", "usage": {"prompt_tokens": 900}})
+        self.assertEqual(json.loads(sent.calls[0][1])["method"], "estimate")
+
+
 class Callback(unittest.TestCase):
     def posted(self, sent):
         self.assertEqual(len(sent.calls), 1)
@@ -246,7 +430,7 @@ class Callback(unittest.TestCase):
             asked.append((base, key, model))
             return 10 + len(text) // 4
 
-        kwargs = {**ANTHROPIC, "litellm_params": {"custom_llm_provider": "anthropic", "api_key": "sk-ant-test"}}
+        kwargs = {**ANTHROPIC, "tools": None, "litellm_params": {"custom_llm_provider": "anthropic", "api_key": "sk-ant-test"}}
         finish(callback(sent, anthropic_count=count), kwargs, {"id": "msg_02", "usage": {"prompt_tokens": 900}})
         _, body, raw, _ = self.posted(sent)
         self.assertEqual(body["method"], "provider")
@@ -269,8 +453,10 @@ class Callback(unittest.TestCase):
         self.assertEqual(len(sent.calls), 2)
         body = json.loads(sent.calls[0][1])
         self.assertEqual(body["method"], "tokenizer")
-        self.assertEqual(body["parts"]["userMessage"], 4)
-        self.assertEqual(body["parts"]["formatting"], 16)
+        expected = cc.BpeCounter(FIXTURE["tokens"], FIXTURE["merges"], FIXTURE["pre"]).count("Hello, world!")
+        self.assertGreater(expected, 0)
+        self.assertEqual(body["parts"]["userMessage"], expected)
+        self.assertEqual(body["parts"]["formatting"], 20 - expected)
 
     def test_request_id_is_the_spend_logs_id(self):
         from litellm.proxy.spend_tracking.spend_tracking_utils import get_spend_logs_id

@@ -194,6 +194,18 @@ describe('with the spend import', () => {
     expect(byRequest(spend.request_id)[0]).toMatchObject({ usage_id: usage!.id, source: 'gateway' });
   });
 
+  it('attaches a waiting split to a row the meter wrote first, which has no split of its own', async () => {
+    const member = litellm.addKey({ key_alias: fresh('member') }).key;
+    const spend = await call(member);
+    const id = fresh('au');
+    database().insertNew('ai_usage', { id, at: new Date().toISOString(), day: new Date().toISOString().slice(0, 10), provider: 'litellm', model: 'qwen3-coder:30b', operation: 'chat', input_tokens: 30, output_tokens: 10, cost: 0, source: 'landflow', runtime: 'landflow', gateway_request_id: spend.request_id });
+    expect((await post(goodBody(spend.request_id))).status).toBe(204);
+    expect(byRequest(spend.request_id)).toHaveLength(1);
+    expect(byRequest(spend.request_id)[0]).toMatchObject({ usage_id: id, source: 'gateway' });
+    await importSpend({ now: later() });
+    expect(byUsage(id)).toHaveLength(1);
+  });
+
   it('keeps a Landflow split that holds the usage row: the gateway post is a no-op', async () => {
     const member = litellm.addKey({ key_alias: fresh('member') }).key;
     const spend = await call(member);

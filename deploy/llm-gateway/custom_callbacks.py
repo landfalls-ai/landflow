@@ -8,10 +8,11 @@ custom_callbacks.proxy_handler_instance`). Off unless LANDFLOW_PARTS_URL and LAN
 
 Never text: prompt text lives in memory for the length of one callback; what is sent and what is logged are token counts,
 hashes, the model's name and the request id. The callback never raises into LiteLLM and never delays a response (it runs
-after it, and the counting and the post run on a worker thread).
+after it, and the counting and the post run on the callback's own small thread pool with a bounded queue: a slow Landflow
+or Ollama can fill it, and then calls are dropped, never queued without limit).
 """
 
-import asyncio
+import concurrent.futures
 import hashlib
 import hmac
 import json
@@ -19,6 +20,7 @@ import logging
 import os
 import threading
 import time
+import urllib.error
 import urllib.request
 
 try:  # LiteLLM's own base class; tests that import this file without the image still see the module.
@@ -194,6 +196,18 @@ def split_request(kwargs):
     elif isinstance(system, list):
         for block in system:
             segments.append({"where": "system", "part": "instructions", "text": _block_text(block), "breakpoint": _has_cache_control(block)})
+    # A /v1/messages request routed to a non-Anthropic model is translated by LiteLLM: its system prompt is then only in
+    # `kwargs["input"]` (the translated messages), not in `system` nor in `messages`. Read it from there, and only when
+    # nothing else carried one, so the native Anthropic path (where `system` is set) never counts it twice.
+    has_system = bool(system) or any(isinstance(m, dict) and m.get("role") in ("system", "developer") for m in messages)
+    if not has_system and isinstance(kwargs.get("input"), list):
+        leading = []
+        for message in kwargs["input"]:
+            if isinstance(message, dict) and message.get("role") in ("system", "developer"):
+                leading.append(message)
+            else:
+                break
+        messages = leading + messages
     body = []
     for message in messages:
         if isinstance(message, dict) and message.get("role") in ("system", "developer"):
@@ -245,6 +259,21 @@ def part_texts(segments):
 
 # ---------------------------------------------------------------------------------------------------------------------
 # Counting.
+
+
+def strip_base(base, suffixes):
+    """LiteLLM logs `litellm_params.api_base` as the full request URL (`.../api/chat`, `.../v1/messages`): the provider's
+    root is that URL less its path."""
+    base = (base or "").strip().rstrip("/")
+    for suffix in suffixes:
+        if base.endswith(suffix):
+            return base[: -len(suffix)].rstrip("/")
+    return base
+
+
+OLLAMA_PATHS = ("/api/chat", "/api/generate", "/api/show")
+ANTHROPIC_PATHS = ("/v1/messages/count_tokens", "/v1/messages")
+RETRY_AFTER = 300  # seconds a failed counter load is remembered
 
 
 def estimate_tokens(text):
@@ -365,7 +394,15 @@ def _spend_id(kwargs, response_obj):
     """LiteLLM's own request id for the spend log row (called, not copied)."""
     from litellm.proxy.spend_tracking.spend_tracking_utils import get_spend_logs_id
 
-    return get_spend_logs_id(kwargs.get("call_type") or "acompletion", _as_dict(response_obj) or response_obj, kwargs)
+    call_type = kwargs.get("call_type") or "acompletion"
+    # The same metadata LiteLLM's own get_logging_payload passes (a background-cost row's id gets a suffix from it).
+    try:
+        from litellm.litellm_core_utils.core_helpers import get_litellm_metadata_from_kwargs
+
+        metadata = get_litellm_metadata_from_kwargs(kwargs)
+    except Exception:
+        return get_spend_logs_id(call_type, _as_dict(response_obj) or response_obj, kwargs)
+    return get_spend_logs_id(call_type, _as_dict(response_obj) or response_obj, kwargs, metadata)
 
 
 def _reported_input(kwargs, response_obj):
@@ -393,7 +430,13 @@ class LandflowParts(CustomLogger):
         self._show = show or self._ollama_show
         self._anthropic_count = anthropic_count or self._anthropic_count_http
         self._counters = {}
+        self._stubs = {}
         self._lock = threading.Lock()
+        self._warned = set()
+        self._pool = None
+        self._pending = 0
+        self._idle = threading.Condition()
+        self.max_pending = 64
 
     # Configuration is read when a call finishes, so a test (or a restart-free env change) takes effect.
     def _settings(self):
@@ -418,10 +461,52 @@ class LandflowParts(CustomLogger):
             input_tokens = _reported_input(kwargs, response_obj)
             if input_tokens <= 0:
                 return
-            # The callback returns to LiteLLM at once; counting and posting happen on a worker thread.
-            asyncio.get_running_loop().run_in_executor(None, self._count_and_send, url, secret, kwargs, request_id, segments, images, names, input_tokens)
+            self._submit(url, secret, kwargs, request_id, segments, images, names, input_tokens)
         except Exception as error:
-            log.warning("landflow parts: skipped a call (%s)", type(error).__name__)
+            self._warn_once("skip:" + type(error).__name__, "landflow parts: skipped a call (%s)" % type(error).__name__)
+
+    def _warn_once(self, key, message):
+        with self._lock:
+            if key in self._warned:
+                return
+            self._warned.add(key)
+        log.warning(message)
+
+    def _submit(self, *args):
+        """Hands the work to the callback's own pool (not LiteLLM's default executor); drops it when the queue is full."""
+        with self._idle:
+            if self._pending >= self.max_pending:
+                full = True
+            else:
+                full = False
+                self._pending += 1
+        if full:
+            self._warn_once("full", "landflow parts: queue full, dropping splits until it drains")
+            return
+        try:
+            if self._pool is None:
+                with self._lock:
+                    if self._pool is None:
+                        self._pool = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="landflow-parts")
+            self._pool.submit(self._run, *args)
+        except Exception:
+            self._done()
+
+    def _done(self):
+        with self._idle:
+            self._pending -= 1
+            self._idle.notify_all()
+
+    def _run(self, *args):
+        try:
+            self._count_and_send(*args)
+        finally:
+            self._done()
+
+    def wait_idle(self, timeout=10):
+        """Blocks until every queued split has been sent or dropped (tests, shutdown)."""
+        with self._idle:
+            return self._idle.wait_for(lambda: self._pending == 0, timeout)
 
     def _count_and_send(self, url, secret, kwargs, request_id, segments, images, names, input_tokens):
         try:
@@ -432,7 +517,7 @@ class LandflowParts(CustomLogger):
             body = build_body(request_id, model, provider, method, input_tokens, counts, hashes)
             self.send(url, secret, body)
         except Exception as error:
-            log.warning("landflow parts: could not split a call (%s)", type(error).__name__)
+            self._warn_once("split:" + type(error).__name__, "landflow parts: could not split a call (%s)" % type(error).__name__)
 
     def _model_of(self, kwargs):
         params = kwargs.get("litellm_params") if isinstance(kwargs.get("litellm_params"), dict) else {}
@@ -461,9 +546,12 @@ class LandflowParts(CustomLogger):
                 if counted is not None:
                     if images:
                         counted["images"] = images * IMAGE_TOKENS
-                    return counted, "provider" if not images else "estimate"
+                    # The count endpoint is asked for each part as user-message text, so tool definitions (which it
+                    # would count in its own `tools` format) are only approximate: the call is then an estimate.
+                    exact = not images and "toolDefinitions" not in texts
+                    return counted, "provider" if exact else "estimate"
         except Exception as error:
-            log.warning("landflow parts: no counter for %s (%s)", provider or "unknown", type(error).__name__)
+            self._warn_once("count:%s:%s" % (provider, type(error).__name__), "landflow parts: no counter for %s (%s)" % (provider or "unknown", type(error).__name__))
             counter = None
         if counter is None:
             counts = {part: estimate_tokens(text) for part, text in texts.items()}
@@ -476,16 +564,25 @@ class LandflowParts(CustomLogger):
         return counts, method
 
     def _cached(self, key, make):
+        """A loaded counter by key. A failed load is remembered (for RETRY_AFTER seconds) so a broken model is not asked for
+        again on every call; the first failure raises (and is warned once), later ones answer None."""
+        now = time.time()
         with self._lock:
-            if key in self._counters:
-                return self._counters[key]
-        counter = make()
+            entry = self._counters.get(key)
+            if entry is not None and (entry[0] is not None or entry[1] > now):
+                return entry[0]
+        try:
+            counter = make()
+        except Exception:
+            with self._lock:
+                self._counters[key] = (None, now + RETRY_AFTER)
+            raise
         with self._lock:
-            self._counters[key] = counter
+            self._counters[key] = (counter, 0)
         return counter
 
     def _ollama_counter(self, api_base, model):
-        base = (api_base or os.environ.get("OLLAMA_API_BASE") or "http://host.docker.internal:11434").rstrip("/")
+        base = strip_base(api_base or os.environ.get("OLLAMA_API_BASE") or "http://host.docker.internal:11434", OLLAMA_PATHS)
         return self._cached("ollama:%s:%s" % (base, model), lambda: self._load_ollama(base, model))
 
     def _load_ollama(self, base, model):
@@ -504,10 +601,12 @@ class LandflowParts(CustomLogger):
         key = params.get("api_key") or os.environ.get("ANTHROPIC_API_KEY")
         if not key:
             return None
-        base = (params.get("api_base") or os.environ.get("ANTHROPIC_API_BASE") or "https://api.anthropic.com").rstrip("/")
-        # One request per part: the part alone as a user message (the tools as a tools-only request's text), less the
-        # count of the stub message every request needs.
-        stub = self._anthropic_count(base, key, model, "x")
+        base = strip_base(params.get("api_base") or os.environ.get("ANTHROPIC_API_BASE") or "https://api.anthropic.com", ANTHROPIC_PATHS)
+        # One request per part: the part alone as a user message, less the count of the stub message every request needs
+        # (asked once per model; a failure is remembered for a while).
+        stub = self._cached("anthropic-stub:%s:%s" % (base, model), lambda: self._anthropic_count(base, key, model, "x"))
+        if stub is None:
+            return None
         counts = {}
         for part, text in texts.items():
             counts[part] = max(0, self._anthropic_count(base, key, model, text) - stub)
@@ -529,9 +628,20 @@ class LandflowParts(CustomLogger):
             try:
                 self._post(url, raw, {"content-type": "application/json", "x-landflow-signature": sign(secret, raw)})
                 return True
+            except urllib.error.HTTPError as error:
+                if 400 <= error.code < 500:  # a refusal (wrong secret, off, bad body) does not change on retry
+                    self._warn_once("http:%d" % error.code, "landflow parts: Landflow answered %d; dropping splits (check LANDFLOW_PARTS_SECRET and that the host has LANDFLOW_LLM_GATEWAY_PARTS_SECRET)" % error.code)
+                    return False
+                if attempt == 2:
+                    self._warn_once("drop:http", "landflow parts: dropped a split after 3 tries (HTTP %d)" % error.code)
+                    return False
+                try:
+                    self._sleep(0.5 * (attempt + 1))
+                except Exception:
+                    return False
             except Exception as error:
                 if attempt == 2:
-                    log.warning("landflow parts: dropped a split after 3 tries (%s)", type(error).__name__)
+                    self._warn_once("drop:" + type(error).__name__, "landflow parts: dropped a split after 3 tries (%s)" % type(error).__name__)
                     return False
                 try:
                     self._sleep(0.5 * (attempt + 1))

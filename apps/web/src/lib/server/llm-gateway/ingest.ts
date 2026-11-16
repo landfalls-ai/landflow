@@ -181,7 +181,12 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
   const spend = typeof row.spend === 'number' && Number.isFinite(row.spend) && row.spend > 0 ? row.spend : 0;
   if (input + output + count(row.total_tokens) === 0 && spend === 0) return false;
   // Imported before, or a call Landflow's meter counted (it keeps the response id the server's gateway gave it).
-  if (db.get('SELECT 1 AS found FROM ai_usage WHERE gateway_request_id = ?', requestId)) return false;
+  const before = db.get<{ id: string }>('SELECT id FROM ai_usage WHERE gateway_request_id = ?', requestId);
+  if (before) {
+    // SP21: Landflow's meter may have written this row before the gateway's split arrived (and wrote no split of its own).
+    attachWaitingParts(before.id, requestId, db);
+    return false;
+  }
   // A call with no response id is paired by its call id only on the server's own key: only the server holds it and
   // Landflow mints its call ids, so nobody can reuse one. Any other key's holder can, so its rows are always imported.
   // One Landflow row takes one spend row. Nothing the caller sends (the `in-process` metadata) and no credential's key

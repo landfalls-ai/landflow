@@ -2236,9 +2236,9 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   person list (`peopleTotals`; admins get the caption alone, and a person with no name is "Unnamed person" to a member);
   the rules are in [llm-gateway.md](llm-gateway.md#the-ai-page) "Who sees what".
 
-## Token spend wave 12: the gateway's split (SP21)
+## Token spend wave 12
 
-- **Built**: a LiteLLM callback (`deploy/llm-gateway/custom_callbacks.py`) counts the parts of each call kagent's agents and
+- **The gateway's split (SP21), built**: a LiteLLM callback (`deploy/llm-gateway/custom_callbacks.py`) counts the parts of each call kagent's agents and
   Claude Code make through the gateway with the model's own tokenizer and posts numbers and hashes to
   `POST /api/gateway-parts`, under the gateway's response id; the spend import pairs them. Off until both sides have the
   shared secret ([llm-gateway.md](llm-gateway.md#the-gateways-split)). Not built: a response id on the harness mod's step
