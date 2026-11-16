@@ -526,7 +526,7 @@ admins see the caption alone, since the page's totals are already that figure). 
 their email address, is "Unnamed person" to a member, who never sees another person's email; admins, and the person
 themselves, see the email. Spend views never show prompt text or run contents. A member sees only their own user cap
 and the caps of workflows and agents they can open; credential caps and the gateway's address, keys and sync detail
-are for admins. The page never shows a key.
+are for admins. The page never shows a key. Your own spend and caps also reach you over MCP (`my_ai_spend`), the CLI (`landflow spend`) and the landflow-brain mod, through `GET /api/brain/my-spend` (`brain:read`): only your own rows and caps, an owner or admin included.
 
 **The report behind the page** (`GET /api/insights/ai`, SP08). Besides the totals and the ten groups it holds a daily
 series (hourly for 24 hours; days with no calls are zeros), optionally split by one group (`stack=<group>`: its top 5 by

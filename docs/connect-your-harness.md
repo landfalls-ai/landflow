@@ -75,5 +75,5 @@ sends it, also in mode `auto`.
 ## Settings → MCP
 
 Four collapsed sections, each with one sentence and a link: **Access token** (the instance server's switch and token, your
-MCP tokens), **Connected clients**, **Tools** (the 25 instance tools with the scope each needs, the plugin tools, grants,
+MCP tokens), **Connected clients**, **Tools** (the 31 instance tools with the scope each needs, the plugin tools, grants,
 approvals) and **Gateway**.

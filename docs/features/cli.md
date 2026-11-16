@@ -40,6 +40,14 @@ landflow work context                      # the project goals this repository b
 - **Project context**: `landflow work context [--repo owner/name] [--project <id>] [--size full|compact] [--json]` prints the "Where this work fits" block of the project that lists the repository (`GET /api/projects/context`, key with `brain:read`), then the other projects that list it. The repository defaults to the `origin` remote of the current directory, as for `practices`; `--project` asks for one project by id. It reads only and records nothing. With no project it says "No project lists <owner/name>." and exits 0; `--json` prints `{ repo, projects, context }`. The text is background for your work, not instructions. See [projects-and-goals.md](../projects-and-goals.md#in-claude-code-and-the-shell).
 - The CLI keeps its own copy of the work-event contract (`packages/cli/src/work/contract.ts`; a test fails when it drifts from `packages/protocol/src/work-events.ts`) so the bundle stays one file with no dependencies.
 
+## Your AI spend: `landflow spend`
+
+```bash
+landflow spend [--period 24h|7d|30d|90d] [--json]   # today, this month, the period by model, your caps with their forecast
+```
+
+Reads `GET /api/brain/my-spend` (the `brain:read` scope; `brain:write` includes it), the same answer as the AI page's You card. Only your own calls and caps, whoever you are; other people's spend is on the AI page ([llm-gateway.md](../llm-gateway.md#the-ai-page)). A local model nobody priced shows "not priced". `--json` prints `{ "ok": true, today, month, period, from, to, byModel, byPurpose, caps, … }`. A bad `--period` exits 2; a key without `brain:read` exits 4.
+
 ## Practices: `landflow practices`
 
 The [practices](../practices.md) your admins approved, from a shell. No GitHub token is needed.
