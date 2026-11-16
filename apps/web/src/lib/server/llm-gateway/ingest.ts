@@ -191,10 +191,15 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
   const spend = typeof row.spend === 'number' && Number.isFinite(row.spend) && row.spend > 0 ? row.spend : 0;
   if (input + output + count(row.total_tokens) === 0 && spend === 0) return false;
   // Imported before, or a call Landflow's meter counted (it keeps the response id the server's gateway gave it).
-  const before = db.get<Record<string, SqlValue> & { id: string }>('SELECT * FROM ai_usage WHERE gateway_request_id = ?', requestId);
+  // The overlap rereads many rows that are already there: read only what the backfill below needs (the columns a row can't be
+  // written without: its key and the NOT NULL ones, which Postgres checks on the insert part of an upsert too).
+  const before = db.get<{ id: string; at: string; day: string; provider: string; model: string; operation: string; gateway_provider: string | null }>(
+    'SELECT id, at, day, provider, model, operation, gateway_provider FROM ai_usage WHERE gateway_request_id = ?',
+    requestId,
+  );
   if (before) {
     // SP12: a call Landflow's meter counted keeps the gateway's provider name too (`ollama_chat`), so a local model behind LiteLLM is known.
-    if (gatewayProvider && !before.gateway_provider) db.upsert('ai_usage', { ...before, gateway_provider: gatewayProvider });
+    if (gatewayProvider && !before.gateway_provider) db.upsert('ai_usage', { id: before.id, at: before.at, day: before.day, provider: before.provider, model: before.model, operation: before.operation, gateway_provider: gatewayProvider });
     // SP21: Landflow's meter may have written this row before the gateway's split arrived (and wrote no split of its own).
     attachWaitingParts(before.id, requestId, db);
     return false;

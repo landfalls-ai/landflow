@@ -533,8 +533,9 @@ the call may start, then prices and records what it used.
   workflow, user, credential, surface, purpose, provider, model, source and runtime (`''` for none) with the summed tokens,
   cost, calls and distinct runs. The leader's "AI spend rollup" service rewrites today, yesterday, every day a late spend
   import marked dirty (the `meta` key `ai_spend_dirty_days`) and every day since its last pass (the `meta` key
-  `ai_spend_rolled_through`, capped at the retention, so a host that was off for days loses nothing) every 10 minutes, through `delete` and `upsert` calls in one
-  transaction, and prunes it at `LANDFLOW_AI_USAGE_RETENTION_DAYS` like `ai_usage` itself. The AI page reads it for the
+  `ai_spend_rolled_through`, capped at the retention, so a host that was off for days loses nothing) every 10 minutes, a
+  week of days at a time with the event loop free between the steps (`runRollupInBatches`), through `delete` and `upsert`
+  calls in one transaction per day, and prunes it at `LANDFLOW_AI_USAGE_RETENTION_DAYS` like `ai_usage` itself. The AI page reads it for the
   days before yesterday ([llm-gateway.md](llm-gateway.md#the-ai-page)).
 - **Where it shows**: the execution view (tokens, cost and calls per model), Insights (a cost
   column and the period's total), an agent's Abilities → Guardrails (today and this month), and

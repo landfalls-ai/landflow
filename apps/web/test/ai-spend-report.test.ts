@@ -27,7 +27,7 @@ const { enableTestAuth } = await import('@/lib/server/auth/test-bypass');
 const projects = await import('@/lib/server/projects');
 const { database, MIGRATIONS, migrateSqlite } = await import('@/lib/server/db');
 const { aiUsageMeter } = await import('@/lib/server/ai-usage');
-const { runRollup, markSpendDays, rollupDay } = await import('@/lib/server/ai-usage/rollup');
+const { runRollup, runRollupInBatches, markSpendDays, rollupDay } = await import('@/lib/server/ai-usage/rollup');
 const { aiSpendReport } = await import('@/lib/server/ai-usage/spend-report');
 const { aiConsoleReport } = await import('@/lib/server/llm-gateway/console');
 const { credentials } = await import('@/lib/server/credentials/vault');
@@ -346,6 +346,27 @@ describe('the rollup', () => {
     database().delete('ai_usage', { id: 'sp08-gap' });
     rollupDay(day);
     database().upsert('meta', { key: 'ai_spend_rolled_through', value: day });
+  });
+
+  it('catches up in steps of a week with the event loop free between them, and writes the same rows', async () => {
+    const rolled = () => database().all('SELECT * FROM ai_usage_daily ORDER BY day, project_id, goal_id, agent_id, workflow_id, user_id, credential_id, surface, purpose, provider, model, source, runtime');
+    const wanted = rolled();
+    // A host off for 30 days: the last pass was 30 days ago, and the rollup holds nothing newer.
+    database().upsert('meta', { key: 'ai_spend_rolled_through', value: daysAgo(30) });
+    for (let back = 0; back <= 30; back++) database().delete('ai_usage_daily', { day: daysAgo(back) });
+    expect(rolled().length).toBeLessThan(wanted.length);
+    let pauses = 0;
+    const days = await runRollupInBatches(Date.now(), database(), async () => {
+      pauses += 1;
+      // The rows written so far stay whole: a step is complete days.
+      await Promise.resolve();
+    });
+    expect(days.length).toBeGreaterThanOrEqual(31);
+    // At least 31 days in steps of 7: four pauses or more.
+    expect(pauses).toBe(Math.ceil(days.length / 7) - 1);
+    expect(pauses).toBeGreaterThanOrEqual(4);
+    expect(rolled()).toEqual(wanted);
+    expect(database().get<{ value: string }>("SELECT value FROM meta WHERE key = 'ai_spend_rolled_through'")?.value).toBe(daysAgo(0));
   });
 
   it('writes only through row-level calls', () => {
@@ -667,6 +688,18 @@ describe('runs and unpriced models', () => {
     expect(report.groups.model.find((m) => m.key === 'ollama/llama-priced')?.unpriced).toBeUndefined();
     expect(report.groups.model.find((m) => m.key === 'anthropic/claude-sonnet-5-5')?.unpriced).toBeUndefined();
     expect(report.totals.unpricedCalls).toBeGreaterThanOrEqual(1);
+  });
+
+  it('counts the calls of an unpriced model in the totals and in the rows that hold them', async () => {
+    const report = await reportAs(admin, { period: '7d' });
+    const raw = Number(database().get<{ n: number }>("SELECT COUNT(*) AS n FROM ai_usage WHERE provider = 'ollama' AND model = 'qwen3-coder:30b' AND day >= ?", daysAgo(6))?.n);
+    expect(raw).toBeGreaterThan(0);
+    // The only calls with no price and no cost: the unpriced local model's.
+    expect(report.totals.unpricedCalls).toBe(raw);
+    expect(report.groups.model.find((m) => m.key === 'ollama/qwen3-coder:30b')?.unpricedCalls).toBe(raw);
+    expect(report.groups.model.find((m) => m.key === 'ollama/llama-priced')?.unpricedCalls).toBe(0);
+    expect(report.groups.workflow.find((w) => w.key === wfMine)?.unpricedCalls).toBe(raw);
+    expect(sumBy(report.groups.model, (m) => m.unpricedCalls)).toBe(report.totals.unpricedCalls);
   });
 });
 

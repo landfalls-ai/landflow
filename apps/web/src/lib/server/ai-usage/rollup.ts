@@ -4,7 +4,8 @@
  * itself is kept as long (`LANDFLOW_AI_USAGE_RETENTION_DAYS`); the rollup is for speed, not for a longer memory.
  *
  * A leader service recomputes today, yesterday, every day since the last pass (`meta` `ai_spend_rolled_through`, so a host that
- * was off for days loses nothing) and every day marked dirty every 10 minutes. A day is rewritten whole in
+ * was off for days loses nothing) and every day marked dirty every 10 minutes, a week of days at a time with the event loop
+ * free between steps (`runRollupInBatches`). A day is rewritten whole in
  * one transaction through the row-level calls (`delete`, `upsert`), never a raw statement: Postgres mode replays those
  * calls and nothing else. Days marked dirty (a late import wrote a row into a past day) live in the `meta` table, so a
  * leader change loses none.
@@ -101,8 +102,8 @@ export function rollupDay(day: string, db: Database = database()): number {
   return rows.length;
 }
 
-/** One pass: today, yesterday and the dirty days; then the retention prune. Returns the days it recomputed. */
-export function runRollup(now = Date.now(), db: Database = database()): string[] {
+/** What one pass recomputes: today, yesterday, every day since the last pass (up to the retention) and the dirty days, oldest first. */
+function planPass(now: number, db: Database): { days: string[]; dirty: string[] } {
   const meter = aiUsageMeter();
   // Around a time-zone change of clocks "a day ago" can name the same day twice or skip one: ask around it.
   const days = new Set<string>([meter.today(now), meter.today(now - DAY_MS), meter.today(now - DAY_MS - 3_600_000), meter.today(now - DAY_MS + 3_600_000)]);
@@ -118,11 +119,12 @@ export function runRollup(now = Date.now(), db: Database = database()): string[]
   }
   const dirty = dirtyDays(db);
   for (const day of dirty) days.add(day);
-  const done: string[] = [];
-  for (const day of [...days].sort()) {
-    rollupDay(day, db);
-    done.push(day);
-  }
+  return { days: [...days].sort(), dirty };
+}
+
+/** The end of a pass: the day it reached, the dirty marks it handled, and the retention prune. */
+function finishPass(now: number, db: Database, dirty: string[]) {
+  const meter = aiUsageMeter();
   db.upsert('meta', { key: THROUGH_KEY, value: meter.today(now) });
   // Clear only what was marked before the pass: a day marked while it ran stays for the next one.
   if (dirty.length) {
@@ -133,7 +135,35 @@ export function runRollup(now = Date.now(), db: Database = database()): string[]
     });
   }
   db.deleteBefore('ai_usage_daily', 'day', meter.today(now - aiUsageRetentionDays() * DAY_MS));
-  return done;
+}
+
+/**
+ * One pass, in one go: today, yesterday, the days since the last pass and the dirty days (every day it recomputed is
+ * returned), then the retention prune. The leader's service runs `runRollupInBatches`, which does the same in steps.
+ */
+export function runRollup(now = Date.now(), db: Database = database()): string[] {
+  const { days, dirty } = planPass(now, db);
+  for (const day of days) rollupDay(day, db);
+  finishPass(now, db, dirty);
+  return days;
+}
+
+const BATCH_DAYS = 7;
+const yieldToEventLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+/**
+ * The same pass as `runRollup`, a week of days per step with `pause` (the event loop by default) between steps, so a host
+ * off for days, or the first pass over 400 days, doesn't hold the leader's event loop for the whole of it. `through` moves
+ * only at the end, so a pass cut short starts from the same day again.
+ */
+export async function runRollupInBatches(now = Date.now(), db: Database = database(), pause: () => Promise<void> = yieldToEventLoop, batchDays = BATCH_DAYS): Promise<string[]> {
+  const { days, dirty } = planPass(now, db);
+  for (let i = 0; i < days.length; i += batchDays) {
+    if (i > 0) await pause();
+    for (const day of days.slice(i, i + batchDays)) rollupDay(day, db);
+  }
+  finishPass(now, db, dirty);
+  return days;
 }
 
 /** The leader's service: the first pass 15 s after start, then every 10 minutes. */
@@ -143,14 +173,11 @@ export const aiSpendRollup = singleton('ai-spend-rollup', () => {
 
   function arm(delay: number) {
     timer = setTimeout(() => {
-      try {
-        runRollup();
-      } catch (error) {
-        logger.warn('ai spend rollup failed', {
-          error: (error as Error).message,
+      runRollupInBatches()
+        .catch((error) => logger.warn('ai spend rollup failed', { error: (error as Error).message }))
+        .finally(() => {
+          if (!stopped) arm(EVERY_MS);
         });
-      }
-      if (!stopped) arm(EVERY_MS);
     }, delay);
     timer.unref?.();
   }

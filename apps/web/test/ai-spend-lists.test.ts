@@ -26,6 +26,7 @@ const { createUser } = await import("@/lib/server/auth/users");
 const { enableTestAuth } = await import("@/lib/server/auth/test-bypass");
 const projects = await import("@/lib/server/projects");
 const { database } = await import("@/lib/server/db");
+const { credentials } = await import("@/lib/server/credentials/vault");
 const { aiUsageMeter } = await import("@/lib/server/ai-usage");
 const { getSettings, updateSettings } = await import("@/lib/server/settings");
 const { routePolicy } = await import("@/lib/server/auth/policy");
@@ -341,6 +342,35 @@ describe("GET /api/insights/ai/runs", () => {
     ).body as AiSpendRunsPage;
     expect(page.runs).toEqual([]);
     expect(page.hidden).toEqual({ runs: 0, calls: 0, cost: 0 });
+  });
+
+  it("keeps a person row under a credential filter to what the report shows the viewer, not every row", async () => {
+    const desk = projects.createTeamProject({ name: "Credential desk" }).id;
+    projects.setMember(desk, member.id, "editor");
+    const credential = credentials.create({ name: "Desk key", type: "core.openAiApi", data: { apiKey: "sk-test" } }).id;
+    projects.setHomeProject("credential", credential, desk);
+    execution("ex_cred_closed", "wf_sl_closed");
+    // The owner's call on a credential the member can read, from a workflow the member can't.
+    usage({
+      id: "au_cred_closed",
+      at: at(6),
+      execution_id: "ex_cred_closed",
+      workflow_id: "wf_sl_closed",
+      credential_id: credential,
+      user_id: owner.id,
+      input_tokens: 9000,
+      output_tokens: 900,
+    });
+    try {
+      const page = (await runs({ group: "person", key: owner.id, credentialId: credential }, member)).body as AiSpendRunsPage;
+      expect(page.runs).toEqual([]);
+      expect(page.hidden).toEqual({ runs: 0, calls: 0, cost: 0 });
+      const list = (await calls({ group: "person", key: owner.id, credentialId: credential }, member)).body as AiSpendCallsPage;
+      expect(list.calls).toEqual([]);
+      expect(list.hidden).toEqual({ runs: 0, calls: 0, cost: 0 });
+    } finally {
+      database().delete("ai_usage", { id: "au_cred_closed" });
+    }
   });
 
   it("answers 404 for a filter or key the member cannot read, and 400 for “Other”", async () => {

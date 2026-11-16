@@ -148,7 +148,7 @@ describe('local prices', () => {
     // Landflow's meter counted this call on a LiteLLM credential first (provider litellm, the response id).
     database().insertNew('ai_usage', { id: `au_pair_${process.pid}`, at: new Date().toISOString(), day: aiUsageMeter().today(), provider: 'litellm', model: 'qwen3-coder:30b', operation: 'chat', input_tokens: 5, output_tokens: 5, cost: 0, source: 'landflow', runtime: 'landflow', gateway_request_id: log.request_id });
     await importLogs(log);
-    expect(database().get<Usage>('SELECT * FROM ai_usage WHERE id = ?', `au_pair_${process.pid}`)).toMatchObject({ gateway_provider: 'ollama_chat' });
+    expect(database().get<Usage>('SELECT * FROM ai_usage WHERE id = ?', `au_pair_${process.pid}`)).toMatchObject({ gateway_provider: 'ollama_chat', provider: 'litellm', model: 'qwen3-coder:30b', input_tokens: 5, output_tokens: 5, source: 'landflow', runtime: 'landflow', gateway_request_id: log.request_id });
 
     // The spend row arrives before the response id is known: paired by the call id on the server's own key.
     const second = ollamaLog({ api_key: serverKeyHash() });

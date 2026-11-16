@@ -525,9 +525,9 @@ on the raw rows, so one run across two models is one run in the total and one in
 a filter on a project, agent, workflow or credential you can't read answers 404. Under a filter by project, agent, workflow
 or credential the person group holds the filtered rows you can see; under any other filter it keeps every row that matches
 (D1). **Day periods read a daily rollup** (`ai_usage_daily`, one row per day and combination of the grouping columns): a
-leader service rewrites today, yesterday, every day a late import marked and every day since its last pass (so a host that was off for
-days loses nothing), every 10 minutes, in one transaction of row
-calls; days older than yesterday are read from it, yesterday and today from the raw rows (always exact), and 24 hours from
+leader service rewrites today, yesterday, every day a late import marked and every day since its last pass (so a host
+that was off for days loses nothing), every 10 minutes, a week of days at a time with the event loop free between the
+steps, each day in one transaction of row calls; days older than yesterday are read from it, yesterday and today from the raw rows (always exact), and 24 hours from
 the raw rows by hour. The rollup is kept as long as `ai_usage` (`LANDFLOW_AI_USAGE_RETENTION_DAYS`, default 400), so it is
 for speed, not for a longer memory. A person's row links to the person filter (`/insights/ai?userId=<id>`).
 
