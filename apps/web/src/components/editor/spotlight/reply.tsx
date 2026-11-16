@@ -15,6 +15,7 @@ import { StatusSwap, StreamingText } from '../../ui/chat-motion';
 import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta, ShortReply } from '../../ui/chat';
 import { MAX_FIXES, approveDestinations, productionNote, publishToProduction, testUntilItRuns, undoApplied } from '../test-session'; // SB03:
 import { agentStep, runRow } from '../timeline';
+import { CredentialPicker } from './credential-picker';
 
 import { ProposalCard, ProposalRow } from './proposal';
 import { provisionalText } from '@/lib/shared/leaked-markup';
@@ -32,13 +33,22 @@ export function openNodeNamed(name: string) {
   if (node) useEditor.getState().openNode(node.id);
 }
 
+/** Change one row of a reply: only the part at `index` (and only a needs part) is patched; its siblings stay open. */
+export function markNeed(itemId: string, index: number, patch: Partial<Need>) {
+  useAssistant.getState().updateParts(itemId, (parts) => parts.map((p, at) => (at === index && p.kind === 'needs' ? { ...p, need: { ...p.need, ...patch } } : p)));
+}
+
 /**
  * Something only the person can do (docs/assistant.md#test-and-fix): what it is, the button that does it, and one that
- * tests on. Picking a credential or an agent opens the node; a trigger is one op; sending for real is a yes.
+ * tests on. Picking an agent opens the node; a credential row with types holds the picker; a trigger is one op; sending for real is a yes.
  */
-function NeedRow({ itemId, need }: { itemId: string; need: Need }) {
+function NeedRow({ itemId, index, need }: { itemId: string; /** Where this row's part sits in the reply: only this row changes when it is marked or picked. */ index: number; need: Need }) {
   const busy = useAssistant((s) => s.pending || Boolean(s.testing));
-  const mark = (state: 'done' | 'dismissed') => useAssistant.getState().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'needs' ? { ...p, need: { ...p.need, state } } : p)));
+  const mark = (state: 'done' | 'dismissed') => markNeed(itemId, index, { state });
+  const workflowId = useEditor((s) => s.workflowId);
+  // SB12: a credential row with the types a step accepts holds the picker; after a pick it reads "Using “name”" and is done.
+  const offer = need.what === 'credential' && Boolean(need.credentialTypes?.length);
+  const picked = (name: string) => markNeed(itemId, index, { state: 'done', picked: name });
   const goOn = () => {
     mark('done');
     void testUntilItRuns(need.goal);
@@ -60,9 +70,13 @@ function NeedRow({ itemId, need }: { itemId: string; need: Need }) {
           <span className="text-t2">{need.text}</span>
         </span>
       </div>
-      {need.state ? (
+      {/* SB12: the credentials that fit, nothing picked by itself */}
+      {offer && !need.state && need.credentialTypes && (
+        <CredentialPicker workflowId={workflowId} nodeId={need.nodeId} node={need.node ?? ''} credentialTypes={need.credentialTypes} onPicked={(c) => picked(c.name)} />
+      )}
+      {offer && !need.state ? null : need.state ? (
         <p className="pl-5 text-[11.5px] text-t3">
-          {need.state === 'dismissed' ? 'Left for later.' : need.what === 'sends' || need.what === 'destination' ? yesText(need.destinations) : need.what === 'blocked' || need.what === 'address' ? 'Left for you to change.' : need.what === 'trigger' ? 'Trigger added.' : 'Testing again.'}
+          {need.picked ? `Using “${need.picked}”.` : need.state === 'dismissed' ? 'Left for later.' : need.what === 'sends' || need.what === 'destination' ? yesText(need.destinations) : need.what === 'blocked' || need.what === 'address' ? 'Left for you to change.' : need.what === 'trigger' ? 'Trigger added.' : 'Testing again.'}
         </p>
       ) : (
         <div className="flex flex-wrap gap-1.5 pl-5">
@@ -431,7 +445,7 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
         ) : part.kind === 'action' ? (
           <ActionView key={i} itemId={item.id} action={part} />
         ) : part.kind === 'needs' ? (
-          <NeedRow key={i} itemId={item.id} need={part.need} />
+          <NeedRow key={i} itemId={item.id} index={i} need={part.need} />
         ) : part.kind === 'outcome' ? (
           <OutcomeCard key={i} itemId={item.id} outcome={part.outcome} />
         ) : part.kind === 'ask' ? (

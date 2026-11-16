@@ -17,6 +17,7 @@ import type { NodeRun } from '@/lib/shared/types';
 import type { MentionRef } from '@/lib/shared/mentions';
 import type { AskEvent, AskPart } from '@/lib/shared/spotlight-wire'; // SB11:
 import type { ReplyInfo } from '../ui/chat';
+import type { CredentialNeedFields, CredentialOfferEvent } from '@/lib/shared/spotlight-wire'; // SB12:
 import { useEditor } from './store';
 import { emptyStored, withEarlier, type Stored } from './spotlight-history';
 
@@ -253,7 +254,7 @@ export interface Proposal {
  * Something only the person can do before Spotlight tests on (docs/assistant.md#test-and-fix): pick a credential, pick
  * an agent, add a trigger, or say a test may send for real. Its row has the button that does it and one that goes on.
  */
-export interface Need {
+export interface Need extends CredentialNeedFields { // SB12:
   what: 'credential' | 'agent' | 'trigger' | 'sends' | 'destination' | 'blocked' | 'address'; // SB03:
   text: string;
   /** `sends` and `destination`: where the test would send; the yes is kept for these (SB03). */
@@ -367,7 +368,8 @@ export type StreamEvent =
   | ({ type: 'proposal' } & Omit<Proposal, 'state'>)
   | AskEvent // SB11:
   | { type: 'done'; model: string; durationMs: number; steps: number; usage?: { inputTokens: number; outputTokens: number }; costUsd?: number; local?: boolean }
-  | { type: 'error'; message: string; kind?: 'model' | 'cap' | 'stalled' | 'internal'; checkpoint?: string; step?: number };
+  | { type: 'error'; message: string; kind?: 'model' | 'cap' | 'stalled' | 'internal'; checkpoint?: string; step?: number }
+  | CredentialOfferEvent; // SB12:
 
 /** What kind of trace row a tool call is. */
 export function toolKind(name: string): ActivityKind {
@@ -437,6 +439,9 @@ export function applyStreamEvent(turn: AssistantTurn, event: StreamEvent, now: n
       };
     case 'error':
       return { ...turn, steps: settleModel(turn, now, 'failed'), error: event.message, ...(event.checkpoint && { checkpoint: event.checkpoint }), ...(event.kind && { errorKind: event.kind }), ...(event.step !== undefined && { errorStep: event.step }) };
+    // SB12: a step that needs a credential: a "Needs you" row with the picker (decision D2), never one set by Spotlight.
+    case 'credential':
+      return { ...turn, parts: [...turn.parts, { kind: 'needs', need: { what: 'credential', text: event.text, node: event.node, ...(event.nodeId && { nodeId: event.nodeId }), credentialTypes: event.credentialTypes } }] };
   }
 }
 

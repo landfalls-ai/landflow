@@ -235,10 +235,11 @@ interface Collected {
   error?: string;
   drafts: Array<Partial<AgentConfig>>;
   asked: Array<{ question: string; choices: string[] }>; // SB11:
+  offers: NonNullable<Outcome['offers']>; // SB12:
 }
 
 function collect(events: Array<{ event: string; data: any }>): Collected { // eslint-disable-line @typescript-eslint/no-explicit-any
-  const out: Collected = { text: '', tools: [], proposals: [], drafts: [], asked: [] };
+  const out: Collected = { text: '', tools: [], proposals: [], drafts: [], asked: [], offers: [] };
   for (const { data } of events) {
     switch (data.type) {
       case 'text':
@@ -256,6 +257,7 @@ function collect(events: Array<{ event: string; data: any }>): Collected { // es
       case 'draft':
         out.drafts.push(data.config);
         break;
+      case 'credential': out.offers.push({ node: data.node, credentialTypes: data.credentialTypes }); break; // SB12:
       case 'done':
         out.done = data;
         break;
@@ -554,7 +556,7 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
     } else if (scenario.via === 'chat' || scenario.via === 'session') {
       if (!canvas) throw new Error(`${scenario.id}: a chat scenario needs start.workflow`);
       const result = await chatOnce({ ask: echoed(scenario.ask, options), workflow: canvas, selected: idOf(canvas, scenario.start?.selected), runs: runsById(canvas, scenario.start?.runs), session: scenario.start?.session, ...scopeOfStart(canvas, scenario.start) }, form, scripted, options);
-      Object.assign(outcome, { text: result.text, tools: result.tools, proposals: result.proposals, asked: result.asked, ...(result.error && { error: result.error }) }); // SB11: asked
+      Object.assign(outcome, { text: result.text, tools: result.tools, proposals: result.proposals, asked: result.asked, offers: result.offers, ...(result.error && { error: result.error }) }); // SB11: asked; SB12: offers
       withDone(result);
       outcome.after = applyAsTheEditor(canvas, result.proposals, scenario.start?.autonomy);
       if (scenario.via === 'session') {

@@ -2484,3 +2484,8 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   `LANDFLOW_SPOTLIGHT_PLUGINS`), so `get_node_docs messaging.slack` answers "not found", the model wrote the question as
   numbered text or asked "Which Slack node?" with type ids as chips, and the destination send-back is not exercised live;
   not re-run with the plugin served, so open. The chips are not kept in a stored conversation.
+- **SB12, never empty, never a false claim, credentials offered, built:** a reply that the guards left empty says one
+  line (*The card shows the change.* or *Nothing changed, because …*), a change claimed with no card is sent back once
+  (`claimsAChange`), and a step that needs a credential gets a **Needs you** row with the credentials you may use, **Use
+  it** and **Create one**, with nothing picked by Spotlight (decision D2; the `credential` chat event). Docs:
+  [assistant.md](assistant.md#the-builder-chat).

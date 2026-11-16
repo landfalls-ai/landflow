@@ -591,6 +591,16 @@ export function withoutApplyRequests(text: string): string {
   return dropSentences(prose, (sentence) => APPLY_REQUEST.test(sentence)) ?? prose;
 }
 
+// SB12: the words of a change claimed with no card ("I've set the retry to 3", "The step now retries"), not a question and not a plan.
+export const CHANGE_CLAIM = /\bI(?:'ve| have) (?:just |now )?(?:set|changed|added|updated|fixed|removed|connected)\b|\b(?:has|have) been (?:set|changed|added|updated)\b|\bnow (?:retries|posts|sends|reads|uses)\b|\bis now (?:set|connected|configured)\b/i;
+
+// SB12: whether the text says a change was made. A sentence that asks, or says what would, could or will happen, is not a claim.
+export function claimsAChange(text: string): boolean {
+  return text
+    .split(/(?<=[.!?])\s+|\n+/)
+    .some((sentence) => CHANGE_CLAIM.test(sentence) && !/\?\s*$|\b(?:would|could|will|should|might)\b/i.test(sentence));
+}
+
 /**
  * Local models (qwen3-coder in particular) sometimes write a tool call as text,
  * `<function=name><parameter=key>value</parameter></function>`, instead of a
