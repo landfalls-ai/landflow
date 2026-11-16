@@ -2289,6 +2289,7 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   `local-only.cjs`, makes any connection to anything but this machine fail, for the suite and for a live host
   (`NODE_OPTIONS`). Not built: the browser scorecard (each package checks its own screens) and the agents' guardrails, eval cases
   and test-run columns of the evaluation (the scenario outcome carries no such fields yet).
+- **The first draft fills its collections (SB01), built**: the first draft asks Ollama for `format: "json"` with the schema in the system prompt (a schema-held reply left every list empty: 9 of 9 drafts), parses the reply with a schema (one send-back, then the error), checks the draft for empty lists (`emptyParts`) and sends it back once with a line for each, keeps what is still empty as `FlowDraft.left`, maps a near-miss step type to the one it can mean, and pins test items on an app trigger or on the app step that reads data after a schedule. Not built: the staged build (wave sb3).
 
 ## Practices (waves P1 and P2)
 
