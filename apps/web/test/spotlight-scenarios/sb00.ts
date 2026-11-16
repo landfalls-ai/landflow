@@ -118,6 +118,15 @@ const hasAgentNode: Check = {
 // One-step asks on the "Bug triage" fixture
 // ---------------------------------------------------------------------------
 
+/** The 401 is fixed by choosing an authentication, not by inventing a field no item has. */
+const fixed401 = right('right-change', 'Authentication set, no made-up field', (o) => {
+  if (!o.after) return false;
+  const params = JSON.stringify(node(o, HTTP)?.parameters ?? {});
+  const before = JSON.stringify(BUG_TRIAGE.nodes.find((n) => n.name === HTTP)?.parameters);
+  const madeUp = /api_token/.test(params) || /authorization[^}]*\{\{\s*\$json/i.test(params);
+  return o.proposals.length > 0 && params !== before && !madeUp;
+});
+
 const retryOn = (name: string): Check =>
   right('right-change', 'Retries 3 times', (o) => {
     const n = node(o, name) as { maxTries?: number; retryOnFail?: boolean } | undefined;
@@ -199,7 +208,7 @@ export default defineScenarios([
     title: 'This HTTP step fails with 401 (selected, with the failed run)',
     ask: 'this HTTP step fails with 401, fix it',
     start: { workflow: BUG_TRIAGE, selected: 'n_http', runs: BUG_TRIAGE_RUNS },
-    checks: [only([HTTP]), right('right-change', 'Authentication set, no made-up field', (o) => (o.after ? Boolean(o.proposals.length) && !/api_token/.test(JSON.stringify(node(o, HTTP)?.parameters)) && JSON.stringify(node(o, HTTP)?.parameters) !== JSON.stringify(BUG_TRIAGE.nodes.find((n) => n.name === HTTP)?.parameters) : false)), checks.noOutside],
+    checks: [only([HTTP]), fixed401, checks.noOutside],
   },
   {
     id: 'sb00-fix-401-autonomous',
@@ -209,7 +218,7 @@ export default defineScenarios([
     title: 'This HTTP step fails with 401, in autonomous mode',
     ask: 'this HTTP step fails with 401, fix it',
     start: { workflow: BUG_TRIAGE, selected: 'n_http', runs: BUG_TRIAGE_RUNS, autonomy: 'auto', session: 'auto' },
-    checks: [only([HTTP]), right('right-change', 'Authentication set, no made-up field', (o) => (o.after ? Boolean(o.proposals.length) && !/api_token/.test(JSON.stringify(node(o, HTTP)?.parameters)) && JSON.stringify(node(o, HTTP)?.parameters) !== JSON.stringify(BUG_TRIAGE.nodes.find((n) => n.name === HTTP)?.parameters) : false)), checks.noOutside],
+    checks: [only([HTTP]), fixed401, checks.noOutside],
   },
   {
     id: 'sb00-fix-retry-only',

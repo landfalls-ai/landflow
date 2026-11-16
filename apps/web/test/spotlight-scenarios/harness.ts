@@ -488,6 +488,28 @@ export function reportOf(model: string, startedAt: string, runs: Array<{ scenari
   return { model, startedAt, scenarios: [...byId.values()] };
 }
 
+/** The scorecard's column for each check id, in the evaluation's words (a check's own label is for the unit form's message). */
+const COLUMNS: Record<string, string> = {
+  'right-types': 'Right node types',
+  wiring: 'Wiring',
+  'collections-filled': 'Collections filled',
+  'ids-asked': 'Ids asked, not made up',
+  'credentials-listed': 'Credentials listed',
+  'runs-right': 'Runs right with the pinned data',
+  'no-junk': 'No junk nodes',
+  'left-listed': 'Left items listed',
+  'only-asked-node': 'Only the asked node',
+  'right-change': 'Right change',
+  'no-change': 'No change for a question',
+  proposed: 'Change card',
+  answered: 'Answered in words',
+  'no-outside': 'No outside',
+  'agent-exists': 'An agent exists',
+  model: 'Model chosen',
+  tools: 'Tools least-privilege',
+  knowledge: 'Knowledge base',
+};
+
 const TITLES: Record<Job, string> = { build: 'Build', fix: 'Fix one step', agent: 'Agents' };
 
 /** The three tables, in the evaluation's words: per scenario, runs, median time and "k of n" per check. */
@@ -497,7 +519,7 @@ export function tables(report: Report, scenarios: Scenario[]): string {
     const rows = report.scenarios.filter((s) => s.job === job);
     if (!rows.length) continue;
     const labels = new Map<string, string>();
-    for (const s of scenarios) for (const c of s.checks) labels.set(c.id, c.label);
+    for (const s of scenarios) for (const c of s.checks) labels.set(c.id, COLUMNS[c.id] ?? c.label);
     const ids = [...new Set(rows.flatMap((r) => r.runs.flatMap((run) => Object.keys(run.checks))))];
     out.push(`\n${TITLES[job]}`, ['scenario', 'runs', 'median', ...ids.map((id) => labels.get(id) ?? id)].join(' | '));
     for (const row of rows) {
