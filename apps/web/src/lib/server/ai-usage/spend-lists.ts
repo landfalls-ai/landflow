@@ -16,6 +16,7 @@ import { agentStore } from "../agents/store";
 import { getGoal } from "../goals/store";
 import { visibleGoals } from "../goals/views";
 import { database, type SqlValue } from "../db";
+import { HttpError } from "../errors";
 import { sourceKey } from "../llm-gateway/console";
 import {
   canResource,
@@ -82,12 +83,10 @@ export const aiSpendListQuerySchema = z
 export type AiSpendListQuery = z.infer<typeof aiSpendListQuerySchema>;
 
 /** A problem with the query the caller can fix (400) or an id the caller can't read (404). */
-export class SpendListError extends Error {
-  constructor(
-    message: string,
-    readonly status: 400 | 404,
-  ) {
-    super(message);
+export class SpendListError extends HttpError {
+  static readonly errorName: string = 'SpendListError';
+  constructor(message: string, status: 400 | 404) {
+    super(message, status);
   }
 }
 
