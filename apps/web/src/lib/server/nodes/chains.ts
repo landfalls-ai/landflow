@@ -8,6 +8,8 @@
  * the first one fails (see fallback.ts).
  */
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem } from '@landflow/sdk';
+import { withCallNote } from '../ai-usage/call-context';
+import { plainDraft } from '../ai-usage/drafts';
 import { BINARY_INPUT_OPTIONS, optionalAttachments } from './attachments';
 import { connectedModel, FALLBACK_PORT, FALLBACK_PROPERTY } from './fallback';
 import type { GenerateInput } from './models';
@@ -114,7 +116,8 @@ export const chainLlmNode = defineNode({
         ...(send && { onToken: (delta: string) => send({ type: 'item', itemIndex: i, content: delta }) }),
       };
       send?.({ type: 'begin', itemIndex: i });
-      const turn = await model.generate(request);
+      // The call's prompt draft: the meter writes its split (what the prompt was made of) into ai_call_parts.
+      const turn = await withCallNote({ draft: plainDraft({ system: request.system, messages: request.messages }) }, () => model.generate(request));
       send?.({ type: 'end', itemIndex: i });
       return { json: { text: turn.text }, pairedItem: { item: i } };
     });

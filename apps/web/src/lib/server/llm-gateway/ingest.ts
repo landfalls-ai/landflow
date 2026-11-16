@@ -15,6 +15,7 @@ import { createHash } from 'node:crypto';
 import { envInt } from '../config';
 import { database, type Database, type SqlValue } from '../db';
 import { aiUsageMeter } from '../ai-usage';
+import { markSpendDays } from '../ai-usage/rollup'; // SP08:
 import { dayOf, recordUsage } from '../usage/ledger';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
@@ -121,6 +122,8 @@ export async function importSpend(options: ImportOptions = {}): Promise<IngestSt
   /** The end of the last chunk that was read to an empty page: nothing older than it is unread. */
   let doneUpTo: number | undefined;
   let stalled = false;
+  // SP08: the days of the rows this pass wrote, so a late one marks its rolled-up day for the next rollup pass.
+  const importedDays = new Set<string>();
 
   try {
     // LiteLLM caps only the advertised total (`total_is_capped`); the data is never cut, so page until a page is empty.
@@ -135,7 +138,7 @@ export async function importSpend(options: ImportOptions = {}): Promise<IngestSt
           break;
         }
         for (const row of reply.data) {
-          if (importRow(row, { db, meter, ownKeyHash, serverKey, now })) imported++;
+          if (importRow(row, { db, meter, ownKeyHash, serverKey, now, days: importedDays })) imported++;
           else skipped++;
         }
       }
@@ -149,6 +152,12 @@ export async function importSpend(options: ImportOptions = {}): Promise<IngestSt
   } catch (cause) {
     error = (cause as Error).message || 'The gateway could not be read';
     logger.warn('llm gateway: the spend import failed', { error });
+  }
+
+  // SP08: today and yesterday are recomputed every pass; an older day is marked.
+  if (imported) {
+    const yesterday = meter.today(now - 86_400_000);
+    markSpendDays([...importedDays].filter((day) => day < yesterday), db);
   }
 
   // Only chunks read to the end move the mark; a failed or stalled run keeps what it had.
@@ -168,21 +177,29 @@ export async function importSpend(options: ImportOptions = {}): Promise<IngestSt
 }
 
 /** One spend row into `ai_usage` (and the usage ledger); false when it is skipped. */
-function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<typeof aiUsageMeter>; ownKeyHash?: string; serverKey?: string; now: number }): boolean {
+function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<typeof aiUsageMeter>; ownKeyHash?: string; serverKey?: string; now: number; days?: Set<string> }): boolean {
   const { db, meter } = ctx;
   // A spend row is named by LiteLLM's request id, the response's id (the gateway's, not the caller's). The call id
   // (`x-litellm-call-id`) is not enough: a caller may send its own, so two rows can share one.
   const requestId = text(row.request_id);
   if (!requestId) return false;
   const callId = text(row.litellm_call_id);
+  const gatewayProvider = text(row.custom_llm_provider);
   if (row.status !== undefined && row.status !== 'success') return false;
   const input = count(row.prompt_tokens) || (row.prompt_tokens === undefined ? count(row.total_tokens) - count(row.completion_tokens) : 0);
   const output = count(row.completion_tokens);
   const spend = typeof row.spend === 'number' && Number.isFinite(row.spend) && row.spend > 0 ? row.spend : 0;
   if (input + output + count(row.total_tokens) === 0 && spend === 0) return false;
   // Imported before, or a call Landflow's meter counted (it keeps the response id the server's gateway gave it).
-  const before = db.get<{ id: string }>('SELECT id FROM ai_usage WHERE gateway_request_id = ?', requestId);
+  // The overlap rereads many rows that are already there: read only what the backfill below needs (the columns a row can't be
+  // written without: its key and the NOT NULL ones, which Postgres checks on the insert part of an upsert too).
+  const before = db.get<{ id: string; at: string; day: string; provider: string; model: string; operation: string; gateway_provider: string | null }>(
+    'SELECT id, at, day, provider, model, operation, gateway_provider FROM ai_usage WHERE gateway_request_id = ?',
+    requestId,
+  );
   if (before) {
+    // SP12: a call Landflow's meter counted keeps the gateway's provider name too (`ollama_chat`), so a local model behind LiteLLM is known.
+    if (gatewayProvider && !before.gateway_provider) db.upsert('ai_usage', { id: before.id, at: before.at, day: before.day, provider: before.provider, model: before.model, operation: before.operation, gateway_provider: gatewayProvider });
     // SP21: Landflow's meter may have written this row before the gateway's split arrived (and wrote no split of its own).
     attachWaitingParts(before.id, requestId, db);
     return false;
@@ -195,7 +212,8 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
   if (callId && serverKey) {
     const counted = db.get<Record<string, SqlValue>>("SELECT * FROM ai_usage WHERE call_id = ? AND source = 'landflow' AND gateway_key_hash = ? AND gateway_request_id IS NULL", callId, serverKey);
     if (counted) {
-      db.upsert('ai_usage', { ...counted, gateway_request_id: requestId });
+      // SP12: the row keeps the gateway's provider name too (`ollama_chat`), so a local model behind LiteLLM is known.
+      db.upsert('ai_usage', { ...counted, gateway_request_id: requestId, ...(gatewayProvider && { gateway_provider: gatewayProvider }) });
       // SP21: a gateway split that arrived first waits under the request id; Landflow's own split for the call wins.
       attachWaitingParts(String(counted.id), requestId, db);
       return false;
@@ -208,7 +226,7 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
   if (ctx.ownKeyHash && row.api_key === ctx.ownKeyHash) who.runtime = 'landflow';
   const model = text(row.model_group) ?? text(row.model) ?? 'unknown';
   const cache = cacheTokens(row);
-  const priced = meter.price({ provider: text(row.custom_llm_provider) ?? 'litellm', model, inputTokens: input, outputTokens: output, cacheReadTokens: cache.read, cacheWriteTokens: cache.write });
+  const priced = meter.price({ provider: gatewayProvider ?? 'litellm', model, inputTokens: input, outputTokens: output, cacheReadTokens: cache.read, cacheWriteTokens: cache.write });
   const cost = priced.priced ? priced.cost : spend;
   const hash = sha(requestId);
   // The call id is unique in ai_usage: a second row with a reused one keeps it only in the spend log.
@@ -234,8 +252,10 @@ function importRow(row: LiteLlmSpendLog, ctx: { db: Database; meter: ReturnType<
     runtime: who.runtime,
     project_id: who.projectId,
     gateway_cost: spend,
+    ...(gatewayProvider && { gateway_provider: gatewayProvider }),
   });
   if (!done) return false;
+  ctx.days?.add(dayOf(at)); // SP08:
   // SP21: a gateway split that arrived before this row waits under the request id.
   attachWaitingParts(`au_ll_${hash}`, requestId, db);
   recordUsage(

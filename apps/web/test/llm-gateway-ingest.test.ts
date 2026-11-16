@@ -336,6 +336,31 @@ describe('the spend import', () => {
     expect(new Date(status.lastEnd!).getTime()).toBeGreaterThan(Date.now());
   });
 
+  // SP08: a late row (its call is older than yesterday) marks its day for the daily rollup; a recent one does not.
+  it('marks the day of a late imported row for the spend rollup, and not today’s', async () => {
+    const { runRollup } = await import('@/lib/server/ai-usage/rollup');
+    runRollup();
+    const old = Date.now() - 5 * 86_400_000;
+    const tag = fresh('late');
+    const make = (id: string, at: number) => ({ request_id: `${tag}-${id}`, api_key: 'unknown', status: 'success', spend: 0.5, total_tokens: 3, prompt_tokens: 2, completion_tokens: 1, model: 'm-late', startTime: new Date(at).toISOString(), metadata: {} });
+    saveIngestStatus({ enabled: true, imported: 0, skipped: 0, totalImported: 0, lastEnd: new Date(old - 3_600_000).toISOString() });
+    let served = false;
+    const fetcher = async () => {
+      const data = served ? [] : [make('old', old), make('new', Date.now())];
+      served = true;
+      return new Response(JSON.stringify({ data, total: data.length }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const status = await importSpend({ now: later(), fetcher });
+    expect(status.imported).toBe(2);
+    const dirty = JSON.parse(database().get<{ value: string }>("SELECT value FROM meta WHERE key = 'ai_spend_dirty_days'")?.value ?? '[]') as string[];
+    const oldDay = database().get<{ day: string }>('SELECT day FROM ai_usage WHERE gateway_request_id = ?', `${tag}-old`)?.day;
+    const newDay = database().get<{ day: string }>('SELECT day FROM ai_usage WHERE gateway_request_id = ?', `${tag}-new`)?.day;
+    expect(dirty).toContain(oldDay);
+    expect(dirty).not.toContain(newDay);
+    expect(runRollup()).toContain(oldDay);
+    expect(database().get<{ calls: number }>('SELECT SUM(calls) AS calls FROM ai_usage_daily WHERE day = ? AND model = ?', oldDay as string, 'm-late')?.calls).toBe(1);
+  });
+
   it('never moves the mark past unread rows when the page cap is hit, and the next run imports them', async () => {
     const before = new Date(Date.now() - 20 * 60_000).toISOString();
     saveIngestStatus({ enabled: true, imported: 0, skipped: 0, totalImported: 0, lastEnd: before });

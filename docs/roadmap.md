@@ -2040,6 +2040,28 @@ members has been cache-aware since wave 11; SP19 rewrapped the long `// SP03:` l
   an Ollama agent run whose Spend tab says "Counted by the model's tokenizer". They need a host and a headed browser,
   and are carried with those still owed from waves 6 to 10.
 
+## Company backbone: left open from the wave 12 reviews (2026-11-16)
+
+Wave 13 (token spend) checked the wave 12 notes against its merge. SP10's drill sheet opens any call by its id, so a Run
+an Agent call's composition is reachable from the AI page; SP11's limitation lines name the 1,024-token cache minimum
+and gateway rows without cache numbers. These wait, each with its reason:
+
+- **On Ollama `formatting` holds the chat template** (about half of a call with tools, 221 of 355 tokens on
+  `qwen3-coder:30b`; [limitations](limitations.md)): it is real input, so the waste detectors (SP13, wave 14) should not
+  read a large `formatting` on an Ollama call as waste. Wave 13 shows no composition on the AI page.
+- **Run an Agent's calls still have no model span** in the Run Trace (above, wave 11): the AI page's drill sheet opens
+  them by id, but the Spend tab's per-call sheet does not; one `model` span per loop step is its own change.
+- **A Landflow call on a gateway credential keeps Landflow's estimate** even when the gateway's split counted it exactly
+  ([llm-gateway.md](llm-gateway.md#what-a-prompt-was-made-of)); deciding which split wins is its own change, and no wave
+  13 package touched it.
+- **`MIN_CACHEABLE_TOKENS` is one figure (1,024) for every model** (`ai-usage/run-spend.ts`): a newer Claude model's
+  higher minimum reads as `not-requested`; documented ([limitations](limitations.md#token-spend-wave-13)), a per-model
+  table waits for a model that needs it.
+- **Two concurrent counts of the same prefix both send a count request** (`ai-usage/count/anthropic.ts`): the results
+  stay correct and each request is free; sharing an in-flight count would also have to share its per-minute budget slot.
+- **Long unwrapped doc lines** (`llm-gateway.md`, `projects-and-goals.md`, `run-trace.md`, `agents.md`): cosmetic, there
+  is no formatter, and rewrapping whole files is not done; a change rewraps the lines it edits.
+
 ## Runs: one list (B20, 2026-11-14)
 
 Closed from the wave 1 page review: X2 (Executions, Runs and Search runs are one page, **Runs** at `/runs`, the old URLs redirect), P-ex-1 (no ID or Mode column), P-ex-2 (Stop all only while a run runs), P-ex-3 (repeated failures fold into one row), P-ex-4 (two re-run words), P-runs-1 (one search box with Status and Workflow chips, the rest under More filters) and P-cmp-1 (compare with fewer than two runs goes back to the list). See [the Runs list](run-trace.md#the-runs-list).
@@ -2279,6 +2301,77 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   the cache line, the prompt's composition as one bar with the method named, and the calls list, refreshed every 10
   seconds while the run is live ([run-trace.md](run-trace.md#spend)). A call opens its model span.
 - **One call's view (SP07), built:** a model step's sheet in the Run Trace shows the call's composition, cache line and what changed since the previous call; sessions show cached tokens ([run-trace.md](run-trace.md#one-call)).
+
+## Token spend wave 13
+
+- **The daily rollup and the AI page's report (SP08; plan items G6 and G7, and the `unpriced` part of G8; G9, one waste
+  detector, is not touched), built**: `ai_usage_daily` (migration 2902, backfilled from the
+  rows already there) is rewritten every 10 minutes for today, yesterday, any day a late import marked and every day
+  since its last pass (so a host that was off for days loses nothing; a week of days at a time, the event loop free
+  between steps); the AI page's `GET /api/insights/ai` answers 90 days and custom ranges of up to 400 days, ten groups
+  (workflow, credential, surface and purpose are new), a daily series, a stack, the previous period with movers,
+  filters, distinct runs and an `unpriced` flag on model rows, with people per D1
+  ([llm-gateway.md](llm-gateway.md#the-ai-page)). Yesterday and today are read from the raw rows (always exact); the
+  screens are SP10 to SP12. A model row's `unpricedCalls` counts a combination's calls when it has no price and no cost,
+  so a gateway-costed call among unpriced ones of one model is not told apart.
+- **Left open (SP08, SP09): distinct runs per group in SQL.** The report's `loadRuns` selects `DISTINCT run` plus the
+  twelve key columns over the range from raw `ai_usage` (and again for the previous period), and the lists scan the raw
+  rows, so a wide range of a busy instance moves many rows into JS. Counting distinct runs per group in SQL (or a
+  run-day rollup) would do it in the database; not built.
+- **The runs and calls behind a number (SP09), built**: `GET /api/insights/ai/runs` and `GET /api/insights/ai/calls`
+  list what is behind one row of the AI page's report (a `group` and its `key`, over the report's period and filters),
+  costliest or newest first, 50 a page with a cursor, or as a CSV (`format=csv`, at most 10,000 rows, never prompt
+  text). They list only what the viewer may open (rule 3 of [llm-gateway.md](llm-gateway.md#the-ai-page) "Who sees
+  what", run-spend.ts's own checks) and count the rest in `hidden` (runs, calls, cost; no names, no ids). The screens
+  that use them are SP10's.
+- **The AI page's trend, movers and drill-down (SP10), built:** the AI page gains 90 days and a custom range, ten groups
+  in a menu, filters as chips in the URL, a cost-or-tokens trend with the period before as a faint line and a stack of
+  any group's top 5, the biggest rises and falls, and a drill sheet from any row with the runs and calls behind it, "N
+  runs you can't open: $X", one call's composition and CSV ([llm-gateway.md](llm-gateway.md#the-ai-page)). The AI page's
+  wave 13 parts (trend, movers, drill sheet, forecast and cache cards, You card) are made for desktop; on a phone the
+  page keeps its earlier row cards and never scrolls sideways.
+- **The cache card and the forecast to month end (SP11), built**: the AI page gains a **Forecast to month end** card
+  (the month's total as a range, "$410 to $520 by Nov 30", the most likely figure in words, "early" under 7 days of
+  data, and each cap or budget the viewer may see with the day the P50 line reaches its limit or "stays under"; a daily
+  cap shows today's pace) and a **Prompt cache** card (hit rate, dollars saved, misses, the five agents with the most
+  uncached input with why they missed, and the AI Agent node's uncached calls). `forecastMonth`
+  (`lib/shared/ai-forecast.ts`) is the one method; SP23 alerts on it and SP12's My AI spend takes it for its own caps.
+  The forecast reads `ai_usage` by day through one function (`dayRows` in `lib/server/ai-usage/forecast.ts`), not the
+  daily rollup (SP08): exact, and moving it onto the rollup is a speed change for when a month of rows gets slow. Live
+  check: owner and member views on a seeded month, light and dark, desktop and phone; the seed had the same spend on
+  each day (no spread), so the range form was covered by unit tests only. Misses are also counted in distinct runs ("in
+  3 of 40 runs"), each call grouped by its own session, else execution.
+- **Local models priced in Settings (SP12), built**: Settings → AI prices lists the local models seen in the last 30
+  days (calls, tokens, "Not priced" or the price) with an inline "Set a price"; one `ollama/<model>` price covers
+  Landflow's own `ollama` calls and the gateway's `ollama_chat` rows
+  ([observability.md](observability.md#8-token-and-cost-tracking)). The AI page's You card gives everyone their own
+  spend and caps, and its Model group says "Not priced" and can rank by tokens
+  ([llm-gateway.md](llm-gateway.md#the-ai-page)). By decision D5 (2026-11-16) there is no "equivalent cost" for a local
+  model: it costs $0 until someone prices it, and an unpriced one is ranked by tokens. Equivalent cost is dropped, not
+  postponed. The You card's caps carry SP11's forecast (the forecast card's figure and words for the same cap, wired at
+  integration). Follow-ups: the You card leaves out by purpose and by surface (the API returns them), and F's "by agent"
+  and "most expensive runs" are not built.
+- **Wave 13 join tests (integration), built**: `spend-local-price-join` (an imported `ollama_chat` row, a paired
+  Landflow row and Landflow's own Ollama call, priced once in Settings: the report's model row, "Not priced", Local
+  models, the You card and the rollup after a pass), `spend-forecast-join` (each own cap's figure and words equal on the
+  forecast card and the You card, as the person and as an owner, for a set cap and everyone's default) and
+  `spend-report-join` (for every group key and every filter a row can become, `none`, `provider/model` and
+  `surface=none` included, the runs and calls lists count the calls, cost and runs the report counts, owner and members,
+  24 hours, 7 and 30 days). The last found the lists reading `model=provider/model` and `surface=none` as literal values
+  (nothing listed); they now take the report's filter forms.
+- **Live checks (wave 13, run before the merge on b69627fe)**: a production-profile host (CSP enforced,
+  `local-only.cjs`), headed Chrome at 1440×900 in light and dark, local Ollama `qwen3-coder:30b`, 100 days of made-up
+  rows for an owner and two made-up members in two projects. 7, 30 and 90 days and a custom range with compare: series
+  of 7, 30, 90 and 19 points, movers and the new groups; the 90-day report answered in 57 to 198 ms. The drill sheet's
+  runs, calls, one call's composition, the run link to its Spend tab and Back; the CSV quotes a workflow name with a
+  comma and quotes. Filters, `provider/model` and `surface=none` included, narrow the lists and the cache card. A member
+  sees every person's spend by name and no closed workflow or agent; another project's runs show as "30 runs you can't
+  open: $468.00". The You card's cap outlook equals the forecast card's. A price set in Settings priced the next real
+  Ollama calls and left 229 earlier rows at $0. After 11 minutes the rollup held today and yesterday, and 30 days read
+  458 calls and $832.50 on the page, in the raw rows and in the rollup alike. At 390 px nothing scrolls sideways. No
+  request left the machine, no CSP report, no console error but the member's deliberate 404s. The fix passes after
+  b69627fe (the rollup's dirty marks taken in each day's own transaction, the page's view helpers, the calls CSV's run
+  link, the chain nodes' prompt split) are covered by tests and Opus's last review, not by the browser.
 
 ## Practices (waves P1 and P2)
 

@@ -41,7 +41,7 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations' | 'Goals' | 'Practices' | 'Projects';
+  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations' | 'Goals' | 'Practices' | 'Projects' | 'Insights'; // SP09, SP11: Insights
   id: string;
   summary: string;
   description?: string;
@@ -632,6 +632,60 @@ function paths(): Record<string, Record<string, Json>> {
     pathParams: { id: 'The call id (`ai_usage.id`)' },
     responses: { 200: reply('The call', { type: 'object', additionalProperties: true }), 404: notFound },
   });
+  // SP09:
+  add('get', '/api/insights/ai/runs', {
+    tag: 'Insights',
+    id: 'getAiSpendRuns',
+    summary: 'List the runs behind a spend number',
+    description: 'Runs (an execution, else an agent session) behind one row of the AI page, costliest or newest first, with their tokens, cost and a link to each run’s Spend tab. `group` and `key` pick one row of the AI page’s report (`other` is not a row: 400; `shared` lists nothing and counts everything as hidden); the report’s period and filters narrow it; `order` is `cost` or `recent`; `cursor` pages (50 a page); `format=csv` answers `text/csv` with the same columns, at most 10,000 rows. Only what the caller may open is listed; the rest is counted in `hidden` (runs, calls, cost: no names, no ids). Never prompt text. A filter or key the caller can’t read answers 404.',
+    query: [
+      { name: 'group', description: 'project, goal, agent, workflow, person, model, source, credential, surface or purpose', schema: { type: 'string' }, required: true },
+      { name: 'key', description: 'The row’s key (an id, `provider/model`, `none` or `shared`)', schema: { type: 'string' }, required: true },
+      { name: 'period', description: '24h, 7d (default), 30d, 90d or custom (custom needs `from` and `to`)', schema: { type: 'string' } },
+      { name: 'from', description: 'First day of a custom range, YYYY-MM-DD', schema: { type: 'string' } },
+      { name: 'to', description: 'Last day of a custom range, YYYY-MM-DD', schema: { type: 'string' } },
+      { name: 'projectId', description: 'Filter by project', schema: { type: 'string' } },
+      { name: 'agentId', description: 'Filter by agent', schema: { type: 'string' } },
+      { name: 'workflowId', description: 'Filter by workflow', schema: { type: 'string' } },
+      { name: 'userId', description: 'Filter by person', schema: { type: 'string' } },
+      { name: 'credentialId', description: 'Filter by credential', schema: { type: 'string' } },
+      { name: 'model', description: 'Filter by model name', schema: { type: 'string' } },
+      { name: 'purpose', description: 'Filter by call purpose (or `none`)', schema: { type: 'string' } },
+      { name: 'source', description: 'Filter by source key', schema: { type: 'string' } },
+      { name: 'surface', description: 'Filter by surface', schema: { type: 'string' } },
+      { name: 'order', description: '`cost` or `recent`', schema: { type: 'string' } },
+      { name: 'cursor', description: 'The previous page’s `next`', schema: { type: 'string' } },
+      { name: 'format', description: '`json` (default) or `csv`', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('List the runs behind a spend number', { type: 'object', additionalProperties: true }), 400: invalid, 404: notFound },
+  });
+  // SP09:
+  add('get', '/api/insights/ai/calls', {
+    tag: 'Insights',
+    id: 'getAiSpendCalls',
+    summary: 'List the model calls behind a spend number',
+    description: 'Model calls behind one row of the AI page, newest first (or dearest first), each opening with `GET /api/ai-calls/{id}`. `group` and `key` pick one row of the AI page’s report (`other` is not a row: 400; `shared` lists nothing and counts everything as hidden); the report’s period and filters narrow it; `order` is `cost` or `recent`; `cursor` pages (50 a page); `format=csv` answers `text/csv` with the same columns, at most 10,000 rows. Only what the caller may open is listed; the rest is counted in `hidden` (runs, calls, cost: no names, no ids). Never prompt text. A filter or key the caller can’t read answers 404.',
+    query: [
+      { name: 'group', description: 'project, goal, agent, workflow, person, model, source, credential, surface or purpose', schema: { type: 'string' }, required: true },
+      { name: 'key', description: 'The row’s key (an id, `provider/model`, `none` or `shared`)', schema: { type: 'string' }, required: true },
+      { name: 'period', description: '24h, 7d (default), 30d, 90d or custom (custom needs `from` and `to`)', schema: { type: 'string' } },
+      { name: 'from', description: 'First day of a custom range, YYYY-MM-DD', schema: { type: 'string' } },
+      { name: 'to', description: 'Last day of a custom range, YYYY-MM-DD', schema: { type: 'string' } },
+      { name: 'projectId', description: 'Filter by project', schema: { type: 'string' } },
+      { name: 'agentId', description: 'Filter by agent', schema: { type: 'string' } },
+      { name: 'workflowId', description: 'Filter by workflow', schema: { type: 'string' } },
+      { name: 'userId', description: 'Filter by person', schema: { type: 'string' } },
+      { name: 'credentialId', description: 'Filter by credential', schema: { type: 'string' } },
+      { name: 'model', description: 'Filter by model name', schema: { type: 'string' } },
+      { name: 'purpose', description: 'Filter by call purpose (or `none`)', schema: { type: 'string' } },
+      { name: 'source', description: 'Filter by source key', schema: { type: 'string' } },
+      { name: 'surface', description: 'Filter by surface', schema: { type: 'string' } },
+      { name: 'order', description: '`cost` or `recent`', schema: { type: 'string' } },
+      { name: 'cursor', description: 'The previous page’s `next`', schema: { type: 'string' } },
+      { name: 'format', description: '`json` (default) or `csv`', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('List the model calls behind a spend number', { type: 'object', additionalProperties: true }), 400: invalid, 404: notFound },
+  });
   add('get', '/api/executions/{id}/events', {
     tag: 'Executions',
     id: 'getExecutionEvents',
@@ -1161,6 +1215,34 @@ function paths(): Record<string, Record<string, Json>> {
     description: 'Any subset. `jsonRender` (`true`, `false`, or `null` for the environment default) is the owner’s: an admin gets 403.',
     body: jsonBody(object({ timezone: { type: 'string' }, executions: object({ maxCount: { type: 'integer' }, maxAgeDays: { type: 'integer' } }), jsonRender: { type: ['boolean', 'null'] }, company: object({ name: { type: ['string', 'null'], maxLength: 120 }, mission: { type: ['string', 'null'], maxLength: 500 } }) })),
     responses: { 200: reply('The settings', object({ settings: settingsDoc, jsonRender: { type: 'boolean' } })), 400: invalid, 403: errorRef('Not the owner (json-render)') },
+  });
+
+  // SP12: the caller's own AI spend, and the local models Settings lists (docs/llm-gateway.md, "The AI page").
+  const spendTotals = { inputTokens: { type: 'integer' }, outputTokens: { type: 'integer' }, cacheReadTokens: { type: 'integer' }, cacheWriteTokens: { type: 'integer' }, cost: { type: 'number' }, calls: { type: 'integer' }, unpricedCalls: { type: 'integer' }, runs: { type: 'integer' } };
+  const spendTotalsDoc = object(spendTotals, ['inputTokens', 'outputTokens', 'cost', 'calls', 'unpricedCalls', 'runs']);
+  const spendRowDoc = object({ ...spendTotals, key: { type: 'string' }, label: { type: 'string' }, share: { type: 'number' }, unpriced: { type: 'boolean', description: 'A model with no price whose calls cost nothing (a local model nobody priced)' } }, ['key', 'label', 'share']);
+  // SP11's month-end forecast, for the forecast card's total and caps and the You card's own caps.
+  const forecastShape = object({ monthToDate: { type: 'number' }, p50: { type: 'number' }, low: { type: 'number' }, high: { type: 'number' }, early: { type: 'boolean' }, daysObserved: { type: 'integer' }, daysLeft: { type: 'integer' } }, ['monthToDate', 'p50', 'low', 'high', 'early', 'daysObserved', 'daysLeft']);
+  add('get', '/api/insights/ai/me', {
+    tag: 'Insights',
+    id: 'getMyAiSpend',
+    summary: 'Your own AI spend',
+    description: 'Only the caller’s own rows (today, this month, the period’s days, or hours for 24h, by model, purpose and surface) and the caller’s own user caps (their own set, or the default for everyone), each with the forecast card’s figure for the same cap: a monthly cap’s `forecast` and `reachesOn`, a daily cap’s `pace`; never anyone else’s. No prompt text.',
+    query: [{ name: 'period', description: '`24h`, `7d` (default), `30d` or `90d`', schema: { type: 'string', enum: ['24h', '7d', '30d', '90d'] } }],
+    responses: {
+      200: reply(
+        'Your spend',
+        object({ today: spendTotalsDoc, month: spendTotalsDoc, period: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' }, series: array(object({ at: { type: 'string' }, cost: { type: 'number' }, inputTokens: { type: 'integer' }, outputTokens: { type: 'integer' }, calls: { type: 'integer' } })), byModel: array(spendRowDoc), byPurpose: array(spendRowDoc), bySurface: array(spendRowDoc), caps: array(object({ id: { type: 'string' }, subject: { type: 'string' }, period: { type: 'string', enum: ['day', 'month'] }, metric: { type: 'string', enum: ['tokens', 'cost'] }, max: { type: 'number' }, used: { type: 'number' }, ratio: { type: 'number' }, forecast: forecastShape, pace: { type: 'number' }, reachesOn: { type: 'string', description: 'YYYY-MM-DD' } })), monthEnd: { type: 'string', description: 'YYYY-MM-DD: the month’s last day in the instance’s time zone, what a monthly cap’s forecast runs to' } }, ['today', 'month', 'series', 'byModel', 'byPurpose', 'bySurface', 'caps', 'monthEnd']),
+      ),
+      400: invalid,
+    },
+  });
+  add('get', '/api/settings/ai-prices/local', {
+    tag: 'Settings',
+    id: 'listLocalModels',
+    summary: 'The local models seen in the last 30 days',
+    description: 'Every model seen on a local provider (Ollama through Landflow or the gateway) with its calls and tokens, and the override that prices it now (`price` absent: not priced). A price saved with `PUT /api/settings/ai-prices` applies from then on; recorded calls keep their cost.',
+    responses: { 200: reply('The local models', array(object({ model: { type: 'string' }, providers: array({ type: 'string' }), calls: { type: 'integer' }, inputTokens: { type: 'integer' }, outputTokens: { type: 'integer' }, lastAt: { type: 'string' }, price: object({ provider: { type: 'string' }, model: { type: 'string' }, input: { type: 'number' }, output: { type: 'number' } }) }, ['model', 'providers', 'calls', 'inputTokens', 'outputTokens', 'lastAt']))) },
   });
 
   // ---- goals and project briefs (PC01; docs/projects-and-goals.md) ----
@@ -2472,6 +2554,44 @@ function paths(): Record<string, Record<string, Json>> {
     ],
     responses: { 200: reply('The agents', object({ agents: array({ type: 'object', additionalProperties: true }) }, ['agents'])), 404: notFound },
   });
+  // SP11: the AI page's forecast and cache card
+  add('get', '/api/insights/ai/forecast', {
+    tag: 'Insights',
+    id: 'aiForecast',
+    summary: 'The AI page’s month-end forecast',
+    description:
+      'Needs the `executions:read` scope or a session. The month’s total of what the caller can see, forecast to the month’s end (month to date + the mean of the last 7 complete days × the days left, with a band of ±1.2816·σ·√(days left), never below month to date; `early` with fewer than 7 days of data), and each cap or budget the caller may see: monthly ones forecast with the day the P50 line reaches the limit (`reachesOn`), daily ones as today’s `pace`. Cost caps in dollars, token caps in tokens. Other people’s caps are never listed for a member.',
+    responses: {
+      200: reply(
+        'The forecast',
+        object(
+          {
+            month: { type: 'string', description: 'YYYY-MM in the instance’s time zone' },
+            total: forecastShape,
+            caps: array(object({ capId: { type: 'string' }, subject: { type: 'string' }, period: { type: 'string', enum: ['day', 'month'] }, metric: { type: 'string', enum: ['cost', 'tokens'] }, max: { type: 'number' }, used: { type: 'number' }, forecast: forecastShape, pace: { type: 'number' }, reachesOn: { type: 'string', description: 'YYYY-MM-DD' } }, ['capId', 'subject', 'period', 'metric', 'max', 'used'])),
+          },
+          ['month', 'total', 'caps'],
+        ),
+      ),
+    },
+  });
+  add('get', '/api/insights/ai/cache', {
+    tag: 'Insights',
+    id: 'aiCache',
+    summary: 'The AI page’s prompt-cache card',
+    description:
+      'Needs the `executions:read` scope or a session. Over the period: the cache hit rate over the calls the Run Trace’s cache line counts (Anthropic and OpenAI rows, and gateway rows that report cache tokens), the dollars it saved, the top 5 agents by uncached input with why they missed, and how many Anthropic calls the AI Agent node made (it asks for no cache). Only what the caller can see; numbers only, never prompt text. `reasonsPartial`: miss reasons need prompt splits, kept 30 days.',
+    query: [
+      { name: 'period', description: 'The period', schema: { type: 'string', enum: ['24h', '7d', '30d', '90d', 'custom'], default: '7d' } },
+      { name: 'from', description: 'A custom range’s first day (YYYY-MM-DD)', schema: { type: 'string', format: 'date' } },
+      { name: 'to', description: 'A custom range’s last day (YYYY-MM-DD)', schema: { type: 'string', format: 'date' } },
+      ...['projectId', 'agentId', 'workflowId', 'userId', 'credentialId', 'model', 'purpose', 'source', 'surface'].map((name) => ({ name, description: `Narrows the card as it narrows the report (a workflow, agent, project or credential the caller can’t read is 404)`, schema: { type: 'string' } })),
+    ],
+    responses: {
+      200: reply('The cache card', object({ period: { type: 'string' }, cache: { type: 'object', additionalProperties: true }, agents: array({ type: 'object', additionalProperties: true }), agentNode: object({ calls: { type: 'integer' }, uncachedTokens: { type: 'integer' } }, ['calls', 'uncachedTokens']), reasonsPartial: { type: 'boolean' }, truncated: { type: 'boolean' } }, ['period', 'cache', 'agents', 'agentNode', 'reasonsPartial', 'truncated'])),
+      400: invalid,
+    },
+  });
   // PC10: project context for a harness
   add('get', '/api/projects/context', {
     tag: 'Projects',
@@ -2733,6 +2853,8 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Conversations', description: 'A person’s own chats with Spotlight, the brain and the Agent architect, and their personal preferences: session only, owner only (docs/assistant.md#conversation-history)' },
       { name: 'Practices', description: 'Rules in the brain that connected agents follow: drafts, versions, approval by a person, waivers (docs/practices.md)' },
       { name: 'Projects', description: 'A project’s context block for a harness, found by repository or id (docs/connect-your-harness.md#project-context)' },
+      // SP09, SP11, SP12:
+      { name: 'Insights', description: 'The AI page: spend, the runs and model calls behind a number (JSON or CSV), the month-end forecast against caps and budgets, the prompt cache and the caller’s own spend (docs/llm-gateway.md, “The AI page”)' },
       { name: 'MCP', description: 'Agents and MCP (docs/transports.md): Landflow-issued MCP tokens, tool grants, the JWKS, the plugin catalog (server.json, the registry API) and protected resource metadata' },
     ],
     security: [{ bearerAuth: [] }, { apiKeyHeader: [] }, { sessionCookie: [] }],

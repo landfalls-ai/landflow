@@ -95,7 +95,8 @@ function toParts(row: PartsRow): CallParts {
 }
 
 /** Splits of these rows, keyed by `ai_usage.id` (a gateway split joins by the row's `gateway_request_id`). */
-function partsOf(rows: UsageRow[]): Map<string, CallParts> {
+// SP11: exported, so the AI page cache card runs the same cacheLine as the Run Trace.
+export function partsOf(rows: UsageRow[]): Map<string, CallParts> {
   const found = new Map<string, CallParts>();
   const db = database();
   const byRequest = new Map(rows.filter((r) => r.gateway_request_id).map((r) => [r.gateway_request_id as string, r.id]));
@@ -115,7 +116,8 @@ function partsOf(rows: UsageRow[]): Map<string, CallParts> {
 
 const priceFor = (overrides: ModelPrice[]) => (call: { provider: string; model: string }) => findPrice(call.provider, call.model, overrides);
 
-function callOf(row: UsageRow, price: (c: { provider: string; model: string }) => ModelPrice | undefined, hasParts: boolean, agentVisible: boolean): SpendCall {
+// SP11: exported, as partsOf.
+export function callOf(row: UsageRow, price: (c: { provider: string; model: string }) => ModelPrice | undefined, hasParts: boolean, agentVisible: boolean): SpendCall {
   return {
     usageId: row.id,
     at: row.at,
@@ -246,7 +248,8 @@ function runWorkflowId(executionId: string): { workflowId: string } | undefined 
   return workflowId ? { workflowId } : undefined;
 }
 
-const canOpenRun = (actor: Actor, executionId: string) => {
+// SP09: exported for the lists behind a number (spend-lists.ts).
+export const canOpenRun = (actor: Actor, executionId: string) => {
   const run = runWorkflowId(executionId);
   return Boolean(run && canResource(actor, 'workflow', run.workflowId, 'read'));
 };
@@ -393,11 +396,12 @@ function isChildSessionRow(row: UsageRow, cache?: Map<string, boolean>): boolean
   return is;
 }
 
+// SP09: exported for the lists behind a number (spend-lists.ts).
 /**
  * Whether `actor` may open this call (rule 3): its run, its agent or its project, else its own person and admins. The
  * rule of `runSpend` holds here too: a call in a child session of an agent the viewer cannot read is not opened.
  */
-function canOpenCall(actor: Actor, row: UsageRow): boolean {
+export function canOpenCall(actor: Actor, row: UsageRow): boolean {
   if (isInstanceAdmin(actor)) return true;
   if (row.agent_id && !canResource(actor, 'agent', row.agent_id, 'read') && isChildSessionRow(row)) return false;
   if (row.execution_id && canOpenRun(actor, row.execution_id)) return true;

@@ -1889,6 +1889,23 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS ai_call_parts_prompt ON ai_call_parts (prompt_hash, at)`,
     ],
   },
+  // SP08: the daily rollup of ai_usage, for the AI page's 90 days and custom ranges (docs/llm-gateway.md, "The AI page")
+  {
+    version: 2902,
+    name: 'ai_usage_daily',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS ai_usage_daily (day TEXT NOT NULL, project_id TEXT NOT NULL, goal_id TEXT NOT NULL, agent_id TEXT NOT NULL, workflow_id TEXT NOT NULL, user_id TEXT NOT NULL, credential_id TEXT NOT NULL, surface TEXT NOT NULL, purpose TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, source TEXT NOT NULL, runtime TEXT NOT NULL, input_tokens BIGINT NOT NULL DEFAULT 0, output_tokens BIGINT NOT NULL DEFAULT 0, cache_read_tokens BIGINT NOT NULL DEFAULT 0, cache_write_tokens BIGINT NOT NULL DEFAULT 0, calls BIGINT NOT NULL DEFAULT 0, runs BIGINT NOT NULL DEFAULT 0, cost DOUBLE PRECISION NOT NULL DEFAULT 0, PRIMARY KEY (day, project_id, goal_id, agent_id, workflow_id, user_id, credential_id, surface, purpose, provider, model, source, runtime))`,
+      `CREATE INDEX IF NOT EXISTS ai_usage_daily_day ON ai_usage_daily (day)`,
+      `INSERT INTO ai_usage_daily (day, project_id, goal_id, agent_id, workflow_id, user_id, credential_id, surface, purpose, provider, model, source, runtime, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, calls, runs, cost) SELECT day, COALESCE(project_id, ''), COALESCE(goal_id, ''), COALESCE(agent_id, ''), COALESCE(workflow_id, ''), COALESCE(user_id, ''), COALESCE(credential_id, ''), COALESCE(surface, ''), COALESCE(purpose, ''), COALESCE(provider, ''), COALESCE(model, ''), COALESCE(source, ''), COALESCE(runtime, ''), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0), COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(cache_write_tokens), 0), COUNT(*), COUNT(DISTINCT COALESCE(execution_id, session_id)), COALESCE(SUM(cost), 0) FROM ai_usage GROUP BY day, COALESCE(project_id, ''), COALESCE(goal_id, ''), COALESCE(agent_id, ''), COALESCE(workflow_id, ''), COALESCE(user_id, ''), COALESCE(credential_id, ''), COALESCE(surface, ''), COALESCE(purpose, ''), COALESCE(provider, ''), COALESCE(model, ''), COALESCE(source, ''), COALESCE(runtime, '')`,
+    ],
+  },
+  // SP12: the gateway's own name for the provider an imported call ran on (`ollama_chat`), so local models are known (docs/llm-gateway.md#the-ai-page)
+  {
+    version: 2903,
+    name: 'ai_usage_gateway_provider',
+    statements: [],
+    addColumns: [{ table: 'ai_usage', column: 'gateway_provider', definition: 'TEXT' }],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1917,6 +1934,8 @@ export const TABLES = {
   workflow_publish_log: ['id'],
   node_static_data: ['workflow_id', 'node_id'],
   ai_usage: ['id'],
+  // SP08: the daily rollup of ai_usage
+  ai_usage_daily: ['day', 'project_id', 'goal_id', 'agent_id', 'workflow_id', 'user_id', 'credential_id', 'surface', 'purpose', 'provider', 'model', 'source', 'runtime'],
   // SP03:
   ai_call_parts: ['id'],
   chat_messages: ['workflow_id', 'session_id', 'seq'],

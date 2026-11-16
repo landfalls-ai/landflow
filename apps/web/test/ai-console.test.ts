@@ -498,7 +498,8 @@ describe('spend by goal', () => {
     expect(report.groups.goal.reduce((sum, r) => sum + r.cost, 0)).toBeCloseTo(report.totals.cost);
   });
 
-  it('lists Goal second among six groups', () => {
-    expect(helpers.AI_GROUPS.map((g) => g.value)).toEqual(['project', 'goal', 'agent', 'person', 'model', 'source']);
+  it('lists Goal second among the ten groups', () => {
+    // SP10: wave 13 adds workflow, credential, surface and purpose (the report's ten groups).
+    expect(helpers.AI_GROUPS.map((g) => g.value)).toEqual(['project', 'goal', 'agent', 'workflow', 'person', 'model', 'source', 'credential', 'surface', 'purpose']);
   });
 });
