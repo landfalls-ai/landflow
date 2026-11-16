@@ -2395,6 +2395,20 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   b69627fe (the rollup's dirty marks taken in each day's own transaction, the page's view helpers, the calls CSV's run
   link, the chain nodes' prompt split) are covered by tests and Opus's last review, not by the browser.
 
+## Token spend wave 14
+
+- **Forecast and unusual-spend alerts (SP23, decision D6), built**: a leader service (**AI spend flags**, every 10
+  minutes) writes `ai_spend_flags` (migration 2904): Landledger's check (median and MAD in millionths, score 3.5, half the
+  median, 7 observed days) for each person, agent, workflow, project and model on today and yesterday, tokens for a key
+  with no cost, and a flag for each monthly cap whose forecast reaches it. The AI cost rule's channels get "forecast over
+  the cap" once per cap and month and "unusual spend" once per dimension, key and day (again at twice the value), with
+  an **Open** link to the AI page at the day; Needs you gets kind **AI spend** with **Acknowledge**
+  (`POST /api/insights/ai/flags/:id/ack`); the brain gets the detector **Unusual AI spend** for agents and workflows,
+  naming no person; **Landledger alerts on agent and model spikes** keeps those two from going out twice
+  ([llm-gateway.md](llm-gateway.md#forecasts-and-unusual-spend)).
+- **Left open (SP23)**: an anomaly view on the AI page, a Landledger trigger event for `cost.anomaly`, reading Landledger's
+  own flags, a weekday-aware baseline and a way to mute one key.
+
 ## Practices (waves P1 and P2)
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided

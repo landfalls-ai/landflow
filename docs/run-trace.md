@@ -192,6 +192,17 @@ run has **Approve** (primary), **Deny** and **Open task** for one who may decide
 its message under the buttons. Phone buttons are 44 px. See
 [projects-and-goals.md](projects-and-goals.md#the-tasks-tab-and-needs-you).
 
+### Needs you for AI spend
+
+A forecast over a monthly cap, and a day of unusual spend (a person, agent, workflow, project or model far above its usual
+day), is an item in **Needs you** (kind **AI spend**) for the people it is theirs to hear, as
+[Forecasts and unusual spend](llm-gateway.md#forecasts-and-unusual-spend) says: the person for their own spend and caps, the
+editors of an agent or workflow, a project's admins, owners and admins for all (a model's and a credential cap's: owners and
+admins only). A member never gets another person's item. It counts in Home's tile and the rail's badge. The title says the
+figure; the detail says the usual day, the score, the runs and the surfaces. **Acknowledge** clears it for everyone (it opens
+again if the day's value doubles); **Open** shows the AI page at that day, narrowed to what the item is about. Nothing here
+changes a cap, a budget or a run.
+
 ### A run as a timeline
 
 A card above the tabs shows the run as a timeline

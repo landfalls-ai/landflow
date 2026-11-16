@@ -304,6 +304,17 @@ Slots: Landledger (read), Landledger webhooks, Landledger notes (`notes:draft` o
 
 Slots: Landfall (its API key), Landledger (read).
 
+## Who flags what
+
+Landledger flags a day of cost far from usual per cost center, service, agent and model, in its console and webhooks (a robust
+score over the 14 days before it). Landflow flags the same way for a person, agent, workflow, project and model, from its own
+AI spend, with Landledger's own check (same baseline, same 3.5 score, same half-the-median rule; see
+[Forecasts and unusual spend](../llm-gateway.md#forecasts-and-unusual-spend)), and adds the forecast over a cap. The two
+overlap on agents and models. By default both tell you, and the Landflow alert says so; turn on **Landledger alerts on agent
+and model spikes** in the AI cost rule (Settings → Alerts) and Landflow sends no channel alert for those two (they still
+show in Needs you and the inbox), so a spike is not announced twice. Landledger's trigger has no `cost.anomaly` event yet,
+so a flow cannot start from Landledger's alert.
+
 ## Deploying
 
 `deploy/k8s/components/landledger` adds the plugin (image `landflow/plugin-landledger:k8s-dev`, built on this machine)
