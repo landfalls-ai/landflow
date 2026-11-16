@@ -115,7 +115,7 @@ describe('spend-trace-join: the routes, the Spend tab and the call’s view on o
     const model = foldJournal(readAll(record.executionId));
     const spans = Object.values(model.spans).filter((s) => s.kind === 'model');
     expect(spans.length).toBeGreaterThanOrEqual(3);
-    const matched = spans.map((s) => matchSpanToCall(s, spend.body.calls));
+    const matched = spans.map((s) => matchSpanToCall(s, spend.body.calls, spans));
     expect(matched.every(Boolean)).toBe(true);
     expect(new Set(matched.map((c) => c!.usageId)).size).toBe(spans.length);
     const answers = spend.body.calls.filter((c) => c.purpose === 'answer').map((c) => c.usageId);

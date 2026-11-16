@@ -660,15 +660,18 @@ names and hashes only (the Run Trace's own content still follows `LANDFLOW_TRACE
 - The cache line is `hitRate` (cache reads over the whole prompt, for chat calls of providers that report cache numbers),
   the tokens read and written, the calls that wrote the prefix again instead of reading it (`missCalls`) and why, as far
   as hashes tell: the instructions changed, the tools changed, more than 5 minutes passed, the stable prefix may be under
-  the provider's minimum (1,024 tokens; also when a session made no cache write or read at all and its split shows a small prefix), or the model asked for no cache (no split, or a prefix over the minimum); `unknown` otherwise. `savedUsd` is what the
-  reads saved against the input price, 0 for a model with no price.
+  the provider's minimum (1,024 tokens; also when a session made no cache write or read at all and its split shows a
+  small prefix), or the model asked for no cache (no split, or a prefix over the minimum); `unknown` otherwise. Hashes
+  are compared only between two splits of one source (a gateway's and Landflow's are keyed differently). `savedUsd` is
+  what the reads saved against the input price, 0 for a model with no price.
 - A sub-run the viewer can't open (a sub-workflow of another project, a team member's agent they can't read) is counted
   in `hidden` (runs, totals) and never listed or named. An agent they can't read is "Another agent".
 - `GET /api/ai-calls/:id` answers one call (`call`), its split in tokens (`parts`, with `source`: Landflow made it or the
   gateway did for a kagent call), the previous call of the same session (else run), agent and model (`previous`: whether
   the stable prefix is the same and which parts changed, by hash) and the run's link. A call opens for anyone who can
   read its run or its agent or has a role in its project; a call with none of these opens only for its own person and
-  owners and admins. Anything else answers 404 (the rules are "Who sees what" in
+  owners and admins; a call in a child session of an agent the viewer can't read answers 404 too, as it is left out of
+  the run's report. Anything else answers 404 (the rules are "Who sees what" in
   [llm-gateway.md](llm-gateway.md#the-ai-page)).
 
 Limits of the report: the node slice names the innermost node (a model sub-node, not its AI Agent node); the node, agent
@@ -678,7 +681,7 @@ spend. See [limitations](limitations.md#call-attribution-wave-11).
 
 A run that used model tokens has a **Spend** tab (after Artifacts; desktop first, on a phone it only must not scroll
 sideways). It reads `GET /api/executions/:id/spend` (the route and its numbers are SP05's) and again every 10 seconds
-while the run is live. Tokens, models and cost are what happened in the run, never behind the developer-details switch.
+while the run is live; the model steps' sheets read the same answer (one read per run, shared), not one each. Tokens, models and cost are what happened in the run, never behind the developer-details switch.
 
 - **The totals**: cost, tokens in and out, cached tokens and calls. "n unpriced calls" means the tokens count and the
   cost does not; admins get a link to Settings → AI prices (`/settings#ai-prices`). "n runs you can't open: $X" counts
@@ -688,29 +691,37 @@ while the run is live. Tokens, models and cost are what happened in the run, nev
 - **The cache**: "53% of the prompt came from the cache · saved $0.0432 · 0 misses", with each miss's reason in words
   (the instructions or tools changed, may be under the provider's minimum, expired, no cache asked for).
 - **What the prompt was made of**: one stacked bar over the calls that have a split, a legend of parts with tokens and
-  shares, and how they were counted, said from the data: "Counted exactly", "Counted by the model's tokenizer" or
-  "Estimated" (the weakest method among the calls summed), plus how many calls have no split.
+  shares, and how they were counted, in the same words as a call's sheet: "Counted by the provider", "Counted with the
+  model's own tokenizer" or "Estimated from text length" (the weakest method among the calls summed), plus how many
+  chat calls have a split. The ones without may be built outside Landflow, or their split may be past its retention;
+  open a call to see which (embedding and rerank calls are not counted).
 - **Calls**: time, purpose, model, tokens and cost, the latest 20 (Show all lists the rest); a time opens the call's
   model span in the detail sheet. A call's `spanId` is the OpenTelemetry id, the Run Trace's spans have journal ids, so
-  `matchCallToSpan` (`lib/client/run-spend.ts`) finds the span: same model name, the call's time within a second before
-  and two after the span, the same agent, the span whose end is nearest on a tie (a call is recorded when it ends). A call with no such span shows its time as plain
-  text. The tab reads once more when the run ends, and a failed read has a Try again button.
+  the pair is found by one rule that the tab and the call's sheet share (`lib/client/span-call-match.ts`): the same
+  model, the same node and agent when both have one, the call's time within a second before and two after the span, one
+  call to one span (the nearest pair by the span's end first; a call is recorded when it ends; a span still open counts
+  as ending at its start). A call with no such span shows its time as plain text. The tab reads once more when the run
+  ends, and a failed read has a Try again button.
 
 The answer holds sizes, counts and names only: no prompt text is shown or stored for spend.
 
 ### One call
 
 A model step's sheet shows what the call cost in tokens, not only how many (`components/run-trace/call-spend.tsx`,
-`lib/client/call-spend.ts`). The sheet finds the call of the run's spend record that the step is (`GET /api/executions/:id/spend`:
-the same model, a time within a second before the step started and two after it ended, the same agent and the same node; on a tie the call
-nearest the end), then reads its view (`GET /api/ai-calls/:id`):
+`lib/client/call-spend.ts`). The sheet finds the call of the run's spend record that the step is (the answer the Spend
+tab reads, shared) by the rule above, then reads its view (`GET /api/ai-calls/:id`):
 
 - **What this call was made of**: one bar and a line per part (instructions, tool definitions, memory, the conversation so
   far and the rest) with its tokens and share, and the way the numbers were reached in words (counted by the provider,
-  counted with the model's own tokenizer, or estimated from text length). A split the LLM gateway made says **From the LLM
-  gateway**. The parts the provider's cache holds (tool definitions, instructions, the project block, practices) are marked
-  **cached prefix** when the call used the cache.
-- **The cache line**: "8,000 read from the cache · 2,000 not cached · written: 0". A model that reports no cache numbers says so.
+  counted with the model's own tokenizer, or estimated from text length: the Spend tab uses the same three phrases). A
+  split the LLM gateway made says **From the LLM gateway**. The parts that come first in a cached request (tool
+  definitions, instructions, the project block, practices) are marked **stable prefix** when the call used the cache.
+  Since wave 12 the conversation's last block is a cache point too, so the conversation so far (history and tool
+  results) is marked **may be cached** and shaded in a pale accent: when the cache read is larger than the stable
+  prefix, it covers part of the conversation as well.
+- **The cache line**: "8,000 read from the cache · 2,000 not cached · written: 0". A model that reports no cache
+  numbers says so, decided by the provider's family (a gateway row's `anthropic/…` or `litellm` is never taken for a
+  model without a cache).
 - **What changed**: "Same prefix as the previous call" (iteration 2 of a run, usually), or "The instructions changed" and
   the like, against the previous call of the same session or run.
 - **No split for this call**, with the reason: built outside Landflow, or no split was kept for it (a split is kept for a

@@ -4,19 +4,27 @@
  * came from the cache, what changed since the previous call. Sizes and shares only: never prompt text.
  */
 import { cn } from '@/lib/utils';
-import { cacheLine, callSpendState, compositionLegend, matchSpanToCall, noSplitReason, previousLine, useAiCall, useRunCalls, type CompositionLegend, type SpanForMatch } from '@/lib/client/call-spend';
+import { cacheLine, callSpendState, compositionLegend, matchSpanToCall, noSplitReason, previousLine, useAiCall, type CompositionLegend, type SpanForMatch } from '@/lib/client/call-spend';
+import { useRunSpend } from '@/lib/client/run-spend';
 import type { AiCallView } from '@/lib/shared/run-spend';
 import { SectionTitle } from './parts';
 
-/** Part colours: the cached prefix in the accent family, the rest in neutral steps, so the prefix reads as one block. */
+/**
+ * Part colours: the stable prefix in the accent family, so it reads as one block; the conversation, which the cache may
+ * also have read (its last block is a cache point), in a pale accent; the rest in neutral steps.
+ */
 const PREFIX_SHADES = ['bg-ac', 'bg-ac/75', 'bg-ac/55', 'bg-ac/40'];
+const MAYBE_SHADES = ['bg-ac/25', 'bg-ac/15'];
 const REST_SHADES = ['bg-t3', 'bg-t3/80', 'bg-t3/60', 'bg-t3/45', 'bg-t3/35', 'bg-t3/25', 'bg-t3/20', 'bg-t3/15'];
 
-/** One shade per item: by whether the part is in the cached prefix, then by its place among those. No accent without a prefix. */
-export function shadesFor(items: { cachedPrefix: boolean }[]): string[] {
+/** One shade per item: stable prefix, possibly cached conversation, or the rest, then by place among those. No accent when the cache was not used. */
+export function shadesFor(items: { cachedPrefix: boolean; maybeCached?: boolean }[]): string[] {
   let p = 0;
+  let m = 0;
   let r = 0;
-  return items.map((item) => (item.cachedPrefix ? PREFIX_SHADES[p++ % PREFIX_SHADES.length] : REST_SHADES[r++ % REST_SHADES.length]));
+  return items.map((item) =>
+    item.cachedPrefix ? PREFIX_SHADES[p++ % PREFIX_SHADES.length] : item.maybeCached ? MAYBE_SHADES[m++ % MAYBE_SHADES.length] : REST_SHADES[r++ % REST_SHADES.length],
+  );
 }
 
 const pct = (share: number) => (share > 0 && share < 0.01 ? '<1%' : `${Math.round(share * 100)}%`);
@@ -36,7 +44,8 @@ export function CompositionBar({ legend }: { legend: CompositionLegend }) {
             <span className={cn('size-2 shrink-0 rounded-sm', shades[i])} aria-hidden />
             <span className="min-w-0 flex-1 truncate text-t1">
               {item.label}
-              {item.cachedPrefix && <span className="ml-1.5 rounded border border-acbd bg-acdim px-1 text-[10px] font-semibold text-ac">cached prefix</span>}
+              {item.cachedPrefix && <span className="ml-1.5 rounded border border-acbd bg-acdim px-1 text-[10px] font-semibold text-ac">stable prefix</span>}
+              {item.maybeCached && <span className="ml-1.5 rounded border border-hair px-1 text-[10px] font-semibold text-t2">may be cached</span>}
             </span>
             <span className="font-mono text-t2">{item.tokens.toLocaleString('en-US')}</span>
             <span className="w-9 text-right font-mono text-t3">{pct(item.share)}</span>
@@ -66,15 +75,16 @@ export function CallSpendView({ view }: { view: AiCallView }) {
 }
 
 /** Mounted under a model span's facts: finds the call behind the span, then shows its view. */
-export function CallSpend({ span, executionId }: { span: SpanForMatch; executionId: string }) {
-  // A live run: read the run's calls again when the span ends or the span's status moves.
-  const calls = useRunCalls(executionId, `${span.endedAt ?? ''}|${span.status ?? ''}`);
-  const call = calls.data ? matchSpanToCall(span, calls.data.calls) : undefined;
+export function CallSpend({ span, executionId, spans, live = false }: { span: SpanForMatch; executionId: string; spans: Iterable<SpanForMatch>; live?: boolean }) {
+  // One read of the run's spend, shared with the Spend tab; a live run reads again when the span ends or its status moves.
+  const calls = useRunSpend(executionId, live, `${span.endedAt ?? ''}|${span.status ?? ''}`);
+  // Matched with the run's other model spans, as the Spend tab does: no two spans claim one call.
+  const call = calls.spend ? matchSpanToCall(span, calls.spend.calls, spans) : undefined;
   const view = useAiCall(call?.usageId);
-  const state = callSpendState({ callsLoading: calls.loading, callsError: calls.error, call, viewLoading: view.loading, viewError: view.error, hasView: Boolean(view.data) });
+  const state = callSpendState({ callsLoading: calls.loading, callsError: calls.spend ? undefined : calls.error, call, viewLoading: view.loading, viewError: view.error, hasView: Boolean(view.data) });
   if (state === 'loading') return null;
   if (state === 'view' && view.data) return <CallSpendView view={view.data} />;
-  return <CallSpendNote text={state === 'error' ? `Couldn't read this call's spend. ${calls.error ?? view.error}` : `No split for this call. ${noSplitReason(call, calls.data?.truncated)}`} />;
+  return <CallSpendNote text={state === 'error' ? `Couldn't read this call's spend. ${calls.error ?? view.error}` : `No split for this call. ${noSplitReason(call, calls.spend?.truncated)}`} />;
 }
 
 export function CallSpendNote({ text }: { text: string }) {

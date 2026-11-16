@@ -2277,8 +2277,7 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   ([run-trace.md](run-trace.md#spend)). The Run Trace opens them (SP06, SP07); the AI page's views of them are SP09 and SP10.
 - **The run's Spend tab (SP06), built**: the Run Trace gains a **Spend** tab for a run with model tokens: totals, spend by purpose, model, node, agent and step,
   the cache line, the prompt's composition as one bar with the method named, and the calls list, refreshed every 10
-  seconds while the run is live ([run-trace.md](run-trace.md#spend)). A call opens its model span; the call's own sheet
-  with its composition comes with SP07.
+  seconds while the run is live ([run-trace.md](run-trace.md#spend)). A call opens its model span.
 - **One call's view (SP07), built:** a model step's sheet in the Run Trace shows the call's composition, cache line and what changed since the previous call; sessions show cached tokens ([run-trace.md](run-trace.md#one-call)).
 
 ## Practices (waves P1 and P2)

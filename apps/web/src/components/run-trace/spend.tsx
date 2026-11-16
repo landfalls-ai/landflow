@@ -35,7 +35,8 @@ export function Spend({ executionId, live, open, model }: { executionId: string;
         ))}
       </div>
     );
-  if (!spend) return (
+  if (!spend)
+    return (
       <EmptyState
         title="The spend could not be loaded"
         hint={error ?? 'Try again in a moment.'}
@@ -85,8 +86,13 @@ export function SpendBody({ spend, open, model }: { spend: RunSpend; open: (o: O
         )}
         {spend.hidden.runs > 0 && (
           <p className="mt-2 text-[12px] text-t2">
-            {spend.hidden.runs} run{spend.hidden.runs === 1 ? '' : 's'} you can’t open:{' '}
-            {costOf(spend.hidden.totals) === UNPRICED ? `${formatTokens(spend.hidden.totals.inputTokens)} in · ${formatTokens(spend.hidden.totals.outputTokens)} out` : costOf(spend.hidden.totals)}
+            {spend.hidden.runs} run{spend.hidden.runs === 1 ? '' : 's'} you can’t open
+            {spend.hidden.totals.calls > 0 && (
+              <>
+                :{' '}
+                {costOf(spend.hidden.totals) === UNPRICED ? `${formatTokens(spend.hidden.totals.inputTokens)} in · ${formatTokens(spend.hidden.totals.outputTokens)} out` : costOf(spend.hidden.totals)}
+              </>
+            )}
           </p>
         )}
       </Card>
@@ -165,7 +171,7 @@ export function SpendBody({ spend, open, model }: { spend: RunSpend; open: (o: O
               {bar.note && <p className="mt-0.5 text-[12px] text-t3">{bar.note}</p>}
             </>
           ) : (
-            <p className="text-[13px] text-t3">No split: the calls of this run were built outside Landflow.</p>
+            <p className="text-[13px] text-t3">No split for the calls of this run: they were built outside Landflow, are not chat calls, or the split was kept only for a limited time.</p>
           )}
         </Card>
       </section>

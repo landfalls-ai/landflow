@@ -1,15 +1,16 @@
 'use client';
 /**
  * The run's Spend section on the client (wave 12, SP06): `useRunSpend` reads `GET /api/executions/:id/spend` (again every
- * 10 seconds while the run is live) and the pure helpers turn a `RunSpend` into the rows, the cache sentence, the
+ * 10 seconds while the run is live; the Spend tab and the call sheet share one read per run) and the pure helpers turn a `RunSpend` into the rows, the cache sentence, the
  * composition bar and the call rows the Spend tab draws. Numbers and names only; the answer holds no prompt text.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef } from 'react';
 import { api } from './api';
 import { CALL_PURPOSE_LABELS } from '../shared/ai-call';
 import { PROMPT_PART_LABELS, type CountMethod, type PromptPart } from '../shared/ai-call-parts';
 import { formatCost, formatTokens } from '../shared/ai-usage';
 import type { RunModel } from '../shared/run-trace-model';
+import { matchSpansToCalls } from './span-call-match';
 import { type CacheLine, type RunSpend, type SpendCall, type SpendComposition, type SpendSlice, type SpendTotals } from '../shared/run-spend';
 
 export const SPEND_REFRESH_MS = 10_000;
@@ -23,43 +24,110 @@ export interface RunSpendState {
 /** Whether the run's spend must be read once more: the run was live and is not any more (the last calls land after the last poll). */
 export const readsAtEnd = (wasLive: boolean, live: boolean): boolean => wasLive && !live;
 
-/** The run's spend, kept current while the run is live. `retry` reads again (after a failed read). */
-export function useRunSpend(executionId: string | undefined, live = false): RunSpendState & { retry: () => void } {
-  const [state, setState] = useState<RunSpendState>({ loading: Boolean(executionId) });
-  const wasLive = useRef(false);
-  /** Bumped by every new run (and its cleanup); an answer of an older read is ignored. */
-  const generation = useRef(0);
-  const read = useCallback(async () => {
-    if (!executionId) return;
-    const mine = generation.current;
-    try {
-      const spend = await api<RunSpend>(`/api/executions/${executionId}/spend`, { background: true });
-      if (mine === generation.current) setState({ spend, loading: false });
-    } catch (e) {
-      if (mine === generation.current) setState((s) => ({ ...s, loading: false, error: (e as Error).message }));
+interface SpendEntry {
+  state: RunSpendState;
+  /** When the last answer arrived (ms). */
+  at: number;
+  reading: boolean;
+  listeners: Set<() => void>;
+}
+
+/** One entry per run: the Spend tab and every opened call sheet read the same answer, and a read in flight is shared. */
+const entries = new Map<string, SpendEntry>();
+const MAX_ENTRIES = 6;
+
+function entryFor(executionId: string): SpendEntry {
+  let entry = entries.get(executionId);
+  if (!entry) {
+    entry = { state: { loading: true }, at: 0, reading: false, listeners: new Set() };
+    entries.set(executionId, entry);
+    // Keep the newest few runs; one nobody listens to is dropped first.
+    for (const [id, old] of entries) {
+      if (entries.size <= MAX_ENTRIES) break;
+      if (id !== executionId && old.listeners.size === 0) entries.delete(id);
     }
+  }
+  return entry;
+}
+
+const publish = (entry: SpendEntry, state: RunSpendState) => {
+  entry.state = state;
+  for (const listener of entry.listeners) listener();
+};
+
+/** Reads the run's spend unless a read is already in flight. */
+export async function readSpend(executionId: string): Promise<void> {
+  const entry = entryFor(executionId);
+  if (entry.reading) return;
+  entry.reading = true;
+  try {
+    const spend = await api<RunSpend>(`/api/executions/${executionId}/spend`, { background: true });
+    entry.at = Date.now();
+    publish(entry, { spend, loading: false });
+  } catch (e) {
+    publish(entry, { ...entry.state, loading: false, error: (e as Error).message });
+  } finally {
+    entry.reading = false;
+  }
+}
+
+/** Reads unless there is an answer already (for a live run: one younger than a poll), so a second reader does not fetch. */
+export function ensureRunSpend(executionId: string, live = false): Promise<void> {
+  const entry = entryFor(executionId);
+  if (entry.state.spend && !(live && Date.now() - entry.at > SPEND_REFRESH_MS)) return Promise.resolve();
+  return readSpend(executionId);
+}
+
+/** What is known of a run's spend right now, and a way to hear of changes. */
+export const runSpendState = (executionId: string): RunSpendState => entryFor(executionId).state;
+export function watchRunSpend(executionId: string, listener: () => void): () => void {
+  const entry = entryFor(executionId);
+  entry.listeners.add(listener);
+  return () => void entry.listeners.delete(listener);
+}
+
+/** Forgets what was read (a test starts from nothing). */
+export const resetRunSpend = () => entries.clear();
+
+/**
+ * The run's spend, kept current while the run is live. Every caller of one run shares one answer and one read: the call
+ * sheet passes a `refresh` key (the span's end and status) to read again when a live span moves. `retry` reads again
+ * (after a failed read).
+ */
+export function useRunSpend(executionId: string | undefined, live = false, refresh?: string): RunSpendState & { retry: () => void } {
+  const [, rerender] = useReducer((n: number) => n + 1, 0);
+  const wasLive = useRef(false);
+  const lastRefresh = useRef(refresh);
+  useEffect(() => {
+    if (!executionId) return;
+    const unwatch = watchRunSpend(executionId, rerender);
+    // Nothing read yet, or a live run's answer that the poll would not reach for a while.
+    void ensureRunSpend(executionId, live);
+    return unwatch;
+    // `live` only decides the first read; the poll below follows it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [executionId]);
   useEffect(() => {
-    generation.current += 1;
-    setState({ loading: Boolean(executionId) });
-    void read();
-    return () => {
-      generation.current += 1;
-    };
-  }, [executionId, read]);
+    if (!executionId || lastRefresh.current === refresh) return;
+    lastRefresh.current = refresh;
+    void readSpend(executionId);
+  }, [executionId, refresh]);
   useEffect(() => {
-    if (readsAtEnd(wasLive.current, live)) void read();
+    if (executionId && readsAtEnd(wasLive.current, live)) void readSpend(executionId);
     wasLive.current = live;
-  }, [live, read]);
+  }, [executionId, live]);
   useEffect(() => {
     if (!executionId || !live) return;
-    const timer = setInterval(() => void read(), SPEND_REFRESH_MS);
+    const timer = setInterval(() => void readSpend(executionId), SPEND_REFRESH_MS);
     return () => clearInterval(timer);
-  }, [executionId, live, read]);
+  }, [executionId, live]);
   const retry = useCallback(() => {
-    setState((s) => ({ ...s, loading: !s.spend, error: undefined }));
-    void read();
-  }, [read]);
+    if (!executionId) return;
+    const entry = entryFor(executionId);
+    publish(entry, { ...entry.state, loading: !entry.state.spend, error: undefined });
+    void readSpend(executionId);
+  }, [executionId]);
+  const state: RunSpendState = executionId ? runSpendState(executionId) : { loading: false };
   return { ...state, retry };
 }
 
@@ -125,9 +193,9 @@ export function cacheSentence(cache: CacheLine): { line: string; reasons: string
 }
 
 export const COUNT_METHOD_LABELS: Record<CountMethod, string> = {
-  provider: 'Counted exactly',
-  tokenizer: 'Counted by the model’s tokenizer',
-  estimate: 'Estimated',
+  provider: 'Counted by the provider',
+  tokenizer: 'Counted with the model’s own tokenizer',
+  estimate: 'Estimated from text length',
 };
 
 export interface CompositionBar {
@@ -150,7 +218,7 @@ export function compositionBars(composition: SpendComposition | undefined): Comp
     methodLabel: COUNT_METHOD_LABELS[composition.method],
     total,
     segments: entries.map(([part, tokens]) => ({ part, label: PROMPT_PART_LABELS[part], tokens, tokensText: formatTokens(tokens), share: total ? tokens / total : 0 })),
-    ...(missing > 0 && { note: `${composition.callsWithParts} of ${composition.calls} calls have a split. No split: the call was built outside Landflow.` }),
+    ...(missing > 0 && { note: `${composition.callsWithParts} of ${composition.calls} chat calls have a split. The others have none: they were built outside Landflow, a part could not be told, or the split was kept only for a limited time. Open a call to see which.` }),
   };
 }
 
@@ -164,17 +232,20 @@ export interface SpendCallRow {
   spanId?: string;
 }
 
+/** One row per call; a call that is one of the run's model spans (the shared rule of `span-call-match.ts`) carries its span id. */
 export function callRows(calls: SpendCall[], model?: Pick<RunModel, 'spans'>): SpendCallRow[] {
+  const spanOf = new Map<string, string>();
+  if (model) for (const [spanId, call] of matchSpansToCalls(Object.values(model.spans), calls)) spanOf.set(call.usageId, spanId);
   return calls.map((c) => {
-    const spanId = model ? matchCallToSpan(c, model) : undefined;
+    const spanId = spanOf.get(c.usageId);
     return {
-    usageId: c.usageId,
-    at: c.at,
-    purpose: c.purpose ? CALL_PURPOSE_LABELS[c.purpose] : 'Not set',
-    model: c.model,
-    tokens: `${formatTokens(c.inputTokens)} in · ${formatTokens(c.outputTokens)} out`,
-    cost: c.priced ? formatCost(c.cost) : UNPRICED,
-    ...(spanId && { spanId }),
+      usageId: c.usageId,
+      at: c.at,
+      purpose: c.purpose ? CALL_PURPOSE_LABELS[c.purpose] : 'Not set',
+      model: c.model,
+      tokens: `${formatTokens(c.inputTokens)} in · ${formatTokens(c.outputTokens)} out`,
+      cost: c.priced ? formatCost(c.cost) : UNPRICED,
+      ...(spanId && { spanId }),
     };
   });
 }
@@ -189,26 +260,4 @@ export function totalTiles(t: SpendTotals): Array<[label: string, value: string]
     ['Calls', String(t.calls)],
   ];
   return tiles;
-}
-
-/**
- * The journal model span of a priced call (the inverse of `matchSpanToCall`): the call's `spanId` is the OpenTelemetry
- * id, the Run Trace's spans have journal ids. Same model name, `at` within [startedAt - 1 s, endedAt + 2 s], the same
- * agent when the span's actor or caller is one, the nearest to the span's end on a tie (a call is recorded when it ends).
- */
-export function matchCallToSpan(call: Pick<SpendCall, 'at' | 'model' | 'agentId'>, model: Pick<RunModel, 'spans'>): string | undefined {
-  const at = Date.parse(call.at);
-  if (Number.isNaN(at)) return undefined;
-  let best: { id: string; gap: number } | undefined;
-  for (const span of Object.values(model.spans)) {
-    if (span.kind !== 'model' || span.name !== call.model) continue;
-    const start = Date.parse(span.startedAt);
-    const end = span.endedAt ? Date.parse(span.endedAt) : start;
-    if (Number.isNaN(start) || at < start - 1000 || at > end + 2000) continue;
-    const agent = [span.actor, span.caller].find((a) => a?.id.startsWith('agent:'));
-    if (agent && call.agentId && agent.id !== `agent:${call.agentId}`) continue;
-    const gap = Math.abs(at - end);
-    if (!best || gap < best.gap) best = { id: span.id, gap };
-  }
-  return best?.id;
 }

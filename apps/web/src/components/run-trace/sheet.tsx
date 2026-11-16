@@ -202,7 +202,7 @@ function SpanSheet({
         ]}
       />
       {/* SP07: a model call's composition and cache line. */}
-      {span.kind === 'model' && model.executionId && <CallSpend span={span} executionId={model.executionId} />}
+      {span.kind === 'model' && model.executionId && <CallSpend span={span} executionId={model.executionId} spans={Object.values(model.spans).filter((s) => s.kind === 'model')} live={model.live} />}
       <div className="mt-3 flex flex-col gap-2.5">
         {edits?.length ? (
           <ChangeSheet changes={edits.map((e) => e.c)} file={edits[0].file} git={Boolean(changes?.git)} />

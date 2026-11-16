@@ -348,7 +348,9 @@ export async function runSpend(executionId: string, actor: Actor): Promise<RunSp
   );
   const byIteration = slices(all, (c) => (c.iteration !== undefined ? { key: String(c.iteration), label: `Step ${c.iteration}` } : undefined), totals).sort((a, b) => Number(a.key) - Number(b.key));
 
-  const have = listed.filter((r) => parts.has(r.id));
+  // Only chat calls can have a split: embeddings and rerank calls are no part of "calls without one".
+  const chatRows = listed.filter((r) => r.operation !== 'embeddings' && !(r.purpose && NOT_CHAT.has(r.purpose)));
+  const have = chatRows.filter((r) => parts.has(r.id));
   let composition: SpendComposition | undefined;
   if (have.length) {
     const sum: Partial<Record<PromptPart, number>> = {};
@@ -358,7 +360,7 @@ export async function runSpend(executionId: string, actor: Actor): Promise<RunSp
       if (WEAKNESS[split.method] < WEAKNESS[method]) method = split.method;
       for (const [part, tokens] of Object.entries(split.parts)) sum[part as PromptPart] = (sum[part as PromptPart] ?? 0) + (tokens ?? 0);
     }
-    composition = { method, parts: sum, callsWithParts: have.length, calls: listed.length };
+    composition = { method, parts: sum, callsWithParts: have.length, calls: chatRows.length };
   }
 
   const chat = calls.filter((_, i) => listed[i].operation !== 'embeddings');

@@ -5,13 +5,16 @@
  */
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JournalEvent, RunActor } from '@/lib/shared/run-trace';
 import { foldJournal } from '@/lib/shared/run-trace-model';
 import type { RunSpend, SpendCall, SpendSlice, SpendTotals } from '@/lib/shared/run-spend';
-import { cacheSentence, callRows, compositionBars, matchCallToSpan, readsAtEnd, spendRows, totalTiles } from '../src/lib/client/run-spend';
+import { cacheSentence, callRows, compositionBars, ensureRunSpend, readSpend, readsAtEnd, resetRunSpend, runSpendState, spendRows, totalTiles, watchRunSpend } from '../src/lib/client/run-spend';
+import { api } from '../src/lib/client/api';
 import { TAB_LABELS, visibleTabs } from '../src/components/run-trace/run-trace-tabs';
 import { SpendBody } from '../src/components/run-trace/spend';
+
+vi.mock('../src/lib/client/api', () => ({ api: vi.fn() }));
 
 const totals = (o: Partial<SpendTotals>): SpendTotals => ({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0, calls: 0, unpricedCalls: 0, ...o });
 const slice = (key: string, label: string, share: number, o: Partial<SpendTotals>): SpendSlice => ({ key, label, share, ...totals(o) });
@@ -60,10 +63,11 @@ describe('the Spend helpers', () => {
     const bar = compositionBars(demo.composition)!;
     expect(bar.segments.map((s) => s.label)).toEqual(['Instructions', 'Tool definitions', 'Conversation so far', 'The message']);
     expect(bar.segments.reduce((n, s) => n + s.share, 0)).toBeCloseTo(1);
-    expect(bar.methodLabel).toBe('Estimated');
-    expect(bar.note).toMatch(/3 of 4 calls/);
-    expect(compositionBars({ ...demo.composition!, method: 'provider', callsWithParts: 4 })).toMatchObject({ methodLabel: 'Counted exactly' });
-    expect(compositionBars({ ...demo.composition!, method: 'tokenizer' })!.methodLabel).toBe('Counted by the model’s tokenizer');
+    expect(bar.methodLabel).toBe('Estimated from text length');
+    expect(bar.note).toMatch(/3 of 4 chat calls/);
+    expect(bar.note).not.toMatch(/built outside Landflow\.$/);
+    expect(compositionBars({ ...demo.composition!, method: 'provider', callsWithParts: 4 })).toMatchObject({ methodLabel: 'Counted by the provider' });
+    expect(compositionBars({ ...demo.composition!, method: 'tokenizer' })!.methodLabel).toBe('Counted with the model’s own tokenizer');
     expect(compositionBars(undefined)).toBeUndefined();
   });
 
@@ -105,24 +109,29 @@ describe('the Spend refresh and the span of a call', () => {
 
   it('finds the journal span of a call that carries an OpenTelemetry span id', () => {
     const c = (at: string, o: Partial<SpendCall> = {}) => call(1, { spanId: '5b8aa5a2d2c5f1e0', model: 'claude-sonnet-4-6', agentId: 'ag1', at, ...o });
-    expect(matchCallToSpan(c('2026-11-16T10:00:01.200Z'), journal)).toBe('run/model:0');
-    expect(matchCallToSpan(c('2026-11-16T10:00:03.100Z'), journal)).toBe('run/model:1');
-    expect(matchCallToSpan(c('2026-11-16T10:00:01.200Z', { model: 'other' }), journal)).toBeUndefined();
-    expect(matchCallToSpan(c('2026-11-16T10:00:01.200Z', { agentId: 'ag2' }), journal)).toBeUndefined();
-    expect(matchCallToSpan(c('2026-11-16T11:00:00.000Z'), journal)).toBeUndefined();
+    const spanOf = (x: SpendCall) => callRows([x], journal)[0].spanId;
+    expect(spanOf(c('2026-11-16T10:00:01.200Z'))).toBe('run/model:0');
+    expect(spanOf(c('2026-11-16T10:00:03.100Z'))).toBe('run/model:1');
+    expect(spanOf(c('2026-11-16T10:00:01.200Z', { model: 'other' }))).toBeUndefined();
+    expect(spanOf(c('2026-11-16T10:00:01.200Z', { agentId: 'ag2' }))).toBeUndefined();
+    expect(spanOf(c('2026-11-16T11:00:00.000Z'))).toBeUndefined();
     const rows = callRows([c('2026-11-16T10:00:01.200Z'), c('2026-11-16T11:00:00.000Z', { usageId: 'late' })], journal);
     expect(rows.map((r) => r.spanId)).toEqual(['run/model:0', undefined]);
   });
 
-  it('opens the span a call ended, for back-to-back calls of one model', () => {
+  it('opens the span a call ended, for back-to-back calls of one model, one call to one span', () => {
     const mk = (spans: Array<[string, string, string]>) => ({
       spans: Object.fromEntries(spans.map(([id, startedAt, endedAt]) => [id, { id, kind: 'model', name: 'claude-sonnet-4-6', startedAt, endedAt, caller: agent }])),
     }) as never;
-    const c = (at: string) => call(1, { model: 'claude-sonnet-4-6', agentId: 'ag1', at });
+    const c = (at: string, n = 1) => call(n, { model: 'claude-sonnet-4-6', agentId: 'ag1', at });
     const two = mk([['a', '2026-11-16T10:00:00.000Z', '2026-11-16T10:00:05.000Z'], ['b', '2026-11-16T10:00:05.400Z', '2026-11-16T10:00:10.000Z']]);
-    expect(matchCallToSpan(c('2026-11-16T10:00:05.010Z'), two)).toBe('a');
+    expect(callRows([c('2026-11-16T10:00:05.010Z')], two)[0].spanId).toBe('a');
     const three = mk([['a', '2026-11-16T10:00:00.000Z', '2026-11-16T10:00:04.000Z'], ['b', '2026-11-16T10:00:04.300Z', '2026-11-16T10:00:08.000Z'], ['c', '2026-11-16T10:00:08.500Z', '2026-11-16T10:00:12.000Z']]);
-    expect(['10:00:04.010', '10:00:08.010', '10:00:12.010'].map((t) => matchCallToSpan(c(`2026-11-16T${t}Z`), three))).toEqual(['a', 'b', 'c']);
+    const times = ['10:00:04.010', '10:00:08.010', '10:00:12.010'];
+    expect(callRows(times.map((t, i) => c(`2026-11-16T${t}Z`, i + 1)), three).map((r) => r.spanId)).toEqual(['a', 'b', 'c']);
+    // Two calls near one span: the nearer one opens it, the other has no span.
+    const rows = callRows([c('2026-11-16T10:00:04.010Z', 1), c('2026-11-16T10:00:03.500Z', 2)], mk([['a', '2026-11-16T10:00:00.000Z', '2026-11-16T10:00:04.000Z']]));
+    expect(rows.map((r) => r.spanId)).toEqual(['a', undefined]);
   });
 
   it('draws a time as a button only when a span was found', () => {
@@ -151,10 +160,53 @@ describe('the Spend tab', () => {
     expect(TAB_LABELS.spend).toBe('Spend');
   });
 
+  it('names hidden runs without a $0 when they made no calls', () => {
+    const quiet = { ...demo, hidden: { runs: 2, totals: totals({}) } };
+    const html = renderToStaticMarkup(createElement(SpendBody, { spend: quiet, open: () => {} }));
+    expect(html).toContain('2 runs you can’t open');
+    expect(html).not.toMatch(/can’t open[^<]*\$/);
+  });
+
   it('renders the totals, every view, the method and the hidden runs, with no prompt text', () => {
     const html = renderToStaticMarkup(createElement(SpendBody, { spend: demo, open: () => {} }));
-    for (const text of ['0.0746', '53% of the prompt came from the cache', 'Estimated', 'Instructions', 'Guardrail check', '2 runs you can’t open: $0.5', '1 unpriced call', 'Where it went', 'Step']) expect(html).toContain(text);
+    for (const text of ['0.0746', '53% of the prompt came from the cache', 'Estimated from text length', 'Instructions', 'Guardrail check', '2 runs you can’t open: $0.5', '1 unpriced call', 'Where it went', 'Step']) expect(html).toContain(text);
     expect(html).not.toMatch(/prompt text|system prompt|You are/);
     expect(html).not.toContain('/settings#ai-prices'); // no viewer here: only admins get the link
+  });
+});
+
+describe('one read of a run\'s spend for the tab and every sheet', () => {
+  beforeEach(() => {
+    resetRunSpend();
+    vi.mocked(api).mockReset();
+  });
+
+  it('shares one request between readers, and gives a later reader the answer without another', async () => {
+    vi.mocked(api).mockResolvedValue(demo);
+    const heard: number[] = [];
+    const unwatch = watchRunSpend('ex_demo', () => heard.push(1));
+    // The tab and two sheets open at once.
+    await Promise.all([ensureRunSpend('ex_demo'), ensureRunSpend('ex_demo'), ensureRunSpend('ex_demo')]);
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(runSpendState('ex_demo').spend).toBe(demo);
+    expect(heard.length).toBeGreaterThan(0);
+    // A sheet opened later reads nothing: the answer is there.
+    await ensureRunSpend('ex_demo');
+    await ensureRunSpend('ex_demo', false);
+    expect(api).toHaveBeenCalledTimes(1);
+    // An explicit read (a live span ended, the poll) goes out again.
+    await readSpend('ex_demo');
+    expect(api).toHaveBeenCalledTimes(2);
+    unwatch();
+  });
+
+  it('keeps the last answer when a later read fails, and reads once per run', async () => {
+    vi.mocked(api).mockResolvedValueOnce(demo).mockRejectedValueOnce(new Error('boom'));
+    await readSpend('ex_a');
+    await readSpend('ex_a');
+    expect(runSpendState('ex_a')).toMatchObject({ spend: demo, error: 'boom', loading: false });
+    vi.mocked(api).mockResolvedValue(demo);
+    await ensureRunSpend('ex_b');
+    expect(api).toHaveBeenCalledTimes(3);
   });
 });
