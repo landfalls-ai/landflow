@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Workflow } from '@landflow/engine';
 import { addDays, FORECAST_Z90, forecastMonth, monthEndOf, paceToday, reachesOn } from '@/lib/shared/ai-forecast';
-import { amountOf, capOutlook, dayWord, forecastNote, forecastRange, money } from '@/lib/client/ai-forecast';
+import { amountOf, capOutlook, dayWord, forecastNote, forecastRange, missesLead, money } from '@/lib/client/ai-forecast';
 
 const series = (from: string, values: number[]): Record<string, number> => Object.fromEntries(values.map((v, i) => [addDays(from, i), v]));
 
@@ -295,6 +295,15 @@ describe('the forecast report', () => {
     const body = await as(member, async () => (await forecastRoute.GET(new Request('http://x.test/api/insights/ai/forecast'), { params: Promise.resolve({}) } as never)).json());
     expect(body.caps.map((c: { capId: string }) => c.capId)).not.toContain(`user:${other.id}:month:cost`);
     expect(body.total.daysLeft).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('the cache card\'s reasons line', () => {
+  it('says "Not cached", not "Misses", for an agent with a reason but no miss call', () => {
+    expect(missesLead({ missCalls: 0, missRuns: 0, runs: 4 })).toBe('Not cached');
+    expect(missesLead({ missCalls: 2, missRuns: 0, runs: 4 })).toBe('Misses');
+    expect(missesLead({ missCalls: 2, missRuns: 1, runs: 1 })).toBe('Misses in 1 of 1 run');
+    expect(missesLead({ missCalls: 5, missRuns: 2, runs: 9 })).toBe('Misses in 2 of 9 runs');
   });
 });
 

@@ -240,4 +240,20 @@ describe('momentLabel', () => {
     expect(label).toContain(d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }));
     expect(momentLabel('nope')).toBe('nope');
   });
+
+  it('names the local day, not the UTC day, in a zone far from UTC (fixed expectations)', () => {
+    // 23:30 UTC on 15 November is 13:30 on 16 November in Kiritimati (UTC+14) and 15:30 on 15 November in Los Angeles.
+    const label = momentLabel('2026-11-15T23:30:00.000Z');
+    // The day number and the hour, whatever the browser's language (this machine's locale may not be English).
+    if (process.env.TZ === 'Pacific/Kiritimati') {
+      expect(label).toMatch(/\b16\b/);
+      expect(label).not.toMatch(/\b15\b/);
+      expect(label).toMatch(/\b(13|1):30\b/);
+    }
+    if (process.env.TZ === 'America/Los_Angeles') {
+      expect(label).toMatch(/\b15\b/);
+      expect(label).not.toMatch(/\b16\b/);
+      expect(label).toMatch(/\b(15|3):30\b/);
+    }
+  });
 });

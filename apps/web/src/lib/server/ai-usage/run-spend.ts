@@ -396,11 +396,11 @@ function isChildSessionRow(row: UsageRow, cache?: Map<string, boolean>): boolean
   return is;
 }
 
+// SP09: exported for the lists behind a number (spend-lists.ts).
 /**
  * Whether `actor` may open this call (rule 3): its run, its agent or its project, else its own person and admins. The
  * rule of `runSpend` holds here too: a call in a child session of an agent the viewer cannot read is not opened.
  */
-// SP09: exported for the lists behind a number (spend-lists.ts).
 export function canOpenCall(actor: Actor, row: UsageRow): boolean {
   if (isInstanceAdmin(actor)) return true;
   if (row.agent_id && !canResource(actor, 'agent', row.agent_id, 'read') && isChildSessionRow(row)) return false;

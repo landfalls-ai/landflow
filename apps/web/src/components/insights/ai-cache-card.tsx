@@ -5,7 +5,7 @@
  */
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client/api';
-import { cacheHeadline, hitPercent } from '@/lib/client/ai-forecast';
+import { cacheHeadline, hitPercent, missesLead } from '@/lib/client/ai-forecast';
 import { MISS_REASON_WORDS } from '@/lib/client/run-spend';
 import { formatTokens } from '@/lib/shared/ai-usage';
 import type { AiCacheReport } from '@/lib/shared/ai-cache';
@@ -79,7 +79,7 @@ export function AiCacheCard({ query, ready }: { query: string; ready: boolean })
                       <span className="min-w-0 flex-1 truncate text-t1 max-md:basis-full">{agent.label}</span>
                       <span className="tabular-nums text-t2">{formatTokens(agent.uncachedTokens)} uncached</span>
                       <span className="tabular-nums text-t3">{agent.hitRate === undefined ? 'no cache numbers' : `${hitPercent(agent.hitRate)} hit`}</span>
-                      {agent.missReasons.length > 0 && <span className="basis-full text-[12px] text-t3">Misses{agent.missRuns > 0 && ` in ${agent.missRuns} of ${agent.runs} ${agent.runs === 1 ? 'run' : 'runs'}`}: {agent.missReasons.map((r) => MISS_REASON_WORDS[r]).join('; ')}</span>}
+                      {agent.missReasons.length > 0 && <span className="basis-full text-[12px] text-t3">{missesLead(agent)}: {agent.missReasons.map((r) => MISS_REASON_WORDS[r]).join('; ')}</span>}
                     </li>
                   ))}
                 </ul>

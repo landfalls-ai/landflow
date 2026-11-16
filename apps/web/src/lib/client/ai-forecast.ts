@@ -19,10 +19,10 @@ export function forecastRange(forecast: AiForecast, monthEnd: string, metric: 'c
   return low === high ? `about ${low} by ${by}` : `${low} to ${high} by ${by}`;
 }
 
-/** The P50 in words, and why the band is rough when it is. */
 /** An amount as the Caps card shows it (cents at every size), for a cap's used and max. */
 export const exactOf = (metric: 'cost' | 'tokens', value: number): string => (metric === 'cost' ? formatCost(value) : amountOf(metric, value));
 
+/** The P50 in words, and why the band is rough when it is. */
 export function forecastNote(forecast: AiForecast, metric: 'cost' | 'tokens' = 'cost'): string {
   const left = `${forecast.daysLeft} day${forecast.daysLeft === 1 ? '' : 's'} left`;
   const seen = Math.min(7, forecast.daysObserved);
@@ -56,4 +56,10 @@ export function cacheHeadline(report: AiCacheReport): string {
   if (cache.hitRate === undefined) return 'No call in this period reported cache numbers.';
   const saved = cache.savedUsd > 0 ? ` · saved ${formatCost(cache.savedUsd)}` : '';
   return `${hitPercent(cache.hitRate)} of the prompt came from the cache${saved}`;
+}
+
+/** The lead of an agent's reasons line on the cache card: "Misses in 1 of 3 runs", "Misses", or "Not cached" when it has no miss (a reason, such as no cache asked for, is not a miss). */
+export function missesLead(agent: { missCalls: number; missRuns: number; runs: number }): string {
+  if (agent.missCalls === 0) return 'Not cached';
+  return agent.missRuns > 0 ? `Misses in ${agent.missRuns} of ${agent.runs} ${agent.runs === 1 ? 'run' : 'runs'}` : 'Misses';
 }
