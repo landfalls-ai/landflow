@@ -92,26 +92,45 @@ const noJunk: Check = {
   },
 };
 
+/** A loose word list on the reply's text. A build's `Outcome.text` is "Built N nodes" until SB15 gives it a summary, so this is 0 of N for builds today. */
 const leftListed: Check = {
   id: 'left-listed',
   label: 'Said what is left',
   judge: (o) => /left|still|need|pick|set up|assum|empty|choose/i.test(o.text) && o.text.length > 40,
 };
 
-/** Both POST steps send the order (an expression), not a fixed body. */
+/** `$json.a.b` paths an expression reads. */
+const jsonPaths = (value: unknown): string[] => [...JSON.stringify(value ?? {}).matchAll(/\$json\.([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*)/g)].map((m) => m[1]);
+const reads = (item: unknown, path: string) => path.split('.').reduce<unknown>((v, k) => (v && typeof v === 'object' ? (v as Record<string, unknown>)[k] : undefined), item) !== undefined;
+
+/**
+ * Both POST steps send the order (an expression), and the If reads a field the pinned webhook items really carry (a
+ * `$json.total` against items that hold `body.total` sends every order down the same branch). The pinned items are the
+ * draft's own: the trigger's `pinData`.
+ */
 const sendsTheOrder: Check = {
   id: 'runs-right',
   label: 'Runs right with the pinned data',
   judge: (o) => {
     const posts = draftNodes(o).filter((n) => n.type === 'core.httpRequest');
-    return posts.length === 2 && posts.every((n) => /\{\{\s*\$json/.test(JSON.stringify(n.parameters ?? {}))) && draftNodes(o).some((n) => n.type === 'core.if' && !hollow(n.parameters));
+    const ifs = draftNodes(o).filter((n) => n.type === 'core.if');
+    if (posts.length !== 2 || !posts.every((n) => /\{\{\s*\$json/.test(JSON.stringify(n.parameters ?? {}))) || ifs.length !== 1) return false;
+    if (Object.values(ifs[0].parameters ?? {}).some(hollow)) return false;
+    const paths = jsonPaths(ifs[0].parameters);
+    const trigger = draftNodes(o).find((n) => n.type === 'core.webhook');
+    const pinned = (trigger && o.after?.pinData?.[trigger.id]) || [];
+    return paths.length > 0 && pinned.length > 0 && paths.every((path) => pinned.every((item) => reads((item as { json?: unknown }).json, path)));
   },
 };
 
+/** Exactly one run of the existing agent, with its id, and no If with an empty condition. */
 const hasAgentNode: Check = {
   id: 'runs-right',
   label: 'Runs the existing agent once, behind a decision',
-  judge: (o) => draftNodes(o).some((n) => n.type === 'core.messageAgent' && Boolean((n.parameters as { agentId?: unknown } | undefined)?.agentId)) && !draftNodes(o).some((n) => n.type === 'core.if' && hollow(n.parameters)),
+  judge: (o) => {
+    const agents = draftNodes(o).filter((n) => n.type === 'core.messageAgent');
+    return agents.length === 1 && Boolean((agents[0].parameters as { agentId?: unknown } | undefined)?.agentId) && !draftNodes(o).some((n) => n.type === 'core.if' && Object.values(n.parameters ?? {}).some(hollow));
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -143,8 +162,7 @@ export default defineScenarios([
     title: 'B1: Linear bugs, an agent triages them, P0s to Slack, the rest to a table',
     ask: 'Every weekday at 8, read new Linear issues labelled bug, have an agent triage each into P0–P3 with a reason, post P0s to Slack #oncall and put the rest in a data table',
     checks: [rightTypes(['core.schedule', 'linear.linear', 'messaging.slack']), wired, collectionsFilled, idsAsked, credentialsListed, noJunk, leftListed, checks.noOutside],
-    // Needs the real Linear and Messaging nodes online (docs/development.md: LANDFLOW_SPOTLIGHT_PLUGINS).
-    live: process.env.LANDFLOW_SPOTLIGHT_PLUGINS ? { runs: 3 } : { skip: 'the Linear and Messaging plugins are not online (set LANDFLOW_SPOTLIGHT_PLUGINS to their local endpoints)' },
+    // Live, the harness registers the bundled Linear and Messaging plugins (or LANDFLOW_SPOTLIGHT_PLUGINS' endpoints), so the catalog is a person's.
   },
   {
     id: 'sb00-build-webhook-branch',
@@ -298,7 +316,7 @@ export default defineScenarios([
 ]);
 
 function agentExists(): Check {
-  return right('agent-exists', 'An agent exists', (o) => o.agents.length > 0);
+  return right('agent-exists', 'An agent draft was produced', (o) => o.agents.length > 0);
 }
 function agentModel(): Check {
   return right('model', 'A model chosen', (o) => (o.agents.length ? o.agents.every((a) => Boolean(a.model)) : false));

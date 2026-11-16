@@ -309,16 +309,19 @@ cd apps/web && NODE_OPTIONS="--require $PWD/test/spotlight-scenarios/local-only.
   LANDFLOW_SPOTLIGHT_REPORT=/tmp/scorecard.json npx vitest run test/spotlight-scenarios.test.ts
 ```
 
-It prints three tables (Build, Fix one step, Agents: per scenario the runs, the median time and "k of n" per check) and
+It prints three tables (Build, Fix one step, Agents: per scenario the runs, the time range and "k of n" per check) and
 writes the same as JSON (sizes and check results only, no reply or ask text). Variables: `LANDFLOW_SPOTLIGHT_MODEL`
 (default `qwen3-coder:30b`), `LANDFLOW_SPOTLIGHT_RUNS` (runs per scenario; default the scenario's, 3),
 `LANDFLOW_SPOTLIGHT_ONLY` (comma-separated scenario ids or owners, e.g. `SB03,sb04-why-last-run`),
 `LANDFLOW_SPOTLIGHT_REPORT` (the JSON path; default `$TMPDIR/landflow-spotlight-scorecard.json`),
 `LANDFLOW_SPOTLIGHT_ECHO_PORT` (the suite's echo server, default 3399) and `LANDFLOW_SPOTLIGHT_PLUGINS` (comma-separated
-local plugin endpoints, e.g. the Linear and Messaging plugins; without them Slack and Linear are small stand-ins and the
-Linear build is skipped). The guard, `test/spotlight-scenarios/local-only.cjs`, makes every connection to anything but this
+local plugin endpoints that serve Linear and Messaging; without it the live form registers the bundled Linear and
+Messaging plugins in the test process, so builds see the catalog a person has; the scripted form uses small stand-ins). The guard, `test/spotlight-scenarios/local-only.cjs`, makes every connection to anything but this
 machine fail with `ECONNREFUSED` (and every lookup of another name with `ENOTFOUND`), printing `[local-only] refused
-<host>:<port>`: the runner requires it itself, and a live check of a running host puts it in `NODE_OPTIONS`. A package adds
+<host>:<port>`. It must be on from the process's start: the runner stops with a message when the live form is asked for
+and it is not loaded, so the command above sets `NODE_OPTIONS` (a live check of a running host does the same). It covers
+`net` connections and `dns.lookup`; it does not cover `dns.resolve*` or `Resolver` (c-ares over UDP), `dgram` or child
+processes, which no product code uses today. A package adds
 its scenarios as `test/spotlight-scenarios/<owner>.ts` (`export default defineScenarios([...])`, ids `<owner>-<slug>`):
 the runner finds it, no index to edit. [assistant.md](assistant.md#how-spotlight-is-measured) says what the checks mean.
 

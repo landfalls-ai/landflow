@@ -11,7 +11,7 @@ import './env';
 import { createRequire } from 'node:module';
 import { nanoid } from 'nanoid';
 import { definePlugin, defineNode } from '@landflow/sdk';
-import type { Workflow } from '@landflow/engine';
+import type { NodeRun, Workflow } from '@landflow/engine';
 import { applyOps, type AssistantOp, type RunDigest } from '@/lib/shared/assistant-ops';
 import type { AgentConfig } from '@/lib/shared/agents';
 import { corePlugin } from '@/lib/server/nodes';
@@ -76,12 +76,15 @@ function stand(plugin: string, name: string, displayName: string, properties: st
 }
 
 let prepared = false;
-/** Register the core plugin and, unless the real ones are online, stand-ins for Slack and Linear; seed one published agent. */
-export function prepare(): void {
+/**
+ * Register the core plugin and, for the unit form, stand-ins for Slack and Linear; seed one published agent. The live
+ * form builds against the catalog a person has: the bundled Linear and Messaging plugins (`prepareLive`), not stand-ins.
+ */
+export function prepare(options: { live?: boolean } = {}): void {
   if (prepared) return;
   prepared = true;
   registry.registerBuiltin(corePlugin);
-  if (!process.env.LANDFLOW_SPOTLIGHT_PLUGINS) {
+  if (!options.live && !process.env.LANDFLOW_SPOTLIGHT_PLUGINS) {
     registry.registerBuiltin(stand('messaging', 'slack', 'Slack', ['authentication', 'resource', 'operation', 'channelId', 'text', 'blocksUi', 'otherOptions']));
     registry.registerBuiltin(stand('linear', 'linear', 'Linear', ['authentication', 'resource', 'operation', 'since', 'returnAll', 'limit', 'activityOptions']));
   }
@@ -90,6 +93,23 @@ export function prepare(): void {
     const agent = agentStore.create({ name: 'Support triage', description: 'Answers support questions from the docs and hands over what it cannot answer.', instructions: 'Answer support questions.', model: { provider: 'ollama', model: 'qwen3-coder:30b' } });
     agentStore.publish(agent.id);
   }
+}
+
+/**
+ * Live form: register the bundled plugins the scenarios use, in this process (their node code is the product's; no
+ * server to start), unless `LANDFLOW_SPOTLIGHT_PLUGINS` names endpoints that serve them (`addPlugins`).
+ */
+export async function prepareLive(): Promise<string[]> {
+  if (process.env.LANDFLOW_SPOTLIGHT_PLUGINS) return [];
+  const added: string[] = [];
+  for (const dir of ['linear', 'messaging']) {
+    // A computed path: the plugins are packages of their own, outside this app's type roots.
+    const path = ['..', '..', '..', '..', 'plugins', dir, 'src', 'main'].join('/');
+    const { plugin } = (await import(/* @vite-ignore */ new URL(path, import.meta.url).href)) as { plugin: Parameters<typeof registry.registerBuiltin>[0] };
+    registry.registerBuiltin(plugin);
+    added.push(dir);
+  }
+  return added;
 }
 
 /** Live form: add the plugin endpoints named in LANDFLOW_SPOTLIGHT_PLUGINS (comma-separated, local URLs only). */
@@ -216,6 +236,8 @@ const agentOf = (config: Partial<AgentConfig>, published = false): Outcome['agen
 // One chat message
 // ---------------------------------------------------------------------------
 
+type Scripted = ReturnType<typeof scriptedModel>;
+
 interface ChatCall {
   ask: string;
   workflow: Workflow;
@@ -230,7 +252,7 @@ interface ChatCall {
  * it (route.ts: `allowedTypes`, `roster()`, `tagMentions`), because the route takes the model as a string and the scripted
  * one is an object. That seam is here and nowhere in the product.
  */
-async function chatOnce(call: ChatCall, form: Form, script: ScriptTurn[] | undefined, options: RunOptions): Promise<Collected & { calls: number }> {
+async function chatOnce(call: ChatCall, form: Form, scripted: Scripted | undefined, options: RunOptions): Promise<Collected & { calls: number }> {
   const body = {
     messages: [{ role: 'user', content: call.ask }],
     workflow: call.workflow,
@@ -250,11 +272,15 @@ async function chatOnce(call: ChatCall, form: Form, script: ScriptTurn[] | undef
   const { roster } = await import('@/lib/server/assistant/roster');
   const { allowedTypes, meteredWorkflowId } = await import('@/lib/server/assistant/scope');
   const { routeActor } = await import('@/lib/server/projects/http');
-  const { model, calls } = scriptedModel(script ?? []);
+  // One scripted model for the whole scenario (see `runScenario`): its turns are consumed once across every message.
+  const { model, calls } = scripted ?? scriptedModel([]);
+  const callsBefore = calls.length;
+  const { currentPrincipal } = await import('@/lib/server/auth/guard');
   const events: Array<{ event: string; data: unknown }> = [];
   await asOwner(async () => {
     const types = allowedTypes(call.workflow.id);
     const { agents, teams } = roster();
+    const actorId = currentPrincipal()?.user?.id;
     const tagged = await tagMentions(routeActor(), [], { workflow: call.workflow, workflowId: call.workflow.id, types, ...(call.runs && { runs: call.runs }) });
     await runChat({
       messages: body.messages as never,
@@ -269,10 +295,11 @@ async function chatOnce(call: ChatCall, form: Form, script: ScriptTurn[] | undef
       tagged,
       trace: true,
       actor: routeActor(),
+      ...(actorId && { userId: actorId }),
       onEvent: (event) => events.push({ event: event.type, data: event }),
     });
   });
-  return { ...collect(events as never), calls: calls.length };
+  return { ...collect(events as never), calls: calls.length - callsBefore };
 }
 
 /** Apply every proposal with the product's `applyOps`, as Apply does. */
@@ -286,15 +313,16 @@ function applyAll(workflow: Workflow, proposals: Outcome['proposals']): Workflow
 // The session: Spotlight's test-and-fix loop on the editor's stores, in Node
 // ---------------------------------------------------------------------------
 
-async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, start: Workflow, first: Collected, afterChat: Workflow, script: ScriptTurn[] | undefined) {
+async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, start: Workflow, first: Collected, afterChat: Workflow, scripted: Scripted | undefined) {
   const { useEditor } = await import('@/components/editor/store');
-  const { useAssistant } = await import('@/components/editor/assistant');
+  const { useAssistant, runDigests } = await import('@/components/editor/assistant');
   const { testUntilItRuns } = await import('@/components/editor/test-session');
   const { statusesOf } = await import('@/lib/client/run-data');
   const types = registry.nodeTypes();
   useAssistant.getState().reset();
   useEditor.getState().load(afterChat, types);
   const rounds = scenario.start?.sessionRuns ?? [];
+  const roundOf = (all: typeof rounds, i: number) => all[Math.min(Math.max(i, 0), Math.max(all.length - 1, 0))] ?? {};
   let round = 0;
 
   // The editor's run: scripted rounds (unit) or the product's runner on the canvas, in this process (live).
@@ -305,20 +333,36 @@ async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, st
       if (form === 'unit') {
         // The run is seen going (the session waits for it to start) before it ends.
         await new Promise((resolve) => setTimeout(resolve, 5));
-        const scripted = rounds[Math.min(round++, Math.max(rounds.length - 1, 0))] ?? {};
+        const thisRound = roundOf(rounds, round++);
         const statuses = Object.fromEntries(
           nodes.flatMap((n) => {
-            const r = scripted[n.data.wf.name];
+            const r = thisRound[n.data.wf.name];
             return [[n.id, r?.error ? { state: 'error' as const, error: r.error, itemCounts: [0] } : { state: 'success' as const, itemCounts: [r?.items ?? 1] }]];
           }),
         );
         const failed = Object.values(statuses).some((s) => s.state === 'error');
-        useEditor.setState({ running: false, statuses, runStatus: failed ? 'error' : 'success' });
+        // What the editor keeps of a run (`useEditor.runs`), which `runDigests()` hands to the assistant.
+        const runs = Object.fromEntries(
+          nodes.map((n) => {
+            const r = thisRound[n.data.wf.name];
+            const run: NodeRun = {
+              startedAt: new Date().toISOString(),
+              durationMs: 5,
+              status: r?.error ? 'error' : 'success',
+              source: 'main',
+              inputs: [[{ json: {} }]],
+              outputs: [r?.error ? [] : Array.from({ length: r?.items ?? 1 }, () => ({ json: {} }))],
+              ...(r?.error && { error: { message: r.error } }),
+            };
+            return [n.id, [run]];
+          }),
+        );
+        useEditor.setState({ running: false, statuses, runs, runStatus: failed ? 'error' : 'success' });
         return;
       }
       const { runWorkflow } = await import('@/lib/server/runner');
       const record = await runWorkflow({ workflow: useEditor.getState().toWorkflow(), mode: 'manual' });
-      useEditor.setState({ running: false, statuses: statusesOf(record.runData), runStatus: record.status as never });
+      useEditor.setState({ running: false, statuses: statusesOf(record.runData), runs: record.runData, runStatus: record.status as never });
     }) as never,
   });
 
@@ -326,8 +370,11 @@ async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, st
   const replies: Array<Collected & { calls: number }> = [{ ...first, calls: 0 }];
   useAssistant.setState({
     send: (async (text: string, sendOptions: { nodeId?: string; session?: 'fix' | 'review' | 'auto'; testId?: string } = {}) => {
-      const workflow = useEditor.getState().toWorkflow();
-      const result = await chatOnce({ ask: text, workflow, ...(sendOptions.nodeId && { selected: sendOptions.nodeId }), ...(sendOptions.session && { session: sendOptions.session }) }, form, script, options);
+      const editor = useEditor.getState();
+      const workflow = editor.toWorkflow();
+      // As the editor's send(): the node it was asked about (else the open or selected one) and `runDigests()`.
+      const selected = sendOptions.nodeId ?? editor.openNodeId ?? editor.nodes.find((n) => n.selected)?.id;
+      const result = await chatOnce({ ask: text, workflow, ...(selected && { selected }), runs: runDigests(), ...(sendOptions.session && { session: sendOptions.session }) }, form, scripted, options);
       replies.push(result);
       useAssistant.getState().append([
         { id: nanoid(6), role: 'user', text, auto: true, ...(sendOptions.testId && { testId: sendOptions.testId }) },
@@ -360,11 +407,15 @@ async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, st
 /** Run `scenario` once. Never throws for a product failure: that is the Outcome's `error`. */
 export async function runScenario(scenario: Scenario, form: Form, options: RunOptions = {}): Promise<Outcome> {
   prepare();
+  // `start.autonomy` and `start.approvedDestinations` are not wired yet: SB03 (autonomy) and SB04 (needs you) add them
+  // here. Until then a scenario that sets them (`sb00-fix-401-autonomous`) differs from the plain one by `session` only.
   const started = Date.now();
   const refusedBefore = refusedNow().length;
   const echoBefore = options.echo?.log.length ?? 0;
   const outcome: Outcome = { scenario: scenario.id, form, ms: 0, text: '', tools: [], proposals: [], needs: [], sent: [], refused: [], agents: [], modelCalls: 0, tokens: { input: 0, output: 0 } };
   const script = form === 'unit' ? (scenario.script ?? []) : undefined;
+  // One scripted model per scenario: the script is its replies in order, across the first message and every session reply.
+  const scripted = script ? scriptedModel(script) : undefined;
   const canvas = canvasOf(scenario, options);
   if (canvas) outcome.before = canvas;
   const previousOllama = process.env.OLLAMA_URL;
@@ -396,12 +447,12 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
       outcome.modelCalls = fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 1;
     } else if (scenario.via === 'chat' || scenario.via === 'session') {
       if (!canvas) throw new Error(`${scenario.id}: a chat scenario needs start.workflow`);
-      const result = await chatOnce({ ask: scenario.ask, workflow: canvas, selected: idOf(canvas, scenario.start?.selected), runs: runsById(canvas, scenario.start?.runs), session: scenario.start?.session }, form, script, options);
+      const result = await chatOnce({ ask: scenario.ask, workflow: canvas, selected: idOf(canvas, scenario.start?.selected), runs: runsById(canvas, scenario.start?.runs), session: scenario.start?.session }, form, scripted, options);
       Object.assign(outcome, { text: result.text, tools: result.tools, proposals: result.proposals, ...(result.error && { error: result.error }) });
       withDone(result);
       outcome.after = applyAll(canvas, result.proposals);
       if (scenario.via === 'session') {
-        const session = await sessionOf(scenario, form, options, canvas, result, outcome.after, script);
+        const session = await sessionOf(scenario, form, options, canvas, result, outcome.after, scripted);
         outcome.after = session.after;
         outcome.needs = session.needs;
         outcome.modelCalls += session.replies.slice(1).reduce((n, r) => n + r.calls, 0);
@@ -461,6 +512,8 @@ export function assertUnit(scenario: Scenario, outcome: Outcome): void {
 export interface Report {
   model: string;
   startedAt: string;
+  /** Scenarios not run live, with the scenario's own reason. */
+  skipped: Array<{ id: string; reason: string }>;
   scenarios: Array<{ id: string; owner: string; job: Job; runs: Array<{ ms: number; checks: Record<string, boolean | 'n/a'>; error?: string }> }>;
 }
 
@@ -477,15 +530,20 @@ export function judge(scenario: Scenario, outcome: Outcome): Record<string, bool
   );
 }
 
+/** An error's kind, not its text: a model or parser error can quote the reply (the part before the first colon or line break, cut short). */
+function errorKind(error: string): string {
+  return error.split(/[:\n]/)[0].trim().slice(0, 40);
+}
+
 /** Sizes and check results only: no prompt text, no reply text. */
-export function reportOf(model: string, startedAt: string, runs: Array<{ scenario: Scenario; outcome: Outcome }>): Report {
+export function reportOf(model: string, startedAt: string, runs: Array<{ scenario: Scenario; outcome: Outcome }>, skipped: Report['skipped'] = []): Report {
   const byId = new Map<string, Report['scenarios'][number]>();
   for (const { scenario, outcome } of runs) {
     const entry = byId.get(scenario.id) ?? { id: scenario.id, owner: scenario.owner, job: scenario.job, runs: [] };
-    entry.runs.push({ ms: outcome.ms, checks: judge(scenario, outcome), ...(outcome.error && { error: outcome.error }) });
+    entry.runs.push({ ms: outcome.ms, checks: judge(scenario, outcome), ...(outcome.error && { error: errorKind(outcome.error) }) });
     byId.set(scenario.id, entry);
   }
-  return { model, startedAt, scenarios: [...byId.values()] };
+  return { model, startedAt, skipped, scenarios: [...byId.values()] };
 }
 
 /** The scorecard's column for each check id, in the evaluation's words (a check's own label is for the unit form's message). */
@@ -504,7 +562,7 @@ const COLUMNS: Record<string, string> = {
   proposed: 'Change card',
   answered: 'Answered in words',
   'no-outside': 'No outside',
-  'agent-exists': 'An agent exists',
+  'agent-exists': 'Agent draft produced',
   model: 'Model chosen',
   tools: 'Tools least-privilege',
   knowledge: 'Knowledge base',
@@ -512,7 +570,7 @@ const COLUMNS: Record<string, string> = {
 
 const TITLES: Record<Job, string> = { build: 'Build', fix: 'Fix one step', agent: 'Agents' };
 
-/** The three tables, in the evaluation's words: per scenario, runs, median time and "k of n" per check. */
+/** The three tables, in the evaluation's words: per scenario, runs, time range and "k of n" per check. */
 export function tables(report: Report, scenarios: Scenario[]): string {
   const out: string[] = [];
   for (const job of ['build', 'fix', 'agent'] as Job[]) {
@@ -521,7 +579,7 @@ export function tables(report: Report, scenarios: Scenario[]): string {
     const labels = new Map<string, string>();
     for (const s of scenarios) for (const c of s.checks) labels.set(c.id, COLUMNS[c.id] ?? c.label);
     const ids = [...new Set(rows.flatMap((r) => r.runs.flatMap((run) => Object.keys(run.checks))))];
-    out.push(`\n${TITLES[job]}`, ['scenario', 'runs', 'median', ...ids.map((id) => labels.get(id) ?? id)].join(' | '));
+    out.push(`\n${TITLES[job]}`, ['scenario', 'runs', 'time', ...ids.map((id) => labels.get(id) ?? id)].join(' | '));
     for (const row of rows) {
       const times = row.runs.map((r) => r.ms).sort((a, b) => a - b);
       const cells = ids.map((id) => {
@@ -529,9 +587,10 @@ export function tables(report: Report, scenarios: Scenario[]): string {
         return results.length ? `${results.filter((v) => v === true).length} of ${results.length}` : 'n/a';
       });
       const errors = row.runs.filter((r) => r.error).length;
-      out.push([row.id, `${row.runs.length}${errors ? ` (${errors} errors)` : ''}`, `${((times[Math.floor(times.length / 2)] ?? 0) / 1000).toFixed(1)} s`, ...cells].join(' | '));
+      out.push([row.id, `${row.runs.length}${errors ? ` (${errors} errors)` : ''}`, times.length ? `${(times[0] / 1000).toFixed(1)}–${(times[times.length - 1] / 1000).toFixed(1)} s` : 'n/a', ...cells].join(' | '));
     }
   }
+  if (report.skipped.length) out.push('\nSkipped live', ...report.skipped.map((k) => `${k.id}: ${k.reason}`));
   return out.join('\n');
 }
 

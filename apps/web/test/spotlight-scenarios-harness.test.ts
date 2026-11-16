@@ -5,9 +5,10 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { Workflow } from '@landflow/engine';
+import type { LanguageModel, ModelTurn, Workflow } from '@landflow/engine';
 import { call, checks, defineScenarios, scriptedModel, touchedNodes, type Outcome, type Scenario } from './spotlight-scenarios/scenario';
-import { assertUnit, failedChecks, liveEnabled, reportOf, runScenario, tables } from './spotlight-scenarios/harness';
+import sb00 from './spotlight-scenarios/sb00';
+import { assertUnit, failedChecks, judge, liveEnabled, reportOf, runScenario, tables } from './spotlight-scenarios/harness';
 
 const node = (id: string, name: string, parameters: Record<string, unknown> = {}) => ({ id, name, type: 'core.code', typeVersion: 1, position: [0, 0] as [number, number], parameters });
 const wf = (): Workflow => ({ id: 'wf_h', name: 'H', nodes: [node('a', 'A'), node('b', 'B'), node('c', 'C')], connections: [{ id: 'e1', type: 'main', source: 'a', sourceIndex: 0, target: 'b', targetIndex: 0 }], pinData: {}, settings: {} }) as Workflow;
@@ -53,7 +54,7 @@ describe('the scenario files', () => {
     expect(all.filter((s) => s.owner === 'SB00').length).toBeGreaterThanOrEqual(10);
   });
 
-  it('keeps no outside URL in a fixture or an ask: the echo server is 127.0.0.1:3399', () => {
+  it('keeps no outside destination in an ask or a fixture workflow: the echo server is 127.0.0.1:3399 (run data may quote a link)', () => {
     const text = JSON.stringify(all.map((s) => [s.ask, s.start?.workflow]));
     for (const url of text.match(/https?:\/\/[^"\\\s)]+/g) ?? []) expect(url).toMatch(/^https?:\/\/(127\.0\.0\.1|localhost)/);
   });
@@ -109,7 +110,16 @@ describe('the harness drives the product', () => {
     expect(failedChecks(scenario, o)).toEqual([]);
   });
 
-  it('a session: scripted runs, a fix between them, and the "Needs you" rows recorded', async () => {
+  it('a session: one script across every message, the failed run reaches the fix request, and "Needs you" is recorded', async () => {
+    const seen: Array<{ turn: number; last: string; runs: string }> = [];
+    const lastUser = (input: Parameters<LanguageModel['generate']>[0]) => {
+      const m = [...input.messages].reverse().find((x) => x.role === 'user');
+      return typeof m?.content === 'string' ? m.content : JSON.stringify(m?.content);
+    };
+    const see = (turn: number, reply: Partial<ModelTurn>) => (input: Parameters<LanguageModel['generate']>[0]) => {
+      seen.push({ turn, last: lastUser(input), runs: JSON.stringify(input) });
+      return reply;
+    };
     const scenario: Scenario = {
       id: 'sb00-h-session',
       owner: 'SB00',
@@ -118,12 +128,27 @@ describe('the harness drives the product', () => {
       title: 't',
       ask: 'make C run',
       start: { workflow: { ...wf(), nodes: [{ ...node('t', 'Start'), type: 'core.manualTrigger' }, node('b', 'B'), node('c', 'C')], connections: [{ id: 'e1', type: 'main', source: 't', sourceIndex: 0, target: 'b', targetIndex: 0 }, { id: 'e2', type: 'main', source: 'b', sourceIndex: 0, target: 'c', targetIndex: 0 }] } as Workflow, sessionRuns: [{ C: { error: 'Boom: bad code' } }, {}] },
-      script: [{ text: 'Nothing to change yet.' }, call('propose_changes', { summary: 'Fixed C', ops: [{ op: 'setParameters', node: 'C', parameters: { codeEach: 'return $json;' } }] }), { text: 'Fixed C.' }],
+      script: [
+        see(0, call('propose_changes', { summary: 'Asked', ops: [{ op: 'setParameters', node: 'B', parameters: { codeEach: 'return $json;' } }] })),
+        see(1, { text: 'Added it.' }),
+        see(2, call('propose_changes', { summary: 'Fixed C', ops: [{ op: 'setParameters', node: 'C', parameters: { codeEach: 'return $json;' } }] })),
+        see(3, { text: 'Fixed C.' }),
+        see(4, { text: 'Test run 2 had no errors.' }),
+      ],
       checks: [],
     };
     const o = await runScenario(scenario, 'unit');
     expect(o.error).toBeUndefined();
+    // The turns were consumed once, in order, across the first ask and every session message.
+    expect(seen.map((s) => s.turn)).toEqual([0, 1, 2, 3, 4].slice(0, seen.length));
+    expect(seen[0].last).toContain('make C run');
+    const fix = seen.find((s) => s.last.includes('Test run 1 failed'));
+    expect(fix?.turn).toBe(2);
+    expect(seen.at(-1)?.last).toContain('Test run 2 had no errors');
+    // The failed run's data reached the model, as the editor's `runs` do: the failed node's error.
+    expect(fix?.runs).toContain('Boom: bad code');
     expect(o.proposals.map((p) => p.summary)).toContain('Fixed C');
+    expect(o.modelCalls).toBe(seen.length);
     expect(o.after?.nodes.find((n) => n.name === 'C')?.parameters).toMatchObject({ codeEach: 'return $json;' });
   });
 
@@ -189,7 +214,50 @@ describe('the outbound guard (local-only.cjs)', () => {
     expect(r.stderr).not.toContain('refused');
   });
 
-  it('is a byte copy of the contract file kept next to the scenarios, and requires cleanly', () => {
+  it('local-only.cjs requires cleanly and exports refused() (the integrator\'s cmp checks the bytes)', () => {
     expect(execFileSync(process.execPath, ['-e', `console.log(typeof require(${JSON.stringify(guard)}).refused)`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()).toBe('function');
+  });
+});
+
+describe('SB00\'s build checks on the shapes the evaluation recorded', () => {
+  const byId = (id: string) => sb00.find((s) => s.id === id)!;
+  const n = (id: string, type: string, parameters: Record<string, unknown> = {}, name = id) => ({ id, name, type, typeVersion: 1, position: [0, 0] as [number, number], parameters });
+  const flow = (nodes: ReturnType<typeof n>[], pinData: Record<string, unknown> = {}): Workflow => ({ id: 'd', name: 'D', nodes, connections: nodes.slice(1).map((x, i) => ({ id: `e${i}`, type: 'main', source: nodes[i].id, sourceIndex: 0, target: x.id, targetIndex: 0 })), pinData, settings: {} }) as unknown as Workflow;
+  const emptyIf = { conditions: { condition: [] }, combinator: 'and' };
+  const filledIf = (left: string) => ({ conditions: { condition: [{ left, operator: 'gt', right: '1000' }] }, combinator: 'and' });
+  const post = (url: string) => n(url, 'core.httpRequest', { url, body: '{{ $json.body }}' });
+  const judged = (scenario: Scenario, after: Workflow, id: string) => judge(scenario, outcome({ after, text: 'Built' }))[id];
+
+  it('an empty-condition If is not a filled collection and not a run that goes right', () => {
+    const scenario = byId('sb00-build-webhook-branch');
+    const after = flow([n('w', 'core.webhook'), n('i', 'core.if', emptyIf), post('http://127.0.0.1:3399/vip'), post('http://127.0.0.1:3399/regular')], { w: [{ json: { body: { total: 1500 } } }] });
+    expect(judged(scenario, after, 'collections-filled')).toBe(false);
+    expect(judged(scenario, after, 'runs-right')).toBe(false);
+  });
+
+  it('an If that reads $json.total while the pinned webhook items carry body.total, or carry {}, does not run right', () => {
+    const scenario = byId('sb00-build-webhook-branch');
+    const nodes = (left: string) => [n('w', 'core.webhook'), n('i', 'core.if', filledIf(left)), post('http://127.0.0.1:3399/vip'), post('http://127.0.0.1:3399/regular')];
+    expect(judged(scenario, flow(nodes('{{ $json.total }}'), { w: [{ json: { body: { total: 1500 } } }] }), 'runs-right')).toBe(false);
+    expect(judged(scenario, flow(nodes('{{ $json.body.total }}'), { w: [{ json: {} }] }), 'runs-right')).toBe(false);
+    expect(judged(scenario, flow(nodes('{{ $json.body.total }}'), { w: [{ json: { body: { total: 1500 } } }] }), 'runs-right')).toBe(true);
+  });
+
+  it('the agent run twice, or behind an empty If, is not a run that goes right', () => {
+    const scenario = byId('sb00-build-chat-support');
+    const agent = (id: string) => n(id, 'core.messageAgent', { agentId: 'agent_1' });
+    expect(judged(scenario, flow([n('c', 'core.chatTrigger'), agent('a1'), agent('a2')]), 'runs-right')).toBe(false);
+    expect(judged(scenario, flow([n('c', 'core.chatTrigger'), n('i', 'core.if', emptyIf), agent('a1')]), 'runs-right')).toBe(false);
+    expect(judged(scenario, flow([n('c', 'core.chatTrigger'), agent('a1'), n('i', 'core.if', filledIf('{{ $json.answered }}'))]), 'runs-right')).toBe(true);
+  });
+});
+
+describe('the report', () => {
+  it('keeps an error\'s kind, not its text, and lists what was skipped live', () => {
+    const scenario: Scenario = { id: 'sb00-e', owner: 'SB00', job: 'fix', via: 'chat', title: 't', ask: 'a', checks: [] };
+    const report = reportOf('m', 'now', [{ scenario, outcome: outcome({ error: 'Unexpected token: the secret reply words that were quoted back' }) }], [{ id: 'sb00-s', reason: 'because' }]);
+    expect(JSON.stringify(report)).not.toContain('secret');
+    expect(report.scenarios[0].runs[0].error).toBe('Unexpected token');
+    expect(tables(report, [scenario])).toContain('sb00-s: because');
   });
 });
