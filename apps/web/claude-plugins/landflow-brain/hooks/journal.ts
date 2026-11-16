@@ -4,6 +4,7 @@
  * directory names, a repository and the links of pull requests.
  */
 
+import type { MySpendTotals } from './my-spend-wire'
 import type { BrainWorkEvent } from './summary'
 
 /** `forgetting`: dropped here, but the delete in the brain has not been answered yet. */
@@ -307,6 +308,17 @@ export function bandLine(view: View | undefined, dismissedDay: string | undefine
 }
 
 /** The status line text: while the admin forbids automatic sending, mode `auto` is shown as review. */
-export function statusLine(mode: 'review' | 'auto' | 'off', autoSend: unknown, held: number): string {
-  return mode === 'auto' && autoSend === 'forbidden' ? 'brain: review (auto off by admin)' : `brain: on · ${held} held`
+export function statusLine(mode: 'review' | 'auto' | 'off', autoSend: unknown, held: number, spend?: MySpendTotals): string {
+  const line = mode === 'auto' && autoSend === 'forbidden' ? 'brain: review (auto off by admin)' : `brain: on · ${held} held`
+  return line + spendText(spend)
+}
+
+/** Today's spend as the status line adds it: dollars, or tokens when nothing today was priced; nothing without calls. */
+export function spendText(spend?: MySpendTotals): string {
+  if (!spend || !(spend.calls > 0)) return ''
+  if (!(spend.cost > 0) && spend.unpricedCalls > 0) {
+    const tokens = spend.inputTokens + spend.outputTokens
+    return ` · ${tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : tokens} tokens today`
+  }
+  return spend.cost > 0 && spend.cost < 0.01 ? ' · <$0.01 today' : ` · $${spend.cost.toFixed(2)} today`
 }

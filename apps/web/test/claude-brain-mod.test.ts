@@ -248,6 +248,17 @@ describe('colleagues, visibility and the admin rule', () => {
     expect(statusLine('review', 'forbidden', 2)).toBe('brain: on · 2 held');
   });
 
+  // SP15: today's spend on the status line
+  it('adds today\'s spend: dollars, tokens when nothing was priced, nothing without calls', () => {
+    const t = { cost: 1.234, inputTokens: 100_000, outputTokens: 20_000, calls: 5, unpricedCalls: 0 };
+    expect(statusLine('review', 'allowed', 2, t)).toBe('brain: on · 2 held · $1.23 today');
+    expect(statusLine('review', 'allowed', 2, { ...t, cost: 0.004 })).toBe('brain: on · 2 held · <$0.01 today');
+    expect(statusLine('review', 'allowed', 2, { ...t, cost: 0, unpricedCalls: 5 })).toBe('brain: on · 2 held · 120k tokens today');
+    expect(statusLine('review', 'allowed', 2, { ...t, calls: 0 })).toBe('brain: on · 2 held');
+    expect(statusLine('review', 'allowed', 2, undefined)).toBe('brain: on · 2 held');
+    expect(statusLine('auto', 'forbidden', 2, t)).toBe('brain: review (auto off by admin) · $1.23 today');
+  });
+
   const view = (at = '2026-11-13T10:00:00Z') => ({
     day: '2026-11-14',
     today: [{ title: 'Mine', sourceId: 'cc-1' }],
@@ -322,10 +333,10 @@ describe('untrusted text in titles and names', () => {
 });
 
 describe('the mod\'s version', () => {
-  it('is 0.4.0 in the plugin and in the marketplace', () => {
+  it('is 0.5.0 in the plugin and in the marketplace', () => {
     const plugin = JSON.parse(readFileSync(join(__dirname, '../claude-plugins/landflow-brain/.claude-plugin/plugin.json'), 'utf8')) as { version: string };
     const market = JSON.parse(readFileSync(join(__dirname, '../../../.claude-plugin/marketplace.json'), 'utf8')) as { plugins: Array<{ name: string; version: string }> };
-    expect(plugin.version).toBe('0.4.0');
+    expect(plugin.version).toBe('0.5.0');
     expect(market.plugins.find((p) => p.name === 'landflow-brain')?.version).toBe(plugin.version);
   });
 });

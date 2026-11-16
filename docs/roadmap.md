@@ -2395,6 +2395,12 @@ backstop. Self-hosted Claude Managed Agents and an agent-runtime seam are deferr
   b69627fe (the rollup's dirty marks taken in each day's own transaction, the page's view helpers, the calls CSV's run
   link, the chain nodes' prompt split) are covered by tests and Opus's last review, not by the browser.
 
+## Token spend wave 14
+
+- **SP15, today's spend in your own Claude Code (landflow-brain 0.5.0).** The mod's status line adds today's own spend
+  from `GET /api/brain/my-spend?period=24h` (SP14's route), with the option `showSpend`. Tests: `claude-brain-mod.test.ts`
+  and `hooks/register.test.ts`. Left: the live check in a real Claude Code session.
+
 ## Practices (waves P1 and P2)
 
 Rules in the brain that connected agents follow, each approved by a person ([practices.md](practices.md)). Decided

@@ -5,6 +5,7 @@
  */
 import type { EngineInterface } from 'claude-code'
 import { clip, cleanText, safeLink } from './journal'
+import { MY_SPEND_PATH, type MySpendTotals, type MySpendWire } from './my-spend-wire'
 import { parseProjectContext, projectQuery, type ProjectContext } from './project'
 import type { BrainWorkEvent } from './summary'
 
@@ -20,6 +21,8 @@ export const QUEUE_DAYS = 14
 export const BACKOFF_FIRST_MS = 30_000
 export const BACKOFF_MAX_MS = 30 * 60_000
 export const BRIEFING_TIMEOUT_MS = 2000
+/** The status line's spend read waits this long, then the line goes without it. */
+export const SPEND_TIMEOUT_MS = 3000
 /** A POST or DELETE that has not answered by now counts as unreachable. */
 export const REQUEST_TIMEOUT_MS = 10_000
 
@@ -247,6 +250,25 @@ export async function getBriefing($: EngineInterface, config: Config, day: strin
   if (first && first !== 'timeout') return first
   const old = await cached()
   return old && { ...old, today: old.today ?? [], related: old.related ?? [] }
+}
+
+/** A non-negative finite number, else 0. */
+const count = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0)
+
+/** Today's own spend from GET /api/brain/my-spend?period=24h within 3 s. Never throws: a non-2xx, a timeout or a bad body is undefined. */
+export function getMySpend($: EngineInterface, config: Config): Promise<MySpendTotals | undefined> {
+  const run = async (): Promise<MySpendTotals | undefined> => {
+    try {
+      const response = await $.http.fetch(`${config.url}${MY_SPEND_PATH}?period=24h`, { method: 'GET', headers: headers(config) })
+      if (response.status < 200 || response.status >= 300) return undefined
+      const today = (JSON.parse(response.text || '{}') as Partial<MySpendWire>).today
+      if (!today || typeof today !== 'object') return undefined
+      return { cost: count(today.cost), inputTokens: count(today.inputTokens), outputTokens: count(today.outputTokens), calls: count(today.calls), unpricedCalls: count(today.unpricedCalls) }
+    } catch {
+      return undefined
+    }
+  }
+  return within($, run(), undefined, SPEND_TIMEOUT_MS)
 }
 
 /** The project context of a repository: GET /api/projects/context. No project is undefined; any failure (unreachable, refused, not JSON, too slow) is 'failed'. */

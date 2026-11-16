@@ -8,8 +8,9 @@
  * not at all. The hooks only observe: none denies a tool call or changes a result.
  */
 import type { EngineInterface, Register } from 'claude-code'
-import { BRIEFING_TIMEOUT_MS, QUEUE_MAX, VISIBILITIES, backoffMs, callBrain, confirmAndPost, deleteWork, due, emptyQueue, enqueue, getBriefing, getProjectContext, keyFingerprint, liftStop, postWork, serverUrl, settle, shareRequest, visibilityRequest, type Briefing, type Config, type OutEvent, type Queue, type WorkVisibility } from './client'
+import { BRIEFING_TIMEOUT_MS, QUEUE_MAX, VISIBILITIES, backoffMs, callBrain, confirmAndPost, deleteWork, due, emptyQueue, enqueue, getBriefing, getMySpend, getProjectContext, keyFingerprint, liftStop, postWork, serverUrl, settle, shareRequest, visibilityRequest, type Briefing, type Config, type OutEvent, type Queue, type WorkVisibility } from './client'
 import { addArea, addPrs, areaOf, bandLine, bashFacts, canPost, isAllowed, localDay, newEntry, parseRepos, repoSlug, statusLine, syncText, type Entry, type View } from './journal'
+import type { MySpendTotals } from './my-spend-wire'
 import { PANE_ID, drawBand, drawPane } from './pane'
 import { titleFrom, toEvent } from './summary'
 import { SECTION_PROJECT, projectReply, projectSection, type ProjectContext } from './project'
@@ -17,6 +18,8 @@ import { LEARN_DEFAULT_PATHS, SECTION_PRACTICES, learnPrompt, practicesInput } f
 import { BRAIN_ASK_FULL, BRAIN_ASK_SPEC, PRACTICES_FULL, PRACTICES_SPEC, PRACTICE_DRAFT_FULL, PRACTICE_DRAFT_SPEC, brainAsk, practiceDraftTool, practicesApplicable, practicesTool, questionOf } from './tools'
 
 const FLUSH_MS = 60_000
+/** After a turn, today's spend is read again at most this often. */
+const SPEND_EVERY_MS = 5 * 60_000
 /** The journal keeps this many entries and this many days. */
 const JOURNAL_MAX = 200
 const JOURNAL_DAYS = 14
@@ -49,6 +52,9 @@ let config: Config | undefined
 let mode: 'review' | 'auto' | 'off' = 'review'
 let repos: string[] = []
 let sync = true
+let showSpend = true
+/** When today's spend was last asked, ms; 0 before the first. */
+let spendAt = 0
 /** This session's entry, until it ends. */
 let current: Entry | undefined
 let cwd = '/'
@@ -141,7 +147,30 @@ async function showStatus($: EngineInterface) {
   if (queue.stopped === 'key') return $.ui.status('brain: key rejected')
   if (await paused($)) return $.ui.status('brain: paused')
   const held = (await load($)).filter(entry => entry.status === 'held').length
-  $.ui.status(statusLine(mode, await $.store.get('autoSend'), held))
+  const spend = showSpend ? ((await $.store.get('spend')) as StoredSpend | undefined) : undefined
+  $.ui.status(statusLine(mode, await $.store.get('autoSend'), held, spend && spend.day === day(await $.clock.now()) ? spend.totals : undefined))
+}
+
+interface StoredSpend {
+  /** The day the totals are for (the instance's day, as the line's own clock reads it). */
+  day: string
+  totals: MySpendTotals
+}
+
+/** Asks for today's spend and keeps it with its day; a failed call keeps the last value of the same day, and an older day's goes. Never throws. */
+async function refreshSpend($: EngineInterface): Promise<void> {
+  if (!config || !showSpend || mode === 'off') return
+  try {
+    const now = await $.clock.now()
+    spendAt = now
+    const totals = await getMySpend($, config)
+    const today = day(now)
+    const old = (await $.store.get('spend')) as StoredSpend | undefined
+    if (totals) await $.store.set('spend', { day: today, totals } satisfies StoredSpend)
+    else if (old && old.day !== today) await $.store.delete('spend')
+  } catch {
+    // The status line goes without it.
+  }
 }
 
 /** The stored view, only while it is today's: an earlier day's view (an offline start, a session past midnight) counts as none. */
@@ -396,6 +425,8 @@ export const register: Register = (on, options) => {
   repos = parseRepos(options.repos)
   mode = options.mode === 'auto' || options.mode === 'off' ? options.mode : 'review'
   sync = options.sync !== false
+  showSpend = options.showSpend !== false
+  spendAt = 0
   config = url && key ? { url, key } : undefined
   fingerprint = keyFingerprint(key)
   allowed = undefined
@@ -451,6 +482,8 @@ export const register: Register = (on, options) => {
         await $.store.set('view', { day: briefing.day, today: briefing.today, yesterday: briefing.yesterday, related: briefing.related } satisfies View)
         if (sync) yesterday = yesterdaySection(briefing.yesterday)
       }
+      // After the briefing, so it never delays it; the line is redrawn when the answer comes.
+      void refreshSpend($).then(() => showStatus($)).catch(() => undefined)
       const [remote, top, branch] = await gitFacts
       const slug = repoSlug(remote ?? '')
       if (isAllowed(repos, slug)) {
@@ -533,6 +566,7 @@ export const register: Register = (on, options) => {
 
   on('turn.complete', async ($, e, next) => {
     if (current && !e.agentId) await upsert($, current).catch(() => undefined)
+    if (config && showSpend && mode !== 'off' && !e.agentId && (await $.clock.now()) - spendAt >= SPEND_EVERY_MS) void refreshSpend($).then(() => showStatus($)).catch(() => undefined)
     return next(e)
   }).catch(($, e, next) => next(e))
 
