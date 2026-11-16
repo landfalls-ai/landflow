@@ -14,6 +14,7 @@ import { recoverToolCalls, runChat, TOOLS, type ChatEvent } from '@/lib/server/a
 import { scriptedModel, call } from './spotlight-scenarios/scenario';
 import { applyStreamEvent, useAssistant, type AssistantTurn } from '@/components/editor/assistant';
 import { AskRow } from '@/components/editor/spotlight/reply';
+import { useEditor } from '@/components/editor/store';
 
 let types: NodeTypeInfo[];
 beforeAll(() => {
@@ -192,5 +193,18 @@ describe('the editor', () => {
     expect(send).toHaveBeenCalledWith('Read Linear bugs', {});
     const part = (useAssistant.getState().items[0] as AssistantTurn).parts[0];
     expect(part).toMatchObject({ kind: 'ask', ask: { answered: 'Read Linear bugs' } });
+  });
+
+  it('a chip that names a step on the canvas sends that step as the scope (SB07 × SB11)', async () => {
+    const send = vi.fn(async () => {});
+    const before = useEditor.getState().nodes;
+    useEditor.setState({ nodes: [{ id: 'n7', data: { wf: { id: 'n7', name: 'Open status incident' } } }] as never });
+    try {
+      useAssistant.setState({ pending: false, send, items: [{ id: 'r1', role: 'assistant', parts: [{ kind: 'ask', ask: { question: 'Which step?', choices: CHOICES } }] }] });
+      await useAssistant.getState().answerAsk('r1', 'Open status incident');
+      expect(send).toHaveBeenCalledWith('Open status incident', { scope: { kind: 'only', nodes: ['n7'] } });
+    } finally {
+      useEditor.setState({ nodes: before });
+    }
   });
 });

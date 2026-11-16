@@ -747,7 +747,9 @@ export const useAssistant = create<AssistantState>((set, get) => ({
   async answerAsk(itemId, choice) { // SB11:
     if (get().pending) return;
     get().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'ask' && !p.ask.answered ? { ...p, ask: { ...p.ask, answered: choice } } : p)));
-    await get().send(choice, {});
+    // SB07 × SB11 (the integrator's line): a choice that is a step's name is the scope of the change that follows.
+    const step = useEditor.getState().nodes.find((n) => n.data.wf.name === choice);
+    await get().send(choice, step ? { scope: { kind: 'only', nodes: [step.id] } } : {});
   },
 }));
 

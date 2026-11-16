@@ -398,9 +398,12 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     proposalLog.push(earlier);
     for (const op of validated.ops) if (op.op === 'addNode' && op.ref && op.name) proposedRefs.set(op.ref, op.name);
   }
-  // SB10: the steps whose parameters, settings and credential state the model reads whole: the scope's, else the selected one.
-  const focusScope = scopeOf({ sent: (input as { scope?: SpotlightScope | null }).scope, message: input.messages.findLast((m) => m.role === 'user')?.content ?? '', nodes: working.nodes, ...(input.selectedNodeId && { selectedId: input.selectedNodeId }) });
-  const focus = new Set<string>(focusScope?.nodes ?? (input.selectedNodeId ? [input.selectedNodeId] : []));
+  // SB07: what the request may change: the selected, tagged or named steps, or where a new step goes. A test-and-fix session has its own rules.
+  // (`input.workflow.id` is the metered id, 'draft' when unsaved, so the tag's own workflow is not compared: `scopeOf` keeps the ids on this canvas.)
+  const taggedIds = (input.tagged?.reads ?? []).flatMap((r) => (r.ok && r.ref.type === 'node' ? [r.ref.id] : []));
+  const askScope = input.session === 'fix' || input.session === 'review' ? undefined : scopeOf({ sent: input.scope, message: input.messages.findLast((m) => m.role === 'user')?.content ?? '', nodes: working.nodes, selectedId: input.selectedNodeId, taggedIds });
+  // SB10: the steps whose parameters, settings and credential state the model reads whole: the scope's (SB07's), else the selected one.
+  const focus = new Set<string>(askScope?.nodes ?? (input.selectedNodeId ? [input.selectedNodeId] : []));
   const outline = () => workflowOutline(working, runs, { types, full: focus, pending: waiting, pendingSummaries: waitingSummaries, removed: [...removed.values()] });
   const latest = input.messages.findLast((m) => m.role === 'user')?.content.toLowerCase() ?? '';
   /** Whether the latest message asks to add a node by this name ("remove Check and add a new Check after Filter"). */
@@ -459,10 +462,6 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
 
   const nodeByName = (name: string) => working.nodes.find((n) => n.name === name) ?? working.nodes.find((n) => n.name.toLowerCase() === name.toLowerCase() || n.id === name);
   const selected = input.selectedNodeId && working.nodes.find((n) => n.id === input.selectedNodeId);
-  // SB07: what the request may change: the selected, tagged or named steps, or where a new step goes. A test-and-fix session has its own rules.
-  // (`input.workflow.id` is the metered id, 'draft' when unsaved, so the tag's own workflow is not compared: `scopeOf` keeps the ids on this canvas.)
-  const taggedIds = (input.tagged?.reads ?? []).flatMap((r) => (r.ok && r.ref.type === 'node' ? [r.ref.id] : []));
-  const askScope = input.session === 'fix' || input.session === 'review' ? undefined : scopeOf({ sent: input.scope, message: input.messages.findLast((m) => m.role === 'user')?.content ?? '', nodes: working.nodes, selectedId: input.selectedNodeId, taggedIds });
   // What the person tagged: read and checked by the route (`tagMentions`), here only worded for the model. A tag that could
   // not be read is named and nothing more, so the model does not make up what it holds.
   const unread = (input.tagged?.reads ?? []).filter((r) => !r.ok).map((r) => r.label.replace(/^Couldn't read /, ''));
@@ -485,12 +484,11 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
 
   /**
    * SB11: the names of the steps that fit when the proposal edits an existing step of a kind several steps share, the request has no
-   * scope (the integrator swaps in SB07's `scope`), names no step and nothing is selected; else undefined. "All"/"both"/"every"/"each" is a choice already made.
+   * scope (SB07's `askScope`), names no step and nothing is selected; else undefined. "All"/"both"/"every"/"each" is a choice already made.
    */
   const severalFit = (ops: AssistantOp[]): string[] | undefined => {
     const latestRaw = input.messages.findLast((m) => m.role === 'user')?.content ?? '';
-    const taggedIds = (input.tagged?.reads ?? []).flatMap((r) => (r.ok && r.ref.type === 'node' ? [r.ref.id] : []));
-    if (scopeOf({ message: latestRaw, nodes: working.nodes, selectedId: input.selectedNodeId, taggedIds }) || namedNodes(latestRaw, working.nodes).length || /\b(?:all|both|every|each)\b/i.test(latestRaw)) return undefined;
+    if (askScope || input.selectedNodeId || namedNodes(latestRaw, working.nodes).length || /\b(?:all|both|every|each)\b/i.test(latestRaw)) return undefined;
     const edited = ops.flatMap((op) => (op.op === 'setParameters' || op.op === 'setNodeSettings' ? [nodeByName(String((op as { node?: unknown }).node ?? ''))] : [])).filter((n): n is NonNullable<typeof n> => n !== undefined && !waiting.has(n.id)); // only steps that existed before this reply
     const first = edited[0];
     if (!first) return undefined;
