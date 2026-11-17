@@ -161,6 +161,20 @@ describe('approved practices', () => {
     expect(config.tools).toEqual([]);
     expect(config.practices).toBeUndefined();
   });
+
+  it('keeps one check_practices tool and no "left out" line when the model proposes Check Practices and the request asks', () => {
+    const proposed = { name: 'Reviewer', role: 'Reviewer', instructions: 'Review.', tools: [{ type: 'node', nodeType: 'core.practiceCheck', name: 'practices' }] };
+    const { config, dropped } = draftFrom(proposed, context(REVIEWER));
+    expect(nodeTools(config).filter((t) => t.name === 'check_practices')).toHaveLength(1);
+    expect(nodeTools(config)).toHaveLength(1);
+    expect(dropped.join(' ')).not.toContain('Check Practices');
+  });
+
+  it('says why the model’s Check Practices is left out when no practices are asked', () => {
+    const proposed = { name: 'Reviewer', role: 'Reviewer', instructions: 'Review.', tools: [{ type: 'node', nodeType: 'core.practiceCheck', name: 'practices' }] };
+    const { dropped } = draftFrom(proposed, context('an agent that reviews pull requests'));
+    expect(dropped).toContain('Check Practices: the request doesn’t ask for your practices');
+  });
 });
 
 describe('least privilege and approval on writes', () => {

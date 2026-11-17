@@ -103,6 +103,7 @@ dialog's and Spotlight's design) is made to a brief in code (`architect.ts`, mar
   out" with its reason ("Slack: the request never asks for it (it would change things there)"). A tool the model left
   on the node's defaults, which would write, becomes a read when the request doesn't ask to write (the pull request
   resource and its first read operation for "pull requests"). The prompt says "the fewest tools; read before write".
+  On Spotlight's design path the request is only the new agent's own fields (name, description, instructions, tools, knowledge), never `designRequest`'s fixed sentences.
 - **Writes behind approval.** Every node tool that writes gets `requireApproval: true`, so a person approves each call;
   reads get none. A write is what the session's heuristic calls one (`writesOutside`, the HTTP method and the
   operation's name: [assistant.md](assistant.md#autonomous-mode)) or, for a plugin that marks its reads

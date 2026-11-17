@@ -370,7 +370,7 @@ const AGENT_ASK = /\b(?:create|make|build|design|add)\s+(?:me\s+)?an?\s+(?:[\w-]
 /** A request that says what the agent answers from: documents, docs, a knowledge base, policies … (a knowledge tool needs one). */
 export const KNOWLEDGE_ASK = /\b(?:knowledge|docs?|documents?|documentation|wiki|playbooks?|policies|policy|manuals?|faq|handbook|runbooks?|articles?|past\s+(?:tickets|answers)|contracts?)\b/i;
 /** Words of a node's keywords too general to say the request names its app. */
-const GENERIC_KEYWORDS = new Set(['comment', 'message', 'messages', 'trigger', 'webhook', 'file', 'files', 'send', 'create', 'update', 'search', 'record', 'records', 'database', 'table', 'event', 'events']);
+const GENERIC_KEYWORDS = new Set(['comment', 'message', 'messages', 'trigger', 'webhook', 'file', 'files', 'send', 'create', 'update', 'search', 'record', 'records', 'database', 'table', 'event', 'events', 'document', 'documents', 'upload', 'attachment', 'attachments']);
 const REPOSITORY = /(?<![\w./-])(?!(?:and\/or|either\/or|he\/she|s\/he|i\/o|ci\/cd|n\/a|w\/o|yes\/no|input\/output)\b)[a-z0-9][\w.-]*\/[a-z0-9][\w.-]*(?![\w/-])/i;
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -592,7 +592,10 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
       }
       const d = info.descriptor;
       // SB17: the model's own Check Practices tool is replaced below by the brief's, and only for a request that asks for practices.
-      if (request !== undefined && info.type === 'core.practiceCheck') { dropped.push('Check Practices: the request doesn’t ask for your practices'); continue; } // SB17:
+      if (request !== undefined && info.type === 'core.practiceCheck') {
+        if (!PRACTICES_ASK.test(request)) dropped.push('Check Practices: the request doesn’t ask for your practices'); // SB17:
+        continue;
+      }
       if (request !== undefined && /^core\.message(?:Agent|Team)$/.test(info.type) && !HANDOVER_ASK.test(request)) {
         dropped.push(`${d.displayName}: the request doesn’t ask to hand over to another agent`); // SB17:
         continue;
