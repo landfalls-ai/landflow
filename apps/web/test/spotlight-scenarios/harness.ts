@@ -11,7 +11,7 @@ import './env';
 import { summaryText, type DraftSummary } from '@/lib/shared/draft-summary'; // SB15:
 import { createRequire } from 'node:module';
 import { nanoid } from 'nanoid';
-import { definePlugin, defineNode, type PropertyDescriptor } from '@landflow/sdk';
+import { definePlugin, defineNode, defineCredentialType, type PropertyDescriptor } from '@landflow/sdk';
 import { Linear } from '../../../../plugins/linear/src/nodes/linear'; // SB10: the unit form's Linear stand-in carries its real operations
 import type { ModelTurn, NodeRun, Workflow } from '@landflow/engine';
 import { applyOps, type AssistantOp, type RunDigest } from '@/lib/shared/assistant-ops';
@@ -102,6 +102,35 @@ function stand(plugin: string, name: string, displayName: string, properties: st
   });
 }
 
+// AG05: the `ag05stand` plugin of sb-ag05.ts: Get Alerts (needs a Grafana-like token), Hollow Lookup (returns {}), Send Note (a write).
+function ag05StandIns() {
+  const base = { version: 1, kind: 'action' as const, inputs: [{ type: 'main' as const }], outputs: [{ type: 'main' as const }] };
+  return definePlugin({
+    info: { id: 'ag05stand', name: 'Smoke test stand-ins', version: '0.0.0', language: 'typescript' },
+    credentialTypes: [defineCredentialType({ name: 'alertsApi', displayName: 'Alerts API', properties: [{ name: 'token', displayName: 'Token', type: 'string', typeOptions: { password: true } }] })],
+    nodes: [
+      defineNode({
+        description: { ...base, name: 'alerts', displayName: 'Get Alerts', description: 'The alerts that are firing', credentials: [{ name: 'alertsApi', required: true }], properties: [] },
+        async execute() {
+          return [[{ json: { alerts: [{ name: 'CPU high' }] } }]];
+        },
+      }),
+      defineNode({
+        description: { ...base, name: 'hollow', displayName: 'Hollow Lookup', description: 'Looks something up', properties: [] },
+        async execute() {
+          return [[{ json: {} }]];
+        },
+      }),
+      defineNode({
+        description: { ...base, name: 'send', displayName: 'Send Note', description: 'Sends a note', properties: [{ name: 'operation', displayName: 'Operation', type: 'string', default: 'send' }] },
+        async execute() {
+          return [[{ json: { sent: true } }]];
+        },
+      }),
+    ],
+  });
+}
+
 let prepared = false;
 /**
  * Register the core plugin and, for the unit form, stand-ins for Slack and Linear; seed one published agent. The live
@@ -116,6 +145,8 @@ export function prepare(options: { live?: boolean } = {}): void {
     // SB10: Linear's own `resource` and `operation` properties (with each operation's `outputSchema`), so a scenario's prompt shows the real fields.
     registry.registerBuiltin(stand('linear', 'linear', 'Linear', ['authentication', 'resource', 'operation', 'since', 'returnAll', 'limit', 'activityOptions'], Linear.description.properties.filter((p) => p.name === 'resource' || p.name === 'operation')));
   }
+  // AG05: tools for the smoke test's scenarios (a read that needs a credential, one that returns nothing, a write).
+  if (!options.live) registry.registerBuiltin(ag05StandIns());
   // The agent the evaluation's chat flow ("my Support triage agent") picks: made-up, published.
   if (!agentStore.list().some((a) => a.published?.config.name === 'Support triage')) {
     const agent = agentStore.create({ name: 'Support triage', description: 'Answers support questions from the docs and hands over what it cannot answer.', instructions: 'Answer support questions.', model: { provider: 'ollama', model: 'qwen3-coder:30b' } });
@@ -625,8 +656,11 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
           const message = String(item?.chatInput ?? item?.text ?? scenario.ask);
           const smokeRoute = await import('@/app/api/agents/[id]/smoke-test/route');
           const smoked = await smokeRoute.POST(post(`/api/agents/${body.agent.id}/smoke-test`, { message }), { params: Promise.resolve({ id: body.agent.id }) });
-          const smoke = ((await smoked.json()) as { smoke?: { state: 'passed' | 'failed' | 'untested' } }).smoke;
+          const smoke = ((await smoked.json()) as { smoke?: { state: 'passed' | 'failed' | 'untested'; reason?: string; tools?: Array<{ name: string; status: 'success' | 'error' | 'empty' | 'denied' }> } }).smoke;
           outcome.smoke = smoke?.state ?? 'failed';
+          // AG05: what the smoke test said besides its state: the reason line and each tool call.
+          if (smoke?.reason) outcome.smokeReason = smoke.reason;
+          if (smoke?.tools) outcome.smokeTools = smoke.tools.map((t) => ({ name: t.name, status: t.status }));
           if (outcome.smoke === 'passed' && scenario.start.autonomy === 'auto') {
             const publishRoute = await import('@/app/api/agents/[id]/publish/route');
             const done = await publishRoute.POST(post(`/api/agents/${body.agent.id}/publish`, {}), { params: Promise.resolve({ id: body.agent.id }) });

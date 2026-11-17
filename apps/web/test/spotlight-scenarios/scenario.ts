@@ -1,11 +1,12 @@
 /**
  * The Spotlight scenario suite's API: what a scenario is, what running it gives, and the checks the scorecards count.
  *
- * Contract file: backbone/contracts/sb3/spotlight-scenario.ts (version 3, wave sb3), copied byte for byte to
- * apps/web/test/spotlight-scenarios/scenario.ts by SB13 (owner this wave) and by every sb3 package that adds scenarios
- * (SB14, SB15, SB16, SB17, SB18). Version 2 was backbone/contracts/sb2/spotlight-scenario.ts (SB10), version 1
- * backbone/contracts/sb1/spotlight-scenario.ts (SB00); each version only adds optional fields and helpers, so every
- * earlier scenario still type-checks. Change it in the contracts folder first. Types and pure helpers only: no server import, no I/O. SB00's runner
+ * Contract file: backbone/contracts/ag1/spotlight-scenario.ts (version 4, wave ag1), copied byte for byte to
+ * apps/web/test/spotlight-scenarios/scenario.ts by AG02 (owner this wave) and by every ag1 package that adds scenarios
+ * (AG04, AG05). Version 3 was backbone/contracts/sb3/spotlight-scenario.ts (SB13), version 2
+ * backbone/contracts/sb2/spotlight-scenario.ts (SB10), version 1 backbone/contracts/sb1/spotlight-scenario.ts (SB00);
+ * each version only adds optional fields and helpers, so every earlier scenario still type-checks. Wave ag1's scenario
+ * files are named `sb-ag0N.ts` (the runner globs `sb*.ts`; nobody changes the glob) with `owner: 'AG0N'`. Change it in the contracts folder first. Types and pure helpers only: no server import, no I/O. SB00's runner
  * (apps/web/test/spotlight-scenarios.test.ts, with apps/web/test/spotlight-scenarios/harness.ts) finds every
  * `apps/web/test/spotlight-scenarios/<owner>.ts` (lower case, e.g. `sb03.ts`) with `import.meta.glob`, so packages never
  * edit a shared index: each adds one file that `export default defineScenarios([...])`.
@@ -32,8 +33,13 @@ export type Job = 'build' | 'fix' | 'agent';
  *   /api/agents/design with `preview: true` (the card), then the card's Create (POST /api/agents/import and the cases),
  *   on an empty `start.workflow` (or none) the starter flow as `after`, and with `start.autonomy: 'auto'` also SB18's
  *   smoke test on the starter flow's sample item and the publish that follows a pass.
+ * - `agent-revise` (wave ag1, AG04): a change to an agent in words. With `start.card`, that ask is designed first as
+ *   `agent-ask` does (the pending card, not created), then `ask` is the follow-up typed under it: the card is revised in
+ *   place (POST /api/agents/design with `preview: true`, `base: { config }` and `change`), nothing created. With
+ *   `start.agent`, that config is imported (and published) first, then `ask` is typed on its page: the change card
+ *   (`base: { agentId }`), then Apply (`PUT /api/agents/:id`, the draft only; never a publish).
  */
-export type Via = 'build' | 'chat' | 'session' | 'design' | 'architect' | 'agent-ask';
+export type Via = 'build' | 'chat' | 'session' | 'design' | 'architect' | 'agent-ask' | 'agent-revise';
 
 /** One model reply in the unit form; a function sees what the model was asked. */
 export type ScriptTurn = Partial<ModelTurn> | ((input: Parameters<LanguageModel['generate']>[0]) => Partial<ModelTurn>);
@@ -90,6 +96,17 @@ export interface Start {
    * that does not copy build-plan.ts still compiles this file.
    */
   plan?: Record<string, unknown>;
+  /** Wave ag1 (AG04): for `agent-revise`, the earlier ask whose card is still pending when `ask` is typed under it. */
+  card?: string;
+  /** Wave ag1 (AG04): for `agent-revise`, an existing agent's config (`POST /api/agents/import`, then published) whose page `ask` is typed on. */
+  agent?: Record<string, unknown>;
+  /**
+   * Wave ag1 (AG02): the local plugins the scenario needs by plugin id (`triage`, `grafana`, `text-toolkit`, `databases`,
+   * `go-crypto`, `py-insights`, `messaging`). Unit form: the harness registers stand-ins from the recorded manifests (or
+   * the TypeScript plugin's own code in-process); live form: the TypeScript ones in-process, the Go and Python ones from
+   * `LANDFLOW_SPOTLIGHT_PLUGINS` endpoints, and a scenario whose plugin is in neither is skipped with the reason.
+   */
+  plugins?: string[];
 }
 
 /** What running a scenario once gave. Every list is empty, never absent. */
@@ -127,6 +144,9 @@ export interface Outcome {
     cases?: number;
     practices?: boolean;
     guardrails?: string[];
+    /** Wave ag1 (AG02): the description and the instructions as saved (or as the card's config holds them). */
+    description?: string;
+    instructions?: string;
   }>;
   /** Model calls, and tokens in and out as AI usage recorded them. */
   modelCalls: number;
@@ -153,10 +173,23 @@ export interface Outcome {
   plan?: { steps: Array<{ name: string; type: string }>; cannot: string[] };
   /** Wave sb3 (SB13): a build's model calls in order (`draft.stages`): the stage and the prompt's size in tokens (the greater of the reported and the estimated count). */
   prompts?: Array<{ stage: string; tokens: number }>;
-  /** Wave sb3 (SB16): an agent card was shown (`agent-ask`), and whether the starter flow came with it. */
-  card?: { starter: boolean };
+  /**
+   * Wave sb3 (SB16): an agent card was shown (`agent-ask`), and whether the starter flow came with it. Wave ag1 adds, as
+   * the card shows them: `model` and `models` (AG02: the Model row and its select), `notAdded` (AG02: the tools asked for
+   * and not added, by name) and `changes` (AG04: a revised card's lines).
+   */
+  card?: { starter: boolean; model?: string; models?: string[]; notAdded?: string[]; changes?: string[] };
   /** Wave sb3 (SB18): the smoke test of the agent it made, as the row reads it (lib/shared/agent-card.ts `AgentSmoke.state`). */
   smoke?: 'passed' | 'failed' | 'untested';
+  /** Wave ag1 (AG05): the smoke test's reason, and each tool call's status (`AgentSmokeTool`), when there was one. */
+  smokeReason?: string;
+  smokeTools?: Array<{ name: string; status: 'success' | 'error' | 'empty' | 'denied' }>;
+  /** Wave ag1 (AG02): the host's builder model as the server names it (`LANDFLOW_BUILDER_MODEL`, `provider/model` or a bare Ollama name). */
+  hostModel?: string;
+  /** Wave ag1: what each node tool's call handed the node as its input item (`inputs[0][0].json`), in call order. AG02's stand-ins record it; AG03's `item` argument is what fills it. */
+  toolInputs?: Array<{ tool: string; input: Record<string, unknown> }>;
+  /** Wave ag1 (AG04): an `agent-revise` on an existing agent: whether Apply saved its draft, and whether anything published it. */
+  revised?: { agentId: string; savedDraft: boolean; published: boolean };
 }
 
 /** A check: true, false, or 'n/a' (it does not apply to this outcome; not counted). */
@@ -226,6 +259,11 @@ export function touchedNodes(before: Workflow | undefined, after: Workflow | und
   return [...ids].filter((id) => key(before, id) !== key(after, id)).map(name);
 }
 
+/** Wave ag1: a name as a tool's call name and a person's word compare (lower case, every run of other characters one `_`). */
+export function toolKey(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+}
+
 /** The checks several packages count; a package adds its own `Check`s beside them. */
 export const checks = {
   /** Nothing tried to leave the machine, and nothing was refused for trying. */
@@ -287,4 +325,65 @@ export const checks = {
       return o.card.starter && Boolean(o.after?.nodes.some((n) => n.type === 'core.chatTrigger')) && typeof step?.parameters?.agentId === 'string' && step.parameters.agentId !== '';
     },
   }),
+  /** Wave ag1 (AG02): every agent it made runs on the host's builder model (finding 2); 'n/a' when the harness named none. */
+  modelFollowsHost: {
+    id: 'model-follows-host',
+    label: 'The agent runs on the host’s builder model',
+    judge: (o: Outcome) => {
+      if (!o.hostModel || !o.agents.length) return 'n/a';
+      const bare = (m: string) => m.replace(/^(ollama|anthropic|openai)\//, '');
+      return o.agents.every((a) => Boolean(a.model) && bare(String(a.model)) === bare(o.hostModel!));
+    },
+  } satisfies Check,
+  /** Wave ag1 (AG02): the instructions name no tool the agent does not have (finding 3): every snake_case word is one of its tools. */
+  toolsNamedReal: {
+    id: 'tools-named-real',
+    label: 'Instructions name only its own tools',
+    judge: (o: Outcome) => {
+      const agent = o.agents[0];
+      if (!agent?.instructions) return 'n/a';
+      const own = new Set(agent.tools.map(toolKey));
+      const named = agent.instructions.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [];
+      return named.every((n) => own.has(n));
+    },
+  } satisfies Check,
+  /** Wave ag1 (AG02): the person's text is kept as given (finding 4: "oncall@landflow.test", not "oncall@landflow"). */
+  keepsText: (text: string): Check => ({
+    id: 'keeps-text',
+    label: `Kept “${text}” as given`,
+    judge: (o) => {
+      const agent = o.agents[0];
+      if (!agent) return false;
+      const words = `${agent.description ?? ''}\n${agent.instructions ?? ''}`;
+      return new RegExp(`${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?!\\w)`).test(words);
+    },
+  }),
+  /** Wave ag1 (AG02): each tool the ask named is on the agent or in the card's "Not added" line, never silently dropped (finding 9). */
+  askedToolsAccounted: (names: string[]): Check => ({
+    id: 'asked-tools-accounted',
+    label: `Added or said why not: ${names.join(', ')}`,
+    judge: (o) => {
+      const agent = o.agents[0];
+      if (!agent) return false;
+      const have = [...agent.tools, ...(agent.toolsDetail ?? []).map((t) => t.type ?? '')].map(toolKey);
+      const said = (o.card?.notAdded ?? []).map(toolKey);
+      return names.every((n) => have.some((h) => h.includes(toolKey(n))) || said.some((s) => s.includes(toolKey(n))));
+    },
+  }),
+  /** Wave ag1 (AG02): a read (`select`, `get`, `getAll`, `list`, `search`) asks for no approval (finding 12); 'n/a' without details. */
+  readsWithoutApproval: {
+    id: 'reads-without-approval',
+    label: 'Reads need no approval',
+    judge: (o: Outcome) => {
+      const detail = o.agents.flatMap((a) => a.toolsDetail ?? []);
+      const reads = detail.filter((t) => t.operation && /^(select|get|getAll|getMany|list|search|read)$/i.test(t.operation));
+      return reads.length ? reads.every((t) => !t.requireApproval) : 'n/a';
+    },
+  } satisfies Check,
+  /** Wave ag1 (AG04): a change to an existing agent was saved as its draft and published by nothing (D3: only after its smoke test and the gate). */
+  revisedNotPublished: {
+    id: 'revised-not-published',
+    label: 'The change was saved as a draft, not published',
+    judge: (o: Outcome) => (o.revised ? o.revised.savedDraft && !o.revised.published : 'n/a'),
+  } satisfies Check,
 };
