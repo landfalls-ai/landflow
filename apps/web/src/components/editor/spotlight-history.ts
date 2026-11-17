@@ -62,7 +62,7 @@ function fit(input: ConversationItemInput): ConversationItemInput {
   if (bytes(next) <= MAX_ITEM_BYTES) return next;
   next = { ...input, parts: parts.map((p) => (p.type === 'text' ? { ...p, text: p.text.slice(0, 8_000) } : p)) };
   if (bytes(next) <= MAX_ITEM_BYTES) return next;
-  // AG11: a card still too big: its cases, needs and description are cut, so the batch is never refused for one item.
+  // AG11: a card still too big: its cases, needs and description are cut, so a card with real content fits (a pathological one, 60 tools with long strings, can still make the server refuse the batch).
   return { ...next, parts: next.parts.map((p) => (p.type === 'agentCard' ? { ...p, card: { ...p.card, description: p.card.description.slice(0, 500), cases: p.card.cases.slice(0, 3).map((c) => ({ ...c, input: c.input.slice(0, 300), ...(c.expected && { expected: c.expected.slice(0, 300) }) })), needs: p.card.needs.slice(0, 5).map((n) => n.slice(0, 200)), changes: p.card.changes?.slice(0, 5).map((c) => c.slice(0, 200)) } } : p)) };
 }
 
