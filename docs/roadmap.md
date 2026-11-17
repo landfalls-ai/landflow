@@ -2680,3 +2680,13 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   not catch yet; one click on a credential row's radio did nothing before Apply (the label works; unconfirmed). The
   phone Execute/Debug pill overlap is the same on main (a phone follow-up). Not Spotlight: after runs the host logged
   "the brain's run failed: NOT NULL constraint failed: brain_facts.subject_type" 6 times. **Fixed in wave 14 (SP13):** `staleFactsBefore` writes the whole row, so the study finishes, is stamped, and the detectors run on the brain's own loop.
+
+## Spotlight wave sb3
+
+- **SB18, test before publish (D3):** an agent Spotlight makes is run once on the item that reaches its step
+  (`POST /api/agents/:id/smoke-test`) and published only after a pass, by itself only on a brand-new draft and through the
+  eval gate; asks-first offers **Publish** on the row after the pass; **Undo** removes an agent nothing else uses
+  (`DELETE /api/agents/design`). The test session's leftovers: **Run it for real** goes on with the same session (its
+  fixes are not reset), a review's "no" names what is missing (or reads as a pass), a yes is per `scheme://host:port`, a
+  "Publish … first" at an agent Spotlight made is not a fix round, and a pending **Run it for real** row survives a
+  reload. Left: the smoke test is one item, not the eval gate (SB17's cases are what the gate runs).

@@ -11,9 +11,11 @@ import { agentResources } from '@/lib/server/assistant/agent-resources';
 import { designAgent } from '@/lib/server/assistant/architect';
 import { resolveSpotlightModel } from '@/lib/server/assistant/models-list'; // SB19:
 import { allowedTypes } from '@/lib/server/assistant/scope';
+import { agentUsedBy, removeAgent } from '@/lib/server/agents/remove'; // SB18:
 import { agentStore } from '@/lib/server/agents/store';
 import { isUsageCapError } from '@/lib/server/ai-usage';
 import { error, handler, json, parseBody } from '@/lib/server/http';
+import { canResource } from '@/lib/server/projects/access'; // SB18:
 import { createInProject, routeActor } from '@/lib/server/projects/http';
 
 export const dynamic = 'force-dynamic';
@@ -50,4 +52,18 @@ export const POST = handler(async (request: Request) => {
   const config = { avatar: { kind: 'face' as const, face: randomFace(parsed.data.name) }, ...design.config };
   const agent = createInProject(request, 'agent', () => agentStore.create(config), (a) => a.id);
   return json({ agent, needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed }, 201);
+});
+
+// SB18: take back an agent Spotlight made for a step when its change is undone, only when nothing else uses it.
+const TakeBack = z.object({ agentId: z.string().min(1).max(200), workflowId: z.string().min(1).max(200) });
+
+/** DELETE { agentId, workflowId } — answers `{ deleted: true }`, or `{ deleted: false, usedBy: string[] }` with what still uses it. */
+export const DELETE = handler(async (request: Request) => {
+  const parsed = await parseBody(request, TakeBack);
+  if (!parsed.ok) return parsed.response;
+  const { agentId, workflowId } = parsed.data;
+  if (!agentStore.get(agentId) || !canResource(routeActor(), 'agent', agentId, 'delete')) return error('Agent not found', 404);
+  const usedBy = agentUsedBy(agentId, workflowId);
+  if (usedBy.length) return json({ deleted: false, usedBy });
+  return json({ deleted: await removeAgent(agentId) });
 });

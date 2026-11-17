@@ -577,7 +577,26 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
       const response = await route.POST(post('/api/agents/design', { name: nameOfAsk(scenario.ask), description: scenario.ask, instructions: '', ...(canvas && { workflow: canvas.name }), ...(scenario.start?.model && { model: scenario.start.model }) /* SB19: */ }));
       const body = (await response.json()) as { agent?: { id: string; name: string; tools: AgentConfig['tools']; model?: AgentConfig['model'] }; error?: string };
       if (!body.agent) outcome.error = body.error ?? `design ${response.status}`;
-      else outcome.agents.push(agentOf(body.agent as Partial<AgentConfig>));
+      else {
+        outcome.agents.push(agentOf(body.agent as Partial<AgentConfig>));
+        // SB18 (D3): what the editor does once the agent is designed: the smoke test on the item that reaches its step, and
+        // (autonomous) the publish after a pass. A scenario that names an autonomy is a flow's step; asks-first never publishes.
+        // The unit form's fake Ollama lists no models, so a design has none: it gets the scenario's own, as a person's pick would.
+        if (scenario.start?.autonomy && !body.agent.model) agentStore.saveDraft(body.agent.id, { model: { provider: 'ollama', model: 'qwen3-coder:30b' } });
+        if (scenario.start?.autonomy) {
+          const item = Object.values(canvas?.pinData ?? {})[0]?.[0]?.json as Record<string, unknown> | undefined;
+          const message = String(item?.chatInput ?? item?.text ?? scenario.ask);
+          const smokeRoute = await import('@/app/api/agents/[id]/smoke-test/route');
+          const smoked = await smokeRoute.POST(post(`/api/agents/${body.agent.id}/smoke-test`, { message }), { params: Promise.resolve({ id: body.agent.id }) });
+          const smoke = ((await smoked.json()) as { smoke?: { state: 'passed' | 'failed' | 'untested' } }).smoke;
+          outcome.smoke = smoke?.state ?? 'failed';
+          if (outcome.smoke === 'passed' && scenario.start.autonomy === 'auto') {
+            const publishRoute = await import('@/app/api/agents/[id]/publish/route');
+            const done = await publishRoute.POST(post(`/api/agents/${body.agent.id}/publish`, {}), { params: Promise.resolve({ id: body.agent.id }) });
+            if (done.ok) outcome.agents[outcome.agents.length - 1].published = true;
+          }
+        }
+      }
       outcome.modelCalls = fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 1;
     } else {
       const route = await import('@/app/api/assistant/agent/route');

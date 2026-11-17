@@ -4,6 +4,7 @@
  * and the rows of a test-and-fix session. Pure: no React, no store, so it is tested in Node.
  */
 import { opsTitle } from '@/lib/shared/assistant-ops';
+import { smokeLine } from '@/lib/shared/agent-card'; // SB18:
 import type { AgentProgress, ChatItem } from './assistant';
 
 export interface Step {
@@ -100,14 +101,20 @@ export function lastOutcomeOf(items: ChatItem[]): import('./assistant').Outcome 
 export const foldLine = (fold: SessionFold) =>
   `Tested ${fold.runs}×${fold.fixes ? ` · ${fold.fixes} fix${fold.fixes === 1 ? '' : 'es'}` : ''} · ${fold.state === 'passed' ? 'passed' : 'stopped'}`;
 
+// SB18: the row says how the agent's smoke test went (lib/shared/agent-card.ts `smokeLine`), then what became of it.
 export function agentStep(agent: AgentProgress): Step {
-  const text =
-    agent.state === 'designing'
+  const busy = agent.state === 'designing' || agent.state === 'testing';
+  const tested = smokeLine(agent.smoke);
+  const text = agent.taken
+    ? agent.taken.deleted
+      ? `Removed the agent “${agent.name}” (nothing else used it)`
+      : `Kept the agent “${agent.name}”: used by ${agent.taken.usedBy?.slice(0, 2).join(' and ') ?? 'something else'}${(agent.taken.usedBy?.length ?? 0) > 2 ? ` and ${(agent.taken.usedBy?.length ?? 0) - 2} more` : ''}`
+    : agent.state === 'designing'
       ? `Designing the agent “${agent.name}”…`
       : agent.state === 'failed'
         ? `Couldn’t create the agent “${agent.name}”${agent.summary ? `: ${agent.summary}` : ''}`
-        : `Agent “${agent.name}” ${agent.state === 'published' ? 'published' : 'saved as a draft'}${agent.summary ? ` · ${agent.summary}` : ''}`;
-  return { id: `agent:${agent.nodeId}`, kind: 'agent', icon: agent.state === 'designing' ? 'busy' : agent.state === 'failed' ? 'failed' : 'agent', text, ...(agent.agentId && { agentId: agent.agentId }) };
+        : `Agent “${agent.name}” ${agent.smoke ? tested : agent.state === 'published' ? 'published' : 'saved as a draft'}${agent.state === 'published' && agent.smoke ? ' · published' : ''}${agent.held ? ` · ${agent.held}` : ''}${agent.summary ? ` · ${agent.summary}` : ''}`;
+  return { id: `agent:${agent.nodeId}`, kind: 'agent', icon: busy ? 'busy' : agent.state === 'failed' ? 'failed' : 'agent', text, ...(agent.agentId && !agent.taken?.deleted && { agentId: agent.agentId }) };
 }
 
 /**
@@ -172,7 +179,7 @@ export interface PanelState {
   /** The last run's state, once a session is over. */
   lastRun?: 'passed' | 'failed';
   /** What the person has to do before Spotlight goes on (a credential, a trigger, a yes to sending). */
-  needs?: 'credential' | 'agent' | 'trigger' | 'sends' | 'destination' | 'blocked' | 'address'; // SB03:
+  needs?: 'credential' | 'agent' | 'trigger' | 'sends' | 'destination' | 'blocked' | 'address' | 'publish'; // SB03: SB18:
   /** The node the last session stopped at. */
   stoppedAt?: string;
   /** Anything in the conversation yet. */
@@ -199,7 +206,7 @@ export function titleOf(state: PanelState): string {
   if (state.testing && state.waitingForApply) return 'Needs you: apply the fix?';
   if (state.testing) return state.fixingName ? `Fixing “${state.fixingName}”` : 'Testing the flow';
   if (state.pending) return 'Working on it';
-  if (state.needs) return `Needs you: ${{ credential: 'pick a credential', agent: 'pick an agent', trigger: 'add a trigger', sends: 'OK to send?', destination: 'OK to send there?', blocked: 'blocked by this host', address: 'fill in an address' }[state.needs]}`;
+  if (state.needs) return `Needs you: ${{ credential: 'pick a credential', agent: 'pick an agent', trigger: 'add a trigger', sends: 'OK to send?', destination: 'OK to send there?', blocked: 'blocked by this host', address: 'fill in an address', publish: 'publish the agent?' /* SB18: */ }[state.needs]}`;
   if (state.lastRun === 'passed') return 'Passed';
   if (state.lastRun === 'failed') return state.stoppedAt ? `Stopped at “${state.stoppedAt}”` : 'Stopped';
   return state.hasItems ? 'Spotlight' : 'Ask Spotlight';

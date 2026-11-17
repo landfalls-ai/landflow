@@ -797,6 +797,8 @@ the draft averages under 3 / 5, or more than 0.5 under the published version's l
 offers **Publish anyway** (`{ "skipEval": true }`). A publish that passes saves its run as the new version's baseline;
 a first publish is held only by the 3 / 5 floor. An agent without cases publishes as before.
 
+**Smoke test.** Beside the gate, `POST /api/agents/:id/smoke-test { message }` runs the draft once on one message (a throwaway `test` session titled *Smoke test*, approvals denied, deleted after, so it never shows in Sessions) and answers `{ smoke: { state: 'passed' | 'failed', reply?, reason?, ms } }`: *passed* when the run completes with a reply, else *failed* with one sentence (*The run ended with an error: …*, *No reply*, *It wanted a tool that needs approval: <tool>*, *It stopped at its step limit*); 400 without a model. Spotlight uses it before it publishes an agent it made ([assistant.md](assistant.md#agents-and-teams)). It is one item with no judge, not the gate: a pass says the agent answers, the gate says it answers well.
+
 Routes: `GET/POST/PUT/DELETE /api/agents/:id/eval-gate` (cases and runs; `PUT { version? }` runs the draft or a
 published version). Cases (at most 50 per agent) and the last 30 runs live in `agent_eval_cases` and
 `agent_eval_runs` (migration 2042); deleting the agent removes them.

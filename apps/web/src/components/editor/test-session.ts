@@ -16,7 +16,8 @@ import { opsTitle } from '@/lib/shared/assistant-ops';
 import { checkRun, destinationsOf, givenKept, hollowSteps, hostOf, multipliedSteps, needsPerson, isUnreadHost, NO_ADDRESS, sameFailure, type CheckedRun, type RunVerdict } from '@/lib/shared/run-check';
 import { applyChanges, fixedNodes, ownRun, runDigests, undos, useAssistant, type Need, type Outcome, type ReplyPart } from './assistant';
 import { nextRound } from './timeline';
-import { agentsSettled } from './new-agent';
+import { agentsSettled, itemReaching, smokeTestAgent } from './new-agent'; // SB18:
+import { smokeLine } from '@/lib/shared/agent-card'; // SB18:
 import { publishVersion, toastApprovalRequested } from './publish-control';
 import { autonomyOf, needsAClick, notePublished, type Autonomy } from './spotlight-autonomy'; // SB03:
 import { useEditor } from './store';
@@ -44,13 +45,32 @@ interface Sending {
   key: string;
 }
 
+/**
+ * SB18: one yes per `scheme://host:port`. `destinationsOf` (lib/shared/run-check.ts) gives `host:port`; an HTTP Request's
+ * plain-text URL adds its scheme here, so `https://x` and `http://x` ask apart. A step with an expression or no address keeps
+ * what it had.
+ */
+export function withScheme(destination: string, type: string, url: unknown): string {
+  if (type !== 'core.httpRequest' || isUnreadHost(destination) || destination === NO_ADDRESS) return destination;
+  const scheme = /^\s*=?\s*(https?):\/\//i.exec(String(url ?? ''))?.[1]?.toLowerCase();
+  return scheme ? `${scheme}://${destination}` : destination;
+}
+
+/** Whether the person said yes to this destination: its own scheme, or, for a bare `host:port` from before schemes, `http` only. */
+function allowedBy(allowed: Set<string> | undefined, destination: string): boolean {
+  if (!allowed) return false;
+  if (allowed.has(destination)) return true;
+  const bare = /^http:\/\/(.+)$/i.exec(destination)?.[1];
+  return Boolean(bare && allowed.has(bare));
+}
+
 /** The enabled steps that would send for real, each with its own destination. */
 function sendingNow(): Sending[] {
   const { nodes, workflowId } = useEditor.getState();
   const live = nodes.filter((n) => !n.data.wf.disabled);
   return destinationsOf(live.map((n) => ({ name: n.data.wf.name, type: n.data.wf.type, parameters: n.data.wf.parameters }))).map((d) => {
     const step = live.find((n) => n.data.wf.name === d.node);
-    return { ...d, key: `${workflowId} ${step?.id ?? d.node} ${JSON.stringify(step?.data.wf.parameters.url ?? '')}` };
+    return { ...d, destination: withScheme(d.destination, step?.data.wf.type ?? '', step?.data.wf.parameters.url), key: `${workflowId} ${step?.id ?? d.node} ${JSON.stringify(step?.data.wf.parameters.url ?? '')}` }; // SB18:
   });
 }
 
@@ -63,12 +83,79 @@ export function approveDestinations(workflowId: string, destinations: string[], 
   for (const destination of destinations) if (!isUnreadHost(destination) && destination !== NO_ADDRESS) set.add(destination);
   for (const key of once) approvedOnce.add(key);
   sendsAllowed.set(workflowId, set);
+  forgetPendingYes(workflowId); // SB18: the row it answered is not kept for a reload any more
 }
+
+// SB18: a "Run it for real" row still waiting survives a reload of the page (this tab only, by workflow): its words, its
+// destinations and its goal, never a yes.
+const PENDING_KEY = (workflowId: string) => `landflow-spotlight-run-for-real:${workflowId}`;
+const sticky = (need: Need | undefined) => (need && (need.what === 'sends' || need.what === 'destination') && !need.state ? need : undefined);
+
+function writePending(workflowId: string, need: Need | undefined) {
+  try {
+    if (!workflowId) return;
+    if (!need) sessionStorage.removeItem(PENDING_KEY(workflowId));
+    else {
+      const { what, text, destinations, nodes, once, node, goal } = need;
+      sessionStorage.setItem(PENDING_KEY(workflowId), JSON.stringify({ what, text, destinations, nodes, once, node, goal }));
+    }
+  } catch {
+    // Private mode or no storage: the row is not kept, as before.
+  }
+}
+
+/** The pending row kept for this workflow in this tab, if any (never carries a yes). */
+export function pendingNeedFor(workflowId: string): Need | undefined {
+  try {
+    const raw = sessionStorage.getItem(PENDING_KEY(workflowId));
+    const need = raw ? (JSON.parse(raw) as Need) : undefined;
+    return sticky(need && { ...need, state: undefined });
+  } catch {
+    return undefined;
+  }
+}
+
+function forgetPendingYes(workflowId: string) {
+  writePending(workflowId, undefined);
+}
+
+/** Keeps the open "Run it for real" row in step with the conversation, and brings it back when the workflow reopens. */
+function watchPending() {
+  let boundTo = '';
+  let kept: Need | undefined;
+  const openNeed = () => {
+    for (const item of useAssistant.getState().items) if (item.role === 'assistant') for (const part of item.parts) if (part.kind === 'needs' && sticky(part.need)) return part.need;
+    return undefined;
+  };
+  const sync = () => {
+    const { workflowId, items } = useAssistant.getState();
+    if (!workflowId) return;
+    if (workflowId !== boundTo) {
+      boundTo = workflowId;
+      kept = undefined;
+      // A workflow opened: its pending row comes back, still waiting for the click.
+      const need = pendingNeedFor(workflowId);
+      if (need && !items.length) {
+        say([{ kind: 'needs', need }]);
+        kept = need;
+      }
+      return;
+    }
+    const open = openNeed();
+    if (open !== kept) {
+      kept = open;
+      writePending(workflowId, open);
+    }
+  };
+  useAssistant.subscribe(sync);
+  sync();
+}
+watchPending();
 
 /** The enabled steps that would send for real, grouped by what the person has not said yes to yet. */
 function unapproved(): Sending[] {
   const allowed = sendsAllowed.get(useEditor.getState().workflowId);
-  return sendingNow().filter((d) => !allowed?.has(d.destination) && !approvedOnce.has(d.key));
+  return sendingNow().filter((d) => !allowedBy(allowed, d.destination) && !approvedOnce.has(d.key)); // SB18:
 }
 
 const quoted = (names: string[]) => names.slice(0, 2).map((n) => `“${n}”`).join(' and ') + (names.length > 2 ? ` and ${names.length - 2} more` : '');
@@ -276,38 +363,102 @@ function say(parts: ReplyPart[], testId?: string): string {
 
 const setRun = (itemId: string, run: Extract<ReplyPart, { kind: 'run' }>['run']) => useAssistant.getState().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'run' ? { ...p, run } : p)));
 
+// SB18: what carries a session on after the person's yes ("Run it for real", a pick, a Publish): by workflow, in this page's life.
+interface Paused {
+  fixes: number;
+  startNodes: Array<{ id: string; name: string; enabled: boolean }>;
+  tried: string[];
+  lastApplied: Array<{ item: string; proposals: string[] }>;
+  lastFailure: string | undefined;
+  reviewedAt: number | undefined;
+  ran: boolean;
+  autonomy: Autonomy;
+  publishAgents: boolean | undefined;
+}
+const paused = new Map<string, Paused>();
+
+/** SB18: what each step put out, field by field, for the review ("“Reply” has: answer, tokens"). */
+export function outputFields(): string {
+  const { nodes } = useEditor.getState();
+  const digests = runDigests();
+  const lines = nodes.flatMap((n) => {
+    const first: unknown = digests[n.id]?.outputs[0]?.sample;
+    const sample = Array.isArray(first) ? first[0] : first;
+    if (!sample || typeof sample !== 'object' || Array.isArray(sample)) return [];
+    const keys = Object.keys(sample as Record<string, unknown>).slice(0, 12);
+    return keys.length ? [`“${n.data.wf.name}” has: ${keys.join(', ')}`] : [];
+  });
+  return lines.length ? ` Fields each step put out: ${lines.slice(0, 12).join('; ')}.` : '';
+}
+
+/**
+ * SB18: the part of the goal a review says did not happen, from its reply ("No, it never sends the email"); undefined when
+ * the reply names none, which reads as a pass.
+ */
+export function missingPart(text: string): string | undefined {
+  const rest = text.replace(/^\s*(?:no|not yet|not quite)\b[\s,.:;!-]*/i, '');
+  if (rest === text) return undefined; // it did not say no
+  const first = rest.split(/(?<=[.!?])\s/)[0]?.trim().replace(/[.!?]+$/, '') ?? '';
+  return first.split(/\s+/).filter(Boolean).length >= 3 ? first : undefined;
+}
+
+/** SB18: the part of the goal a review reply names, from its text. */
+const missingPartOf = (reply: { parts: ReplyPart[] }) => {
+  const said = reply.parts.find((p) => p.kind === 'text');
+  return said?.kind === 'text' ? missingPart(said.text) : undefined;
+};
+
+/** SB18: the agent a failed run stopped at ("Publish “X” first") when Spotlight made that agent for the step. */
+function unpublishedAgentAt(node: string | undefined, error: string | undefined) {
+  if (!node || !/^\s*Publish “.+” first/.test(error ?? '')) return undefined;
+  const step = useEditor.getState().nodes.find((n) => n.data.wf.name === node);
+  return step && useAssistant.getState().agents.find((a) => a.nodeId === step.id && a.agentId && !a.taken);
+}
+
 /**
  * Run, fix, run again until a run passes, MAX_FIXES fixes are spent, or the user stops it. With a `goal` (the description
  * the workflow was drafted from), a run without errors is checked against it as well: the assistant compares the output
  * with the goal and fixes what doesn't match.
  */
 /** `publishAgents`: an agent a fix creates is published so the next run can use it (autonomous mode, ./autonomous.ts). */
-export async function testUntilItRuns(goal?: string, options: { publishAgents?: boolean; autonomy?: Autonomy } = {}): Promise<void> {
+export async function testUntilItRuns(goal?: string, options: { publishAgents?: boolean; autonomy?: Autonomy; resume?: boolean } = {}): Promise<void> {
   if (useAssistant.getState().pending || useAssistant.getState().testing) return;
   const abort = new AbortController();
   const { signal } = abort;
   const testId = nanoid(8);
   useAssistant.setState({ testing: abort, testingId: testId, fixNotes: {} });
+  const wfId = useEditor.getState().workflowId;
+  // SB18: the person's yes goes on with the same session (its fixes, its starting steps, what it tried), never a fresh one.
+  const resumed = options.resume ? paused.get(wfId) : undefined;
+  paused.delete(wfId);
   try {
+    let fixes = resumed?.fixes ?? 0;
+    // SB03: the fixes applied when the last review was asked; a pass is reviewed again after any fix since.
+    let reviewedAt: number | undefined = resumed?.reviewedAt;
+    /** SB03: what Spotlight may do alone, and the steps the flow had when the session started. */
+    const autonomy = options.autonomy ?? resumed?.autonomy ?? autonomyOf(wfId);
+    const publishAgents = options.publishAgents ?? resumed?.publishAgents;
+    const startNodes = resumed?.startNodes ?? useEditor.getState().nodes.map((n) => ({ id: n.id, name: n.data.wf.name, enabled: n.data.wf.disabled !== true }));
+    let ran = resumed?.ran ?? false;
+    /** The last failure, to tell a fix that changed nothing. */
+    let lastFailure: string | undefined = resumed?.lastFailure;
+    /** What was applied so far: the assistant gets no history, so it hears what didn't help. */
+    const tried: string[] = resumed?.tried ?? [];
+    /** The fixes applied, newest last, for undoing one that changed nothing (or all of them, from the outcome card). */
+    const lastApplied: Array<{ item: string; proposals: string[] }> = resumed?.lastApplied ?? [];
+    /** SB18: a row waits for the person: the session's state is kept for the click that goes on. */
+    const waitFor = (need: Need) => {
+      paused.set(wfId, { fixes, startNodes, tried, lastApplied, lastFailure, reviewedAt, ran, autonomy, publishAgents });
+      ask(need);
+    };
+    /** SB18: agents whose "Publish … first" was already handled once this session. */
+    const agentTried = new Set<string>();
     // What only the person can do comes first: no run, no fix spent on it.
     const first = beforeTesting(goal);
     if (first) {
-      ask(first);
+      waitFor(first);
       return;
     }
-    let fixes = 0;
-    // SB03: the fixes applied when the last review was asked; a pass is reviewed again after any fix since.
-    let reviewedAt: number | undefined;
-    /** SB03: what Spotlight may do alone, and the steps the flow had when the session started. */
-    const autonomy = options.autonomy ?? autonomyOf(useEditor.getState().workflowId);
-    const startNodes = useEditor.getState().nodes.map((n) => ({ id: n.id, name: n.data.wf.name, enabled: n.data.wf.disabled !== true }));
-    let ran = false;
-    /** The last failure, to tell a fix that changed nothing. */
-    let lastFailure: string | undefined;
-    /** What was applied so far: the assistant gets no history, so it hears what didn't help. */
-    const tried: string[] = [];
-    /** The fixes applied, newest last, for undoing one that changed nothing (or all of them, from the outcome card). */
-    const lastApplied: Array<{ item: string; proposals: string[] }> = [];
     /** The session ends without a pass: a card with why and what to do next. */
     const stop = (text: string, node?: string) =>
       say([{ kind: 'outcome', outcome: { text, ...(node && { node }), ...(goal && { goal }), fixes: lastApplied.flatMap((a) => a.proposals.map((proposal) => ({ item: a.item, proposal }))), edits: useEditor.getState().edits } satisfies Outcome }]);
@@ -321,7 +472,20 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         const last = ran ? lastApplied.at(-1) : undefined;
         const need = destinationNeed(goal, false, last && { item: last.item, proposals: last.proposals });
         if (need) {
-          ask(need);
+          waitFor(need); // SB18:
+          return;
+        }
+      }
+      // SB18: an agent Spotlight made, untested because no item reached its step yet, is tested now that one does.
+      for (const a of useAssistant.getState().agents) {
+        if (a.state === 'untested' && a.agentId && !a.taken && itemReaching(a.nodeId)) await smokeTestAgent(a.nodeId, { publish: autonomy === 'auto' });
+        if (signal.aborted) return;
+      }
+      // SB18: asks-first, a tested agent waits for the person's Publish: a run now would stop at "Publish … first".
+      {
+        const waiting = autonomy === 'auto' ? undefined : useAssistant.getState().agents.find((a) => a.state === 'tested' && a.agentId && !a.taken && useEditor.getState().nodes.some((n) => n.id === a.nodeId));
+        if (waiting) {
+          waitFor({ what: 'publish', nodeId: waiting.nodeId, node: waiting.name, text: `Publish “${waiting.name}”: ${smokeLine(waiting.smoke)}.`, ...(goal && { goal }) });
           return;
         }
       }
@@ -340,9 +504,28 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       if (!result.passed) {
         const failedNode = result.node ? useEditor.getState().nodes.find((n) => n.data.wf.name === result.node) : undefined;
         const error = failedNode ? (useEditor.getState().statuses[failedNode.id]?.error ?? runError()) : runError();
+        // SB18: "Publish … first" at an agent Spotlight made is not a fix round: it is tested, and published on a pass.
+        const unpublished = unpublishedAgentAt(result.node, error);
+        if (unpublished) {
+          if (agentTried.has(unpublished.nodeId)) {
+            stop(`“${unpublished.name}” is not published yet: ${unpublished.held ?? smokeLine(unpublished.smoke)}. Open it, or tell me what to change.`, result.node);
+            return;
+          }
+          agentTried.add(unpublished.nodeId);
+          const smoke = await smokeTestAgent(unpublished.nodeId, { publish: autonomy === 'auto' });
+          if (signal.aborted) return;
+          const now = useAssistant.getState().agents.find((a) => a.nodeId === unpublished.nodeId);
+          if (smoke?.state === 'passed' && now?.state === 'published') continue; // run again
+          if (smoke?.state === 'passed' && autonomy !== 'auto') {
+            waitFor({ what: 'publish', nodeId: unpublished.nodeId, node: unpublished.name, text: `Publish “${unpublished.name}”: ${smokeLine(smoke)}.`, ...(goal && { goal }) });
+            return;
+          }
+          stop(`“${unpublished.name}” is not published: ${now?.held ?? smokeLine(smoke)}. Open it, or tell me what to change.`, result.node);
+          return;
+        }
         const need = personNeed(result, error, goal);
         if (need) {
-          ask(need);
+          waitFor(need); // SB18:
           return;
         }
         // The same failure after a fix: the fix didn't help. Undo it and stop, rather than spend another.
@@ -388,7 +571,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         ? `Test run ${round} ${result.summary}.${asked} Fix it.${before}`
         : hollow.length
           ? `Test run ${round} had no errors, but ${hollow.map((h) => h.problem).join('; ')}.${asked} Fix it.${before}`
-          : `Test run ${round} had no errors: ${result.summary}.${outputOf(result.node)} Does that do what I asked for: “${goal}”? Check each part of what I asked against it. If not, fix it; if it does, start your reply with "Yes," and say so in one sentence.${before}`;
+          : `Test run ${round} had no errors: ${result.summary}.${outputOf(result.node)} Does that do what I asked for: “${goal}”?${outputFields() /* SB18: */} Check each part of what I asked against it. If it does, start your reply with "Yes," and say so in one sentence. If not, start your reply with "No," and name the part of what I asked that did not happen, then fix it.${before}`;
       if (!failed) reviewedAt = fixes; // SB03:
       useAssistant.setState({ fixing: failed ? nodeId : undefined });
       await useAssistant.getState().send(request, { auto: true, fresh: true, session: failed ? 'fix' : 'review', autonomy, withoutSelection: true, testId, ...(nodeId && { nodeId }) });
@@ -404,8 +587,13 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         // Nothing to change: a run the review said yes to is ready; a "no" without a fix, or a failed run, needs the person.
         const said = reply.parts.find((p) => p.kind === 'text');
         const yes = said?.kind === 'text' && /^\s*yes\b/i.test(said.text);
+        // SB18: a "no" must name the part of the goal that did not happen; one that names none reads as a pass.
+        const part = said?.kind === 'text' && !yes ? missingPart(said.text) : undefined;
         if (!failed && yes) say([{ kind: 'action', action: 'publish' }]);
-        else if (!failed) stop('It runs, but doesn’t do all you asked yet, and I have no change for it: tell me what to change.', result.node);
+        else if (!failed && !part) {
+          say([{ kind: 'text', text: 'Reviewed: nothing missing.' }]);
+          say([{ kind: 'action', action: 'publish' }]);
+        } else if (!failed) stop(`It runs, but doesn’t do all you asked yet: ${part}. I have no change for it: tell me what to change.`, result.node);
         // The reply above already says why.
         else stop(`I found no fix for “${result.node ?? 'this step'}”. Tell me what it should do, or open it.`, at);
         return;
@@ -423,7 +611,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       }
       if (fixes >= MAX_FIXES) {
         for (const proposal of proposals) useAssistant.getState().setProposalState(reply.id, proposal.id, 'dismissed');
-        stop('It runs, but doesn’t do all you asked yet, and I am out of fixes: tell me what to change.', result.node);
+        stop(`It runs, but doesn’t do all you asked yet${missingPartOf(reply) ? `: ${missingPartOf(reply)}` : ''}, and I am out of fixes: tell me what to change.`, result.node);
         return;
       }
       // SB03 (D1): asks-first, and a change that removes a step even under auto, waits for the person's Apply.
@@ -459,7 +647,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       const label = proposals.length === 1 ? `Spotlight applied “${proposals[0].summary}”` : `Spotlight applied ${proposals.length} fixes`;
       let skipped = 0;
       const applied = applyChanges(proposals.map((p) => ({ ops: p.ops, kind: 'proposal' as const })), label, {
-        publishAgents: options.publishAgents,
+        publishAgents, // SB18:
         quiet: true,
         onApplied: ({ undo, skipped: dropped }) => {
           for (const p of proposals) undos.set(p.id, undo);
