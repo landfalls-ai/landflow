@@ -822,6 +822,10 @@ often they were served again, with **Clear**; `GET/DELETE /api/agents/:id/cache`
 in `agent_response_cache` (migration 2043) behind the `ResponseCache` interface in
 `lib/server/agents/response-cache.ts`, so the database adapter can be replaced by Valkey or a gateway's cache.
 
+The node-tool dialog (Abilities → Capabilities → a node tool) lists only the credentials the tool's settings use, as the
+node panel does: an HTTP Request tool with Authentication None lists none, with Bearer Auth chosen lists the Bearer slot
+only. A pick stays when the dialog reopens; it is dropped only when the person changes the parameter that hid its slot.
+
 ## Tool access
 
 **Abilities → Tool access** decides which callers may use which tools, so one agent can read for everyone and refund

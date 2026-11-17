@@ -20,7 +20,8 @@ import {
   Wrench,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { defaultParameters } from '@landflow/protocol';
+import { defaultParameters, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
+import type { NodeDescriptor } from '@landflow/protocol';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { useWorkflowsReadOnly } from '@/lib/client/environment';
@@ -185,6 +186,29 @@ function NodePicker({ onPick, onClose }: { onPick: (info: NodeTypeInfo) => void;
   );
 }
 
+/** AG06: the credential slots a tool's settings use (the node panel's rule): a slot another auth method owns is not listed. */
+export function toolCredentialSlots(descriptor: Pick<NodeDescriptor, 'credentials' | 'properties'> | undefined, parameters: Record<string, unknown>) {
+  const slots = descriptor?.credentials ?? [];
+  if (!descriptor) return slots;
+  const values = withPropertyDefaults(descriptor.properties, parameters as never);
+  return slots.filter((c) => isPropertyVisible(c, values));
+}
+
+/** AG06: the credentials after a parameter change: a pick leaves only when this change hid its slot, never on open. */
+export function credentialsAfterChange(
+  descriptor: Pick<NodeDescriptor, 'credentials' | 'properties'>,
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+  credentials: NodeToolConfig['credentials'],
+) {
+  const now = toolCredentialSlots(descriptor, after);
+  const hidden = toolCredentialSlots(descriptor, before).filter((c) => !now.some((n) => n.name === c.name));
+  if (hidden.length === 0) return credentials;
+  const kept = { ...(credentials ?? {}) };
+  for (const c of hidden) delete kept[c.name];
+  return kept;
+}
+
 function NodeToolDialog({
   tool,
   info,
@@ -203,7 +227,7 @@ function NodeToolDialog({
   const [value, setValue] = useState(tool);
   const [tab, setTab] = useState<'parameters' | 'settings'>('parameters');
   const set = (patch: Partial<NodeToolConfig>) => setValue((v) => ({ ...v, ...patch }));
-  const requirements = info?.descriptor.credentials ?? [];
+  const requirements = toolCredentialSlots(info?.descriptor, value.parameters); // AG06
   const valid = value.name.trim() && value.description.trim();
   const modelFields = Object.values(value.parameters).filter((v) => typeof v === 'string' && v.includes('$fromAI(')).length;
 
@@ -299,7 +323,7 @@ function NodeToolDialog({
                   nodeType={value.nodeType}
                   properties={info.descriptor.properties}
                   values={value.parameters}
-                  onChange={(parameters) => set({ parameters })}
+                  onChange={(parameters) => set({ parameters, credentials: credentialsAfterChange(info.descriptor, value.parameters, parameters, value.credentials) })} // AG06
                   credentials={value.credentials}
                   scope={{ agentId }}
                   fromAI
