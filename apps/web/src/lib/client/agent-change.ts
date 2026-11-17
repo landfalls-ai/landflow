@@ -4,6 +4,7 @@
  * draft and smoke-test it (Apply), and publish it (only after a pass, through the eval gate, never skipping it: decision D3).
  * No store and no server import: both surfaces keep their own state.
  */
+import { useEffect, useState } from 'react'; // AG09:
 import { api, ApiError } from '@/lib/client/api';
 import { agentChanges } from '@/lib/shared/agent-changes';
 import type { AgentNotAdded, AgentPublish, AgentSmoke } from '@/lib/shared/agent-card';
@@ -78,4 +79,60 @@ export async function draftMoved(agentId: string, snapshot: string | undefined, 
   const current = await readDraft(agentId);
   if (!current || JSON.stringify(current) === snapshot) return undefined;
   return { snapshot: JSON.stringify(current), changes: agentChanges(current, config) };
+}
+
+// AG09: the change card follows the agent's draft: what is left is what its draft still lacks, and Test again runs the draft as it is.
+
+/** The agent page saved its draft (a credential picked in a tool dialog, say): `AGENT_CHANGED` makes the page reload itself, this one only tells the cards. */
+export const AGENT_SAVED = 'landflow:agent-saved';
+export function announceSaved(agentId: string): void {
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(AGENT_SAVED, { detail: { agentId } }));
+}
+
+/**
+ * The Left row's lines as the agent's draft leaves them: a "<tool>: pick a <slot> credential" line is dropped when that tool of
+ * the draft has the slot set. Every other line stays (a credential is the person's pick; nothing here sets one).
+ */
+export function stillLeft(lines: string[], draft: Record<string, unknown> | undefined): string[] {
+  if (!draft) return lines;
+  const tools = (Array.isArray(draft.tools) ? draft.tools : []) as Array<Record<string, unknown>>;
+  return lines.filter((line) => {
+    const m = /^(.+?): pick an? (.+?) credential/.exec(line);
+    if (!m) return true;
+    const tool = tools.find((t) => t.name === m[1]);
+    const given = tool?.credentials;
+    return !(given && typeof given === 'object' && (given as Record<string, unknown>)[m[2]]);
+  });
+}
+
+/** The draft the card reads its Left row against: read when the card shows, and again on `AGENT_CHANGED` and `AGENT_SAVED` for this agent. */
+export function useAgentDraft(agentId: string | undefined, reload = 0): Record<string, unknown> | undefined {
+  const [draft, setDraft] = useState<Record<string, unknown>>();
+  useEffect(() => {
+    if (!agentId) return;
+    let live = true;
+    const read = () => void readDraft(agentId).then((d) => live && d && setDraft(d));
+    read();
+    const onEvent = (e: Event) => {
+      if ((e as CustomEvent<{ agentId?: string }>).detail?.agentId === agentId) read();
+    };
+    window.addEventListener(AGENT_CHANGED, onEvent);
+    window.addEventListener(AGENT_SAVED, onEvent);
+    return () => {
+      live = false;
+      window.removeEventListener(AGENT_CHANGED, onEvent);
+      window.removeEventListener(AGENT_SAVED, onEvent);
+    };
+  }, [agentId, reload]);
+  return draft;
+}
+
+/** Test again: the smoke test on the draft as it is now (no save, no publish). */
+export async function testDraft(agentId: string, sample: string): Promise<AgentSmoke> {
+  try {
+    const { smoke } = await api<{ smoke: AgentSmoke }>(`/api/agents/${agentId}/smoke-test`, { method: 'POST', json: { message: sample.slice(0, 4000) } });
+    return smoke;
+  } catch (e) {
+    return { state: 'failed', reason: (e as Error).message };
+  }
 }

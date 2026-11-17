@@ -215,6 +215,21 @@ draft** saves it as the agent's draft only (the page shows it) and runs the smok
 pass and goes through the [eval gate](#eval-gate), which can hold it. The published version stays what it was until then.
 The Agent architect dialog still designs new agents only.
 
+The card says what applying does and follows the agent (wave ag2, AG09):
+- A tool the change adds that no step names gets one: "N. When <the task you named, or the first sentence of what the tool is for>, call `extract_iocs`." goes before the
+  Tools line (with "(it asks the person first)" for a tool that writes), and the steps are renumbered. A step an earlier
+  change wrote stays when the model's proposal leaves it out. The Changes row says "Adds the tool Extract IOCs (asks
+  first)", with acronyms in capitals (IOCs, JWT, UUID, URL, HTTP, API, SQL, SMTP, IP, ID, CPU, JSON, CSV); the added
+  step is not counted again as "Instructions rewritten".
+- **Left** lists what the agent's draft still lacks: a credential slot already set on the agent's tool is not asked again,
+  and one set after Apply (in the tool's dialog on the agent's page) drops off the card without a reload (the page's
+  save sends `landflow:agent-saved`; the card also re-reads the draft on `landflow:agent-changed`).
+- After Apply the card offers **Test again** next to Publish: the smoke test on the draft as it is, no save. Publish
+  waits for a pass as before.
+- A pending card's name that the design made ("Crypto Toolkit agent") is made again from the tools the card has now
+  ("Utility helper"), and the Changes row says "Renames it to Utility helper (its tools changed)"; a name you gave, and an
+  agent that exists, are renamed only by "call it …". Create names the agent what the card shows.
+
 ### Avatars
 
 An agent's avatar shows on its page, the roster, the test chat, the sub-agent list and the New agent dialog, and in

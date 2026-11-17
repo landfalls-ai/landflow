@@ -12,7 +12,7 @@ import { AskPanel, ASK_INPUT, type AskConversation, type AskTag } from '../brain
 import { Button } from '../ui/button';
 import { CHAT_ICON_BUTTON, ChatComposer, ChatEmpty, ChatError, UserBubble } from '../ui/chat';
 import { ChatList, ChatMotion } from '../ui/chat-motion';
-import { announceChange, designChange, draftMoved, publishChange, readDraft, saveChange, type ChangeDesign } from '@/lib/client/agent-change';
+import { announceChange, designChange, draftMoved, publishChange, readDraft, saveChange, stillLeft, testDraft, useAgentDraft, type ChangeDesign } from '@/lib/client/agent-change'; // AG09: stillLeft, testDraft, useAgentDraft
 import { agentChangeAsk } from '@/lib/shared/agent-ask';
 import { agentChanges } from '@/lib/shared/agent-changes';
 import { publishLine, smokeLine, type AgentPublish, type AgentSmoke } from '@/lib/shared/agent-card';
@@ -21,10 +21,11 @@ import { cn } from '@/lib/utils';
 type Turn = { id: string; message: string; state: 'designing' | 'ready' | 'saving' | 'saved' | 'failed' | 'dismissed'; design?: ChangeDesign; error?: string; smoke?: AgentSmoke; publish?: AgentPublish; snapshot?: string; notice?: string };
 
 /** The change card: what would change, then Apply to its draft (a small read-only copy of the editor's card rows). */
-function ChangeCard({ name, agentId, turn, onApply, onPublish, onDismiss }: { name: string; agentId: string; turn: Turn; onApply: () => void; onPublish: () => void; onDismiss: () => void }) {
+function ChangeCard({ name, agentId, turn, onApply, onPublish, onDismiss, onTest }: { name: string; agentId: string; turn: Turn; onApply: () => void; onPublish: () => void; onDismiss: () => void; onTest: () => void /* AG09: */ }) {
+  const draft = useAgentDraft(agentId); // AG09: the Left row follows the agent's draft, also after a credential is picked on its page
   const changes = turn.design?.changes ?? [];
   const notAdded = turn.design?.notAdded ?? []; // ag1-int:
-  const left = [...(turn.design?.needs ?? []).map((n) => n.text), ...(turn.design?.missing ?? []).map((m) => `Not available here: ${m.capability}`)];
+  const left = [...stillLeft((turn.design?.needs ?? []).map((n) => n.text), draft) /* AG09: */, ...(turn.design?.missing ?? []).map((m) => `Not available here: ${m.capability}`)];
   const saved = turn.state === 'saved';
   return (
     <div data-testid="agent-change-card" className={cn('animate-fade-up rounded-xl border bg-sf p-2.5', saved ? 'border-gnbd' : 'border-acbd')}>
@@ -84,6 +85,12 @@ function ChangeCard({ name, agentId, turn, onApply, onPublish, onDismiss }: { na
               <Button size="sm" variant="primary" disabled={turn.publish?.state === 'publishing'} onClick={onPublish} className="max-md:h-11 max-md:px-4">
                 {turn.publish?.state === 'publishing' && <Loader2 className="size-3.5 animate-spin" />}
                 Publish
+              </Button>
+            )}
+            {/* AG09: the smoke test again on the draft as it is (a credential picked since), no save. */}
+            {turn.smoke?.state !== 'testing' && (
+              <Button size="sm" variant="ghost" onClick={onTest} className="max-md:h-11 max-md:px-4">
+                Test again
               </Button>
             )}
             <a href={`/agents/${agentId}`} className="flex min-h-7 items-center gap-0.5 text-[12px] font-semibold text-ac hover:underline max-md:min-h-11">
@@ -165,6 +172,13 @@ export function AgentChangePanel({ agentId, name, onClose, conversation, heading
     }
   };
 
+  // AG09: Test again runs the draft as it is now and saves nothing.
+  const testAgain = async (turn: Turn) => {
+    if (turn.smoke?.state === 'testing') return;
+    patch(turn.id, { smoke: { state: 'testing' } });
+    patch(turn.id, { smoke: await testDraft(agentId, `Hello ${name}, what can you do?`) });
+  };
+
   const publish = async (turn: Turn) => {
     if (turn.smoke?.state !== 'passed' || turn.publish?.state === 'publishing') return;
     patch(turn.id, { publish: { state: 'publishing' } });
@@ -225,7 +239,7 @@ export function AgentChangePanel({ agentId, name, onClose, conversation, heading
                     </Button>
                   </>
                 )}
-                {t.design && t.state !== 'dismissed' && <ChangeCard name={name} agentId={agentId} turn={t} onApply={() => void apply(t)} onPublish={() => void publish(t)} onDismiss={() => patch(t.id, { state: 'dismissed' })} />}
+                {t.design && t.state !== 'dismissed' && <ChangeCard name={name} agentId={agentId} turn={t} onApply={() => void apply(t)} onPublish={() => void publish(t)} onDismiss={() => patch(t.id, { state: 'dismissed' })} onTest={() => void testAgain(t)} />}
               </div>
             ))}
           </ChatList>

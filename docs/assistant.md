@@ -197,6 +197,8 @@ Ids are checked like team ids: a name written where `agentId` goes becomes the i
 
 The agent Spotlight designs fills a tool's destination only from your words (Send Email goes to the address you gave, with a subject and body the agent writes on each call; a URL you did not give is left for you), and its test cases are inputs a person would send, not descriptions of them ([agents.md](agents.md#agent-architect)).
 
+A revise of a pending agent card keeps the card's name only when you gave it: a name the design made from the tools ("Crypto Toolkit agent") is made again from the new tools ("Utility helper") and the Changes row says why, and Create names the agent what the card shows. A tool a change adds gets its own step in the agent's instructions, and "(asks first)" on the Changes row when it writes ([agents.md](agents.md#changes-from-spotlight)).
+
 ### Fold, Apply and errors
 
 What the panel does between states (the rules for the states themselves are in [The Spotlight panel](#the-spotlight-panel); the pure parts are in `components/editor/spotlight/states.ts`, tested in `test/spotlight-states.test.ts`):

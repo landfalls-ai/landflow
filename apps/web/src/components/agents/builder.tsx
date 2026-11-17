@@ -64,7 +64,7 @@ import { AgentLastRuns } from '../run-trace/run-line';
 import type { ToolEntry } from './timeline';
 import { TriggersCard } from './triggers-card';
 import { useAgentData, useAgentList } from './use-agent-data';
-import { AGENT_CHANGED } from '@/lib/client/agent-change'; // AG04:
+import { AGENT_CHANGED, announceSaved } from '@/lib/client/agent-change'; // AG04: AG09: announceSaved
 import { BackLink } from '../shell/page-header';
 import { ExportPluginDialog } from './export-plugin-dialog';
 import { AvailabilityDialog } from './availability-dialog';
@@ -320,6 +320,7 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
           json: body,
         });
         if (r?.agent) setAgent(r.agent);
+        announceSaved(agentId); // AG09: the change cards re-read the draft (this tells them; it never reloads this page)
         if (!dirty.current) setSave('saved');
       } catch (e) {
         dirty.current = true;
