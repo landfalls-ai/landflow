@@ -282,7 +282,7 @@ export const messageAgentNode = defineNode({
             const existing = conversationKey ? agentStore.findConversation(agent.id, conversationKey) : undefined;
             // AG10: a keyed conversation that waits for Approve or Reject takes no new message: the model would be sent an unanswered tool call.
             // N6: a waiting run that was cancelled (or failed, or is gone) leaves nobody to decide: the orphan call is settled as cancelled and the conversation goes on.
-            if (existing && (existing.pending || existing.status === 'awaiting_approval') && !stillWaiting(existing, (await import('../store')).store)) settleOrphan(existing, agentStore);
+            if (existing && (existing.pending || existing.status === 'awaiting_approval') && !(await stillWaiting(existing, (await import('../store')).store))) settleOrphan(existing, agentStore);
             if (existing && (existing.pending || existing.status === 'awaiting_approval')) throw new NodeOperationError(`${agent.name} is waiting for Approve or Reject on its last tool call: decide that first, then send the next message`, { itemIndex: i });
             session = (existing && { ...existing, version: agent.published.version }) ?? newSession(agent, { source: 'workflow', userId, version: agent.published.version, ...(conversationKey && { conversationKey }) });
           }
@@ -367,9 +367,9 @@ export const messageAgentNode = defineNode({
 });
 
 /** Whether the run that put this session to wait is still waiting for a decision (another execution than the one now running, in the 'waiting' state). */
-function stillWaiting(session: AgentSession, store: typeof import('../store').store): boolean {
+async function stillWaiting(session: AgentSession, store: typeof import('../store').store): Promise<boolean> {
   const id = session.execution?.executionId;
-  return Boolean(id && store.getExecution(id)?.status === 'waiting');
+  return Boolean(id && (await store.loadExecution(id))?.status === 'waiting');
 }
 
 /** A pending call nobody can decide any more: each is answered "cancelled", so the transcript has no unanswered tool call, and the session is idle. */
