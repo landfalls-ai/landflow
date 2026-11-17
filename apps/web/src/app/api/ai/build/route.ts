@@ -12,6 +12,7 @@ import { currentPrincipal } from '@/lib/server/auth/guard'; // SB19:
 import { meteredWorkflowId } from '@/lib/server/assistant/scope'; // SB19:
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { planProblems } from '@/lib/shared/build-plan'; // SB13:
+import { subnodeProblems } from '@/lib/server/assistant/build-plan'; // SB13:
 import { PlanSchema } from './plan-schema'; // SB13:
 
 export const dynamic = 'force-dynamic';
@@ -38,7 +39,7 @@ export const POST = handler(async (request: Request) => {
     const { plan } = parsed.data;
     if (plan) {
       const offered = new Map(types.map((t) => [t.type, t]));
-      const problems = planProblems(plan, new Set(offered.keys()), (type) => offered.get(type)?.descriptor.kind === 'trigger');
+      const problems = [...planProblems(plan, new Set(offered.keys()), (type) => offered.get(type)?.descriptor.kind === 'trigger'), ...subnodeProblems(plan, (type) => offered.get(type))];
       if (problems.length) return error(`The plan cannot be built: ${problems.map((p) => `${p.step ? `${p.step}: ` : ''}${p.problem}`).join('; ')}`, 400);
     }
     const draft = await runInUsageScope(scope, () => buildFlow(parsed.data.prompt, picked.model, teams, agents, { types, ...(plan && { plan }) /* SB13: */ }));

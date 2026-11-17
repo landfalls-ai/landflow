@@ -4,6 +4,7 @@
  * card, the first draft's flow (./draft-flow.ts) and their tests share it.
  */
 import type { BuildPlan } from '@/lib/shared/build-plan';
+import { withoutStep } from '@/lib/shared/plan-edit';
 import { useAssistant } from '../assistant';
 
 export interface PlanPart {
@@ -16,21 +17,8 @@ export interface PlanPart {
   prompt: string;
 }
 
-/** The plan without a step: what followed it follows the step's own `from` (and output). The trigger stays. */
-export function dropStep(plan: BuildPlan, key: string): BuildPlan {
-  const gone = plan.steps.find((s) => s.key === key);
-  if (!gone || !gone.from) return plan;
-  return {
-    ...plan,
-    steps: plan.steps
-      .filter((s) => s.key !== key)
-      .map((s) => {
-        if (s.from !== key) return s;
-        const { output: _output, ...rest } = s;
-        return { ...rest, from: gone.from, ...(!s.attach && gone.output ? { output: gone.output } : {}) };
-      }),
-  };
-}
+/** The plan without a step (its attached sub-nodes go with it); see `withoutStep`. */
+export const dropStep = withoutStep;
 
 /** The plan with another node type for one step (its words stay). */
 export function swapStep(plan: BuildPlan, key: string, type: string): BuildPlan {

@@ -36,7 +36,7 @@ const { createUser } = await import('@/lib/server/auth/users');
 const { enableTestAuth } = await import('@/lib/server/auth/test-bypass');
 const { availableTypes } = await import('@/lib/server/assistant/research');
 const { allowedTypes } = await import('@/lib/server/assistant/scope');
-const { candidatesFor, planFlow, repairPlan, parsePlan, alternativesFor } = await import('@/lib/server/assistant/build-plan');
+const { candidatesFor, planFlow, repairPlan, parsePlan, alternativesFor, subnodeProblems } = await import('@/lib/server/assistant/build-plan');
 const { buildFlow } = await import('@/lib/server/flow-builder');
 const planRoute = await import('@/app/api/ai/build/plan/route');
 const buildRoute = await import('@/app/api/ai/build/route');
@@ -407,5 +407,28 @@ describe('the plan card', () => {
       const card = useAssistant.getState().items.find((i) => i.role === 'assistant' && i.parts.some((p) => p.kind === 'plan'));
       expect(card?.role === 'assistant' && card.parts[0]).toMatchObject({ plan: { state: 'stopped' } });
     });
+  });
+});
+
+describe('sub-nodes are never main steps', () => {
+  // A sub-node (a chat model, a loader) as the live catalog has them; cloned so the test does not depend on which plugin ships one.
+  const base = availableTypes();
+  const sub = { ...base.find((t) => t.type === 'core.dataTable')!, type: 'core.testLoader' };
+  sub.descriptor = { ...sub.descriptor, displayName: 'Data Loader', kind: 'subnode', supplies: 'ai_document' } as typeof sub.descriptor;
+  const types = [...base.filter((t) => t.descriptor.kind !== 'subnode'), sub];
+  it('offers no sub-node as an alternative to a main step', () => {
+    const plan = parsePlan(reply({ ...GOOD, steps: GOOD.steps.map((s) => (s.key === 's5' ? { ...s, name: 'Data Loader', does: 'Load data documents into a table' } : s)) }));
+    if (!plan.ok) throw new Error('plan');
+    const alternatives = alternativesFor(plan.plan, new Map(types.map((t) => [t.type, t])), types);
+    for (const list of Object.values(alternatives)) for (const a of list) expect(types.find((t) => t.type === a.type)?.descriptor.kind).not.toBe('subnode');
+  });
+  it('flags and repairs a sub-node used without attach', () => {
+        const bad = { ...GOOD, steps: [...GOOD.steps.slice(0, 2), { key: 's3', type: sub.type, name: 'Loader', does: 'Load documents', from: 's2' }] } as BuildPlan;
+    const lookup = (type: string) => types.find((t) => t.type === type);
+    expect(subnodeProblems(bad, lookup)).toHaveLength(1);
+    expect(subnodeProblems({ ...bad, steps: bad.steps.map((s) => (s.key === 's3' ? { ...s, attach: 'ai_languageModel' } : s)) }, lookup)).toHaveLength(0);
+    const fixed = repairPlan(bad, { offered: new Map(types.map((t) => [t.type, t])), isTrigger: (t) => lookup(t)?.descriptor.kind === 'trigger', isSubnode: (t) => lookup(t)?.descriptor.kind === 'subnode', stand: () => undefined });
+    expect(fixed.steps.some((s) => s.type === sub.type)).toBe(false);
+    expect(fixed.cannot.length).toBeGreaterThan(0);
   });
 });

@@ -10,6 +10,7 @@ import { z } from 'zod';
 import type { NodeTypeInfo } from '@/lib/shared/types';
 import { describeAgents, type AgentBrief } from '@/lib/shared/agent-brief';
 import { describeTeams, type TeamBrief } from '@/lib/shared/agent-teams';
+import { withoutStep } from '@/lib/shared/plan-edit';
 import { PLAN_STEP_LIMIT, planProblems, type BuildPlan, type BuildStage, type PlanProblem, type PlanStep } from '@/lib/shared/build-plan';
 import { askModel, builderTimeoutMs, jsonOf } from '../flow-builder';
 import { catalogSummary, searchNodes } from './research';
@@ -19,7 +20,7 @@ export const CANDIDATE_LIMIT = 24;
 /** A hit scores 4 or more when a word of the request is in a node's name or type: a lower score is a word in its description. */
 const MIN_SCORE = 4;
 
-const FILLER = new Set('the and for with each when its into from that this then them they their what which who your you any all are was has have not but per one two also only must should will can new have'.split(' '));
+const FILLER = new Set('the and for with each when its into from that this then them they their what which who your you any all are was has have not but per one two also only must should will can new'.split(' '));
 
 /** A request's own words for a node search: two-letter words ("to", "on") are inside half the node names. */
 export const searchWords = (value: string | undefined): string =>
@@ -44,6 +45,14 @@ export function clausesOf(prompt: string): string[] {
 const GLUE = ['core.if', 'core.filter', 'core.switch', 'core.set', 'core.code', 'core.merge', 'core.httpRequest'];
 
 const isTriggerInfo = (t: NodeTypeInfo | undefined) => t?.descriptor.kind === 'trigger';
+const isSubnodeInfo = (t: NodeTypeInfo | undefined) => t?.descriptor.kind === 'subnode';
+
+/** A step without `attach` must not be a sub-node type (it would be built as a main step); `lookup` tells a type's info. */
+export function subnodeProblems(plan: BuildPlan, lookup: (type: string) => NodeTypeInfo | undefined): PlanProblem[] {
+  return plan.steps.flatMap((step): PlanProblem[] =>
+    !step.attach && isSubnodeInfo(lookup(step.type)) ? [{ step: step.key, problem: `“${step.type}” is a sub-node: it must be attached to an agent step (“attach”), not a step of its own in the flow` }] : [],
+  );
+}
 
 export interface Candidates {
   /** The types offered to the model, triggers first. */
@@ -158,25 +167,13 @@ export function standIn(step: PlanStep, pool: NodeTypeInfo[]): string | undefine
   return pool.find((t) => words.has(squash(t.descriptor.displayName)) || words.has(squash(t.type.split('.').pop()!)))?.type;
 }
 
-/** The plan without a step: its children follow the step's own `from` (and output), the way the card's × does it. */
-export function withoutStep(plan: BuildPlan, key: string): BuildPlan {
-  const gone = plan.steps.find((s) => s.key === key);
-  if (!gone) return plan;
-  return {
-    ...plan,
-    steps: plan.steps
-      .filter((s) => s.key !== key)
-      .map((s) => {
-        if (s.from !== key) return s;
-        const { output: _output, ...rest } = s;
-        return { ...rest, ...(gone.from && { from: gone.from }), ...(!s.attach && gone.output ? { output: gone.output } : {}) };
-      }),
-  };
-}
+export { withoutStep };
 
 export interface RepairContext {
   offered: ReadonlyMap<string, NodeTypeInfo>;
   isTrigger: (type: string) => boolean;
+  /** Tells a sub-node type: one used as a main step (no `attach`) is replaced like a type that is not offered. */
+  isSubnode?: (type: string) => boolean;
   /** The best offered type for a step's words (a trigger for the first step), or undefined. */
   stand: (step: PlanStep, asTrigger: boolean) => string | undefined;
 }
@@ -204,7 +201,7 @@ export function repairPlan(input: BuildPlan, ctx: RepairContext): BuildPlan {
   const kept: PlanStep[] = [];
   const dropped = new Map<string, PlanStep>();
   for (const [index, s] of steps.entries()) {
-    if (ctx.offered.has(s.type)) {
+    if (ctx.offered.has(s.type) && (s.attach || !ctx.isSubnode?.(s.type))) {
       kept.push(s);
       continue;
     }
@@ -295,7 +292,15 @@ const stem = (w: string) => w.replace(/(ing|es|s)$/, '');
 export function alternativesFor(plan: BuildPlan, offered: ReadonlyMap<string, NodeTypeInfo>, all: NodeTypeInfo[]): PlanResult['alternatives'] {
   const out: PlanResult['alternatives'] = {};
   plan.steps.forEach((step, index) => {
-    const pool = all.filter((t) => (index === 0 ? isTriggerInfo(t) : !isTriggerInfo(t)) && t.type !== step.type);
+    // A trigger only among triggers; a main step only among main steps; an attached sub-node only among sub-nodes.
+    const supplies = (t: NodeTypeInfo) => [t.descriptor.supplies ?? []].flat() as string[];
+    const own0 = all.find((t) => t.type === step.type);
+    const pool = all.filter((t) => {
+      if (t.type === step.type) return false;
+      if (index === 0) return isTriggerInfo(t);
+      if (step.attach) return isSubnodeInfo(t) && (!own0 || !supplies(own0).length || supplies(t).some((x) => supplies(own0).includes(x)));
+      return !isTriggerInfo(t) && !isSubnodeInfo(t);
+    });
     const words = new Set(searchWords(`${step.name} ${step.does}`).split(' ').map(stem));
     // Only a node one of whose own words (name, type, keywords) is a word of the step: "post" is not "Postgres".
     const near = pool.filter((t) => [t.descriptor.displayName, t.type.split('.').pop() ?? '', ...(t.descriptor.keywords ?? [])].join(' ').toLowerCase().split(/[^a-z0-9]+/).some((w) => w.length > 2 && words.has(stem(w))));
@@ -328,7 +333,7 @@ export async function planFlow(prompt: string, input: PlanInput): Promise<PlanRe
   const timeoutMs = builderTimeoutMs();
   const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [{ role: 'user', content: request }];
   const ask = (stage: 'plan' | 'send-back', left: number) => askModel(model, messages, left, { stage, stages, system: PLAN_SYSTEM });
-  const check = (plan: BuildPlan) => planProblems(plan, new Set(offered.keys()), isTrigger);
+  const check = (plan: BuildPlan) => [...planProblems(plan, new Set(offered.keys()), isTrigger), ...subnodeProblems(plan, (type) => offered.get(type) ?? types.find((t) => t.type === type))];
 
   const first = await ask('plan', timeoutMs);
   messages.push({ role: 'assistant', content: first });
@@ -351,7 +356,8 @@ export async function planFlow(prompt: string, input: PlanInput): Promise<PlanRe
     plan = repairPlan(plan, {
       offered,
       isTrigger,
-      stand: (step, asTrigger) => standIn(step, offeredList.filter((t) => isTriggerInfo(t) === asTrigger)),
+      isSubnode: (type) => isSubnodeInfo(offered.get(type)),
+      stand: (step, asTrigger) => standIn(step, offeredList.filter((t) => isTriggerInfo(t) === asTrigger && !isSubnodeInfo(t))),
     });
     const still = check(plan);
     if (still.length) throw new Error(`The plan cannot be built: ${problemsText(still)}`);
