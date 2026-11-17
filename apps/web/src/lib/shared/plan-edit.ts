@@ -1,4 +1,7 @@
-import type { BuildPlan } from './build-plan'; // SB13:
+/**
+ * Edits to a build plan the plan card makes in the browser (lib/shared, so the card and the server's repair share them).
+ */
+import type { BuildPlan } from './build-plan';
 
 /**
  * The plan without a step: a main step that followed it follows the step's own `from` (and output); a sub-node attached

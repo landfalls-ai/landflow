@@ -10,7 +10,6 @@ import { z } from 'zod';
 import type { NodeTypeInfo } from '@/lib/shared/types';
 import { describeAgents, type AgentBrief } from '@/lib/shared/agent-brief';
 import { describeTeams, type TeamBrief } from '@/lib/shared/agent-teams';
-import { withoutStep } from '@/lib/shared/plan-edit';
 import { PLAN_LINES_LIMIT, PLAN_STEP_LIMIT, planProblems, type BuildPlan, type BuildStage, type PlanProblem, type PlanStep } from '@/lib/shared/build-plan';
 import { askModel, buildFlow, builderTimeoutMs, jsonOf, type FlowDraft } from '../flow-builder';
 import { availableTypes, catalogSummary, searchNodes } from './research';
@@ -50,10 +49,21 @@ const isSubnodeInfo = (t: NodeTypeInfo | undefined) => t?.descriptor.kind === 's
 
 /** A step without `attach` must not be a sub-node type (it would be built as a main step); `lookup` tells a type's info. */
 export function subnodeProblems(plan: BuildPlan, lookup: (type: string) => NodeTypeInfo | undefined): PlanProblem[] {
-  return plan.steps.flatMap((step): PlanProblem[] =>
-    !step.attach && isSubnodeInfo(lookup(step.type)) ? [{ step: step.key, problem: `“${step.type}” is a sub-node: it must be attached to an agent step (“attach”), not a step of its own in the flow` }] : [],
-  );
+  return plan.steps.flatMap((step): PlanProblem[] => {
+    const info = lookup(step.type);
+    if (!step.attach) return isSubnodeInfo(info) ? [{ step: step.key, problem: `“${step.type}” is a sub-node: it must be attached to an agent step (“attach”), not a step of its own in the flow` }] : [];
+    // An attached step must supply the connection it attaches by (a chat model as ai_languageModel, never Slack).
+    return info && !attachFits(info, step.attach) ? [{ step: step.key, problem: `“${step.type}” cannot be attached as ${step.attach}${suppliesOf(info).length ? `: it supplies ${suppliesOf(info).join(', ')}` : ': it is not a sub-node'}` }] : [];
+  });
 }
+
+const suppliesOf = (t: NodeTypeInfo) => [t.descriptor.supplies ?? []].flat() as string[];
+/**
+ * Whether a node can be attached by this connection: a sub-node whose `supplies` has it (a sub-node that names none
+ * fits any), or, as an agent's tool (`ai_tool`), an action node that is not opted out (`usableAsTool`).
+ */
+const attachFits = (t: NodeTypeInfo, attach: string) =>
+  isSubnodeInfo(t) ? !suppliesOf(t).length || suppliesOf(t).includes(attach) : attach === 'ai_tool' && t.descriptor.kind === 'action' && t.descriptor.usableAsTool !== false;
 
 export interface Candidates {
   /** The types offered to the model, triggers first. */
@@ -168,13 +178,13 @@ export function standIn(step: PlanStep, pool: NodeTypeInfo[]): string | undefine
   return pool.find((t) => words.has(squash(t.descriptor.displayName)) || words.has(squash(t.type.split('.').pop()!)))?.type;
 }
 
-export { withoutStep };
-
 export interface RepairContext {
   offered: ReadonlyMap<string, NodeTypeInfo>;
   isTrigger: (type: string) => boolean;
   /** Tells a sub-node type: one used as a main step (no `attach`) is replaced like a type that is not offered. */
   isSubnode?: (type: string) => boolean;
+  /** Whether a type can be attached by this connection (`attach`): false drops the step. Absent: any. */
+  attachFits?: (type: string, attach: string) => boolean;
   /** The best offered type for a step's words (a trigger for the first step), or undefined. */
   stand: (step: PlanStep, asTrigger: boolean) => string | undefined;
   /** Integration (sb3): whether the request names this trigger type: of two triggers that one stays (SB02's rule for drafts), else the first. */
@@ -204,11 +214,13 @@ export function repairPlan(input: BuildPlan, ctx: RepairContext): BuildPlan {
   const kept: PlanStep[] = [];
   const dropped = new Map<string, PlanStep>();
   for (const [index, s] of steps.entries()) {
-    if (ctx.offered.has(s.type) && (s.attach || !ctx.isSubnode?.(s.type))) {
+    // An offered type attached by a connection it does not supply is no stand-in's to fix: the step goes, named.
+    const misattached = Boolean(s.attach && ctx.offered.has(s.type) && ctx.attachFits && !ctx.attachFits(s.type, s.attach));
+    if (!misattached && ctx.offered.has(s.type) && (s.attach || !ctx.isSubnode?.(s.type))) {
       kept.push(s);
       continue;
     }
-    const stand = ctx.stand(s, index === 0);
+    const stand = misattached ? undefined : ctx.stand(s, index === 0);
     if (stand) {
       notes.push(`“${s.name}” was planned as ${s.type}, which is not a node here: ${ctx.offered.get(stand)!.descriptor.displayName} stands in for it`);
       kept.push({ ...s, type: stand });
@@ -305,7 +317,7 @@ export function alternativesFor(plan: BuildPlan, offered: ReadonlyMap<string, No
   const out: PlanResult['alternatives'] = {};
   plan.steps.forEach((step, index) => {
     // A trigger only among triggers; a main step only among main steps; an attached sub-node only among sub-nodes.
-    const supplies = (t: NodeTypeInfo) => [t.descriptor.supplies ?? []].flat() as string[];
+    const supplies = suppliesOf;
     const own0 = all.find((t) => t.type === step.type);
     const pool = all.filter((t) => {
       if (t.type === step.type) return false;
@@ -388,6 +400,7 @@ export async function planFlow(prompt: string, input: PlanInput): Promise<PlanRe
       isTrigger,
       named: (type) => triggerNamed(offered.get(type) ?? types.find((t) => t.type === type), prompt),
       isSubnode: (type) => isSubnodeInfo(offered.get(type)),
+      attachFits: (type, attach) => { const info = offered.get(type) ?? types.find((t) => t.type === type); return !info || attachFits(info, attach); },
       stand: (step, asTrigger) => standIn(step, offeredList.filter((t) => isTriggerInfo(t) === asTrigger && !isSubnodeInfo(t))),
     });
     const still = check(plan);

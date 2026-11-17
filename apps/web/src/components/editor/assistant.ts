@@ -592,7 +592,7 @@ interface AssistantState {
 }
 
 /** What the model sees of earlier turns: the text, plus a note of each proposal and whether it was applied. */
-function historyOf(items: ChatItem[]) {
+export function historyOf(items: ChatItem[]) {
   return items.map((item) => {
     if (item.role === 'user') return { role: 'user' as const, content: item.text };
     const content = item.parts
@@ -600,6 +600,8 @@ function historyOf(items: ChatItem[]) {
         if (part.kind === 'text') return part.text;
         if (part.kind === 'proposal') return `[Proposed “${part.proposal.summary}”: ${part.proposal.state ?? 'not applied yet'}]`;
         if (part.kind === 'run' && part.run.state !== 'running') return `[Test run ${part.run.round} ${part.run.state}: ${part.run.summary ?? ''}]`;
+        // The plan card: the steps the person was shown, so the builder chat knows the flow that was agreed.
+        if (part.kind === 'plan') return `[Plan “${part.plan.plan.name}” (${part.plan.state}): ${part.plan.plan.steps.map((s, i) => `${i + 1}. ${s.name}: ${s.does}`).join('; ')}]`;
         if (part.kind === 'ask') return askedLine(part.ask.choices); // SB09 × SB11: the next message is the answer, the server reads the request across it
         return '';
       })

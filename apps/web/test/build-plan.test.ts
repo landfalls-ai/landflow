@@ -486,12 +486,62 @@ describe('sub-nodes are never main steps', () => {
     for (const list of Object.values(alternatives)) for (const a of list) expect(types.find((t) => t.type === a.type)?.descriptor.kind).not.toBe('subnode');
   });
   it('flags and repairs a sub-node used without attach', () => {
-        const bad = { ...GOOD, steps: [...GOOD.steps.slice(0, 2), { key: 's3', type: sub.type, name: 'Loader', does: 'Load documents', from: 's2' }] } as BuildPlan;
+    const bad = { ...GOOD, steps: [...GOOD.steps.slice(0, 2), { key: 's3', type: sub.type, name: 'Loader', does: 'Load documents', from: 's2' }] } as BuildPlan;
     const lookup = (type: string) => types.find((t) => t.type === type);
     expect(subnodeProblems(bad, lookup)).toHaveLength(1);
-    expect(subnodeProblems({ ...bad, steps: bad.steps.map((s) => (s.key === 's3' ? { ...s, attach: 'ai_languageModel' } : s)) }, lookup)).toHaveLength(0);
+    const attachedAs = (attach: string) => ({ ...bad, steps: bad.steps.map((s) => (s.key === 's3' ? { ...s, attach } : s)) });
+    expect(subnodeProblems(attachedAs('ai_document'), lookup)).toHaveLength(0);
     const fixed = repairPlan(bad, { offered: new Map(types.map((t) => [t.type, t])), isTrigger: (t) => lookup(t)?.descriptor.kind === 'trigger', isSubnode: (t) => lookup(t)?.descriptor.kind === 'subnode', stand: () => undefined });
     expect(fixed.steps.some((s) => s.type === sub.type)).toBe(false);
     expect(fixed.cannot.length).toBeGreaterThan(0);
+  });
+
+  it('flags a step attached by a connection its node does not supply, and the repair drops it, named', () => {
+    // `types` was read before the plugins registered: Slack comes from the live catalog.
+    const live = [...types, ...availableTypes().filter((t) => !types.some((x) => x.type === t.type) && t.descriptor.kind !== 'subnode')];
+    const lookup = (type: string) => live.find((t) => t.type === type);
+    const withStep = (type: string, attach: string) => ({ ...GOOD, steps: [...GOOD.steps.slice(0, 2), { key: 's3', type, name: 'Attached', does: 'Attach it', from: 's2', attach }] }) as BuildPlan;
+    // A loader supplies documents, not a chat model; Slack is no sub-node at all.
+    const asModel = subnodeProblems(withStep(sub.type, 'ai_languageModel'), lookup);
+    expect(asModel).toHaveLength(1);
+    expect(asModel[0].problem).toContain('ai_document');
+    const slackAsModel = subnodeProblems(withStep('messaging.slack', 'ai_languageModel'), lookup);
+    expect(slackAsModel).toHaveLength(1);
+    expect(slackAsModel[0].problem).toContain('ai_languageModel');
+    // An action node may be an agent's tool; a sub-node may supply what it supplies.
+    expect(subnodeProblems(withStep('messaging.slack', 'ai_tool'), lookup)).toHaveLength(0);
+    expect(subnodeProblems(withStep(sub.type, 'ai_document'), lookup)).toHaveLength(0);
+    const ctx = { offered: new Map(live.map((t) => [t.type, t])), isTrigger: (t: string) => lookup(t)?.descriptor.kind === 'trigger', isSubnode: (t: string) => lookup(t)?.descriptor.kind === 'subnode', attachFits: (t: string, a: string) => subnodeProblems({ ...GOOD, steps: [{ key: 'x', type: t, name: 'x', does: 'x', attach: a }] }, lookup).length === 0, stand: () => 'core.dataTable' };
+    const fixed = repairPlan(withStep('messaging.slack', 'ai_languageModel'), ctx);
+    expect(fixed.steps.some((s) => s.name === 'Attached')).toBe(false);
+    expect(fixed.cannot.some((c) => c.startsWith('Attached'))).toBe(true);
+  });
+
+  it('is refused by the build route when a sub-node is a main step of the plan (400, nothing built)', async () => {
+    const loader = availableTypes().find((t) => t.descriptor.kind === 'subnode');
+    expect(loader).toBeDefined();
+    const plan = { ...GOOD, steps: [...GOOD.steps.slice(0, 2), { key: 's3', type: loader!.type, name: 'Loader', does: 'Load documents', from: 's2' }] };
+    const response = await (buildRoute.POST as unknown as Route)(post('/api/ai/build', { prompt: B1, plan }));
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toMatch(/is a sub-node/);
+    expect(chats()).toHaveLength(0);
+  });
+
+  it('removing a step takes the sub-node attached to it along, and a step that followed it follows its parent', async () => {
+    const { withoutStep } = await import('@/lib/shared/plan-edit');
+    const plan: BuildPlan = {
+      name: 'Agent',
+      steps: [
+        { key: 's1', type: 'core.schedule', name: 'Daily', does: 'Run daily' },
+        { key: 's2', type: 'core.aiAgent', name: 'Agent', does: 'Triage', from: 's1' },
+        { key: 's3', type: 'core.openaiChatModel', name: 'Model', does: 'Chat model', from: 's2', attach: 'ai_languageModel' },
+        { key: 's4', type: 'messaging.slack', name: 'Post', does: 'Post it', from: 's2' },
+      ],
+      assumptions: [],
+      cannot: [],
+    };
+    expect(withoutStep(plan, 's2').steps.map((s) => [s.key, s.from])).toEqual([['s1', undefined], ['s4', 's1']]);
+    // The trigger stays.
+    expect(withoutStep(plan, 's1')).toBe(plan);
   });
 });

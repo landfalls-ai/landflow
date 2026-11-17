@@ -12,7 +12,7 @@ vi.mock('@/components/editor/assistant', async (original) => ({
   applyChanges: vi.fn(() => true),
 }));
 
-const { fixedNodes, ownRun, spotlightOwnsRun, useAssistant } = await import('@/components/editor/assistant');
+const { fixedNodes, historyOf, ownRun, spotlightOwnsRun, useAssistant } = await import('@/components/editor/assistant');
 const { useEditor } = await import('@/components/editor/store');
 const { afterReply, useAutonomous } = await import('@/components/editor/autonomous');
 const { agentStep, draftPhase, draftStatus, lastRunOf, sessionIsWaiting, sessionWaitsForApply, stepsOf, titleOf } = await import('@/components/editor/timeline');
@@ -169,5 +169,14 @@ describe('the status while a flow is drafted', () => {
     // An older, finished plan does not make the next ask's plan call look like a build; nothing drafting says nothing.
     expect(draftPhase([card('built'), ...asked], true)).toBe('planning');
     expect(draftPhase(building, false)).toBeUndefined();
+  });
+});
+
+describe('what the builder chat is told about earlier turns', () => {
+  it('gives a plan card a line with its steps, not "(no reply)"', () => {
+    const plan = { name: 'Bug triage', steps: [{ key: 's1', type: 'core.schedule', name: 'Every weekday', does: 'Run at 8' }, { key: 's2', type: 'linear.linear', name: 'Get bugs', does: 'Read new bugs', from: 's1' }], assumptions: [], cannot: [] };
+    const items: ChatItem[] = [{ id: 'u', role: 'user', text: 'Triage bugs' }, { id: 'c', role: 'assistant', parts: [{ kind: 'plan', plan: { plan, alternatives: {}, state: 'built', prompt: 'Triage bugs' } }] }];
+    const [, said] = historyOf(items);
+    expect(said.content).toBe('[Plan “Bug triage” (built): 1. Every weekday: Run at 8; 2. Get bugs: Read new bugs]');
   });
 });
