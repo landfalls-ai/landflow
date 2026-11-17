@@ -959,7 +959,13 @@ class WorkflowRun {
     }
 
     // Pin data is test data for runs a person starts: a trigger, poll, webhook or an agent's tool call runs the node.
-    const pinned = pinsApply(this.options.mode) ? this.options.workflow.pinData?.[node.id] : undefined;
+    // AG01: items the run was given (a chat message, the run route's items) beat the start node's own pin.
+    const givenItems = !!this.options.triggerItems?.length && this.options.startNodeId === node.id;
+    const pinWas = pinsApply(this.options.mode) ? this.options.workflow.pinData?.[node.id] : undefined;
+    const pinned = givenItems ? undefined : pinWas;
+    const givenNote: LogEntry | undefined = pinWas && givenItems
+      ? { level: 'info', message: this.options.mode === 'chat' ? 'Used the chat message, not the pinned sample' : 'Used the given items, not the pinned data' }
+      : undefined;
     if (pinned) {
       telemetry.span.setAttribute('landflow.node.pinned', true);
       const outputs = [pinned];
@@ -993,7 +999,7 @@ class WorkflowRun {
           this.pendingWait = { request: wait, node, inputs: effectiveInputs, outputs: response.outputs, ...(response.logs && { logs: response.logs }), startedAt: started, askedAt: Date.now() };
           return response.outputs;
         }
-        const logs = throttled ? [throttled, ...(response.logs ?? [])] : response.logs;
+        const logs = throttled || givenNote ? [...(givenNote ? [givenNote] : []), ...(throttled ? [throttled] : []), ...(response.logs ?? [])] : response.logs; // AG01: givenNote
         finish({ status: 'success', inputs: effectiveInputs, outputs: response.outputs, ...(logs && { logs }) });
         return response.outputs;
       } catch (caught) {
