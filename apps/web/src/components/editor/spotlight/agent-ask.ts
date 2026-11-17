@@ -9,7 +9,7 @@
  */
 import { nanoid } from 'nanoid';
 import { api } from '@/lib/client/api';
-import { agentAsk, agentChangeAsk, askCatalog, fallbackName, knowledgeFolderOf, readsTokens, type AgentAsk, type AskCatalogEntry } from '@/lib/shared/agent-ask';
+import { agentAsk, agentChangeAsk, askCatalog, fallbackName, knowledgeFolderOf, knowledgeOf, readsTokens, sourceFolderOf, type AgentAsk, type AskCatalogEntry } from '@/lib/shared/agent-ask';
 import { starterFlow, starterSample, type AgentCard, type AgentCardTool, type AgentKnowledgeSetup, type AgentNotAdded } from '@/lib/shared/agent-card';
 import { agentChanges } from '@/lib/shared/agent-changes'; // AG04:
 import { announceChange, announceSaved, designChange, publishChange, saveChange, testDraft } from '@/lib/client/agent-change'; // AG04: AG09: testDraft; ag3 carryover: announceSaved
@@ -113,7 +113,7 @@ export async function designAgentCard(message: string, ask: AgentAsk, options: {
   const abort = (draftCall.request = new AbortController());
   try {
     const workflow = useEditor.getState().name;
-    const spec = { name: designName, description: ask.description, instructions: '', ask: message.slice(0, 4000) /* AG02: the whole ask */, ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }), ...(ask.knowledgeFolder && { knowledgeFolder: ask.knowledgeFolder, knowledgeAsked: true }) /* AG13: */ };
+    const spec = { name: designName, description: ask.description, instructions: '', ask: message.slice(0, 4000) /* AG02: the whole ask */, ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }), ...(ask.knowledgeFolder && { knowledgeFolder: ask.knowledgeFolder, ...(ask.knowledge && { knowledgeAsked: true }) }) /* AG13: a folder is a source only when the ask wants knowledge (ag3 fix: 'answers emails from the Inbox folder' is not one) */ };
     const preview = await designPreview(spec, workflow && !/^untitled/i.test(workflow) ? { workflow } : {}, abort.signal);
     const card = { ...cardFromPreview(preview, ask, options.starter, message), workflowId: workflowAtStart };
     const alone = createsAlone();
@@ -269,12 +269,28 @@ export function folderAnswerOf(message: string): string | undefined {
   return SHORT.test(text) ? knowledgeFolderOf(`answers questions ${text.replace(/^(?:(?:it\s+)?(?:answers?|reads?|uses?|searches?)\s+)/i, '')}`) : undefined;
 }
 
+/** ag3 fix pass: the card asked for a source (no folder, no existing base) or its folder had a problem: a reply naming a folder answers it. */
+export const cardAsksSource = (card: AgentCard): boolean => Boolean(card.knowledgeSetup && !card.knowledgeSetup.existing && (!card.knowledgeSetup.folder || card.knowledgeSetup.problem));
+
+/** The folder a message under `card` names, and whether it is the answer to the card's own question (then it is a source whatever the words). */
+function folderUnder(message: string, card?: AgentCard): { folder: string; answer: boolean } | undefined {
+  if (card && cardAsksSource(card)) {
+    const folder = sourceFolderOf(message);
+    if (folder) return { folder, answer: true };
+  }
+  const folder = folderAnswerOf(message);
+  return folder ? { folder, answer: false } : undefined;
+}
+
 export function reviseCardFor(message: string): { itemId: string; card: AgentCard } | undefined {
   // ag3 carryover (the live pass): an answer that only names a source ("from the folder runbooks") starts with no change verb, so it
   // went to the flow builder ("Plan: Runbooks folder workflow"); under a card it revises the card's knowledge, as AG13 promised.
-  const change = agentChangeAsk(message) === 'change' || (agentChangeAsk(message) === undefined && !!folderAnswerOf(message));
+  // ag3 fix pass: when the card asked for a source, any reply naming a folder is that answer ("The folder is runbooks", "from the guides folder").
+  const newest = newestCard();
+  const kind = agentChangeAsk(message);
+  const change = kind === 'change' || (kind === undefined && !!folderUnder(message, newest?.card));
   if (!change || cardAskFor(message) || workflowShaped(message)) return undefined;
-  return newestCard();
+  return newest;
 }
 
 const WORKFLOW_WORDS = /\b(?:steps?|nodes?|triggers?|flows?|workflows?|webhooks?|cron|canvas)\b/i;
@@ -364,8 +380,10 @@ export async function reviseAgentCard(itemId: string, card: AgentCard, message: 
   try {
     // A created card's agent is the base; a pending card's own config is (a card that already proposes a change to an agent keeps its base).
     const base = made && existing ? { agentId: existing } : { config: card.config };
-    const folder = folderAnswerOf(message); // AG13: "from the folder runbooks" under a card adds the knowledge base (ag3 carryover: a bare answer too)
-    const input = { name: card.name, description: card.description, base, change: message, ...pickedModel(), ...(folder && { knowledgeFolder: folder, knowledgeAsked: true }) };
+    // AG13: "from the folder runbooks" under a card adds the knowledge base (ag3 carryover: a bare answer too). ag3 fix pass: it is a source
+    // when the card asked for one (read without the knowledge-clause gate) or the words ask for knowledge; never because a folder was named.
+    const named = folderUnder(message, card);
+    const input = { name: card.name, description: card.description, base, change: message, ...pickedModel(), ...(named && { knowledgeFolder: named.folder, ...((named.answer || knowledgeOf(message)) && { knowledgeAsked: true }) }) };
     const design = (await designChange(input, abort.signal)) as Awaited<ReturnType<typeof designChange>> & { knowledge?: Omit<AgentKnowledgeSetup, 'state'> };
     const notAdded = design.notAdded ?? []; // ag1-int: the tools the change named and the agent did not get
     const fresh = cardFromPreview({ config: design.config, needs: design.needs ?? [], missing: design.missing ?? [], designed: design.designed ?? true, cases: card.cases, notAdded, ...(design.knowledge && { knowledge: design.knowledge }) } as unknown as Parameters<typeof cardFromPreview>[0], { description: card.description, placed: false, tools: [] }, Boolean(card.starter));

@@ -47,3 +47,42 @@ describe('folderAnswerOf', () => {
     expect(folderAnswerOf('from the folder /etc')).toBeUndefined();
   });
 });
+
+// ag3 fix pass (AG13 blocker): the card asked "which folder does it answer from?"; any reply naming a folder answers it.
+const noSourceCard = () =>
+  useAssistant.setState({
+    items: [
+      { id: 'u1', role: 'user', text: 'Create an agent that answers questions from our incident runbooks.' },
+      { id: 'a1', role: 'assistant', parts: [{ kind: 'agentCard', card: { state: 'designed', name: 'Runbooks answerer', tools: [], knowledgeSetup: { collection: '', existing: false } } }] },
+    ] as never,
+  });
+
+describe('a folder reply under a card that asked for a source', () => {
+  beforeEach(() => useAssistant.setState({ items: [] as never }));
+
+  it('revises the no-source card, whatever the words', async () => {
+    const { reviseCardFor: reviseFor } = await import('@/components/editor/spotlight/agent-ask');
+    noSourceCard();
+    for (const reply of ['from the folder runbooks', 'answer from the folder runbooks', 'The folder is runbooks', 'use the folder guides', 'from the guides folder', 'in the folder manuals']) {
+      expect(reviseFor(reply)?.itemId, reply).toBe('a1');
+    }
+  });
+
+  it('the same words under a card that did not ask are no change, except where they were one before', async () => {
+    const { reviseCardFor: reviseFor } = await import('@/components/editor/spotlight/agent-ask');
+    withCard();
+    expect(reviseFor('The folder is runbooks')).toBeUndefined();
+    expect(reviseFor('from the guides folder')?.itemId).toBe('a1'); // the strict parser: a bare "from the <x> folder" is read as a source only through the SHORT form
+  });
+
+  it('reads the folder without the knowledge-clause gate; a destination is still not a source', async () => {
+    const { sourceFolderOf } = await import('@/lib/shared/agent-ask');
+    expect(sourceFolderOf('The folder is runbooks')).toBe('runbooks');
+    expect(sourceFolderOf('answer from the folder runbooks')).toBe('runbooks');
+    expect(sourceFolderOf('use the folder guides')).toBe('guides');
+    expect(sourceFolderOf('from the guides folder')).toBe('guides');
+    expect(sourceFolderOf('in the folder manuals')).toBe('manuals');
+    expect(sourceFolderOf('save it in the reports folder')).toBeUndefined();
+    expect(sourceFolderOf('from the folder /etc')).toBeUndefined();
+  });
+});

@@ -148,6 +148,67 @@ describe('the design route', () => {
   });
 });
 
+// ag3 fix pass (AG13 blockers 1 and 2).
+describe('a folder reply to the card that asked for a source (the revise)', () => {
+  const revise = async (extra: Record<string, unknown>) => {
+    const route = await import('@/app/api/agents/design/route');
+    // The no-source card's config has no knowledge base (the design dropped it); the reply names a folder.
+    const response = await route.POST(post('/api/agents/design', { name: 'Runbook answerer', description: 'Answers from the runbooks.', ask: NO_KB, preview: true, base: { config: { name: 'Runbook answerer', instructions: 'Answer support emails.', tools: [] } }, change: 'from the folder runbooks', ...extra }));
+    expect(response.status).toBe(200);
+    return (await response.json()) as Preview & { changes: string[] };
+  };
+
+  it('knowledgeAsked + folder on a no-source card: the knowledge base, its files and the folder come back', async () => {
+    const preview = await revise({ knowledgeFolder: 'runbooks', knowledgeAsked: true });
+    expect(preview.knowledge).toMatchObject({ folder: 'runbooks', fileCount: 4, search: 'keyword' });
+    expect(kbOf(preview.config)).toMatchObject({ collection: 'runbooks', indexedFrom: 'runbooks' });
+  });
+
+  it('a folder that is not named like knowledge works the same', async () => {
+    mkdirSync(join(files, 'guides'), { recursive: true });
+    writeFileSync(join(files, 'guides', 'onboarding.md'), '# Onboarding\n\nHow a new person starts.');
+    const preview = await revise({ knowledgeFolder: 'guides', knowledgeAsked: true, change: 'from the guides folder' });
+    expect(preview.knowledge).toMatchObject({ folder: 'guides', files: ['guides/onboarding.md'] });
+    expect(kbOf(preview.config)).toMatchObject({ collection: 'guides', indexedFrom: 'guides' });
+  });
+
+  it('without knowledgeAsked the same folder adds nothing', async () => {
+    const preview = await revise({ knowledgeFolder: 'runbooks' });
+    expect(kbOf(preview.config)).toBeUndefined();
+    expect(preview.knowledge?.folder).toBeUndefined();
+  });
+});
+
+describe('an email folder is never a knowledge source (ag3 fix pass)', () => {
+  const EMAIL_ASKS: Array<[string, string]> = [
+    ['Make an agent that answers emails from the Inbox folder', 'Inbox'],
+    ['Make an agent that searches emails in the Spam folder and answers them', 'Spam'],
+    ['Make an agent that searches for invoices in the inbox folder', 'inbox'],
+    ['Make an agent that looks up orders in the orders folder', 'orders'],
+  ];
+
+  it('the parser may read the folder, but the ask has no knowledge words, so the client sends no knowledgeAsked', () => {
+    for (const [ask] of EMAIL_ASKS) {
+      const parsed = agentAsk(ask);
+      expect(parsed?.knowledge, ask).toBeUndefined();
+    }
+    // The positive ask still names its source.
+    expect(agentAsk(ASK_E)?.knowledge).toBeTruthy();
+    expect(agentAsk('Make an agent that answers from the runbooks folder')?.knowledge).toBeTruthy();
+  });
+
+  it('the design route, an existing inbox folder, a scripted design with no knowledge base: no base, no problem row, no need', async () => {
+    mkdirSync(join(files, 'inbox'), { recursive: true });
+    writeFileSync(join(files, 'inbox', 'mail.md'), '# Mail\n\nA message.');
+    for (const [ask, folder] of EMAIL_ASKS) {
+      const preview = await design({ ask: NO_KB, knowledge: undefined, knowledgeFolder: folder === 'inbox' || folder === 'Inbox' ? 'inbox' : folder });
+      expect(kbOf(preview.config), ask).toBeUndefined();
+      expect(preview.knowledge, ask).toBeUndefined();
+      expect(preview.needs.some((n) => /knowledge|folder|files directory/i.test(n.text)), ask).toBe(false);
+    }
+  });
+});
+
 describe('the folder route and the search', () => {
   let agentId = '';
   let toolId = '';

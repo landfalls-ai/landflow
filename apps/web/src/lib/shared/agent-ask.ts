@@ -188,7 +188,7 @@ export function toolsOf(message: string, catalog: AskCatalogEntry[] = []): strin
 const LEAD_WORDS = /^(?:(?:the|our|a|an|your|its|my|from|in|on|with|and|to|using|of)\s+)+/i;
 
 /** What it answers from: "from our docs", "the docs knowledge base", "from the product wiki". */
-function knowledgeOf(message: string): string | undefined {
+export function knowledgeOf(message: string): string | undefined {
   const base = /((?:[\w-]+\s+){1,2})knowledge\s*base\b/i.exec(message);
   if (base) {
     const words = base[1].trim().replace(LEAD_WORDS, '').trim();
@@ -223,12 +223,32 @@ export function knowledgeFolderOf(message: string): string | undefined {
     ?? new RegExp(`\\b(?:in|from|under|inside)\\s+(?:the\\s+|our\\s+)?["“'‘]?([\\w.~:/\\\\-]+?)["”'’]?\\s+(?:folder|directory)\\b`, 'i').exec(clause)
     ?? (wantsKnowledge ? new RegExp(`\\b(?:the\\s+|our\\s+)?["“'‘]?([\\w.-]+?)["”'’]?\\s+folder\\b`, 'i').exec(clause) : null)
     ?? new RegExp(`\\b(?:in|from|under)\\s+["“'‘]?([\\w.-]+(?:/[\\w.-]+)*/)["”'’]?(?![\\w/])`, 'i').exec(clause);
-  if (!m) return undefined;
-  const raw = m[1].replace(/[.!?]+$/, '');
-  if (!raw || /^(?:the|a|an|this|that|our|your|its|new|same|another|files?|shared|local|specific)$/i.test(raw)) return undefined;
+  return m ? cleanFolder(m[1]) : undefined;
+}
+
+/** A folder name as the files directory takes it: relative, no `..`, no URL or drive; undefined for a filler word or anything else. */
+function cleanFolder(match: string): string | undefined {
+  const raw = match.replace(/[.!?]+$/, '');
+  if (!raw || /^(?:the|a|an|this|that|our|your|its|new|same|another|files?|shared|local|specific|is|are|called|named)$/i.test(raw)) return undefined;
   if (/^[\\/~]/.test(raw) || /^[a-z]:/i.test(raw) || /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) || raw.split(/[\\/]/).includes('..')) return undefined;
   const path = raw.replace(/\/+$/, '');
   return /^[\w.-]+(?:\/[\w.-]+)*$/.test(path) && path.length <= 200 ? path : undefined;
+}
+
+/**
+ * ag3 fix pass: the folder a reply names when a card has just asked "which folder does it answer from?": "from the folder runbooks",
+ * "answer from the folder runbooks", "The folder is runbooks", "use the folder guides", "from the guides folder", "in the folder manuals".
+ * No knowledge-clause gate (the card's question is the clause), but a write verb ("save it in the reports folder") names a destination.
+ */
+export function sourceFolderOf(message: string): string | undefined {
+  const text = message.trim();
+  if (!text || WRITE_VERB.test(text)) return undefined;
+  const PATH = '([^\\s"“”\'‘’,;()]+)';
+  const m = new RegExp(`\\b(?:in|from|under|inside|at|of|use|uses|using)\\s+(?:the\\s+|our\\s+)?folder\\s+(?:called\\s+|named\\s+)?["“'‘]?${PATH}`, 'i').exec(text)
+    ?? new RegExp(`\\bfolder\\s+(?:is|=|:)\\s*(?:called\\s+|named\\s+)?["“'‘]?${PATH}`, 'i').exec(text)
+    ?? new RegExp(`\\b(?:in|from|under|inside|use|uses|using)\\s+(?:the\\s+|our\\s+)?["“'‘]?([\\w.~:/\\\\-]+?)["”'’]?\\s+(?:folder|directory)\\b`, 'i').exec(text)
+    ?? new RegExp(`\\b(?:in|from|under)\\s+["“'‘]?([\\w.-]+(?:/[\\w.-]+)*/)["”'’]?(?![\\w/])`, 'i').exec(text);
+  return m ? cleanFolder(m[1]) : undefined;
 }
 
 const AGENT_NOUN: Record<string, string> = { review: 'reviewer', answer: 'answerer', summari: 'summariser', triage: 'triager', monitor: 'monitor', watch: 'watcher', write: 'writer', draft: 'drafter', classify: 'classifier', route: 'router', check: 'checker', label: 'labeller', translate: 'translator', research: 'researcher', report: 'reporter', plan: 'planner', find: 'finder', track: 'tracker', prioriti: 'prioritiser', respond: 'responder', reply: 'replier', handle: 'handler', analy: 'analyst', extract: 'extractor' };
