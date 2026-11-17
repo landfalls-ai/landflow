@@ -244,6 +244,21 @@ describe('Run an Agent, Tool Approvals', () => {
     expect(toolResults.join('\n')).toMatch(/other is not something this tool takes; ignored/);
   });
 
+  it('a keyed conversation whose waiting run was cancelled is not locked: the orphan call is settled as cancelled and the next message goes on', async () => {
+    script = (_t, body) => (body.messages.some((m) => m.role === 'tool') ? { text: 'Back again.' } : { toolCalls: [call(WRITE, { to: 'oncall@landflow.test' }, 'c_send')] });
+    const wf = flow({ toolApprovals: 'askInChat', conversation: 'key', sessionKey: 'cancel-key' });
+    const first = await run(wf, 'chat');
+    expect(first.status).toBe('waiting');
+    // Still waiting: the guard holds.
+    expect((await run(wf, 'chat')).error?.message).toMatch(/waiting for Approve or Reject/);
+    // The run is cancelled: nobody can decide it.
+    store.saveExecution({ ...store.getExecution(first.executionId)!, status: 'canceled' });
+    const next = await run(wf, 'chat');
+    expect(next.error?.message ?? next.status).toBe('success');
+    expect(toolResults.some((t) => /Cancelled: the run waiting for approval was cancelled/.test(t))).toBe(true);
+    expect(out(next).reply).toBe('Back again.');
+  });
+
   it.each([
     ['chat mode with Refuse (the default)', {}, 'chat'],
     ['webhook mode with Ask in the editor’s chat', { toolApprovals: 'askInChat' }, 'webhook'],

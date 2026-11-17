@@ -6,7 +6,7 @@
  */
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem, type StreamChunk } from '@landflow/sdk';
 import type { AgentMemory, AgentTool, LanguageModel } from '@landflow/engine';
-import { approvalSubject, type AgentStreamEvent } from '../../shared/agents';
+import { approvalSubject, type AgentSession, type AgentStreamEvent } from '../../shared/agents';
 import { agentAllowedBy } from '../../shared/project-policy';
 // AG10: the chat approval (the AI Agent node's own wait, reused).
 import { approvalSettings, askForApproval, decisionsOf } from './ai';
@@ -281,6 +281,8 @@ export const messageAgentNode = defineNode({
             const conversationKey = key ? `${userId}:${key}` : undefined;
             const existing = conversationKey ? agentStore.findConversation(agent.id, conversationKey) : undefined;
             // AG10: a keyed conversation that waits for Approve or Reject takes no new message: the model would be sent an unanswered tool call.
+            // N6: a waiting run that was cancelled (or failed, or is gone) leaves nobody to decide: the orphan call is settled as cancelled and the conversation goes on.
+            if (existing && (existing.pending || existing.status === 'awaiting_approval') && !stillWaiting(existing, (await import('../store')).store)) settleOrphan(existing, agentStore);
             if (existing && (existing.pending || existing.status === 'awaiting_approval')) throw new NodeOperationError(`${agent.name} is waiting for Approve or Reject on its last tool call: decide that first, then send the next message`, { itemIndex: i });
             session = (existing && { ...existing, version: agent.published.version }) ?? newSession(agent, { source: 'workflow', userId, version: agent.published.version, ...(conversationKey && { conversationKey }) });
           }
@@ -363,6 +365,26 @@ export const messageAgentNode = defineNode({
     },
   },
 });
+
+/** Whether the run that put this session to wait is still waiting for a decision (another execution than the one now running, in the 'waiting' state). */
+function stillWaiting(session: AgentSession, store: typeof import('../store').store): boolean {
+  const id = session.execution?.executionId;
+  return Boolean(id && store.getExecution(id)?.status === 'waiting');
+}
+
+/** A pending call nobody can decide any more: each is answered "cancelled", so the transcript has no unanswered tool call, and the session is idle. */
+function settleOrphan(session: AgentSession, agentStore: typeof import('../agents/store').agentStore): void {
+  const pending = session.pending;
+  if (pending) {
+    const answered = new Set(pending.results.map((r) => r.id));
+    const cancelled = pending.calls.filter((c) => !answered.has(c.callId)).map((c) => ({ id: c.callId, name: c.tool, content: 'Cancelled: the run waiting for approval was cancelled, so this call did not run.', isError: true }));
+    session.messages.push({ role: 'tool', results: [...pending.results, ...cancelled] });
+    for (const entry of session.timeline) if (entry.type === 'tool' && entry.status === 'awaiting_approval') Object.assign(entry, { status: 'denied', error: 'Cancelled: the run was cancelled' });
+  }
+  delete session.pending;
+  session.status = 'idle';
+  agentStore.saveSession(session);
+}
 
 /** An agent's timeline as the chat chunks of the AI Agent node: its answers, and its tool calls as they start and end. */
 export function streamer(send: NonNullable<IExecuteContext['sendChunk']>, itemIndex: number, agent?: StreamChunk['agent']) {
