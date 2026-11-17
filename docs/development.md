@@ -323,7 +323,7 @@ anything but this machine fail with `ECONNREFUSED` (and every lookup of another 
 `[local-only] refused <host>:<port>`. It must be on from the process's start: the runner stops with a message when the live form is asked for
 and it is not loaded, so the command above sets `NODE_OPTIONS` (a live check of a running host does the same). It covers
 `net` connections and `dns.lookup`; it does not cover `dns.resolve*` or `Resolver` (c-ares over UDP), `dgram` or child
-processes, which no product code uses today. A package adds
+processes, which no product code uses today. A scenario can give a build its plan outright (`start.plan`, a `BuildPlan` as JSON; SB14's are in `test/spotlight-scenarios/fixtures/sb14-plans.json`), posted with the prompt to `POST /api/ai/build`, so stage 2 is scored without the plan stage. A package adds
 its scenarios as `test/spotlight-scenarios/<owner>.ts` (`export default defineScenarios([...])`, ids `<owner>-<slug>`):
 the runner finds it, no index to edit. A scenario's `start.autonomy` decides what the scripted form applies: asks-first
 leaves every card waiting (nobody clicks Apply; a session waiting for Apply is stopped as the person would with ■), auto

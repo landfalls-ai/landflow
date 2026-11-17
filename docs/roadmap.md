@@ -2680,3 +2680,7 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   not catch yet; one click on a credential row's radio did nothing before Apply (the label works; unconfirmed). The
   phone Execute/Debug pill overlap is the same on main (a phone follow-up). Not Spotlight: after runs the host logged
   "the brain's run failed: NOT NULL constraint failed: brain_facts.subject_type" 6 times. **Fixed in wave 14 (SP13):** `staleFactsBefore` writes the whole row, so the study finishes, is stamped, and the detectors run on the brain's own loop.
+
+## Spotlight wave sb3
+
+- **SB14, build in stages: parameters and wiring (built 2026-11-17):** given a plan, the first draft is one node per step wired exactly as the plan (`planEdges`, no model call draws a connection) and one small call per step: that node's docs only, the fields the step before really writes (its output schema, the trigger's test items, a schedule's `firedAt`), the reply checked (empty If, Set, Switch and schedule lists, option values, expressions against what the step receives, a schedule's days) and sent back once to that step alone. Closes the first-draft side of findings 1.1, 1.4 and 1.6 and the sb1 leftover (`$json.lastRun`, `$json.issues`, "every morning" read as weekdays). Left: the plan-first default and migrating the one-shot scripts (the integrator), and the limits in `limitations.md` ("What the per-step check does not see").

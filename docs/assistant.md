@@ -207,6 +207,17 @@ A change Spotlight builds in the builder chat is watched taking shape instead of
 
 The Agent architect (a dialog with a draft preview, not a canvas) does not show steps this way yet.
 
+#### Each step's parameters
+
+When the first draft is built from a plan (`POST /api/ai/build` with `plan`, or `buildFlow(…, { plan })`), stage 2 (`buildFromPlan` in `lib/server/assistant/build-nodes.ts`) does not ask the model for the whole flow. It makes **one node per plan step** (the step's `key` and name, in the plan's order, never a node the plan does not have: a step whose type is not available is left out and named in the draft's `left` as *dropped*) and wires them **from the plan, in code** (`planEdges`): no model call draws a connection. Each step that has parameters then gets **one small call**, in plan order:
+
+- **What the call is sent.** The request, the step's own sentence, that node's docs (`nodeDocs`: its parameters, options and output fields, no other type's), and **what the step receives**: the output fields of the step whose items really arrive (past an If, Filter or Switch, which pass items through) or, for the first step after the trigger, the trigger's test items; a schedule's item is only a time (`firedAt`); a Set's fields are the names it writes. A Run an Agent or Run a Team step also gets the roster's one-liners. The reply is `{ "parameters": { … } }`; the trigger's reply also carries `testData` (1 item when the flow runs an agent, else 2 to 4), and after a schedule the app step that reads data carries the sample records. The system prompt is the one-shot draft's reduced to parameters (the same parameter formats); one call never sends more than the 6 000-token prompt budget (a node with a very long parameter list gets its docs cut).
+- **What is checked, and what goes back.** Before the next step is asked, the step's parameters are cut to the names its node has, then checked as the chat checks a proposal: an If, Set, Switch or schedule left empty (`emptyParts`), an option value or a collection shape the node does not have (`validateNodeParameters`, read with only the properties these parameters show), an expression that reads a field the step does not receive (`expressionMisses`, against the trigger's test items, the schedule's `firedAt` and the output schemas), and a schedule that does not parse or limits the days when the request named none (`cronProblems`: "every morning" is every day). A problem goes back **once, to that step alone**, in the checks' own words; the second reply stands when it has no more problems than the first. What is still wrong after it is listed with the draft (`left`: *empty* for an empty list, *made-up* for the rest), never a third call.
+- **When a call fails.** A step whose call fails (or the build's `LANDFLOW_BUILDER_TIMEOUT_SECONDS` ran out) keeps empty parameters and a `left` item, and the build goes on with the rest. When every call fails (a model that is down) the build is an error, as the one-shot draft is.
+- **What the draft reports.** `calls` is the number of model calls (one per step with parameters, plus one per send-back); `stages` has one `node` entry per call (and a `send-back` for a second try, with the step's key): sizes and times, never text. All calls are counted in AI usage as Spotlight's (`purpose: answer`).
+
+The one-shot draft below stays as it is for a call without a plan.
+
 ### Test and fix
 
 **Test and fix** (`components/editor/test-session.ts`) runs the workflow and, while a run doesn't pass, has the assistant fix it and runs it again. It starts by itself in [autonomous mode](#autonomous-mode) (on by default); otherwise from the button at the end of an empty-canvas draft, or from the *Test it and fix what fails* bubble on any workflow with a trigger. Starting it is your go-ahead for the fixes: each is applied as it comes, with its own Undo. ■ in the panel's header ends the session; a run already going finishes.
@@ -490,6 +501,8 @@ credentials named, no junk nodes, only the asked node changed, the right change,
 tried to leave this machine. Collections are judged by a heuristic (a condition, field, rule or schedule list with nothing in
 it counts as empty); "runs right with the pinned data" is judged on what the draft sends, not by running it. How to run it and
 what the variables do: [development.md](development.md#spotlight-scorecard).
+
+A build from a plan is measured on its own (`sb14.ts`): the plans of the evaluation's B1, B4, B8 and a "every morning at 8" ask are given outright (`start.plan`, `fixtures/sb14-plans.json`, written as a person would agree them), so stage 2 is scored without stage 1: the checks are collections filled, the Slack step reading only fields it receives (`reads-right`), weekdays at 8 for "every weekday at 8" and a daily rule for "every morning" (`schedule-as-asked`, `daily-no-day-limit`), the B4 and B8 `runs-right`, and one call per step, with a send-back going to its step only.
 
 The scorecard reads what happened in the places SB10 fixed. A live session sets the host's outbound policy outright
 (`LANDFLOW_OUTBOUND_BLOCK_PRIVATE=true`, since the scorecard runs in vitest, whose development profile does not block
