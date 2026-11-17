@@ -9,7 +9,7 @@
  */
 import { nanoid } from 'nanoid';
 import { api } from '@/lib/client/api';
-import { agentAsk, agentChangeAsk, askCatalog, fallbackName, knowledgeFolderOf, readsTokens, type AgentAsk, type AskCatalogEntry } from '@/lib/shared/agent-ask';
+import { agentAsk, agentChangeAsk, askCatalog, asksKnowledge, fallbackName, knowledgeFolderOf, readsTokens, type AgentAsk, type AskCatalogEntry } from '@/lib/shared/agent-ask';
 import { starterFlow, starterSample, type AgentCard, type AgentCardTool, type AgentKnowledgeSetup, type AgentNotAdded } from '@/lib/shared/agent-card';
 import { agentChanges } from '@/lib/shared/agent-changes'; // AG04:
 import { announceChange, designChange, publishChange, saveChange, testDraft } from '@/lib/client/agent-change'; // AG04: AG09: testDraft
@@ -348,7 +348,7 @@ export async function reviseAgentCard(itemId: string, card: AgentCard, message: 
   try {
     // A created card's agent is the base; a pending card's own config is (a card that already proposes a change to an agent keeps its base).
     const base = made && existing ? { agentId: existing } : { config: card.config };
-    const folder = knowledgeFolderOf(message); // AG13: "from the folder runbooks" under a card adds the knowledge base
+    const folder = asksKnowledge(message) ? knowledgeFolderOf(message) : undefined; // AG13: "from the folder runbooks" under a card adds the knowledge base
     const input = { name: card.name, description: card.description, base, change: message, ...pickedModel(), ...(folder && { knowledgeFolder: folder }) };
     const design = (await designChange(input, abort.signal)) as Awaited<ReturnType<typeof designChange>> & { knowledge?: Omit<AgentKnowledgeSetup, 'state'> };
     const notAdded = design.notAdded ?? []; // ag1-int: the tools the change named and the agent did not get

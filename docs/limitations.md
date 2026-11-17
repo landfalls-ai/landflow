@@ -719,6 +719,7 @@ own sections are [call attribution](#call-attribution-wave-11) and [the gateway'
 ## Agent knowledge from a folder (wave ag3)
 
 - Keyword search finds the words in a question, not their meaning ("how much journal" finds a passage that says "journal"; "how much log space" may not). With an embeddings model on the host, or an OpenAI-compatible credential, a knowledge base can search by meaning; Spotlight picks keyword search only when the host has none.
+- Indexing a folder replaces a file's chunks before it adds the new ones, so a file whose load or embedding fails is left with none; files removed from the folder keep their old chunks until the knowledge base is cleared. The live check on Claude is still owed ("not yet read live").
 - A keyword knowledge base needs the SQLite or in-memory store: Postgres PGVector needs real vectors and refuses it.
 - A folder is indexed once, when Create runs (and again on the agent page's route call): it is not watched for changes. At most 200 files of 25 MB are indexed from a folder, and only under the files directory (`LANDFLOW_FILES_DIR`); the card lists at most 50 of them.
 - Spotlight's ask reads a folder only as a relative path in English words ("in the folder runbooks"); an absolute path, `..`, `~`, a URL or a drive letter gives none and the card asks for a folder.

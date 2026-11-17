@@ -202,6 +202,11 @@ function knowledgeOf(message: string): string | undefined {
   return undefined;
 }
 
+/** AG13: whether the ask wants knowledge at all; a bare "<word> folder" (the junk folder, the right folder) is not a source. */
+export function asksKnowledge(message: string): boolean {
+  return Boolean(knowledgeOf(message)) || /\b(?:knowledge|answers?|answering|looks?\s+(?:\w+\s+)?up|search(?:es)?|cites?|grounded|based\s+on|learns?\s+from|index(?:es)?)\b/i.test(message);
+}
+
 /**
  * AG13: the folder the ask names: "in the folder runbooks", "from the folder runbooks/ops", "the runbooks folder", "in runbooks/".
  * Relative paths only: an absolute path, `..`, `~`, a URL or a drive letter gives none (the design says why).
@@ -285,7 +290,7 @@ export function agentAsk(message: string, nodeNames: string[] = [], catalog: Ask
   if (!text || askKind(text) === 'question') return undefined;
   if (!AS_OBJECT.test(text) && !AS_SUBJECT.test(text)) return undefined;
   const knowledge = knowledgeOf(text);
-  const knowledgeFolder = knowledgeFolderOf(text); // AG13
+  const knowledgeFolder = asksKnowledge(text) ? knowledgeFolderOf(text) : undefined; // AG13: only when the ask wants knowledge
   const job = jobOf(text);
   const tools = toolsOf(text, catalog);
   const description = descriptionOf(text, job);

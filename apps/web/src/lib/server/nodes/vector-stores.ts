@@ -189,7 +189,7 @@ export async function search(searcher: Searcher, query: string, topK: number): P
   const { store, collection, embeddings, reranker, options, signal } = searcher;
   const k = Math.max(1, Math.floor(topK));
   const candidates = Math.max(k, Number(options.candidates) || 20);
-  const keyword = options.searchMode === 'keyword'; // AG13: keyword search never embeds the query
+  const keyword = options.searchMode === 'keyword' || embeddings.provider === 'none'; // AG13: keyword search never embeds the query
   const vector = keyword ? [] : await embeddings.embedQuery(text, signal);
   const found = await searchStore(store, collection, {
     query: text,

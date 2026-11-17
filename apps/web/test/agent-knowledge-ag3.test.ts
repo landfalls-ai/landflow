@@ -74,6 +74,12 @@ describe('the ask names a folder', () => {
     for (const bad of ['/etc', '../x', '~/docs', 'https://x/y', 'C:\\docs']) expect(knowledgeFolderOf(`answers from the folder ${bad}`)).toBeUndefined();
     expect(agentAsk('Create an agent that answers questions from the folder /etc')?.knowledgeFolder).toBeUndefined();
   });
+
+  it('a bare "<word> folder" that asks for no knowledge names no source', () => {
+    for (const ask of ['Make an agent that files each email into the right folder', 'Make an agent that moves spam to the junk folder', 'Make an agent that watches the inbox folder and summarises new mail']) {
+      expect(agentAsk(ask)?.knowledgeFolder).toBeUndefined();
+    }
+  });
 });
 
 type Preview = { config: Partial<AgentConfig>; needs: Array<{ text: string }>; knowledge?: { folder?: string; files?: string[]; fileCount?: number; search?: string; embeddings?: string; existing?: boolean; problem?: string; collection?: string } };
@@ -176,6 +182,24 @@ describe('the folder route and the search', () => {
 });
 
 describe('embeddings', () => {
+  it('a base drafted without a search mode, on a host with no embeddings model, still searches by keywords', async () => {
+    const { draftFrom } = await import('@/lib/server/assistant/architect');
+    const { agentResources } = await import('@/lib/server/assistant/agent-resources');
+    const { allowedTypes } = await import('@/lib/server/assistant/scope');
+    const { TEST_OWNER } = await import('@/lib/server/auth/test-bypass');
+    const { addKnowledgeDocument, knowledgeTool } = await import('@/lib/server/agents/knowledge');
+    const actor = TEST_OWNER;
+    const resources = await agentResources(actor);
+    const draft = draftFrom({ name: 'Notes', instructions: 'Answer from the notes.', nodeTools: '', knowledge: 'notes', tools: [{ type: 'knowledge', collection: `notes-${Date.now()}`, description: 'Search the notes' }] }, { types: allowedTypes(undefined, actor), actor, known: '', resources });
+    const config = (draft.config.tools ?? []).find((t) => t.type === 'knowledge') as VectorKnowledgeBaseConfig;
+    expect(config.embeddings.provider).toBe('none');
+    for (const [name, text] of [['a.md', 'The kettle is in the kitchen.'], ['b.md', 'Rotate the journal at 730 MB.'], ['c.md', 'Lunch is at noon.']]) await addKnowledgeDocument(config, { bytes: Buffer.from(text), fileName: name });
+    const tool = knowledgeTool(config);
+    if ('error' in tool) throw new Error(tool.error);
+    const { output } = await tool.invoke({ query: 'journal' }, {} as never);
+    expect((output as { results: Array<{ pageContent: string }> }).results[0].pageContent).toMatch(/journal/);
+  });
+
   it('a keyword base on Postgres is refused with a clear message', async () => {
     const { knowledgeTool } = await import('@/lib/server/agents/knowledge');
     const tool = knowledgeTool({ id: 't', type: 'knowledge', name: 'search_x', description: 'x', store: 'pgvector', collection: 'x', embeddings: { provider: 'none', model: 'bm25' }, searchMode: 'keyword' });

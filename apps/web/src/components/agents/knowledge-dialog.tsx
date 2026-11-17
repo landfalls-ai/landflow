@@ -190,7 +190,7 @@ export function KnowledgeDialog({ agentId, tool, onSave, onClose }: { agentId?: 
             >
               <option value="ollama">Ollama</option>
               <option value="openai">OpenAI-compatible</option>
-              <option value="none">Keyword search (built in, no model)</option>{/* AG13: */}
+              {(agentId || value.embeddings.provider === 'none') && <option value="none">Keyword search (built in, no model)</option>}{/* AG13: project settings cannot save it, so only the agent page offers it */}
             </Select>
           </Field>
           {value.embeddings.provider === 'none' ? (
