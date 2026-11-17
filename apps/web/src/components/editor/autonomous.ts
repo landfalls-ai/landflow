@@ -3,8 +3,8 @@
  * Spotlight's autonomous mode (docs/assistant.md#autonomous-mode), on unless turned off: Spotlight doesn't wait for a
  * click. A flow it drafts on an empty canvas goes straight into Test and fix; the changes a chat reply proposes are
  * applied as the reply ends (each with Undo, as Apply would) and the flow is tested and fixed again. Publishing to
- * production still takes a person's click. An agent it creates is designed by the Agent architect and published, so the
- * flow can run it while it is tested (./new-agent.ts); unpublishing it is one click on its page.
+ * production still takes a person's click. An agent it creates is designed by the Agent architect, smoke-tested on the item that
+ * reaches its step and published only after a pass (./new-agent.ts); unpublishing it is one click on its page.
  * The choice is kept in the browser (localStorage), like the after-run suggestions' switch.
  */
 import { create } from 'zustand';

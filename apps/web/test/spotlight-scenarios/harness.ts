@@ -328,7 +328,7 @@ async function chatOnce(call: ChatCall, form: Form, scripted: Scripted | undefin
     ...(call.scope !== undefined && { scope: call.scope }), // SB07:
     ...(call.tagged?.length && { mentions: { refs: call.tagged.map((id) => ({ type: 'node' as const, id, workflowId: call.workflow.id })) } }), // SB07:
   };
-  if (form === 'live') {
+  if (form === 'live' && !scripted) { // SB18: a `-scripted` scenario's model is scripted in the live form
     const route = await import('@/app/api/assistant/chat/route');
     const response = await route.POST(post('/api/assistant/chat', { ...body, model: call.model ?? options.model ?? 'qwen3-coder:30b' /* SB19: */ }));
     if (!response.ok) return { ...collect([]), error: `chat ${response.status}`, calls: 0 };
@@ -528,7 +528,8 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
   const refusedBefore = refusedNow().length;
   const echoBefore = options.echo?.log.length ?? 0;
   const outcome: Outcome = { scenario: scenario.id, form, ms: 0, text: '', tools: [], proposals: [], needs: [], sent: [], refused: [], agents: [], modelCalls: 0, tokens: { input: 0, output: 0 } };
-  const script = form === 'unit' ? (scenario.script ?? []) : undefined;
+  // SB18: a scenario whose id ends in `-scripted` keeps its scripted model in the live form too (the product's runner and the echo server are real).
+  const script = form === 'unit' || scenario.id.endsWith('-scripted') ? (scenario.script ?? []) : undefined;
   // One scripted model per scenario: the script is its replies in order, across the first message and every session reply.
   const scripted = script ? scriptedModel(script) : undefined;
   const canvas = canvasOf(scenario, options);
@@ -613,6 +614,23 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
       else {
         outcome.agents.push(agentOf(body.agent as Partial<AgentConfig>, false, 0, body.agent.id /* SB17: */));
         outcome.draft = { instructions: (body.agent as Partial<AgentConfig>).instructions ?? '' }; // SB17: the brief's four parts are read from it
+        // SB18 (D3): what the editor does once the agent is designed: the smoke test on the item that reaches its step, and
+        // (autonomous) the publish after a pass. A scenario that names an autonomy is a flow's step; asks-first never publishes.
+        // The unit form's fake Ollama lists no models, so a design has none: it gets the scenario's own, as a person's pick would.
+        if (scenario.start?.autonomy && !body.agent.model) agentStore.saveDraft(body.agent.id, { model: { provider: 'ollama', model: 'qwen3-coder:30b' } });
+        if (scenario.start?.autonomy) {
+          const item = Object.values(canvas?.pinData ?? {})[0]?.[0]?.json as Record<string, unknown> | undefined;
+          const message = String(item?.chatInput ?? item?.text ?? scenario.ask);
+          const smokeRoute = await import('@/app/api/agents/[id]/smoke-test/route');
+          const smoked = await smokeRoute.POST(post(`/api/agents/${body.agent.id}/smoke-test`, { message }), { params: Promise.resolve({ id: body.agent.id }) });
+          const smoke = ((await smoked.json()) as { smoke?: { state: 'passed' | 'failed' | 'untested' } }).smoke;
+          outcome.smoke = smoke?.state ?? 'failed';
+          if (outcome.smoke === 'passed' && scenario.start.autonomy === 'auto') {
+            const publishRoute = await import('@/app/api/agents/[id]/publish/route');
+            const done = await publishRoute.POST(post(`/api/agents/${body.agent.id}/publish`, {}), { params: Promise.resolve({ id: body.agent.id }) });
+            if (done.ok) outcome.agents[outcome.agents.length - 1].published = true;
+          }
+        }
       }
       outcome.modelCalls = fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 1;
     } else if (scenario.via === 'agent-ask') {
