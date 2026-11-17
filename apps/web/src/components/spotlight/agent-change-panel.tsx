@@ -12,12 +12,13 @@ import { AskPanel, ASK_INPUT, type AskConversation, type AskTag } from '../brain
 import { Button } from '../ui/button';
 import { CHAT_ICON_BUTTON, ChatComposer, ChatEmpty, ChatError, UserBubble } from '../ui/chat';
 import { ChatList, ChatMotion } from '../ui/chat-motion';
-import { announceChange, designChange, publishChange, saveChange, type ChangeDesign } from '@/lib/client/agent-change';
+import { announceChange, designChange, draftMoved, publishChange, readDraft, saveChange, type ChangeDesign } from '@/lib/client/agent-change';
 import { agentChangeAsk } from '@/lib/shared/agent-ask';
+import { agentChanges } from '@/lib/shared/agent-changes';
 import { publishLine, smokeLine, type AgentPublish, type AgentSmoke } from '@/lib/shared/agent-card';
 import { cn } from '@/lib/utils';
 
-type Turn = { id: string; message: string; state: 'designing' | 'ready' | 'saving' | 'saved' | 'failed' | 'dismissed'; design?: ChangeDesign; error?: string; smoke?: AgentSmoke; publish?: AgentPublish };
+type Turn = { id: string; message: string; state: 'designing' | 'ready' | 'saving' | 'saved' | 'failed' | 'dismissed'; design?: ChangeDesign; error?: string; smoke?: AgentSmoke; publish?: AgentPublish; snapshot?: string; notice?: string };
 
 /** The change card: what would change, then Apply to its draft (a small read-only copy of the editor's card rows). */
 function ChangeCard({ name, agentId, turn, onApply, onPublish, onDismiss }: { name: string; agentId: string; turn: Turn; onApply: () => void; onPublish: () => void; onDismiss: () => void }) {
@@ -45,6 +46,7 @@ function ChangeCard({ name, agentId, turn, onApply, onPublish, onDismiss }: { na
             )}
           </div>
         </div>
+        {turn.notice && <p role="status" className="text-t2">{turn.notice}</p>}
         {left.length > 0 && (
           <div className="flex gap-2">
             <span className="w-[68px] shrink-0 text-t3">Left</span>
@@ -109,8 +111,12 @@ export function AgentChangePanel({ agentId, name, onClose, conversation, heading
     setTurns((all) => [...all, { id, message, state: 'designing' }]);
     const request = (abort.current = new AbortController());
     try {
-      const design = await designChange({ name, base: { agentId }, change: message }, request.signal);
-      patch(id, { state: 'ready', design });
+      // The draft the design starts from. A change typed while a card still waits is designed from that card (as the editor does), and its lines are read against the draft.
+      const draft = await readDraft(agentId);
+      const waiting = [...turns].reverse().find((t) => t.state === 'ready' && t.design);
+      const design = await designChange({ name, base: waiting?.design ? { config: waiting.design.config } : { agentId }, change: message }, request.signal);
+      if (waiting && draft) design.changes = agentChanges(draft, design.config);
+      patch(id, { state: 'ready', design, ...(draft && { snapshot: JSON.stringify(draft) }) });
     } catch (e) {
       patch(id, request.signal.aborted ? { state: 'dismissed' } : { state: 'failed', error: (e as Error).message });
     }
@@ -132,6 +138,12 @@ export function AgentChangePanel({ agentId, name, onClose, conversation, heading
     if (!turn.design || turn.state === 'saving') return;
     patch(turn.id, { state: 'saving', error: undefined });
     try {
+      // The promise of this card is its Changes row: if the draft moved since it was designed, say what applying does now before any save.
+      const moved = await draftMoved(agentId, turn.snapshot, turn.design.config);
+      if (moved) {
+        patch(turn.id, { state: 'ready', snapshot: moved.snapshot, design: { ...turn.design, changes: moved.changes }, notice: 'The draft changed since this was designed. Here is what applying it does now; nothing was saved.' });
+        return;
+      }
       const smoke = await saveChange(agentId, turn.design.config, `Hello ${name}, what can you do?`);
       patch(turn.id, { state: 'saved', smoke });
     } catch (e) {
@@ -191,7 +203,14 @@ export function AgentChangePanel({ agentId, name, onClose, conversation, heading
                   </p>
                 )}
                 {t.state === 'dismissed' && <p className="text-[12px] text-t3">Dismissed: nothing was changed.</p>}
-                {t.state === 'failed' && !t.design && <ChatError message={`Couldn’t design the change: ${t.error ?? ''}`} />}
+                {t.state === 'failed' && !t.design && (
+                  <>
+                    <ChatError message={`Couldn’t design the change: ${t.error ?? ''}`} />
+                    <Button size="sm" variant="ghost" disabled={designing} onClick={() => { setTurns((all) => all.filter((x) => x.id !== t.id)); void change(t.message); }} className="max-md:h-11 max-md:px-4">
+                      Try again
+                    </Button>
+                  </>
+                )}
                 {t.design && t.state !== 'dismissed' && <ChangeCard name={name} agentId={agentId} turn={t} onApply={() => void apply(t)} onPublish={() => void publish(t)} onDismiss={() => patch(t.id, { state: 'dismissed' })} />}
               </div>
             ))}

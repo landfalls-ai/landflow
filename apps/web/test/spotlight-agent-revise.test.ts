@@ -35,6 +35,7 @@ vi.mock('@/lib/server/projects/access', async (importActual) => {
   return { ...actual, canResource: (actor: never, kind: never, id: string, action: never) => !foreign.has(id) && actual.canResource(actor, kind, id, action) };
 });
 
+const { draftMoved, designChange } = await import('@/lib/client/agent-change');
 const { cardAskFor, createFromCard, designAgentCard, reviseCardFor, agentCardQuestion, reviseAgentCard, applyAgentChange, publishAgentChange } = await import('@/components/editor/spotlight/agent-ask');
 const { useAssistant } = await import('@/components/editor/assistant');
 const { useEditor } = await import('@/components/editor/store');
@@ -153,6 +154,28 @@ describe('POST /api/agents/design with base and change', () => {
       // The proposal added Slugify unasked: the change doesn’t name it, so it is left out (and said), and the base’s tool stays.
       expect(body.config.tools.map((t) => ('name' in t ? t.name : t.type))).toEqual(['Change Case']);
       expect(body.changes).toEqual([]);
+    } finally {
+      await run.done();
+    }
+  });
+
+  it('a model that proposes nothing answers designed: false with no changes, and “without the footer” removes no tool', async () => {
+    const none = await startFakeModels({ reply: () => ({ text: '', toolCalls: [] }) });
+    const previous = process.env.OLLAMA_URL;
+    process.env.OLLAMA_URL = none.origin;
+    try {
+      const body = (await (await post({ name: 'Text helper', preview: true, base: { config: baseConfig() }, change: 'add Slugify as a tool' })).json()) as { designed: boolean; changes: string[] };
+      expect(body).toMatchObject({ designed: false, changes: [] });
+    } finally {
+      if (previous === undefined) delete process.env.OLLAMA_URL;
+      else process.env.OLLAMA_URL = previous;
+      await none.close();
+    }
+    const run = await proposing('text-toolkit.changeCase');
+    try {
+      const res = await post({ name: 'Text helper', preview: true, base: { config: baseConfig() }, change: 'also do the case change without the footer' });
+      const out = (await res.json()) as { config: AgentConfig };
+      expect(out.config.tools.map((t) => ('name' in t ? t.name : t.type))).toEqual(['Change Case']);
     } finally {
       await run.done();
     }
@@ -294,6 +317,57 @@ describe('a follow-up under a pending card', () => {
     await pending();
     expect(reviseCardFor('create an agent that summarises incidents for the on-call channel')).toBeUndefined();
     expect(agentCardQuestion('what tools does it have?')).toBe(true);
+  });
+});
+
+describe('a workflow edit after an agent card', () => {
+  const step = (id: string, name: string) => ({ id, type: 'lf', position: { x: 0, y: 0 }, data: { wf: { id, name, type: 'core.webhook' } } });
+
+  it('with a starter flow on the canvas, workflow-shaped asks are the builder’s and never revise the card', async () => {
+    const { id, card } = await pending();
+    await createFromCard(id, card);
+    useEditor.setState({ nodes: [step('n1', 'Webhook'), step('n2', 'Run an Agent')] as never });
+    for (const m of ['add an HTTP Request step after the trigger', 'add a Slack node after the agent', 'change the schedule to every hour', 'remove the email node', 'connect the trigger to the agent', 'set the cron to 9am', 'make the webhook POST only', 'add a delay after Webhook'])
+      expect(reviseCardFor(m), m).toBeUndefined();
+    // A change to the agent itself still revises.
+    expect(reviseCardFor('use Haiku')?.itemId).toBe(id);
+  });
+
+  it('a change typed after a later reply that has no card does not revise the old card', async () => {
+    await pending();
+    expect(reviseCardFor('add Slugify as a tool')).toBeDefined();
+    useAssistant.getState().append([{ id: 'u9', role: 'user', text: 'what is this?' }, { id: 'a9', role: 'assistant', parts: [{ kind: 'text', text: 'A flow.' }] } as never]);
+    expect(reviseCardFor('add Slugify as a tool')).toBeUndefined();
+    expect(agentCardQuestion('why does it need the Hash tool?')).toBe(false);
+  });
+
+  it('a design the model never proposed is a failure, not “No change”', async () => {
+    const { id } = await pending();
+    answers['/api/agents/design'] = () => ({ ...preview(), changes: [], designed: false });
+    await reviseAgentCard(id, cardOf()!.card, 'add Slugify as a tool');
+    const last = [...useAssistant.getState().items].reverse().find((i) => i.role === 'assistant');
+    expect(JSON.stringify(last)).toContain('Nothing was changed');
+    expect(JSON.stringify(last)).toContain('the model proposed nothing');
+    expect(JSON.stringify(last)).not.toContain('No change: the card above');
+  });
+});
+
+describe('Apply on an agent’s page against a draft that moved', () => {
+  const draftOf = (config: Record<string, unknown>) => ({ id: 'ag_p', ...config });
+  it('card 2, designed without Slugify, says it removes Slugify once card 1 was applied, and saves nothing', async () => {
+    const d0 = cardConfig();
+    const snapshot = JSON.stringify(draftOf(d0)); // both cards were designed from this draft
+    answers = { '/api/agents/ag_p': () => ({ agent: draftOf(withSlugify()) }) }; // card 1 (Slugify) was applied since
+    expect(await draftMoved('ag_p', snapshot, { ...d0, description: 'Shorter.' })).toMatchObject({ changes: expect.arrayContaining(['Removes the tool Slugify']) });
+    // An unchanged draft: Apply goes ahead.
+    answers = { '/api/agents/ag_p': () => ({ agent: draftOf(d0) }) };
+    expect(await draftMoved('ag_p', snapshot, d0)).toBeUndefined();
+    expect(calls.some((c) => c.method === 'PUT')).toBe(false);
+  });
+
+  it('designChange fails when the model proposed nothing', async () => {
+    answers = { '/api/agents/design': () => ({ config: cardConfig(), changes: [], designed: false }) };
+    await expect(designChange({ name: 'x', base: { agentId: 'ag_p' }, change: 'add Slugify as a tool' })).rejects.toThrow('the model proposed nothing');
   });
 });
 

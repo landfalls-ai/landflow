@@ -209,19 +209,41 @@ export const dismissCard = (itemId: string): void =>
  * still makes a new card). A question is not one: it goes to the chat, answered and never applied.
  */
 export function reviseCardFor(message: string): { itemId: string; card: AgentCard } | undefined {
-  if (agentChangeAsk(message) !== 'change' || cardAskFor(message)) return undefined;
+  if (agentChangeAsk(message) !== 'change' || cardAskFor(message) || workflowShaped(message)) return undefined;
   return newestCard();
 }
 
-/** The newest agent card of this conversation when it is designed (waiting for Create) or created; a failed or creating one is nobody's to change. */
+const WORKFLOW_WORDS = /\b(?:steps?|nodes?|triggers?|flows?|workflows?|webhooks?|cron|canvas)\b/i;
+const WORKFLOW_WEAK = /\b(?:schedules?|connect|after|before|branch|branches)\b/i;
+const AGENT_WORDS = /\b(?:agent|tools?|instructions?|persona|guardrails?|model)\b/i;
+
+/**
+ * A message that asks for a change to the flow on the canvas, not to the agent: it names a step, node, trigger or flow, or says
+ * "after/before" a step that is on the canvas (a weaker word such as "schedule" counts unless the message is about the agent).
+ * Only on a canvas that has steps; on an empty one there is no flow to change.
+ */
+function workflowShaped(message: string): boolean {
+  const nodes = useEditor.getState().nodes;
+  if (!nodes.length) return false;
+  if (WORKFLOW_WORDS.test(message)) return true;
+  const labels = nodes.flatMap((n) => {
+    const wf = (n.data as { wf?: { name?: string } } | undefined)?.wf;
+    return wf?.name ? [wf.name.toLowerCase()] : [];
+  });
+  if (/\b(?:after|before)\b/i.test(message) && labels.some((l) => message.toLowerCase().includes(l))) return true;
+  return WORKFLOW_WEAK.test(message) && !AGENT_WORDS.test(message);
+}
+
+/**
+ * The newest agent card of this conversation when it is designed (waiting for Create) or created, and the person is writing
+ * right under it: it is in the newest assistant reply and nothing but the person's own messages came after it. A card many
+ * turns old, or one with another reply after it, is nobody's to change (the message goes to the chat or the builder).
+ */
 function newestCard(): { itemId: string; card: AgentCard } | undefined {
-  for (const item of [...useAssistant.getState().items].reverse()) {
-    if (item.role !== 'assistant') continue;
-    const part = item.parts.find((p) => p.kind === 'agentCard');
-    if (part?.kind !== 'agentCard') continue;
-    return part.card.state === 'designed' || part.card.state === 'created' ? { itemId: item.id, card: part.card } : undefined;
-  }
-  return undefined;
+  const last = [...useAssistant.getState().items].reverse().find((item) => item.role === 'assistant');
+  const part = last?.parts.find((p) => p.kind === 'agentCard');
+  if (!last || part?.kind !== 'agentCard') return undefined;
+  return part.card.state === 'designed' || part.card.state === 'created' ? { itemId: last.id, card: part.card } : undefined;
 }
 
 /**

@@ -1036,7 +1036,7 @@ function reviseRequest(base: Partial<AgentConfig>, change: string): string {
   ].join('\n');
 }
 
-const REMOVES = /\b(?:remove|delete|drop|without|no longer|stop using|get rid of|take away|disable)\b/i;
+const REMOVES = /\b(?:remove|delete|drop|stop using|get rid of|take away|disable)\b/gi;
 const GENERIC = new Set(['tool', 'tools', 'node', 'agent', 'with', 'from', 'that', 'this', 'also', 'make', 'give', 'get', 'set', 'list']);
 /** The words of a tool's name and node type that say what it is ("send_email", "grafana.getAlerts" -> send, email, grafana, alerts). */
 const toolWords = (tool: AgentToolConfig): string[] =>
@@ -1047,6 +1047,13 @@ const toolWords = (tool: AgentToolConfig): string[] =>
     .split(/[^a-z0-9]+/)
     .filter((w) => w.length >= 4 && !GENERIC.has(w));
 const toolKey = (tool: AgentToolConfig) => (tool.type === 'node' ? `node|${tool.nodeType}|${String(tool.parameters?.operation ?? '')}` : `${tool.type}|${'name' in tool ? tool.name : ''}|${'agentId' in tool ? tool.agentId : ''}|${'workflowId' in tool ? tool.workflowId : ''}`);
+/** The tool is named after a remove verb in the same clause ('remove the email tool'), not merely near 'without' ('send it to Slack without the footer'). */
+const removed = (change: string, tool: AgentToolConfig) =>
+  change.split(/[.;\n]+/).some((clause) => {
+    REMOVES.lastIndex = 0;
+    const verb = REMOVES.exec(clause);
+    return verb ? names(clause.slice(verb.index), tool) : false;
+  });
 const names = (change: string, tool: AgentToolConfig) => toolWords(tool).some((w) => change.toLowerCase().includes(w.replace(/s$/, '')));
 
 const TOOLS_STEP = /^\d+\. Tools: [^\n]*$/m;
@@ -1070,7 +1077,7 @@ function reviseInstructions(proposed: string, base: string, tools: AgentToolConf
  * practices, look and team stay unless the change names them.
  */
 function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: string): void {
-  const kept = (base.tools ?? []).filter((t) => !(REMOVES.test(change) && names(change, t)));
+  const kept = (base.tools ?? []).filter((t) => !removed(change, t));
   const have = new Set(kept.map(toolKey));
   const added: AgentToolConfig[] = [];
   for (const tool of draft.config.tools ?? []) {
