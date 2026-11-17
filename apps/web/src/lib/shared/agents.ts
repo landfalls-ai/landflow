@@ -114,7 +114,7 @@ export interface VectorKnowledgeBaseConfig extends ToolBase {
   tableName?: string;
   /** Must be the model the documents were inserted with. */
   embeddings: {
-    provider: 'ollama' | 'openai';
+    provider: 'ollama' | 'openai' | 'none'; // AG13: `none` (model `bm25`) is keyword search: no embeddings model, no key (SQLite or in-memory store only)
     model: string;
     /** ollama: the server, default OLLAMA_URL or http://127.0.0.1:11434 */
     baseUrl?: string;
@@ -125,7 +125,9 @@ export interface VectorKnowledgeBaseConfig extends ToolBase {
     dimensions?: number;
   };
   topK?: number;
-  searchMode?: 'vector' | 'hybrid';
+  searchMode?: 'vector' | 'hybrid' | 'keyword'; // AG13: `keyword` ranks by BM25 alone and never embeds the query
+  /** AG13: the folder this knowledge base was indexed from, relative to the files directory (`runbooks`). */
+  indexedFrom?: string;
 }
 
 /**

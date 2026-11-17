@@ -9,8 +9,8 @@
  */
 import { nanoid } from 'nanoid';
 import { api } from '@/lib/client/api';
-import { agentAsk, agentChangeAsk, askCatalog, fallbackName, readsTokens, type AgentAsk, type AskCatalogEntry } from '@/lib/shared/agent-ask';
-import { starterFlow, starterSample, type AgentCard, type AgentCardTool, type AgentNotAdded } from '@/lib/shared/agent-card';
+import { agentAsk, agentChangeAsk, askCatalog, fallbackName, knowledgeFolderOf, readsTokens, type AgentAsk, type AskCatalogEntry } from '@/lib/shared/agent-ask';
+import { starterFlow, starterSample, type AgentCard, type AgentCardTool, type AgentKnowledgeSetup, type AgentNotAdded } from '@/lib/shared/agent-card';
 import { agentChanges } from '@/lib/shared/agent-changes'; // AG04:
 import { announceChange, designChange, publishChange, saveChange, testDraft } from '@/lib/client/agent-change'; // AG04: AG09: testDraft
 import { pickedModel } from '../spotlight-model'; // AG04:
@@ -36,7 +36,7 @@ function cardTool(tool: ToolConfig): AgentCardTool {
 }
 
 /** The card from what the design route answered (`POST /api/agents/design` with `preview`). */
-export function cardFromPreview(preview: Awaited<ReturnType<typeof designPreview>> & { notAdded?: AgentNotAdded[]; models?: string[] /* AG02: */ }, ask: AgentAsk, starter: boolean, message?: string /* AG02: the person's whole ask */): AgentCard {
+export function cardFromPreview(preview: Awaited<ReturnType<typeof designPreview>> & { notAdded?: AgentNotAdded[]; models?: string[] /* AG02: */; knowledge?: Omit<AgentKnowledgeSetup, 'state'> /* AG13: */ }, ask: AgentAsk, starter: boolean, message?: string /* AG02: the person's whole ask */): AgentCard {
   const config = (preview.config ?? {}) as Partial<AgentConfig>;
   const tools = config.tools ?? [];
   const knowledge = tools.find((t) => t.type === 'knowledge');
@@ -60,6 +60,7 @@ export function cardFromPreview(preview: Awaited<ReturnType<typeof designPreview
     ...(message && { ask: message }), // AG02:
     ...(preview.notAdded?.length && { notAdded: preview.notAdded }), // AG02:
     ...(preview.models?.length && { models: preview.models }), // AG02:
+    ...(preview.knowledge && { knowledgeSetup: preview.knowledge }), // AG13: what it will index, from where, how it is searched
   };
 }
 
@@ -112,7 +113,7 @@ export async function designAgentCard(message: string, ask: AgentAsk, options: {
   const abort = (draftCall.request = new AbortController());
   try {
     const workflow = useEditor.getState().name;
-    const spec = { name: designName, description: ask.description, instructions: '', ask: message.slice(0, 4000) /* AG02: the whole ask */, ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }) };
+    const spec = { name: designName, description: ask.description, instructions: '', ask: message.slice(0, 4000) /* AG02: the whole ask */, ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }), ...(ask.knowledgeFolder && { knowledgeFolder: ask.knowledgeFolder }) /* AG13: */ };
     const preview = await designPreview(spec, workflow && !/^untitled/i.test(workflow) ? { workflow } : {}, abort.signal);
     const card = { ...cardFromPreview(preview, ask, options.starter, message), workflowId: workflowAtStart };
     const alone = createsAlone();
@@ -147,7 +148,7 @@ export async function createFromCard(itemId: string, card: AgentCard): Promise<v
   let step: string | undefined;
   patchCard(itemId, { state: 'creating', error: undefined });
   try {
-    const { agent } = await api<{ agent: { id: string; name: string } }>('/api/agents/import', { method: 'POST', json: { config: { ...card.config, name: card.name } /* AG09: the agent is named what the card shows */ } });
+    const { agent } = await api<{ agent: { id: string; name: string; tools?: Array<{ id: string; type: string; collection?: string }> /* AG13: */ } }>('/api/agents/import', { method: 'POST', json: { config: { ...card.config, name: card.name } /* AG09: the agent is named what the card shows */ } });
     const unsaved: string[] = [];
     for (const c of card.cases) {
       try {
@@ -179,6 +180,8 @@ export async function createFromCard(itemId: string, card: AgentCard): Promise<v
     }
     const extra = [...unsaved.length ? [`${unsaved.length} test case${unsaved.length === 1 ? '' : 's'} not saved: ${unsaved[0]}`] : [], ...notes];
     patchCard(itemId, { state: 'created', agentId: agent.id, ...(extra.length && { needs: [...card.needs, ...extra] }) });
+    // AG13: the knowledge base is indexed from the folder the ask named, before the smoke test (which then searches it).
+    await indexKnowledge(itemId, card, agent);
     // D3: the smoke test on the starter's pinned item; the card's line then reads what the row reads.
     if (step) {
       const smoke = await smokeTestAgent(step, { publish });
@@ -191,6 +194,24 @@ export async function createFromCard(itemId: string, card: AgentCard): Promise<v
     patchCard(itemId, { state: 'failed', error: (e as Error).message });
   } finally {
     creating.delete(itemId);
+  }
+}
+
+/**
+ * AG13: Create indexes the folder into the new knowledge base (`POST /api/agents/:id/knowledge/:toolId/folder`), following it
+ * on the card: indexing, then indexed with the counts, or failed with the error (the smoke test still runs and says so).
+ */
+async function indexKnowledge(itemId: string, card: AgentCard, agent: { id: string; tools?: Array<{ id: string; type: string; collection?: string }> }): Promise<void> {
+  const setup = card.knowledgeSetup;
+  if (!setup?.folder || setup.problem) return;
+  const tool = agent.tools?.find((t) => t.type === 'knowledge' && t.collection === setup.collection);
+  if (!tool) return;
+  patchCard(itemId, { knowledgeSetup: { ...setup, state: 'indexing' } });
+  try {
+    const indexed = await api<NonNullable<AgentKnowledgeSetup['indexed']>>(`/api/agents/${agent.id}/knowledge/${tool.id}/folder`, { method: 'POST', json: { folder: setup.folder } });
+    patchCard(itemId, { knowledgeSetup: { ...setup, state: 'indexed', indexed } });
+  } catch (e) {
+    patchCard(itemId, { knowledgeSetup: { ...setup, state: 'failed', error: (e as Error).message } });
   }
 }
 
@@ -327,9 +348,11 @@ export async function reviseAgentCard(itemId: string, card: AgentCard, message: 
   try {
     // A created card's agent is the base; a pending card's own config is (a card that already proposes a change to an agent keeps its base).
     const base = made && existing ? { agentId: existing } : { config: card.config };
-    const design = await designChange({ name: card.name, description: card.description, base, change: message, ...pickedModel() }, abort.signal);
+    const folder = knowledgeFolderOf(message); // AG13: "from the folder runbooks" under a card adds the knowledge base
+    const input = { name: card.name, description: card.description, base, change: message, ...pickedModel(), ...(folder && { knowledgeFolder: folder }) };
+    const design = (await designChange(input, abort.signal)) as Awaited<ReturnType<typeof designChange>> & { knowledge?: Omit<AgentKnowledgeSetup, 'state'> };
     const notAdded = design.notAdded ?? []; // ag1-int: the tools the change named and the agent did not get
-    const fresh = cardFromPreview({ config: design.config, needs: design.needs ?? [], missing: design.missing ?? [], designed: design.designed ?? true, cases: card.cases, notAdded } as unknown as Parameters<typeof cardFromPreview>[0], { description: card.description, placed: false, tools: [] }, Boolean(card.starter));
+    const fresh = cardFromPreview({ config: design.config, needs: design.needs ?? [], missing: design.missing ?? [], designed: design.designed ?? true, cases: card.cases, notAdded, ...(design.knowledge && { knowledge: design.knowledge }) } as unknown as Parameters<typeof cardFromPreview>[0], { description: card.description, placed: false, tools: [] }, Boolean(card.starter));
     let changes = design.changes;
     // A pending change to an agent lists what differs from the agent itself, not from the proposal before it.
     if (card.base && !made) {
@@ -341,7 +364,9 @@ export async function reviseAgentCard(itemId: string, card: AgentCard, message: 
       }
     }
     // AG09: a pending card's name is the revised design's (the server made a design-made name again from the new tools; its `changes` line says why).
-    const next: AgentCard = { ...fresh, ...(card.workflowId && { workflowId: card.workflowId }), ...(card.ask && { ask: card.ask }), ...(card.models && { models: card.models }), changes };
+    // AG13: a change that does not touch the knowledge keeps the Knowledge row the card had (while its agent still has the base, or it asked for a source).
+    const keptSetup = !fresh.knowledgeSetup && card.knowledgeSetup && (fresh.knowledge || !card.knowledgeSetup.folder) ? card.knowledgeSetup : undefined;
+    const next: AgentCard = { ...fresh, ...(keptSetup && { knowledgeSetup: keptSetup }), ...(card.workflowId && { workflowId: card.workflowId }), ...(card.ask && { ask: card.ask }), ...(card.models && { models: card.models }), changes };
     if (!made) {
       // ag1-int: the card's Not added row is the change's, and what the ask before it named that the agent still lacks.
       const squash = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, '');

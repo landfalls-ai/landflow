@@ -8,7 +8,7 @@
 import { useState } from 'react';
 import { Check, ExternalLink, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { publishLine, smokeLine, type AgentCard as AgentCardData } from '@/lib/shared/agent-card'; // AG04: publishLine
+import { knowledgeLine, publishLine, smokeLine, type AgentCard as AgentCardData } from '@/lib/shared/agent-card'; // AG04: publishLine
 import type { AgentConfig } from '@/lib/shared/agents';
 import { AgentAvatar } from '../../agents/avatar';
 import { Button } from '../../ui/button';
@@ -104,7 +104,27 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
             </ul>
           </Row>
         )}
-        {card.knowledge && <Row label="Knows">The “{card.knowledge}” knowledge base</Row>}
+        {/* AG13: what will be indexed, from where, how it is searched, and after Create how the indexing went; a card without it reads as before. */}
+        {card.knowledgeSetup ? (
+          <Row label="Knowledge">
+            <span data-testid="agent-knowledge" className={cn(card.knowledgeSetup.problem || card.knowledgeSetup.state === 'failed' ? 'text-rd' : card.knowledgeSetup.state === 'indexed' && 'text-gn')}>{knowledgeLine(card.knowledgeSetup)}</span>
+            {card.knowledgeSetup.files && card.knowledgeSetup.files.length > 0 && (
+              <details data-testid="agent-knowledge-files" className="mt-0.5">
+                <summary className="inline-flex min-h-5 cursor-pointer text-[11.5px] font-semibold text-ac hover:underline max-md:min-h-9 max-md:items-center">
+                  {card.knowledgeSetup.fileCount ?? card.knowledgeSetup.files.length} file{(card.knowledgeSetup.fileCount ?? card.knowledgeSetup.files.length) === 1 ? '' : 's'}
+                </summary>
+                <ul className="mt-0.5 space-y-0.5 text-t2">
+                  {card.knowledgeSetup.files.map((f) => (
+                    <li key={f}>{f}</li>
+                  ))}
+                  {(card.knowledgeSetup.fileCount ?? 0) > card.knowledgeSetup.files.length && <li>and {(card.knowledgeSetup.fileCount ?? 0) - card.knowledgeSetup.files.length} more</li>}
+                </ul>
+              </details>
+            )}
+          </Row>
+        ) : (
+          card.knowledge && <Row label="Knows">The “{card.knowledge}” knowledge base</Row>
+        )}
         {card.practices && <Row label="Practices">Follows your approved practices</Row>}
         {card.guardrails.length > 0 && (
           <Row label="Guardrails">

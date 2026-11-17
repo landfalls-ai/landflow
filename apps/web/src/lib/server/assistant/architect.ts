@@ -1147,7 +1147,8 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
       }
       case 'list_knowledge_bases': {
         const list = input.resources?.knowledge ?? [];
-        const fresh = input.resources?.embeddings ? `A new empty one can be started (type "knowledge" with a new collection name), embedded with ${input.resources.embeddings.model}.` : 'No embeddings model is pulled, so no new one can be started.';
+        // AG13: a new knowledge base can always be started: with the host's embeddings model, or searched by keywords (built in) when it has none
+        const fresh = `A new empty one can be started (type "knowledge" with a new collection name), ${input.resources?.embeddings?.provider === 'none' || !input.resources?.embeddings ? 'searched by keywords (built in, no embeddings model needed)' : `embedded with ${input.resources.embeddings.model}`}.`;
         return result(`${list.length ? JSON.stringify(list.map((k) => ({ collection: k.collection, description: k.description, store: k.store, usedBy: k.usedBy }))) : 'No agent searches a knowledge base yet.'} ${fresh}`, `Listed ${list.length} knowledge base${list.length === 1 ? '' : 's'}`);
       }
       case 'list_templates': {
@@ -1588,9 +1589,8 @@ export function designBrief(spec: AgentSpec, input: Pick<ArchitectInput, 'types'
   return [
     models.length ? `Models (pick one, the first is best here): ${models.map((m) => `${m.provider}/${m.model} (${m.note})`).join('; ')}` : 'Models: none known; leave the model out.',
     knowledge.length ? `Knowledge bases: ${knowledge.map((k) => `${k.collection}: ${k.description}`).join('; ')}` : 'Knowledge bases: none yet.',
-    input.resources?.embeddings
-      ? 'Knowledge: only if its job means looking things up in documents (policies, contracts, playbooks, past answers). Use an existing collection only if it holds those documents; else a new name (lowercase-dashes) for an empty one the user fills. Most agents that act need none: leave knowledge empty.'
-      : 'No new knowledge base can be started here (no embeddings model): leave knowledge empty.',
+    // AG13: a new knowledge base can always be started (the host's embeddings model, else keyword search), so the brief never says it cannot
+    'Knowledge: only if its job means looking things up in documents (policies, contracts, playbooks, past answers). Use an existing collection only if it holds those documents; else a new name (lowercase-dashes) for an empty one the user fills (it is searched with the host\'s embeddings model, or by keywords when it has none). Most agents that act need none: leave knowledge empty.',
     'Node tools: only for what it must do outside its reply (post a message, create a ticket, fetch a record). Reading, judging or summarising the message it gets needs no tool: then leave nodeTools empty.',
     hits.size ? `Nodes that matched the request (most are probably not needed): ${[...hits.values()].join('; ')}` : 'No node matched the request.',
     'If it must act in an app none of these nodes covers (Slack, Jira…), name it in missing ("Slack: post a message") instead of picking a node that doesn\'t do it.',

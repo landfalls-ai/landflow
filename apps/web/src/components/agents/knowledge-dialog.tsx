@@ -62,6 +62,7 @@ export function KnowledgeDialog({ agentId, tool, onSave, onClose }: { agentId?: 
             value.collection.trim() &&
             value.embeddings.model.trim() &&
             (value.store !== 'pgvector' || value.credential) &&
+            !(value.store === 'pgvector' && value.embeddings.provider === 'none') && // AG13: Postgres needs real vectors
             (value.embeddings.provider !== 'openai' || value.embeddings.credential),
         );
   const save = () => (source === 'node' ? onSave({ ...node, name: node.name.trim() }) : onSave({ ...value, name: value.name.trim(), collection: value.collection.trim() }));
@@ -179,18 +180,28 @@ export function KnowledgeDialog({ agentId, tool, onSave, onClose }: { agentId?: 
               value={value.embeddings.provider}
               onChange={(e) => {
                 const provider = e.target.value as VectorKnowledgeBaseConfig['embeddings']['provider'];
-                setEmbeddings({ provider, model: provider === 'openai' ? 'text-embedding-3-small' : 'nomic-embed-text' });
+                // AG13: keyword search (provider none, model bm25) has no model and searches by keywords only
+                setValue((v) => ({
+                  ...v,
+                  embeddings: { ...v.embeddings, provider, model: provider === 'none' ? 'bm25' : provider === 'openai' ? 'text-embedding-3-small' : 'nomic-embed-text' },
+                  searchMode: provider === 'none' ? 'keyword' : v.searchMode === 'keyword' ? 'hybrid' : v.searchMode,
+                }));
               }}
             >
               <option value="ollama">Ollama</option>
               <option value="openai">OpenAI-compatible</option>
+              <option value="none">Keyword search (built in, no model)</option>{/* AG13: */}
             </Select>
           </Field>
-          <Field id="kb-model" label="Embeddings model" required>
-            <Input id="kb-model" value={value.embeddings.model} onChange={(e) => setEmbeddings({ model: e.target.value })} />
-          </Field>
+          {value.embeddings.provider === 'none' ? (
+            <p className="self-end pb-2 text-[12px] text-t3">Finds the words in the question, not their meaning. No model, no key. SQLite and in-memory stores only.</p>
+          ) : (
+            <Field id="kb-model" label="Embeddings model" required>
+              <Input id="kb-model" value={value.embeddings.model} onChange={(e) => setEmbeddings({ model: e.target.value })} />
+            </Field>
+          )}
         </div>
-        {value.embeddings.provider === 'ollama' ? (
+        {value.embeddings.provider === 'none' ? null : value.embeddings.provider === 'ollama' ? (
           <div className="grid grid-cols-2 gap-3">
             <Field id="kb-base-url" label="Ollama URL">
               <Input id="kb-base-url" value={value.embeddings.baseUrl ?? ''} placeholder="http://127.0.0.1:11434" onChange={(e) => setEmbeddings({ baseUrl: e.target.value || undefined })} />
@@ -212,9 +223,15 @@ export function KnowledgeDialog({ agentId, tool, onSave, onClose }: { agentId?: 
             <Input id="kb-topk" type="number" min={1} max={50} value={value.topK ?? 4} onChange={(e) => set({ topK: Math.max(1, Math.min(50, Number(e.target.value) || 4)) })} />
           </Field>
           <Field id="kb-search" label="Search">
-            <Select id="kb-search" value={value.searchMode ?? 'vector'} onChange={(e) => set({ searchMode: e.target.value as 'vector' | 'hybrid' })}>
-              <option value="hybrid">Hybrid (meaning + keywords)</option>
-              <option value="vector">By meaning (vectors)</option>
+            <Select id="kb-search" value={value.embeddings.provider === 'none' ? 'keyword' : (value.searchMode ?? 'vector')} disabled={value.embeddings.provider === 'none'} onChange={(e) => set({ searchMode: e.target.value as 'vector' | 'hybrid' })}>
+              {value.embeddings.provider === 'none' ? (
+                <option value="keyword">Keywords (BM25)</option>
+              ) : (
+                <>
+                  <option value="hybrid">Hybrid (meaning + keywords)</option>
+                  <option value="vector">By meaning (vectors)</option>
+                </>
+              )}
             </Select>
           </Field>
         </div>
@@ -336,6 +353,7 @@ function DocumentsPanel({ agentId, tool }: { agentId: string; tool: VectorKnowle
         </div>
       ))}
       {other > 0 && <p className="text-[11.5px] text-t3">{other} more chunks were inserted by workflows.</p>}
+      {tool.indexedFrom && <p className="text-[11.5px] text-t3">Indexed from {tool.indexedFrom}</p>}{/* AG13: the folder of the files directory it was indexed from */}
     </div>
   );
 }

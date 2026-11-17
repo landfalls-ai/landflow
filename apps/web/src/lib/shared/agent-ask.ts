@@ -20,6 +20,8 @@ export interface AgentAsk {
   tools: string[];
   /** What it answers from ("docs"). */
   knowledge?: string;
+  /** AG13: a folder the ask named, relative to the files directory (`runbooks`, `runbooks/ops`); never an absolute path. */
+  knowledgeFolder?: string;
 }
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -200,6 +202,24 @@ function knowledgeOf(message: string): string | undefined {
   return undefined;
 }
 
+/**
+ * AG13: the folder the ask names: "in the folder runbooks", "from the folder runbooks/ops", "the runbooks folder", "in runbooks/".
+ * Relative paths only: an absolute path, `..`, `~`, a URL or a drive letter gives none (the design says why).
+ */
+export function knowledgeFolderOf(message: string): string | undefined {
+  const PATH = '([^\\s"“”\'‘’,;()]+)';
+  const m = new RegExp(`\\b(?:in|from|under|inside|at|of)\\s+(?:the\\s+|our\\s+)?folder\\s+(?:called\\s+|named\\s+)?["“'‘]?${PATH}`, 'i').exec(message)
+    ?? new RegExp(`\\b(?:in|from|under|inside)\\s+(?:the\\s+|our\\s+)?["“'‘]?([\\w.~:/\\\\-]+?)["”'’]?\\s+(?:folder|directory)\\b`, 'i').exec(message)
+    ?? new RegExp(`\\b(?:the\\s+|our\\s+)?["“'‘]?([\\w.-]+?)["”'’]?\\s+folder\\b`, 'i').exec(message)
+    ?? new RegExp(`\\b(?:in|from|under)\\s+["“'‘]?([\\w.-]+(?:/[\\w.-]+)*/)["”'’]?(?![\\w/])`, 'i').exec(message);
+  if (!m) return undefined;
+  const raw = m[1].replace(/[.!?]+$/, '');
+  if (!raw || /^(?:the|a|an|this|that|our|your|its|new|same|another|files?|shared|local|specific)$/i.test(raw)) return undefined;
+  if (/^[\\/~]/.test(raw) || /^[a-z]:/i.test(raw) || /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) || raw.split(/[\\/]/).includes('..')) return undefined;
+  const path = raw.replace(/\/+$/, '');
+  return /^[\w.-]+(?:\/[\w.-]+)*$/.test(path) && path.length <= 200 ? path : undefined;
+}
+
 const AGENT_NOUN: Record<string, string> = { review: 'reviewer', answer: 'answerer', summari: 'summariser', triage: 'triager', monitor: 'monitor', watch: 'watcher', write: 'writer', draft: 'drafter', classify: 'classifier', route: 'router', check: 'checker', label: 'labeller', translate: 'translator', research: 'researcher', report: 'reporter', plan: 'planner', find: 'finder', track: 'tracker', prioriti: 'prioritiser', respond: 'responder', reply: 'replier', handle: 'handler', analy: 'analyst', extract: 'extractor' };
 
 const cap = (text: string) => (text ? text[0].toUpperCase() + text.slice(1) : text);
@@ -265,11 +285,12 @@ export function agentAsk(message: string, nodeNames: string[] = [], catalog: Ask
   if (!text || askKind(text) === 'question') return undefined;
   if (!AS_OBJECT.test(text) && !AS_SUBJECT.test(text)) return undefined;
   const knowledge = knowledgeOf(text);
+  const knowledgeFolder = knowledgeFolderOf(text); // AG13
   const job = jobOf(text);
   const tools = toolsOf(text, catalog);
   const description = descriptionOf(text, job);
   const name = named ? named[1].trim() : nameOf(sentencesOf(job)[0] ?? job, knowledge); // none when the job names no thing: the card then uses `fallbackName`
-  return { ...(name && { name }), description, placed: isPlaced(text, nodeNames), tools, ...(knowledge && { knowledge }) };
+  return { ...(name && { name }), description, placed: isPlaced(text, nodeNames), tools, ...(knowledge && { knowledge }), ...(knowledgeFolder && { knowledgeFolder }) };
 }
 
 /**

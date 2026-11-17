@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { randomFace } from '@/lib/shared/faces';
 import { agentResources } from '@/lib/server/assistant/agent-resources';
 import { designAgent } from '@/lib/server/assistant/architect';
+import { withKnowledgeSetup } from '@/lib/server/assistant/knowledge-setup'; // AG13:
 import { resolveSpotlightModel } from '@/lib/server/assistant/models-list'; // SB19:
 import { allowedTypes } from '@/lib/server/assistant/scope';
 import { addCase } from '@/lib/server/agents/eval-gate'; // SB17:
@@ -40,6 +41,8 @@ const Body = z.object({
   // SB05: what the agent needs, from Spotlight's newAgent.
   tools: z.array(z.string().max(80)).max(8).optional(),
   knowledge: z.string().max(200).optional(),
+  // AG13: a folder the ask named, relative to the files directory: the knowledge base is indexed from it when Create runs.
+  knowledgeFolder: z.string().trim().max(200).optional(),
   // SB19: the model Spotlight picked (a model this server offers); absent, the Settings default.
   model: z.string().max(100).optional(),
   // AG02: the person's whole message: the architect reads it, not only the short description.
@@ -76,13 +79,17 @@ export const POST = handler(async (request: Request) => {
     if (isUsageCapError(caught)) return error(caught.message, 429);
     throw caught;
   }
+  // AG13: a folder the ask named becomes the knowledge base's source; no folder (and nothing that fits) is asked, never invented.
+  const setup = await withKnowledgeSetup(design, { ...(parsed.data.knowledgeFolder && { folder: parsed.data.knowledgeFolder }), ...(parsed.data.knowledge && { knowledge: parsed.data.knowledge }), spotlight: true, revise: Boolean(baseConfig), resources });
+  design.config = setup.config;
+  design.needs = setup.needs;
   const models = resources.models.map((m) => `${m.provider}/${m.model}`); // AG02: the card's Model select, the builder model first
   const config = baseConfig ? design.config : { avatar: { kind: 'face' as const, face: randomFace(parsed.data.name) }, ...design.config }; // AG04: a change keeps the base's own look
   if (parsed.data.preview) {
     // SB16: the card's preview: a face to show, nothing saved; SB17's brief's cases come with it.
     // AG04: a change also says what it changes from the base; nothing is saved.
-    if (baseConfig) return json({ config, changes: agentChanges(baseConfig, config as Record<string, unknown>), needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: [], notAdded: design.notAdded, models /* AG02: */, ...(design.failure && { failure: design.failure }) });
-    return json({ config, needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: design.cases ?? [], notAdded: design.notAdded, models /* AG02: */ });
+    if (baseConfig) return json({ config, changes: agentChanges(baseConfig, config as Record<string, unknown>), needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: [], notAdded: design.notAdded, models /* AG02: */, ...(setup.knowledge && { knowledge: setup.knowledge }) /* AG13: */, ...(design.failure && { failure: design.failure }) });
+    return json({ config, needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: design.cases ?? [], notAdded: design.notAdded, models /* AG02: */, ...(setup.knowledge && { knowledge: setup.knowledge }) /* AG13: */ });
   }
   const agent = createInProject(request, 'agent', () => agentStore.create(config), (a) => a.id);
   // SB17: the brief's test cases are saved on the new agent (the eval gate runs them on its first publish); one that fails is a line for the person, not a 500.

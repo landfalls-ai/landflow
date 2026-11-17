@@ -24,7 +24,10 @@ import { agentStore } from '@/lib/server/agents/store';
 import { listCases } from '@/lib/server/agents/eval-gate'; // SB17:
 import { guardrailWords } from '@/lib/shared/agents'; // SB17:
 import { agentAsk, agentChangeAsk, askCatalog, fallbackName } from '@/lib/shared/agent-ask'; // SB16: AG02: fallbackName; AG04: agentChangeAsk
-import { readFileSync } from 'node:fs'; // AG02:
+import { cpSync, mkdirSync, readFileSync } from 'node:fs'; // AG02: AG13: cpSync, mkdirSync
+import { join } from 'node:path'; // AG13:
+import { filesDir } from '@/lib/server/nodes/files'; // AG13:
+import { SqliteVectorStore } from '@/lib/server/rag/stores'; // AG13:
 import { builderModel } from '@/lib/server/assistant/agent-resources'; // AG02:
 import { starterFlow, starterSample } from '@/lib/shared/agent-card'; // SB16:
 import { handler } from '@/lib/server/http';
@@ -657,6 +660,10 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
     return outcome;
   }
   await addScenarioPlugins(scenario, form);
+  // AG13: the runbooks are in the test host's files directory before an AG13 scenario designs an agent from them.
+  // (an agent an earlier AG13 scenario made, with its knowledge base, is gone: each ask starts from a host with none)
+  if (scenario.owner === 'AG13') for (const a of agentStore.list()) if (a.tools.some((t) => t.type === 'knowledge')) agentStore.delete(a.id);
+  if (scenario.owner === 'AG13') cpSync(join(import.meta.dirname, 'fixtures', 'runbooks'), join(filesDir(), 'runbooks'), { recursive: true });
   toolInputs = [];
   outcome.hostModel = builderModel(); // AG02:
   const previousOllama = process.env.OLLAMA_URL;
@@ -774,14 +781,14 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
         if (canvas) outcome.after = canvas;
       } else {
         const designed = await import('@/app/api/agents/design/route');
-        const spec = { name: ask.name ?? fallbackName(ask.description, ask.tools, catalog) /* AG02: */, description: ask.description, instructions: '', ask: scenario.ask /* AG02: */, ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }), ...((scenario.start?.model ?? model) && { model: scenario.start?.model ?? model }), preview: true };
+        const spec = { name: ask.name ?? fallbackName(ask.description, ask.tools, catalog) /* AG02: */, description: ask.description, instructions: '', ask: scenario.ask /* AG02: */, ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }), ...(ask.knowledgeFolder && { knowledgeFolder: ask.knowledgeFolder }) /* AG13: */, ...((scenario.start?.model ?? model) && { model: scenario.start?.model ?? model }), preview: true };
         const response = await designed.POST(post('/api/agents/design', spec));
-        const body = (await response.json()) as { config?: Partial<AgentConfig>; cases?: Array<{ input: string; expected?: string }>; notAdded?: Array<{ name: string }>; models?: string[]; error?: string };
+        const body = (await response.json()) as { config?: Partial<AgentConfig>; cases?: Array<{ input: string; expected?: string }>; notAdded?: Array<{ name: string }>; models?: string[]; knowledge?: { folder?: string; files?: string[]; search?: 'vector' | 'keyword'; embeddings?: string; problem?: string }; error?: string };
         outcome.modelCalls = fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 1;
         if (!response.ok || !body.config) outcome.error = body.error ?? `design ${response.status}`;
         else {
           const starter = !names.length;
-          outcome.card = { starter, needs: ((body as { needs?: Array<{ text: string }> }).needs ?? []).map((n) => n.text) /* AG08: */, ...(body.config.model && { model: `${body.config.model.provider}/${body.config.model.model}` }), ...(body.models && { models: body.models }), notAdded: (body.notAdded ?? []).map((n) => n.name) /* AG02: */ };
+          outcome.card = { starter, needs: ((body as { needs?: Array<{ text: string }> }).needs ?? []).map((n) => n.text) /* AG08: */, ...(body.config.model && { model: `${body.config.model.provider}/${body.config.model.model}` }), ...(body.models && { models: body.models }), notAdded: (body.notAdded ?? []).map((n) => n.name) /* AG02: */, ...(body.knowledge && { knowledge: body.knowledge }) /* AG13: */ };
           outcome.text = `Designed ${body.config.name ?? spec.name}`;
           const imported = await (await import('@/app/api/agents/import/route')).POST(post('/api/agents/import', { config: body.config }));
           const made = (await imported.json()) as { agent?: AgentConfig & { id: string }; error?: string };
@@ -790,6 +797,13 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
             const gate = await import('@/app/api/agents/[id]/eval-gate/route');
             for (const c of body.cases ?? []) await gate.POST(post(`/api/agents/${made.agent.id}/eval-gate`, c), { params: Promise.resolve({ id: made.agent.id }) });
             outcome.agents.push({ ...agentOf(made.agent, false, 0, undefined, (body.cases ?? []).map((c) => c.input) /* AG08: */), cases: (body.cases ?? []).length });
+            // AG13: Create indexes the folder into the new knowledge base; the outcome lists each knowledge base's collection and the `source` of what is in it.
+            const kb = made.agent.tools.find((t) => t.type === 'knowledge' && !('source' in t && t.source === 'node'));
+            if (kb && kb.type === 'knowledge' && 'collection' in kb) {
+              if (body.knowledge?.folder && !body.knowledge.problem) await (await import('@/app/api/agents/[id]/knowledge/[toolId]/folder/route')).POST(post(`/api/agents/${made.agent.id}/knowledge/${kb.id}/folder`, { folder: body.knowledge.folder }), { params: Promise.resolve({ id: made.agent.id, toolId: kb.id }) });
+              const rows = kb.store === 'sqlite' ? await new SqliteVectorStore().metadataOf(kb.collection) : [];
+              outcome.agents[outcome.agents.length - 1].knowledgeDocs = [{ collection: kb.collection, sources: [...new Set(rows.map((r) => String(r.metadata.source ?? '')).filter(Boolean))].sort() }];
+            }
             outcome.after = starter ? draftToWorkflow(starterFlow({ id: made.agent.id, name: made.agent.name }, starterSample({ name: made.agent.name, cases: body.cases ?? [] }))) : canvas;
           }
         }
