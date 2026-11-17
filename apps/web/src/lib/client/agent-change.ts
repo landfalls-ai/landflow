@@ -132,6 +132,14 @@ export function stillLeft(lines: string[], draft: Record<string, unknown> | unde
   if (!draft) return lines;
   const tools = (Array.isArray(draft.tools) ? draft.tools : []) as Array<Record<string, unknown>>;
   return lines.filter((line) => {
+    // ag3 carryover: "send_email: fill in From Email" goes once the draft's tool has that field (a Spotlight change set it).
+    const field = /^(.+?): (?:fill in|set) (.+?)(?: \(the request gives none\))?$/.exec(line);
+    if (field) {
+      const parameters = tools.find((t) => t.name === field[1])?.parameters;
+      const key = field[2].replace(/\s+/g, '').toLowerCase();
+      const value = parameters && typeof parameters === 'object' ? Object.entries(parameters as Record<string, unknown>).find(([k]) => k.toLowerCase() === key)?.[1] : undefined;
+      return !(typeof value === 'string' ? value.trim() : value !== undefined && value !== null && !(Array.isArray(value) && !value.length));
+    }
     const m = /^(.+?): pick an? (.+?) credential/.exec(line);
     if (!m) return true;
     const tool = tools.find((t) => t.name === m[1]);

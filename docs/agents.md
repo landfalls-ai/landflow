@@ -236,6 +236,8 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   to …") sets that tool's **From Email** when it is still empty, and the Changes row says "Send Email: From Email set to
   landflow@landflow.test"; a From you already set is never rewritten, and a change that names no sender, or two, sets
   none (wave ag3's live pass found the change said "No change" instead).
+  The card's **Left** row then drops "fill in From Email" (any "fill in" or "set" line whose field the agent's draft now
+  holds), as it drops a credential line once the slot is set.
 - After Apply the card offers **Test again** next to Publish: the smoke test on the draft as it is, no save. Publish
   waits for a pass as before.
 - A pending card's name that the design made ("Crypto Toolkit agent") is made again from the tools the card has now

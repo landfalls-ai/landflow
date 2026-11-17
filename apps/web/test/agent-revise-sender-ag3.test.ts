@@ -121,3 +121,14 @@ describe('agentChanges says a value set on a kept tool', () => {
     expect(agentChanges(tool({ fromEmail: 'me@landflow.test' }), tool({ fromEmail: 'me@landflow.test' }))).toEqual([]);
   });
 });
+
+describe("the created card's Left row follows a field set on the draft", () => {
+  it('drops "fill in From Email" once the draft\'s Send Email has a From, keeps it while empty, and keeps other lines', async () => {
+    const { stillLeft } = await import('@/lib/client/agent-change');
+    const lines = ['send_email: pick a smtp credential (you have “Mailpit SMTP”)', 'send_email: fill in From Email', 'http_request: set URL (the request gives none)', 'Pick a model: none'];
+    const empty = { tools: [{ name: 'send_email', parameters: { fromEmail: '' } }, { name: 'http_request', parameters: {} }] };
+    expect(stillLeft(lines, empty)).toEqual(lines);
+    const set = { tools: [{ name: 'send_email', parameters: { fromEmail: 'landflow@landflow.test' }, credentials: { smtp: { id: 'c' } } }, { name: 'http_request', parameters: { url: 'http://127.0.0.1:1/x' } }] };
+    expect(stillLeft(lines, set)).toEqual(['Pick a model: none']);
+  });
+});
