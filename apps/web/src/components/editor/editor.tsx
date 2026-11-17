@@ -711,7 +711,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
   const spotlightOpen = !spotlightFolded;
   const spotlightVisible = column !== 'chat' && spotlightOpen;
   // On a phone, Spotlight's own runs take the canvas: the Execute bar steps aside while it drafts or tests.
-  // SB16: also true while Spotlight designs an agent card (an agent row in state 'designing').
+  // SB16: also true while Spotlight designs an agent (an agent row in state 'designing': the agent card's, or one the chat's newAgent saves).
   const spotlightWorks = useAssistant((s) => s.drafting || Boolean(s.testing) || s.agents.some((a) => a.state === 'designing'));
 
   // Spotlight starts a build or a test: it takes the column (once, so the person can still switch to the chat while it works).

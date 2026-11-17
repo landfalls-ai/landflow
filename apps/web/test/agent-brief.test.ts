@@ -155,6 +155,14 @@ describe('approved practices', () => {
     expect(needs.some((n) => n.tool === 'check_practices')).toBe(false);
   });
 
+  it('does not read a word pair like pass/fail or PRs/MRs as the repository', () => {
+    for (const phrase of ['a pass/fail verdict', 'for PRs/MRs', 'read/write access', 'a go/no-go call']) {
+      const { config, needs } = draftFrom({ name: 'Reviewer', role: 'Reviewer', instructions: 'Review.', tools: [] }, context(`${REVIEWER} with ${phrase}`));
+      expect(nodeTools(config)[0].parameters.repository, phrase).toBe('');
+      expect(needs.some((n) => n.tool === 'check_practices' && /Repository/.test(n.text)), phrase).toBe(true);
+    }
+  });
+
   it('adds no practice tool when the request does not ask, and drops the model’s own', () => {
     const asked = { name: 'Reviewer', role: 'Reviewer', instructions: 'Review.', tools: [{ type: 'node', nodeType: 'core.practiceCheck', name: 'practices' }] };
     const { config } = draftFrom(asked, context('an agent that reviews pull requests'));

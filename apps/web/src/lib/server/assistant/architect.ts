@@ -371,7 +371,7 @@ const AGENT_ASK = /\b(?:create|make|build|design|add)\s+(?:me\s+)?an?\s+(?:[\w-]
 export const KNOWLEDGE_ASK = /\b(?:knowledge|docs?|documents?|documentation|wiki|playbooks?|policies|policy|manuals?|faq|handbook|runbooks?|articles?|past\s+(?:tickets|answers)|contracts?)\b/i;
 /** Words of a node's keywords too general to say the request names its app. */
 const GENERIC_KEYWORDS = new Set(['comment', 'message', 'messages', 'trigger', 'webhook', 'file', 'files', 'send', 'create', 'update', 'search', 'record', 'records', 'database', 'table', 'event', 'events', 'document', 'documents', 'upload', 'attachment', 'attachments']);
-const REPOSITORY = /(?<![\w./-])(?!(?:and\/or|either\/or|he\/she|s\/he|i\/o|ci\/cd|n\/a|w\/o|yes\/no|input\/output)\b)[a-z0-9][\w.-]*\/[a-z0-9][\w.-]*(?![\w/-])/i;
+const REPOSITORY = /(?<![\w./-])(?!(?:and\/or|either\/or|he\/she|s\/he|i\/o|ci\/cd|n\/a|w\/o|yes\/no|input\/output|pass\/fail|read\/write|prs\/mrs|go\/no-go|true\/false|on\/off)\b)[a-z0-9][\w.-]*\/[a-z0-9][\w.-]*(?![\w/-])/i;
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** Whether the request names the app of a node (its name, plugin id or one of its specific keywords). */

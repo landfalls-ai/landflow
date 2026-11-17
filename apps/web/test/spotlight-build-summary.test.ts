@@ -256,6 +256,9 @@ describe('the card', () => {
     act(() => useEditor.getState().applyTemplate({ nodes: [{ key: 'iff', type: 'core.if', name: 'Filter Bugs', x: 0, y: 0 }], edges: [] } as never));
     render({ ...SUMMARY, left: [{ node: 'Filter Bugs', kind: 'empty', text: '“Filter Bugs”: has no conditions, so it keeps every item' }] });
     expect(button(/Open “Filter Bugs”/)).toBeDefined();
+    const id = useEditor.getState().nodes.find((n) => n.data.wf.name === 'Filter Bugs')!.id;
+    act(() => useEditor.getState().updateNode(id, { parameters: { conditions: { condition: [{ left: '{{ $json.priority }}', operator: 'equals', right: 'P0' }] } } }));
+    expect(button(/Open “Filter Bugs”/)).toBeUndefined();
   });
 
   it('with no credential to pick from, the picker opens the create dialog for the step’s types', () => {
