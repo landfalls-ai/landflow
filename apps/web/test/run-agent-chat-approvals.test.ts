@@ -206,6 +206,21 @@ describe('Run an Agent, Tool Approvals', () => {
     expect(label('failed')).toContain('Failed');
   });
 
+  it('a resumed run updates the waiting row instead of starting a second one; Deny reads Denied at once', async () => {
+    const { settleEarlierCall, markCallDenied, ToolCalls } = await import('@/components/editor/chat-panel');
+    const calls = [{ id: 'c1', name: 'send_email', status: 'approval' as const, input: { to: 'a' } }];
+    const html = (rows: typeof calls | ReturnType<typeof markCallDenied>) => renderToStaticMarkup(createElement(ToolCalls, { calls: rows as never }));
+    const started = settleEarlierCall(calls, { type: 'tool', tool: { id: 'c1', name: 'send_email', status: 'started' } } as never)!;
+    const done = settleEarlierCall(started, { type: 'tool', tool: { id: 'c1', name: 'send_email', status: 'finished', output: 'sent' } } as never)!;
+    expect(done).toEqual([expect.objectContaining({ id: 'c1', status: 'finished', output: 'sent', input: { to: 'a' } })]);
+    expect(html(done)).toContain('Done');
+    expect(html(done)).not.toContain('Waiting for approval');
+    // A call of the new reply, or any non-tool chunk, is not the old row's.
+    expect(settleEarlierCall(calls, { type: 'tool', tool: { id: 'c2', name: 'post', status: 'started' } } as never)).toBeUndefined();
+    expect(settleEarlierCall(calls, { type: 'item', content: 'hi' } as never)).toBeUndefined();
+    expect(html(markCallDenied(calls, 'c1') as never)).toContain('Denied');
+  });
+
   it.each([
     ['chat mode with Refuse (the default)', {}, 'chat'],
     ['webhook mode with Ask in the editor’s chat', { toolApprovals: 'askInChat' }, 'webhook'],
