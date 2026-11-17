@@ -15,7 +15,7 @@ export const githubWorkEventNode = defineNode({
     version: 1,
     kind: 'action',
     categories: ['AI', 'Core'],
-    icon: 'lucide:git-pull-request',
+    icon: 'brand:github',
     color: '#24292F',
     keywords: ['github', 'pull request', 'review', 'ci', 'work event', 'second brain', 'webhook'],
     inputs: main,

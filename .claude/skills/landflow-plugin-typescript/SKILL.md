@@ -56,7 +56,9 @@ siblings.
 
 ## 3. Write the node
 
-- Descriptor fields: `name`, `displayName`, `description`, `version: 1`, `kind`, `categories`, `icon: 'lucide:<name>'`,
+- Descriptor fields: `name`, `displayName`, `description`, `version: 1`, `kind`, `categories`, `icon: 'lucide:<name>'`
+  (a node that stands for an app takes the app's real mark, `icon: 'file:<name>.svg'`: never a drawn stand-in; see
+  `docs/plugins.md#branding-and-real-marks`), `subtitle` (optional; the operation's `action` label is shown by default),
   `inputs`, `outputs` (one entry per output, with `displayName`), `credentials`, `properties`, `idempotent`.
 - `execute(ctx)`: loop `ctx.getInputData().entries()`, read `ctx.getNodeParameter<T>(name, i)`, call APIs with `ctx.http`
   (traced, redacts credentials), return `[out0, out1, ...]`. Copy items (`{ ...item.json, x }`); keep `pairedItem` when you add items.

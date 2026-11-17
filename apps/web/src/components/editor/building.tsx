@@ -18,7 +18,7 @@ import type { ActivityStep } from '@/lib/shared/activity';
 import { cn } from '@/lib/utils';
 import { ActivityTrace } from '../ui/activity-trace';
 import { Button } from '../ui/button';
-import { NodeIcon } from '../ui/icon';
+import { NodeIcon, isImageIcon } from '../ui/icon';
 import { edgePath, useLane } from '../canvas/edge-path';
 import { applyChanges, editorLookup, sendFeedback, undos, useAssistant, useWorking, type AssistantTurn, type ChatItem, type Proposal } from './assistant';
 import { holdsForClick, useAutonomous } from './autonomous';
@@ -297,7 +297,7 @@ export function GhostNodeView({ data }: NodeProps<GhostFlowNode>) {
     >
       <div className={cn('relative grid size-[88px] place-items-center overflow-hidden rounded-2xl border-2 border-dashed bg-sf/80', data.active ? 'border-viz-7' : 'border-[color-mix(in_oklab,var(--node)_55%,var(--bd))]')}>
         {data.active && <span className="lf-shimmer absolute inset-x-0 bottom-0 h-[3px]" />}
-        <NodeIcon icon={info?.descriptor.icon} size={26} style={{ color }} strokeWidth={1.7} />
+        <NodeIcon icon={info?.descriptor.icon} size={isImageIcon(info?.descriptor.icon) ? 40 : 26} style={{ color }} strokeWidth={1.7} />
       </div>
       <span className="max-w-[160px] truncate rounded-full border border-dashed border-bd bg-sf px-2 py-px text-[11px] leading-4 text-t2">{data.name}</span>
       {data.ins.map((id) => (

@@ -46,7 +46,7 @@ What the look draws:
 | | n8n | Landflow | |
 |---|---|---|---|
 | Node shape | Square tiles, label underneath; D-shaped triggers with a bolt; wide AI Agent with diamond sub-ports | Same: 88px tiles, D-shaped triggers with a bolt, wide AI root with round sub-node ports, round sub-nodes | ✅ |
-| Icons | Brand icons for apps | Plugin-published SVG icons (data URLs from the SDKs), otherwise lucide glyphs on a tint of the node colour | ✅ |
+| Icons | Brand icons for apps | Plugin-published SVG icons (data URLs from the SDKs) that are the apps' real marks, `brand:<slug>` marks for built-in nodes, otherwise lucide glyphs on a tint of the node colour | ✅ |
 | Add from an output | "+" stub on unconnected outputs | "+" stub; also "+" on AI sub-ports and in the middle of an edge (insert a node into the connection) | ✅ |
 | Run state on nodes | Green border and check, red with an x, spinner | Same, plus a rotating conic border while running, a pin mark, a breakpoint dot and the plugin transport under the label | ➕ |
 | Edges after a run | Green, "N items" label | Green with an "N items" pill that pops in, dots travelling along the edge while items flow; AI edges violet with "N calls" | ➕ |

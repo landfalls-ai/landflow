@@ -15,7 +15,7 @@ import { runsInOrder, type RunEntry } from '@/lib/client/run-data';
 import type { LogEntry } from '@landflow/protocol';
 import type { NodeRun, NodeTypeInfo } from '@/lib/shared/types';
 import { RemoteSteps } from '../agents/timeline';
-import { NodeIcon } from '../ui/icon';
+import { NodeIcon, isImageIcon } from '../ui/icon';
 import { DataView } from './data-view';
 import { RUN_STATE, RunStateIcon, statusText, useNow, type RunState } from './run-status';
 import { Segmented as SharedSegmented } from '../ui/segmented';
@@ -147,6 +147,8 @@ function itemCount(items: NodeRun['outputs']) {
 
 function NodeBadge({ info, size = 22 }: { info?: NodeTypeInfo; size?: number }) {
   const color = nodeColor(info);
+  // An app's own icon (its real mark) brings its tile: shown whole.
+  if (isImageIcon(info?.descriptor.icon)) return <NodeIcon icon={info?.descriptor.icon} size={size} className="shrink-0" />;
   return (
     <span className="grid shrink-0 place-items-center rounded-[7px]" style={{ width: size, height: size, background: tint(color, 14), color }}>
       <NodeIcon icon={info?.descriptor.icon} size={Math.round(size * 0.6)} strokeWidth={1.9} />

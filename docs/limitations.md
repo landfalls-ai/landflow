@@ -701,3 +701,16 @@ own sections are [call attribution](#call-attribution-wave-11) and [the gateway'
 - The landflow-brain mod's status line has been checked against fakes and the real route, not in a live Claude Code
   session, which would call a vendor ([landflow-brain-mod.md](landflow-brain-mod.md)).
 - **The brain's draft workflows** ([second-brain.md](second-brain.md)): a suggestion's draft is built planned first (a plan call, one call per step and the send-backs, usually 5 to 15 calls and at most 26, on the brain's local model), so one detector pass builds drafts for at most 3 findings (`MAX_DRAFTS_PER_PASS`; the only draft detector, unmet demand, reports at most 3 anyway); a finding past that is saved without a draft and gets none until it is found again in a later pass that has room. A request whose suggestion is still open or snoozed keeps its saved draft and is not rebuilt, as long as the prompt it was built from (the request and its example requests, hashed on the suggestion as `draftPromptHash`) is the same; when the examples change as requests leave the 30-day window, or the draft was saved before the hash was kept, the next pass rebuilds it and the rebuild counts against the cap. Dismissing a suggestion does not get a new draft: it holds the request back (see [second-brain.md](second-brain.md)).
+
+## Real app icons (2026-11)
+
+- **Marks that are not the app's own**: Microsoft Teams (no clean source) and Fathom keep a Landflow glyph. Simple Icons'
+  "Fathom" is Fathom Analytics, a different product from fathom.video (the meeting recorder the plugin talks to), and
+  fathom.video publishes no press kit. Add a mark when the brand offers one.
+- **Slack and Twilio** come from Simple Icons 15.0.0, the last version that carries them (the 16.36.0 package dropped
+  both), so they may lag a rebrand. Attio's mark is from its press kit, offered for third-party materials.
+- **Bundles**: the Messaging, Databases and Productivity plugins keep one simple tile of their own; each app in them
+  (Slack, Postgres, Notion, and so on) has its real mark on its own nodes.
+- **Names**: an app a Marketplace entry or an agent tool is named after gets its mark only when the whole name says it
+  ("Slack", "Linear Trigger", "GitHub MCP"); "Linear regression" or "Slack-like notifier" get none, and neither does an
+  app with no entry in `brand-icons.ts`.

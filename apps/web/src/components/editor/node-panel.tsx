@@ -9,7 +9,8 @@ import type { NodeItem, NodeRun, NodeTypeInfo } from '@/lib/shared/types';
 import { Badge, LanguageBadge, TransportBadge, executionTone } from '../ui/badge';
 import { RUN_STATE, type RunState } from '../run/run-status';
 import { Button } from '../ui/button';
-import { NodeIcon } from '../ui/icon';
+import { NodeIcon, isImageIcon } from '../ui/icon';
+import { nodeSubtitle } from '@/lib/shared/node-subtitle';
 import { Input, SectionLabel } from '../ui/inputs';
 import { DataView } from '../run/data-view';
 import { useEditLock } from './edit-lock';
@@ -224,6 +225,7 @@ export function NodePanel() {
   if (!node || !openNodeId) return null;
   const descriptor = info?.descriptor;
   const wf = node.data.wf;
+  const action = nodeSubtitle(descriptor, wf.parameters);
   // A credential can depend on a parameter (one per auth method); an unset one counts at its default.
   const credentialRequirements = descriptor?.credentials?.filter((c) => isPropertyVisible(c, withPropertyDefaults(descriptor.properties, wf.parameters))) ?? [];
   const update = (patch: Parameters<ReturnType<typeof useEditor.getState>['updateNode']>[1]) => useEditor.getState().updateNode(openNodeId, patch);
@@ -304,12 +306,30 @@ export function NodePanel() {
           <button ref={backButton} type="button" onClick={close} aria-label="Back to the flow" className="grid size-11 shrink-0 place-items-center rounded-full text-t2 hover:text-t1 md:hidden">
             <ArrowLeft className="size-5" />
           </button>
-          <div className="grid size-9 place-items-center rounded-lg border border-hair bg-wl max-md:shrink-0">
-            <NodeIcon icon={descriptor?.icon} size={17} className="text-t1" strokeWidth={1.6} />
+          {/* From md up a plugin's own icon (the app's real mark) brings its tile: no frame around it. The phone keeps the framed 17px icon. */}
+          <div
+            className={cn(
+              'grid place-items-center max-md:size-9 max-md:shrink-0 max-md:rounded-lg max-md:border max-md:border-hair max-md:bg-wl',
+              isImageIcon(descriptor?.icon) ? 'md:size-10' : 'size-9 rounded-lg border border-hair bg-wl',
+            )}
+          >
+            {isImageIcon(descriptor?.icon) ? (
+              <>
+                <NodeIcon icon={descriptor?.icon} size={38} className="max-md:hidden" />
+                <NodeIcon icon={descriptor?.icon} size={17} className="md:hidden" />
+              </>
+            ) : (
+              <NodeIcon icon={descriptor?.icon} size={17} className="text-t1" strokeWidth={1.6} />
+            )}
           </div>
           <div className="min-w-0 max-md:flex-1">
             <NodeNameInput nodeId={openNodeId} name={wf.name} />
             <NodeTypeLine type={wf.type} info={info} />
+            {action && (
+              <p className="max-w-[560px] truncate text-[12px] font-medium text-t2 max-md:hidden" title={action} data-node-action>
+                {action}
+              </p>
+            )}
             {descriptor?.description && (
               <p className="max-w-[560px] truncate text-[12px] text-t3 max-md:hidden" title={descriptor.description}>
                 {descriptor.description}

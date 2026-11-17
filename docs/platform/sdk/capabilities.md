@@ -484,7 +484,9 @@ The host adds the plugin to its gateway automatically ([protocol §15](../../pro
 ## Branding and icons
 
 `icon` takes `lucide:<name>`, `emoji:<char>`, an `https:` URL, a `data:` URL, or `file:icons/x.svg`, which the SDK reads and
-inlines (SVG or PNG, at most 64 KB; draw glyphs as paths, not text). `color` is a hex colour for the plugin's segment and
+inlines (SVG or PNG, at most 64 KB; draw glyphs as paths, not text). A node that stands for an app wears the app's real
+mark, not a drawn stand-in ([plugins.md](../../plugins.md#branding-and-real-marks): sources, licences and
+`scripts/brand-icon.mjs`). `color` is a hex colour for the plugin's segment and
 its nodes. Where relative `file:` paths resolve: TypeScript `definePlugin({ iconDir })`, Python the module's folder or
 `Plugin(icon_dir=)`, Go `PluginInfo.IconFS` (an `embed.FS`). See [protocol §6](../../protocol.md#6-icons-and-brand-colour).
 

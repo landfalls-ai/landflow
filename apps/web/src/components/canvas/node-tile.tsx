@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 import { duration, languageMeta, TRANSPORT_META } from '@/lib/client/format';
 import { useDeveloperDetails } from '@/lib/client/developer-details';
 import { nodeColor, tint } from '@/lib/client/node-style';
+import { nodeSubtitle } from '@/lib/shared/node-subtitle';
 import type { NodeStatus } from '@/lib/client/run-data';
 import type { ConnectionType, NodeTypeInfo, PortDescriptor } from '@/lib/shared/types';
 import { AgentAvatar, type AvatarSource } from '../agents/avatar';
@@ -33,16 +34,6 @@ const AI_LABEL: Record<string, string> = {
 
 export function handleId(type: ConnectionType, index: number) {
   return `${type}:${index}`;
-}
-
-function subtitleOf(template: string | undefined, parameters: Record<string, unknown>) {
-  if (!template) return undefined;
-  const text = template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_m, key: string) => {
-    const value = parameters[key];
-    return value === undefined || value === null ? '' : typeof value === 'object' ? '…' : String(value);
-  });
-  // An empty value leaves its separator behind ("insert · "): drop separators at either end.
-  return text.replace(/^[\s·|]+|[\s·|]+$/g, '') || undefined;
 }
 
 /**
@@ -201,7 +192,7 @@ export function NodeTile(props: NodeTileProps) {
   const isTrigger = kind === 'trigger';
   const unavailable = !info || !info.available;
   const color = nodeColor(info);
-  const subtitle = subtitleOf(descriptor?.subtitle, parameters);
+  const subtitle = useMemo(() => nodeSubtitle(descriptor, parameters), [descriptor, parameters]);
   const lang = info && info.pluginId !== 'core' ? languageMeta(info.language) : undefined;
   const ran = ranFor(status);
   const developerDetails = useDeveloperDetails();
@@ -318,7 +309,7 @@ export function NodeTile(props: NodeTileProps) {
           {face ? <AgentAvatar agent={face} size={36} round /> : <NodeIcon icon={descriptor?.icon} size={isImage ? 30 : 24} style={{ color }} strokeWidth={1.7} className="shrink-0" />}
           <div className="min-w-0">
             <div className={cn('truncate text-[13px] font-semibold text-t1', disabled && 'line-through')}>{name}</div>
-            <div className="truncate text-[11px] text-t3">{subtitle ?? descriptor?.displayName}</div>
+            <div className="truncate text-[11px] text-t3" title={subtitle}>{subtitle ?? descriptor?.displayName}</div>
           </div>
           <StatusMark status={status} compact />
           {status?.uses && status.uses > 1 && (
@@ -392,7 +383,7 @@ export function NodeTile(props: NodeTileProps) {
       {wide && (
         <div className="min-w-0">
           <div className={cn('truncate text-[14px] font-semibold text-t1', disabled && 'line-through')}>{name}</div>
-          <div className="truncate text-[12px] text-t3">{subtitle ?? descriptor?.displayName}</div>
+          <div className="truncate text-[12px] text-t3" title={subtitle}>{subtitle ?? descriptor?.displayName}</div>
         </div>
       )}
     </>
@@ -434,7 +425,13 @@ export function NodeTile(props: NodeTileProps) {
       {!wide && (
         <div className="pointer-events-none absolute left-1/2 top-full w-[170px] -translate-x-1/2 pt-2 text-center">
           <div className={cn('line-clamp-2 text-[13px] font-semibold leading-tight text-t1', disabled && 'line-through')}>{name}</div>
-          {subtitle && <div className="truncate text-[11px] text-t3">{subtitle}</div>}
+          {subtitle && (
+            <div className="truncate text-[11px] text-t3">
+              <span className="pointer-events-auto inline-block max-w-full truncate align-top" title={subtitle}>
+                {subtitle}
+              </span>
+            </div>
+          )}
           {meta}
         </div>
       )}

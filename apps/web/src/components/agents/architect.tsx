@@ -25,7 +25,7 @@ import { ActivityTrace } from '../ui/activity-trace';
 import { AssistantRow, CHAT_ICON_BUTTON, ChatComposer, ChatEmpty, ChatError, ChatMarkdown, ModelChip, ReplyMeta, UserBubble, Working, type ReplyInfo } from '../ui/chat';
 import { ChatList } from '../ui/chat-motion';
 import { ConversationHistory } from '../ui/conversation-history';
-import { NodeIcon } from '../ui/icon';
+import { NodeIcon, isImageIcon } from '../ui/icon';
 import { Input } from '../ui/inputs';
 import { AgentAvatar } from './avatar';
 import { AGENT_COLORS, AvatarDialog, type AvatarChoice } from './avatar-dialog';
@@ -180,6 +180,8 @@ export async function postCases(agentId: string, cases: AgentCaseDraft[], post: 
 
 function ToolTile({ info, size = 32 }: { info?: NodeTypeInfo; size?: number }) {
   const color = nodeColor(info);
+  // An app's own icon (its real mark) brings its tile: shown whole, not inside a tinted one.
+  if (isImageIcon(info?.descriptor.icon)) return <NodeIcon icon={info?.descriptor.icon} size={size} className="shrink-0" />;
   return (
     <span className="grid shrink-0 place-items-center rounded-[10px] border border-hair" style={{ width: size, height: size, background: tint(color, 12) }}>
       <NodeIcon icon={info?.descriptor.icon ?? 'wrench'} size={Math.round(size * 0.45)} style={{ color }} />

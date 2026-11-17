@@ -165,6 +165,15 @@ SDK environment variables:
 }
 ```
 
+**The line under a node's name** (`apps/web/src/lib/shared/node-subtitle.ts`) says what the node will do, in this order:
+the descriptor's `subtitle` first, read with option display names (`{{operation}}` shows "Create an issue", not
+`create`) and n8n's `{{ $parameter.operation }}` and `{{ $parameter["operation"] }}` forms; a parameter that is an
+expression (`=…` or holding `{{`) shows as `…` and only a node's own parameters are read. A template that holds anything
+else, or only says `{{operation}}: {{resource}}`, falls through to the operation's `action` label ("Create an issue"),
+then "Resource · Operation" ("Issue · Get many"), then nothing (the caller shows the node's type name). The node
+creator lists the same operations as actions for an app's node (never for a core node), and picking one places the node
+with its `resource` and `operation` already set.
+
 **Composite types** (optional `composites`) are contracts for canvas frames: slots that take nodes matching a
 `NodeMatcher` (by type, kind, what a sub-node supplies, category, **capability**, an input type, or a nested composite),
 ports, rules (`feeds`, `onError`, `reaches`, `sealed`), optional run behaviour (`onError: 'fallback'`,
