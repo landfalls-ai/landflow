@@ -209,7 +209,7 @@ describe('the Agent architect keeps its conversation', () => {
     ]);
     expect(back.messages.map((m) => [m.role, m.earlier])).toEqual([['user', true], ['assistant', true], ['assistant', true]]);
     expect(back.messages[1]).toMatchObject({ text: 'Here is a draft.', proposed: draft.summary, steps: [{ id: 's1', status: 'ok' }], info: { model: 'claude-test', costUsd: 0.001 } });
-    expect(back.draft).toEqual(draft);
+    expect(back.draft).toEqual({ ...draft, cases: [] }); // SB17: a draft kept before the brief has no cases
     // A kept failure has lost its checkpoint: Try again only.
     expect(back.messages[2].error).toEqual({ message: 'Ollama error 500', kind: 'model' });
     expect(back.messages[2].error?.checkpoint).toBeUndefined();
