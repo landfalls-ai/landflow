@@ -78,6 +78,11 @@ const TRIGGER_FIELDS: Record<string, Record<string, unknown>> = {
   'core.webhook': { method: '', path: '', headers: {}, query: {} },
   'core.chatTrigger': { chatInput: '', sessionId: '', action: '' },
 };
+/** What an agent step writes (nodes/ai.ts, nodes/agents.ts): its answer is `output`, never the fields of the item it read. */
+const AGENT_FIELDS: Record<string, Record<string, unknown>> = {
+  'core.aiAgent': { output: '', sessionId: '', model: '', iterations: 0, usage: {}, steps: [] },
+  'core.messageAgent': { output: '', sessionId: '', model: '', iterations: 0, usage: {}, steps: [] },
+};
 
 // ---------------------------------------------------------------------------
 // The prompt
@@ -200,7 +205,8 @@ export async function buildFromPlan(plan: BuildPlan, prompt: string, options: Bu
   /** The step whose items really arrive at `step`: the one it follows, past the steps that pass items through unchanged. */
   const dataSource = (step: PlanStep): string | undefined => {
     let from = step.attach ? undefined : step.from;
-    while (from) {
+    // A plan that follows itself would loop here: at most one hop per step.
+    for (let hops = 0; from && hops <= plan.steps.length; hops++) {
       const source = stepOf.get(from);
       if (!source || !PASS_THROUGH.has(source.type)) return from;
       from = source.from;
@@ -320,16 +326,17 @@ export async function buildFromPlan(plan: BuildPlan, prompt: string, options: Bu
       let testData: unknown[] | undefined;
       let problems: string[] = [];
       let failed: Error | undefined;
+      let unusable = false;
       let text = '';
-      const take = (reply: string): { parameters: Record<string, unknown>; testData?: unknown[]; problems: string[] } => {
+      const take = (reply: string): { parameters: Record<string, unknown>; testData?: unknown[]; problems: string[]; unusable?: boolean } => {
         const parsed = parseStep(reply, kit.jsonOf);
-        if (!parsed.ok) return { parameters: {}, problems: [`${parsed.problem}; reply with one JSON object {"parameters": {…}}`] };
+        if (!parsed.ok) return { parameters: {}, problems: [`${parsed.problem}; reply with one JSON object {"parameters": {…}}`], unusable: true };
         const kept = keep(info, parsed.parameters);
         return { parameters: kept, testData: parsed.testData, problems: checks(step, { ...node, parameters: kept }) };
       };
       try {
         text = await call(step, messages, 'node');
-        ({ parameters, testData, problems } = take(text));
+        ({ parameters, testData, problems, unusable = false } = take(text));
         succeeded++;
       } catch (e) {
         failed = e as Error;
@@ -340,14 +347,17 @@ export async function buildFromPlan(plan: BuildPlan, prompt: string, options: Bu
         try {
           const again = await call(step, [...messages, { role: 'assistant', content: text }, { role: 'user', content: `That reply has problems:\n${problems.map((p) => `- ${p}`).join('\n')}\nReply again with this step's whole {"parameters": {…}} as one JSON object, every problem above fixed as the request asks. Keep everything else as it is.` }], 'send-back');
           const next = take(again);
-          if (next.problems.length <= problems.length) ({ parameters, problems } = next);
+          if (next.problems.length <= problems.length) {
+            ({ parameters, problems } = next);
+            unusable = Boolean(next.unusable);
+          }
           if (next.testData && !testData) testData = next.testData;
         } catch {
           // The first reply stands: a failed send-back is no reason to lose it.
         }
       }
       node.parameters = parameters;
-      if (failed) left.push({ node: name, kind: 'empty', text: `“${name}”: its parameters could not be drafted (${clip(failed.message, 120)}): fill it in` });
+      if (failed || unusable) left.push({ node: name, kind: 'empty', text: `“${name}”: its parameters could not be drafted (${clip(failed?.message ?? problems[0] ?? 'the reply was not usable', 120)}): fill it in` });
       else {
         const empties = emptyParts({ nodes: [node], edges: [] }, byType).filter((p) => p.kind === 'empty');
         for (const part of empties) left.push({ node: name, field: part.field, kind: 'empty', text: part.left });
@@ -361,6 +371,7 @@ export async function buildFromPlan(plan: BuildPlan, prompt: string, options: Bu
     // What the next steps receive from this one.
     const out: Output = { declared: outputFields(info.descriptor, withPropertyDefaults(info.descriptor.properties, node.parameters ?? {})) };
     if (TRIGGER_FIELDS[info.type]) out.sample = { ...TRIGGER_FIELDS[info.type] };
+    if (AGENT_FIELDS[info.type]) out.sample = { ...AGENT_FIELDS[info.type] };
     if (info.type === 'core.set') {
       const upstream = node.parameters?.includeOtherFields !== false && step.from ? outputs.get(dataSource(step) ?? '') : undefined;
       const fields = Object.fromEntries(setNames(node.parameters ?? {}).map((n) => [n, '']));

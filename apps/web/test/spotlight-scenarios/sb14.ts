@@ -49,24 +49,44 @@ function sourceOf(o: Outcome, id: string): string | undefined {
   return undefined;
 }
 
+const AGENT_OUTPUT = ['output', 'sessionId', 'model', 'iterations', 'usage', 'steps', 'fallbackUsed'];
+const AGENT_TYPES = new Set(['core.aiAgent', 'core.messageAgent']);
+
+/** The fields a node writes, when known: Linear's schema (and `text`), an agent's output fields; undefined when not known. */
+function fieldsOf(node: DraftNode | undefined): Set<string> | undefined {
+  if (node?.type === 'linear.linear') return new Set([...Object.keys((ACTIVITY_ITEM_SCHEMA.properties ?? {}) as object), 'text']);
+  if (node && AGENT_TYPES.has(node.type)) return new Set(AGENT_OUTPUT);
+  return undefined;
+}
+
 /**
- * The Slack step reads only fields its input has: nothing the Linear step does not write (its output schema, when
- * the items come straight from it), never `$json.lastRun` and never `$json.issues` unless a step writes a field of that name.
+ * The names a Slack step reads that the step really does not have. `$json.x` is checked against what arrives (its
+ * source past If/Filter: Linear's schema, an agent's `output`, `sessionId` ...); `$('Name').item.json.x` against that
+ * node's own fields; `$json.lastRun` and `$json.issues` fail unless a Set writes them. Exported for the unit case.
  */
+export function badReads(slack: DraftNode, source: DraftNode | undefined, all: DraftNode[]): string[] {
+  const written = new Set(all.flatMap((n) => (n.type === 'core.set' ? [...text(n.parameters).matchAll(/"name":"(\w+)"/g)].map((m) => m[1]) : [])));
+  const bad: string[] = [];
+  const have = fieldsOf(source);
+  for (const r of rootsRead(slack.parameters)) {
+    if ((r === 'lastRun' || r === 'issues') && !written.has(r)) bad.push(r);
+    else if (have && !have.has(r) && !written.has(r)) bad.push(r);
+  }
+  for (const m of text(slack.parameters).matchAll(/\$\(\\?["']([^"'\\]+)\\?["']\)\.item\.json\.([A-Za-z_]\w*)/g)) {
+    const named = fieldsOf(all.find((n) => n.name === m[1]));
+    if (named && !named.has(m[2])) bad.push(`${m[1]}.${m[2]}`);
+  }
+  return bad;
+}
+
 const readsRight: Check = {
   id: 'reads-right',
   label: 'The Slack step reads only fields it receives',
   judge: (o) => {
     const slack = nodesOf(o).find((n) => n.type === 'messaging.slack');
     if (!o.after || !slack) return false;
-    const roots = rootsRead(slack.parameters);
-    const written = new Set(nodesOf(o).flatMap((n) => (n.type === 'core.set' ? [...text(n.parameters).matchAll(/"name":"(\w+)"/g)].map((m) => m[1]) : [])));
-    if (roots.some((r) => (r === 'lastRun' || r === 'issues') && !written.has(r))) return false;
-    const source = sourceOf(o, slack.key);
-    const linear = nodesOf(o).find((n) => n.key === source && n.type === 'linear.linear');
-    if (!linear) return true;
-    const fields = new Set([...Object.keys((ACTIVITY_ITEM_SCHEMA.properties ?? {}) as object), 'text']);
-    return roots.every((r) => fields.has(r));
+    const source = nodesOf(o).find((n) => n.key === sourceOf(o, slack.key));
+    return badReads(slack, source, nodesOf(o)).length === 0;
   },
 };
 
@@ -162,7 +182,7 @@ export default defineScenarios([
       r({ resource: 'issue', operation: 'getManySince' }, { testData: [{ title: 'Crash on save', summary: 'It crashes', url: 'https://example.test/1' }] }),
       r({ prompt: 'Triage this bug into P0, P1, P2 or P3 and say why: {{ $json.title }}. {{ $json.summary }}' }),
       r(CONDITION('{{ $json.output }}', 'contains', 'P0')),
-      r({ resource: 'message', operation: 'post', text: '{{ $json.title }} {{ $json.url }}' }),
+      r({ resource: 'message', operation: 'post', text: '{{ $json.output }}' }),
       r({ operation: 'insert', columns: { column: [{ column: 'title', value: '{{ $json.title }}' }] } }),
     ],
     checks: [planBuilt(6), collectionsFilled, readsRight, scheduleAsAsked, idsAsked, oneCallPerStep(), checks.noOutside],

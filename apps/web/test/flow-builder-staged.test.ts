@@ -295,6 +295,29 @@ describe('SB14: the build route', () => {
   const post = (body: unknown) => new Request('http://staged.test/api/ai/build', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   type Route = (request: Request) => Promise<Response>;
 
+  it('answers 400 for a plan whose `from` follows itself or a later step, repeats a key or has a second trigger', async () => {
+    const bad = (steps: unknown[]) => (buildRoute.POST as unknown as Route)(post({ prompt: ASK, plan: { name: 'x', steps, assumptions: [], cannot: [] } }));
+    const s1 = step('s1', 'core.manualTrigger', 'Start', 'Start');
+    for (const steps of [
+      [s1, step('s2', 'core.noOp', 'Loop', 'loop', 's2'), step('s3', 'core.httpRequest', 'Call', 'call', 's2')],
+      [s1, step('s2', 'core.httpRequest', 'A', 'a', 's3'), step('s3', 'core.httpRequest', 'B', 'b', 's1')],
+      [s1, step('s1', 'core.httpRequest', 'Again', 'a', 's1')],
+      [s1, step('s2', 'core.manualTrigger', 'Second', 'second')],
+    ]) {
+      const res = await bad(steps);
+      expect(res.status).toBe(400);
+    }
+    expect((await bad([s1, step('s2', 'core.httpRequest', 'A', 'a', 's1', { attach: 'nonsense' })])).status).toBe(400);
+  });
+
+  it('ends a walk through pass-through steps that follow each other', async () => {
+    const plan: BuildPlan = { name: 'x', steps: [step('s1', 'core.manualTrigger', 'Start', 'Start'), step('s2', 'core.noOp', 'A', 'a', 's3'), step('s3', 'core.noOp', 'B', 'b', 's2'), step('s4', 'core.httpRequest', 'Call', 'call', 's2')], assumptions: [], cannot: [] };
+    script = {};
+    const types = registry.nodeTypes().filter((t) => t.available);
+    const built = await Promise.race([buildFromPlan(plan, 'x', { kit: flowBuilder, model: 'ollama/x', types, timeoutMs: 10_000, ask: async () => ({ text: '{"parameters":{}}' }) }), new Promise((r) => setTimeout(() => r('hung'), 5_000))]);
+    expect(built).not.toBe('hung');
+  });
+
   it('gives the staged draft when the body has a plan, and the one-shot draft without one', async () => {
     script = B4_REPLIES;
     const staged = await (buildRoute.POST as unknown as Route)(post({ prompt: ASK, plan: B4 }));
@@ -312,5 +335,15 @@ describe('SB14: the build route', () => {
     expect(oneShot.status).toBe(502);
     expect(chatCalls().length).toBeGreaterThanOrEqual(1);
     expect(JSON.stringify(chatCalls()[0].body.messages)).toContain('Node catalog');
+  });
+});
+
+describe('SB14: the reads-right judge', () => {
+  it('fails a Slack step that reads title or url after an agent, and passes output', async () => {
+    const { badReads } = await import('./spotlight-scenarios/sb14');
+    const agent = { key: 'a', type: 'core.aiAgent', name: 'Triage each bug' };
+    const slack = (text: string) => ({ key: 's', type: 'messaging.slack', name: 'Slack', parameters: { text } });
+    expect(badReads(slack('{{ $json.title }} {{ $json.url }}'), agent, [agent])).toEqual(['title', 'url']);
+    expect(badReads(slack('{{ $json.output }}'), agent, [agent])).toEqual([]);
   });
 });
