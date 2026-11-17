@@ -178,6 +178,15 @@ changes an agent itself. It uses the assistant's model (`LANDFLOW_BUILDER_MODEL`
 `apps/web/src/lib/server/assistant/architect.ts`, `apps/web/src/lib/server/assistant/agent-resources.ts`,
 `apps/web/src/components/agents/architect.tsx`. Tests: `test/agent-architect.test.ts`, `test/agent-design.test.ts`, `test/agent-brief.test.ts`; the scenarios `sb17-*` in `test/spotlight-scenarios/sb17.ts`.
 
+#### Changes from Spotlight
+
+Spotlight also changes an agent that exists ([assistant.md](assistant.md#agents-and-teams), "Changing an agent"). From the
+agent's page, or under the card of an agent it made, "also let it get one alert's details" is designed as a proposal
+(`POST /api/agents/design` with `base: { agentId }` and `change`) and shown as a card of what would change. **Apply to its
+draft** saves it as the agent's draft only (the page shows it) and runs the smoke test; **Publish** is offered only after a
+pass and goes through the [eval gate](#eval-gate), which can hold it. The published version stays what it was until then.
+The Agent architect dialog still designs new agents only.
+
 ### Avatars
 
 An agent's avatar shows on its page, the roster, the test chat, the sub-agent list and the New agent dialog, and in
