@@ -202,6 +202,8 @@ function knowledgeOf(message: string): string | undefined {
   return undefined;
 }
 
+const WRITE_VERB = /\b(?:sav(?:e|es|ing)|mov(?:e|es|ing)|put|puts|stor(?:e|es|ing)|writ(?:e|es|ing)|cop(?:y|ies|ying)|send|sends|upload|uploads|archiv(?:e|es|ing)|fil(?:e|es|ing)|drop|drops|export|exports)\b/i;
+
 /** AG13: whether the ask wants knowledge at all; a bare "<word> folder" (the junk folder, the right folder) is not a source. */
 export function asksKnowledge(message: string): boolean {
   return Boolean(knowledgeOf(message)) || /\b(?:knowledge|answers?|answering|looks?\s+(?:\w+\s+)?up|search(?:es)?|cites?|grounded|based\s+on|learns?\s+from|index(?:es)?)\b/i.test(message);
@@ -213,10 +215,14 @@ export function asksKnowledge(message: string): boolean {
  */
 export function knowledgeFolderOf(message: string): string | undefined {
   const PATH = '([^\\s"“”\'‘’,;()]+)';
-  const m = new RegExp(`\\b(?:in|from|under|inside|at|of)\\s+(?:the\\s+|our\\s+)?folder\\s+(?:called\\s+|named\\s+)?["“'‘]?${PATH}`, 'i').exec(message)
-    ?? new RegExp(`\\b(?:in|from|under|inside)\\s+(?:the\\s+|our\\s+)?["“'‘]?([\\w.~:/\\\\-]+?)["”'’]?\\s+(?:folder|directory)\\b`, 'i').exec(message)
-    ?? new RegExp(`\\b(?:the\\s+|our\\s+)?["“'‘]?([\\w.-]+?)["”'’]?\\s+folder\\b`, 'i').exec(message)
-    ?? new RegExp(`\\b(?:in|from|under)\\s+["“'‘]?([\\w.-]+(?:/[\\w.-]+)*/)["”'’]?(?![\\w/])`, 'i').exec(message);
+  const wantsKnowledge = Boolean(knowledgeOf(message));
+  // The folder is a source only in a clause that asks for knowledge and writes nothing: "moves spam to the junk folder" and "saves it in the reports folder" name a destination.
+  const clause = message.split(/[;,]|\s(?:and|then|but)\s|(?<=[.!?])\s/i).find((c) => asksKnowledge(c) && !WRITE_VERB.test(c) && /\bfolder\b|\b(?:in|from|under)\s+["“'‘]?[\w.-]+(?:\/[\w.-]+)*\/["”'’]?(?![\w/])/i.test(c));
+  if (!clause) return undefined;
+  const m = new RegExp(`\\b(?:in|from|under|inside|at|of)\\s+(?:the\\s+|our\\s+)?folder\\s+(?:called\\s+|named\\s+)?["“'‘]?${PATH}`, 'i').exec(clause)
+    ?? new RegExp(`\\b(?:in|from|under|inside)\\s+(?:the\\s+|our\\s+)?["“'‘]?([\\w.~:/\\\\-]+?)["”'’]?\\s+(?:folder|directory)\\b`, 'i').exec(clause)
+    ?? (wantsKnowledge ? new RegExp(`\\b(?:the\\s+|our\\s+)?["“'‘]?([\\w.-]+?)["”'’]?\\s+folder\\b`, 'i').exec(clause) : null)
+    ?? new RegExp(`\\b(?:in|from|under)\\s+["“'‘]?([\\w.-]+(?:/[\\w.-]+)*/)["”'’]?(?![\\w/])`, 'i').exec(clause);
   if (!m) return undefined;
   const raw = m[1].replace(/[.!?]+$/, '');
   if (!raw || /^(?:the|a|an|this|that|our|your|its|new|same|another|files?|shared|local|specific)$/i.test(raw)) return undefined;
@@ -290,7 +296,7 @@ export function agentAsk(message: string, nodeNames: string[] = [], catalog: Ask
   if (!text || askKind(text) === 'question') return undefined;
   if (!AS_OBJECT.test(text) && !AS_SUBJECT.test(text)) return undefined;
   const knowledge = knowledgeOf(text);
-  const knowledgeFolder = asksKnowledge(text) ? knowledgeFolderOf(text) : undefined; // AG13: only when the ask wants knowledge
+  const knowledgeFolder = knowledgeFolderOf(text); // AG13: only a folder that is a source (a knowledge clause, no write verb)
   const job = jobOf(text);
   const tools = toolsOf(text, catalog);
   const description = descriptionOf(text, job);

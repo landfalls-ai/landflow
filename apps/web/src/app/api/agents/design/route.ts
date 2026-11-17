@@ -43,6 +43,7 @@ const Body = z.object({
   knowledge: z.string().max(200).optional(),
   // AG13: a folder the ask named, relative to the files directory: the knowledge base is indexed from it when Create runs.
   knowledgeFolder: z.string().trim().max(200).optional(),
+  knowledgeAsked: z.boolean().optional(), // AG13: the ask or change wanted a source (a knowledge clause named the folder)
   // SB19: the model Spotlight picked (a model this server offers); absent, the Settings default.
   model: z.string().max(100).optional(),
   // AG02: the person's whole message: the architect reads it, not only the short description.
@@ -80,7 +81,7 @@ export const POST = handler(async (request: Request) => {
     throw caught;
   }
   // AG13: a folder the ask named becomes the knowledge base's source; no folder (and nothing that fits) is asked, never invented.
-  const setup = await withKnowledgeSetup(design, { ...(parsed.data.knowledgeFolder && { folder: parsed.data.knowledgeFolder }), ...(parsed.data.knowledge && { knowledge: parsed.data.knowledge }), spotlight: true, revise: Boolean(baseConfig), resources });
+  const setup = await withKnowledgeSetup(design, { ...(parsed.data.knowledgeFolder && { folder: parsed.data.knowledgeFolder }), ...(parsed.data.knowledge && { knowledge: parsed.data.knowledge }), spotlight: true, ...(parsed.data.knowledgeAsked && { sourceAsked: true }), revise: Boolean(baseConfig), resources });
   design.config = setup.config;
   design.needs = setup.needs;
   const models = resources.models.map((m) => `${m.provider}/${m.model}`); // AG02: the card's Model select, the builder model first

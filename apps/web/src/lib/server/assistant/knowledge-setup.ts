@@ -50,9 +50,9 @@ const ruleFor = (tool: { name?: string }) => `Answer from what ${toToolName(tool
  */
 export async function withKnowledgeSetup<N extends Need>(
   draft: { config: Partial<AgentConfig>; needs: N[] },
-  options: { folder?: string; knowledge?: string; spotlight: boolean; revise?: boolean; resources?: Pick<AgentResources, 'knowledge' | 'embeddings'> },
+  options: { folder?: string; knowledge?: string; sourceAsked?: boolean; spotlight: boolean; revise?: boolean; resources?: Pick<AgentResources, 'knowledge' | 'embeddings'> },
 ): Promise<{ config: Partial<AgentConfig>; needs: N[]; knowledge?: Knowledge }> {
-  const { folder, resources } = options;
+  const { resources } = options;
   const tools = [...(draft.config.tools ?? [])];
   let needs = [...draft.needs];
   const isNew = (t: VectorKnowledgeBaseConfig) => !resources?.knowledge.some((k) => k.collection === t.collection && k.store === t.store);
@@ -60,6 +60,8 @@ export async function withKnowledgeSetup<N extends Need>(
   const withoutAddDocs = (label: string) => needs.filter((n) => !(n.tool === label && ADD_DOCS.test(n.text)));
   const embeddings = resources?.embeddings ?? KEYWORD_EMBEDDINGS;
 
+  // A folder is a source only when the design proposed a knowledge base or the ask wanted one: never invent one from a folder word.
+  const folder = options.folder && (vectorIndex() >= 0 || options.knowledge || options.sourceAsked) ? options.folder : undefined;
   if (folder) {
     const listed = await folderSetup(folder);
     let index = vectorIndex();

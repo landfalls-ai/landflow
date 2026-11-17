@@ -9,7 +9,7 @@
  */
 import { nanoid } from 'nanoid';
 import { api } from '@/lib/client/api';
-import { agentAsk, agentChangeAsk, askCatalog, asksKnowledge, fallbackName, knowledgeFolderOf, readsTokens, type AgentAsk, type AskCatalogEntry } from '@/lib/shared/agent-ask';
+import { agentAsk, agentChangeAsk, askCatalog, fallbackName, knowledgeFolderOf, readsTokens, type AgentAsk, type AskCatalogEntry } from '@/lib/shared/agent-ask';
 import { starterFlow, starterSample, type AgentCard, type AgentCardTool, type AgentKnowledgeSetup, type AgentNotAdded } from '@/lib/shared/agent-card';
 import { agentChanges } from '@/lib/shared/agent-changes'; // AG04:
 import { announceChange, designChange, publishChange, saveChange, testDraft } from '@/lib/client/agent-change'; // AG04: AG09: testDraft
@@ -113,7 +113,7 @@ export async function designAgentCard(message: string, ask: AgentAsk, options: {
   const abort = (draftCall.request = new AbortController());
   try {
     const workflow = useEditor.getState().name;
-    const spec = { name: designName, description: ask.description, instructions: '', ask: message.slice(0, 4000) /* AG02: the whole ask */, ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }), ...(ask.knowledgeFolder && { knowledgeFolder: ask.knowledgeFolder }) /* AG13: */ };
+    const spec = { name: designName, description: ask.description, instructions: '', ask: message.slice(0, 4000) /* AG02: the whole ask */, ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }), ...(ask.knowledgeFolder && { knowledgeFolder: ask.knowledgeFolder, knowledgeAsked: true }) /* AG13: */ };
     const preview = await designPreview(spec, workflow && !/^untitled/i.test(workflow) ? { workflow } : {}, abort.signal);
     const card = { ...cardFromPreview(preview, ask, options.starter, message), workflowId: workflowAtStart };
     const alone = createsAlone();
@@ -348,8 +348,8 @@ export async function reviseAgentCard(itemId: string, card: AgentCard, message: 
   try {
     // A created card's agent is the base; a pending card's own config is (a card that already proposes a change to an agent keeps its base).
     const base = made && existing ? { agentId: existing } : { config: card.config };
-    const folder = asksKnowledge(message) ? knowledgeFolderOf(message) : undefined; // AG13: "from the folder runbooks" under a card adds the knowledge base
-    const input = { name: card.name, description: card.description, base, change: message, ...pickedModel(), ...(folder && { knowledgeFolder: folder }) };
+    const folder = knowledgeFolderOf(message); // AG13: "from the folder runbooks" under a card adds the knowledge base
+    const input = { name: card.name, description: card.description, base, change: message, ...pickedModel(), ...(folder && { knowledgeFolder: folder, knowledgeAsked: true }) };
     const design = (await designChange(input, abort.signal)) as Awaited<ReturnType<typeof designChange>> & { knowledge?: Omit<AgentKnowledgeSetup, 'state'> };
     const notAdded = design.notAdded ?? []; // ag1-int: the tools the change named and the agent did not get
     const fresh = cardFromPreview({ config: design.config, needs: design.needs ?? [], missing: design.missing ?? [], designed: design.designed ?? true, cases: card.cases, notAdded, ...(design.knowledge && { knowledge: design.knowledge }) } as unknown as Parameters<typeof cardFromPreview>[0], { description: card.description, placed: false, tools: [] }, Boolean(card.starter));

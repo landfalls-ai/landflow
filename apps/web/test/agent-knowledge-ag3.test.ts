@@ -20,6 +20,8 @@ vi.mock('@/lib/server/projects/access', async (importActual) => {
   return { ...actual, canResource: (actor: never, kind: never, id: string, action: never) => !foreign.has(id) && actual.canResource(actor, kind, id, action) };
 });
 
+const NO_KB = 'Answers support emails and moves spam to the junk folder.'; // an ask whose scripted design proposes no knowledge base
+
 // The architect, scripted: it proposes a knowledge base for the runbooks through the real `draftFrom` (the product's own rules).
 vi.mock('@/lib/server/assistant/architect', async (importActual) => {
   const actual = await importActual<typeof import('@/lib/server/assistant/architect')>();
@@ -27,7 +29,9 @@ vi.mock('@/lib/server/assistant/architect', async (importActual) => {
     ...actual,
     designAgent: async (spec: { name: string; ask?: string }, input: Parameters<typeof actual.draftFrom>[1] & { types: never }) => {
       const draft = actual.draftFrom(
-        { name: spec.name, instructions: 'Search the runbooks and answer.', nodeTools: '', knowledge: 'runbooks', tools: [{ type: 'knowledge', collection: 'runbooks', description: 'Search the incident runbooks' }] },
+        spec.ask === NO_KB
+          ? { name: spec.name, instructions: 'Answer support emails.', nodeTools: '', tools: [] }
+          : { name: spec.name, instructions: 'Search the runbooks and answer.', nodeTools: '', knowledge: 'runbooks', tools: [{ type: 'knowledge', collection: 'runbooks', description: 'Search the incident runbooks' }] },
         { types: input.types, actor: input.actor, known: '', ...(input.resources && { resources: input.resources }), ...(spec.ask && { request: spec.ask }) },
       );
       return { ...draft, designed: true, notAdded: [] };
@@ -80,6 +84,15 @@ describe('the ask names a folder', () => {
       expect(agentAsk(ask)?.knowledgeFolder).toBeUndefined();
     }
   });
+
+  it('a folder that is a destination or a plain object, not a source, names none even with a knowledge-ish verb', () => {
+    for (const ask of ['Make an agent that answers support emails and moves spam to the junk folder', 'Make an agent that searches the inbox folder for invoices', 'Make an agent that saves the report in the reports folder based on the weekly sales']) {
+      expect(agentAsk(ask)?.knowledgeFolder).toBeUndefined();
+      expect(knowledgeFolderOf(ask)).toBeUndefined();
+    }
+    expect(knowledgeFolderOf('answer in French and move spam to the junk folder')).toBeUndefined();
+    expect(agentAsk('Make an agent that answers questions from the folder runbooks')?.knowledgeFolder).toBe('runbooks');
+  });
 });
 
 type Preview = { config: Partial<AgentConfig>; needs: Array<{ text: string }>; knowledge?: { folder?: string; files?: string[]; fileCount?: number; search?: string; embeddings?: string; existing?: boolean; problem?: string; collection?: string } };
@@ -118,6 +131,13 @@ describe('the design route', () => {
     expect(preview.knowledge).toMatchObject({ existing: false });
     expect(preview.knowledge?.folder).toBeUndefined();
     expect(await collectionRows('runbooks')).toHaveLength(0);
+  });
+
+  it('a folder given while the design proposes no knowledge base and none was asked adds none', async () => {
+    const preview = await design({ knowledgeFolder: 'runbooks', ask: NO_KB, knowledge: undefined });
+    expect(kbOf(preview.config)).toBeUndefined();
+    expect(preview.knowledge?.folder).toBeUndefined();
+    expect(preview.config.instructions ?? '').not.toMatch(/name the file/);
   });
 
   it('a folder outside the files directory is never listed: the problem says why', async () => {
