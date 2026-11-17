@@ -55,7 +55,7 @@
     "mailparser": "^3.12.4",
     "motion": "^14.6.0",
     "nanoid": "^6.0.2",
-    "next": "^16.4.3",
+    "next": "^16.4.6",
     "pg": "^8.23.1",
     "protobufjs": "^7.5.5",
     "pulsar-client": "1.18.0",
