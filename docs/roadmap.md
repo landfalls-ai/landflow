@@ -2838,3 +2838,7 @@ account's own console is the figure.
 
 - **Built (2026-11-17):** the Linear, Attio and Fathom plugin icons are the apps' real marks (they were drawn stand-ins), and `brand-icons.ts` holds the real mark of every app a plugin or core node stands for, with sources and licences ([plugins.md](plugins.md#branding-and-real-marks)); the Messaging, Databases and Productivity bundles show a grid of their apps' icons. A node says what it will do under its name (the descriptor's `subtitle`, else the operation's action label, else "Issue · Get many") on the canvas and in the node panel; the node creator lists an app's actions (a search such as "send message" lists matching actions first) and picking one adds the node set to do it; Marketplace entries and agent tools named after an app wear its mark.
 - **Left open:** Microsoft Teams (the Microsoft bot credential) keeps a Landflow glyph, no clean source for its mark; Slack and Twilio come from Simple Icons 15.0.0, the last version that has them, and are one colour, not the multi-colour Slack logo; a Marketplace entry that is not running and whose name is not the app's gets no app mark.
+
+## Agents that work locally (wave ag1)
+
+- **Built (2026-11-17, AG06):** credentials that work locally: the SQLite credential has **Create If Missing**, an agent's node-tool dialog lists only the credentials its settings use, and Send Email over SSL/TLS to a plain local server (Mailpit) says to turn SSL/TLS off ([integrations.md](features/integrations.md), [agents.md](agents.md)).
