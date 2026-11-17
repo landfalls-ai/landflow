@@ -29,6 +29,8 @@ const sample = (): Workflow => ({
   ],
 });
 
+/** SB17's architect asks once more for test cases when the design came with fewer than three: this answer gives none. */
+const NO_CASES = { text: 'No cases.' };
 const design = (name: string, role: string, instructions: string) => call('propose_design', { summary: name, name, role, instructions, model: 'ollama/qwen3-coder:30b' });
 
 const newAgents = (o: Outcome) => o.proposals.flatMap((p) => p.ops).filter((op) => op.op === 'addNode' && 'newAgent' in op && op.newAgent);
@@ -42,7 +44,7 @@ export default defineScenarios([
     via: 'agent-ask',
     title: 'An agent that reviews pull requests, asked on an empty canvas: the card and a starter flow, no flow drafted',
     ask: 'create an agent that reviews pull requests against our practices, and run it after Sample PR',
-    script: [design('PR reviewer', 'Pull request reviewer', 'Read the pull request, check it against the practices, comment.'), { text: 'Designed a PR reviewer.' }],
+    script: [design('PR reviewer', 'Pull request reviewer', 'Read the pull request, check it against the practices, comment.'), { text: 'Designed a PR reviewer.' }, NO_CASES],
     checks: [checks.agentCard(true), noBuild, agentExists, checks.noOutside],
   },
   {
@@ -53,7 +55,7 @@ export default defineScenarios([
     title: 'An agent asked for on the Bug triage flow: a card, the canvas unchanged',
     ask: 'create an agent that summarises incidents for the on-call channel',
     start: { workflow: BUG_TRIAGE },
-    script: [design('Incident summariser', 'Incident summariser', 'Summarise each incident for the on-call channel.'), { text: 'Designed an incident summariser.' }],
+    script: [design('Incident summariser', 'Incident summariser', 'Summarise each incident for the on-call channel.'), { text: 'Designed an incident summariser.' }, NO_CASES],
     checks: [checks.agentCard(false), noBuild, agentExists, right('canvas-unchanged', 'The canvas is unchanged', (o) => touchedNodes(o.before, o.after).length === 0), checks.noOutside],
   },
   {

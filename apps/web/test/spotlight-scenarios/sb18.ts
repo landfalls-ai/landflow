@@ -19,6 +19,8 @@ const sample = (): Workflow => ({
 });
 
 const ask = 'an agent that answers questions about our refund policy';
+/** SB17's architect asks once more for test cases when the design came with fewer than three: this answer gives none (so the eval gate has nothing to run). */
+const NO_CASES = { text: 'No cases.' };
 const design = () =>
   call('propose_design', { summary: 'A refund policy agent', name: 'Refund policy', role: 'Refund answers', instructions: 'Answer questions about our refund policy in two sentences.', model: 'ollama/qwen3-coder:30b' });
 
@@ -35,7 +37,7 @@ const smoke = defineScenarios([
     title: 'Autonomous: a new agent is run once on the item that reaches its step and published after the pass',
     ask,
     start: { workflow: sample(), autonomy: 'auto', outbound: 'blocked' },
-    script: [design(), { text: 'Drafted.' }, { text: 'You have 14 days from delivery to ask for a refund.' }],
+    script: [design(), { text: 'Drafted.' }, NO_CASES, { text: 'You have 14 days from delivery to ask for a refund.' }],
     checks: [passed, publishedAfterPass, checks.noOutside],
     live: { runs: 3 },
   },
@@ -51,6 +53,7 @@ const smoke = defineScenarios([
     script: [
       design(),
       { text: 'Drafted.' },
+      NO_CASES,
       () => {
         throw new Error('Ollama error 500: {"error":"the model fell over"}');
       },
@@ -66,7 +69,7 @@ const smoke = defineScenarios([
     title: 'Asks first: the test passes and nothing is published (Publish is the person’s click)',
     ask,
     start: { workflow: sample(), autonomy: 'asks-first', outbound: 'blocked' },
-    script: [design(), { text: 'Drafted.' }, { text: 'You have 14 days from delivery to ask for a refund.' }],
+    script: [design(), { text: 'Drafted.' }, NO_CASES, { text: 'You have 14 days from delivery to ask for a refund.' }],
     checks: [passed, notPublished, checks.noOutside],
     live: { runs: 3 },
   },

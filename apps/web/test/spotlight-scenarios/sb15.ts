@@ -3,7 +3,23 @@
  * (a credential offered, never picked: decision D2) and nothing at all when nothing is. The harness reads a build's text
  * as `summaryText` of the draft's `summary`. Scripted (unit) answers are made-up drafts; the live form asks the local model.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { checks, defineScenarios, type Check, type Outcome } from './scenario';
+
+/** SB14's plans (the same fixture): a build is planned first now, so a scripted build is the plan's steps, one answer each. */
+const PLANS = JSON.parse(readFileSync(join(import.meta.dirname, 'fixtures', 'sb14-plans.json'), 'utf8')) as Record<string, Record<string, unknown>>;
+const step = (parameters: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ text: JSON.stringify({ parameters, ...extra }) });
+const LINEAR_PLAN = {
+  name: 'Bug triage',
+  steps: [
+    { key: 's1', type: 'core.schedule', name: 'Weekdays at 8', does: 'Run every weekday at 8' },
+    { key: 's2', type: 'core.httpRequest', name: 'Get issues', does: 'Read the bug issues', from: 's1' },
+    { key: 's3', type: 'core.set', name: 'Mark as bug', does: 'Mark each issue as a bug', from: 's2' },
+  ],
+  assumptions: [],
+  cannot: [],
+};
 
 interface Item {
   node: string;
@@ -62,18 +78,11 @@ export default defineScenarios([
     title: 'B1: the reply is a summary with the steps in words and a credential offered',
     ask: 'Every weekday at 8, read new Linear issues labelled bug, have an agent triage each into P0–P3 with a reason, post P0s to Slack #oncall and put the rest in a data table',
     // The unit form's Linear stand-in has no credential slot, so its scripted "Get issues" is a header-authenticated request; live, the Linear step itself.
+    start: { plan: LINEAR_PLAN },
     script: [
-      {
-        text: JSON.stringify({
-          name: 'Bug triage',
-          nodes: [
-            { key: 't', type: 'core.schedule', name: 'Weekdays at 8', parameters: { unit: 'rules', rule: { interval: [{ expression: '0 0 8 * * 1-5', field: 'cronExpression' }] } } },
-            { key: 'get', type: 'core.httpRequest', name: 'Get issues', parameters: { method: 'GET', url: 'http://127.0.0.1:3399/issues', authentication: 'genericCredentialType', genericAuthType: 'httpHeaderAuth' } },
-            { key: 'mark', type: 'core.set', name: 'Mark as bug', parameters: { mode: 'manual', fields: { values: [{ name: 'kind', type: 'string', value: 'bug' }] } } },
-          ],
-          connections: [{ from: 't', to: 'get' }, { from: 'get', to: 'mark' }],
-        }),
-      },
+      step({ unit: 'rules', rule: { interval: [{ expression: '0 0 8 * * 1-5', field: 'cronExpression' }] } }),
+      step({ method: 'GET', url: 'http://127.0.0.1:3399/issues', authentication: 'genericCredentialType', genericAuthType: 'httpHeaderAuth' }),
+      step({ mode: 'manual', fields: { values: [{ name: 'kind', type: 'string', value: 'bug' }] } }),
     ],
     checks: [credentialOffered, leftListed, stepsInWords, checks.noOutside],
     live: { runs: 3 },
@@ -85,21 +94,13 @@ export default defineScenarios([
     via: 'build',
     title: 'B4 with every field filled: no “Left for you” block and a text that is not empty',
     ask: ORDERS,
+    start: { plan: PLANS.b4 },
     script: [
-      {
-        text: JSON.stringify({
-          name: 'Orders by size',
-          nodes: [
-            { key: 'hook', type: 'core.webhook', name: 'Order in', parameters: { path: 'orders' } },
-            { key: 'big', type: 'core.if', name: 'Check total', parameters: { conditions: { condition: [{ left: '{{ $json.body.total }}', operator: 'gt', right: '1000' }] }, combinator: 'and' } },
-            { key: 'vip', type: 'core.httpRequest', name: 'Send to VIP', parameters: { method: 'POST', url: 'http://127.0.0.1:3399/vip', bodyType: 'json', body: '{{ JSON.stringify({ ...$json.body, vip: true }) }}' } },
-            { key: 'std', type: 'core.httpRequest', name: 'Send to regular', parameters: { method: 'POST', url: 'http://127.0.0.1:3399/regular', bodyType: 'json', body: '{{ JSON.stringify($json.body) }}' } },
-            { key: 'ok', type: 'core.respondToWebhook', name: 'Reply ok', parameters: {} },
-          ],
-          connections: [{ from: 'hook', to: 'big' }, { from: 'big', to: 'vip', output: 0 }, { from: 'big', to: 'std', output: 1 }, { from: 'vip', to: 'ok' }, { from: 'std', to: 'ok' }],
-          testData: [{ body: { id: 'o-1', total: 1500 } }],
-        }),
-      },
+      step({ path: 'orders', httpMethod: 'POST' }, { testData: [{ body: { id: 'o-1', total: 1500 } }] }),
+      step({ conditions: { condition: [{ left: '{{ $json.body.total }}', operator: 'gt', right: '1000' }] }, combinator: 'and' }),
+      step({ method: 'POST', url: 'http://127.0.0.1:3399/vip', sendBody: true, body: '{{ JSON.stringify({ ...$json.body, vip: true }) }}' }),
+      step({ method: 'POST', url: 'http://127.0.0.1:3399/regular', sendBody: true, body: '{{ JSON.stringify($json.body) }}' }),
+      step({ respondWith: 'json', responseBody: '{"ok": true}' }),
     ],
     checks: [nothingLeft, stepsInWords, checks.noOutside],
     live: { runs: 3 },
