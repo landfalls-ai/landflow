@@ -184,6 +184,27 @@ describe('the plan call', () => {
     expect(plan.steps.map((s) => s.key)).toEqual(['s1', 's2']);
   });
 
+  it('a plan the plan route returns always parses in the build route\'s PlanSchema, even from a long reply', async () => {
+    const { PlanSchema } = await import('@/app/api/ai/build/plan-schema');
+    const many = (n: number, text: (i: number) => string) => Array.from({ length: n }, (_, i) => text(i));
+    const long = reply({
+      name: 'x'.repeat(200),
+      steps: [
+        { key: 's1', type: 'core.schedule', name: 'Every weekday', does: 'Run every weekday at 8' },
+        // Fifteen steps (three past the limit, two of a type nobody offered), 200-character reads, an output of 99.
+        ...many(14, (i) => ({ key: `s${i + 2}`, type: i % 7 === 6 ? 'made.up' : 'linear.linear', name: `Step ${i + 2}`, does: 'Read issues', from: 's1', output: 99, attach: 'a'.repeat(80), reads: many(20, () => 'field.'.repeat(40)) })),
+      ],
+      assumptions: many(40, (i) => `assumption ${i} ${'y'.repeat(400)}`),
+      cannot: many(40, (i) => `cannot ${i}`),
+    });
+    queue = [long, long];
+    const { plan } = await planFlow(B1, { model: 'qwen3-coder:30b', types: availableTypes(), stages: [] });
+    const parsed = PlanSchema.safeParse(plan);
+    expect(parsed.error?.issues ?? []).toEqual([]);
+    expect(plan.assumptions.length).toBeLessThanOrEqual(30);
+    expect(plan.cannot.length).toBeLessThanOrEqual(30);
+  });
+
   it('repairs a plan with no trigger, a loose step and too many steps', () => {
     const types = availableTypes();
     const byType = new Map(types.map((t) => [t.type, t]));

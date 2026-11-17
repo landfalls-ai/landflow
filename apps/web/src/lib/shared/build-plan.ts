@@ -12,6 +12,8 @@
 
 /** At most this many steps, the trigger included: a bigger plan is cut and the rest named in `cannot`. */
 export const PLAN_STEP_LIMIT = 12;
+/** How many `assumptions` and how many `cannot` lines a plan carries (the build route's `PlanSchema` allows this many of each). */
+export const PLAN_LINES_LIMIT = 30;
 
 /** The largest prompt one model call of a build may send (plan or node), in tokens (spotlight-pro/plan.md §5, SB13). */
 export const PROMPT_TOKEN_BUDGET = 6000;

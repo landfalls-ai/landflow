@@ -3,7 +3,7 @@
  * object schema: the production CSP reports zod's `new Function` probe).
  */
 import { z } from 'zod';
-import { PLAN_STEP_LIMIT } from '@/lib/shared/build-plan';
+import { PLAN_LINES_LIMIT, PLAN_STEP_LIMIT } from '@/lib/shared/build-plan';
 
 const Short = (max: number) => z.string().trim().max(max);
 
@@ -24,8 +24,8 @@ export const PlanSchema = z.object({
       }),
     )
     .max(PLAN_STEP_LIMIT),
-  assumptions: z.array(Short(300)).max(30),
-  cannot: z.array(Short(300)).max(30),
+  assumptions: z.array(Short(300)).max(PLAN_LINES_LIMIT),
+  cannot: z.array(Short(300)).max(PLAN_LINES_LIMIT),
 });
 
 export const PlanBody = z.object({

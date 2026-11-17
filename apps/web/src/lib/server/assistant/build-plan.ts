@@ -11,7 +11,7 @@ import type { NodeTypeInfo } from '@/lib/shared/types';
 import { describeAgents, type AgentBrief } from '@/lib/shared/agent-brief';
 import { describeTeams, type TeamBrief } from '@/lib/shared/agent-teams';
 import { withoutStep } from '@/lib/shared/plan-edit';
-import { PLAN_STEP_LIMIT, planProblems, type BuildPlan, type BuildStage, type PlanProblem, type PlanStep } from '@/lib/shared/build-plan';
+import { PLAN_LINES_LIMIT, PLAN_STEP_LIMIT, planProblems, type BuildPlan, type BuildStage, type PlanProblem, type PlanStep } from '@/lib/shared/build-plan';
 import { askModel, buildFlow, builderTimeoutMs, jsonOf, type FlowDraft } from '../flow-builder';
 import { availableTypes, catalogSummary, searchNodes } from './research';
 import { names as triggerNamed } from './draft-guards';
@@ -263,7 +263,15 @@ export function repairPlan(input: BuildPlan, ctx: RepairContext): BuildPlan {
   // Keys s1, s2 …, with `from` re-pointed.
   const rekey = new Map(steps.map((s, i) => [s.key, `s${i + 1}`]));
   steps = steps.map((s) => ({ ...s, key: rekey.get(s.key)!, ...(s.from && { from: rekey.get(s.from) ?? s.from }) }));
-  return { name: input.name, steps, assumptions: [...input.assumptions, ...notes], cannot };
+  // What the build route accepts back (`PlanSchema`): a plan this route returns always parses there.
+  const line = (text: string) => text.trim().slice(0, 300);
+  steps = steps.map((s) => ({
+    ...s,
+    ...(typeof s.output === 'number' && { output: Math.min(50, Math.max(0, Math.trunc(s.output))) }),
+    ...(s.attach && { attach: s.attach.slice(0, 40) }),
+    ...(s.reads && { reads: s.reads.map((r) => r.trim().slice(0, 80)).filter(Boolean).slice(0, 12) }),
+  }));
+  return { name: input.name.slice(0, 80), steps, assumptions: [...input.assumptions, ...notes].map(line).slice(0, PLAN_LINES_LIMIT), cannot: cannot.map(line).slice(0, PLAN_LINES_LIMIT) };
 }
 
 export interface PlanInput {
