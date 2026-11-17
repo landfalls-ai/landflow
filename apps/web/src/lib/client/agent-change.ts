@@ -74,6 +74,10 @@ export function announceChange(agentId: string): void {
 /** The draft without what the server stamps on it (times, versions, the kagent deployment). */
 const settings = ({ updatedAt: _u, createdAt: _c, published: _p, history: _h, kagent: _k, ...rest }: Record<string, unknown>) => rest;
 
+/** Equal as data: the same keys and values whatever order the server wrote them in (a save moves model, persona and guardrails to the end). */
+const canonical = (value: unknown): unknown => (Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, v]) => [k, canonical(v)])) : value);
+const same = (a: unknown, b: unknown) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+
 /**
  * Before Apply saves `config`: has the draft moved since the change was designed (`snapshot` is the draft's JSON then)? If so
  * nothing is saved and the card must show what applying does against the draft as it is now (`changes`, `snapshot`), then wait
@@ -83,7 +87,7 @@ export async function draftMoved(agentId: string, snapshot: string | undefined, 
   if (!snapshot) return undefined;
   const current = await readDraft(agentId);
   // The draft's own settings are what Apply overwrites: a bumped updatedAt (the page opening, a smoke test) or a new published version is not a move, and never costs a first click.
-  if (!current || JSON.stringify(settings(current)) === JSON.stringify(settings(JSON.parse(snapshot) as Record<string, unknown>))) return undefined;
+  if (!current || same(settings(current), settings(JSON.parse(snapshot) as Record<string, unknown>))) return undefined;
   return { snapshot: JSON.stringify(current), changes: agentChanges(current, config) };
 }
 
