@@ -426,8 +426,10 @@ export function NodeTile(props: NodeTileProps) {
         <div className="pointer-events-none absolute left-1/2 top-full w-[170px] -translate-x-1/2 pt-2 text-center">
           <div className={cn('line-clamp-2 text-[13px] font-semibold leading-tight text-t1', disabled && 'line-through')}>{name}</div>
           {subtitle && (
-            <div className="pointer-events-auto truncate text-[11px] text-t3" title={subtitle}>
-              {subtitle}
+            <div className="truncate text-[11px] text-t3">
+              <span className="pointer-events-auto inline-block max-w-full truncate align-top" title={subtitle}>
+                {subtitle}
+              </span>
             </div>
           )}
           {meta}

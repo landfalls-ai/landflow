@@ -9,7 +9,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { CircleAlert, CircleCheck, CircleDot, Loader2, Pause, Pin, Plus, PowerOff, CornerDownRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { duration } from '@/lib/client/format';
-import { NodeIcon, isImageIcon } from '../ui/icon';
+import { NodeIcon } from '../ui/icon';
 import { useEditor } from './store';
 import { stepOrder } from './step-order';
 
@@ -118,7 +118,7 @@ function StepCard({ id, index, attached, then }: { id: string; index: number; at
     <div className={cn('rounded-2xl border bg-sf', tone, wf.disabled && 'border-dashed')}>
       <button type="button" onClick={() => open(id)} className="flex w-full items-center gap-3 px-3 py-2.5 text-left">
         <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-hair bg-wl">
-          <NodeIcon icon={info?.descriptor.icon} size={isImageIcon(info?.descriptor.icon) ? 32 : 18} className="text-t1" strokeWidth={1.6} />
+          <NodeIcon icon={info?.descriptor.icon} size={18} className="text-t1" strokeWidth={1.6} />
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">

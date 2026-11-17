@@ -93,6 +93,18 @@ describe('node actions', () => {
     expect(nodeActions({ properties: [{ name: 'operation', displayName: 'Operation', type: 'options', options: [{ name: 'Hash', value: 'hash' }] }] })).toEqual([]);
   });
 
+  it('shows an expression parameter as an ellipsis, not its text', () => {
+    const d = plain({ subtitle: '{{url}}' });
+    expect(nodeSubtitle(d, { url: '={{ $json.url }}' })).toBe('…');
+    expect(nodeSubtitle(d, { url: 'https://x/{{ id }}' })).toBe('…');
+    expect(nodeSubtitle(d, { url: 'https://x.test' })).toBe('https://x.test');
+  });
+
+  it('reads only own properties: {{constructor}} names no parameter', () => {
+    expect(nodeSubtitle(plain({ subtitle: '{{constructor}}' }), {})).not.toMatch(/function|native code/);
+    expect(nodeSubtitle(plain({ subtitle: '{{toString}} {{url}}' }), { url: 'a' })).toBe('a');
+  });
+
   it('lists the real Linear node: every operation of every resource', () => {
     const actions = nodeActions(node('linear', 'linear'));
     expect(actions.length).toBeGreaterThanOrEqual(8);

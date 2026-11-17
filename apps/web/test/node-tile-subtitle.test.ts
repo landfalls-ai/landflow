@@ -32,6 +32,12 @@ describe('canvas node subtitle', () => {
     expect(html).toMatch(/<svg|<img/);
   });
 
+  it('catches pointer events only on the subtitle text, not the whole 170px box', () => {
+    const html = tile({ resource: 'issue', operation: 'create' });
+    expect(html).toMatch(/<span class="pointer-events-auto inline-block max-w-full truncate[^"]*" title="Create an issue">/);
+    expect(html).not.toMatch(/<div class="pointer-events-auto/);
+  });
+
   it('follows the parameters', () => {
     expect(tile({ resource: 'user', operation: 'getAll' })).toContain('Get many users');
     expect(tile({})).toContain('title="Get issues changed since"');

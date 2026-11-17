@@ -18,7 +18,7 @@ type Parameters = Record<string, unknown>;
 
 /** The shown option of an `options` property for a value: the visible variant first (`operation` is declared once per resource). */
 function optionFor(properties: PropertyDescriptor[], parameters: Parameters, name: string) {
-  const value = parameters[name];
+  const value = Object.hasOwn(parameters, name) ? parameters[name] : undefined;
   if (value === undefined || value === null || value === '') return undefined;
   const candidates = properties.filter((p) => p.name === name && p.options?.length);
   const shown = candidates.filter((p) => isPropertyVisible(p, parameters));
@@ -31,10 +31,13 @@ function optionFor(properties: PropertyDescriptor[], parameters: Parameters, nam
 
 /** One value as the subtitle shows it: an option's display name, an expression or object as an ellipsis. */
 function shown(properties: PropertyDescriptor[], parameters: Parameters, name: string): string {
-  const value = parameters[name];
+  // Own properties only: `{{constructor}}` names no parameter.
+  const value = Object.hasOwn(parameters, name) ? parameters[name] : undefined;
   if (value === undefined || value === null) return '';
+  // An expression is not evaluated here.
+  if (typeof value === 'string' && (value.startsWith('=') || value.includes('{{'))) return '…';
   if (Array.isArray(value)) return value.map((v) => optionFor(properties, { ...parameters, [name]: v }, name)?.name ?? String(v)).join(', ');
-  if (typeof value === 'object') return '…';
+  if (typeof value === 'object' || typeof value === 'function') return '…';
   return optionFor(properties, parameters, name)?.name ?? String(value);
 }
 

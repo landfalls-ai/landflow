@@ -306,9 +306,21 @@ export function NodePanel() {
           <button ref={backButton} type="button" onClick={close} aria-label="Back to the flow" className="grid size-11 shrink-0 place-items-center rounded-full text-t2 hover:text-t1 md:hidden">
             <ArrowLeft className="size-5" />
           </button>
-          {/* A plugin's own icon (the app's real mark) brings its tile: no frame around it. */}
-          <div className={cn('grid place-items-center max-md:shrink-0', isImageIcon(descriptor?.icon) ? 'size-10' : 'size-9 rounded-lg border border-hair bg-wl')}>
-            <NodeIcon icon={descriptor?.icon} size={isImageIcon(descriptor?.icon) ? 38 : 17} className="text-t1" strokeWidth={1.6} />
+          {/* From md up a plugin's own icon (the app's real mark) brings its tile: no frame around it. The phone keeps the framed 17px icon. */}
+          <div
+            className={cn(
+              'grid place-items-center max-md:size-9 max-md:shrink-0 max-md:rounded-lg max-md:border max-md:border-hair max-md:bg-wl',
+              isImageIcon(descriptor?.icon) ? 'md:size-10' : 'size-9 rounded-lg border border-hair bg-wl',
+            )}
+          >
+            {isImageIcon(descriptor?.icon) ? (
+              <>
+                <NodeIcon icon={descriptor?.icon} size={38} className="max-md:hidden" />
+                <NodeIcon icon={descriptor?.icon} size={17} className="md:hidden" />
+              </>
+            ) : (
+              <NodeIcon icon={descriptor?.icon} size={17} className="text-t1" strokeWidth={1.6} />
+            )}
           </div>
           <div className="min-w-0 max-md:flex-1">
             <NodeNameInput nodeId={openNodeId} name={wf.name} />
