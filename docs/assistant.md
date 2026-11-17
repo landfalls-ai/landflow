@@ -223,7 +223,7 @@ The first draft on an empty canvas is two stages (wave sb3). Stage 1 is the **pl
 
 **What the model is sent.** The plan call: the candidates' lines and the request, no node's properties, under 6 000 tokens for a request with the Linear, Messaging and GitHub plugins installed. The build calls: one per step, each with that node's docs only ([below](#each-steps-parameters)), instead of the whole catalog (88 000 characters with three plugins). `POST /api/ai/build` takes the plan (`plan`), checks it against the workflow's allowed types (400 with the problems) and answers it back in the draft with `stages`: every model call of the build in order (`plan`, `one-shot`, `send-back`), with the provider's input and output tokens, the request's length in characters and its time, never its text. The plan route answers its own calls the same way. Both write an `ai_usage` row per call (surface `spotlight`, purpose `answer`).
 
-Without a plan the build route is as before (the whole catalog in one call); the editor always sends one.
+Without a plan the build route plans first itself (`buildPlanFirst`); only `staged: false` is the one-shot draft (the whole catalog in one call). The editor always sends a plan.
 
 #### Each step's parameters
 
@@ -560,7 +560,7 @@ left" is `draft.left` having items (not applicable when the draft lacks nothing)
 | `components/editor/test-session.ts` | Test and fix: `testUntilItRuns`, `productionNote`, `publishToProduction` |
 | `components/editor/suggestions-card.tsx`, `spotlight.tsx` | the after-run card, and Spotlight's panel (header, timeline, box, bubbles, proposal rows) |
 | `components/editor/timeline.ts` | the panel's header and steps, worked out from the conversation (pure) |
-| `components/editor/ai-builder.tsx` | `useBuildFlow`: the empty canvas's one-shot flow draft |
+| `components/editor/ai-builder.tsx` | `useBuildFlow`: the empty canvas's flow draft (plan first, then built in stages; `staged: false` is the one-shot draft) |
 | `apps/web/test/assistant.test.ts` | ops, suggestion parsing and the chat loop with scripted models |
 | `apps/web/test/spotlight.test.ts` | the bubbles |
 | `apps/web/test/spotlight-panel.test.ts` | the panel: timeline, header, never folding by itself, agent rows, fix bubbles, Spotlight's own runs |
