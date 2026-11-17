@@ -27,17 +27,22 @@ export interface TabTarget {
   open?: AbilityRow;
   /** The Activity sub-view. */
   view?: ActivityView;
+  /** AG12: a tool's id in Capabilities (`&tool=`): its row is scrolled into view and outlined for two seconds. */
+  tool?: string;
 }
 
 /** Where a `?tab=` value, current or from an older build, lands. A session id alone means the Sessions view. */
-export function mapLegacyTab(tab?: string, session?: string, view?: string): TabTarget {
+export function mapLegacyTab(tab?: string, session?: string, view?: string, open?: string, tool?: string): TabTarget {
   const activityView = (ACTIVITY_VIEWS as readonly string[]).includes(view ?? '') ? (view as ActivityView) : undefined;
   switch (tab) {
     case 'persona':
     case 'build':
       return { tab: 'persona' };
-    case 'abilities':
-      return { tab: 'abilities' };
+    case 'abilities': {
+      // AG12: `open` (an Abilities row) and `tool` (a tool's id) from the canvas's band; an unknown value is ignored.
+      const row = (ABILITY_ROWS as readonly string[]).includes(open ?? '') ? (open as AbilityRow) : undefined;
+      return { tab: 'abilities', ...(row && { open: row }), ...(row === 'capabilities' && tool && tool.length <= 200 && { tool }) };
+    }
     case 'deploy':
       return { tab: 'abilities', open: 'deploy' };
     case 'safety':

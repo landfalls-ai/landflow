@@ -46,7 +46,8 @@ switches to the flow chart and back; the canvas stays loaded underneath. A deskt
   listed, back where the split was, so after a branch the main line goes on. A connection back to an earlier step (a
   loop) shows as *then “Loop”* on the step it comes from. Steps that nothing reaches are listed at the end.
 - **The cards.** Each shows the step's number, name and kind, and how its last run went: a tick with its items and
-  time, a red mark with the error, or a spinner while it runs. Off, pinned output and a breakpoint show as marks.
+  time, a red mark with the error, or a spinner while it runs. A Run an Agent or Run a Team step's kind line says what its
+  agent is connected to: "Run an Agent · claude-sonnet-5-5 · 4 tools · 1 knowledge base" (the canvas's band, as one line). Off, pinned output and a breakpoint show as marks.
   Sub-nodes (a chat model, a tool, a memory, and theirs) are chips on the step they serve, and a tap opens them.
 - **Opening and adding.** A tap opens the step full screen ([the node editor](#the-node-editor)). **Add a step** at the
   end opens the node picker, connected from the last step that doesn't go on yet.

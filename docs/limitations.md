@@ -715,3 +715,7 @@ own sections are [call attribution](#call-attribution-wave-11) and [the gateway'
 - **Names**: an app a Marketplace entry or an agent tool is named after gets its mark only when the whole name says it
   ("Slack", "Linear Trigger", "GitHub MCP"); "Linear regression" or "Slack-like notifier" get none, and neither does an
   app with no entry in `brand-icons.ts`.
+
+## What the canvas's agent band does not show
+
+The band on a Run an Agent node (AG12) shows the agent's own model, memory, tools and knowledge bases. It does not show an A2A Agent node's remote agent, a Run a Team node's members other than its lead, the agent's skills, or what a tool call reached (that is on the Run Trace). It is read-only: changes happen on the agent's page. Wiring read from the editor shows before a save, but the project's settings and the agent's own data are read from the saved workflow and agent, so a workflow never saved shows the agent without its project's settings.

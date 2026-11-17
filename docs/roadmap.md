@@ -2882,7 +2882,7 @@ account's own console is the figure.
 - The live pass's findings (each small; none blocks):
   - A made-up tool's clause drops its whole step, so the address the ask gave can leave the instructions with it (joins: "email it with send_summary to oncall@…" loses the address); live, a card once listed "Not available here: send the summary to oncall@landflow.test; its node type id was not confirmed here".
   - A step cut by the steps check can leave a fragment: the Grafana agent's "3. For dashboard questions, GET) on the dashboard URL or API path given in the message."
-  - Spotlight's created card keeps its Left row ("pick a smtp credential; fill in From Email") after the pick on the agent page opened by **Pick it** in another tab (`landflow:agent-saved` is window-local), also after a reload and once published.
+  - ~~Spotlight's created card keeps its Left row ("pick a smtp credential; fill in From Email") after the pick on the agent page opened by **Pick it** in another tab (`landflow:agent-saved` is window-local), also after a reload and once published.~~ built in ag3, AG12: the agent tabs tell each other over a `BroadcastChannel`.
   - ~~A change card's Left row drops "fill in From Email" while From is still empty.~~ fixed after ag2's review: a kept tool keeps a parameter need while that parameter is empty on the base's tool.
   - ~~In the editor's chat a tool call waiting for approval, and a denied one, reads **Failed** in the step list.~~ fixed after ag2's review: *Waiting for approval*, *Denied*, *Done*.
   - The editor's chat conversation does not come back after a reload.
@@ -2891,3 +2891,7 @@ account's own console is the figure.
   - The Grafana credential's API Token field is a plain text input, so a pasted token shows on the screen.
   - Spend: an agent's smoke tests, eval-gate cases and chat runs carry no surface, so the AI page cannot tell them apart, and the scorecard's calls are on no host's page.
 - Owed to a person: whether a denied write may count as a pass in a smoke test; whether the agent page keeps its own **Publish anyway**; whether the Grafana observer should ever get Acknowledge Alert by default; whether every Run an Agent in the editor's chat should ask (saved flows keep Refuse); whether a fixed destination on a heuristic-schema tool should be closed to the model (`lib/server/agents/tools.ts`).
+
+## Agents that show what they are connected to, wave ag3
+
+- **Built (AG12):** a Run an Agent node (and a Run a Team node, for its lead) shows what its agent is connected to in a read-only band under its name: model, memory, tools and knowledge bases above the Chat Model, Memory and Tool slots, with *asks first*, documents, *replaced by* a wired model or memory, *Not published* and *Draft has changes*; a click opens the agent's page at that ability. One function, `agentConnections`, feeds the band (`GET /api/agents/:id/connections`) and the Run Trace, and the tabs tell each other about agent changes over a `BroadcastChannel`. A phone's step card says it in one line. See [agents.md](agents.md#from-workflows).

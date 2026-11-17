@@ -10,6 +10,8 @@ import { CircleAlert, CircleCheck, CircleDot, Loader2, Pause, Pin, Plus, PowerOf
 import { cn } from '@/lib/utils';
 import { duration } from '@/lib/client/format';
 import { NodeIcon } from '../ui/icon';
+import { useTeamLeads } from '../agents/faces'; // AG12
+import { stepLine, useAgentConnections } from '../canvas/agent-band'; // AG12
 import { useEditor } from './store';
 import { stepOrder } from './step-order';
 
@@ -109,6 +111,21 @@ function StepCard({ id, index, attached, then }: { id: string; index: number; at
   const pinned = useEditor((s) => Boolean(s.pinData[id]));
   const breakpoint = useEditor((s) => s.breakpoints.includes(id));
   const names = useEditor(useShallow((s) => [...attached, ...then].map((other) => s.nodes.find((n) => n.id === other)?.data.wf.name ?? other)));
+  // AG12: a Run an Agent / Run a Team step says what its agent is connected to (the canvas's band, as one line).
+  const workflowId = useEditor((s) => s.workflowId);
+  const wired = useEditor(
+    useShallow((s) => {
+      const subs = s.edges.filter((e) => e.target === id && e.data?.connectionType !== 'main');
+      const nameOf = (type: string) => {
+        const edge = subs.find((e) => e.data?.connectionType === type);
+        return edge ? s.nodes.find((n) => n.id === edge.source)?.data.wf.name : undefined;
+      };
+      return { model: nameOf('ai_languageModel'), memory: nameOf('ai_memory'), tools: subs.filter((e) => e.data?.connectionType === 'ai_tool').length };
+    }),
+  );
+  const leads = useTeamLeads(wf?.type === 'core.runTeam' ? [wf] : undefined);
+  const agentId = wf?.type === 'core.messageAgent' && typeof wf.parameters.agentId === 'string' && wf.parameters.agentId && !wf.parameters.agentId.includes('{{') ? wf.parameters.agentId : wf?.type === 'core.runTeam' ? leads[String(wf.parameters.teamId)] : undefined;
+  const connected = useAgentConnections(agentId, workflowId || undefined, id);
   if (!wf) return null;
   const open = (nodeId: string) => useEditor.getState().openNode(nodeId);
   const state = status?.state ?? 'idle';
@@ -128,7 +145,7 @@ function StepCard({ id, index, attached, then }: { id: string; index: number; at
             {pinned && <Pin className="size-3.5 shrink-0 text-viz-7" aria-label="Pinned output" />}
             {breakpoint && <CircleDot className="size-3.5 shrink-0 text-rd" aria-label="Breakpoint" />}
           </span>
-          <span className="block truncate text-[12.5px] text-t3">{info?.descriptor.displayName ?? wf.type}</span>
+          <span className={cn('block text-[12.5px] text-t3', connected ? 'line-clamp-2' : 'truncate')}>{connected ? stepLine(info?.descriptor.displayName ?? wf.type, connected.connections, { ...(wired.model && { model: wired.model }), ...(wired.memory && { memory: wired.memory }), tools: wired.tools }) : (info?.descriptor.displayName ?? wf.type)}</span>
         </span>
         <StepState state={state} items={items} ms={status?.durationMs} />
       </button>
