@@ -641,8 +641,8 @@ request: the run goes on when the last one is decided). The Platform analyst's o
   read-only, in three columns straight above the Chat Model, Memory and Tool slots: the model (the provider's logo and
   the name, *project default* when the agent has none and the project gives one), memory (*Remembers across sessions* or
   *This conversation*) and the tools and knowledge bases (each with its icon, a lock and *asks first* for a tool that
-  waits for approval, a knowledge base's collection and *N documents*, a credential's name in the hover title; at most
-  four rows, then *+N more*; a tool the project's settings keep out is greyed with the reason). A **Chat Model** or
+  waits for approval, a knowledge base's document count and a credential's name in the hover title; one line each, at most
+  two rows, then *+N more*, so the node ends above the 200 px where wired sub-nodes sit; a tool the project's settings keep out is greyed with the reason). A **Chat Model** or
   **Memory** wired to the node shows the agent's own struck through and *replaced by* that node; wired tools add
   (*+ 1 wired*). The node runs the **published** version, so the band shows it: *Not published* for an agent never
   published (the band shows its draft and the node says "Publish X first" when run), *Draft has changes* when the

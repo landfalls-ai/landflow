@@ -17,7 +17,8 @@ import { cn } from '@/lib/utils';
 import { useConnectionIcon } from '../run-trace/connections';
 import { NodeIcon } from '../ui/icon';
 
-const MAX_TOOL_ROWS = 4;
+// The band must stay short: sub-nodes are placed 200 canvas px below a node, so the tile, the slot labels and the '+' buttons have to end above that.
+const MAX_TOOL_ROWS = 2;
 
 export interface AgentConnectionsAnswer {
   agent: { id: string; name: string; published: boolean; draftDiffers: boolean; icon?: string; color?: string };
@@ -43,7 +44,14 @@ function load(agentId: string, workflowId?: string, nodeId?: string): Promise<Ag
       // A workflow not saved yet is 404: the agent as it is, without the project's settings.
       scoped && error instanceof ApiError && error.status === 404 ? api<AgentConnectionsAnswer>(url(''), { background: true }) : Promise.reject(error),
     );
-    cache.set(key, read.catch(() => null));
+    // A failed read is not kept: the next mount or change asks again.
+    cache.set(
+      key,
+      read.catch(() => {
+        setTimeout(() => cache.delete(key), 0);
+        return null;
+      }),
+    );
   }
   return cache.get(key)!;
 }
@@ -157,6 +165,7 @@ export function AgentBand({ agentId, data, wired, lead }: { agentId: string; dat
               window.open(`/agents/${encodeURIComponent(agentId)}`, '_blank', 'noopener');
             }}
             onPointerDown={stop}
+            onDoubleClick={stop}
             className="nodrag nopan shrink-0 rounded-full bg-viz-1/20 px-1.5 text-[9.5px] font-semibold normal-case tracking-normal text-t1"
           >
             {mark}
@@ -170,7 +179,7 @@ export function AgentBand({ agentId, data, wired, lead }: { agentId: string; dat
             {modelIcon && <NodeIcon icon={modelIcon} size={12} className={cn('mt-px shrink-0', view.model.replacedBy && 'opacity-50')} />}
             <span className="min-w-0">
               {view.model.project ? <span className="block truncate">project default</span> : null}
-              <span className={cn('block break-words', view.model.project && 'text-t3', view.model.replacedBy && 'line-through opacity-70', !view.model.name && !view.model.replacedBy && 'text-t3')}>{view.model.name ?? (view.model.replacedBy ? '' : 'no model')}</span>
+              <span className={cn('block truncate', view.model.project && 'text-t3', view.model.replacedBy && 'line-through opacity-70', !view.model.name && !view.model.replacedBy && 'text-t3')}>{view.model.name ?? (view.model.replacedBy ? '' : 'no model')}</span>
               {view.model.replacedBy && <span className="block truncate text-t3">replaced by {view.model.replacedBy}</span>}
             </span>
           </Row>
@@ -178,7 +187,7 @@ export function AgentBand({ agentId, data, wired, lead }: { agentId: string; dat
         <div className="min-w-0 pr-1">
           <Row label={`${who}: ${slot('memory')} ${view.memory.replacedBy ? `replaced by ${view.memory.replacedBy}` : view.memory.text}`} title={view.memory.replacedBy ? `${view.memory.text} (replaced by ${view.memory.replacedBy} in this flow)` : view.memory.text} href={agentLink(agentId, 'memory')}>
             <span className="min-w-0">
-              <span className={cn('block', view.memory.replacedBy && 'line-through opacity-70')}>{view.memory.text}</span>
+              <span className={cn('line-clamp-2', view.memory.replacedBy && 'line-through opacity-70')}>{view.memory.text}</span>
               {view.memory.replacedBy && <span className="block truncate text-t3">replaced by {view.memory.replacedBy}</span>}
             </span>
           </Row>
@@ -193,21 +202,20 @@ export function AgentBand({ agentId, data, wired, lead }: { agentId: string; dat
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1">
                     <span className="truncate">{c.name}</span>
+                    {knowledge && c.documents !== undefined && <span className="shrink-0 text-[9.5px] text-t3">{c.documents}</span>}
                     {c.asksFirst && <Lock className="size-2.5 shrink-0 text-t3" aria-hidden />}
                   </span>
-                  {c.asksFirst && <span className="block text-[9.5px] text-t3">asks first</span>}
-                  {knowledge && c.documents !== undefined && <span className="block text-[9.5px] text-t3">{c.documents} document{c.documents === 1 ? '' : 's'}</span>}
-                  {c.withheld && <span className="block truncate text-[9.5px] text-t3">{c.withheld}</span>}
                 </span>
               </Row>
             );
           })}
-          {more.length > 0 && (
+          {more.length > 0 ? (
             <Row label={`${who}: ${more.length} more`} title={view.tools.map((c) => c.name).join(', ')} href={agentLink(agentId, 'capabilities')} className="text-t3">
-              +{more.length} more
+              +{more.length} more{view.wiredTools > 0 ? ` · + ${view.wiredTools} wired` : ''}
             </Row>
+          ) : (
+            view.wiredTools > 0 && <div className="px-0.5 text-t3">+ {view.wiredTools} wired</div>
           )}
-          {view.wiredTools > 0 && <div className="px-0.5 text-t3">+ {view.wiredTools} wired</div>}
           {view.tools.length === 0 && view.wiredTools === 0 && (
             <Row label={`${who}: no tools`} title="No tools or knowledge bases" href={agentLink(agentId, 'capabilities')} className="text-t3">
               no tools

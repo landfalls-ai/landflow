@@ -123,7 +123,9 @@ export function agentConnections(agent: Agent, skip: { model?: boolean; memory?:
   if (model) out.push(options.wired?.model ? { ...model, overriddenBy: options.wired.model } : model);
   if (!skip.memory && config.memory?.crossSession) out.push({ kind: 'memory', name: 'Remembers across sessions', icon: 'lucide:brain', from: 'agent', ...(options.wired?.memory && { overriddenBy: options.wired.memory }) });
   if (!skip.tools) {
-    const known = new Map(credentials.list().map((c) => [c.id, c.name]));
+    // Only a tool with a credential reference asks the vault (list() decrypts and counts usage), and only once.
+    let names: Map<string, string> | undefined;
+    const known = { get: (id: string) => (names ??= new Map(credentials.list().map((c) => [c.id, c.name]))).get(id) } as ReadonlyMap<string, string>;
     for (const tool of config.tools ?? []) {
       const connection = toolConnection(tool, known);
       const kind = projectKindOf(tool);

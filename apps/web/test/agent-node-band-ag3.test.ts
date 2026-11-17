@@ -94,9 +94,9 @@ describe('the band on a Run an Agent node', () => {
     expect(text()).toContain('Remembers across sessions');
     expect(text()).toContain('Normalize Alert');
     expect(text()).toContain('Send Email');
-    expect(text()).toContain('asks first');
-    expect(text()).toContain('runbooks');
-    expect(text()).toContain('2 documents');
+    expect(container.querySelector('button[aria-label*="Send Email, asks first"]')).toBeTruthy();
+    // Two rows only: the knowledge base is behind "+1 more" (its row, with the documents, is on the agent's page).
+    expect(text()).toContain('+1 more');
     expect(container.querySelector('[title*="Mailpit SMTP"]')).toBeTruthy();
     expect(container.querySelector('[data-agent-band]')?.className).toContain('border-dashed');
     // No handle of its own: the node still has its four (main in and out, three slots counted apart).
@@ -137,17 +137,19 @@ describe('the band on a Run an Agent node', () => {
     expect(container.querySelector('.line-through')?.textContent).toContain('claude-sonnet-5-5');
   });
 
-  it('keeps four rows and says how many more', async () => {
+  it('keeps two rows (the band stays above where wired sub-nodes sit) and says how many more', async () => {
     next = answer({}, [{ kind: 'tool', name: 'Extra tool', toolId: 't_x', from: 'agent' }, { kind: 'tool', name: 'Last tool', toolId: 't_y', from: 'agent' }]);
-    await show();
-    expect(text()).toContain('+1 more');
+    await show({ wired: { tools: 1 } });
+    expect(text()).toContain('+3 more · + 1 wired');
+    expect(text()).toContain('Normalize Alert');
     expect(text()).not.toContain('Last tool');
+    expect(container.querySelectorAll('[data-agent-band] button[aria-label*="tool"], [data-agent-band] button[aria-label*="knowledge base"]')).toHaveLength(2);
   });
 
   it('reads again when this tab announces a save, and when another tab posts on the channel', async () => {
     await show();
     expect(reads).toHaveLength(1);
-    next = answer({}, [{ kind: 'tool', name: 'Field Statistics', toolId: 't_stats', from: 'agent' }]);
+    next = { ...answer(), connections: [{ kind: 'tool', name: 'Field Statistics', toolId: 't_stats', from: 'agent' }] };
     await act(async () => announceSaved('a1'));
     await settle();
     expect(reads).toHaveLength(2);
@@ -171,6 +173,23 @@ describe('the band on a Run an Agent node', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'Agent not found' }), { status: 404, headers: { 'content-type': 'application/json' } })));
     await show({ agentId: 'hidden' });
     expect(container.querySelector('[data-agent-band]')).toBeNull();
+  });
+});
+
+describe('the band on a Run a Team node', () => {
+  it('shows with the team body, labelled for the lead, above the body', async () => {
+    const runTeam = type('core.runTeam', descriptor('Run a Team', SLOTS));
+    await act(async () =>
+      root.render(
+        createElement(ReactFlowProvider, null, createElement(NodeTile, { name: 'Team', info: runTeam, parameters: {}, readOnly: true, live: { body: createElement('div', { 'data-team-body': '' }, 'roster') } as never, band: createElement(AgentBand, { agentId: 'a1', data: answer() as never, lead: true }) })),
+      ),
+    );
+    const band = container.querySelector('[data-agent-band]')!;
+    expect(band.getAttribute('aria-label')).toBe('What Alert triager (lead) is connected to');
+    expect(text()).toContain('Alert triager · connected to');
+    const body = container.querySelector('[data-team-body]')!;
+    expect(body).toBeTruthy();
+    expect(band.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
 

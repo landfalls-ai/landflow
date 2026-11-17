@@ -367,11 +367,13 @@ export function NodeTile(props: NodeTileProps) {
   }
 
   // -------------------------------------------------------------- main node
-  // AG12: a band (what the agent is connected to) widens the tile to hold its three columns and grows it in height; a team's live body wins.
-  const banded = wide && Boolean(band) && !live?.body;
+  // AG12: a band (what the agent is connected to) widens the tile to hold its three columns and grows it in height; a team's live body follows it (the lead's band above the roster or the live body).
+  const banded = wide && Boolean(band);
   const width = wide ? Math.max(WIDE_TILE, slotsWidth(aiIn), banded ? BAND_TILE : 0) : TILE;
   const height = Math.max(TILE, Math.max(mainIn.length, mainOut.length) * 30 + 22);
   const grows = wide && (Boolean(live?.body) || banded);
+  // A banded tile's head is shorter so the band fits above the 200 px where wired sub-nodes sit.
+  const headHeight = banded ? Math.min(height, 56) : height;
   const head = wide && live?.head ? (
     live.head
   ) : (
@@ -415,10 +417,11 @@ export function NodeTile(props: NodeTileProps) {
       >
         {grows ? (
           <>
-            <div className="flex shrink-0 items-center gap-3 px-4" style={{ height }}>
+            <div className="flex shrink-0 items-center gap-3 px-4" style={{ height: headHeight }}>
               {head}
             </div>
-            {banded ? band : live!.body}
+            {banded && band}
+            {live?.body}
           </>
         ) : (
           head

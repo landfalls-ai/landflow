@@ -313,7 +313,9 @@ A connection may also say (AG12, wave ag3; the Run an Agent node's canvas band r
 a deleted one), `toolId` (for the link to its row on the agent page), `overriddenBy` and `withheld` (set only where a
 flow and project are given: the canvas route; a run's own list leaves the model and memory a sub-node gives out), a
 project's default model (`from: 'project'`) and its knowledge base (*Project knowledge*), and a vector knowledge base's
-document count (the route only). A knowledge base without an embeddings model reads *SQLite · keyword search (BM25, built in)*.
+document count. `overriddenBy`, `withheld`, the project's default model, *Project knowledge* and the document count are
+route-only: the Run Trace's path passes no project. `withheld` follows the project's tool kinds on the saved tool, not the
+runtime's per-caller tool access. A knowledge base without an embeddings model reads *SQLite · keyword search (BM25, built in)*.
 
 **GitHub MCP** is its own row for an agent that has GitHub's MCP tools (`preset: 'github'`, [a2a.md](a2a.md#githubs-mcp-tools-for-agents)),
 with the GitHub mark and kind *Tool*: *Tool · pull requests, reviews, line comments* at *Read and review*, *Tool ·

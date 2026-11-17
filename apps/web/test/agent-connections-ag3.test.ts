@@ -185,6 +185,11 @@ describe('who may read', () => {
       const get = (cookie: string) => route.GET(new Request(`http://localhost:3000/api/agents/${a.id}/connections`, { headers: { cookie: `landflow_session=${cookie}` } }), { params: Promise.resolve({ id: a.id }) });
       expect((await get(ownerSession)).status).toBe(200);
       expect((await get(memberSession)).status).toBe(404);
+      // A workflow that exists but the member cannot read is 404 as well, whatever the agent.
+      store.saveWorkflow({ id: 'wf_ag12_private', name: 'Private', nodes: [], connections: [] } as unknown as Workflow);
+      const scoped = (cookie: string, id: string) => route.GET(new Request(`http://localhost:3000/api/agents/${id}/connections?workflowId=wf_ag12_private`, { headers: { cookie: `landflow_session=${cookie}` } }), { params: Promise.resolve({ id }) });
+      expect((await scoped(ownerSession, a.id)).status).toBe(200);
+      expect((await scoped(memberSession, a.id)).status).toBe(404);
     } finally {
       auth.enableTestAuth();
     }
