@@ -116,8 +116,9 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
         setStatus('error');
         localError('The run ended without a result. Check the server log.');
       }
+      return !failed;
     } catch (error) {
-      if (c.signal.aborted) return;
+      if (c.signal.aborted) return false;
       if (quiet && error instanceof ApiError && error.status === 409) {
         // AG05: say what it was decided as, then show the session as it is.
         const was = /^Already (approved|denied)/.exec(error.message)?.[1] as Decisions[string] | undefined;
@@ -125,11 +126,21 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
         if (was && callId) setDecisions((d) => ({ ...d, [callId]: was }));
         const id = sessionIdRef.current;
         if (id) await load(id).catch(() => {});
-        return;
+        return true;
+      }
+      // AG05: a decision the server did not take is not a decision: the buttons come back.
+      if (quiet) {
+        const callId = (body as { callId?: string }).callId;
+        if (callId)
+          setDecisions((d) => {
+            const { [callId]: _gone, ...rest } = d;
+            return rest;
+          });
       }
       setStatus('error');
       // 403 from the chat route: the agent isn't available in the chosen project (shown in the chat, not only as a toast).
       localError(projectId && error instanceof ApiError && error.status === 403 ? NOT_AVAILABLE_MESSAGE : (error as Error).message);
+      return false;
     } finally {
       if (controller.current === c) {
         controller.current = undefined;
@@ -155,14 +166,14 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
 
   // AG05: a call decided once is not decided again; a decision streams the run on only when it was the last one waiting.
   const decide = (callId: string, approved: boolean) => {
-    if (!sessionId || decisions[callId]) return Promise.resolve();
+    if (!sessionId || decisions[callId]) return Promise.resolve(false);
     setDecisions((d) => ({ ...d, [callId]: approved ? 'approved' : 'denied' }));
     return consume(`/api/agents/${agentId}/sessions/${sessionId}/approvals`, { callId, approved }, true);
   };
 
   /** AG05: every call still waiting decided the same way, one after the other, each once; the last one resumes the run. */
   const decideAll = async (callIds: string[], approved: boolean) => {
-    for (const callId of callIds) await decide(callId, approved);
+    for (const callId of callIds) if (!(await decide(callId, approved))) break;
   };
 
   /** Stops reading the stream. */

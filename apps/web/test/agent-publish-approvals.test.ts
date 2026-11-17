@@ -151,6 +151,20 @@ describe('approval cards settle (AG05)', () => {
     expect(container.textContent).not.toContain('Already');
   });
 
+  it('a failed decision (500) puts the buttons back and Approve all stops at the first failure', async () => {
+    await mount(session());
+    wire.streamFails = () => new ApiError('boom', 500);
+    const all = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('Approve all'))!;
+    await act(async () => {
+      all.click();
+    });
+    await vi.waitFor(() => expect(wire.streams).toHaveLength(1));
+    expect(run.decisions.c1).toBeUndefined();
+    expect(wire.streams).toHaveLength(1);
+    expect(labels().filter((l) => l === 'Approve')).toHaveLength(2);
+    expect(labels().filter((l) => l === 'Deny')).toHaveLength(2);
+  });
+
   it('two calls waiting: Approve all (2) posts both ids in order, once each, and both read Approved', async () => {
     await mount(session());
     expect(labels()).toContain('Approve all (2)');

@@ -37,7 +37,7 @@ export function AgentCardView({ itemId, card, busy = false }: { itemId: string; 
   const row = useAssistant((s) => (card.agentId ? s.agents.find((a) => a.agentId === card.agentId) : undefined));
   const smoke = row?.smoke ?? card.smoke;
   // AG05: what the row says while the eval gate runs and after (held stays); the same words, from `publishLine`.
-  const publish = row?.publish ?? card.publish;
+  const publish = row ? row.publish : card.publish;
   const tested = smoke ? `${smokeLine(smoke)}${smoke.state === 'passed' && smoke.reason ? ` · ${smoke.reason}` : ''}` : 'Created as a draft';
   const createdLine = publish?.state === 'publishing' ? publishLine(publish) : `${tested}${publish && publish.state !== 'published' ? ` · ${publishLine(publish)}` : row?.state === 'published' ? ' · published' : ''}`;
   const needsCredential = smoke?.state === 'untested' && Boolean(smoke.reason?.startsWith('needs a credential'));

@@ -586,10 +586,14 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
                 {!publishing && <Rocket className="size-3.5" />}
                 {/* AG05: while the gate runs the button says so (short on a phone; the notice below has the whole line). */}
                 {gate?.state === 'publishing' ? (
-                  <>
-                    <span className="sm:hidden">Publishing…</span>
-                    <span className="hidden sm:inline">Publishing: the eval gate runs {gate.cases ? `${gate.cases} case${gate.cases === 1 ? '' : 's'}` : 'its cases'}…</span>
-                  </>
+                  gate.cases ? (
+                    <>
+                      <span className="md:hidden">Publishing…</span>
+                      <span className="hidden md:inline">Publishing: the eval gate runs {gate.cases} case{gate.cases === 1 ? '' : 's'}…</span>
+                    </>
+                  ) : (
+                    <span>Publishing…</span>
+                  )
                 ) : (
                   <span>{publishLabel(published, changed, nextVersion)}</span>
                 )}
@@ -758,7 +762,7 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
             className={cn('mx-auto mt-4 flex w-[calc(100%-2rem)] max-w-[680px] flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border px-3 py-2 text-[12.5px] leading-snug sm:w-[calc(100%-3rem)]', gate.state === 'held' ? 'border-warn text-warn' : 'border-hair text-t2')}
           >
             {gate.state === 'publishing' && <Loader2 className="size-3.5 shrink-0 animate-spin" />}
-            <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{publishLine(gate)}</span>
+            <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{gate.state === 'publishing' && !gate.cases ? 'Publishing…' : publishLine(gate)}</span>
             {gate.state === 'held' && (
               <>
                 <button type="button" onClick={() => go('activity', undefined, 'evaluations')} className="min-h-7 font-semibold text-ac hover:underline max-md:min-h-11">
