@@ -6,9 +6,11 @@
 #                                              LANDFLOW_<KIND>_URL            what a plugin connects to (kafka, amqp, jetstream, valkey)
 #                                              LANDFLOW_TRANSPORT_<KIND>_URL  what the host reads: one read-only connection `env-<kind>` per URL
 #                                              LANDFLOW_MAX_CONCURRENCY       calls a plugin replica runs at once (the spill-over and KEDA numbers follow from it)
-#   ConfigMap landflow-transport-<plugin>    LANDFLOW_TRANSPORTS for that plugin: which faces start. Every bundled plugin is listed
-#                                              (the TypeScript images carry all eleven client libraries, the Go images link the tier 1
-#                                              drivers, the Python images the native tier 1 drivers); add your own by copying a block.
+#   ConfigMap landflow-transport-<plugin>    LANDFLOW_TRANSPORTS for that plugin: which faces start. Seven of the twelve base plugins are
+#                                              listed (text-toolkit, messaging, go-crypto, google-workspace, databases,
+#                                              py-insights, productivity); the rest keep http,grpc. The TypeScript
+#                                              images carry all eleven client libraries, the Go images link the tier 1
+#                                              drivers, the Python images the native tier 1 drivers. Add your own by copying a block.
 #   Secret landflow-transport                LANDFLOW_TRANSPORT_SECRET, the shared key for end-to-end encryption and signing over brokers
 #                                              (the host and every brokered plugin need the same value), and the AMQP URLs with the
 #                                              RabbitMQ credentials. Development values: replace the Secret for anything real.

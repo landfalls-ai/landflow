@@ -2827,3 +2827,9 @@ account's own console is the figure.
 - The seventh **Unused (Data Table)** step in B1's plan and flow (a plan step with no use) and a `no-junk` reading that
   sees it.
 - The design fallback saying so on the card (and not choosing a different model than the default for it).
+
+
+## Platform guide and the landflow-dev plugin
+
+- **Built (2026-11-17):** [`docs/platform/`](platform/README.md), a guided tour of the platform (overview, the host's layers, agents, Kubernetes, the three SDKs with runnable samples in `examples/sdk/`), and `claude-plugins/landflow-dev`, a Claude Code plugin with a skill for each topic and two agents (`landflow-platform-guide`, `landflow-plugin-builder`). The plugin is in the repository's marketplace; opening the repository with Claude Code loads the same skills and agents from `.claude/` (`scripts/sync-claude-plugin.mjs`, run by `pnpm check`, keeps the copies equal).
+- **Left open:** the queue overlay's workers get no code runner, SMTP or LLM gateway settings (see [limitations.md](limitations.md)); the plugin has no `LICENSE` file, which the Claude plugin directory asks for before a listing; the skills have no eval suite.

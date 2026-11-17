@@ -111,14 +111,44 @@ describe('plugin flows', () => {
           expect(loaded.unsupported.map((u) => u.kind), entry.name).toContain('hooks');
           continue;
         }
+        if (entry.source.startsWith('./claude-plugins/')) {
+          // Skills and agents for people building on Landflow (landflow-dev): no node plugin and no flows.
+          expect(loaded.nodePlugin, entry.name).toBeUndefined();
+          expect(loaded.flows, entry.name).toEqual([]);
+          expect(entry.flows, entry.name).toBeUndefined();
+          continue;
+        }
         expect(entry.source, entry.name).toMatch(/^\.\/plugins\//);
         expect(loaded.nodePlugin?.id, entry.name).toBe(entry.name);
         expect(loaded.flows.map((f) => `./${f.path}`).sort(), entry.name).toEqual([...(entry.flows ?? [])].sort());
       }
       expect(manifest.plugins.filter((p) => p.source.startsWith('./apps/web/claude-plugins/')).map((p) => p.name).sort()).toEqual(['landflow-brain', 'landflow-harness']);
+      expect(manifest.plugins.filter((p) => p.source.startsWith('./claude-plugins/')).map((p) => [p.name, p.source, p.category])).toEqual([['landflow-dev', './claude-plugins/landflow-dev', 'development']]);
     } finally {
       delete process.env.LANDFLOW_MARKETPLACE_ALLOW_LOCAL;
     }
+  });
+
+  it('ship the landflow-dev plugin with skills and agents that name and describe themselves', () => {
+    const root = join(repo, 'claude-plugins', 'landflow-dev');
+    const plugin = JSON.parse(readFileSync(join(root, '.claude-plugin', 'plugin.json'), 'utf8')) as { name: string; description: string; keywords: string[] };
+    const manifest = JSON.parse(readFileSync(join(repo, '.claude-plugin', 'marketplace.json'), 'utf8')) as { plugins: Array<{ name: string; description: string; keywords: string[] }> };
+    const entry = manifest.plugins.find((p) => p.name === 'landflow-dev');
+    expect(plugin.name).toBe('landflow-dev');
+    expect(entry?.description).toBe(plugin.description);
+    expect(entry?.keywords).toEqual(plugin.keywords);
+    const frontmatter = (file: string, expected: string) => {
+      const text = readFileSync(file, 'utf8');
+      const head = /^---\n([\s\S]*?)\n---\n/.exec(text)?.[1] ?? '';
+      expect(head, file).toMatch(new RegExp(`^name: ${expected}$`, 'm'));
+      expect(head, file).toMatch(/^description: \S.{20,}$/m);
+    };
+    const skills = readdirSync(join(root, 'skills'));
+    expect(skills.length).toBeGreaterThan(0);
+    for (const skill of skills) frontmatter(join(root, 'skills', skill, 'SKILL.md'), skill);
+    const agents = readdirSync(join(root, 'agents')).filter((f) => f.endsWith('.md'));
+    expect(agents.sort()).toEqual(['landflow-platform-guide.md', 'landflow-plugin-builder.md']);
+    for (const agent of agents) frontmatter(join(root, 'agents', agent), agent.replace(/\.md$/, ''));
   });
 
   it('are listed in the repo’s marketplace', () => {

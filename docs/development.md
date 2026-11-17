@@ -12,14 +12,14 @@ infra stack and the images.
 pnpm install
 (cd plugins/py-insights && ./setup.sh)        # .venv with the Python SDK, gRPC, MCP and broker extras
 (cd plugins/productivity && ./setup.sh)       # the same for the Python integrations
-pnpm dev:all                                  # host on :3000 + the seven plugins (7101–7107 HTTP, 7201–7207 gRPC)
+pnpm dev:all                                  # host on :3000 + ten plugins (7101–7107 and 7116–7118 HTTP, 7201–7207 and 7216–7218 gRPC)
 pnpm dev:all:browser                          # the same plus the Browser plugin (7112 / 7212; needs agent-browser and Chrome on the Mac)
 pnpm dev:all:agent-shell                      # the same plus the Agent Shell plugin (7114 / 7214)
 pnpm dev:all:web-search                       # the same plus the Web Search plugin (7113 / 7213; needs a SearXNG URL or an API key credential)
 docker compose -f deploy/compose.infra.yml up -d --wait   # Postgres, Valkey, Mailpit, MinIO, OpenBao (optional)
 ```
 
-`pnpm dev` runs only the host; `pnpm plugin:ts|py|go|messaging|productivity|google|databases|github|browser|web-search|agent-shell|ai-sdk` runs one plugin (`web-search` on 7113 / 7213, `agent-shell` on 7114 / 7214, `ai-sdk` on 7115 / 7215; the last two are opt-in and not in `dev:all`), and
+`pnpm dev` runs only the host; `pnpm plugin:ts|py|go|messaging|productivity|google|databases|github|linear|attio|fathom|clickland|landledger|landfall|triage|threat-intel|browser|web-search|agent-shell|ai-sdk` runs one plugin (`web-search` on 7113 / 7213, `agent-shell` on 7114 / 7214, `ai-sdk` on 7115 / 7215; these three, `github`, `clickland`, `landledger` and the Landfall, triage and threat-intel plugins are not in `dev:all`; see ports in [platform/kubernetes.md](platform/kubernetes.md)), and
 `pnpm worker` runs a queue-mode worker. The host keeps its data in `apps/web/.data` (SQLite, `credentials.json`,
 `encryption.key`). Don't edit those files by hand: use the UI, the API or the [CLI](features/cli.md).
 [deployment.md, "Using the infra from the dev server on the host"](deployment.md#using-the-infra-from-the-dev-server-on-the-host)
@@ -147,6 +147,17 @@ Claude Code works on this repository with three things checked in beside the cod
 | `landflow-plugin-engineer` | sonnet | all | plugins, the protocol, the three SDKs, transports |
 | `landflow-docs-writer` | sonnet | all | feature pages, reference, limitations, roadmap, history rows |
 | `landflow-local-ops` | sonnet | all | the infra stack, the OrbStack cluster, kagent's kind cluster, the scratch host |
+
+**The `landflow-dev` plugin.** Seven more skills (`landflow-platform-overview`, `landflow-server-change`,
+`landflow-agents`, `landflow-kubernetes`, `landflow-plugin-typescript`, `landflow-plugin-python`, `landflow-plugin-go`)
+and two agents (`landflow-platform-guide`, `landflow-plugin-builder`) live in
+[`claude-plugins/landflow-dev/`](../claude-plugins/landflow-dev/README.md), a Claude Code plugin that is also listed in
+`.claude-plugin/marketplace.json`. The plugin is the source: the same files are copied into `.claude/skills/` and
+`.claude/agents/` so this repository loads them with no install. To change one, edit the plugin copy, run
+`node scripts/sync-claude-plugin.mjs --write`, and commit both. `pnpm check:claude-plugin` (part of `pnpm check`) runs
+the script with `--check` and fails when a copy differs or is missing. The script touches only files the plugin has: the
+contributor agents above and `landflow-feature` are not part of it. Check the plugin with
+`claude plugin validate claude-plugins/landflow-dev` and the marketplace with `claude plugin validate .`.
 
 The models follow one rule: planning on the strongest planner, implementation on a cheaper model, reviews on fable,
 with at most two fable agents running at once. To change an agent, edit its file; keep its paths true to the code,

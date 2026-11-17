@@ -718,7 +718,7 @@ Each test file uses a fresh mailbox (`<name>-<time>@landflow.test`), delivered o
 
 ## Kubernetes
 
-[`k8s/`](../deploy/k8s) runs the host and the seven plugins on Kubernetes, with the host finding the plugins through
+[`k8s/`](../deploy/k8s) runs the host and the twelve base plugins on Kubernetes, with the host finding the plugins through
 **Kubernetes discovery** instead of announcements ([protocol §13](protocol.md#13-kubernetes-discovery-and-registry-proofs)).
 It is plain [kustomize](https://kustomize.io), built into `kubectl` (`apply -k`): no extra tool, plain YAML to read and
 diff, and overlays for the differences between clusters. A Helm chart would add templating Landflow does not need yet.
@@ -996,7 +996,7 @@ To go back to the plain overlay: `kubectl --context orbstack apply -k deploy/k8s
 ### Brokers on Kubernetes
 
 `k8s/overlays/orbstack-brokers` is the OrbStack overlay plus Kafka (KRaft), RabbitMQ, NATS with JetStream and Valkey in
-`landflow-dev`, and the host and the TypeScript plugins (text-toolkit, messaging) connected to all four. Without it nothing
+`landflow-dev`, and the host and seven plugins (text-toolkit, messaging, go-crypto, google-workspace, databases, py-insights, productivity) connected to all four. The other five base plugins (github, linear, attio, fathom, clickland) get no face list and keep `http,grpc`. Without it nothing
 changes: the base plugin Deployments read their broker settings through `envFrom` on optional ConfigMaps and a Secret, which
 only `broker-transports` creates. The environment a plugin gets:
 
