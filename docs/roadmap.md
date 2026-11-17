@@ -2891,3 +2891,7 @@ account's own console is the figure.
   - The Grafana credential's API Token field is a plain text input, so a pasted token shows on the screen.
   - Spend: an agent's smoke tests, eval-gate cases and chat runs carry no surface, so the AI page cannot tell them apart, and the scorecard's calls are on no host's page.
 - Owed to a person: whether a denied write may count as a pass in a smoke test; whether the agent page keeps its own **Publish anyway**; whether the Grafana observer should ever get Acknowledge Alert by default; whether every Run an Agent in the editor's chat should ask (saved flows keep Refuse); whether a fixed destination on a heuristic-schema tool should be closed to the model (`lib/server/agents/tools.ts`).
+
+## Agents that show what they are connected to, wave ag3
+
+- **AG13, Spotlight gives an agent its knowledge**: the card's Knowledge row says what will be indexed (the folder the ask named and its files), from where and how it is searched; Create indexes the folder into the new knowledge base (`POST /api/agents/:id/knowledge/:toolId/folder`) before the smoke test; an ask with no source asks which folder and invents nothing; a knowledge base with no embeddings model is searched by keywords (BM25, built in, SQLite and in-memory stores). Built; not yet read live (see the report) ([assistant.md](assistant.md#agents-and-teams), [agents.md](agents.md#agent-architect)).
