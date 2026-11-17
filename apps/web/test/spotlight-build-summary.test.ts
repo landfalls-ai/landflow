@@ -53,7 +53,7 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), message: v
 
 const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
-const { draftSummary, summaryText, isFilled, credentialLabel } = await import('@/lib/shared/draft-summary');
+const { draftSummary, summaryText, fieldEmpty, isBlank, credentialLabel } = await import('@/lib/shared/draft-summary');
 const { useEditor } = await import('@/components/editor/store');
 const { useAssistant } = await import('@/components/editor/assistant');
 const { useAutonomous } = await import('@/components/editor/autonomous');
@@ -113,8 +113,11 @@ describe('draftSummary', () => {
   });
 
   it('reads emptiness and the credential’s display name', () => {
-    expect([undefined, '', '  ', [], {}].map(isFilled)).toEqual([false, false, false, false, false]);
-    expect([0, 'a', [1], { a: 1 }, false].map(isFilled)).toEqual([true, true, true, true, true]);
+    expect([undefined, '', [], {}, { condition: [] }, [{ a: '' }]].map(isBlank)).toEqual([true, true, true, true, true, true]);
+    expect([0, 'a', [1], { a: 1 }, false].map(isBlank)).toEqual([false, false, false, false, false]);
+    const cond = { name: 'conditions', type: 'fixedCollection', default: { condition: [{ left: 'x', operator: 'isNotEmpty', right: '' }] }, groups: [{ name: 'condition', values: [{ name: 'left', type: 'string' }, { name: 'right', type: 'string' }] }] };
+    expect([undefined, {}, { condition: [] }, cond.default].map((v) => fieldEmpty(cond as never, v))).toEqual([true, true, true, true]);
+    expect(fieldEmpty(cond as never, { condition: [{ left: '{{ $json.total }}', right: '1' }] })).toBe(false);
     expect(credentialLabel(left[0])).toBe('Header Auth');
   });
 });
@@ -237,6 +240,21 @@ describe('the card', () => {
     expect(button(/Open “Big order\?”/)).toBeUndefined();
     withCondition({});
     expect(button(/Open “Big order\?”/)).toBeDefined();
+  });
+
+  it.each([['left out', undefined], ['an empty list', { condition: [] }]])('an If landed through applyTemplate with conditions %s reads open, then done once a real condition is set', (_, conditions) => {
+    act(() => useEditor.getState().applyTemplate({ nodes: [{ key: 'iff', type: 'core.if', name: 'Is P0?', x: 0, y: 0, ...(conditions && { parameters: { conditions } }) }], edges: [] } as never));
+    render({ ...SUMMARY, left: [{ node: 'Is P0?', field: 'conditions', kind: 'empty', text: '“Is P0?”: no condition yet: it keeps every item' }] });
+    expect(button(/Open “Is P0\?”/)).toBeDefined();
+    const id = useEditor.getState().nodes.find((n) => n.data.wf.name === 'Is P0?')!.id;
+    act(() => useEditor.getState().updateNode(id, { parameters: { conditions: { condition: [{ left: '{{ $json.p }}', operator: 'equals', right: 'P0' }] } } }));
+    expect(button(/Open “Is P0\?”/)).toBeUndefined();
+  });
+
+  it('a hollow-step row with no field reads done once the step has its list', () => {
+    act(() => useEditor.getState().applyTemplate({ nodes: [{ key: 'iff', type: 'core.if', name: 'Filter Bugs', x: 0, y: 0 }], edges: [] } as never));
+    render({ ...SUMMARY, left: [{ node: 'Filter Bugs', kind: 'empty', text: '“Filter Bugs”: has no conditions, so it keeps every item' }] });
+    expect(button(/Open “Filter Bugs”/)).toBeDefined();
   });
 
   it('with no credential to pick from, the picker opens the create dialog for the step’s types', () => {

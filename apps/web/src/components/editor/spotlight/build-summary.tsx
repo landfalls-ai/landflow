@@ -6,9 +6,9 @@
  * credential set), read on every render, never stored.
  */
 import { useState } from 'react';
-import { CircleCheck, Hand } from 'lucide-react';
+import { CircleCheck, Hand, Minus } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { credentialLabel, isFilled, type DraftSummary } from '@/lib/shared/draft-summary';
+import { credentialLabel, fieldEmpty, neededField, type DraftSummary } from '@/lib/shared/draft-summary';
 import type { DraftLeft } from '@/lib/shared/draft-left';
 import { Button } from '../../ui/button';
 import { qualifiedCredentialType, useCredentials } from '../../credentials/use-credentials';
@@ -39,7 +39,8 @@ function LeftRow({ item, onOpen }: { item: DraftLeft; onOpen: (name: string) => 
   const descriptor = useEditor((s) => (step ? s.nodeTypes[step.type]?.descriptor : undefined));
   const slots = (descriptor?.credentials ?? []).map((c) => c.name);
   const chosen = step && item.kind === 'credential' ? Object.values(step.credentials ?? {}).find((c) => c?.id) : undefined;
-  const filled = step && item.field && item.kind !== 'credential' && item.kind !== 'dropped' ? isFilled(step.parameters?.[item.field]) : false;
+  const field = item.field ?? (step ? neededField(step.type) : undefined);
+  const filled = step && field && item.kind !== 'credential' && item.kind !== 'dropped' ? !fieldEmpty(descriptor?.properties.find((p) => p.name === field), step.parameters?.[field]) : false;
   const gone = item.kind !== 'dropped' && Boolean(item.node) && !step;
   const done = Boolean(chosen) || filled || gone;
   const label = credentialLabel(item);
@@ -47,7 +48,7 @@ function LeftRow({ item, onOpen }: { item: DraftLeft; onOpen: (name: string) => 
   return (
     <div className="space-y-1.5" data-testid="summary-left" data-state={done ? 'done' : 'open'}>
       <div className="flex items-start gap-1.5 text-[12.5px] leading-snug">
-        {done ? <CircleCheck className="mt-px size-3.5 shrink-0 text-ok" /> : <Hand className="mt-px size-3.5 shrink-0 text-warn" />}
+        {gone ? <Minus className="mt-px size-3.5 shrink-0 text-t3" /> : done ? <CircleCheck className="mt-px size-3.5 shrink-0 text-ok" /> : <Hand className="mt-px size-3.5 shrink-0 text-warn" />}
         <span className={cn('min-w-0 [overflow-wrap:anywhere]', done ? 'text-t3' : 'text-t2')}>{item.text}</span>
       </div>
       {done ? (
@@ -85,8 +86,8 @@ export function BuildSummaryCard({ summary, onOpen }: { summary: DraftSummary; w
       <div className="space-y-1">
         <Heading>Steps</Heading>
         <ol className="space-y-0.5 text-[12.5px] leading-snug text-t2" data-testid="summary-steps">
-          {shown.map((line) => (
-            <li key={line} className="[overflow-wrap:anywhere]">
+          {shown.map((line, i) => (
+            <li key={`${i}-${line}`} className="[overflow-wrap:anywhere]">
               {line}
             </li>
           ))}
@@ -100,8 +101,8 @@ export function BuildSummaryCard({ summary, onOpen }: { summary: DraftSummary; w
       {summary.assumptions.length > 0 && (
         <div className="space-y-1" data-testid="summary-assumed">
           <Heading>Assumed</Heading>
-          {summary.assumptions.map((line) => (
-            <p key={line} className="text-[12.5px] leading-snug text-t2 [overflow-wrap:anywhere]">
+          {summary.assumptions.map((line, i) => (
+            <p key={`${i}-${line}`} className="text-[12.5px] leading-snug text-t2 [overflow-wrap:anywhere]">
               {line}
             </p>
           ))}
@@ -118,8 +119,8 @@ export function BuildSummaryCard({ summary, onOpen }: { summary: DraftSummary; w
       {summary.cannot.length > 0 && (
         <div className="space-y-1" data-testid="summary-cannot">
           <Heading>Not possible here</Heading>
-          {summary.cannot.map((line) => (
-            <p key={line} className="text-[12.5px] leading-snug text-t2 [overflow-wrap:anywhere]">
+          {summary.cannot.map((line, i) => (
+            <p key={`${i}-${line}`} className="text-[12.5px] leading-snug text-t2 [overflow-wrap:anywhere]">
               {line}
             </p>
           ))}

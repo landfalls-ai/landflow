@@ -5,6 +5,7 @@
  * loads it for the summary card), no I/O.
  */
 import { planLines, type BuildPlan } from './build-plan';
+import type { PropertyDescriptor } from '@landflow/protocol';
 import type { DraftLeft } from './draft-left';
 
 export interface DraftSummary {
@@ -77,13 +78,48 @@ export function summaryText(name: string, summary: DraftSummary): string {
   ].join('\n');
 }
 
-/** Whether a parameter value holds anything (a person filled it): not unset, blank, or an empty list or object. */
-export function isFilled(value: unknown): boolean {
-  if (value === undefined || value === null) return false;
-  if (typeof value === 'string') return value.trim() !== '';
-  if (Array.isArray(value)) return value.length > 0;
-  if (typeof value === 'object') return Object.keys(value as object).length > 0;
-  return true;
+const plain = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+
+/** Nothing in it: unset, '', or lists and objects of only such values. */
+export function isBlank(v: unknown): boolean {
+  return v === undefined || v === null || v === '' || (Array.isArray(v) && v.every(isBlank)) || (plain(v) && Object.values(v).every(isBlank));
+}
+
+/** A row with nothing in it: every value blank, or an option still at its default. */
+function rowEmpty(fields: PropertyDescriptor[] | undefined, row: unknown): boolean {
+  if (!plain(row)) return isBlank(row);
+  return Object.entries(row).every(([k, v]) => {
+    const f = fields?.find((x) => x.name === k);
+    if (f?.type === 'options' && v === f.default) return true;
+    return f?.type === 'fixedCollection' && f.groups ? collectionEmpty(f, v) : isBlank(v);
+  });
+}
+
+/** A fixedCollection's value with no usable row: missing, `{}`, or only empty rows (the guard's own emptiness). */
+function collectionEmpty(p: PropertyDescriptor, value: unknown): boolean {
+  if (isBlank(value)) return true;
+  if (!plain(value)) return false;
+  return Object.entries(value).every(([name, rows]) => (Array.isArray(rows) ? rows : [rows]).every((row) => rowEmpty(p.groups?.find((g) => g.name === name)?.values, row)));
+}
+
+const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Whether a person filled a parameter. Blank, an empty list or only empty rows is not filled, and neither is a value
+ * still equal to the descriptor's default (the canvas put it there, not the person).
+ */
+export function fieldEmpty(property: PropertyDescriptor | undefined, value: unknown): boolean {
+  if (property?.type === 'fixedCollection' && property.groups) {
+    if (collectionEmpty(property, value)) return true;
+  } else if (isBlank(value)) return true;
+  return property?.default !== undefined && !isBlank(property.default) && same(value, property.default);
+}
+
+/** The list a step type cannot work without, for a left row that names no field (a hollow If, Filter or Set). */
+export function neededField(type: string): string | undefined {
+  if (type === 'core.if' || type === 'core.filter') return 'conditions';
+  if (type === 'core.set') return 'fields';
+  return undefined;
 }
 
 /** The display name of a credential item's type, from the text the guard wrote ("“X” needs a Linear API credential: pick one"). */
