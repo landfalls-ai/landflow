@@ -195,6 +195,8 @@ A new AI Agent step the chat proposes that wouldn't run here, with no chat model
 
 Ids are checked like team ids: a name written where `agentId` goes becomes the id of the one published agent with that name (`withAgentId`, with or without "agent"); the builder clears an id no agent has, so the node asks for one, and the chat leaves it out as made up. A `newAgent` never carries an `agentId`. Its node runs the agent with the agent's own model and instructions, so the prompt says to attach nothing to it; a local model that then adds an AI Agent named after the new agent ("Legal Clause Reviewer 2"), or a chat model or tool for its node, has those left out, with the connections that use them, and is told why (`withoutAgentStandIns`, in the same reply or while the newAgent is pending). With no published agents the chat's prompt says *Your agents: none published yet.*, and `get_node_docs("core.messageAgent")` lists them (or says to propose a `newAgent`). Tests: `test/spotlight-agents.test.ts`, `test/flow-builder.test.ts` (AI builder agents).
 
+A revise of a pending agent card keeps the card's name only when you gave it: a name the design made from the tools ("Crypto Toolkit agent") is made again from the new tools ("Utility helper") and the Changes row says why, and Create names the agent what the card shows. A tool a change adds gets its own step in the agent's instructions, and "(asks first)" on the Changes row when it writes ([agents.md](agents.md#changes-from-spotlight)).
+
 ### Fold, Apply and errors
 
 What the panel does between states (the rules for the states themselves are in [The Spotlight panel](#the-spotlight-panel); the pure parts are in `components/editor/spotlight/states.ts`, tested in `test/spotlight-states.test.ts`):

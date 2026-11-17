@@ -2858,10 +2858,14 @@ account's own console is the figure.
   - The editor's chat cannot approve a tool call (only the agent page's Test chat shows approval cards).
   - The Grafana agent's instructions name node types (`grafana.getAlerts`, `core.httpRequest`) instead of tool names, and its HTTP Request tool is preset to `http://127.0.0.1:3000/api/health`.
   - Send Email's To and From are fixed empty and its Subject and Body unset on the card.
-  - After an agent-page change is applied the card has no Test button, does not update after a credential pick, its Left row repeats credentials that are set, and it does not say Acknowledge Alert asks first.
+  - ~~After an agent-page change is applied the card has no Test button, does not update after a credential pick, its Left row repeats credentials that are set, and it does not say Acknowledge Alert asks first.~~ built in ag2, AG09
   - Spotlight's history loses the smoke row and the card results after a reload.
-  - A revise adds a tool to the Tools line without a step for it, and the reply spells "Extract Iocs".
-  - The created agent's name can differ from the card's ("Crypto Toolkit agent" against "Utility helper").
+  - ~~A revise adds a tool to the Tools line without a step for it, and the reply spells "Extract Iocs".~~ built in ag2, AG09
+  - ~~The created agent's name can differ from the card's ("Crypto Toolkit agent" against "Utility helper").~~ built in ag2, AG09
   - Grafana 11.4's Acknowledge Alert returns 404 from the plugin.
   - The before/after scorecard and the phone screenshots were not run in the ag1 live pass.
 - Owed to a person, not the pipeline: whether a denied write may count as a pass in a smoke test (AG05's rule; SB18 said no); whether the agent page keeps its own **Publish anyway** (Spotlight never offers it); whether the Grafana observer should ever get Acknowledge Alert by default (it writes: today only when asked, with approval).
+
+## Agents that work locally, wave ag2 (the leftovers of ag1)
+
+- **AG09, changing an agent follows the agent**: a tool a revise adds gets its own step ("N. When <the change>, call <tool>.", with "it asks the person first" for a write) and the Changes row says "(asks first)"; the Left row lists only what the agent's draft still lacks and follows a credential picked on the agent's page (`landflow:agent-saved`); **Test again** after Apply; acronyms stay in capitals ("Extract IOCs"); a pending card's design-made name follows its tools ("Renames it to … (its tools changed)"), and Create names the agent what the card shows ([agents.md](agents.md#changes-from-spotlight)).
