@@ -253,18 +253,21 @@ export const messageAgentNode = defineNode({
           const calls = stored?.pending?.calls ?? [];
           let resumed: Awaited<ReturnType<typeof decide>> | undefined;
           send?.({ type: 'begin', itemIndex: i });
+          // Every edit is saved before the first decision, so no decision rewrites a stale copy of the session.
+          let edited = false;
+          for (const pendingCall of calls) {
+            const decision = decisions[pendingCall.callId];
+            if (!decision?.approved || !decision.input) continue;
+            // A remote agent's pause keeps its own state, so an edit cannot be applied there: say so rather than run it unedited.
+            if (pendingCall.remote) throw new NodeOperationError('The approval changed the input of a remote agent\'s call, which cannot be edited; approve it as it is', { itemIndex: i });
+            pendingCall.input = decision.input as typeof pendingCall.input;
+            edited = true;
+          }
+          if (edited && stored) agentStore.saveSession(stored);
           for (const pendingCall of calls) {
             const decision = decisions[pendingCall.callId];
             if (!decision) continue;
-            // A person who approved with changes: the tool runs with their input, not the model's. A remote agent's pause keeps its own state, so the edit is ignored there.
-            if (decision.approved && decision.input && stored?.pending && !pendingCall.remote) {
-              const target = stored.pending.calls.find((c) => c.callId === pendingCall.callId);
-              if (target) {
-                target.input = decision.input as typeof target.input;
-                agentStore.saveSession(stored);
-              }
-            }
-            resumed = await decide(agent, waited.sessionId, pendingCall.callId, decision.approved, { ...(decision.by && { by: decision.by }), ...(onEvent && { onEvent }), ...(ctx.signal && { signal: ctx.signal }) });
+            resumed = await decide(agent, waited.sessionId, pendingCall.callId, decision.approved, { ...(decision.by && { by: decision.by }), toolImages: { keep: Number(ctx.getNodeParameter('toolImagesKept', i, 2)) }, ...(onEvent && { onEvent }), ...(ctx.signal && { signal: ctx.signal }) });
           }
           if (!resumed || resumed.status !== 'resumed') throw new NodeOperationError('The approval was not decided for every tool call', { itemIndex: i });
           result = resumed;
@@ -300,6 +303,7 @@ export const messageAgentNode = defineNode({
             const subject = approvalSubject(c);
             return { id: c.callId, name: c.remote ? subject.tool : (labels.get(c.callId) ?? c.tool), input: subject.input as JsonObject };
           });
+          send?.({ type: 'end', itemIndex: i });
           ctx.setNodeState?.({ waiting: { kind: 'approval', itemIndex: i, sessionId: result.session.id, agentId: agent.id, out: out as unknown as JsonObject[] } as unknown as JsonObject });
           await askForApproval(ctx, i, approvalSettings(ctx, i, 'all'), calls, { agentApproval: { agent: agent.name } }, `${agent.name} wants to use ${calls.map((c) => c.name).join(', ')}`);
           return [out];

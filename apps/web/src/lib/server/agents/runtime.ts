@@ -832,7 +832,7 @@ export async function decide(
   sessionId: string,
   callId: string,
   approved: boolean,
-  options: { onEvent?: (event: AgentStreamEvent) => void; signal?: AbortSignal; by?: string } = {},
+  options: { onEvent?: (event: AgentStreamEvent) => void; signal?: AbortSignal; by?: string; toolImages?: { keep?: number } } = {},
 ): Promise<DecisionResult> {
   const session = agentStore.getSession(sessionId);
   if (!session || session.agentId !== agent.id) throw new DecisionError('Session not found', 404);

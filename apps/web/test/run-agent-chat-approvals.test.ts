@@ -143,6 +143,20 @@ describe('Run an Agent, Tool Approvals', () => {
     expect(out(done).reply).toBe('Done.');
   });
 
+  it('two writes, the first approved plainly and the second with changes, both run', async () => {
+    script = (t) => (t === 1 ? { toolCalls: [call(WRITE, { to: 'a' }, 'c_one'), call(POST, { text: 'model' }, 'c_two')] } : { text: 'Done.' });
+    const record = await run(flow({ toolApprovals: 'askInChat' }), 'chat');
+    const first = await decideApproval(record.executionId, idOf(record, 0), true);
+    expect(first.status).toBe('waiting');
+    const second = await decideApproval(record.executionId, idOf(record, 1), true, { input: { text: 'edited' } });
+    expect(second.status).toBe('resumed');
+    const done = (second as { record: typeof record }).record;
+    expect(done.error?.message ?? done.status).toBe('success');
+    expect(out(done).steps.map((s) => s.status)).toEqual(['success', 'success']);
+    expect(toolResults.join('\n')).toContain('edited');
+    expect(toolResults.join('\n')).not.toContain('model');
+  });
+
   it('a second approval in the same run waits again', async () => {
     script = (t) => (t === 1 ? { toolCalls: [call(WRITE, { to: 'a' }, 'c_one')] } : t === 2 ? { toolCalls: [call(POST, { text: 'b' }, 'c_two')] } : { text: 'Both.' });
     const record = await run(flow({ toolApprovals: 'askInChat' }), 'chat');
