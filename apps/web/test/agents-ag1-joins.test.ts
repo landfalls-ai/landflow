@@ -602,10 +602,11 @@ describe('5. reads stay reads (AG02 × AG06)', () => {
 
 // The pipeline's contracts folder lives outside the repository: set LANDFLOW_BACKBONE_CONTRACTS to it to check the copies.
 const CONTRACTS = process.env.LANDFLOW_BACKBONE_CONTRACTS ?? '';
-describe.skipIf(!CONTRACTS || !existsSync(join(CONTRACTS, 'ag1')))('6. the ag1 contract copies are byte-identical', () => {
+describe.skipIf(!CONTRACTS || !existsSync(join(CONTRACTS, 'ag2')))('6. the ag1 contract copies are byte-identical', () => {
   it.each([
-    ['src/lib/shared/agent-card.ts', 'ag1/agent-card.ts'],
-    ['test/spotlight-scenarios/scenario.ts', 'ag1/spotlight-scenario.ts'],
+    // Wave ag2 replaced these two contracts (contracts/ag2, checked in agents-ag2-joins.test.ts).
+    ['src/lib/shared/agent-card.ts', 'ag2/agent-card.ts'],
+    ['test/spotlight-scenarios/scenario.ts', 'ag2/spotlight-scenario.ts'],
   ])('%s = contracts/%s', (copy, contract) => {
     expect(readFileSync(join(import.meta.dirname, '..', copy), 'utf8')).toBe(readFileSync(join(CONTRACTS, contract), 'utf8'));
   });
