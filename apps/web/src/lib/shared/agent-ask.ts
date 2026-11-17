@@ -91,13 +91,30 @@ function names(message: string, name: string): boolean {
   return new RegExp(`(?<![\\w-])${body}(?![\\w-])`, 'i').test(message);
 }
 
-/** AG02: a plugin node of two or more words whose every word is in the message in some form, in any order ("decodes JWTs" names JWT Decode). */
-function wordsNamed(message: string, entry: AskCatalogEntry): boolean {
+/** AG07: words a node's name shares with ordinary talk, so they never name it alone ("extract the text" is not Extract IOCs). */
+const COMMON_WORDS = new Set(['get', 'send', 'create', 'list', 'read', 'write', 'update', 'delete', 'extract', 'check', 'run', 'search', 'find', 'fetch', 'post', 'query', 'call', 'add', 'set', 'make', 'new', 'all', 'data', 'text', 'message', 'messages', 'file', 'item', 'items', 'tool', 'email', 'mail', 'alert', 'alerts', 'issue', 'issues', 'request', 'result', 'results', 'value', 'values', 'decode', 'encode', 'parse', 'convert', 'analyze', 'analyse']);
+const baseWord = (w: string) => w.toLowerCase().replace(/ies$/, 'y').replace(/s$/, '');
+
+/**
+ * AG02: a plugin node of two or more words whose every word is in the message in some form, in any order ("decodes JWTs" names JWT Decode).
+ * AG07: or whose one distinctive word is in the message as a whole word (an acronym in its name: IOCs, JWT, UUID, SQL; or a word no other catalog
+ * node's name has), the plural folded: "pull out the IOCs" names Extract IOCs. A word two catalog nodes share ("Alert", "Email") names neither.
+ */
+function wordsNamed(message: string, entry: AskCatalogEntry, catalog: AskCatalogEntry[] = []): boolean {
   const words = entry.displayName.trim().split(/\s+/);
   if (entry.core || words.length < 2 || words.some((w) => w.length < 3)) return false;
   // -ise and -ize, -yse and -yze are one word ("normalise" names Normalize Alert, "analyse" Analyze Logs).
   const stem = (w: string) => escape(w.replace(/e$/i, '')).replace(/([iy])[sz]$/i, '$1[sz]');
-  return words.every((w) => new RegExp(`(?<![\\w-])${stem(w)}(?:e?s|e?d|ing|e)?(?![\\w-])`, 'i').test(message));
+  if (words.every((w) => new RegExp(`(?<![\\w-])${stem(w)}(?:e?s|e?d|ing|e)?(?![\\w-])`, 'i').test(message))) return true;
+  // AG07: the distinctive word alone.
+  const others = new Set(catalog.filter((c) => c !== entry && c.displayName !== entry.displayName).flatMap((c) => c.displayName.trim().split(/\s+/).map(baseWord)));
+  return words.some((w) => {
+    const acronym = /^[A-Z0-9]{2,}s?$/.test(w) && /[A-Z]/.test(w);
+    if (!acronym && (w.length < 5 || COMMON_WORDS.has(baseWord(w)))) return false;
+    if (others.has(baseWord(w))) return false;
+    const root = escape(w.replace(/s$/i, ''));
+    return new RegExp(`(?<![\\w-])${root}(?:e?s)?(?![\\w-])`, 'i').test(message);
+  });
 }
 
 /** AG02: "email/mail/send/forward … to <address>": a message that sends to an address it was given. */
@@ -127,7 +144,7 @@ export function toolsOf(message: string, catalog: AskCatalogEntry[] = []): strin
     }
   }
   // AG02: the nodes and plugins the message names by their display names ("Normalize Alert", "SQLite", "Grafana"): a plugin's name only when none of its nodes is named.
-  const nodes = catalog.filter((c) => names(message, c.displayName) || wordsNamed(message, c));
+  const nodes = catalog.filter((c) => names(message, c.displayName) || wordsNamed(message, c, catalog)); // AG07: the catalog tells which words are distinctive
   for (const entry of nodes) add(entry.displayName);
   for (const plugin of new Set(catalog.map((c) => c.pluginName).filter((n): n is string => Boolean(n)))) {
     if (!names(message, plugin) || nodes.some((n) => n.pluginName === plugin)) continue;
