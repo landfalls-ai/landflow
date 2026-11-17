@@ -140,6 +140,26 @@ export function restore(items: ConversationItem[]): { messages: Message[]; draft
   return { messages, ...(draft && { draft }) };
 }
 
+/** SB17: whether the "Earlier: … · Continue" line shows: only on a fresh dialog, before anything is said. */
+export const showEarlier = (latest: { id: string; title: string } | undefined, messageCount: number, streaming: boolean) => Boolean(latest) && messageCount === 0 && !streaming;
+
+/** SB17: Continue reopens the kept conversation. */
+export const continueLatest = (latest: { id: string }, open: (id: string) => Promise<unknown>) => open(latest.id);
+
+/** SB17: the line under the fresh dialog that offers the last conversation. */
+export function EarlierLine({ latest, onContinue }: { latest: { id: string; title: string }; onContinue: () => void }) {
+  return (
+    <p className="mt-2 flex min-w-0 items-center gap-1.5 px-1 pb-2 text-[12px] text-t3">
+      <span className="shrink-0">Earlier:</span>
+      <span className="min-w-0 truncate text-t2">{latest.title || 'Untitled design'}</span>
+      <span aria-hidden="true">·</span>
+      <button type="button" onClick={onContinue} className="shrink-0 rounded font-semibold text-ac hover:underline focus-visible:outline-2 focus-visible:outline-ac max-md:min-h-11">
+        Continue
+      </button>
+    </p>
+  );
+}
+
 /**
  * SB17: Create posts each test case to the agent's eval gate after the import. A case that fails does not undo the agent:
  * what failed comes back as lines for a toast.
@@ -713,25 +733,17 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
                 chip={lastInfo?.model ? <ModelChip model={lastInfo.model} local={lastInfo.local} /> : undefined}
               />
               {/* SB17: */}
-              {latest && messages.length === 0 && !streaming && (
-                <p className="mt-2 flex min-w-0 items-center gap-1.5 px-1 text-[12px] text-t3">
-                  <span className="shrink-0">Earlier:</span>
-                  <span className="min-w-0 truncate text-t2">{latest.title || 'Untitled design'}</span>
-                  <span aria-hidden="true">·</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      ask(true);
-                      void kept.open(latest.id).catch(() => {
-                        asked.current = null;
-                      });
-                      setLatest(undefined);
-                    }}
-                    className="shrink-0 rounded font-semibold text-ac hover:underline focus-visible:outline-2 focus-visible:outline-ac max-md:min-h-11"
-                  >
-                    Continue
-                  </button>
-                </p>
+              {showEarlier(latest, messages.length, streaming) && (
+                <EarlierLine
+                  latest={latest!}
+                  onContinue={() => {
+                    ask(true);
+                    void continueLatest(latest!, kept.open).catch(() => {
+                      asked.current = null;
+                    });
+                    setLatest(undefined);
+                  }}
+                />
               )}
             </div>
           </section>

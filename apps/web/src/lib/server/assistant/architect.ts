@@ -380,7 +380,7 @@ export function appNamed(info: NodeTypeInfo, request: string): boolean {
   const d = info.descriptor;
   const names = [info.pluginId, d.displayName].map((n) => n?.toLowerCase().trim()).filter((n): n is string => Boolean(n) && n.length >= 3);
   const words = (d.keywords ?? []).map((k) => k.toLowerCase().trim()).filter((k) => (k.length >= 5 || k.includes(' ')) && !GENERIC_KEYWORDS.has(k));
-  return [...names, ...words].some((n) => new RegExp(`(?<![a-z0-9])${escapeRegExp(n)}`).test(asked));
+  return [...names, ...words].some((n) => new RegExp(`(?<![a-z0-9])${escapeRegExp(n)}(?:e?s)?(?![a-z0-9])`).test(asked));
 }
 
 /** Whether the request asks the agent to change something outside (not counting "create an agent"). */
@@ -592,7 +592,7 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
       }
       const d = info.descriptor;
       // SB17: the model's own Check Practices tool is replaced below by the brief's, and only for a request that asks for practices.
-      if (request !== undefined && info.type === 'core.practiceCheck') continue;
+      if (request !== undefined && info.type === 'core.practiceCheck') { dropped.push('Check Practices: the request doesn’t ask for your practices'); continue; } // SB17:
       if (request !== undefined && /^core\.message(?:Agent|Team)$/.test(info.type) && !HANDOVER_ASK.test(request)) {
         dropped.push(`${d.displayName}: the request doesn’t ask to hand over to another agent`); // SB17:
         continue;
@@ -981,6 +981,11 @@ export interface AgentSpec {
   knowledge?: string;
 }
 
+/** The person's own words for an agent (no fixed sentences): the text the least-privilege rules read. */
+export function designWords(spec: AgentSpec): string {
+  return [spec.name, spec.description, spec.instructions, ...(spec.tools ?? []), spec.knowledge].filter(Boolean).join('\n');
+}
+
 /** The request the architect gets for Spotlight's newAgent: design it now, model, tools and knowledge included. */
 export function designRequest(spec: AgentSpec): string {
   const where = [spec.workflow && `in the workflow “${spec.workflow}”`, spec.after && `after the step “${spec.after}”`, spec.before && `before “${spec.before}”`].filter(Boolean).join(', ');
@@ -1102,7 +1107,7 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
     if (last || input.signal?.aborted) break;
     // A model that fails gets the fallback below; a reached usage cap is the caller's answer (the route says 429).
     // SB17: `request` is the least-privilege rules' text: the request alone, not the brief's hints.
-    await runArchitect({ ...input, ...attempt, request: designRequest(spec), onEvent }).catch((caught: unknown) => {
+    await runArchitect({ ...input, ...attempt, request: designWords(spec), onEvent }).catch((caught: unknown) => {
       if (isUsageCapError(caught)) throw caught;
     });
   }
@@ -1113,5 +1118,5 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
   }
   const model = input.resources ? chooseModel(undefined, input.resources.models) : undefined;
   const instructions = briefParts(spec.instructions || spec.description, { ...(spec.description && { description: spec.description }), tools: [], writes: false }); // SB17:
-  return { config: { name: spec.name, description: spec.description, instructions, tools: [], guardrails: briefGuardrails(undefined, false) /* SB17: */, ...(model && { model }) }, needs: [], dropped: [], missing: [], cases: [], designed: false };
+  return { config: { name: spec.name, description: spec.description, instructions, tools: [], guardrails: briefGuardrails(undefined, false) /* SB17: */, ...(model && { model }) }, needs: [{ tool: 'test cases', kind: 'parameter', text: 'Add test cases on the Evaluations tab' }], dropped: [], missing: [], cases: [], designed: false };
 }

@@ -3,6 +3,8 @@
  * request asks for "our practices", least privilege, approval on writes, guardrail defaults and 3 to 5 test cases. The
  * model is scripted (the agent-architect.test.ts pattern); nothing leaves this machine.
  */
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { definePlugin, defineNode } from '@landflow/sdk';
 import type { LanguageModel, ModelTurn } from '@landflow/engine';
@@ -33,13 +35,13 @@ vi.mock('@/lib/server/assistant/architect', async (importActual) => ({
 const { corePlugin } = await import('@/lib/server/nodes');
 const { registry } = await import('@/lib/server/plugins/registry');
 const actual = await vi.importActual<typeof import('@/lib/server/assistant/architect')>('@/lib/server/assistant/architect');
-const { PRACTICES_ASK, briefParts, draftFrom, designRequest, parseCases, runArchitect } = await import('@/lib/server/assistant/architect');
+const { PRACTICES_ASK, briefParts, draftFrom, designRequest, designWords, parseCases, runArchitect } = await import('@/lib/server/assistant/architect');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { listCases } = await import('@/lib/server/agents/eval-gate');
 const { TEST_OWNER } = await import('@/lib/server/auth/test-bypass');
 const { plugin: github } = await import('../../../plugins/github/src/main');
 const { plugin: linear } = await import('../../../plugins/linear/src/main');
-const { postCases } = await import('@/components/agents/architect');
+const { postCases, showEarlier, continueLatest, EarlierLine } = await import('@/components/agents/architect');
 const designRoute = await import('@/app/api/agents/design/route');
 
 let types: NodeTypeInfo[];
@@ -337,5 +339,41 @@ describe('the design route and the dialog', () => {
       ['/api/agents/ag_1/eval-gate', { input: 'Three' }],
     ]);
     expect(failed).toEqual(['“Two”: An agent keeps at most 50 test cases']);
+  });
+});
+
+describe('the dialog starts fresh', () => {
+  const latest = { id: 'cv_1', title: 'A PR reviewer' };
+  it('offers the last conversation under Earlier only before anything is said', () => {
+    expect(showEarlier(latest, 0, false)).toBe(true);
+    expect(showEarlier(latest, 1, false)).toBe(false);
+    expect(showEarlier(latest, 0, true)).toBe(false);
+    expect(showEarlier(undefined, 0, false)).toBe(false);
+    const html = renderToStaticMarkup(createElement(EarlierLine, { latest, onContinue: () => {} }));
+    expect(html).toContain('Earlier:');
+    expect(html).toContain('A PR reviewer');
+    expect(html).toContain('Continue');
+  });
+  it('Continue opens the kept conversation', async () => {
+    const open = vi.fn(async () => {});
+    await continueLatest(latest, open);
+    expect(open).toHaveBeenCalledWith('cv_1');
+  });
+});
+
+describe('least privilege on the design path', () => {
+  const spec = { name: 'Reviewer', description: 'reviews pull requests against our practices' };
+  it('reads only the person’s words, not the fixed sentences', () => {
+    expect(designWords(spec)).not.toMatch(/channel|repository|knowledge base/i);
+  });
+  it('drops a Slack read and an unasked knowledge base on a design', () => {
+    const slack = types.find((t) => t.pluginId === 'messaging')!;
+    const out = draftFrom(
+      { name: 'Reviewer', role: 'Reviewer', instructions: 'Review.', tools: [{ type: 'node', nodeType: slack.type, name: 'slack', parameters: { operation: 'getAll' } }, { type: 'knowledge', collection: 'docs' }] },
+      context(designWords(spec), { resources: { models: [], knowledge: [], embeddings: { provider: 'ollama' as const, model: 'nomic-embed-text:latest' } } }),
+    );
+    expect(nodeTools(out.config).some((t) => t.nodeType === slack.type)).toBe(false);
+    expect(out.dropped.join(' ')).toMatch(/Slack: the request never asks for it/);
+    expect(out.dropped.join(' ')).toMatch(/knowledge base/);
   });
 });
