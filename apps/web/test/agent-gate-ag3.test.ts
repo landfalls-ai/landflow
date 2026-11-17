@@ -143,6 +143,19 @@ describe('Spotlight design: cases about a tool that asks first expect the ask', 
     expect(asksFirstCases(same, config)).toEqual(same);
   });
 
+  it('leaves negated cases and cases that only name an email alone; rewrites a send with the address first', () => {
+    const config = { tools: [node('Send Email', 'messaging.emailSend', { requireApproval: true })] } as never;
+    const same = [
+      { input: 'a', expected: 'Says the alert is noise and sends no email.' },
+      { input: 'b', expected: 'Does not send an email; says it is benign.' },
+      { input: 'c', expected: "Names the phishing email's sender and says it is a phishing attempt" },
+      { input: 'd', expected: 'Flags the email as phishing and names the sender domain' },
+    ];
+    expect(asksFirstCases(same, config)).toEqual(same);
+    const [out] = asksFirstCases([{ input: 'e', expected: 'Emails oncall@landflow.test a summary naming 203.0.113.45' }], config);
+    expect(out!.expected).toBe('Drafts a summary naming 203.0.113.45 for oncall@landflow.test and asks for approval before sending it');
+  });
+
   it("casesFor's prompt names the tools that ask first", async () => {
     const { model, systems } = scripted([propose('triage.normalizeAlert, messaging.emailSend', []), { text: 'Designed.' }]);
     await designAgent(spec(), { types, actor: TEST_OWNER, model });

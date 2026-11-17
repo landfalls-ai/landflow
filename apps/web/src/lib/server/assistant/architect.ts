@@ -1055,7 +1055,10 @@ async function casesFor(model: LanguageModel, agent: { name: string; description
 
 // AG15: the tools of a config that ask the person first (a write): their names as the card shows them.
 const asksFirstNames = (config: Partial<AgentConfig>): string[] => (config.tools ?? []).flatMap((t) => (t.type === 'node' && t.requireApproval ? [t.name] : []));
-const EFFECT = /\b(sen[dt]s?|emails?|emailed|posts?|posted|creates?|created|acknowledg\w*|silenc\w*|delet\w*|updat\w*)\b/i;
+const VERB = 'sen[dt]s?|emails?|posts?|creates?|updates?|deletes?|acknowledg\\w*|silenc\\w*';
+// A claim that the action happened: a verb opening the text or following "and"/"then"/a comma, or a past-tense word. A noun "email" mid-sentence is no claim.
+const EFFECT = new RegExp(`^(?:${VERB})\\b|(?:\\band|\\bthen|[,;])\\s+(?:${VERB})\\b|\\b(?:sent|emailed|posted|created|deleted|updated|acknowledged|silenced)\\b`, 'i');
+const NEGATION = /\b(?:no|not|never|nothing|without|none|doesn'?t|don'?t|won'?t|wouldn'?t|didn'?t|cannot|can'?t)\b|n't\b/i;
 const GERUND: Record<string, string> = { send: 'sending', sent: 'sending', sends: 'sending', email: 'sending', emails: 'sending', emailed: 'sending', post: 'posting', posts: 'posting', posted: 'posting', create: 'creating', creates: 'creating', created: 'creating', delete: 'deleting', deletes: 'deleting', deleted: 'deleting', update: 'updating', updates: 'updating', updated: 'updating' };
 /**
  * AG15: a case whose expected answer says a tool that asks first did its work ("Emails a summary to oncall@landflow.test") is
@@ -1069,8 +1072,12 @@ export function asksFirstCases(cases: AgentCaseDraft[], config: Partial<AgentCon
   return cases.map((c) => {
     const expected = c.expected?.trim();
     if (!expected) return c;
-    const claim = EFFECT.exec(expected);
-    if (!claim || !words.some((w) => new RegExp(`\\b${escapeRegExp(w)}`, 'i').test(expected))) return c;
+    if (!EFFECT.test(expected) || NEGATION.test(expected) || !words.some((w) => new RegExp(`\\b${escapeRegExp(w)}`, 'i').test(expected))) return c;
+    const toAddress = /^(sends?|emails?|posts?)\s+(\S+@\S+?)\s+(?!(?:sent|posted)\b)(.+?)\s*\.?$/i.exec(expected);
+    if (toAddress) {
+      const [, verb = '', who = '', what = ''] = toAddress;
+      return { ...c, expected: `Drafts ${what} for ${who} and asks for approval before ${GERUND[verb.toLowerCase()] ?? 'doing'} it` };
+    }
     const lead = /^(sends?|emails?|posts?|creates?|updates?|deletes?)\s+(?!(?:sent|posted|created|updated|deleted|delivered)\b)(.+?)(?:\s+(?:to|for)\s+(\S.*?))?\s*\.?$/i.exec(expected);
     if (lead) {
       const [, verb = '', what = '', who] = lead;
