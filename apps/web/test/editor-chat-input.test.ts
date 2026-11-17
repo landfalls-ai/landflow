@@ -76,11 +76,8 @@ describe('the editor chat with a pinned sample on the trigger', () => {
     useEditor.getState().load({ id: 'wf_starter', name: 'Starter', nodes: [], connections: [] }, types);
     const starter = starterFlow(agent, 'Hello Math desk, what can you do?');
     useEditor.getState().applyTemplate({ ...starter, id: 'starter', description: '' } as never);
-    for (const [nodeId, items] of Object.entries(starter.pinData)) {
-      const target = useEditor.getState().nodes.find((n) => n.data.wf.type === 'core.chatTrigger')!;
-      useEditor.getState().setPinData(target.id, items);
-      void nodeId;
-    }
+    const target = useEditor.getState().nodes.find((n) => n.data.wf.type === 'core.chatTrigger')!;
+    useEditor.getState().setPinData(target.id, Object.values(starter.pinData)[0]);
     const draft = useEditor.getState().toWorkflow();
     expect(Object.keys(draft.pinData ?? {})).toHaveLength(1);
     store.saveWorkflow(draft);

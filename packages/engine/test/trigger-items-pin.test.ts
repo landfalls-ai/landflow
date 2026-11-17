@@ -1,3 +1,6 @@
+/**
+ * AG01: items a run was given (the chat message, the run route's items) beat the start node's own pin; a start without them uses it.
+ */
 import { describe, expect, it } from 'vitest';
 import { defineNode, type INodeType } from '@landflow/sdk';
 import { executeWorkflow, inProcessNodeType, type NodeTypeResolver, type Workflow, type WorkflowNode } from '../src';

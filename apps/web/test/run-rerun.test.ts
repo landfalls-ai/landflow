@@ -19,7 +19,7 @@ Object.assign(process.env, ENV);
 const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
 const { store } = await import('@/lib/server/store');
-const { runWorkflow } = await import('@/lib/server/runner');
+const { runWorkflow, planRerun, planRetry } = await import('@/lib/server/runner');
 const { askAgainMessage, askMemberAgain } = await import('@/lib/server/agent-teams/ask-again');
 const rerunRoute = await import('@/app/api/executions/[id]/rerun/route');
 registry.registerBuiltin(corePlugin);
@@ -123,6 +123,29 @@ describe('ask this member again', () => {
     expect(executionId).not.toBe(record.executionId);
     for (let i = 0; i < 100 && store.getExecution(executionId)?.status === 'running'; i++) await new Promise((r) => setTimeout(r, 25));
     expect(store.getExecution(executionId)).toMatchObject({ rerunOf: { executionId: record.executionId, scope: 'from', nodeId: 'Next' } });
+  });
+});
+
+describe('a run whose trigger used its pin', () => {
+  it('re-runs and retries on the pin again, not on the empty seed item it recorded', async () => {
+    const pinned: Workflow = {
+      id: 'wf_rerun_pinned',
+      name: 'pinned',
+      nodes: [node('Start', 'core.manualTrigger'), node('Next', 'core.noOp')],
+      connections: [edge('Start', 'Next')],
+      pinData: { Start: [{ json: { chatInput: 'sample' } }] },
+    };
+    store.saveWorkflow(pinned);
+    const record = await runWorkflow({ workflow: pinned, mode: 'manual', startNodeId: 'Start' });
+    expect(record.runData.Start[0].logs?.map((l) => l.message)).toContain('Using pinned data');
+    const plan = planRerun(record.executionId, { scope: 'all' });
+    expect(plan.triggerItems).toBeUndefined();
+    expect(plan.startNodeId).toBe('Start');
+    const again = await runWorkflow(plan);
+    expect(JSON.stringify(again.runData.Next[0].inputs)).toContain('sample');
+    // A retry from the start goes through the same plan.
+    store.patchExecution(record.executionId, { status: 'error' });
+    expect(planRetry(record.executionId, { from: 'start', version: 'current' }).triggerItems).toBeUndefined();
   });
 });
 

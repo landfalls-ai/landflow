@@ -1027,7 +1027,7 @@ class WorkflowRun {
         status: 'success',
         inputs: effectiveInputs,
         outputs,
-        logs: [{ level: 'warn', message: `Continued after error: ${error.message}` }],
+        logs: [...(givenNote ? [givenNote] : []), { level: 'warn', message: `Continued after error: ${error.message}` }],
       });
       return outputs;
     }
@@ -1035,6 +1035,7 @@ class WorkflowRun {
       status: 'error',
       inputs: effectiveInputs,
       outputs: [],
+      ...(givenNote && { logs: [givenNote] }),
       error: { message: error.message, ...(error.description && { description: error.description }) },
     });
     throw error;
