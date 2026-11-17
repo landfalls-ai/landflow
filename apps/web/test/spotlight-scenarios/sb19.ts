@@ -6,7 +6,9 @@ import { defineScenarios, type Check } from './scenario';
 
 const refused: Check = { id: 'expects-error', label: 'The unlisted model is refused with the server’s words', judge: (o) => /Not a model this server offers/.test(o.error ?? '') };
 const noCall: Check = { id: 'no-call', label: 'No draft came of it', judge: (o) => !o.draft };
-const localDefault: Check = { id: 'local-default', label: 'Spotlight built on the local default (a bare Ollama name)', judge: (o) => !o.error && Boolean(o.model) && !String(o.model).includes('/') };
+// AG02: the default is whatever the server names (`hostModel`, LANDFLOW_BUILDER_MODEL), so the check holds on Claude too; without it, a bare Ollama name as before.
+const bareName = (m: string) => m.replace(/^(?:ollama|anthropic|openai)\//, '');
+const localDefault: Check = { id: 'local-default', label: 'Spotlight built on the model the server names as its default', judge: (o) => !o.error && Boolean(o.model) && (o.hostModel ? bareName(String(o.model)) === bareName(o.hostModel) : !String(o.model).includes('/')) };
 const viaGateway: Check = { id: 'via-gateway', label: 'Spotlight built on the gateway model', judge: (o) => !o.error && String(o.model).startsWith('litellm/') };
 const noError: Check = { id: 'no-error', label: 'No error', judge: (o) => !o.error };
 

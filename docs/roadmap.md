@@ -2821,12 +2821,10 @@ account's own console is the figure.
 - The whole pass above after `sb13-chat-plan` once the key works again: the sb3 owners' scenarios (sb13 to sb18), items 3
   to 7 and the browser flows of items 4 and 6; the phone shots of the plan card, the summary card, the agent card and the
   agent row.
-- The runner (`test/spotlight-scenarios.test.ts`) requires Ollama even for a cloud model name; a guard for `provider/model`
-  names (no Ollama check), the scorecard JSON keeping each run's reply and the stage prompt sizes, and the scenario
-  `sb19-default-local` reading "the default is the one the server names" would make a Claude pass cheaper to read.
+- ~~The runner requires Ollama even for a cloud model name; the scenario `sb19-default-local` reading "the default is the one the server names"~~ done in wave ag1 (AG02): a `provider/model` name needs that provider's key and no Ollama, and `local-default` compares with the server's own default (`hostModel`). Left: the scorecard JSON keeping each run's reply and the stage prompt sizes.
 - The seventh **Unused (Data Table)** step in B1's plan and flow (a plan step with no use) and a `no-junk` reading that
   sees it.
-- The design fallback saying so on the card (and not choosing a different model than the default for it).
+- ~~The design fallback saying so on the card (and not choosing a different model than the default for it)~~ the fallback now takes the host's model (AG02); saying so on the card is left.
 
 
 ## Platform guide and the landflow-dev plugin
@@ -2838,3 +2836,7 @@ account's own console is the figure.
 
 - **Built (2026-11-17):** the Linear, Attio and Fathom plugin icons are the apps' real marks (they were drawn stand-ins), and `brand-icons.ts` holds the real mark of every app a plugin or core node stands for, with sources and licences ([plugins.md](plugins.md#branding-and-real-marks)); the Messaging, Databases and Productivity bundles show a grid of their apps' icons. A node says what it will do under its name (the descriptor's `subtitle`, else the operation's action label, else "Issue · Get many") on the canvas and in the node panel; the node creator lists an app's actions (a search such as "send message" lists matching actions first) and picking one adds the node set to do it; Marketplace entries and agent tools named after an app wear its mark.
 - **Left open:** Microsoft Teams (the Microsoft bot credential) keeps a Landflow glyph, no clean source for its mark; Slack and Twilio come from Simple Icons 15.0.0, the last version that has them, and are one colour, not the multi-colour Slack logo; a Marketplace entry that is not running and whose name is not the app's gets no app mark.
+
+## Agents that work locally (wave ag1)
+
+- **AG02, built (2026-11-17):** Spotlight's agent design follows the ask: the agent runs on the host's builder model (or Spotlight's picked one) and the card's Model is a select; the whole ask is read (the address kept, tools named by display name added or listed under Not added); names are short nouns; the steps name only the agent's own tools; writes are asked per app so reads never ask first; a token-reading job is not secret-masked on input; the runner takes a cloud model without Ollama. **Left open:** the live pass on Claude with the Go and Python plugins, and the Opus defaults outside Spotlight's design (the Anthropic Chat Model node, `evaluations/online.ts`, the team builder).

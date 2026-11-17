@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, it } from 'vitest';
 import type { Outcome, Scenario } from './spotlight-scenarios/scenario';
-import { ECHO_PORT, addPlugins, liveEnabled, assertUnit, prepare, prepareLive, reportOf, runScenario, tables } from './spotlight-scenarios/harness';
+import { ECHO_PORT, addPlugins, checkRunnerModel, liveEnabled, assertUnit, prepare, prepareLive, reportOf, runScenario, tables } from './spotlight-scenarios/harness';
 
 const live = liveEnabled();
 const MODEL = process.env.LANDFLOW_SPOTLIGHT_MODEL || 'qwen3-coder:30b';
@@ -44,12 +44,7 @@ let echo: { port: number; log: string[]; close: () => Promise<void> } | undefine
 beforeAll(async () => {
   prepare({ live });
   if (!live) return;
-  // Fail fast, never pull: Ollama and the model must already be here.
-  const base = process.env.OLLAMA_URL || 'http://localhost:11434';
-  const tags = await fetch(`${base}/api/tags`).then((r) => r.json() as Promise<{ models?: Array<{ name: string }> }>).catch(() => undefined);
-  if (!tags) throw new Error(`Spotlight scorecard: Ollama is not answering at ${base}. Start it; this suite never starts or pulls anything.`);
-  if (!tags.models?.some((m) => m.name === MODEL)) throw new Error(`Spotlight scorecard: Ollama at ${base} does not have ${MODEL}. This suite never pulls a model: pull it yourself, or set LANDFLOW_SPOTLIGHT_MODEL.`);
-  process.env.OLLAMA_URL = base;
+  await checkRunnerModel(MODEL); // AG02: Ollama and the model for a local one, the provider's key in the environment for another
   await prepareLive();
   await addPlugins();
   // The stand-in for the outside world: the evaluation's echo server, on this machine only.

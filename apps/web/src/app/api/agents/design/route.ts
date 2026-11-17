@@ -6,6 +6,8 @@
  * message when the caller's AI usage cap is reached (no agent is created).
  * SB16: with `preview: true` the design is answered, not saved: 200 `{ config, needs, missing, dropped, designed, cases }`
  * (Spotlight's agent card shows it; Create then imports the config).
+ * AG02: both answers add `notAdded` (the tools the ask named that the agent did not get, with why) and `models` (the `provider/model` names a
+ * card's Model select offers, the builder model first); the body's `ask` is the person's whole message.
  */
 import { z } from 'zod';
 import { randomFace } from '@/lib/shared/faces';
@@ -35,6 +37,8 @@ const Body = z.object({
   knowledge: z.string().max(200).optional(),
   // SB19: the model Spotlight picked (a model this server offers); absent, the Settings default.
   model: z.string().max(100).optional(),
+  // AG02: the person's whole message: the architect reads it, not only the short description.
+  ask: z.string().trim().min(1).max(4000).optional(),
   // SB16: answer the design without saving an agent (Spotlight's agent card).
   preview: z.boolean().optional(),
 });
@@ -54,10 +58,11 @@ export const POST = handler(async (request: Request) => {
     if (isUsageCapError(caught)) return error(caught.message, 429);
     throw caught;
   }
+  const models = resources.models.map((m) => `${m.provider}/${m.model}`); // AG02: the card's Model select, the builder model first
   const config = { avatar: { kind: 'face' as const, face: randomFace(parsed.data.name) }, ...design.config };
   if (parsed.data.preview) {
     // SB16: the card's preview: a face to show, nothing saved; SB17's brief's cases come with it.
-    return json({ config, needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: design.cases ?? [] });
+    return json({ config, needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: design.cases ?? [], notAdded: design.notAdded, models /* AG02: */ });
   }
   const agent = createInProject(request, 'agent', () => agentStore.create(config), (a) => a.id);
   // SB17: the brief's test cases are saved on the new agent (the eval gate runs them on its first publish); one that fails is a line for the person, not a 500.
@@ -71,7 +76,7 @@ export const POST = handler(async (request: Request) => {
       if (!needs.some((n) => n.tool === 'test cases')) needs.push({ tool: 'test cases', kind: 'parameter', text: 'Add test cases on the Evaluations tab' });
     }
   }
-  return json({ agent, needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases /* SB17: */ }, 201);
+  return json({ agent, needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases /* SB17: */, notAdded: design.notAdded, models /* AG02: */ }, 201);
 });
 
 // SB18: take back an agent Spotlight made for a step when its change is undone, only when nothing else uses it.
