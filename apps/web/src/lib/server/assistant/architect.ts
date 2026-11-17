@@ -1403,14 +1403,16 @@ function changeClause(change: string, tool: AgentToolConfig): string {
   // AG09: the shape "a tool that/to/which/for …" is read before its article is stripped.
   const bare = text
     .replace(/^(?:(?:add|attach|include|install|enable|connect|use)\b|give\s+(?:it|the agent)\b)\s*/i, '')
-    .replace(/\s+(?:as\s+(?:a|an|another|one more)\s+tools?|tools?)\s*$/i, '');
+    .replace(/\s+(?:as\s+(?:a|an|another|one more)\s+tools?|tools?)\s*$/i, '')
+    // "a tool to the agent that …" / "a tool to it that …": the agent is who gets it, not what the tool does.
+    .replace(/(\btools?)\s+to\s+(?:(?:the|this|my|our)\s+(?:agent|bot|assistant)|it)\b/i, '$1');
   const toolShape = /^(?:(?:a|an|the|another)\s+)?tools?\s+(?:that|which|to|for)\b/i.test(bare);
   const left = bare.replace(/^(?:the|a|an|another|one more)\s+/i, '');
   const wordsLeft = left.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
   const known = new Set([...toolWords(tool), 'tool', 'tools', 'the', 'a', 'an', 'to', 'it', 'too', 'also']);
   const configAsk = CONFIG_VERB.test(text) && (wordsLeft.every((w) => known.has(w) || toolWords(tool).some((k) => w.replace(/s$/, '') === k.replace(/s$/, ''))) || toolShape);
   if (configAsk) {
-    const toTask = /^(?:(?:a|an|the|another)\s+)?tools?\s+to\s+(.+)$/i.exec(bare)?.[1];
+    const toTask = /^(?:(?:a|an|the|another)\s+)?tools?\s+to\s+(?!(?:the|this|my|our)\s+(?:agent|bot|assistant)\b|it\b)(.+)$/i.exec(bare)?.[1];
     if (toTask) return `asked to ${toTask.split(/\s+/).slice(0, 14).join(' ')}`;
     // the first sentence of what the tool says it is for, without a lead-in such as "Use this to" or "When you need to"
     const first = ('description' in tool && tool.description ? tool.description : '').replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s/)[0].replace(/[\s.!?]+$/, '').replace(/`/g, '');

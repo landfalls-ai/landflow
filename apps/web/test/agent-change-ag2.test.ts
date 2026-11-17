@@ -152,13 +152,13 @@ describe('a revise names the tool it adds in a step', () => {
     }
   });
 
-  it.each(['also add a tool that pulls out IOCs', 'add a tool to pull out the IOCs'])('"%s" gives an extract_iocs step that does not repeat the ask', async (change) => {
+  it.each(['also add a tool that pulls out IOCs', 'add a tool to pull out the IOCs', 'add a tool to the agent that pulls out IOCs', 'attach a tool to it that pulls out the IOCs'])('"%s" gives an extract_iocs step that does not repeat the ask', async (change) => {
     const run = await proposing('triage.normalizeAlert, triage.extractIocs, messaging.emailSend');
     try {
       const body = (await (await post({ name: 'Alert triage agent', preview: true, base: { config: triageBase() }, change })).json()) as Body;
       const step = body.config.instructions.split('\n').find((l) => /call extract_iocs/.test(l) && !/Tools:/.test(l));
       expect(step, body.config.instructions).toBeDefined();
-      expect(step).not.toMatch(/asked to add|add a tool/i);
+      expect(step).not.toMatch(/asked to add|add a tool|asked to (?:the agent|it)\b/i);
     } finally {
       await run.done();
     }
