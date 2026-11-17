@@ -36,8 +36,9 @@ function hint(error: SmtpError, config: SmtpConfig): string | undefined {
   if (code === 530) return 'The server requires authentication: set User and Password in the credential.';
   if (error.phase === 'RCPT TO') return 'Check the recipient addresses; the server may also refuse to relay for this sender.';
   if (error.phase === 'MAIL FROM') return 'The server refused the sender address. Many servers only accept the authenticated account (or its aliases) as From.';
-  if (error.kind === 'tls' && /wrong version number/i.test(error.message)) {
-    return 'SSL/TLS is on but the server expects a plain connection: turn SSL/TLS off for port 587 or 25 (STARTTLS is used automatically).';
+  // AG06: a server that answers in plain text (a local mail catcher) is a TLS setting, not a certificate problem.
+  if (error.kind === 'tls' && /wrong version number|packet length too long|unknown protocol|disconnected before secure TLS|ECONNRESET|EPROTO(?!.*cert)|ended before|before a certificate/i.test(error.message) && !/cert|altnames|self[- ]signed|issuer/i.test(error.message)) {
+    return `The server on ${config.host}:${config.port} answers without TLS: turn SSL/TLS off. A local mail catcher such as Mailpit has no TLS; STARTTLS is used automatically when a server offers it.`;
   }
   if (error.kind === 'tls') return 'The server certificate is not trusted. Enable "Ignore SSL Issues" only for servers you trust.';
   if (error.kind === 'timeout' && error.phase === 'greeting' && !config.secure) return 'No greeting: if this is an implicit-TLS port (465), turn SSL/TLS on.';
