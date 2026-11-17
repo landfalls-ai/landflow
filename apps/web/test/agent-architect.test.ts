@@ -37,7 +37,7 @@ function scripted(turns: Array<Partial<ModelTurn>>) {
     model: 'scripted',
     async generate(input) {
       // SB17: the architect's one follow-up call for test cases (agent-brief.test.ts tests it): answered here without a scripted turn.
-      if (typeof input.system === 'string' && input.system.startsWith('You write test cases')) return { text: 'Hello => A greeting\nWhat can you do? => What it does\nSomething odd => Says it cannot help', toolCalls: [], stopReason: 'stop' as const };
+      if (typeof input.system === 'string' && input.system.startsWith('You write test cases')) return { text: 'Hello there, who are you today? => A greeting\nWhat can you do for me? => What it does\nWrite me a poem about the sea => Says it cannot help', toolCalls: [], stopReason: 'stop' as const };
       calls.push({ ...input, messages: [...input.messages] });
       const next = turns.shift();
       if (!next) throw new Error('No scripted turn left');
@@ -162,7 +162,7 @@ describe('the architect chat', () => {
     expect(calls[0].system).not.toContain('Manual Trigger');
     expect(events.filter((e) => e.type === 'tool').map((e) => (e as { label: string }).label)).toEqual(['Searched plugins for “http request”', 'Listed 7 templates', 'Proposed “Reader” with 1 tools']);
     const draft = events.find((e) => e.type === 'draft') as Extract<ArchitectEvent, { type: 'draft' }>;
-    expect(draft).toMatchObject({ summary: 'A page reader', config: { name: 'Reader', persona: { role: 'Researcher' } }, needs: [], dropped: [] });
+    expect(draft).toMatchObject({ summary: 'A page reader', config: { name: 'Reader', persona: { role: 'Researcher' } }, needs: [{ tool: 'fetch_page', kind: 'parameter', text: 'fetch_page: set URL (the request gives none)' }], dropped: [expect.stringContaining('127.0.0.1:3000/api/health')] }); // AG08: the node's preset URL is not one the request gave
     expect(events.filter((e) => e.type === 'text').map((e) => (e as { text: string }).text)).toEqual(['Here is a first version.', 'Pick a model on its page, then try it.']);
     expect(events.at(-1)).toMatchObject({ type: 'done', model: 'test/scripted', steps: 3 });
   });
