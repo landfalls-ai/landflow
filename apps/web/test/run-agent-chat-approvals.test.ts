@@ -9,6 +9,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { toToolName, type ExecutionMode, type Workflow, type WorkflowNode } from '@landflow/engine';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { startFakeModels, type FakeReply } from './fake-ai-services';
 
 vi.setConfig({ testTimeout: 30_000 });
@@ -183,6 +185,25 @@ describe('Run an Agent, Tool Approvals', () => {
     const outcome = await decideApproval(first.executionId, idOf(first, 0), true);
     expect(outcome.status).toBe('resumed');
     expect((outcome as { record: typeof first }).record.status).toBe('success');
+  });
+
+  it('the chat’s step list reads Waiting for approval while a call waits, Denied after Deny, and Done after Approve', async () => {
+    const { streamer } = await import('@/lib/server/nodes/agents');
+    const { ToolCalls } = await import('@/components/editor/chat-panel');
+    const sent: Array<{ tool?: { status: string } }> = [];
+    const feed = streamer((c) => sent.push(c as never), 0);
+    const entry = (status: string) => feed({ type: 'entry', entry: { type: 'tool', callId: 'c1', tool: 'send_email', status, input: {} } } as never);
+    const label = (status: 'approval' | 'denied' | 'finished' | 'failed') => renderToStaticMarkup(createElement(ToolCalls, { calls: [{ id: 'c1', name: 'send_email', status }] }));
+    entry('awaiting_approval');
+    entry('denied');
+    entry('success');
+    entry('error');
+    expect(sent.map((c) => c.tool?.status)).toEqual(['approval', 'denied', 'finished', 'failed']);
+    expect(label('approval')).toContain('Waiting for approval');
+    expect(label('approval')).not.toContain('Failed');
+    expect(label('denied')).toContain('Denied');
+    expect(label('finished')).toContain('Done');
+    expect(label('failed')).toContain('Failed');
   });
 
   it.each([

@@ -643,7 +643,7 @@ request: the run goes on when the last one is decided). The Platform analyst's o
   because a workflow run has nobody to approve them, unless **Tool Approvals** is *Ask in the editor's chat*
   (default *Refuse*, so a saved flow runs as before): then, in a run started from the editor's Chat only, the
   execution waits with the approval card in the chat, and Approve or Reject resumes the same agent session (a second
-  approval waits again). The hosted chat page, webhooks, schedules and manual runs still refuse, and so does a node
+  approval waits again). In the chat's step list the waiting call reads *Waiting for approval*, then *Done* after Approve and *Denied* after Reject (it never reads *Failed*; the hosted chat page says the same). The hosted chat page, webhooks, schedules and manual runs still refuse, and so does a node
   with a chat model or tools connected to it. Each run is an agent session from the
   workflow. The node is `usableAsTool`, so an AI Agent node can delegate to an agent. It runs
   the agent on Landflow's runtime, also when the agent is deployed to kagent; to call it there,

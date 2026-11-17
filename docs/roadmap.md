@@ -2884,7 +2884,7 @@ account's own console is the figure.
   - A step cut by the steps check can leave a fragment: the Grafana agent's "3. For dashboard questions, GET) on the dashboard URL or API path given in the message."
   - Spotlight's created card keeps its Left row ("pick a smtp credential; fill in From Email") after the pick on the agent page opened by **Pick it** in another tab (`landflow:agent-saved` is window-local), also after a reload and once published.
   - A change card's Left row drops "fill in From Email" while From is still empty.
-  - In the editor's chat a tool call waiting for approval, and a denied one, reads **Failed** in the step list.
+  - ~~In the editor's chat a tool call waiting for approval, and a denied one, reads **Failed** in the step list.~~ fixed after ag2's review: *Waiting for approval*, *Denied*, *Done*.
   - The editor's chat conversation does not come back after a reload.
   - Once, the first **Apply to its draft** under a change card did nothing; the second applied it.
   - A usage-limit answer reads "Couldn't design the change: the model proposed nothing" on the host, and the scorecard runner records the checks as failed with no error.

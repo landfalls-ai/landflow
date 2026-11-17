@@ -19,7 +19,7 @@ export type ChatChunk = Extract<ExecutionEvent, { type: 'node.chunk' }>['chunk']
 export interface ChatTool {
   id: string;
   name: string;
-  status: 'started' | 'finished' | 'failed' | 'approval';
+  status: 'started' | 'finished' | 'failed' | 'approval' | 'denied';
   input?: unknown;
   output?: string;
 }
@@ -398,11 +398,12 @@ const STATUS: Record<ChatTool['status'], { label: string; tone: string }> = {
   started: { label: 'Running', tone: 'text-t3' },
   finished: { label: 'Done', tone: 'text-gn' },
   failed: { label: 'Failed', tone: 'text-rd' },
-  approval: { label: 'Needs you', tone: 'text-warn' },
+  approval: { label: 'Waiting for approval', tone: 'text-warn' },
+  denied: { label: 'Denied', tone: 'text-t3' },
 };
 
 /** Streamed tool calls: name and status, input and output on demand. */
-function ToolCalls({ calls }: { calls: ChatTool[] }) {
+export function ToolCalls({ calls }: { calls: ChatTool[] }) {
   return (
     <div className="space-y-1">
       {calls.map((call) => (

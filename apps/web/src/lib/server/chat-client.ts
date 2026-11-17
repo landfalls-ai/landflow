@@ -259,7 +259,7 @@ const CLIENT = `(function () {
     return node;
   }
   function toolLine(name, state) {
-    var node = el('div', { class: 'tool ' + state, text: (state === 'running' ? 'Using ' : state === 'approval' ? 'Waiting for approval: ' : state === 'failed' ? 'Failed: ' : 'Used ') + name });
+    var node = el('div', { class: 'tool ' + state, text: (state === 'running' ? 'Using ' : state === 'approval' ? 'Waiting for approval: ' : state === 'denied' ? 'Denied: ' : state === 'failed' ? 'Failed: ' : 'Used ') + name });
     log.appendChild(node);
     scroll();
     return node;
@@ -396,7 +396,7 @@ const CLIENT = `(function () {
               if (known && known.className === 'ask') { if (chunk.tool.status === 'failed' && known.textContent.indexOf('(failed)') < 0) known.textContent += ' (failed)'; return; }
               if (!known && reason) { tools[chunk.tool.id] = askLine(chunk.tool.name, reason); return; }
               var state = chunk.tool.status === 'started' ? 'running' : chunk.tool.status;
-              if (known) { known.className = 'tool ' + state; known.textContent = (state === 'failed' ? 'Failed: ' : state === 'approval' ? 'Waiting for approval: ' : 'Used ') + chunk.tool.name; }
+              if (known) { known.className = 'tool ' + state; known.textContent = (state === 'failed' ? 'Failed: ' : state === 'approval' ? 'Waiting for approval: ' : state === 'denied' ? 'Denied: ' : 'Used ') + chunk.tool.name; }
               else tools[chunk.tool.id] = toolLine(chunk.tool.name, state);
             } else if (chunk.type === 'done') {
               if (chunk.executionId) answerId = chunk.executionId;
