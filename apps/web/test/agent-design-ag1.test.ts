@@ -335,6 +335,25 @@ describe('the instructions name only the agent’s tools (finding 3)', () => {
   });
 });
 
+describe('a revise keeps the steps that call the agent’s own tools (the live pass: "add Extract IOCs as a tool" cut the normalize and send steps)', () => {
+  const STEPS = 'Input: one alert.\nSteps:\n1. Call normalize_alert with the alert.\n2. Call extract_iocs on the normalised alert.\n3. Judge severity.\n4. Call send_email to oncall@landflow.test with a subject, and a short summary.\nOutput: short.\nHand over when: unclear.';
+  const node = (name: string, nodeType: string, extra: Record<string, unknown> = {}) => ({ id: `tl_${name}`, type: 'node', name, nodeType, description: name, parameters: {}, ...extra });
+  it('the base’s tools stay callable in the revised instructions', async () => {
+    const base = {
+      name: 'Alert triager', description: 'Triages an alert.', instructions: 'Input: one alert.\nSteps:\n1. Call normalize_alert with the alert.\n2. Judge severity.\n3. Call send_email to oncall@landflow.test with a subject, and a short summary.\nOutput: short.\nHand over when: unclear.',
+      tools: [node('normalize_alert', 'triage.normalizeAlert'), node('send_email', 'messaging.emailSend', { requireApproval: true })],
+    };
+    const { model } = scripted([design({ name: 'Alert triager', instructions: STEPS, nodeTools: 'triage.normalizeAlert, messaging.emailSend, triage.extractIocs' }), { text: 'Changed.' }]);
+    const result = await designAgent({ name: 'Alert triager', description: '', instructions: '', ask: 'add Extract IOCs as a tool', change: 'add Extract IOCs as a tool', base: base as never }, { types, actor: TEST_OWNER, model });
+    const text = result.config.instructions ?? '';
+    expect(text).toContain('Call normalize_alert with the alert.');
+    expect(text).toContain('Call send_email to oncall@landflow.test');
+    expect(text).toContain('Call extract_iocs');
+    expect(result.dropped.join(' ')).not.toMatch(/instructions named/);
+    expect(nodeTools(result.config).map((t) => t.nodeType)).toEqual(expect.arrayContaining(['triage.normalizeAlert', 'messaging.emailSend', 'triage.extractIocs']));
+  });
+});
+
 describe('reads need no approval, a write asks (finding 12)', () => {
   const sqlite = (operation?: string) => ({ name: 'Analyst', role: 'Analyst', instructions: 'Work.', tools: [{ type: 'node', nodeType: 'databases.sqlite', name: 'sqlite', ...(operation && { parameters: { operation } }) }] });
   const context = (request: string) => ({ types, actor: TEST_OWNER, known: '', request });

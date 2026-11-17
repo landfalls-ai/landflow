@@ -811,7 +811,9 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
   const about = text(args.description, 300) ?? base.description ?? keep?.description ?? '';
   // AG02: the steps name only the agent's own tools, by their call names.
   const toolList = tools.flatMap((t) => ('name' in t && t.name ? [{ name: t.name, ...('description' in t && t.description && { description: t.description }) }] : []));
-  const reconciled = nameOnlyOwnTools(text(args.instructions, 8000) ?? base.instructions ?? '', toolList);
+  // A revise proposes the whole agent again, but least privilege leaves out the tools the change does not name: the steps that call the agent's own tools (`keep`'s) are still its own.
+  const keptTools = (keep?.tools ?? []).flatMap((t) => ('name' in t && t.name && !toolList.some((o) => o.name === t.name) ? [{ name: t.name, ...('description' in t && t.description && { description: t.description }) }] : []));
+  const reconciled = nameOnlyOwnTools(text(args.instructions, 8000) ?? base.instructions ?? '', [...toolList, ...keptTools]);
   dropped.push(...reconciled.dropped);
   const config: Partial<AgentConfig> = {
     ...(template && { ...base, tools: undefined }),
