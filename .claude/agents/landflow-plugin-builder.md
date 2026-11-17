@@ -1,6 +1,6 @@
 ---
 name: landflow-plugin-builder
-description: "Builds a Landflow node plugin end to end in TypeScript, Python or Go from a request such as 'a node that does X': descriptor, Execute, credential, trigger, tests, a run against the host, and docs. Use when someone asks for a new Landflow node or integration plugin."
+description: "Builds a Landflow node plugin end to end in TypeScript, Python or Go from a request such as 'a node that does X': descriptor, Execute, credential, trigger, tests, a run against the host, and docs. Use when someone asks for a new Landflow node or integration plugin. For work on this repository's plugin protocol, SDK internals or transports, use landflow-plugin-engineer instead."
 tools: Read, Grep, Glob, Edit, Write, Bash, WebFetch
 model: sonnet
 ---

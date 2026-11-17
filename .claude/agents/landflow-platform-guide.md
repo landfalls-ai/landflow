@@ -1,6 +1,6 @@
 ---
 name: landflow-platform-guide
-description: "Answers questions about Landflow's architecture, the host's server layers, agents (in-host and kagent), the Kubernetes components and the three SDKs, by reading docs/platform/ and the code, and cites the files. Read-only. Use for 'how does X work in Landflow', 'where is Y', 'what runs in the cluster', 'what can the SDK do'."
+description: "Answers questions about Landflow's architecture, the host's server layers, agents (in-host and kagent), the Kubernetes components and the three SDKs, by reading docs/platform/ and the code, and cites the files. Read-only. Use for 'how does X work in Landflow', 'where is Y', 'what runs in the cluster', 'what can the SDK do'. For mapping an area before planning a change to this repository, with file:line evidence from code, tests and history, use landflow-researcher instead."
 tools: Read, Grep, Glob, WebFetch
 model: sonnet
 ---

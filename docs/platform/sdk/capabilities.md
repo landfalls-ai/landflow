@@ -13,7 +13,7 @@ on this branch, checked in `packages/sdk/src`, `sdks/python/landflow_sdk` and `s
 | Several outputs (branches) | yes | yes | yes | [Actions](#actions-and-outputs) |
 | Poll trigger | yes | yes | yes | [Triggers](#triggers) |
 | App webhook trigger (register, verify, run) | yes | yes | yes | [Triggers](#triggers) |
-| `webhook`, `schedule`, `chat`, `manual` trigger sources | descriptor accepts them, host uses them for built-in nodes | same | same | [Triggers](#triggers) |
+| `webhook`, `schedule`, `chat`, `manual` trigger sources | descriptor accepts them; `webhook` and `schedule` are never started for a plugin, `manual` and `chat` start only by hand | same | same | [Triggers](#triggers) |
 | 13 parameter types, `displayOptions`, `typeOptions` | yes | yes | yes | [Parameters](#parameters) |
 | Dynamic dropdowns (`loadOptions`) | yes, with credentials | yes, with credentials | yes, with credentials | [Parameters](#parameters) |
 | Credential types, "Test connection" | yes | yes | yes | [Credentials](#credentials) |
@@ -89,7 +89,10 @@ A trigger starts a workflow run. A plugin has two ways to do it:
 The other sources (`manual`, `webhook`, `schedule`, `chat`) are valid in a descriptor, but they name the entry points of the
 host's own nodes (the Webhook, Schedule and Chat triggers): the host schedules `poll` triggers and registers
 `appWebhook` triggers for plugin nodes (`apps/web/src/lib/server/poller.ts`,
-`apps/web/src/lib/server/plugins/registry.ts:872`), and nothing else. Write a plugin trigger as one of the two above.
+`apps/web/src/lib/server/plugins/registry.ts:872`), and starts nothing else on its own. A `webhook` or `schedule` plugin
+trigger is never started. A `manual` or `chat` one runs only by hand: Execute, the run API and the MCP tools pick the
+first `manual` trigger, the editor chat the `chat` one (`findTrigger()`, `apps/web/src/lib/server/runner/run.ts:346`).
+Write a plugin trigger as one of the two above.
 
 **Poll.** The first poll (`ctx.isFirstPoll()`) records a baseline and returns nothing, so activating a workflow does not
 replay history. Later polls return only what is new and set the next state. A manual run (the editor's Execute) returns

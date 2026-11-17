@@ -31,7 +31,7 @@ Read first (local path, same path on GitHub):
 Answer these from the request, then tell the user in two lines:
 
 - Plugin id (lowercase, dashes) and folder `plugins/<id>`; node names (lowerCamelCase, local).
-- Per node: `action` or `trigger` (`poll` or `appWebhook`; **no** other trigger sources for a plugin), outputs, the
+- Per node: `action` or `trigger` (`poll` or `appWebhook`; `webhook` and `schedule` are never started for a plugin, `manual` and `chat` only start a run by hand), outputs, the
   parameters (type, default, `displayOptions`), `idempotent` (true for a read), `usableAsTool`.
 - Credential type: fields, which are `password`, an overridable `baseUrl`, a cheap `test`. OAuth2: `extends=["oAuth2Api"]`.
 - What a plugin **cannot** do from a separate process: wait/resume, sub-nodes (model, memory), streaming. If the request needs
@@ -47,8 +47,8 @@ cp examples/sdk/python/hello-node/tests/test_hello.py plugins/<id>/tests/
 ```
 
 Then in `plugins/<id>`: rename `hello_node`/`hello-node`; fix the relative path to the SDK in `setup.sh` (two levels up:
-`../../sdks/python[grpc,mcp,brokers]`, as `plugins/py-insights/setup.sh`) and in the `parents[...]` fallbacks (`main.py`: `parents[2]`; the test: `HERE.parents[1]`); pick two free ports (`grep -rnE "HTTP_PORT = [0-9]+|http_port=[0-9]+" plugins/*/main.py`; 7101-7120 and the samples'
-7191-7193 are taken). Run `./setup.sh`; the `.venv` is gitignored.
+`../../sdks/python[grpc,mcp,brokers]`, as `plugins/py-insights/setup.sh`) and in the `parents[...]` fallbacks (`main.py`: `parents[2]`; the test: `HERE.parents[1]`); pick two free ports (`grep -rnE "HTTP_PORT = [0-9]+|http_port=[0-9]+" plugins/*/main.py`; 7101-7121 (gRPC 7201-7221) and the samples'
+7191-7193 are taken: start at HTTP 7122, gRPC 7222). Run `./setup.sh`; the `.venv` is gitignored.
 
 ## 3. Write the node
 
@@ -109,8 +109,7 @@ scratch host with its own `LANDFLOW_DATA_DIR` per `docs/development.md` "Checkin
   extra and copies `plugins/<id>/` to `/app`, running `python main.py`. It has no step for your own dependencies: add one to a copy of
   the Dockerfile or vendor them. Local only: `COMPOSE_BAKE=false`; OrbStack cluster images
   `docker --context orbstack buildx build --builder orbstack --load`; never push.
-- Compose: copy the `py-insights` block in `deploy/compose.yml` and add the service to `LANDFLOW_SCAN_HOSTS`. Kubernetes: copy
-  `deploy/k8s/base/plugins/py-insights.yaml` and list it in `deploy/k8s/base/kustomization.yaml`.
+- Compose: copy the `py-insights` block in `deploy/compose.yml` and add the service to `LANDFLOW_SCAN_HOSTS`. Kubernetes: follow `landflow-kubernetes` step 6 (a component under `deploy/k8s/components/<id>/` plus an overlay `images:` entry with `newTag: k8s-dev`); do not add it to the base.
 - Marketplace: `plugins/<id>/landflow.plugin.json` with `"runtime": "python"`, an entry in `.claude-plugin/marketplace.json`, flows in
   `flows/`. The host links **no** SDK for Python: `install` must create the environment and install `landflow-sdk`, and `start` must run
   that interpreter (not tried by the authors; say so). Run `cd apps/web && npx vitest run test/plugin-flows.test.ts`.
@@ -138,7 +137,7 @@ Pin a commit with `@<sha>` before `#`. Python 3.11+. Use a venv. Copy the sample
 
 ## Traps
 
-Do not use `triggerSource` `webhook`, `schedule` or `chat` for a plugin node. Do not rename a node or parameter after release. A poll
+Do not use `triggerSource` `webhook` or `schedule` for a plugin node (the host never starts them; `manual` and `chat` only run by hand). Do not rename a node or parameter after release. A poll
 trigger with no baseline replays history. Returning a flat list when the node has two outputs sends everything to output 0 (return
 `[a, b]`). `Plugin(...)` raises `DescriptorError` listing every problem at startup: read all of it. Without the `[mcp]` extra `serve()`
 logs an error line about the MCP face; `LANDFLOW_MCP=off` silences it.

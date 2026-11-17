@@ -362,9 +362,10 @@ same way from its folder (`cd plugins/py-insights && .venv/bin/python -m unittes
    `COMPOSE_BAKE=false`, and an image for the OrbStack cluster with `docker --context orbstack buildx build --builder orbstack --load`
    ([CLAUDE.md](../../../CLAUDE.md)).
 3. **Compose and Kubernetes.** Copy the `py-insights` block in `deploy/compose.yml` (names, ports,
-   `LANDFLOW_ADVERTISE_HOST`, and the service name in `LANDFLOW_SCAN_HOSTS`), and
-   `deploy/k8s/base/plugins/py-insights.yaml` (Deployment, Service labelled `landflow.dev/plugin=true`, listed in
-   `deploy/k8s/base/kustomization.yaml`). The pod listens on `0.0.0.0`: keep `LANDFLOW_MCP=off` or give it a token.
+   `LANDFLOW_ADVERTISE_HOST`, and the service name in `LANDFLOW_SCAN_HOSTS`), and,
+   for Kubernetes, a component modelled on `deploy/k8s/base/plugins/py-insights.yaml` (Deployment, Service labelled
+   `landflow.dev/plugin=true`; add it to the overlay's `components:` and an `images:` entry with `newTag: k8s-dev`, see
+   [kubernetes.md](../kubernetes.md)). The pod listens on `0.0.0.0`: keep `LANDFLOW_MCP=off` or give it a token.
 4. Docs: a row in `docs/history.md`, the plugin's README, `docs/limitations.md` if it is not finished.
 
 ## Add it to the marketplace

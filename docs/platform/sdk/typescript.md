@@ -354,9 +354,9 @@ response, not on the log.
    `docker --context orbstack buildx build --builder orbstack --load`.
 3. **Compose.** Copy the `text-toolkit` block in `deploy/compose.yml`, change the names, the ports and
    `LANDFLOW_ADVERTISE_HOST`, and add the service name to `LANDFLOW_SCAN_HOSTS` on the host.
-4. **Kubernetes.** Copy `deploy/k8s/base/plugins/text-toolkit.yaml` (a Deployment and a Service labelled
-   `landflow.dev/plugin=true`, with the gRPC port in an annotation), list it in `deploy/k8s/base/kustomization.yaml`, and add
-   the image tag to the overlay. The host discovers it by the label. The pod listens on `0.0.0.0`, so keep
+4. **Kubernetes.** Model a component under `deploy/k8s/components/<id>/` on `deploy/k8s/base/plugins/text-toolkit.yaml` (a
+   Deployment and a Service labelled `landflow.dev/plugin=true`, with the gRPC port in an annotation), add it to the
+   overlay's `components:` and an `images:` entry with `newTag: k8s-dev` ([kubernetes.md](../kubernetes.md)). The host discovers it by the label. The pod listens on `0.0.0.0`, so keep
    `LANDFLOW_MCP=off` or give it a token.
 5. Docs: a row in `docs/history.md`, the plugin's own README, and `docs/limitations.md` if it is not finished
    ([CLAUDE.md](../../../CLAUDE.md)).

@@ -110,7 +110,7 @@
       "version": "0.1.0",
       "author": { "name": "Landflow" },
       "category": "development",
-      "keywords": ["landflow", "plugins", "sdk", "kubernetes", "agents"]
+      "keywords": ["landflow", "workflow", "plugins", "sdk", "kubernetes", "agents"]
     }
   ]
 }

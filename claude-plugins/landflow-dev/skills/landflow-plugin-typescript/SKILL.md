@@ -31,7 +31,7 @@ Read first (local path, same path on GitHub):
 Answer these from the request, then tell the user in two lines:
 
 - Plugin id (lowercase, dashes, e.g. `acme-crm`) and folder `plugins/<id>`; node names (lowerCamelCase, local).
-- Per node: `action` or `trigger` (`poll` or `appWebhook`; **no** other trigger sources for a plugin), inputs, how many
+- Per node: `action` or `trigger` (`poll` or `appWebhook`; `webhook` and `schedule` are never started for a plugin, `manual` and `chat` only start a run by hand), inputs, how many
   outputs, the parameters (type, default, `displayOptions`), `idempotent` (true for a read), `usableAsTool`.
 - Credential type: fields, which are `password`, an overridable `baseUrl`, a cheap `test` call. OAuth2: `extends: ['oAuth2Api']`.
 - Anything the plugin **cannot** do from a separate process: wait/resume, sub-nodes (model, memory), streaming. If the request
@@ -49,8 +49,8 @@ cp examples/sdk/typescript/hello-node/src/*.ts plugins/<id>/src/ && cp examples/
 Then in `plugins/<id>`: set `package.json` `name` to `@landflow/plugin-<id>`; in `tsconfig.json` keep only
 `"extends": "../../tsconfig.base.json"`, `"compilerOptions": { "types": ["node"] }` and `"include": ["src", "test"]` (delete
 `typeRoots`, `baseUrl`, `paths`); do **not** copy `vitest.config.ts` (it exists only because the sample is outside the
-workspace); rename `hello-node` everywhere; pick two free ports (`grep -rnE "http: [0-9]+" plugins/*/src/main.ts`; 7101-7120 and the
-samples' 7191-7193 are taken, so use the next free HTTP port and the gRPC port 100 above it) and run `pnpm install` (this changes `pnpm-lock.yaml`: keep it).
+workspace); rename `hello-node` everywhere; pick two free ports (`grep -rnE "http: [0-9]+" plugins/*/src/main.ts`; 7101-7121 (gRPC 7201-7221) and the
+samples' 7191-7193 are taken, so start at HTTP 7122 and use the gRPC port 100 above it) and run `pnpm install` (this changes `pnpm-lock.yaml`: keep it).
 Add `"plugin:<id>": "pnpm --filter @landflow/plugin-<id> start"` to the root `package.json` scripts if the repo does that for
 siblings.
 
@@ -112,7 +112,7 @@ Never touch `apps/web/.data` or other people's containers.
   `PLUGIN`, the package `@landflow/plugin-<id>` and the entry `src/main.ts`. Local only: build with `COMPOSE_BAKE=false`; for
   the OrbStack cluster `docker --context orbstack buildx build --builder orbstack --load`; never push an image.
 - Compose: copy the `text-toolkit` block in `deploy/compose.yml`; add the service to `LANDFLOW_SCAN_HOSTS`.
-  Kubernetes: copy `deploy/k8s/base/plugins/text-toolkit.yaml` and list it in `deploy/k8s/base/kustomization.yaml`.
+  Kubernetes: follow `landflow-kubernetes` step 6 (a component under `deploy/k8s/components/<id>/` plus an overlay `images:` entry with `newTag: k8s-dev`); do not add it to the base.
 - Marketplace: `plugins/<id>/landflow.plugin.json` (`{ "id": "<id>", "runtime": "node", "start": ["tsx", "src/main.ts"] }`), an
   entry in `.claude-plugin/marketplace.json`, flows in `plugins/<id>/flows/*.json`. Run `cd apps/web && npx vitest run test/plugin-flows.test.ts`.
 - A node in a **bundled** plugin also needs its recorded manifest refreshed (`docs/development.md`, "Recorded plugin manifests").
@@ -136,7 +136,7 @@ Never touch `apps/web/.data` or other people's containers.
 
 ## Traps
 
-Do not use `triggerSource: 'webhook' | 'schedule' | 'chat'` for a plugin node (the host ignores them for plugins). Do not rename
+Do not use `triggerSource: 'webhook' | 'schedule'` for a plugin node: the host never starts them. `manual` and `chat` only run when someone presses Execute or chats in the editor (`findTrigger()` in `lib/server/runner/run.ts`), never on their own. Do not rename
 a node or parameter after release (saved workflows use the names). A poll trigger with no baseline replays history. Returning
 a flat array when the node has two outputs sends everything to output 0. `definePlugin` throws on an undeclared credential
 type: read the message, it names the node.

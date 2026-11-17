@@ -425,8 +425,8 @@ Run a bundled plugin's tests with `cd plugins/go-crypto && go test ./...`. Tests
    for the OrbStack cluster with `docker --context orbstack buildx build --builder orbstack --load`
    ([CLAUDE.md](../../../CLAUDE.md)).
 3. **Compose and Kubernetes.** Copy the `go-crypto` block in `deploy/compose.yml` (names, ports, `LANDFLOW_ADVERTISE_HOST`,
-   and the service name in `LANDFLOW_SCAN_HOSTS`), and `deploy/k8s/base/plugins/go-crypto.yaml`, listed in
-   `deploy/k8s/base/kustomization.yaml`. The image listens on `0.0.0.0` (`LANDFLOW_LISTEN_HOST`), so the MCP face needs
+   and the service name in `LANDFLOW_SCAN_HOSTS`), and, for Kubernetes, a component modelled on `deploy/k8s/base/plugins/go-crypto.yaml` (a component plus an overlay
+   `images:` entry with `newTag: k8s-dev`, see [kubernetes.md](../kubernetes.md)). The image listens on `0.0.0.0` (`LANDFLOW_LISTEN_HOST`), so the MCP face needs
    `LANDFLOW_MCP_TOKEN` or `LANDFLOW_MCP=off`.
 4. Docs: a row in `docs/history.md`, the plugin's README, `docs/limitations.md` if it is not finished.
 

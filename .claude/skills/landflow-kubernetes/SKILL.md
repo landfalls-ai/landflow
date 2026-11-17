@@ -92,7 +92,7 @@ kubectl --context orbstack -n landflow-dev get deploy,svc
 Model: `deploy/k8s/base/plugins/text-toolkit.yaml` (Node), `go-crypto.yaml` (Go), `py-insights.yaml` (Python). The
 plugin itself is built first with an SDK: see `docs/plugins.md` and the SDK skills of this plugin.
 
-1. Pick the next free ports: HTTP `71xx`, gRPC `72xx` (the last ones used are 7121 and 7221).
+1. Pick the next free ports: HTTP `71xx`, gRPC `72xx` (7121 and 7221 are the last ones used, by grafana: start at 7122 and 7222).
 2. Create `deploy/k8s/components/<name>/<name>.yaml` (a Deployment and a Service) and `kustomization.yaml`
    (`kind: Component`, `resources: [<name>.yaml]`). Copy the model and keep these, because the host depends on them:
    - Service label `landflow.dev/plugin: "true"` and annotation `landflow.dev/grpc-port: grpc`; the Service port named
@@ -103,7 +103,7 @@ plugin itself is built first with an SDK: see `docs/plugins.md` and the SDK skil
      broker patches select on them).
    - readiness and liveness on `GET /landflow/v1/health` (the host follows readiness through EndpointSlices).
    - `runAsUser` 1000 for Node images, 10001 for Go and Python; read-only root filesystem with a `/tmp` `emptyDir`.
-   - resources: requests 20m and 160Mi, limit 512Mi (more only if the plugin needs it, as the browser does).
+   - resources: requests 20m and 160Mi, limit 512Mi for Node and Python plugins; Go plugins use 96Mi and 256Mi (`go-crypto.yaml`); more only if the plugin needs it, as the browser does.
 3. In the overlay: add `- ../../components/<name>` to `components:` and `- { name: landflow/plugin-<name>, newTag: k8s-dev }`
    to `images:` (the overlay's `imagePullPolicy: Never` patch covers every Deployment labelled `part-of=landflow`).
 4. Build the image (step 3), render, apply. No host change is needed: discovery finds it.

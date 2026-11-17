@@ -31,7 +31,7 @@ Read first (local path, same path on GitHub):
 Answer these from the request, then tell the user in two lines:
 
 - Plugin id (lowercase, dashes) and folder `plugins/<id>`; node names (lowerCamelCase, local).
-- Per node: action or trigger (`TriggerPoll` or `TriggerAppWebhook`; **no** other trigger sources for a plugin), outputs, the
+- Per node: action or trigger (`TriggerPoll` or `TriggerAppWebhook`; `TriggerWebhook` and `TriggerSchedule` are never started for a plugin, `manual` and `chat` only start a run by hand), outputs, the
   parameters (type, default, `DisplayOptions`), `Idempotent` (true for a read), `UsableAsTool`.
 - Credential type: fields, which are `Password`, an overridable `baseUrl`, a cheap `Test`. OAuth2: `Extends: []string{"oAuth2Api"}`.
 - What a plugin **cannot** do from a separate process: wait/resume, sub-nodes (model, memory), streaming. If the request needs it,
@@ -44,8 +44,8 @@ mkdir -p plugins/<id> && cp examples/sdk/go/hello-node/{go.mod,go.sum,main.go,pl
 ```
 
 Then in `plugins/<id>`: change the module path (`github.com/landflow/landflow/plugins/<id>`, as `plugins/go-crypto/go.mod`), the
-`replace` to `../../sdks/go`, the plugin id and ports (`grep -rnE "HTTPPort: [0-9]+" plugins/*/main.go`; 7101-7120 and the samples'
-7191-7193 are taken), rename `hello-node`, and run `GOPROXY=off GOFLAGS=-mod=mod go mod tidy` (drop `GOPROXY=off` if a dependency is
+`replace` to `../../sdks/go`, the plugin id and ports (`grep -rnE "HTTPPort: [0-9]+" plugins/*/main.go`; 7101-7121 (gRPC 7201-7221) and the samples'
+7191-7193 are taken: start at HTTP 7122, gRPC 7222), rename `hello-node`, and run `GOPROXY=off GOFLAGS=-mod=mod go mod tidy` (drop `GOPROXY=off` if a dependency is
 missing from the cache). The package must stay `package main` at the folder root.
 
 ## 3. Write the node
@@ -107,8 +107,7 @@ people's containers.
   binary. The `replace` lines must be the relative ones (`../../sdks/go`). For brokers, blank-import `sdks/go/transport/kafka|amqp|nats|valkey`
   as `plugins/go-crypto/main.go` does. Local only: `COMPOSE_BAKE=false`; OrbStack cluster images
   `docker --context orbstack buildx build --builder orbstack --load`; never push.
-- Compose: copy the `go-crypto` block in `deploy/compose.yml` and add the service to `LANDFLOW_SCAN_HOSTS`. Kubernetes: copy
-  `deploy/k8s/base/plugins/go-crypto.yaml` and list it in `deploy/k8s/base/kustomization.yaml`. Add your built binary name to `.gitignore`.
+- Compose: copy the `go-crypto` block in `deploy/compose.yml` and add the service to `LANDFLOW_SCAN_HOSTS`. Kubernetes: follow `landflow-kubernetes` step 6 (a component under `deploy/k8s/components/<id>/` plus an overlay `images:` entry with `newTag: k8s-dev`); do not add it to the base. Add your built binary name to `.gitignore`.
 - Marketplace: `plugins/<id>/landflow.plugin.json` (`{"id":"<id>","runtime":"go","install":["go","build","-o","<id>","."],"start":["./<id>"]}`),
   an entry in `.claude-plugin/marketplace.json`, flows in `flows/`. The host rewrites the SDK `replace` to its own copy. Run
   `cd apps/web && npx vitest run test/plugin-flows.test.ts`.
@@ -138,7 +137,7 @@ path differs.
 
 ## Traps
 
-Do not use `TriggerWebhook`, `TriggerSchedule` or `TriggerChat` for a plugin node. Do not rename a node or parameter after release. A poll
+Do not use `TriggerWebhook` or `TriggerSchedule` for a plugin node (the host never starts them; manual and chat triggers only run by hand). Do not rename a node or parameter after release. A poll
 trigger with no baseline replays history. Returning `[][]landflow.Item{all}` for a node with two outputs sends everything to output 0.
 `NewPlugin` panics at startup and lists every problem: run the tests to see it. JSON numbers arrive as `float64` in maps: use `ParamInt`
 and `CredentialData.Int`.

@@ -1,6 +1,6 @@
 ---
 name: landflow-server-change
-description: "Adds or changes a Landflow host feature across its layers: an API route with handler(), a policy rule, a zod schema, a service, a database migration and table, a background job, tests, OpenAPI for a public route, docs and a history row, then runs the checks. Use when asked to add an endpoint or route, add a table or migration, change the store, add a setting or environment variable, add a background service, or fix a server bug in apps/web."
+description: "Adds or changes a Landflow host feature across its layers: an API route with handler(), a policy rule, a zod schema, a service, a database migration and table, a background job, tests, OpenAPI for a public route, docs and a history row, then runs the checks. Use when asked to add an endpoint or route, add a table or migration, change the store, add a setting or environment variable, add a background service, or fix a server bug in apps/web. For a feature that spans several areas or needs research, a plan and review, use landflow-feature instead."
 ---
 
 # Change the Landflow host
