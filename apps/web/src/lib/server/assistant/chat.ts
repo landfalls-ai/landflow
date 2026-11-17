@@ -27,6 +27,7 @@ import { withParseRetry } from './parse-retry'; // SB05:
 import { authHeaderProblems, cronProblems, expressionMisses, retryProblems } from './change-checks'; // SB09:
 import { ASK_CHOICES_MAX, ASK_CHOICES_MIN, ASK_CHOICE_MAX_CHARS, ASK_USER_TOOL, requestAcrossAsk, type AskEvent, type CredentialOfferEvent } from '../../shared/spotlight-wire'; // SB11: (CredentialOfferEvent: SB12; requestAcrossAsk: SB09 × SB11)
 import { claimsAChange } from './guards'; // SB12:
+import { withAskedTools } from '@/lib/shared/agent-ask'; // SB16:
 import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol'; // SB12:
 import { needsPerson } from '@/lib/shared/run-check'; // SB12:
 import { redundantBranches, registryLookup, validateOps, withoutRepeatedAdds } from './ops';
@@ -569,6 +570,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
           const id = working.nodes.find((n) => n.name === name)?.id;
           return working.connections.filter((c) => c.type === 'main' && c.source === id).map((c) => nameOfId(c.target));
         });
+        placed.ops = withAskedTools(placed.ops, request, working.nodes.map((n) => n.name)); // SB16: a new agent keeps the tools and knowledge the message asked for
         const dedicated = { ...converted, ops: placed.ops, notes: converted.notes };
         const standIns = withoutAgentStandIns(withAgentIds(withTeamIds(dedicated.ops, input.teams ?? [], typeOfNode), input.agents ?? [], typeOfNode), new Set([...newAgents, ...dedicated.handles.map(standInKey)]), kindOf);
         standIns.notes.unshift(...dedicated.notes);

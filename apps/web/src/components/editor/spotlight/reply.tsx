@@ -15,6 +15,7 @@ import { StatusSwap, StreamingText } from '../../ui/chat-motion';
 import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta, ShortReply } from '../../ui/chat';
 import { MAX_FIXES, approveDestinations, productionNote, publishToProduction, testUntilItRuns, undoApplied } from '../test-session'; // SB03:
 import { agentStep, runRow } from '../timeline';
+import { AgentCardView } from './agent-card'; // SB16:
 import { CredentialPicker } from './credential-picker';
 
 import { ProposalCard, ProposalRow } from './proposal';
@@ -451,6 +452,9 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
         ) : part.kind === 'ask' ? (
           // SB11:
           <AskRow key={i} itemId={item.id} ask={part.ask} busy={spotlightBusy} />
+        ) : part.kind === 'agentCard' ? (
+          // SB16:
+          <AgentCardView key={i} itemId={item.id} card={part.card} busy={spotlightBusy} />
         ) : null,
       )}
       {!streamed && steps && firstProposal < 0 && <LiveSteps live={steps} />}

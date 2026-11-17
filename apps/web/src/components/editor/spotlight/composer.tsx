@@ -13,6 +13,7 @@ import { completeBubbles, idleBubbles, liveMentions, TEST_BUBBLE, type Bubble, t
 import { useBuildFlow } from '../ai-builder';
 import { afterReply, typedSession } from '../autonomous';
 import { answeredQuestion } from './answered-question';
+import { cardAskFor, designAgentCard } from './agent-ask'; // SB16:
 import { draftWholeFlow } from './draft-flow';
 import { suggestionKey, useAssistant, useSuggestions, useWorking, type ChatItem, type KeptMention, type Suggestion } from '../assistant';
 import { useEditor } from '../store';
@@ -215,6 +216,12 @@ export function Composer() {
     setDraft('');
     setCaret(0);
     setMentions([]);
+    // SB16: "create an agent …" on any canvas: the agent as a card to review (and, on an empty canvas, a starter flow with it); a placed ask stays the chat's new agent.
+    const agent = cardAskFor(message);
+    if (agent) {
+      await designAgentCard(message, agent, { starter: !useEditor.getState().nodes.length });
+      return;
+    }
     if (!useEditor.getState().nodes.length) {
       // An empty canvas: the builder drafts the whole flow in one go, with test data on the trigger.
       await draftWholeFlow(message, build);

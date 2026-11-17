@@ -2680,3 +2680,7 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   not catch yet; one click on a credential row's radio did nothing before Apply (the label works; unconfirmed). The
   phone Execute/Debug pill overlap is the same on main (a phone follow-up). Not Spotlight: after runs the host logged
   "the brain's run failed: NOT NULL constraint failed: brain_facts.subject_type" 6 times. **Fixed in wave 14 (SP13):** `staleFactsBefore` writes the whole row, so the study finishes, is stamped, and the detectors run on the brain's own loop.
+
+## Spotlight wave sb3
+
+- **SB16, agents from Spotlight, anywhere, built:** "create an agent …" is recognised on any canvas (`agentAsk`) and designed as an agent card to review and create (the design route's `preview` form saves nothing; Create imports a draft and its test cases); on an empty canvas it also lays out Chat message → Run an Agent with a pinned sample, one ⌘Z (finding 3.3, decision D5; a brand-new draft in autonomous mode creates alone, D1); the chat's new agent keeps the tools and knowledge the message asked for (sb1's leftover). Docs: [assistant.md](assistant.md#agents-and-teams). Left: the brief's tools, guardrails, practices and cases (SB17), the smoke test and publishing (SB18).

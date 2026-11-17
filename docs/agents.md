@@ -514,6 +514,11 @@ and footer, and keeps its answer card.
   with **Execute Workflow** (`core.executeWorkflow`, which maps the *Arguments* or passes its items
   through and returns the last node's output). *Input Data Mode* is *Define Arguments* or *Accept
   All Data*. **Run** in the editor starts from it too, with empty example values for each argument.
+- **An agent made from Spotlight's card** ([assistant.md](assistant.md#agents-and-teams)): "create an agent …" typed
+  into Spotlight is designed by the Agent architect without being saved, shown as a card, and **Create agent**
+  imports it as a draft with its test cases in the eval gate. On an empty canvas, **Create agent and flow** also adds
+  the starter flow: **Chat message** into **Run an Agent** pointed at the agent, with a sample chat item pinned on
+  the trigger. The agent stays a draft, and a Run an Agent step runs the published version: publish it from its page.
 - **Run an Agent** (`core.messageAgent`, formerly "Message an Agent"; the type is unchanged) runs
   a published agent as a step of the flow. The agent brings its persona, skills, capabilities,
   guardrails and usage limits. Used as a tool, the node (like Run a Team) takes `message` and a required `reason`. Tool images: the node's **Tool Images to Keep** option, else the agent's **Tool images to keep** (Abilities → Guardrails), else `LANDFLOW_TOOL_IMAGES_KEPT`, else 2; Run Trace shows each image as a thumbnail ([features/ai.md](features/ai.md)). Like the AI Agent, the node has three optional sub-node ports:
