@@ -109,7 +109,8 @@ export function bandView(connections: ActorConnection[], wired: WiredSubnodes = 
     },
     memory: { text: memory ? 'Remembers across sessions' : 'This conversation', ...(wired.memory && { replacedBy: wired.memory }) },
     // Wired tools are drawn below as sub-nodes; they add, so the column says how many.
-    tools: connections.filter((c) => (c.kind === 'tool' || c.kind === 'knowledge' || c.kind === 'agent') && c.from !== 'flow'),
+    // The ones that ask first lead: with two rows shown, they are what a person most wants to see on the node.
+    tools: connections.filter((c) => (c.kind === 'tool' || c.kind === 'knowledge' || c.kind === 'agent') && c.from !== 'flow').sort((a, b) => Number(Boolean(b.asksFirst)) - Number(Boolean(a.asksFirst))),
     wiredTools: wired.tools ?? 0,
   };
 }
@@ -173,22 +174,22 @@ export function AgentBand({ agentId, data, wired, lead }: { agentId: string; dat
         )}
       </div>
       {/* Straight above the handles: the slots sit at 25%, 50% and 75% of the tile, each column holds its own. */}
-      <div className="grid" style={{ gridTemplateColumns: '38% 24% 38%' }}>
+      <div className="grid" style={{ gridTemplateColumns: '33% 30% 37%' }}>
         <div className="min-w-0 pr-1">
           <Row label={`${who}: ${slot('model')} ${view.model.name ?? 'none'}`} title={view.model.title} href={agentLink(agentId, 'model')}>
             {modelIcon && <NodeIcon icon={modelIcon} size={12} className={cn('mt-px shrink-0', view.model.replacedBy && 'opacity-50')} />}
             <span className="min-w-0">
               {view.model.project ? <span className="block truncate">project default</span> : null}
-              <span className={cn('block truncate', view.model.project && 'text-t3', view.model.replacedBy && 'line-through opacity-70', !view.model.name && !view.model.replacedBy && 'text-t3')}>{view.model.name ?? (view.model.replacedBy ? '' : 'no model')}</span>
-              {view.model.replacedBy && <span className="block truncate text-t3">replaced by {view.model.replacedBy}</span>}
+              <span className={cn('block break-words', view.model.replacedBy ? 'truncate line-through opacity-70' : 'line-clamp-2', view.model.project && 'text-t3', !view.model.name && !view.model.replacedBy && 'text-t3')}>{view.model.name ?? (view.model.replacedBy ? '' : 'no model')}</span>
+              {view.model.replacedBy && <span className="block line-clamp-2 break-words text-t3">replaced by {view.model.replacedBy}</span>}
             </span>
           </Row>
         </div>
         <div className="min-w-0 pr-1">
           <Row label={`${who}: ${slot('memory')} ${view.memory.replacedBy ? `replaced by ${view.memory.replacedBy}` : view.memory.text}`} title={view.memory.replacedBy ? `${view.memory.text} (replaced by ${view.memory.replacedBy} in this flow)` : view.memory.text} href={agentLink(agentId, 'memory')}>
             <span className="min-w-0">
-              <span className={cn('line-clamp-2', view.memory.replacedBy && 'line-through opacity-70')}>{view.memory.text}</span>
-              {view.memory.replacedBy && <span className="block truncate text-t3">replaced by {view.memory.replacedBy}</span>}
+              <span className={cn('break-words', view.memory.replacedBy ? 'block truncate line-through opacity-70' : 'line-clamp-2')}>{view.memory.text}</span>
+              {view.memory.replacedBy && <span className="block line-clamp-2 break-words text-t3">replaced by {view.memory.replacedBy}</span>}
             </span>
           </Row>
         </div>
@@ -202,7 +203,7 @@ export function AgentBand({ agentId, data, wired, lead }: { agentId: string; dat
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1">
                     <span className="truncate">{c.name}</span>
-                    {knowledge && c.documents !== undefined && <span className="shrink-0 text-[9.5px] text-t3">{c.documents}</span>}
+                    {knowledge && c.documents !== undefined && <span className="shrink-0 text-[9.5px] text-t3">{c.documents} {c.documents === 1 ? 'doc' : 'docs'}</span>}
                     {c.asksFirst && <Lock className="size-2.5 shrink-0 text-t3" aria-hidden />}
                   </span>
                 </span>
@@ -210,7 +211,7 @@ export function AgentBand({ agentId, data, wired, lead }: { agentId: string; dat
             );
           })}
           {more.length > 0 ? (
-            <Row label={`${who}: ${more.length} more`} title={view.tools.map((c) => c.name).join(', ')} href={agentLink(agentId, 'capabilities')} className="text-t3">
+            <Row label={`${who}: ${more.length} more`} title={view.tools.map((c) => `${c.name}${c.asksFirst ? ' (asks first)' : ''}`).join(', ')} href={agentLink(agentId, 'capabilities')} className="text-t3">
               +{more.length} more{view.wiredTools > 0 ? ` · + ${view.wiredTools} wired` : ''}
             </Row>
           ) : (

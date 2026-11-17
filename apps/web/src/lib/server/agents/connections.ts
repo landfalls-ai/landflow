@@ -80,8 +80,10 @@ function toolShape(tool: AgentToolConfig): ActorConnection {
   }
 }
 
+type CredentialLookup = { get(id: string): string | undefined };
+
 /** AG12: the name of the first credential a tool is given, as the vault knows it ("credential missing" for a deleted one); never data. */
-function credentialName(tool: AgentToolConfig, known: ReadonlyMap<string, string>): string | undefined {
+function credentialName(tool: AgentToolConfig, known: CredentialLookup): string | undefined {
   const refs = 'credentials' in tool && tool.credentials ? Object.values(tool.credentials) : tool.type === 'knowledge' && !isNodeKnowledge(tool) && tool.credential ? [tool.credential] : [];
   const ref = refs.find((r) => r?.id);
   if (!ref) return undefined;
@@ -91,7 +93,7 @@ function credentialName(tool: AgentToolConfig, known: ReadonlyMap<string, string
 /** AG12: the kind a project's settings can withhold, for a tool of the agent's settings (`projectToolKind`'s rule, on the config). */
 const projectKindOf = (tool: AgentToolConfig): ProjectToolKind => tool.type;
 
-function toolConnection(tool: AgentToolConfig, known: ReadonlyMap<string, string> = new Map()): ActorConnection {
+function toolConnection(tool: AgentToolConfig, known: CredentialLookup = { get: () => undefined }): ActorConnection {
   const shape = toolShape(tool);
   const credential = credentialName(tool, known);
   return { ...shape, toolId: tool.id, ...(tool.requireApproval && { asksFirst: true }), ...(credential && { credential }) };
@@ -125,7 +127,7 @@ export function agentConnections(agent: Agent, skip: { model?: boolean; memory?:
   if (!skip.tools) {
     // Only a tool with a credential reference asks the vault (list() decrypts and counts usage), and only once.
     let names: Map<string, string> | undefined;
-    const known = { get: (id: string) => (names ??= new Map(credentials.list().map((c) => [c.id, c.name]))).get(id) } as ReadonlyMap<string, string>;
+    const known = { get: (id: string) => (names ??= new Map(credentials.list().map((c) => [c.id, c.name]))).get(id) };
     for (const tool of config.tools ?? []) {
       const connection = toolConnection(tool, known);
       const kind = projectKindOf(tool);

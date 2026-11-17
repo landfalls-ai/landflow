@@ -742,7 +742,8 @@ export const useEditor = create<EditorState>((set, get) => {
       if (from.handleType === 'target' && handle.type !== 'main') {
         // Sub-node: under the parent's port, next to its siblings.
         const siblings = state.edges.filter((e) => e.target === anchor.id && e.data?.connectionType !== 'main').length;
-        position = { x: anchor.position.x + siblings * 110, y: anchor.position.y + 190 };
+        // AG12: a tall parent (an agent's band, a team's roster) keeps its sub-nodes clear of its slot labels and + buttons.
+        position = { x: anchor.position.x + siblings * 110, y: anchor.position.y + Math.max(190, (anchor.measured?.height ?? 0) + 40) };
       } else {
         // Next step: one column to the right, branches fanned out by output index.
         const outputs = state.nodeTypes[anchor.data.wf.type]?.descriptor.outputs.filter((p) => p.type === 'main').length ?? 1;
@@ -922,7 +923,9 @@ export const useEditor = create<EditorState>((set, get) => {
       const node = nodes.find((n) => n.id === parent);
       if (!base || !node) continue;
       const left = base.x + widthOf(node) / 2 - ((children.length - 1) * SUBNODE_PITCH + 64) / 2;
-      children.forEach((id, i) => (positions[id] = { x: left + i * SUBNODE_PITCH, y: base.y + 200 }));
+      // AG12: below the slot labels and + buttons of a tall parent (a banded agent or team tile), 200 otherwise.
+      const below = Math.max(200, (node.measured?.height ?? 0) + 48);
+      children.forEach((id, i) => (positions[id] = { x: left + i * SUBNODE_PITCH, y: base.y + below }));
     }
     set((s) => {
       const nodes = s.nodes.map((n) => (positions[n.id] ? { ...n, position: positions[n.id] } : n));

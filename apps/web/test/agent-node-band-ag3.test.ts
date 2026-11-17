@@ -97,6 +97,8 @@ describe('the band on a Run an Agent node', () => {
     expect(container.querySelector('button[aria-label*="Send Email, asks first"]')).toBeTruthy();
     // Two rows only: the knowledge base is behind "+1 more" (its row, with the documents, is on the agent's page).
     expect(text()).toContain('+1 more');
+    // The tool that asks first leads the column, so the two rows shown include it.
+    expect(text().indexOf('Send Email')).toBeLessThan(text().indexOf('Normalize Alert'));
     expect(container.querySelector('[title*="Mailpit SMTP"]')).toBeTruthy();
     expect(container.querySelector('[data-agent-band]')?.className).toContain('border-dashed');
     // No handle of its own: the node still has its four (main in and out, three slots counted apart).
@@ -237,6 +239,31 @@ describe('the card’s draft follows another tab', () => {
     await settle();
     other.close();
     expect(draftReads).toBe(before + 1);
+  });
+});
+
+describe('a created card’s Left row follows the agent’s draft (the ag2 leftover)', () => {
+  it('drops “pick a smtp credential” once another tab saved the pick, and keeps the other lines', async () => {
+    const { AgentCardView } = await import('../src/components/editor/spotlight/agent-card');
+    let credentialSet = false;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const tools = [{ id: 't_mail', name: 'send_email', credentials: credentialSet ? { smtp: { id: 'c1', name: 'Mailpit SMTP' } } : {} }];
+        return new Response(JSON.stringify(/\/api\/agents\/agt_9$/.test(String(url)) ? { agent: { id: 'agt_9', tools } } : {}), { status: 200, headers: { 'content-type': 'application/json' } });
+      }),
+    );
+    const card = { id: 'c', state: 'created', agentId: 'agt_9', name: 'Alert triager', description: 'd', config: { name: 'Alert triager', tools: [] }, tools: [], knowledge: [], practices: [], guardrails: [], notAdded: [], changes: [], cases: [], needs: ['send_email: pick a smtp credential (you have “Mailpit SMTP”)', 'send_email: fill in From Email'], missing: [], rationale: [], checks: [] };
+    await act(async () => root.render(createElement(AgentCardView, { itemId: 'i', card: card as never })));
+    await settle();
+    expect(text()).toContain('pick a smtp credential');
+    credentialSet = true;
+    const other = new BroadcastChannel('landflow-agents');
+    await act(async () => other.postMessage({ type: 'landflow:agent-saved', agentId: 'agt_9' }));
+    await settle();
+    other.close();
+    expect(text()).not.toContain('pick a smtp credential');
+    expect(text()).toContain('fill in From Email');
   });
 });
 
