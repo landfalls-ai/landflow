@@ -16,6 +16,8 @@ import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta, ShortReply } from '..
 import { MAX_FIXES, approveDestinations, productionNote, publishToProduction, testUntilItRuns, undoApplied } from '../test-session'; // SB03:
 import { agentStep, runRow } from '../timeline';
 import { CredentialPicker } from './credential-picker';
+import { BuildSummaryCard } from './build-summary'; // SB15:
+import { summaryText } from '@/lib/shared/draft-summary'; // SB15:
 
 import { ProposalCard, ProposalRow } from './proposal';
 import { provisionalText } from '@/lib/shared/leaked-markup';
@@ -398,6 +400,8 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
   // A session's fix: its row says what it did and opens on the model's words; the prose would say it twice.
   const quietText = Boolean(item.testId) && !live && item.parts.some((p) => p.kind === 'proposal' && p.proposal.state);
   const partsText = item.parts.flatMap((p) => (p.kind === 'text' ? [p.text] : [])).join('\n\n');
+  // SB15: a build's copy text is the summary in words, not only its one sentence.
+  const copyText = [partsText, ...item.parts.flatMap((p) => (p.kind === 'summary' ? [summaryText(p.workflowName, p.summary)] : []))].filter(Boolean).join('\n\n');
   // From the chat stream: the words come in item.text (provisional while streaming), the trace in item.steps.
   const streamed = item.steps !== undefined;
   const provisional = streamed && live && !item.parts.some((p) => p.kind === 'text');
@@ -451,6 +455,9 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
         ) : part.kind === 'ask' ? (
           // SB11:
           <AskRow key={i} itemId={item.id} ask={part.ask} busy={spotlightBusy} />
+        ) : part.kind === 'summary' ? (
+          // SB15:
+          <BuildSummaryCard key={i} summary={part.summary} workflowName={part.workflowName} onOpen={openNodeNamed} />
         ) : null,
       )}
       {!streamed && steps && firstProposal < 0 && <LiveSteps live={steps} />}
@@ -461,7 +468,7 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
         </Button>
       )}
       {/* What answered and how: model · time · steps · tokens · cost; a session's fixes are rows, which say what they did. */}
-      {(item.meta ?? item.done) && !live && !item.testId && <ReplyMeta info={item.meta ?? item.done} copy={partsText || undefined} />}
+      {(item.meta ?? item.done) && !live && !item.testId && <ReplyMeta info={item.meta ?? item.done} copy={copyText || undefined} />}
     </AssistantRow>
   );
 }

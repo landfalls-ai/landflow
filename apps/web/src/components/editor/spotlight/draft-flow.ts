@@ -21,11 +21,11 @@ export async function draftWholeFlow(message: string, build: (prompt: string, si
     const flow = await build(message, abort.signal);
     // The same rule testDraft applies: "Testing it now" only where Spotlight does test the draft by itself.
     const auto = useAutonomous.getState().on && autonomyOf(useEditor.getState().workflowId) === 'auto';
-    // SB02: what the guards left for the person (the full summary is wave sb3's).
-    const skipped = flow.left.length ? ` Left for you: ${flow.left.slice(0, 3).map((l) => l.text).join('; ')}${flow.left.length > 3 ? ` (and ${flow.left.length - 3} more)` : ''}.` : '';
-    const pinned = flow.pinned ? ' Test data is pinned on the trigger.' : '';
+    // SB15: one short sentence, then the summary card (steps, assumed, left as buttons, not possible); the full words are the card's.
+    const steps = flow.summary?.steps.length || flow.nodes;
+    const said = `Built “${flow.name}” in ${steps} ${steps === 1 ? 'step' : 'steps'}${flow.pinned ? ', with test data on the trigger' : ''}.${auto ? ' Testing it now.' : ''}`;
     patch({
-      parts: [{ kind: 'text', text: `Built “${flow.name}” with ${flow.nodes} nodes.${skipped}${pinned} ⌘Z undoes it.${auto ? ' Testing it now.' : ''}` }, { kind: 'action', action: 'test', goal: message }],
+      parts: [{ kind: 'text', text: said }, ...(flow.summary ? [{ kind: 'summary' as const, summary: flow.summary, workflowName: flow.name }] : []), { kind: 'action', action: 'test', goal: message }],
       done: { model: flow.model, durationMs: flow.durationMs, steps: 1 },
     });
     // Autonomous: no "Test and fix" click. It starts once the drafting card is gone (finally, below).
