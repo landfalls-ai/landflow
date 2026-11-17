@@ -271,6 +271,28 @@ describe('Spotlight on an agent ask', () => {
     await vi.waitFor(() => expect(useAssistant.getState().agents.find((a) => a.agentId === 'ag_new')?.taken).toEqual({ deleted: true }));
   });
 
+  it('repeated Creates share one ⌘Z subscription, and it ends with the last watched step', async () => {
+    const { undoWatches } = await import('@/components/editor/spotlight/agent-ask');
+    const subscribe = vi.spyOn(useEditor, 'subscribe');
+    try {
+      for (let i = 0; i < 3; i++) {
+        await designAgentCard(SB00_PR, cardAskFor(SB00_PR)!, { starter: true });
+        const { id, card } = cardOf()!;
+        await createFromCard(id, card);
+        useAssistant.getState().reset();
+      }
+      expect(useEditor.getState().nodes.filter((n) => n.data.wf.type === 'core.messageAgent')).toHaveLength(3);
+      expect(subscribe).toHaveBeenCalledTimes(1);
+      // (The mock import answers one agent id, so the steps share the first step's watch.)
+      expect(undoWatches()).toEqual({ steps: 1, subscribed: true });
+      // Leaving the workflow ends every watch, and the subscription with them.
+      useEditor.setState({ workflowId: 'wf_other' });
+      expect(undoWatches()).toEqual({ steps: 0, subscribed: false });
+    } finally {
+      subscribe.mockRestore();
+    }
+  });
+
   it('a step deleted by hand (not ⌘Z) keeps the agent; a failed smoke test is never published', async () => {
     answers['/api/agents/ag_new/smoke-test'] = () => ({ smoke: { state: 'failed', reason: 'The run ended with an error: no model' } });
     useAutonomous.setState({ on: true });

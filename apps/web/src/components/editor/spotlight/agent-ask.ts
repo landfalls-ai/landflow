@@ -164,17 +164,34 @@ export async function createFromCard(itemId: string, card: AgentCard): Promise<v
   }
 }
 
+/** The starter flows' Run an Agent steps watched for ⌘Z: step id -> its workflow. One store subscription serves them all. */
+const watched = new Map<string, string>();
+let stopWatching: (() => void) | undefined;
+
+/** How many ⌘Z watches are open (the editor store subscription is one, whatever the count). For tests. */
+export const undoWatches = () => ({ steps: watched.size, subscribed: Boolean(stopWatching) });
+
 /**
  * ⌘Z of the starter flow (the editor's own undo, not a Spotlight change) takes the agent back like SB18's Undo: the step is
- * gone and the redo stack grew. A step the person deletes by hand is not an undo and keeps the agent. Watches one workflow.
+ * gone and the redo stack grew. A step the person deletes by hand is not an undo and keeps the agent. A step is watched
+ * until it is gone, taken back or its workflow is left; the one subscription ends with the last watch, so repeated
+ * Creates add no subscriptions.
  */
 function takeBackOnUndo(nodeId: string, workflowId: string): void {
-  const stop = useEditor.subscribe((now, before) => {
-    if (now.workflowId !== workflowId) return stop();
-    const gone = before.nodes.some((n) => n.id === nodeId) && !now.nodes.some((n) => n.id === nodeId);
-    if (!gone) return;
-    stop();
-    if (now.history.future > before.history.future) void takeBackAgents([nodeId], workflowId);
+  watched.set(nodeId, workflowId);
+  if (stopWatching) return;
+  stopWatching = useEditor.subscribe((now, before) => {
+    for (const [id, workflow] of [...watched]) {
+      if (now.workflowId !== workflow) watched.delete(id);
+      else if (before.nodes.some((n) => n.id === id) && !now.nodes.some((n) => n.id === id)) {
+        watched.delete(id);
+        if (now.history.future > before.history.future) void takeBackAgents([id], workflow);
+      }
+    }
+    if (!watched.size) {
+      stopWatching?.();
+      stopWatching = undefined;
+    }
   });
 }
 
