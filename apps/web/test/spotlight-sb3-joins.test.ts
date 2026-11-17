@@ -529,9 +529,9 @@ const CONTRACTS = process.env.LANDFLOW_BACKBONE_CONTRACTS ?? '';
 describe.skipIf(!CONTRACTS || !existsSync(CONTRACTS))('6. the contract copies are byte-identical', () => {
   const pairs: Array<[string, string]> = [
     ['src/lib/shared/build-plan.ts', 'sb3/build-plan.ts'],
-    // Wave ag2 replaced these two contracts (contracts/ag2, checked in agents-ag2-joins.test.ts).
-    ['src/lib/shared/agent-card.ts', 'ag2/agent-card.ts'],
-    ['test/spotlight-scenarios/scenario.ts', 'ag2/spotlight-scenario.ts'],
+    // Wave ag3 replaced these two contracts (contracts/ag3, checked in agents-ag3-joins.test.ts).
+    ['src/lib/shared/agent-card.ts', 'ag3/agent-card.ts'],
+    ['test/spotlight-scenarios/scenario.ts', 'ag3/spotlight-scenario.ts'],
     ['src/lib/shared/spotlight-scope.ts', 'sb2/spotlight-scope.ts'],
     ['src/lib/shared/spotlight-wire.ts', 'sb2/spotlight-wire.ts'],
     ['test/spotlight-scenarios/local-only.cjs', 'sb1/local-only.cjs'],
