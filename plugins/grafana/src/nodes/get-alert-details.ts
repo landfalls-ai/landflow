@@ -64,7 +64,7 @@ export class GetAlertDetails implements INodeType {
 
     // Construct the URL for fetching alert details
     // AG10: Alertmanager v2 has no alert-by-id path; the list takes a filter, so the alert is found by its name.
-    const alertUrl = `${String(url).replace(/\/+$/, '')}/api/v2/alerts?filter=${encodeURIComponent(`alertname="${alertId.replace(/[\\"]/g, '\\$&')}"`)}`;
+    const alertUrl = `${String(url).replace(/\/+$/, '')}/api/v2/alerts?filter=${encodeURIComponent(`alertname="${String(alertId).replace(/[\\"]/g, '\\$&')}"`)}`;
 
     try {
       const response = await ctx.http(alertUrl, {
