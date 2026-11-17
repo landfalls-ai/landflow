@@ -90,6 +90,8 @@ const PLAN_SYSTEM = `You plan workflows for Landflow, an n8n-like automation too
 A plan is: one trigger first, then the steps in order. Items (JSON objects) flow from each step to the next.
 - "steps": the first step is the one trigger (use core.manualTrigger unless the request names a webhook, a schedule, a chat or a form), every other step has a "from": the key of the step it follows (a step that runs after an If or Filter on its false branch adds "output": 1). Keys are "s1", "s2" and so on, the trigger "s1". At most ${PLAN_STEP_LIMIT} steps.
 - "type": exactly one of the node types listed under "Node types offered"; never a type that is not listed. Prefer a node of an app (Linear, Slack) over a generic one when it does the job.
+- Exactly one trigger node: the event that starts the flow (a schedule, a webhook, a chat message, a form, a new record an app reports). Reading or listing records is a step, not a trigger: "every morning, read new Linear issues" is a schedule trigger and then the Linear node that reads the issues. An app's own trigger node is a second trigger, so do not add one for it.
+- Add no step the request does not ask for: no Set, Code or formatting step just to reshape data (the step that needs a field reads it itself).
 - "name": 2–4 words for the canvas. "does": one sentence in the person's words saying what the step does here. "reads": the item fields the step reads, when you know them (like "issues" or "body.total").
 - A chat model, memory or tool for an agent step is its own step with "attach" ("ai_languageModel", "ai_memory" or "ai_tool") and "from" the agent's key.
 - "assumptions": what the request leaves open that you took for granted, one short line each ("every weekday at 8 read as 8:00 on weekdays"). Leave it empty when nothing was open.
@@ -286,12 +288,18 @@ export interface PlanResult {
 
 const problemsText = (problems: PlanProblem[]) => problems.map((p) => `${p.step ? `${p.step}: ` : ''}${p.problem}`).join('; ');
 
+/** A word without its plural or -ing ending, so "posts" and "post" meet. */
+const stem = (w: string) => w.replace(/(ing|es|s)$/, '');
+
 /** For each step, up to three other offered types the search ranks for its words (a trigger only among triggers). */
 export function alternativesFor(plan: BuildPlan, offered: ReadonlyMap<string, NodeTypeInfo>, all: NodeTypeInfo[]): PlanResult['alternatives'] {
   const out: PlanResult['alternatives'] = {};
   plan.steps.forEach((step, index) => {
     const pool = all.filter((t) => (index === 0 ? isTriggerInfo(t) : !isTriggerInfo(t)) && t.type !== step.type);
-    const hits = searchNodes(searchWords(`${step.name} ${step.does}`), pool, 3).filter((h) => h.score >= 3);
+    const words = new Set(searchWords(`${step.name} ${step.does}`).split(' ').map(stem));
+    // Only a node one of whose own words (name, type, keywords) is a word of the step: "post" is not "Postgres".
+    const near = pool.filter((t) => [t.descriptor.displayName, t.type.split('.').pop() ?? '', ...(t.descriptor.keywords ?? [])].join(' ').toLowerCase().split(/[^a-z0-9]+/).some((w) => w.length > 2 && words.has(stem(w))));
+    const hits = searchNodes([...words].join(' '), near, 3).filter((h) => h.score >= MIN_SCORE);
     const own = new Map(pool.map((t) => [t.type, t]));
     const list = hits.map((h) => ({ type: h.type, displayName: own.get(h.type)?.descriptor.displayName ?? h.displayName }));
     // A trigger step always may be any of the offered triggers.

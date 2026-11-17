@@ -546,9 +546,9 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
     if (scenario.via === 'build') {
       const route = await import('@/app/api/ai/build/route');
       const buildModel = (scenario.start?.model ?? model) && { model: scenario.start?.model ?? model };
-      // SB13: staged, as the editor builds from sb3 on: the plan route first, then the build with that plan. `staged` absent: planned in the live form, one-shot in the unit form (sb1's and sb2's scripts); `start.plan` is stage 2's own input (SB14 posts it).
+      // SB13: staged, as the editor builds from sb3 on: the plan route first, then the build with that plan. `staged` absent: planned in the live form, one-shot in the unit form (sb1's and sb2's scripts); `start.plan` is stage 2's own input (SB14 posts it); `LANDFLOW_SPOTLIGHT_STAGED=false` never plans (the one-shot draft, the "before" of a live comparison).
       const planned: { plan?: Record<string, unknown>; stages: Array<{ stage: string; inputTokens: number; promptChars: number }> } = { stages: [] };
-      if (!scenario.start?.plan && (scenario.start?.staged ?? form === 'live')) {
+      if (!scenario.start?.plan && process.env.LANDFLOW_SPOTLIGHT_STAGED !== 'false' && (scenario.start?.staged ?? form === 'live')) {
         const planRoute = await import('@/app/api/ai/build/plan/route');
         const planResponse = await planRoute.POST(post('/api/ai/build/plan', { prompt: scenario.ask, ...buildModel, ...(canvas?.id && { workflowId: canvas.id }) }));
         const planBody = (await planResponse.json()) as { plan?: Record<string, unknown>; stages?: typeof planned.stages; error?: string };
