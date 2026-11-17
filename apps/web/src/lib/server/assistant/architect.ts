@@ -1395,15 +1395,17 @@ function changeClause(change: string, tool: AgentToolConfig): string {
   const piece = clause.split(/,|\s+(?:and|but|then)\s+/i).map((c) => c.trim()).find((c) => names(c, tool)) ?? clause;
   const text = piece.replace(/^(?:(?:also|and|please|now|then|just)\s+)+/i, '').replace(/[\s,.:;!?]+$/, '');
   // AG09: "add Slugify as a tool" configures the agent; it is no task, so the step comes from what the tool does.
-  const left = text
+  // AG09: the shape "a tool that/to/which/for …" is read before its article is stripped.
+  const bare = text
     .replace(/^(?:(?:add|attach|include|install|enable|connect|use)\b|give\s+(?:it|the agent)\b)\s*/i, '')
-    .replace(/\s+(?:as\s+(?:a|an|another|one more)\s+tools?|tools?)\s*$/i, '')
-    .replace(/^(?:the|a|an|another|one more)\s+/i, '');
+    .replace(/\s+(?:as\s+(?:a|an|another|one more)\s+tools?|tools?)\s*$/i, '');
+  const toolShape = /^(?:(?:a|an|the|another)\s+)?tools?\s+(?:that|which|to|for)\b/i.test(bare);
+  const left = bare.replace(/^(?:the|a|an|another|one more)\s+/i, '');
   const wordsLeft = left.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
   const known = new Set([...toolWords(tool), 'tool', 'tools', 'the', 'a', 'an', 'to', 'it', 'too', 'also']);
-  const configAsk = CONFIG_VERB.test(text) && (wordsLeft.every((w) => known.has(w) || toolWords(tool).some((k) => w.replace(/s$/, '') === k.replace(/s$/, ''))) || /^(?:a|an|the|another)\s+tools?\s+(?:that|which|to|for)\b/i.test(left));
+  const configAsk = CONFIG_VERB.test(text) && (wordsLeft.every((w) => known.has(w) || toolWords(tool).some((k) => w.replace(/s$/, '') === k.replace(/s$/, ''))) || toolShape);
   if (configAsk) {
-    const toTask = /^(?:a|an|the|another)\s+tools?\s+to\s+(.+)$/i.exec(left)?.[1];
+    const toTask = /^(?:(?:a|an|the|another)\s+)?tools?\s+to\s+(.+)$/i.exec(bare)?.[1];
     if (toTask) return `asked to ${toTask.split(/\s+/).slice(0, 14).join(' ')}`;
     // the first sentence of what the tool says it is for, without a lead-in such as "Use this to" or "When you need to"
     const first = ('description' in tool && tool.description ? tool.description : '').replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s/)[0].replace(/[\s.!?]+$/, '').replace(/`/g, '');
@@ -1533,6 +1535,14 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
     if (addedLabels.has(need.tool)) return true;
     const own = ownBy.get(need.tool) ?? (base.tools ?? []).find((t) => 'name' in t && t.name === need.tool);
     if (!own) return true; // a need of no tool (the model, a design failure) stays
+    if (need.kind === 'parameter') {
+      // AG09: a kept tool keeps a parameter need (Send Email's From Email) while that parameter is still empty on the base's tool.
+      if (own.type !== 'node') return false;
+      const info = types.find((x) => x.type === own.nodeType);
+      const property = info?.descriptor.properties.find((pr) => new RegExp(`(?:set|fill in) ${escapeRe(pr.displayName)}(?:\\s|$)`).test(need.text));
+      const value = property ? (own.parameters as Record<string, unknown> | undefined)?.[property.name] : undefined;
+      return Boolean(property) && (value === undefined || value === '' || (Array.isArray(value) && !value.length));
+    }
     if (need.kind !== 'credential') return false;
     const slot = /pick an? (.+?) credential/.exec(need.text)?.[1];
     const given = 'credentials' in own ? (own.credentials as Record<string, unknown> | undefined) : undefined;
