@@ -14,7 +14,7 @@ import type { ConversationItem, ConversationItemInput, ConversationPart, Convers
 import { nodeColor, tint } from '@/lib/client/node-style';
 import { cn } from '@/lib/utils';
 import type { AgentConfig, AgentToolConfig } from '@/lib/shared/agents';
-import { guardrailWords, isNodeKnowledge } from '@/lib/shared/agents'; // SB17: guardrailWords
+import { followsPractices, guardrailWords, isNodeKnowledge } from '@/lib/shared/agents'; // SB17: one wording for the guardrails and practices
 import type { AgentCaseDraft } from '@/lib/shared/agent-card'; // SB17:
 import { ARCHITECT, type ArchitectMissing, type ArchitectNeed, type ArchitectRequest, type ArchitectTurn } from '@/lib/shared/agent-architect';
 import { randomFace } from '@/lib/shared/faces';
@@ -310,11 +310,11 @@ function DraftPreview({ draft, seed, fresh, onPick, onCases }: { draft: Draft; s
         )}
       </div>
       {/* SB17: the brief's guardrails, practices and test cases */}
-      {(guardrailWords(c.guardrails).length > 0 || c.practices === 'on') && (
+      {(guardrailWords(c.guardrails).length > 0 || followsPractices(c.practices)) && (
         <div>
           <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Guardrails</h4>
           <ul className="space-y-1">
-            {c.practices === 'on' && (
+            {followsPractices(c.practices) && (
               <li className="flex gap-1.5 text-[12px] leading-snug text-t2">
                 <ShieldCheck className="mt-0.5 size-3 shrink-0 text-gn" /> Follows your approved practices
               </li>

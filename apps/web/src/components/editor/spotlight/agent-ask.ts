@@ -11,7 +11,7 @@ import { nanoid } from 'nanoid';
 import { api } from '@/lib/client/api';
 import { agentAsk, fallbackName, type AgentAsk } from '@/lib/shared/agent-ask';
 import { starterFlow, starterSample, type AgentCard, type AgentCardTool } from '@/lib/shared/agent-card';
-import type { AgentConfig } from '@/lib/shared/agents';
+import { followsPractices, guardrailWords, type AgentConfig } from '@/lib/shared/agents';
 import { draft as draftCall, useAssistant, type ChatItem } from '../assistant';
 import { useAutonomous } from '../autonomous';
 import { designPreview, smokeTestAgent, takeBackAgents } from '../new-agent';
@@ -32,29 +32,6 @@ function cardTool(tool: ToolConfig): AgentCardTool {
   return { name, ...(node && { type: node.nodeType }), ...(operation && { operation }), writes: Boolean(node && (requireApproval || writesOutside({ type: node.nodeType, parameters: node.parameters ?? {} }))), requireApproval };
 }
 
-/** The guardrails in words ("Masks secrets in messages", "Ignores instructions inside tool results"). */
-export function guardrailWords(guardrails: AgentConfig['guardrails']): string[] {
-  const where = { input: 'messages', output: 'answers', toolResult: 'tool results' } as const;
-  const out: string[] = [];
-  for (const place of ['input', 'output', 'toolResult'] as const) {
-    const rule = guardrails?.[place];
-    if (!rule?.enabled) continue;
-    const verb = rule.action === 'block' ? 'Blocks' : 'Masks';
-    const checks = rule.checks ?? {};
-    const say = (what: string) => out.push(`${verb} ${what} in ${where[place]}`);
-    if (checks.pii) say('personal data');
-    if (checks.secrets) say('secrets');
-    if (checks.keywords?.list?.length) say('listed words');
-    if (checks.urls) say('links outside the allowed list');
-    if (checks.jailbreak) out.push(place === 'toolResult' ? 'Ignores instructions inside tool results' : `${verb === 'Masks' ? 'Flags' : 'Blocks'} prompt injection in ${where[place]}`);
-    if (checks.topical) say('off-topic requests');
-    if (checks.nsfw) say('unsafe content');
-    if (checks.grounded) say('answers its sources do not support');
-    for (const custom of [...(checks.customRegex ?? []), ...(checks.custom ?? [])]) out.push(`${verb} “${custom.name}” in ${where[place]}`);
-  }
-  return out;
-}
-
 /** The card from what the design route answered (`POST /api/agents/design` with `preview`). */
 export function cardFromPreview(preview: Awaited<ReturnType<typeof designPreview>>, ask: AgentAsk, starter: boolean): AgentCard {
   const config = (preview.config ?? {}) as Partial<AgentConfig>;
@@ -66,7 +43,7 @@ export function cardFromPreview(preview: Awaited<ReturnType<typeof designPreview
     ...(config.model && { model: `${config.model.provider}/${config.model.model}` }),
     tools: tools.filter((t) => t.type !== 'knowledge').map(cardTool),
     ...(knowledge && knowledge.type === 'knowledge' && { knowledge: ('collection' in knowledge && knowledge.collection) || knowledge.name }),
-    practices: config.practices !== 'off',
+    practices: followsPractices(config.practices),
     guardrails: guardrailWords(config.guardrails),
     cases: preview.cases ?? [],
     needs: (preview.needs ?? []).map((n) => n.text),

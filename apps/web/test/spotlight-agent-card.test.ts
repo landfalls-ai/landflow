@@ -377,3 +377,35 @@ describe('the chat\'s new agent', () => {
     expect(spec?.knowledge).toBeUndefined();
   });
 });
+
+describe('one wording for the guardrails and practices (the agent card and the Agent architect dialog)', () => {
+  it('reads the same for one agent, practices on when the config says nothing and off only when it says off', async () => {
+    const { cardFromPreview } = await import('@/components/editor/spotlight/agent-ask');
+    const { followsPractices, guardrailWords } = await import('@/lib/shared/agents');
+    const { readFileSync } = await import('node:fs');
+    const config = {
+      name: 'PR reviewer',
+      tools: [],
+      guardrails: {
+        input: { enabled: true, action: 'sanitize', reply: '', checks: { secrets: { permissiveness: 'balanced' }, urls: {} } },
+        output: { enabled: true, action: 'block', reply: 'No.', checks: { pii: {} } },
+        toolResult: { enabled: true, action: 'block', reply: 'Ignored.', checks: { jailbreak: { useModel: false } } },
+      },
+    };
+    const words = guardrailWords(config.guardrails as never);
+    expect(words).toEqual(['Masks secrets in messages', 'Masks links outside the allowed list in messages', 'Blocks personal data in answers', 'Ignores instructions inside tool results']);
+    const card = (practices?: 'on' | 'off') => cardFromPreview({ config: { ...config, ...(practices && { practices }) } } as never, { name: 'PR reviewer' } as never, false);
+    // The card reads the words the dialog lists: the same helper, so the same text under the same conditions.
+    expect(card().guardrails).toEqual(words);
+    expect(card().practices).toBe(followsPractices(undefined));
+    expect(card().practices).toBe(true);
+    expect(card('on').practices).toBe(true);
+    expect(card('off').practices).toBe(false);
+    expect(followsPractices('off')).toBe(false);
+    // The dialog (components/agents/architect.tsx) uses those two helpers and no condition of its own.
+    const dialog = readFileSync(new URL('../src/components/agents/architect.tsx', import.meta.url), 'utf8');
+    expect(dialog).toContain('followsPractices(c.practices)');
+    expect(dialog).toContain('guardrailWords(c.guardrails)');
+    expect(dialog).not.toContain("c.practices === 'on'");
+  });
+});

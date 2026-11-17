@@ -111,7 +111,7 @@ dialog's and Spotlight's design) is made to a brief in code (`architect.ts`, mar
 - **Guardrail defaults.** Every draft gets an input guardrail that masks secrets in messages (`sanitize`, balanced), and,
   when it has any tool, a tool-result guardrail that blocks text that looks like instructions
   (`jailbreak` with `useModel: false`: pattern checks only, no extra model call). A draft's own guardrails are kept. The
-  preview lists them in words ("Masks secrets in messages", "Ignores instructions inside tool results").
+  preview lists them in words ("Masks secrets in messages", "Ignores instructions inside tool results"). The architect's preview and Spotlight's agent card use one helper for those words (`guardrailWords`) and one condition for "Follows your approved practices" (`followsPractices`: on unless the config says `off`, as a run reads it).
 - **Test cases.** Each proposal asks for 3 to 5 cases, one plain line each (`what a person would send => what a right
   answer says`; at most 5, each input under 4 000 characters). With fewer than 3 the architect makes one small
   follow-up call for cases alone (counted in the same scope); still fewer, the draft says "Add test cases on the

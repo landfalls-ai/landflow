@@ -319,24 +319,32 @@ export const DEFAULT_BRIEF_GUARDRAILS: { input: AgentGuardrail; toolResult: Agen
   },
 };
 
-// SB17: each enabled rule in words, for the draft preview ("Masks secrets in messages", "Ignores instructions inside tool results").
+// Each enabled rule in words, for the draft preview in the Agent architect's dialog and Spotlight's agent card ("Masks
+// secrets in messages", "Ignores instructions inside tool results"): one wording for both.
 export function guardrailWords(guardrails: AgentGuardrails | undefined): string[] {
-  const where = { input: 'in messages', output: 'in answers', toolResult: 'in tool results' } as const;
-  const words: string[] = [];
-  for (const key of ['input', 'output', 'toolResult'] as const) {
-    const rule = guardrails?.[key];
+  const where = { input: 'messages', output: 'answers', toolResult: 'tool results' } as const;
+  const out: string[] = [];
+  for (const place of ['input', 'output', 'toolResult'] as const) {
+    const rule = guardrails?.[place];
     if (!rule?.enabled) continue;
-    const masks = rule.action === 'sanitize';
-    const checks = rule.checks;
-    if (checks.pii) words.push(`${masks ? 'Masks' : 'Blocks'} personal data ${where[key]}`);
-    if (checks.secrets) words.push(`${masks ? 'Masks' : 'Blocks'} secrets ${where[key]}`);
-    if (checks.jailbreak) words.push(key === 'toolResult' ? 'Ignores instructions inside tool results' : `Blocks prompt injection ${where[key]}`);
-    if (checks.keywords) words.push(`${masks ? 'Masks' : 'Blocks'} listed words ${where[key]}`);
-    if (checks.urls) words.push(`Limits links ${where[key]}`);
-    if (checks.topical || checks.grounded || checks.nsfw || checks.customRegex || checks.custom) words.push(`Checks ${where[key]} with extra rules`);
+    const verb = rule.action === 'block' ? 'Blocks' : 'Masks';
+    const checks = rule.checks ?? {};
+    const say = (what: string) => out.push(`${verb} ${what} in ${where[place]}`);
+    if (checks.pii) say('personal data');
+    if (checks.secrets) say('secrets');
+    if (checks.keywords?.list?.length) say('listed words');
+    if (checks.urls) say('links outside the allowed list');
+    if (checks.jailbreak) out.push(place === 'toolResult' ? 'Ignores instructions inside tool results' : `${verb === 'Masks' ? 'Flags' : 'Blocks'} prompt injection in ${where[place]}`);
+    if (checks.topical) say('off-topic requests');
+    if (checks.nsfw) say('unsafe content');
+    if (checks.grounded) say('answers its sources do not support');
+    for (const custom of [...(checks.customRegex ?? []), ...(checks.custom ?? [])]) out.push(`${verb} “${custom.name}” in ${where[place]}`);
   }
-  return words;
+  return out;
 }
+
+/** Whether approved practices go into the agent's prompt: on unless the config says `off` (an absent value is on, as the run reads it). */
+export const followsPractices = (practices: AgentConfig['practices']): boolean => practices !== 'off';
 
 export type AnswerLength = 'sentence' | 'paragraph' | 'detailed';
 
