@@ -23,7 +23,7 @@ import { registryLookup } from '@/lib/server/assistant/ops';
 import { agentStore } from '@/lib/server/agents/store';
 import { listCases } from '@/lib/server/agents/eval-gate'; // SB17:
 import { guardrailWords } from '@/lib/shared/agents'; // SB17:
-import { agentAsk, askCatalog, fallbackName } from '@/lib/shared/agent-ask'; // SB16: AG02: fallbackName
+import { agentAsk, agentChangeAsk, askCatalog, fallbackName } from '@/lib/shared/agent-ask'; // SB16: AG02: fallbackName; AG04: agentChangeAsk
 import { readFileSync } from 'node:fs'; // AG02:
 import { builderModel } from '@/lib/server/assistant/agent-resources'; // AG02:
 import { starterFlow, starterSample } from '@/lib/shared/agent-card'; // SB16:
@@ -757,6 +757,9 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
           }
         }
       }
+    } else if (scenario.via === 'agent-revise') {
+      // AG04: what the editor does with a typed change to an agent. `start.card`: the earlier ask is designed as a pending card, then `ask` is typed under it: a change revises the card in place, a question goes to the chat (answered, the card as it was). `start.agent`: the agent exists (imported, published) and `ask` is typed on its page: the change card, then Apply (the draft only).
+      await reviseVia(scenario, form, outcome, { script, model, options, designed: () => (fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 0) });
     } else {
       const route = await import('@/app/api/assistant/agent/route');
       const response = await route.POST(post('/api/assistant/agent', { messages: [{ role: 'user', content: scenario.ask }], ...(model && { model }) }));
@@ -783,6 +786,108 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
   outcome.sent = options.echo ? options.echo.log.slice(echoBefore) : [];
   return outcome;
 }
+
+// AG04:
+/** The TypeScript plugins a scenario's `start.plugins` names that run in-process in the unit form (the Go and Python ones are the live form's endpoints). */
+const IN_PROCESS: Record<string, string> = { 'text-toolkit': 'text-toolkit', grafana: 'grafana', triage: 'triage', messaging: 'messaging' };
+const loaded = new Set<string>();
+
+async function withPlugins(ids: string[] | undefined): Promise<void> {
+  for (const id of ids ?? []) {
+    const dir = IN_PROCESS[id];
+    if (!dir || loaded.has(id)) continue;
+    loaded.add(id);
+    // A computed path: the plugins are packages of their own, outside this app's type roots.
+    const path = ['..', '..', '..', '..', 'plugins', dir, 'src', 'main'].join('/');
+    const { plugin } = (await import(/* @vite-ignore */ new URL(path, import.meta.url).href)) as { plugin: Parameters<typeof registry.registerBuiltin>[0] };
+    if (!registry.nodeTypes().some((t) => t.pluginId === id)) registry.registerBuiltin(plugin);
+  }
+}
+
+/** The `agent-revise` via (contracts/ag1/spotlight-scenario.ts): the design route's preview with `base` and `change`, then Apply. */
+async function reviseVia(scenario: Scenario, form: Form, outcome: Outcome, ctx: { script: ScriptTurn[] | undefined; model: string | undefined; options: RunOptions; designed: () => number }): Promise<void> {
+  await withPlugins(scenario.start?.plugins);
+  const designed = await import('@/app/api/agents/design/route');
+  const design = async (body: Record<string, unknown>) => {
+    const response = await designed.POST(post('/api/agents/design', { preview: true, ...(ctx.model && { model: ctx.model }), ...body }));
+    return { ok: response.ok, body: (await response.json()) as { config?: Partial<AgentConfig>; changes?: string[]; error?: string } };
+  };
+  const model = scenario.start?.model ?? ctx.model;
+  const startCard = scenario.start?.card;
+  if (startCard) {
+    // The pending card: the earlier ask, designed as the editor's `designAgentCard` does.
+    const ask = agentAsk(startCard, []);
+    if (!ask) {
+      outcome.error = 'start.card is not an agent ask';
+      return;
+    }
+    const first = await design({ name: ask.name ?? 'New agent', description: ask.description, instructions: '', ...(ask.tools.length && { tools: ask.tools }), ...(model && { model }) });
+    if (!first.ok || !first.body.config) {
+      outcome.error = first.body.error ?? 'design failed';
+      return;
+    }
+    outcome.card = { starter: true };
+    const config = first.body.config;
+    if (agentChangeAsk(scenario.ask) === 'question') {
+      // A question under the card goes to the chat: answered, never applied; the card is as it was.
+      const empty = { id: 'ag04-empty', name: 'Untitled workflow', active: false, nodes: [], connections: [], pinData: {}, settings: {} } as unknown as Workflow;
+      outcome.before = empty;
+      const rest = scriptedModel((ctx.script ?? []).slice(ctx.designed()));
+      const result = await chatOnce({ ask: echoedAsk(scenario.ask, ctx.options), workflow: empty, model: scenario.start?.model }, form, ctx.script ? rest : undefined, ctx.options);
+      Object.assign(outcome, { text: result.text, tools: result.tools, proposals: result.proposals, asked: result.asked, offers: result.offers, ...(result.error && { error: result.error }) });
+      outcome.after = applyAsTheEditor(empty, result.proposals, scenario.start?.autonomy);
+      outcome.agents.push(agentOf(config));
+      outcome.modelCalls = ctx.designed() + result.calls;
+      return;
+    }
+    const revised = await design({ name: String(config.name ?? 'New agent'), description: String(config.description ?? ''), instructions: '', base: { config }, change: scenario.ask });
+    if (!revised.ok || !revised.body.config) {
+      outcome.error = revised.body.error ?? 'revise failed';
+      return;
+    }
+    outcome.card = { starter: true, changes: revised.body.changes ?? [] };
+    outcome.text = (revised.body.changes ?? []).join('; ') || 'No change';
+    outcome.agents.push(agentOf(revised.body.config));
+    outcome.modelCalls = ctx.designed();
+    return;
+  }
+  const existing = scenario.start?.agent;
+  if (!existing) {
+    outcome.error = 'agent-revise needs start.card or start.agent';
+    return;
+  }
+  // The agent exists and is published; its page asks for the change.
+  const imported = await (await import('@/app/api/agents/import/route')).POST(post('/api/agents/import', { config: existing }));
+  const made = (await imported.json()) as { agent?: AgentConfig & { id: string }; error?: string };
+  if (!imported.ok || !made.agent) {
+    outcome.error = made.error ?? `import ${imported.status}`;
+    return;
+  }
+  const id = made.agent.id;
+  const publishRoute = await import('@/app/api/agents/[id]/publish/route');
+  await publishRoute.POST(post(`/api/agents/${id}/publish`, {}), { params: Promise.resolve({ id }) });
+  const versionBefore = agentStore.get(id)?.published?.version;
+  const publishedBefore = JSON.stringify(agentStore.get(id)?.published?.config);
+  if (agentChangeAsk(scenario.ask) !== 'change') {
+    outcome.error = 'the ask is not a change';
+    return;
+  }
+  const revised = await design({ name: made.agent.name, description: '', instructions: '', base: { agentId: id }, change: scenario.ask });
+  if (!revised.ok || !revised.body.config) {
+    outcome.error = revised.body.error ?? 'revise failed';
+    return;
+  }
+  outcome.card = { starter: false, changes: revised.body.changes ?? [] };
+  outcome.text = (revised.body.changes ?? []).join('; ') || 'No change';
+  // Apply: the draft only (PUT), never a publish.
+  const put = await (await import('@/app/api/agents/[id]/route')).PUT(new Request(`http://localhost/api/agents/${id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(revised.body.config) }), { params: Promise.resolve({ id }) });
+  const saved = agentStore.get(id);
+  outcome.agents.push(agentOf((saved ?? revised.body.config) as Partial<AgentConfig>, Boolean(saved?.published), 0, id));
+  outcome.revised = { agentId: id, savedDraft: put.ok && JSON.stringify(saved?.tools) === JSON.stringify(revised.body.config.tools), published: saved?.published?.version !== versionBefore || JSON.stringify(saved?.published?.config) !== publishedBefore };
+  outcome.modelCalls = ctx.designed();
+}
+
+const echoedAsk = (text: string, options: RunOptions) => echoed(text, options);
 
 /** A short name for a designed agent, from the ask's own words. */
 function nameOfAsk(ask: string): string {

@@ -12,6 +12,7 @@ import { MENTION_TYPES } from '@/lib/shared/mentions';
 export type SpotlightMode =
   | { kind: 'build'; workflowId: string; name: string }
   | { kind: 'brain'; pageId?: string; name?: string }
+  | { kind: 'agent'; agentId: string; name: string } // AG04: an agent's page: ask for a change to it, or ask about it
   | { kind: 'about'; ref: { type: string; id: string; name: string; workflowId?: string } };
 
 /** The detail of the `landflow:ask-about` window event (C10), typed here so nothing imports from the sender. */
@@ -56,20 +57,31 @@ export function editorWorkflowId(path: string): string | undefined {
 
 export const isEditorRoute = (path: string) => editorWorkflowId(path) !== undefined;
 
+// AG04:
+const AGENT_ROUTE = /^\/agents\/([^/?#]+)\/?$/;
+
+/** The id of the agent when the path is its page (`/agents/<id>`; `/agents/new`, `/agents/teams` and a team's page are not). */
+export function agentPageId(path: string): string | undefined {
+  const id = AGENT_ROUTE.exec(path)?.[1];
+  return id && id !== 'new' && id !== 'teams' ? decodeURIComponent(id) : undefined;
+}
+
 /** The mode a route gives: the editor builds, `/brain*` and everywhere else asks the brain (the general Q&A). */
-export function modeForRoute(path: string, ctx: { workflowName?: string; brainFile?: BrainFile } = {}): Exclude<SpotlightMode, { kind: 'about' }> {
+export function modeForRoute(path: string, ctx: { workflowName?: string; agentName?: string /* AG04: */; brainFile?: BrainFile } = {}): Exclude<SpotlightMode, { kind: 'about' }> {
   const workflowId = editorWorkflowId(path);
   if (workflowId) return { kind: 'build', workflowId, name: ctx.workflowName?.trim() || 'this workflow' };
+  const agentId = agentPageId(path); // AG04:
+  if (agentId) return { kind: 'agent', agentId, name: ctx.agentName?.trim() || 'this agent' };
   const file = path === '/brain' || path.startsWith('/brain/') ? ctx.brainFile : undefined;
   return file?.page ? { kind: 'brain', pageId: file.ref, name: file.name } : { kind: 'brain' };
 }
 
 /** The mode with an ask-about taken in: it wins over the route until its chip is removed. */
-export function spotlightMode(path: string, state: Pick<SpotlightState, 'about' | 'brainFile' | 'askInstead'>, workflowName?: string): SpotlightMode {
+export function spotlightMode(path: string, state: Pick<SpotlightState, 'about' | 'brainFile' | 'askInstead'>, workflowName?: string, agentName?: string /* AG04: */): SpotlightMode {
   if (state.about) return { kind: 'about', ref: state.about.ref };
-  const mode = modeForRoute(path, { ...(workflowName && { workflowName }), ...(state.brainFile && { brainFile: state.brainFile }) });
-  // "Ask the brain instead" on the editor.
-  return mode.kind === 'build' && state.askInstead ? { kind: 'brain' } : mode;
+  const mode = modeForRoute(path, { ...(workflowName && { workflowName }), ...(agentName && { agentName }), ...(state.brainFile && { brainFile: state.brainFile }) });
+  // "Ask the brain instead" on the editor, and on an agent's page (AG04).
+  return (mode.kind === 'build' || mode.kind === 'agent') && state.askInstead ? { kind: 'brain' } : mode;
 }
 
 /** Whether the shell panel shows: open, and not on the editor (whose column is the builder) unless asked for there. */

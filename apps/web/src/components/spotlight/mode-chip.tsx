@@ -1,7 +1,7 @@
 'use client';
 /** The chip in Spotlight's header that says what it is doing here (docs/spotlight.md#one-spotlight). */
 import { useEffect, useRef, useState } from 'react';
-import { Brain, ChevronDown, Hammer, Sparkles } from 'lucide-react';
+import { Brain, ChevronDown, Hammer, Pencil, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { SpotlightMode } from './context';
 
@@ -14,10 +14,12 @@ export function chipLabel(mode: SpotlightMode): string {
       return 'Asking the brain';
     case 'about':
       return `About ${mode.ref.name}`;
+    case 'agent': // AG04:
+      return `Changing ${mode.name}`;
   }
 }
 
-const ICONS = { build: Hammer, brain: Brain, about: Sparkles } as const;
+const ICONS = { build: Hammer, brain: Brain, about: Sparkles, agent: Pencil /* AG04: */ } as const;
 
 /** With `switchTo` the chip is a button that offers the other mode ("Ask the brain instead"); without, it only says. */
 export function ModeChip({ mode, switchTo, className }: { mode: SpotlightMode; switchTo?: { label: string; run: () => void }; className?: string }) {

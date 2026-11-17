@@ -63,6 +63,7 @@ import { AgentLastRuns } from '../run-trace/run-line';
 import type { ToolEntry } from './timeline';
 import { TriggersCard } from './triggers-card';
 import { useAgentData, useAgentList } from './use-agent-data';
+import { AGENT_CHANGED } from '@/lib/client/agent-change'; // AG04:
 import { BackLink } from '../shell/page-header';
 import { ExportPluginDialog } from './export-plugin-dialog';
 import { AvailabilityDialog } from './availability-dialog';
@@ -272,6 +273,26 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
         setDraft(config);
       })
       .catch((e: Error) => setLoadError(e.message));
+  }, [agentId]);
+
+  // AG04: Spotlight applied a change to this agent's draft (or published it): show the saved draft, not the one on screen, and drop an edit still waiting to save over it.
+  useEffect(() => {
+    const reload = (e: Event) => {
+      if ((e as CustomEvent<{ agentId?: string }>).detail?.agentId !== agentId) return;
+      clearTimeout(timer.current);
+      dirty.current = false;
+      api<{ agent: Agent }>(`/api/agents/${agentId}`)
+        .then(({ agent }) => {
+          setAgent(agent);
+          const config = configOf(agent);
+          latest.current = config;
+          setDraft(config);
+          setSave('saved');
+        })
+        .catch(() => {});
+    };
+    window.addEventListener(AGENT_CHANGED, reload);
+    return () => window.removeEventListener(AGENT_CHANGED, reload);
   }, [agentId]);
 
   useEffect(() => {

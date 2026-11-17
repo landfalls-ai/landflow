@@ -8,6 +8,9 @@
  * (Spotlight's agent card shows it; Create then imports the config).
  * AG02: both answers add `notAdded` (the tools the ask named that the agent did not get, with why) and `models` (the `provider/model` names a
  * card's Model select offers, the builder model first); the body's `ask` is the person's whole message.
+ * AG04: with `preview: true`, `base` (`{ agentId }` of an agent the caller can edit, or `{ config }` of a pending card) and `change`
+ * (what to change, in words) the answer is the changed config and `changes` (what differs from the base, one line each); nothing
+ * is saved. `base` without `change` (or the reverse) or without `preview` is 400; an agent the caller cannot edit is 404.
  */
 import { z } from 'zod';
 import { randomFace } from '@/lib/shared/faces';
@@ -17,7 +20,9 @@ import { resolveSpotlightModel } from '@/lib/server/assistant/models-list'; // S
 import { allowedTypes } from '@/lib/server/assistant/scope';
 import { addCase } from '@/lib/server/agents/eval-gate'; // SB17:
 import { agentUsedBy, removeAgent } from '@/lib/server/agents/remove'; // SB18:
-import { agentStore } from '@/lib/server/agents/store';
+import { agentStore, configOf } from '@/lib/server/agents/store';
+import { agentChanges } from '@/lib/shared/agent-changes'; // AG04:
+import type { AgentConfig } from '@/lib/shared/agents'; // AG04:
 import { isUsageCapError } from '@/lib/server/ai-usage';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { canResource } from '@/lib/server/projects/access'; // SB18:
@@ -41,27 +46,42 @@ const Body = z.object({
   ask: z.string().trim().min(1).max(4000).optional(),
   // SB16: answer the design without saving an agent (Spotlight's agent card).
   preview: z.boolean().optional(),
+  // AG04: a change to an agent that exists (`agentId`) or to a pending card (`config`): both or neither, and only as a preview.
+  base: z.union([z.object({ agentId: z.string().min(1).max(200) }), z.object({ config: z.record(z.string(), z.unknown()) })]).optional(),
+  change: z.string().trim().min(1).max(4000).optional(),
 });
 
 export const POST = handler(async (request: Request) => {
   const parsed = await parseBody(request, Body);
   if (!parsed.ok) return parsed.response;
+  // AG04: `base` and `change` come together and only answer a preview; an agent the caller cannot edit is not found.
+  const { base, change } = parsed.data;
+  if (Boolean(base) !== Boolean(change)) return error('Send both base and change, or neither', 400);
+  if (base && !parsed.data.preview) return error('A change is only designed as a preview: set preview to true', 400);
+  let baseConfig: Record<string, unknown> | undefined;
+  if (base && 'agentId' in base) {
+    const current = agentStore.get(base.agentId);
+    if (!current || !canResource(routeActor(), 'agent', base.agentId, 'update')) return error('Agent not found', 404);
+    baseConfig = configOf(current) as unknown as Record<string, unknown>;
+  } else if (base) baseConfig = base.config;
   const picked = await resolveSpotlightModel(parsed.data.model); // SB19:
   if ('error' in picked) return error(picked.error, 400); // SB19:
   const actor = routeActor();
   const resources = await agentResources(actor);
   let design: Awaited<ReturnType<typeof designAgent>>;
   try {
-    design = await designAgent(parsed.data, { model: picked.model, types: allowedTypes(undefined, actor), actor, resources, signal: request.signal });
+    design = await designAgent({ ...parsed.data, base: baseConfig as Partial<AgentConfig> | undefined /* AG04: */ }, { model: picked.model, types: allowedTypes(undefined, actor), actor, resources, signal: request.signal });
   } catch (caught) {
     // The caller's AI usage cap: say so, and create no agent (Spotlight shows the message on the step).
     if (isUsageCapError(caught)) return error(caught.message, 429);
     throw caught;
   }
   const models = resources.models.map((m) => `${m.provider}/${m.model}`); // AG02: the card's Model select, the builder model first
-  const config = { avatar: { kind: 'face' as const, face: randomFace(parsed.data.name) }, ...design.config };
+  const config = baseConfig ? design.config : { avatar: { kind: 'face' as const, face: randomFace(parsed.data.name) }, ...design.config }; // AG04: a change keeps the base's own look
   if (parsed.data.preview) {
     // SB16: the card's preview: a face to show, nothing saved; SB17's brief's cases come with it.
+    // AG04: a change also says what it changes from the base; nothing is saved.
+    if (baseConfig) return json({ config, changes: agentChanges(baseConfig, config as Record<string, unknown>), needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: [], notAdded: design.notAdded, models /* AG02: */ });
     return json({ config, needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: design.cases ?? [], notAdded: design.notAdded, models /* AG02: */ });
   }
   const agent = createInProject(request, 'agent', () => agentStore.create(config), (a) => a.id);

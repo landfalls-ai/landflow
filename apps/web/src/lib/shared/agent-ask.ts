@@ -265,3 +265,21 @@ export function withAskedTools(ops: unknown, message: string, nodeNames: string[
     return op;
   });
 }
+
+// AG04:
+/** A change in words, as the first words of a clause: "add Slugify as a tool", "also send it to Slack", "use Haiku", "it should be shorter". */
+const AG04_CHANGE =
+  /^(?:(?:please|pls|kindly|ok(?:ay)?|so|hey|just|now|also|then|and|go ahead and|(?:can|could|would|will) (?:you|we)(?: please)?|i(?:'d| would)? (?:want|need|like)(?: you| it)? to|i (?:want|need)|let'?s)\b[,\s]*)*(?:add|remove|delete|drop|use|make|call|rename|change|set|switch|swap|replace|send|post|include|give|let|allow|stop|keep|enable|disable|limit|require|ask|connect|attach|tell|update|shorten|lengthen|extend|reduce|increase|turn|put|don't|do not|never|always|only|it should|it must|the agent should|the agent must)\b/i;
+
+/**
+ * What a message typed about an agent that exists (or a card not yet created) asks: `'question'` ("why does it need the Hash
+ * tool?": answer it, change nothing), `'change'` ("add Slugify as a tool", "use Haiku", "call it Alert triager"), or undefined
+ * (neither: "create an agent that …" is a new agent's ask, and anything else is left to the chat). Deterministic and pure,
+ * like `askKind`: the model never decides it (docs/assistant.md "Changing an agent").
+ */
+export function agentChangeAsk(message: string): 'question' | 'change' | undefined {
+  const text = message.trim();
+  if (!text || agentAsk(text)) return undefined;
+  if (askKind(text) === 'question') return 'question';
+  return text.split(/[.!?\n;]+/).some((clause) => AG04_CHANGE.test(clause.trim())) ? 'change' : undefined;
+}

@@ -20,8 +20,11 @@ import { Sheet } from '../ui/sheet';
 import { usePhone } from '@/lib/client/use-phone';
 import { isChromelessPage } from '@/lib/shared/auth-paths';
 import { listenAskAbout, takeAskAbout } from './ask-about-listener';
+import { AGENT_CHANGED } from '@/lib/client/agent-change'; // AG04:
+import { api } from '@/lib/client/api'; // AG04:
 import {
   closeSpotlight,
+  agentPageId, // AG04:
   isEditorRoute,
   isMac,
   keyAction,
@@ -37,6 +40,7 @@ import {
   type SpotlightMode,
 } from './context';
 import { ModeChip } from './mode-chip';
+import { AgentChangePanel } from './agent-change-panel'; // AG04:
 
 const WIDTH_KEY = 'landflow-shell-spotlight-width';
 export const PANEL_WIDTH = { min: 320, default: 360, max: 560 } as const;
@@ -75,6 +79,27 @@ function usePanelWidth(): [number, (w: number, keep?: boolean) => void] {
   ];
 }
 
+// AG04: the name of the agent whose page this is, for the chip ("Changing Alert triager"); fetched while the panel shows, and again when a change renames it.
+function useAgentName(agentId: string | undefined, enabled: boolean): string | undefined {
+  const [named, setNamed] = useState<{ id: string; name: string }>();
+  useEffect(() => {
+    if (!agentId || !enabled) return;
+    let live = true;
+    const load = () =>
+      api<{ agent: { name: string } }>(`/api/agents/${agentId}`)
+        .then(({ agent }) => live && setNamed({ id: agentId, name: agent.name }))
+        .catch(() => {});
+    void load();
+    const again = (e: Event) => (e as CustomEvent<{ agentId?: string }>).detail?.agentId === agentId && void load();
+    window.addEventListener(AGENT_CHANGED, again);
+    return () => {
+      live = false;
+      window.removeEventListener(AGENT_CHANGED, again);
+    };
+  }, [agentId, enabled]);
+  return named && named.id === agentId ? named.name : undefined;
+}
+
 /** The mounted-once host: keys, the ask-about event, the desktop column and the phone sheet. */
 export function ShellSpotlight() {
   const pathname = usePathname();
@@ -87,6 +112,8 @@ export function ShellSpotlight() {
   const chromeless = !viewer || isChromelessPage(pathname);
   const editor = isEditorRoute(pathname);
   const shows = !chromeless && shellPanelShows(pathname, state);
+  const agentId = agentPageId(pathname); // AG04:
+  const agentName = useAgentName(agentId, shows);
   const stateRef = useRef({ state, pathname });
   stateRef.current = { state, pathname };
 
@@ -114,8 +141,8 @@ export function ShellSpotlight() {
 
   // Leaving the editor drops "ask the brain instead": the next editor starts as the builder.
   useEffect(() => {
-    if (!editor) setSpotlightState((s) => (s.askInstead ? { ...s, askInstead: false } : s));
-  }, [editor]);
+    if (!editor && !agentId) setSpotlightState((s) => (s.askInstead ? { ...s, askInstead: false } : s)); // AG04: an agent's page keeps it too
+  }, [editor, agentId]);
 
   // Toasts keep clear of the column (the editor does the same for its own).
   useEffect(() => {
@@ -126,8 +153,8 @@ export function ShellSpotlight() {
   }, [shows, phone, width]);
 
   if (chromeless || !shows) return null;
-  const mode = spotlightMode(pathname, state);
-  const switchTo = switchFor(mode, editor);
+  const mode = spotlightMode(pathname, state, undefined, agentName);
+  const switchTo = switchFor(mode, editor, agentId ? { id: agentId, name: agentName ?? 'this agent' } : undefined /* AG04: */);
   const panel = <PanelBody mode={mode} conversation={conversation} file={state.brainFile} about={state.about?.starters} />;
   // On the Brain page a link in an answer opens in the workbench (a route change would remount it).
   // (Always the Provider: entering or leaving /brain must not remount the panel and lose a half-typed question.)
@@ -220,19 +247,25 @@ function PanelBody({ mode, conversation, file, about }: { mode: SpotlightMode; c
       <AskPanel {...common} subject={tag} starters={about?.length ? about : bubblesFor()} />
     );
   }
+  // AG04: on an agent's page: ask for a change to it, or ask about it.
+  if (mode.kind === 'agent') return <AgentChangePanel agentId={mode.agentId} name={mode.name} onClose={closeSpotlight} conversation={conversation} {...(heading && { heading })} {...(file?.model && { model: file.model })} starters={[]} />;
   const here = mode.kind === 'brain' && mode.pageId && file?.page ? file : undefined;
   return <AskPanel {...common} {...(here && { about: { ref: here.ref, name: here.name } })} starters={bubblesFor(file)} />;
 }
 
 /** The header chip with its "instead" offer, where the shell can make one. */
 function ModeChipFor({ mode }: { mode: SpotlightMode }) {
-  const switchTo = switchFor(mode, isEditorRoute(usePathname()));
+  const path = usePathname();
+  const switchTo = switchFor(mode, isEditorRoute(path), agentPageId(path) /* AG04: */ ? { id: agentPageId(path)!, name: mode.kind === 'agent' ? mode.name : 'this agent' } : undefined);
   return <ModeChip mode={mode} {...(switchTo && { switchTo })} />;
 }
 
 /** The other mode a chip offers: from about, the general brain; on the editor (the brain was asked for there), the builder. */
-export function switchFor(mode: SpotlightMode, editor: boolean): { label: string; run: () => void } | undefined {
+export function switchFor(mode: SpotlightMode, editor: boolean, agent?: { id: string; name: string } /* AG04: */): { label: string; run: () => void } | undefined {
   if (mode.kind === 'about')
-    return { label: 'Ask the brain instead', run: () => setSpotlightState((s) => ({ ...withoutAbout(s), open: true, ...(editor && { askInstead: true }) })) };
+    return { label: 'Ask the brain instead', run: () => setSpotlightState((s) => ({ ...withoutAbout(s), open: true, ...((editor || agent) && { askInstead: true }) })) };
+  // AG04: on an agent's page the chip offers the brain, and from the brain the change panel again.
+  if (agent && mode.kind === 'agent') return { label: 'Ask the brain instead', run: () => setSpotlightState((s) => ({ ...s, open: true, askInstead: true })) };
+  if (agent && mode.kind === 'brain' && !editor) return { label: `Change ${agent.name} instead`, run: () => setSpotlightState((s) => ({ ...s, open: true, askInstead: false })) };
   return editor ? { label: 'Build here instead', run: showBuilderInstead } : undefined;
 }

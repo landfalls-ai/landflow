@@ -17,6 +17,7 @@ import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta, ShortReply } from '..
 import { MAX_FIXES, approveDestinations, productionNote, publishToProduction, testUntilItRuns, undoApplied } from '../test-session'; // SB03:
 import { agentStep, runRow } from '../timeline';
 import { AgentCardView } from './agent-card'; // SB16:
+import { reviseAgentCard } from './agent-ask'; // AG04:
 import { CredentialPicker } from './credential-picker';
 import { PlanCard } from './plan-card'; // SB13:
 import { BuildSummaryCard } from './build-summary'; // SB15:
@@ -367,11 +368,21 @@ function ActionView({ itemId, action }: { itemId: string; action: ReplyAction })
 }
 
 /** Try again after a failed reply: the same message, sent again in its place; `resume` carries on from the step it stopped at. */
-function retryReply(replyId: string, resume?: { checkpoint: string }) {
+export function retryReply(replyId: string, resume?: { checkpoint: string }) {
   const { items, pending } = useAssistant.getState();
   const at = items.findIndex((i) => i.id === replyId);
   const asked = items[at - 1];
   if (pending || at < 1 || asked?.role !== 'user') return;
+  const failed = items[at] as Reply;
+  if (failed.retry?.kind === 'agentRevise') {
+    // AG04: a failed revise of an agent card runs the revise again (never the workflow chat).
+    const target = items.find((i) => i.id === failed.retry!.itemId);
+    const part = target?.role === 'assistant' ? target.parts.find((p) => p.kind === 'agentCard') : undefined;
+    if (part?.kind !== 'agentCard') return;
+    useAssistant.setState({ items: items.filter((_, i) => i !== at && i !== at - 1) });
+    void reviseAgentCard(failed.retry.itemId, part.card, asked.text);
+    return;
+  }
   useAssistant.setState({ items: items.filter((_, i) => i !== at && i !== at - 1) });
   void useAssistant
     .getState()

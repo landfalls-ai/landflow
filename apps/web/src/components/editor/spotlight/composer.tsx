@@ -13,7 +13,7 @@ import { completeBubbles, idleBubbles, liveMentions, TEST_BUBBLE, type Bubble, t
 import { useBuildFlow } from '../ai-builder';
 import { afterReply, typedSession } from '../autonomous';
 import { answeredQuestion } from './answered-question';
-import { cardAskFor, designAgentCard } from './agent-ask'; // SB16:
+import { agentCardQuestion, cardAskFor, cardQuestionFor, keepUnderCard, designAgentCard, reviseAgentCard, reviseCardFor } from './agent-ask'; // SB16: AG04:
 import { draftWholeFlow } from './draft-flow';
 import { suggestionKey, useAssistant, useSuggestions, useWorking, type ChatItem, type KeptMention, type Suggestion } from '../assistant';
 import { useEditor } from '../store';
@@ -217,17 +217,25 @@ export function Composer() {
     setDraft('');
     setCaret(0);
     setMentions([]);
+    // AG04: a change typed under an agent card revises the card (a question goes on to the chat: answered, never applied).
+    const revise = reviseCardFor(message);
+    if (revise) {
+      await reviseAgentCard(revise.itemId, revise.card, message);
+      return;
+    }
     // SB16: "create an agent …" on any canvas: the agent as a card to review (and, on an empty canvas, a starter flow with it); a placed ask stays the chat's new agent.
     const agent = cardAskFor(message);
     if (agent) {
       await designAgentCard(message, agent, { starter: !useEditor.getState().nodes.length });
       return;
     }
-    if (!useEditor.getState().nodes.length) {
+    if (!useEditor.getState().nodes.length && !agentCardQuestion(message) /* AG04: a question under an agent card is the chat's, not a flow to draft */) {
       // An empty canvas: the builder drafts the whole flow in one go, with test data on the trigger.
       await draftWholeFlow(message, build);
       return;
     }
+    const under = cardQuestionFor(message); // AG04: the chat's answer to it stays under the card
+    const since = useAssistant.getState().items.length;
     await useAssistant.getState().send(message, {
       withoutSelection,
       ...(scoped !== undefined && { scope: scoped }), // SB07:
@@ -235,6 +243,7 @@ export function Composer() {
       ...typedSession(message),
       ...(tagged.length && { mentions: tagged.slice(0, 8) }),
     });
+    if (under) keepUnderCard(since, under);
     // Autonomous: what the reply proposed is applied and the flow tested, without Apply or Test and fix.
     await afterReply(message);
   };

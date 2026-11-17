@@ -9,8 +9,11 @@
  */
 import { nanoid } from 'nanoid';
 import { api } from '@/lib/client/api';
-import { agentAsk, askCatalog, fallbackName, readsTokens, type AgentAsk, type AskCatalogEntry } from '@/lib/shared/agent-ask';
+import { agentAsk, agentChangeAsk, askCatalog, fallbackName, readsTokens, type AgentAsk, type AskCatalogEntry } from '@/lib/shared/agent-ask';
 import { starterFlow, starterSample, type AgentCard, type AgentCardTool, type AgentNotAdded } from '@/lib/shared/agent-card';
+import { agentChanges } from '@/lib/shared/agent-changes'; // AG04:
+import { announceChange, designChange, publishChange, saveChange } from '@/lib/client/agent-change'; // AG04:
+import { pickedModel } from '../spotlight-model'; // AG04:
 import { followsPractices, guardrailWords, type AgentConfig } from '@/lib/shared/agents';
 import { draft as draftCall, useAssistant, type ChatItem } from '../assistant';
 import { useAutonomous } from '../autonomous';
@@ -218,3 +221,156 @@ function takeBackOnUndo(nodeId: string, workflowId: string): void {
 /** Dismiss: the card goes away from the reply; nothing was created. */
 export const dismissCard = (itemId: string): void =>
   useAssistant.getState().updateParts(itemId, (parts) => parts.filter((p) => p.kind !== 'agentCard').map((p) => (p.kind === 'text' && /^Designed “/.test(p.text) ? { ...p, text: 'Dismissed: no agent was created.' } : p)));
+
+// AG04:
+/**
+ * A change typed under an agent card (docs/assistant.md "Changing an agent"): the newest agent card of this conversation when it
+ * is designed (not yet created) or created, the message is a change in words, and it is not a new "create an agent …" (that
+ * still makes a new card). A question is not one: it goes to the chat, answered and never applied.
+ */
+export function reviseCardFor(message: string): { itemId: string; card: AgentCard } | undefined {
+  if (agentChangeAsk(message) !== 'change' || cardAskFor(message) || workflowShaped(message)) return undefined;
+  return newestCard();
+}
+
+const WORKFLOW_WORDS = /\b(?:steps?|nodes?|triggers?|flows?|workflows?|webhooks?|cron|canvas)\b/i;
+const WORKFLOW_WEAK = /\b(?:schedules?|connect|after|before|branch|branches)\b/i;
+const AGENT_WORDS = /\b(?:agent|tools?|instructions?|persona|guardrails?|model)\b/i;
+
+/**
+ * A message that asks for a change to the flow on the canvas, not to the agent: it names a step, node, trigger or flow, or says
+ * "after/before" a step that is on the canvas (a weaker word such as "schedule" counts unless the message is about the agent).
+ * Only on a canvas that has steps; on an empty one there is no flow to change.
+ */
+function workflowShaped(message: string): boolean {
+  const nodes = useEditor.getState().nodes;
+  if (!nodes.length) return false;
+  if (WORKFLOW_WORDS.test(message)) return true;
+  const labels = nodes.flatMap((n) => {
+    const wf = (n.data as { wf?: { name?: string } } | undefined)?.wf;
+    return wf?.name ? [wf.name.toLowerCase()] : [];
+  });
+  if (/\b(?:after|before)\b/i.test(message) && labels.some((l) => message.toLowerCase().includes(l))) return true;
+  return WORKFLOW_WEAK.test(message) && !AGENT_WORDS.test(message);
+}
+
+/**
+ * The newest agent card of this conversation when it is designed (waiting for Create) or created, and the person is writing
+ * right under it: it is in the newest assistant reply and nothing but the person's own messages came after it. A card many
+ * turns old, or one with another reply after it, is nobody's to change (the message goes to the chat or the builder).
+ */
+function newestCard(): { itemId: string; card: AgentCard } | undefined {
+  const items = useAssistant.getState().items;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item.role !== 'assistant') continue;
+    const part = item.parts.find((p) => p.kind === 'agentCard');
+    if (part?.kind === 'agentCard') return part.card.state === 'designed' || part.card.state === 'created' ? { itemId: item.id, card: part.card } : undefined;
+    if (!item.forCard) return undefined; // another reply is under the card: it is nobody's to change
+  }
+  return undefined;
+}
+
+/**
+ * A question typed under an agent card ("why does it need the Hash tool?"): the chat answers it, also on an empty canvas
+ * (where any other first message drafts a flow), and nothing is changed (lesson 22). Spotlight's own replies about the card
+ * (a revise's, an answer to such a question) count as under it, so a second change or question still finds the card.
+ */
+export const agentCardQuestion = (message: string): boolean => cardQuestionFor(message) !== undefined;
+
+/** The card a question is about (its item id), when the message is a question under the newest card. */
+export const cardQuestionFor = (message: string): string | undefined => (agentChangeAsk(message) === 'question' ? newestCard()?.itemId : undefined);
+
+/** Marks the assistant replies after the first `since` items as Spotlight's own, about the card `itemId`. */
+export const keepUnderCard = (since: number, itemId: string): void =>
+  useAssistant.setState((s) => ({ items: s.items.map((i, n) => (n >= since && i.role === 'assistant' && !i.parts.some((p) => p.kind === 'agentCard') ? { ...i, forCard: itemId } : i)) }));
+
+const revising = new Set<string>();
+
+/** One card's lines of what changed, as the reply says it. */
+const sayChanges = (changes: string[]) => (changes.length ? changes.map((c) => c.charAt(0).toLowerCase() + c.slice(1)).join('; ') : '');
+
+/**
+ * Revises a card from a follow-up. A designed card is replaced in place with the new design and its `changes`; a created card
+ * (an agent that exists) gets a new card below it with `base`, its `changes` and Apply to its draft. A revise is a proposal:
+ * nothing is saved here, also in autonomous mode (an agent that exists is not a brand-new draft).
+ */
+export async function reviseAgentCard(itemId: string, card: AgentCard, message: string): Promise<void> {
+  if (revising.has(itemId)) return;
+  const made = card.state === 'created';
+  const existing = made ? (card.base?.agentId ?? card.agentId) : card.base?.agentId;
+  const reply: ChatItem = { id: nanoid(8), role: 'assistant', forCard: itemId, parts: [{ kind: 'text', text: `Changing “${card.name}”…` }] };
+  useAssistant.getState().append([{ id: nanoid(8), role: 'user', text: message }, reply]);
+  const rowId = `card:${reply.id}`;
+  useAssistant.getState().setAgent(rowId, { name: card.name, state: 'designing' });
+  draftCall.request?.abort();
+  const abort = (draftCall.request = new AbortController());
+  revising.add(itemId);
+  try {
+    // A created card's agent is the base; a pending card's own config is (a card that already proposes a change to an agent keeps its base).
+    const base = made && existing ? { agentId: existing } : { config: card.config };
+    const design = await designChange({ name: card.name, description: card.description, base, change: message, ...pickedModel() }, abort.signal);
+    const fresh = cardFromPreview({ config: design.config, needs: design.needs ?? [], missing: design.missing ?? [], designed: design.designed ?? true, cases: card.cases } as unknown as Parameters<typeof cardFromPreview>[0], { description: card.description, placed: false, tools: [] }, Boolean(card.starter));
+    let changes = design.changes;
+    // A pending change to an agent lists what differs from the agent itself, not from the proposal before it.
+    if (card.base && !made) {
+      try {
+        const saved = await api<{ agent: Record<string, unknown> }>(`/api/agents/${card.base.agentId}`);
+        changes = agentChanges(saved.agent, design.config);
+      } catch {
+        // Keep what the route said.
+      }
+    }
+    const next: AgentCard = { ...fresh, ...(card.workflowId && { workflowId: card.workflowId }), ...(card.ask && { ask: card.ask }), ...(card.models && { models: card.models }), changes };
+    if (!made) {
+      patchCard(itemId, { ...next, state: 'designed', error: undefined, ...(card.base && { base: card.base }) });
+      patchReply(reply.id, { parts: [{ kind: 'text', text: changes.length ? `Changed the card above: ${sayChanges(changes)}.` : 'No change: the card above already has what you asked.' }] });
+    } else {
+      const change: AgentCard = { ...next, state: 'designed', base: { agentId: existing as string, name: card.name }, cases: [] };
+      patchReply(reply.id, {
+        parts: [
+          { kind: 'text', text: changes.length ? `Here is the change to “${card.name}”: ${sayChanges(changes)}. Review it, then apply it to its draft.` : `No change: “${card.name}” already has what you asked.` },
+          { kind: 'agentCard', card: change },
+        ],
+      });
+    }
+  } catch (e) {
+    if (abort.signal.aborted) patchReply(reply.id, { parts: [{ kind: 'text', text: 'Stopped: nothing was changed.' }] });
+    else patchReply(reply.id, { parts: [{ kind: 'text', text: 'Nothing was changed.' }], retry: { kind: 'agentRevise', itemId }, error: `Couldn’t change the agent: ${(e as Error).message}` });
+  } finally {
+    revising.delete(itemId);
+    if (draftCall.request === abort) draftCall.request = undefined;
+    useAssistant.setState((st) => ({ agents: st.agents.filter((a) => a.nodeId !== rowId) }));
+  }
+}
+
+const applying = new Set<string>();
+
+/**
+ * Apply to its draft: the card's config becomes the agent's draft (PUT), then the draft is smoke-tested on the card's sample.
+ * Nothing is published here; the person's Publish is `publishAgentChange`, and only after a pass (decision D3).
+ */
+export async function applyAgentChange(itemId: string, card: AgentCard): Promise<void> {
+  const agentId = card.base?.agentId;
+  if (!agentId || applying.has(itemId)) return;
+  applying.add(itemId);
+  patchCard(itemId, { state: 'creating', error: undefined });
+  try {
+    patchCard(itemId, { smoke: { state: 'testing' } });
+    const smoke = await saveChange(agentId, card.config, starterSample({ name: card.name, cases: card.cases }));
+    patchCard(itemId, { state: 'created', agentId, smoke });
+  } catch (e) {
+    patchCard(itemId, { state: 'failed', error: (e as Error).message, smoke: undefined });
+  } finally {
+    applying.delete(itemId);
+  }
+}
+
+/** Publish an applied change: only after a pass, through the eval gate (a hold is shown on the card, never skipped). */
+export async function publishAgentChange(itemId: string, card: AgentCard): Promise<void> {
+  const agentId = card.base?.agentId;
+  if (!agentId || card.smoke?.state !== 'passed' || card.publish?.state === 'publishing') return;
+  patchCard(itemId, { publish: { state: 'publishing' } });
+  patchCard(itemId, { publish: await publishChange(agentId) });
+  announceChange(agentId);
+}
