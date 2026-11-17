@@ -274,6 +274,14 @@ describe('Spotlight on an agent ask', () => {
   it('repeated Creates share one ⌘Z subscription, and it ends with the last watched step', async () => {
     const { undoWatches } = await import('@/components/editor/spotlight/agent-ask');
     const subscribe = vi.spyOn(useEditor, 'subscribe');
+    // Each Create gets its own agent (ag_u1, ag_u2, ag_u3), so three steps are watched, with one subscription.
+    let made = 0;
+    answers['/api/agents/import'] = () => ({ agent: { id: `ag_u${++made}`, name: 'PR reviewer' } });
+    for (let n = 1; n <= 3; n++) {
+      answers[`/api/agents/ag_u${n}/eval-gate`] = () => ({ case: { id: 'k1' } });
+      answers[`/api/agents/ag_u${n}/smoke-test`] = () => ({ smoke: { state: 'passed', reply: 'Looks fine.', ms: 5 } });
+      answers[`/api/agents/ag_u${n}/publish`] = () => ({ ok: true });
+    }
     try {
       for (let i = 0; i < 3; i++) {
         await designAgentCard(SB00_PR, cardAskFor(SB00_PR)!, { starter: true });
@@ -283,8 +291,7 @@ describe('Spotlight on an agent ask', () => {
       }
       expect(useEditor.getState().nodes.filter((n) => n.data.wf.type === 'core.messageAgent')).toHaveLength(3);
       expect(subscribe).toHaveBeenCalledTimes(1);
-      // (The mock import answers one agent id, so the steps share the first step's watch.)
-      expect(undoWatches()).toEqual({ steps: 1, subscribed: true });
+      expect(undoWatches()).toEqual({ steps: 3, subscribed: true });
       // Leaving the workflow ends every watch, and the subscription with them.
       useEditor.setState({ workflowId: 'wf_other' });
       expect(undoWatches()).toEqual({ steps: 0, subscribed: false });

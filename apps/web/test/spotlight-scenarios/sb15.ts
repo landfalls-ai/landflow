@@ -1,15 +1,17 @@
 /**
  * SB15's scenarios (wave sb3): the first draft's reply is a summary (finding 1.5): the steps in words, what is left
  * (a credential offered, never picked: decision D2) and nothing at all when nothing is. The harness reads a build's text
- * as `summaryText` of the draft's `summary`. Scripted (unit) answers are made-up drafts; the live form asks the local model.
+ * as `summaryText` of the draft's `summary`. Scripted (unit) answers are a made-up plan, then its steps; the live form asks the local model, plan included.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { checks, defineScenarios, type Check, type Outcome } from './scenario';
 
-/** SB14's plans (the same fixture): a build is planned first now, so a scripted build is the plan's steps, one answer each. */
+/** SB14's plans (the same fixture): a build is planned first now, so a scripted build is the plan, then the plan's steps, one answer each; only the unit form is given the plan, live the model plans. */
 const PLANS = JSON.parse(readFileSync(join(import.meta.dirname, 'fixtures', 'sb14-plans.json'), 'utf8')) as Record<string, Record<string, unknown>>;
 const step = (parameters: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ text: JSON.stringify({ parameters, ...extra }) });
+/** A scripted answer that is the whole reply (the plan), not a step's `parameters`. */
+const whole = (value: unknown) => ({ text: JSON.stringify(value) });
 const LINEAR_PLAN = {
   name: 'Bug triage',
   steps: [
@@ -78,8 +80,9 @@ export default defineScenarios([
     title: 'B1: the reply is a summary with the steps in words and a credential offered',
     ask: 'Every weekday at 8, read new Linear issues labelled bug, have an agent triage each into P0–P3 with a reason, post P0s to Slack #oncall and put the rest in a data table',
     // The unit form's Linear stand-in has no credential slot, so its scripted "Get issues" is a header-authenticated request; live, the Linear step itself.
-    start: { plan: LINEAR_PLAN },
+    // The plan is the script's first answer (the unit form plans through it); live, the model plans for real.
     script: [
+      whole(LINEAR_PLAN),
       step({ unit: 'rules', rule: { interval: [{ expression: '0 0 8 * * 1-5', field: 'cronExpression' }] } }),
       step({ method: 'GET', url: 'http://127.0.0.1:3399/issues', authentication: 'genericCredentialType', genericAuthType: 'httpHeaderAuth' }),
       step({ mode: 'manual', fields: { values: [{ name: 'kind', type: 'string', value: 'bug' }] } }),
@@ -94,8 +97,8 @@ export default defineScenarios([
     via: 'build',
     title: 'B4 with every field filled: no “Left for you” block and a text that is not empty',
     ask: ORDERS,
-    start: { plan: PLANS.b4 },
     script: [
+      whole(PLANS.b4), // the plan, as the unit form's first answer; live, the model plans for real
       step({ path: 'orders', httpMethod: 'POST' }, { testData: [{ body: { id: 'o-1', total: 1500 } }] }),
       step({ conditions: { condition: [{ left: '{{ $json.body.total }}', operator: 'gt', right: '1000' }] }, combinator: 'and' }),
       step({ method: 'POST', url: 'http://127.0.0.1:3399/vip', sendBody: true, body: '{{ JSON.stringify({ ...$json.body, vip: true }) }}' }),
