@@ -198,7 +198,7 @@ pass and goes through the [eval gate](#eval-gate), which can hold it. The publis
 The Agent architect dialog still designs new agents only.
 
 The card says what applying does and follows the agent (wave ag2, AG09):
-- A tool the change adds that no step names gets one: "N. When <what you asked>, call `extract_iocs`." goes before the
+- A tool the change adds that no step names gets one: "N. When <the task you named, or the first sentence of what the tool is for>, call `extract_iocs`." goes before the
   Tools line (with "(it asks the person first)" for a tool that writes), and the steps are renumbered. A step an earlier
   change wrote stays when the model's proposal leaves it out. The Changes row says "Adds the tool Extract IOCs (asks
   first)", with acronyms in capitals (IOCs, JWT, UUID, URL, HTTP, API, SQL, SMTP, IP, ID, CPU, JSON, CSV); the added

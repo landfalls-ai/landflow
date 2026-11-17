@@ -1230,9 +1230,18 @@ function changeClause(change: string, tool: AgentToolConfig): string {
     .replace(/^(?:the|a|an|another|one more)\s+/i, '');
   const wordsLeft = left.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
   const known = new Set([...toolWords(tool), 'tool', 'tools', 'the', 'a', 'an', 'to', 'it', 'too', 'also']);
-  if (CONFIG_VERB.test(text) && wordsLeft.every((w) => known.has(w) || toolWords(tool).some((k) => w.replace(/s$/, '') === k.replace(/s$/, '')))) {
-    const description = 'description' in tool && tool.description ? tool.description.trim().replace(/[.\s]+$/, '') : '';
-    return description ? `you need to ${description.charAt(0).toLowerCase()}${description.slice(1)}` : `the job needs ${'name' in tool && tool.name ? tool.name.replace(/[_-]+/g, ' ') : 'it'}`;
+  const configAsk = CONFIG_VERB.test(text) && (wordsLeft.every((w) => known.has(w) || toolWords(tool).some((k) => w.replace(/s$/, '') === k.replace(/s$/, ''))) || /^(?:a|an|the|another)\s+tools?\s+(?:that|which|to|for)\b/i.test(left));
+  if (configAsk) {
+    const toTask = /^(?:a|an|the|another)\s+tools?\s+to\s+(.+)$/i.exec(left)?.[1];
+    if (toTask) return `asked to ${toTask.split(/\s+/).slice(0, 14).join(' ')}`;
+    // the first sentence of what the tool says it is for, without a lead-in such as "Use this to" or "When you need to"
+    const first = ('description' in tool && tool.description ? tool.description : '').replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s/)[0].replace(/[\s.!?]+$/, '').replace(/`/g, '');
+    const task = first.replace(/^(?:use|call)\s+(?:this|it)\s+(?:when|to|for|if)\s+/i, '').replace(/^(?:use\s+when|when|if)\s+(?:you\s+|the\s+agent\s+)?(?:need\s+to\s+|needs?\s+to\s+)?/i, '').trim();
+    if (task) {
+      const cut = task.length > 90 ? `${task.slice(0, 90).replace(/\s+\S*$/, '')}…` : task;
+      return `you need to ${cut.charAt(0).toLowerCase()}${cut.slice(1)}`;
+    }
+    return `the job needs ${'name' in tool && tool.name ? tool.name.replace(/[_-]+/g, ' ') : 'it'}`;
   }
   const said = /^(?:let|have|make)\s+(?:it|the agent)\s+/i.test(text) ? text.replace(/^(?:let|have|make)\s+(?:it|the agent)\s+/i, 'it should ') : `asked to ${text}`;
   const words = said.split(/\s+/).slice(0, 16).join(' ');

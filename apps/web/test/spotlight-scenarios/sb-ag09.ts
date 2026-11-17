@@ -91,7 +91,7 @@ export default defineScenarios([
     checks: [
       right('named-for-its-tools', 'The card is named for its tools now: Utility helper', (o) => o.agents[0]?.name === 'Utility helper'),
       right('changes-say-why', 'Its changes say the name changed because its tools did', (o) => (o.card?.changes ?? []).includes('Renames it to Utility helper (its tools changed)')),
-      right('slugify-has-step', 'A step calls slugify', (o) => (o.agents[0]?.instructions ?? '').split('\n').some((l) => /^\d+\. When /.test(l) && /call slugify/.test(l))),
+      right('slugify-has-step', 'A step calls slugify', (o) => (o.agents[0]?.instructions ?? '').split('\n').some((l) => /^\d+\. When /.test(l) && /call slugify/.test(l) && !/`|Pass the|add slugify/i.test(l))),
       checks.noOutside,
     ],
   },

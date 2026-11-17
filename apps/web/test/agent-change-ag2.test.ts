@@ -137,6 +137,21 @@ describe('a revise names the tool it adds in a step', () => {
     }
   });
 
+  it('a configuration ask writes one clause from the first sentence of what the tool is for', async () => {
+    const base = triageBase();
+    base.instructions = TRIAGE_STEPS;
+    const run = await proposing('triage.normalizeAlert, text-toolkit.slugify', base.instructions);
+    try {
+      const body = (await (await post({ name: 'Alert triage agent', preview: true, base: { config: base }, change: 'add Slugify as a tool' })).json()) as Body;
+      const step = body.config.instructions.split('\n').find((l) => /call slugify/.test(l) && !/Tools:/.test(l));
+      expect(step, body.config.instructions).toBeDefined();
+      expect(step).not.toMatch(/`|Pass the|add slugify|asked to add/i);
+      expect(step!.replace(/^\d+\. /, '').split('. ').length).toBe(1);
+    } finally {
+      await run.done();
+    }
+  });
+
   it('a tool that writes says it asks the person first', async () => {
     const base = triageBase();
     base.tools = base.tools!.filter((t) => 'name' in t && t.name !== 'send_email');
