@@ -143,6 +143,7 @@ function useSpotlightKeeping() {
     useAssistant.getState().setKept(id, next);
     // AG11: a created card looks at its agent once: a 404 says it was deleted, and its row goes.
     void deletedCards(checked, (agentId) => api(`/api/agents/${agentId}`, { background: true }).then(() => false, (e) => (e instanceof ApiError && e.status === 404 ? true : Promise.reject(e)))).then((gone) => {
+      if (useAssistant.getState().kept.id !== id) return; // AG11: another conversation was opened meanwhile: its cards are not these
       for (const [itemId, agentId] of gone) {
         useAssistant.getState().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'agentCard' ? { ...p, card: { ...p.card, error: DELETED_AGENT_NOTE } } : p)));
         useAssistant.setState((st) => ({ agents: st.agents.filter((a) => a.agentId !== agentId) }));

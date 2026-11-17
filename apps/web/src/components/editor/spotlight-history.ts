@@ -60,7 +60,10 @@ function fit(input: ConversationItemInput): ConversationItemInput {
   parts = parts.map((p) => (p.type === 'proposal' ? { ...p, ops: [], state: 'stale' as const } : p));
   next = { ...input, parts };
   if (bytes(next) <= MAX_ITEM_BYTES) return next;
-  return { ...input, parts: parts.map((p) => (p.type === 'text' ? { ...p, text: p.text.slice(0, 8_000) } : p)) };
+  next = { ...input, parts: parts.map((p) => (p.type === 'text' ? { ...p, text: p.text.slice(0, 8_000) } : p)) };
+  if (bytes(next) <= MAX_ITEM_BYTES) return next;
+  // AG11: a card still too big: its cases, needs and description are cut, so the batch is never refused for one item.
+  return { ...next, parts: next.parts.map((p) => (p.type === 'agentCard' ? { ...p, card: { ...p.card, description: p.card.description.slice(0, 500), cases: p.card.cases.slice(0, 3).map((c) => ({ ...c, input: c.input.slice(0, 300), ...(c.expected && { expected: c.expected.slice(0, 300) }) })), needs: p.card.needs.slice(0, 5).map((n) => n.slice(0, 200)), changes: p.card.changes?.slice(0, 5).map((c) => c.slice(0, 200)) } } : p)) };
 }
 
 /** The assistant's turn as a stored item, or nothing when it has nothing to keep (a reply stopped before it said anything). */
@@ -151,7 +154,7 @@ function storedRow(row: AgentProgress | undefined): StoredRow | undefined {
   if (!row) return undefined;
   const smoke = settledSmoke(row.smoke);
   const publish = settledPublish(row.publish);
-  const state = row.state === 'designing' || row.state === 'testing' ? 'draft' : row.state === 'publishing' ? (smoke?.state === 'passed' ? 'tested' : 'draft') : row.state;
+  const state = row.state === 'designing' ? 'draft' : row.state === 'testing' ? 'untested' : row.state === 'publishing' ? (smoke?.state === 'passed' ? 'tested' : 'draft') : row.state;
   return { nodeId: row.nodeId.slice(0, 200), state, ...(smoke && { smoke }), ...(publish && { publish }), ...(row.summary && { summary: row.summary.slice(0, 1000) }), ...(row.agentId && { agentId: row.agentId.slice(0, 200) }) };
 }
 

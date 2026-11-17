@@ -71,6 +71,18 @@ describe('storing a designed card', () => {
     expect(conversationItemInputSchema.safeParse(input).success).toBe(true);
   });
 
+  it('trims a card that is still too big without its config, so the batch is never refused', () => {
+    const cases = Array.from({ length: 30 }, (_, i) => ({ input: `${i}`.padEnd(2000, 'a'), expected: 'b'.repeat(2000) }));
+    const input = replyInput(reply('a1', card({ cases, needs: Array.from({ length: 30 }, () => 'n'.repeat(1000)), description: 'd'.repeat(2000) })))!;
+    expect(size(input)).toBeLessThanOrEqual(MAX_ITEM_BYTES);
+    expect(conversationItemInputSchema.safeParse(input).success).toBe(true);
+  });
+
+  it('stores a row whose smoke test is still running as untested, so Test stays', () => {
+    const input = replyInput(reply('a1', card({ state: 'created', agentId: 'agt_1' })), [row({ state: 'testing', smoke: { state: 'testing' } })])!;
+    expect(input.parts.find((p) => p.type === 'agentCard')).toMatchObject({ row: { state: 'untested' } });
+  });
+
   it('waits for the card before it stores the reply that says Spotlight is designing', () => {
     const designing: AssistantTurn = { id: 'a1', role: 'assistant', parts: [{ kind: 'text', text: 'Designing “Alert triager”…' }], steps: [], text: '', thinking: [] };
     const stored = emptyStored();
@@ -173,7 +185,7 @@ describe('reading a card back', () => {
   it('keeps Create for a waiting card in the workflow it was designed in, and makes it stale in another', () => {
     const back = restore(kept(designedPart()));
     const render = (items: ChatItem[]) => renderToStaticMarkup(createElement(AgentCardView, { itemId: 'k2', card: ((items[1] as AssistantTurn).parts.find((p) => p.kind === 'agentCard') as { card: AgentCard }).card }));
-    expect(render(checkCards(back.items, 'wf_a'))).toContain('Create agent and flow'.replace(' and flow', '').slice(0, 12));
+    expect(render(checkCards(back.items, 'wf_a'))).toContain('Create agent');
     expect(render(checkCards(back.items, 'wf_b'))).toContain(STALE_CARD_NOTE);
     expect(render(checkCards(back.items, 'wf_b'))).not.toContain('Create agent');
   });
