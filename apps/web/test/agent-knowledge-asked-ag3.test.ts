@@ -58,9 +58,15 @@ describe('a first ask', () => {
 });
 
 describe('a folder named in a "questions" clause is a source', () => {
-  it('asks for the source; an email folder still does not', async () => {
+  it('asks for the source', async () => {
     expect(await design('Make an agent that answers questions from the guides folder')).toMatchObject({ knowledgeFolder: 'guides', knowledgeAsked: true });
     expect(await design('Make an agent that answers questions grounded in the folder handbook')).toMatchObject({ knowledgeFolder: 'handbook', knowledgeAsked: true });
+  });
+});
+
+describe('a mail clause that says "questions" is still a mailbox', () => {
+  it('sends no knowledgeAsked', async () => {
+    for (const ask of ['Make an agent that answers customer questions from emails in the Inbox folder', 'Make an agent that answers questions in messages from the Spam folder']) expect((await design(ask)).knowledgeAsked, ask).toBeUndefined();
   });
 });
 
