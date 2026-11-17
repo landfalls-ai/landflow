@@ -24,6 +24,7 @@ import { collectionWarnings, structuralWarnings } from '@/lib/shared/assistant-o
 import { hollowSteps } from '@/lib/shared/run-check';
 import { mergeLeft, type DraftLeft } from '@/lib/shared/draft-left';
 import { buildFromPlan } from './assistant/build-nodes'; // SB14:
+import type { DraftSummary } from '@/lib/shared/draft-summary'; // SB15:
 
 export interface DraftNode {
   key: string;
@@ -50,6 +51,8 @@ export interface FlowDraft {
   plan?: BuildPlan;
   /** SB13: every model call of the draft in order, with its size (never its text). */
   stages?: BuildStage[];
+  /** SB15: the build summary the route adds after the guards (steps in words, what was assumed, what is left, what no node can do). */
+  summary?: DraftSummary; // SB15:
 }
 
 const DEFAULT_MODEL = process.env.LANDFLOW_BUILDER_MODEL ?? 'qwen3-coder:30b';

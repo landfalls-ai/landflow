@@ -7,6 +7,7 @@ import { describeAgents } from '@/lib/shared/agent-brief';
 import { describeTeams } from '@/lib/shared/agent-teams';
 import { buildFlow } from '@/lib/server/flow-builder';
 import { CONNECTION_TYPES } from '@landflow/protocol'; // SB14:
+import { draftSummary } from '@/lib/shared/draft-summary'; // SB15:
 import { assistantScope, isUsageCapError, runInUsageScope } from '@/lib/server/ai-usage'; // SB19:
 import { resolveSpotlightModel } from '@/lib/server/assistant/models-list'; // SB19:
 import { currentPrincipal } from '@/lib/server/auth/guard'; // SB19:
@@ -50,7 +51,8 @@ export const POST = handler(async (request: Request) => {
     const byType = new Map(types.map((t) => [t.type, t]));
     const credentialNames = new Map(registry.credentialTypes().flatMap((c) => [[c.descriptor.name, c.descriptor.displayName], [c.type, c.descriptor.displayName]] as const));
     const known = [parsed.data.prompt, agents.length ? describeAgents(agents) : '', teams.length ? describeTeams([...teams]) : ''].join('\n');
-    return json({ draft: guardDraft(draft, { prompt: parsed.data.prompt, known, byType: (type) => byType.get(type), credentialName: (name) => credentialNames.get(name) }) });
+    const guarded = guardDraft(draft, { prompt: parsed.data.prompt, known, byType: (type) => byType.get(type), credentialName: (name) => credentialNames.get(name) });
+    return json({ draft: { ...guarded, summary: draftSummary(guarded, (type) => byType.get(type)?.descriptor.displayName ?? type) } }); // SB15:
   } catch (e) {
     // The caller's AI cap, as the design route answers it: 429, not a 502 from the model.
     return error((e as Error).message, isUsageCapError(e) ? 429 : 502);

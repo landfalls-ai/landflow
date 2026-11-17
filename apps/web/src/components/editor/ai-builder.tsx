@@ -10,6 +10,7 @@ import { useReactFlow } from '@xyflow/react';
 import { api } from '@/lib/client/api';
 import type { FlowTemplate, TemplateNode } from '@/lib/client/templates';
 import type { DraftLeft } from '@/lib/shared/draft-left'; // SB02:
+import type { DraftSummary } from '@/lib/shared/draft-summary'; // SB15:
 import type { ConnectionType, NodeItem } from '@/lib/shared/types';
 import { useEditor } from './store';
 import { pickedModel } from './spotlight-model'; // SB19:
@@ -28,6 +29,7 @@ interface FlowDraft {
   /** The plan it was built from, and every model call's size (lib/shared/build-plan.ts). */
   plan?: BuildPlan; // SB13:
   stages?: BuildStage[]; // SB13:
+  summary?: DraftSummary; // SB15:
 }
 
 /** Columns by longest path from the trigger; sub-nodes under the node they attach to. */
@@ -74,6 +76,8 @@ export interface BuiltFlow {
   pinned: boolean;
   /** SB13: the plan it was built from. */
   plan?: BuildPlan;
+  /** SB15: the build summary (steps in words, assumed, left, not possible). */
+  summary?: DraftSummary; // SB15:
 }
 
 /** Draft a flow from a description and drop it on the canvas (one undo step). Throws when the model can't. */
@@ -126,7 +130,7 @@ export function useBuildFlow() {
       if (!state.description?.trim()) state.setMeta({ description: prompt });
       arriveLeftToRight(before);
       setTimeout(() => fitView({ padding: 0.25, duration: 600, maxZoom: 1.1 }), 60);
-      return { name: draft.name, nodes: draft.nodes.length, model: draft.model, durationMs: draft.durationMs, dropped: draft.dropped.length, left: draft.left ?? [], pinned: Boolean(draft.pinData && Object.keys(draft.pinData).length), plan: draft.plan /* SB13 */ };
+      return { name: draft.name, nodes: draft.nodes.length, model: draft.model, durationMs: draft.durationMs, dropped: draft.dropped.length, left: draft.left ?? [], pinned: Boolean(draft.pinData && Object.keys(draft.pinData).length), plan: draft.plan /* SB13 */, ...(draft.summary && { summary: draft.summary }) /* SB15: */ };
     } finally {
       setBusy(false);
     }
