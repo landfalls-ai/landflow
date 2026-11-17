@@ -9,9 +9,6 @@
  *   node scripts/brand-icon.mjs tile <key> <out.svg> [--trigger]
  *       Writes a plugin icon from a `BRANDS` mark: the mark in its brand colour on a white rounded tile, 48x48, the shape
  *       of the plugins' other icons. --trigger adds the amber bolt a trigger node wears.
- *   node scripts/brand-icon.mjs bundle <out.svg> <icon.svg> <icon.svg> <icon.svg> <icon.svg>
- *       Writes the icon of a plugin that bundles several apps (Messaging, Databases, Productivity): a 2x2 grid of the
- *       apps' own icons on a white tile.
  *
  * Simple Icons is CC0; record where each mark came from in the comment above its `BRANDS` line.
  */
@@ -58,33 +55,9 @@ async function tile([key, out, flag]) {
   );
 }
 
-function bundle([out, ...icons]) {
-  // Each icon is a 48x48 tile: shrink it into one cell, keeping its own tile so a cell reads as that app's icon.
-  const cells = icons.map((file, i) => {
-    const body = readFileSync(file, 'utf8')
-      .replace(/<svg[^>]*>/, '')
-      .replace(/<\/svg>\s*$/, '')
-      .replace(/<!--[\s\S]*?-->/g, '')
-      .trim();
-    const x = 5 + (i % 2) * 19.5;
-    const y = 5 + Math.floor(i / 2) * 19.5;
-    return `<g transform="translate(${x} ${y}) scale(0.3)">${body}</g>`;
-  });
-  writeFileSync(
-    out,
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
-  <!-- Four of the bundled apps' own icons on one tile -->
-  <rect x="0.75" y="0.75" width="46.5" height="46.5" rx="11.25" fill="#f4f4f5" stroke="#e4e4e7" stroke-width="1.5"/>
-  ${cells.join('\n  ')}
-</svg>
-`,
-  );
-}
-
 if (mode === 'entry') entry(args);
 else if (mode === 'tile') await tile(args);
-else if (mode === 'bundle') bundle(args);
 else {
-  console.error('usage: brand-icon.mjs entry <simple-icons-dir> <slug> [key] | tile <key> <out.svg> [--trigger] | bundle <out.svg> <4 icons>');
+  console.error('usage: brand-icon.mjs entry <simple-icons-dir> <slug> [key] | tile <key> <out.svg> [--trigger]');
   process.exit(1);
 }

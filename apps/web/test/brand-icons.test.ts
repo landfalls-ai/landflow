@@ -89,6 +89,11 @@ describe('brand marks', () => {
     }
   });
 
+  it('keeps the bundle plugins\' own tiles small enough to read at 18 to 36px', () => {
+    for (const file of ['plugins/databases/icons/databases.svg', 'plugins/messaging/icons/messaging.svg', 'plugins/productivity/productivity/icons/productivity.svg'])
+      expect(statSync(join(root, file)).size, file).toBeLessThan(2048);
+  });
+
   it('points every plugin node and plugin at an icon file that exists', () => {
     const missing: string[] = [];
     for (const plugin of readdirSync(join(root, 'plugins'))) {
