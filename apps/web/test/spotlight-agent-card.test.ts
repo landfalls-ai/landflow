@@ -42,6 +42,16 @@ const B_ASKS = [
 ];
 
 describe('agentAsk', () => {
+  it('reads third-person verbs, a named agent, and tidies names', () => {
+    expect(agentAsk('Build an agent that reads Linear issues and creates GitHub issues', [])?.tools).toEqual(['Linear: read issues', 'GitHub: create issues']);
+    expect(agentAsk('I want an agent that posts to Slack when a build fails', [])?.tools).toEqual(['Slack: post a message']);
+    expect(agentAsk('create an agent that looks up HubSpot records', [])?.tools).toEqual(['HubSpot: look up records']);
+    expect(agentAsk('create a new agent named Sales helper that answers pricing questions', [])).toMatchObject({ name: 'Sales helper' });
+    expect(agentAsk('create an agent that reviews PRs', [])?.name).toBe('PR reviewer');
+    expect(agentAsk('add an agent after “Sample PR” that reviews it', ['Sample PR'])).toMatchObject({ description: 'Reviews it.' });
+    expect(agentAsk('add an agent that reviews it', [])?.name).toBeUndefined();
+  });
+
   it('reads the evaluation\'s agent asks, with the tools and knowledge they name', () => {
     expect(agentAsk(SB00_PR, [])).toMatchObject({ placed: false, tools: [], name: 'PR reviewer' });
     expect(agentAsk(SB00_PR, [])?.description).toMatch(/^Reviews pull requests against our practices/);
@@ -167,6 +177,35 @@ describe('Spotlight on an agent ask', () => {
     // A node tool that writes is marked; a read is not.
     expect(shown.tools.map((t) => [t.name, t.writes])).toEqual([['github_pull_request', false], ['github_comment', true]]);
     expect(useEditor.getState().nodes).toHaveLength(0);
+  });
+
+  it('shows the design as an agent being designed, never as a flow being drafted, and clears it after', async () => {
+    const seen: Array<{ drafting: boolean; designing: string[] }> = [];
+    answers['/api/agents/design'] = (() => {
+      const s = useAssistant.getState();
+      seen.push({ drafting: s.drafting, designing: s.agents.filter((a) => a.state === 'designing').map((a) => a.name) });
+      return preview();
+    }) as never;
+    await designAgentCard(SB00_PR, cardAskFor(SB00_PR)!, { starter: true });
+    expect(seen).toEqual([{ drafting: false, designing: ['PR reviewer'] }]);
+    expect(useAssistant.getState().agents.filter((a) => a.state === 'designing')).toEqual([]);
+  });
+
+  it('an ask without a name still gets one before the design', async () => {
+    const message = 'create an agent that sends a weekly report';
+    await designAgentCard(message, cardAskFor(message)!, { starter: true });
+    expect(calls[0].json).toMatchObject({ name: 'Weekly report agent' });
+  });
+
+  it('Create after the person opened another workflow adds the agent but no starter flow', async () => {
+    useEditor.setState({ workflowId: 'wf_a' });
+    await designAgentCard(SB00_PR, cardAskFor(SB00_PR)!, { starter: true });
+    const { id, card } = cardOf()!;
+    useEditor.setState({ workflowId: 'wf_b' });
+    await createFromCard(id, card);
+    expect(useEditor.getState().nodes).toHaveLength(0);
+    expect(cardOf()!.card.state).toBe('created');
+    expect(cardOf()!.card.needs.at(-1)).toMatch(/left the workflow/);
   });
 
   it('on a canvas with steps an unplaced ask gives the card and the canvas is unchanged; a placed ask stays the chat\'s', async () => {

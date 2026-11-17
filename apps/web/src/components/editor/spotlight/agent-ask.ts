@@ -7,7 +7,7 @@
  */
 import { nanoid } from 'nanoid';
 import { api } from '@/lib/client/api';
-import { agentAsk, type AgentAsk } from '@/lib/shared/agent-ask';
+import { agentAsk, fallbackName, type AgentAsk } from '@/lib/shared/agent-ask';
 import { starterFlow, starterSample, type AgentCard, type AgentCardTool } from '@/lib/shared/agent-card';
 import type { AgentConfig } from '@/lib/shared/agents';
 import { draft as draftCall, useAssistant, type ChatItem } from '../assistant';
@@ -98,13 +98,17 @@ const createsAlone = () => useAutonomous.getState().on && autonomyOf(useEditor.g
 export async function designAgentCard(message: string, ask: AgentAsk, options: { starter: boolean }): Promise<void> {
   const reply: ChatItem = { id: nanoid(8), role: 'assistant', parts: [{ kind: 'text', text: `Designing ${ask.name ? `“${ask.name}”` : 'your agent'}…` }] };
   useAssistant.getState().append([{ id: nanoid(8), role: 'user', text: message }, reply]);
-  useAssistant.setState({ drafting: true });
+  // The design is an agent's, not a flow's: the panel shows "Designing “…”" (the agent row), never the flow placeholder.
+  const rowId = `card:${reply.id}`;
+  const designingName = ask.name ?? 'your agent';
+  useAssistant.getState().setAgent(rowId, { name: designingName, state: 'designing' });
+  const workflowAtStart = useEditor.getState().workflowId;
   const abort = (draftCall.request = new AbortController());
   try {
     const workflow = useEditor.getState().name;
-    const spec = { name: ask.name ?? 'New agent', description: ask.description, instructions: '', ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }) };
+    const spec = { name: ask.name ?? fallbackName(ask.description), description: ask.description, instructions: '', ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }) };
     const preview = await designPreview(spec, workflow && !/^untitled/i.test(workflow) ? { workflow } : {}, abort.signal);
-    const card = cardFromPreview(preview, ask, options.starter);
+    const card = { ...cardFromPreview(preview, ask, options.starter), workflowId: workflowAtStart };
     const alone = createsAlone();
     patchReply(reply.id, {
       parts: [
@@ -115,10 +119,10 @@ export async function designAgentCard(message: string, ask: AgentAsk, options: {
     if (alone) queueMicrotask(() => void createFromCard(reply.id, card));
   } catch (e) {
     if (abort.signal.aborted) patchReply(reply.id, { parts: [{ kind: 'text', text: 'Stopped: no agent was designed.' }] });
-    else patchReply(reply.id, { error: `Couldn’t design the agent: ${(e as Error).message}` });
+    else patchReply(reply.id, { parts: [{ kind: 'text', text: 'No agent was designed.' }], error: `Couldn’t design the agent: ${(e as Error).message}` });
   } finally {
     if (draftCall.request === abort) draftCall.request = undefined;
-    useAssistant.setState({ drafting: false });
+    useAssistant.setState((st) => ({ agents: st.agents.filter((a) => a.nodeId !== rowId) }));
   }
 }
 
@@ -142,15 +146,23 @@ export async function createFromCard(itemId: string, card: AgentCard): Promise<v
         unsaved.push((e as Error).message);
       }
     }
+    const notes: string[] = [];
     if (card.starter) {
-      const flow = starterFlow({ id: agent.id, name: card.name }, starterSample(card));
       const state = useEditor.getState();
-      // The name and description first: each is an undo step of its own, and the template goes last so one ⌘Z takes both steps back.
-      if (/^untitled/i.test(state.name) || !state.name) state.setMeta({ name: flow.name });
-      if (!state.description?.trim()) state.setMeta({ description: card.description });
-      state.applyTemplate({ id: 'agent-starter', title: flow.name, description: card.description, icon: 'lucide:bot', color: 'var(--viz-7)', nodes: flow.nodes, edges: flow.edges as never, pinData: flow.pinData as never });
+      if (card.workflowId && state.workflowId !== card.workflowId) {
+        notes.push('The agent was created, but you left the workflow it was designed in, so its starter flow was not added. Add a Run an Agent step to the flow you want.');
+      } else {
+        const flow = starterFlow({ id: agent.id, name: card.name }, starterSample(card));
+        const blocked = flow.nodes.filter((t) => !state.nodeTypes[t.type]).map((t) => t.name);
+        // The name and description first: each is an undo step of its own, and the template goes last so one ⌘Z takes both steps back.
+        if (/^untitled/i.test(state.name) || !state.name) state.setMeta({ name: flow.name });
+        if (!state.description?.trim()) state.setMeta({ description: card.description });
+        state.applyTemplate({ id: 'agent-starter', title: flow.name, description: card.description, icon: 'lucide:bot', color: 'var(--viz-7)', nodes: flow.nodes, edges: flow.edges as never, pinData: flow.pinData as never });
+        if (blocked.length) notes.push(`This workflow does not allow ${blocked.join(' and ')}, so the starter flow is incomplete.`);
+      }
     }
-    patchCard(itemId, { state: 'created', agentId: agent.id, ...(unsaved.length && { needs: [...card.needs, `${unsaved.length} test case${unsaved.length === 1 ? '' : 's'} not saved: ${unsaved[0]}`] }) });
+    const extra = [...unsaved.length ? [`${unsaved.length} test case${unsaved.length === 1 ? '' : 's'} not saved: ${unsaved[0]}`] : [], ...notes];
+    patchCard(itemId, { state: 'created', agentId: agent.id, ...(extra.length && { needs: [...card.needs, ...extra] }) });
   } catch (e) {
     patchCard(itemId, { state: 'failed', error: (e as Error).message });
   } finally {
@@ -159,4 +171,5 @@ export async function createFromCard(itemId: string, card: AgentCard): Promise<v
 }
 
 /** Dismiss: the card goes away from the reply; nothing was created. */
-export const dismissCard = (itemId: string): void => useAssistant.getState().updateParts(itemId, (parts) => parts.filter((p) => p.kind !== 'agentCard'));
+export const dismissCard = (itemId: string): void =>
+  useAssistant.getState().updateParts(itemId, (parts) => parts.filter((p) => p.kind !== 'agentCard').map((p) => (p.kind === 'text' && /^Designed “/.test(p.text) ? { ...p, text: 'Dismissed: no agent was created.' } : p)));

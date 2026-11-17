@@ -135,7 +135,8 @@ export function Composer() {
   // The `@` picker (docs/spotlight.md): the canvas's nodes first ("On this page"), then everything else the caller may tag.
   const canvasHits = useMemo<MentionHit[]>(() => ctx.nodes.map((n) => ({ type: 'node', id: n.id, workflowId, name: n.name, hint: 'on the canvas' })), [ctx.nodes, workflowId]);
   const picker = useMentionPicker({ value: draft, onChange: (next) => setDraft(next), inputRef: input, scope: { workflowId: workflowId || undefined, local: canvasHits } });
-  const live = pending || drafting;
+  const designing = useAssistant((s) => s.agents.some((a) => a.state === 'designing'));
+  const live = pending || drafting || designing;
   // The model that answered last: no route says which one answers before the first reply.
   const model = useAssistant((s) => lastModel(s.items)?.name);
   const local = useAssistant((s) => lastModel(s.items)?.local);
@@ -296,7 +297,7 @@ export function Composer() {
     }
   };
 
-    const placeholder = drafting || pending ? 'Spotlight is working on the flow…' : empty ? 'Describe the workflow you want…' : 'Ask or describe a change';
+    const placeholder = designing && !drafting && !pending ? 'Spotlight is designing the agent…' : drafting || pending ? 'Spotlight is working on the flow…' : empty ? 'Describe the workflow you want…' : 'Ask or describe a change';
 
   return (
     <div className="shrink-0 space-y-2 border-t border-hair p-2.5">

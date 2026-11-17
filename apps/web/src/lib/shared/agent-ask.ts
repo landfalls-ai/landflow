@@ -59,6 +59,9 @@ const APPS: Array<{ name: string; pattern: string; noun: string }> = [
 const READ_VERBS = 'look up|lookup|look at|read|search|find|fetch|list|get|check|query|pull|summari[sz]e';
 const WRITE_VERBS = 'create|update|comment on|close|assign|open|file|label';
 const SEND_VERBS = 'post|send|write|notify|message|reply|share|publish';
+/** The third-person forms after "an agent that …": "reads", "looks up", "creates" (the suffix goes on the first word). */
+const variants = (verbs: string) => verbs.split('|').map((v) => v.replace(/^(\S+)/, '$1(?:e?s)?')).join('|').replace('query(?:e?s)?', 'quer(?:y|ies)');
+const baseVerb = (verbs: string, said: string) => verbs.split('|').find((v) => new RegExp(`^(?:${variants(v)})$`, 'i').test(said)) ?? said;
 const FILLER = '(?:(?:the|our|its|all|open|new|any|my|your|their|a|an)\\s+)*';
 const NOUN_STOP = new Set(['and', 'or', 'to', 'for', 'from', 'with', 'in', 'on', 'that', 'which', 'when', 'then', 'tool', 'tools', 'integration', 'access', 'as']);
 
@@ -71,13 +74,14 @@ function toolsOf(message: string): string[] {
   for (const app of APPS) {
     const name = `(?:${app.pattern})`;
     // "can look up Linear issues", "read Slack messages", "create Linear issues": the verb and what it works on.
-    const verbed = new RegExp(`\\b(${READ_VERBS}|${WRITE_VERBS})\\s+${FILLER}${name}(?:'s)?(?:\\s+([a-z]+(?:\\s+requests)?))?`, 'gi');
+    const verbed = new RegExp(`\\b(${variants(READ_VERBS)}|${variants(WRITE_VERBS)})\\s+${FILLER}${name}(?:'s)?(?:\\s+([a-z]+(?:\\s+requests)?))?`, 'gi');
     for (const m of message.matchAll(verbed)) {
       const noun = m[2] && !NOUN_STOP.has(m[2].toLowerCase()) ? m[2].toLowerCase() : app.noun;
-      add(`${app.name}: ${m[1].toLowerCase().replace('lookup', 'look up')} ${noun}`);
+      const verb = baseVerb(`${READ_VERBS}|${WRITE_VERBS}`, m[1].toLowerCase().replace(/\s+/g, ' '));
+      add(`${app.name}: ${verb.replace('lookup', 'look up')} ${noun}`);
     }
     // "post to Slack", "send it to Slack", "notify Slack".
-    if (new RegExp(`\\b(?:${SEND_VERBS})\\b(?:\\s+[\\w#@.'’-]+){0,5}?\\s+(?:to|in|on|into|via|through)\\s+(?:the\\s+|our\\s+)?${name}\\b`, 'i').test(message)) add(`${app.name}: post a message`);
+    if (new RegExp(`\\b(?:${variants(SEND_VERBS)})\\b(?:\\s+[\\w#@.'’-]+){0,5}?\\s+(?:to|in|on|into|via|through)\\s+(?:the\\s+|our\\s+)?${name}\\b`, 'i').test(message)) add(`${app.name}: post a message`);
     // "with a Linear tool", "using Slack", "a GitHub integration".
     if (new RegExp(`\\b(?:with|using|via|through)\\s+(?:a\\s+|the\\s+|our\\s+)?${name}(?:\\s+(?:tool|integration|access))?\\b|\\b${name}\\s+(?:tool|integration)\\b`, 'i').test(message)) {
       if (!found.some((t) => t.startsWith(`${app.name}:`))) add(`${app.name}: use ${app.noun}`);
@@ -109,7 +113,7 @@ const cap = (text: string) => (text ? text[0].toUpperCase() + text.slice(1) : te
 
 /** The job after "that|which|to": "reviews pull requests against our practices". */
 function jobOf(message: string): string {
-  const after = /\b(?:agent|assistant)\s+(?:that|which|to|who)\s+([^.!?\n]+)/i.exec(message);
+  const after = /\b(?:agent|assistant)\s+(?:that|which|to|who)\s+([^.!?\n]+)/i.exec(message) ?? /\b(?:that|which|who)\s+([^.!?\n]+)/i.exec(message);
   return (after?.[1] ?? '').split(/,\s*(?:and\s+)?(?:then\s+)?(?:run|put|add|place|insert|make|use)\b/i)[0].trim();
 }
 
@@ -123,10 +127,11 @@ function nameOf(job: string, knowledge: string | undefined): string | undefined 
   // "answers customer questions from the docs" is the Docs answerer; "reviews pull requests" the PR reviewer.
   if (verb === 'answer' && knowledge) return cap(`${knowledge.split(/\s+/).pop()} ${role}`).slice(0, 40);
   const words = m[2].split(/\s+/);
-  let subject = words.filter((w) => !NOUN_STOP.has(w) && !/^(?:against|about|into|by|of|at)$/.test(w))[0] ?? '';
+  let subject = words.filter((w) => !NOUN_STOP.has(w) && !/^(?:against|about|into|by|of|at|it|them|this|these|those|each|everything|anything)$/.test(w))[0] ?? '';
   if (/^pull$/.test(subject)) subject = 'PR';
   else subject = subject.replace(/ies$/, 'y').replace(/(?<=[^s])s$/, '');
-  return subject ? cap(`${subject} ${role}`).slice(0, 40) : undefined;
+  if (/^(?:pr|ci|qa|ui|api|sla|crm|seo|hr)$/i.test(subject)) subject = subject.toUpperCase();
+  return subject ? `${subject[0].toUpperCase()}${subject.slice(1)} ${role}`.slice(0, 40) : undefined;
 }
 
 /** What the person asked for, as a sentence: without the "create an agent that" lead and the placement clause. */
@@ -141,13 +146,23 @@ function descriptionOf(message: string, job: string): string {
  * canvas has none, so nothing is placed by name).
  */
 export function agentAsk(message: string, nodeNames: string[] = []): AgentAsk | undefined {
-  const text = message.trim();
+  const full = message.trim();
+  // "create a new agent named Sales helper that …": the name is the person's own, and the rest reads as "an agent that …".
+  const named = /\b(?:named|called)\s+["“'‘]?([^"”'’,.!?\n]{2,40}?)["”'’]?\s+(?=that\b|which\b|who\b|to\b)/i.exec(full);
+  const text = named ? full.replace(named[0], '') : full;
   if (!text || askKind(text) === 'question') return undefined;
   if (!AS_OBJECT.test(text) && !AS_SUBJECT.test(text)) return undefined;
   const knowledge = knowledgeOf(text);
   const job = jobOf(text);
-  const name = nameOf(job, knowledge);
+  const name = named ? named[1].trim() : nameOf(job, knowledge);
   return { ...(name && { name }), description: descriptionOf(text, job), placed: isPlaced(text, nodeNames), tools: toolsOf(text), ...(knowledge && { knowledge }) };
+}
+
+/** A name for the card when the ask gave none (the design route keeps the name it is sent): "Weekly report agent". */
+export function fallbackName(description: string): string {
+  const skip = /^(?:a|an|the|our|its|my|your|their|with|for|to|of|in|on|from|and|or|that|which|about|it|them|new|any|all)$/;
+  const words = description.replace(/[.!?]+$/, '').toLowerCase().split(/\s+/).slice(1).filter((w) => w && !skip.test(w)).slice(0, 2);
+  return words.length ? `${cap(words.join(' '))} agent`.slice(0, 40) : 'New agent';
 }
 
 /**
