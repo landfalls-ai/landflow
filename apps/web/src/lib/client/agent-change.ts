@@ -33,7 +33,7 @@ export function designChange(input: { name: string; description?: string; base: 
 /** The agent's saved draft as it is now, or undefined when it cannot be read. */
 export async function readDraft(agentId: string): Promise<Record<string, unknown> | undefined> {
   try {
-    return (await api<{ agent: Record<string, unknown> }>(`/api/agents/${agentId}`)).agent;
+    return (await api<{ agent: Record<string, unknown> }>(`/api/agents/${agentId}`, { background: true })).agent; // AG11's lookup does the same: a background read shows no global progress or error
   } catch {
     return undefined;
   }

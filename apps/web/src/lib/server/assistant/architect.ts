@@ -468,7 +468,8 @@ function mailAddresses(request: string): string[] {
 // AG08: a test case's input that describes an input instead of being one (the same rule as the scenarios' `describesInput`).
 export function describesCase(input: string): boolean {
   const text = input.trim();
-  if (text.length < 12 || /<[^<>\n]{1,40}>/.test(text)) return true;
+  // A short input is still an input ('Make a UUID'); only what reads as a description of a test, or a placeholder, goes.
+  if (/<[^<>\n]{1,40}>/.test(text) || /^(?:(?:an?|the)\s+)?(?:test|case)s?\s+(?:that|of|for|where|which|to)\b|^(?:checks?|verif(?:y|ies)|ensures?|tests?|validates?)\s+(?:that|whether|if)\b|^should\b/i.test(text)) return true;
   if (text.length >= 160 || /:\s*\S.{11,}/.test(text)) return false;
   const thing = /^(?:an?|the|some|another|pasted|random|sample|example|generic|typical|plain)\b[^:]{0,80}?\b(?:alert|e-?mail|message|text|log|ticket|request|question|input|payload|event|notification|report|string|token|jwt|file|data|record|row)s?\b(?:\s+(?:about|for|with|that|from|of|where|which|containing|saying|asking|describing|showing|on|in)\b|\s*$)/i;
   const person = /^(?:an?|the|some)\s+(?:user|customer|person|visitor|engineer|teammate|colleague|client)\s+(?:asks?|says|sends|wants|reports|writes|pastes|requests|needs)\b/i;

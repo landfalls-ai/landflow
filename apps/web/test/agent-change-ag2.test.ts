@@ -23,13 +23,13 @@ import { startFakeModels } from './fake-ai-services';
 Object.assign(process.env, { LANDFLOW_DATA_DIR: mkdtempSync(join(tmpdir(), 'landflow-change-ag2-')), LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '' });
 
 const wire = vi.hoisted(() => ({
-  calls: [] as Array<{ path: string; method?: string; json?: unknown }>,
+  calls: [] as Array<{ path: string; method?: string; json?: unknown; background?: boolean }>,
   answers: {} as Record<string, (init: { method?: string; json?: unknown }) => unknown>,
 }));
 vi.mock('@/lib/client/api', async (original) => ({
   ...(await original<typeof import('@/lib/client/api')>()),
-  api: vi.fn(async (path: string, init: { method?: string; json?: unknown } = {}) => {
-    wire.calls.push({ path, method: init.method, json: init.json });
+  api: vi.fn(async (path: string, init: { method?: string; json?: unknown; background?: boolean } = {}) => {
+    wire.calls.push({ path, method: init.method, json: init.json, background: init.background });
     const answer = wire.answers[`${init.method ?? 'GET'} ${path}`];
     if (!answer) throw new Error(`unexpected ${init.method ?? 'GET'} ${path}`);
     return answer(init);
@@ -311,6 +311,11 @@ describe('the agent page’s change card follows the draft', () => {
     await click(/Apply to its draft/);
     expect(text()).toContain('Saved to its draft · not tested yet: needs a credential');
     expect(wire.calls.filter((c) => c.method === 'PUT')).toHaveLength(1);
+
+    // AG09: the draft lookups are background reads
+    const reads = wire.calls.filter((c) => (c.method ?? 'GET') === 'GET' && c.path === '/api/agents/ag_1');
+    expect(reads.length).toBeGreaterThan(0);
+    expect(reads.every((c) => c.background === true)).toBe(true);
 
     // the person picks the credential on the agent's page: its builder saves, and says so
     draft = draftWith(true);
