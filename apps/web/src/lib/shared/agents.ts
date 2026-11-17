@@ -307,6 +307,37 @@ export interface AgentGuardrails {
   toolResult?: AgentGuardrail;
 }
 
+// SB17: what the brief gives every agent it drafts (docs/agents.md "Agent architect"): secrets masked in messages, and, when
+// the agent has any tool, instructions inside what a tool returns ignored. Pattern checks only: neither calls a model.
+export const DEFAULT_BRIEF_GUARDRAILS: { input: AgentGuardrail; toolResult: AgentGuardrail } = {
+  input: { enabled: true, action: 'sanitize', checks: { secrets: { permissiveness: 'balanced' } }, reply: '' },
+  toolResult: {
+    enabled: true,
+    action: 'block',
+    checks: { jailbreak: { useModel: false } },
+    reply: 'A tool returned text that looked like instructions; I ignored it.',
+  },
+};
+
+// SB17: each enabled rule in words, for the draft preview ("Masks secrets in messages", "Ignores instructions inside tool results").
+export function guardrailWords(guardrails: AgentGuardrails | undefined): string[] {
+  const where = { input: 'in messages', output: 'in answers', toolResult: 'in tool results' } as const;
+  const words: string[] = [];
+  for (const key of ['input', 'output', 'toolResult'] as const) {
+    const rule = guardrails?.[key];
+    if (!rule?.enabled) continue;
+    const masks = rule.action === 'sanitize';
+    const checks = rule.checks;
+    if (checks.pii) words.push(`${masks ? 'Masks' : 'Blocks'} personal data ${where[key]}`);
+    if (checks.secrets) words.push(`${masks ? 'Masks' : 'Blocks'} secrets ${where[key]}`);
+    if (checks.jailbreak) words.push(key === 'toolResult' ? 'Ignores instructions inside tool results' : `Blocks prompt injection ${where[key]}`);
+    if (checks.keywords) words.push(`${masks ? 'Masks' : 'Blocks'} listed words ${where[key]}`);
+    if (checks.urls) words.push(`Limits links ${where[key]}`);
+    if (checks.topical || checks.grounded || checks.nsfw || checks.customRegex || checks.custom) words.push(`Checks ${where[key]} with extra rules`);
+  }
+  return words;
+}
+
 export type AnswerLength = 'sentence' | 'paragraph' | 'detailed';
 
 /**

@@ -2,7 +2,7 @@
  * POST { name, description, instructions, workflow?, after?, before?, tools?, knowledge? } — the agent Spotlight proposes (`newAgent`,
  * docs/assistant.md#agents-and-teams), designed by the Agent architect: a model this host has (a local one first), the
  * tools it needs from the plugins online and a knowledge base when it works from documents. Saved as a draft; the
- * editor publishes it in autonomous mode. Answers `{ agent, needs, missing, dropped, designed }`, or 429 with the cap's
+ * editor publishes it in autonomous mode. Its brief's test cases are saved on it (the eval gate). Answers `{ agent, needs, missing, dropped, designed, cases }`, or 429 with the cap's
  * message when the caller's AI usage cap is reached (no agent is created).
  */
 import { z } from 'zod';
@@ -11,6 +11,7 @@ import { agentResources } from '@/lib/server/assistant/agent-resources';
 import { designAgent } from '@/lib/server/assistant/architect';
 import { resolveSpotlightModel } from '@/lib/server/assistant/models-list'; // SB19:
 import { allowedTypes } from '@/lib/server/assistant/scope';
+import { addCase } from '@/lib/server/agents/eval-gate'; // SB17:
 import { agentStore } from '@/lib/server/agents/store';
 import { isUsageCapError } from '@/lib/server/ai-usage';
 import { error, handler, json, parseBody } from '@/lib/server/http';
@@ -49,5 +50,16 @@ export const POST = handler(async (request: Request) => {
   }
   const config = { avatar: { kind: 'face' as const, face: randomFace(parsed.data.name) }, ...design.config };
   const agent = createInProject(request, 'agent', () => agentStore.create(config), (a) => a.id);
-  return json({ agent, needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed }, 201);
+  // SB17: the brief's test cases are saved on the new agent (the eval gate runs them on its first publish); one that fails is a line for the person, not a 500.
+  const cases: NonNullable<typeof design.cases> = [];
+  const needs = [...design.needs];
+  for (const draft of design.cases ?? []) {
+    try {
+      addCase(agent.id, draft);
+      cases.push(draft);
+    } catch {
+      if (!needs.some((n) => n.tool === 'test cases')) needs.push({ tool: 'test cases', kind: 'parameter', text: 'Add test cases on the Evaluations tab' });
+    }
+  }
+  return json({ agent, needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases /* SB17: */ }, 201);
 });
