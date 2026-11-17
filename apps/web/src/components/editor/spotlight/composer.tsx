@@ -13,7 +13,7 @@ import { completeBubbles, idleBubbles, liveMentions, TEST_BUBBLE, type Bubble, t
 import { useBuildFlow } from '../ai-builder';
 import { afterReply, typedSession } from '../autonomous';
 import { answeredQuestion } from './answered-question';
-import { agentCardQuestion, cardAskFor, designAgentCard, reviseAgentCard, reviseCardFor } from './agent-ask'; // SB16: AG04:
+import { agentCardQuestion, cardAskFor, cardQuestionFor, keepUnderCard, designAgentCard, reviseAgentCard, reviseCardFor } from './agent-ask'; // SB16: AG04:
 import { draftWholeFlow } from './draft-flow';
 import { suggestionKey, useAssistant, useSuggestions, useWorking, type ChatItem, type KeptMention, type Suggestion } from '../assistant';
 import { useEditor } from '../store';
@@ -234,6 +234,8 @@ export function Composer() {
       await draftWholeFlow(message, build);
       return;
     }
+    const under = cardQuestionFor(message); // AG04: the chat's answer to it stays under the card
+    const since = useAssistant.getState().items.length;
     await useAssistant.getState().send(message, {
       withoutSelection,
       ...(scoped !== undefined && { scope: scoped }), // SB07:
@@ -241,6 +243,7 @@ export function Composer() {
       ...typedSession(message),
       ...(tagged.length && { mentions: tagged.slice(0, 8) }),
     });
+    if (under) keepUnderCard(since, under);
     // Autonomous: what the reply proposed is applied and the flow tested, without Apply or Test and fix.
     await afterReply(message);
   };

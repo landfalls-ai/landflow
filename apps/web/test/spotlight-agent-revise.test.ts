@@ -37,6 +37,8 @@ vi.mock('@/lib/server/projects/access', async (importActual) => {
 
 const { draftMoved, designChange } = await import('@/lib/client/agent-change');
 const { cardAskFor, createFromCard, designAgentCard, reviseCardFor, agentCardQuestion, reviseAgentCard, applyAgentChange, publishAgentChange } = await import('@/components/editor/spotlight/agent-ask');
+const { retryReply } = await import('@/components/editor/spotlight/reply');
+const { keepUnderCard, cardQuestionFor } = await import('@/components/editor/spotlight/agent-ask');
 const { useAssistant } = await import('@/components/editor/assistant');
 const { useEditor } = await import('@/components/editor/store');
 const { useAutonomous } = await import('@/components/editor/autonomous');
@@ -317,6 +319,67 @@ describe('a follow-up under a pending card', () => {
     await pending();
     expect(reviseCardFor('create an agent that summarises incidents for the on-call channel')).toBeUndefined();
     expect(agentCardQuestion('what tools does it have?')).toBe(true);
+  });
+});
+
+describe('a second follow-up on an empty canvas', () => {
+  const asChat = (since: number, text: string) => {
+    useAssistant.setState((st) => ({ items: [...st.items, { id: `c${st.items.length}`, role: 'user' as const, text: 'why?' }, { id: `a${st.items.length}`, role: 'assistant' as const, parts: [{ kind: 'text' as const, text }] }] }));
+    return since;
+  };
+
+  it('two changes in a row both target the same card', async () => {
+    const { id } = await pending();
+    answers['/api/agents/design'] = () => ({ ...preview(withSlugify()), changes: ['Adds the tool Slugify'] });
+    const t1 = reviseCardFor('add Slugify as a tool');
+    await reviseAgentCard(t1!.itemId, t1!.card, 'add Slugify as a tool');
+    const t2 = reviseCardFor('also make it shorter');
+    expect(t2?.itemId).toBe(id);
+    expect(t2?.card.tools.map((t) => t.name)).toContain('Slugify');
+  });
+
+  it('a question after a revise is still the chat’s, never a plan or a build', async () => {
+    await pending();
+    answers['/api/agents/design'] = () => ({ ...preview(withSlugify()), changes: ['Adds the tool Slugify'] });
+    const t1 = reviseCardFor('add Slugify as a tool');
+    await reviseAgentCard(t1!.itemId, t1!.card, 'add Slugify as a tool');
+    expect(agentCardQuestion('why does it need the Hash tool?')).toBe(true);
+    expect(reviseCardFor('why does it need the Hash tool?')).toBeUndefined();
+    expect(calls.some((c) => c.path.startsWith('/api/ai/build'))).toBe(false);
+  });
+
+  it('the chat’s answer to a question keeps the card the newest; an untagged chat reply blocks the revise', async () => {
+    const { id } = await pending();
+    const since = useAssistant.getState().items.length;
+    const under = cardQuestionFor('why does it need the Hash tool?');
+    expect(under).toBe(id);
+    asChat(since, 'Because it hashes.');
+    keepUnderCard(since, under!);
+    expect(reviseCardFor('add Slugify as a tool')?.itemId).toBe(id);
+    asChat(useAssistant.getState().items.length, 'An unrelated chat reply.');
+    expect(reviseCardFor('add Slugify as a tool')).toBeUndefined();
+    expect(agentCardQuestion('why does it need the Hash tool?')).toBe(false);
+  });
+
+  it('Try again on a failed revise revises again: same base and change, never the chat or the builder', async () => {
+    const { id } = await pending();
+    let fail = true;
+    answers['/api/agents/design'] = () => {
+      if (fail) throw new Error('the model is down');
+      return { ...preview(withSlugify()), changes: ['Adds the tool Slugify'] };
+    };
+    const send = vi.spyOn(useAssistant.getState(), 'send');
+    await reviseAgentCard(id, cardOf()!.card, 'add Slugify as a tool');
+    const failed = useAssistant.getState().items.at(-1)!;
+    expect(failed).toMatchObject({ role: 'assistant', retry: { kind: 'agentRevise', itemId: id } });
+    fail = false;
+    calls.length = 0;
+    retryReply(failed.id);
+    await vi.waitFor(() => expect(cardOf()!.card.tools.map((t) => t.name)).toContain('Slugify'));
+    expect(calls.map((c) => c.path)).toEqual(['/api/agents/design']);
+    expect(calls[0].json).toMatchObject({ change: 'add Slugify as a tool', base: { config: expect.objectContaining({ name: 'Utility agent' }) } });
+    expect(send).not.toHaveBeenCalled();
+    expect(calls.some((c) => c.path.startsWith('/api/ai/build'))).toBe(false);
   });
 });
 

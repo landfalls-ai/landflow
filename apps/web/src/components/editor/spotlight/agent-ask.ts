@@ -240,17 +240,30 @@ function workflowShaped(message: string): boolean {
  * turns old, or one with another reply after it, is nobody's to change (the message goes to the chat or the builder).
  */
 function newestCard(): { itemId: string; card: AgentCard } | undefined {
-  const last = [...useAssistant.getState().items].reverse().find((item) => item.role === 'assistant');
-  const part = last?.parts.find((p) => p.kind === 'agentCard');
-  if (!last || part?.kind !== 'agentCard') return undefined;
-  return part.card.state === 'designed' || part.card.state === 'created' ? { itemId: last.id, card: part.card } : undefined;
+  const items = useAssistant.getState().items;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item.role !== 'assistant') continue;
+    const part = item.parts.find((p) => p.kind === 'agentCard');
+    if (part?.kind === 'agentCard') return part.card.state === 'designed' || part.card.state === 'created' ? { itemId: item.id, card: part.card } : undefined;
+    if (!item.forCard) return undefined; // another reply is under the card: it is nobody's to change
+  }
+  return undefined;
 }
 
 /**
  * A question typed under an agent card ("why does it need the Hash tool?"): the chat answers it, also on an empty canvas
- * (where any other first message drafts a flow), and nothing is changed (lesson 22).
+ * (where any other first message drafts a flow), and nothing is changed (lesson 22). Spotlight's own replies about the card
+ * (a revise's, an answer to such a question) count as under it, so a second change or question still finds the card.
  */
-export const agentCardQuestion = (message: string): boolean => agentChangeAsk(message) === 'question' && newestCard() !== undefined;
+export const agentCardQuestion = (message: string): boolean => cardQuestionFor(message) !== undefined;
+
+/** The card a question is about (its item id), when the message is a question under the newest card. */
+export const cardQuestionFor = (message: string): string | undefined => (agentChangeAsk(message) === 'question' ? newestCard()?.itemId : undefined);
+
+/** Marks the assistant replies after the first `since` items as Spotlight's own, about the card `itemId`. */
+export const keepUnderCard = (since: number, itemId: string): void =>
+  useAssistant.setState((s) => ({ items: s.items.map((i, n) => (n >= since && i.role === 'assistant' && !i.parts.some((p) => p.kind === 'agentCard') ? { ...i, forCard: itemId } : i)) }));
 
 const revising = new Set<string>();
 
@@ -266,7 +279,7 @@ export async function reviseAgentCard(itemId: string, card: AgentCard, message: 
   if (revising.has(itemId)) return;
   const made = card.state === 'created';
   const existing = made ? (card.base?.agentId ?? card.agentId) : card.base?.agentId;
-  const reply: ChatItem = { id: nanoid(8), role: 'assistant', parts: [{ kind: 'text', text: `Changing “${card.name}”…` }] };
+  const reply: ChatItem = { id: nanoid(8), role: 'assistant', forCard: itemId, parts: [{ kind: 'text', text: `Changing “${card.name}”…` }] };
   useAssistant.getState().append([{ id: nanoid(8), role: 'user', text: message }, reply]);
   const rowId = `card:${reply.id}`;
   useAssistant.getState().setAgent(rowId, { name: card.name, state: 'designing' });
@@ -303,7 +316,7 @@ export async function reviseAgentCard(itemId: string, card: AgentCard, message: 
     }
   } catch (e) {
     if (abort.signal.aborted) patchReply(reply.id, { parts: [{ kind: 'text', text: 'Stopped: nothing was changed.' }] });
-    else patchReply(reply.id, { parts: [{ kind: 'text', text: 'Nothing was changed.' }], error: `Couldn’t change the agent: ${(e as Error).message}` });
+    else patchReply(reply.id, { parts: [{ kind: 'text', text: 'Nothing was changed.' }], retry: { kind: 'agentRevise', itemId }, error: `Couldn’t change the agent: ${(e as Error).message}` });
   } finally {
     revising.delete(itemId);
     if (draftCall.request === abort) draftCall.request = undefined;

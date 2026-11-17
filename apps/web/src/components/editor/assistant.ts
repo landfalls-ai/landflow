@@ -369,6 +369,10 @@ export type ChatItem =
       errorStep?: number;
       /** When the running model step began (to time it). */
       stepStartedAt?: number;
+      /** AG04: Spotlight's own reply about the agent card in this item (a revise's reply, the chat's answer to a question under it): the card is still the newest. */
+      forCard?: string;
+      /** AG04: what Try again runs for this failed reply, when it is not a chat message (a revise of an agent card). */
+      retry?: { kind: 'agentRevise'; itemId: string };
     };
 
 /** A tag as the chat keeps and sends it: what it points at, and the name it showed. */
