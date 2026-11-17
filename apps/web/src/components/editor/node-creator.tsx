@@ -160,7 +160,7 @@ function IconBox({ color, children, round, image }: { color: string; children: R
   );
 }
 
-export function NodeCreator() {
+export function NodeCreator({ initialQuery = '' }: { initialQuery?: string } = {}) {
   const request = useEditor((s) => s.palette);
   // A phone: the picker takes the whole screen, as a dialog that keeps the focus (docs/mobile.md#sheets-and-dialogs).
   const phone = usePhone();
@@ -181,7 +181,7 @@ export function NodeCreator() {
   const { screenToFlowPosition, flowToScreenPosition, setCenter, getZoom } = useReactFlow();
   const [stack, setStack] = useState<View[]>([{ kind: 'root' }]);
   const [direction, setDirection] = useState<'push' | 'pop'>('push');
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(initialQuery);
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   const reported = useRef(new Set<string>());
@@ -275,10 +275,9 @@ export function NodeCreator() {
       }
     }
     const center = screenToFlowPosition({ x: window.innerWidth / 2 - 200, y: window.innerHeight / 2.3 });
-    const id = state.placeNode(type.type, effective, { x: center.x - 44, y: center.y - 44 });
+    const id = state.placeNode(type.type, effective, { x: center.x - 44, y: center.y - 44 }, initial);
     if (!id) return;
-    // An action picked from the list: its resource and operation are set, and what depends on them gets its defaults.
-    if (initial) state.updateNode(id, { parameters: withPropertyDefaults(type.descriptor.properties, initial) });
+    // An action picked from the list is placed with its resource and operation set (one undo step), what depends on them at its defaults.
     if (feeds) state.onConnect({ source: id, sourceHandle: 'main:0', target: feeds, targetHandle: 'main:0' });
     close();
     // Keep the new node in view.
@@ -371,8 +370,8 @@ export function NodeCreator() {
 
   /** An app's node with actions opens its action list; any other node is added as it is. */
   const appRow = (t: NodeTypeInfo): RowItem => {
-    const row = nodeRow(t);
-    const count = mode === 'next' ? nodeActions(t.descriptor).length : 0;
+    const row = nodeRow(t, mode === 'trigger' ? TRIGGER_TITLES[t.type] : undefined);
+    const count = mode === 'next' && t.pluginId !== 'core' ? nodeActions(t.descriptor).length : 0;
     return count ? { ...row, description: `${count} actions: ${t.descriptor.description}`, nav: true, onSelect: () => push({ kind: 'node', type: t.type }) } : row;
   };
 

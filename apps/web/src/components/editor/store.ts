@@ -203,9 +203,10 @@ interface EditorState {
   onNodesChange(changes: NodeChange<CanvasNode>[]): void;
   onEdgesChange(changes: EdgeChange<FlowEdge>[]): void;
   onConnect(connection: Connection): void;
-  addNode(type: string, position: { x: number; y: number }, connectFrom?: PaletteRequest['from']): string | undefined;
+  /** `parameters`: the node starts with these set (an action picked from the node creator), what depends on them at its defaults. */
+  addNode(type: string, position: { x: number; y: number }, connectFrom?: PaletteRequest['from'], parameters?: Record<string, unknown>): string | undefined;
   /** Add a node from the node creator: placed, wired and (for edge splits) inserted. */
-  placeNode(type: string, request: PaletteRequest, fallback: { x: number; y: number }): string | undefined;
+  placeNode(type: string, request: PaletteRequest, fallback: { x: number; y: number }, parameters?: Record<string, unknown>): string | undefined;
   setPinData(nodeId: string, items?: NodeItem[]): void;
   /** Drop a starter flow onto the canvas (fresh ids, defaults filled in). */
   applyTemplate(template: FlowTemplate, origin?: { x: number; y: number }): void;
@@ -679,7 +680,7 @@ export const useEditor = create<EditorState>((set, get) => {
     });
   },
 
-  addNode(type, position, connectFrom) {
+  addNode(type, position, connectFrom, initial) {
     const info = get().nodeTypes[type];
     if (!info) return undefined;
     return batch(() => {
@@ -697,7 +698,11 @@ export const useEditor = create<EditorState>((set, get) => {
           name: uniqueName(info.descriptor.displayName, get().nodes),
           type,
           typeVersion: defaultVersionOf(info.descriptor),
-          parameters: slotPort?.displayOptions ? withPropertyDefaults(info.descriptor.properties, portParameters(slotPort)) : defaultParameters(info.descriptor),
+          parameters: initial
+            ? withPropertyDefaults(info.descriptor.properties, initial)
+            : slotPort?.displayOptions
+              ? withPropertyDefaults(info.descriptor.properties, portParameters(slotPort))
+              : defaultParameters(info.descriptor),
         },
       },
       selected: true,
@@ -723,7 +728,7 @@ export const useEditor = create<EditorState>((set, get) => {
     });
   },
 
-  placeNode(type, request, fallback) {
+  placeNode(type, request, fallback, initial) {
     const state = get();
     const info = state.nodeTypes[type];
     if (!info) return undefined;
@@ -759,7 +764,7 @@ export const useEditor = create<EditorState>((set, get) => {
       set((s) => ({ nodes: s.nodes.map((n) => (downstream.has(n.id) ? { ...n, position: { x: n.position.x + 260, y: n.position.y } } : n)), edges: s.edges.filter((e) => e.id !== split.id) }));
       position = { x: (anchor?.position.x ?? position.x) + 260, y: anchor?.position.y ?? position.y };
     }
-    const id = get().addNode(type, position, from);
+    const id = get().addNode(type, position, from, initial);
     if (id && split && info.descriptor.inputs.some((p) => p.type === 'main') && info.descriptor.outputs.some((p) => p.type === 'main')) {
       get().onConnect({ source: id, sourceHandle: handleId('main', 0), target: split.target, targetHandle: split.targetHandle ?? handleId('main', 0) });
     }
