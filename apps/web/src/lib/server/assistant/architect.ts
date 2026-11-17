@@ -1061,6 +1061,25 @@ const EFFECT = new RegExp(`^(?:${VERB})\\b|(?:\\band|\\bthen|[,;])\\s+(?:${VERB}
 const NEGATION = /\b(?:no|not|never|nothing|without|none|doesn'?t|don'?t|won'?t|wouldn'?t|didn'?t|cannot|can'?t)\b|n't\b/i;
 const GERUND: Record<string, string> = { send: 'sending', sent: 'sending', sends: 'sending', email: 'sending', emails: 'sending', emailed: 'sending', post: 'posting', posts: 'posting', posted: 'posting', create: 'creating', creates: 'creating', created: 'creating', delete: 'deleting', deletes: 'deleting', deleted: 'deleting', update: 'updating', updates: 'updating', updated: 'updating' };
 /**
+ * ag3 carryover (the live pass, Grafana agent): a test case that names a URL nobody gave ("What does the dashboard at
+ * https://grafana.example.com/… show?") would have the smoke test and the gate send the agent's HTTP Request there (lesson 21:
+ * never a destination nobody gave). A case whose input or expected answer names a URL whose host is not in what the person
+ * wrote, nor in a tool's own settings, is dropped; the rest stay as they are, in order.
+ */
+export function casesWithoutMadeUpUrls(cases: AgentCaseDraft[], written: string, config: Partial<AgentConfig>): AgentCaseDraft[] {
+  const hostOf = (url: string) => {
+    try {
+      return new URL(url).host.toLowerCase();
+    } catch {
+      return url.toLowerCase();
+    }
+  };
+  const given = `${written}\n${JSON.stringify(config.tools ?? [])}`.toLowerCase();
+  const madeUp = (text: string | undefined) => (text?.match(/\bhttps?:\/\/[^\s"'<>)\]]+/gi) ?? []).some((url) => !given.includes(hostOf(url)));
+  return cases.filter((c) => !madeUp(c.input) && !madeUp(c.expected));
+}
+
+/**
  * AG15: a case whose expected answer says a tool that asks first did its work ("Emails a summary to oncall@landflow.test") is
  * rewritten to what an honest run does when approvals are denied: it says what it would do and waits. Addresses, names and ids
  * stay exactly; the input and every other case are untouched.
@@ -1835,6 +1854,10 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
       notAdded = withSpecHints(kept, { name: spec.name, description: '', instructions: '', ask: spec.change, tools: changeTools(spec.change, input.types.filter(usableAsTool)) }, input, spec.base);
     } else notAdded = withSpecHints(kept, spec, input); // SB17: AG02: what the ask named and the agent did not get
     kept.cases = asksFirstCases(kept.cases, kept.config); // AG15: a case about a tool that asks first expects the ask
+    // ag3 carryover: a case naming a URL nobody gave is dropped (never a destination nobody gave); too few left → the card asks for cases.
+    const before = kept.cases.length;
+    kept.cases = casesWithoutMadeUpUrls(kept.cases, spec.change ? `${designWords(spec)}\n${spec.change}` : designWords(spec), kept.config);
+    if (before >= 3 && kept.cases.length < 3 && !(spec.base && spec.change) && !kept.needs.some((n) => n.tool === 'test cases')) kept.needs.push({ tool: 'test cases', kind: 'parameter', text: 'Add test cases on the Evaluations tab' });
     return { ...kept, config: { ...kept.config, name: spec.base && spec.change ? (kept.config.name ?? spec.name) /* AG04: a rename is the change's */ : spec.name, description: kept.config.description || spec.description }, designed: true, notAdded };
   }
   // AG04: a change nothing proposed is no change: the base as it is.
