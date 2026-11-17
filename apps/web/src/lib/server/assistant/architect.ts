@@ -536,7 +536,8 @@ export function nameOnlyOwnTools(instructions: string, tools: Array<{ name: stri
     const foreign = [...new Set(current.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [])].filter((t) => {
       if (own.has(t)) return false;
       if (CALL_VERBS.test(t) || new RegExp(`\\b(?:call|invoke|run)\\s+\`?${t}\\b`, 'i').test(current)) return true;
-      return !FIELD_WORD.test(t) && new RegExp(`\\buse\\s+\`?${t}\\b`, 'i').test(current);
+      // After "use", or later in the same sentence as "call" ("call jwt_decode, hash or slugify_title"): a tool unless it is shaped like a field.
+      return !FIELD_WORD.test(t) && (new RegExp(`\\buse\\s+\`?${t}\\b`, 'i').test(current) || new RegExp(`\\b(?:call|invoke|run)\\b[^.\\n]*?\\b${t}\\b`, 'i').test(current));
     });
     for (const token of foreign) {
       const words = wordsOf(token).filter((w) => !GENERIC_WORDS.has(w));

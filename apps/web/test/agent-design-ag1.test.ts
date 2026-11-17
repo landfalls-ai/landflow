@@ -140,6 +140,10 @@ describe('the asks as typed (shots 10a, 30d)', () => {
   const TYPED_TRIAGE = 'Create an agent that triages an alert I paste: normalise it, pull out the IOCs, judge how serious it is, and email a short summary to oncall@landflow.test.';
   const TYPED_UTILITY = 'Create an agent that decodes JWTs, hashes strings, makes UUIDs and slugifies titles.';
 
+  it('names JWT Decode from "decodes JWTs"', () => {
+    expect(agentAsk(TYPED_UTILITY, [], catalog())!.tools).toEqual(expect.arrayContaining(['JWT Decode']));
+  });
+
   it('names Slugify from "slugifies" in the ask', () => {
     const read = agentAsk(TYPED_UTILITY, [], catalog())!;
     expect(read.tools).toEqual(expect.arrayContaining(['Hash', 'UUID', 'Slugify']));
@@ -176,6 +180,7 @@ describe('every typed ask (10a, 60b, 30d, 50c): a sensible name, and each asked 
     }
     expect(spec(TYPED.triage).name).toBe('Alert triager');
     expect(spec(TYPED.utility).name).toBe('Utility helper');
+    expect(spec(TYPED.grafana).name).toBe('Grafana alerts agent'); // HTTP Request is core: it names no plugin
   });
 
   it('reads HTTP Request (a core node of two words) as an asked tool, and Get Alerts, Get Alert Details', () => {
@@ -207,6 +212,13 @@ describe('instruction tool names that end like a field', () => {
       expect(text, bad).not.toContain(bad);
       expect(dropped.join(' '), bad).toContain(bad);
     }
+  });
+  it('replaces a tool named later in the same call sentence ("call get_alerts, send_email or get_alert_summary")', () => {
+    const { text, dropped } = nameOnlyOwnTools('Steps:\n2. Call get_alerts, send_email or lookup_alert for each.', tools);
+    expect(text).not.toContain('lookup_alert');
+    expect(dropped.join(' ')).toContain('lookup_alert');
+    const own = 'Steps:\n1. Call get_alerts and read the customer_id from each.';
+    expect(nameOnlyOwnTools(own, tools)).toEqual({ text: own, dropped: [] });
   });
   it('leaves a bare field word alone', () => {
     const line = 'Steps:\n1. Read the customer_id and `user_id` and ticket_number from the input.';

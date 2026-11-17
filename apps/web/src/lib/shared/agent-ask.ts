@@ -69,6 +69,8 @@ const NOUN_STOP = new Set(['and', 'or', 'to', 'for', 'from', 'with', 'in', 'on',
 export interface AskCatalogEntry {
   displayName: string;
   pluginName?: string;
+  /** A core node: it names no plugin, so it never decides an agent's name. */
+  core?: boolean;
 }
 
 /**
@@ -78,7 +80,7 @@ export interface AskCatalogEntry {
 export function askCatalog(types: Array<{ pluginId: string; pluginName?: string; descriptor: { displayName: string } }>): AskCatalogEntry[] {
   return types
     .filter((t) => t.pluginId !== 'core' || /\S\s+\S/.test(t.descriptor.displayName.trim()))
-    .map((t) => ({ displayName: t.descriptor.displayName, pluginName: t.pluginId === 'core' ? undefined : t.pluginName }));
+    .map((t) => (t.pluginId === 'core' ? { displayName: t.descriptor.displayName, core: true } : { displayName: t.descriptor.displayName, pluginName: t.pluginName }));
 }
 
 /** AG02: whether `name` is in `message` as whole words ("field statistics"), allowing a plural on its last word. */
@@ -87,6 +89,13 @@ function names(message: string, name: string): boolean {
   if (text.length < 4) return false;
   const body = /[^aeiou]y$/i.test(text) ? `${escape(text.slice(0, -1)).replace(/\s+/g, '[\\s-]+')}(?:y|ies|ied)` : `${escape(text).replace(/\s+/g, '[\\s-]+')}(?:e?s)?`;
   return new RegExp(`(?<![\\w-])${body}(?![\\w-])`, 'i').test(message);
+}
+
+/** AG02: a plugin node of two or more words whose every word is in the message in some form, in any order ("decodes JWTs" names JWT Decode). */
+function wordsNamed(message: string, entry: AskCatalogEntry): boolean {
+  const words = entry.displayName.trim().split(/\s+/);
+  if (entry.core || words.length < 2 || words.some((w) => w.length < 3)) return false;
+  return words.every((w) => new RegExp(`(?<![\\w-])${escape(w.replace(/e$/i, ''))}(?:e?s|e?d|ing|e)?(?![\\w-])`, 'i').test(message));
 }
 
 function toolsOf(message: string, catalog: AskCatalogEntry[] = []): string[] {
@@ -112,7 +121,7 @@ function toolsOf(message: string, catalog: AskCatalogEntry[] = []): string[] {
     }
   }
   // AG02: the nodes and plugins the message names by their display names ("Normalize Alert", "SQLite", "Grafana"): a plugin's name only when none of its nodes is named.
-  const nodes = catalog.filter((c) => names(message, c.displayName));
+  const nodes = catalog.filter((c) => names(message, c.displayName) || wordsNamed(message, c));
   for (const entry of nodes) add(entry.displayName);
   for (const plugin of new Set(catalog.map((c) => c.pluginName).filter((n): n is string => Boolean(n)))) {
     if (!names(message, plugin) || nodes.some((n) => n.pluginName === plugin)) continue;
@@ -219,6 +228,7 @@ export function fallbackName(description: string, tools: string[] = [], catalog:
   const plugins = new Set<string>();
   for (const tool of tools) {
     const entry = catalog.find((c) => c.displayName.toLowerCase() === tool.toLowerCase());
+    if (entry?.core) continue; // a core node (HTTP Request) belongs to no plugin
     plugins.add(entry?.pluginName ?? entry?.displayName ?? tool.split(':')[0]);
   }
   const [app] = plugins;
