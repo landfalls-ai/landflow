@@ -42,6 +42,10 @@ describe('the steps check, straight (the planner’s probe)', () => {
       ['Call the get_user_id tool.', 'get_user_id'],
       ['Use the lookup_by tool.', 'lookup_by'],
       ['Call send_to.', 'send_to'],
+      ['Use send_summary as the last step.', 'send_summary'],
+      ['Use get_alerts from the Grafana plugin.', 'get_alerts'],
+      ['Use fetch_logs from the log store.', 'fetch_logs'],
+      ['Use get_alerts to order them by severity.', 'get_alerts'],
     ];
     for (const [line, token] of lines) {
       const { text, dropped } = run(line);

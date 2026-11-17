@@ -545,7 +545,6 @@ export interface StepsOptions {
   open?: boolean;
 }
 
-const READ_FAMILY = new Set(['get', 'list', 'fetch', 'read', 'query', 'find', 'lookup', 'search']);
 /** AG07: a word without its plural `s` and with -ise as -ize ("alerts" and "alert", "normalise" and "normalize" are one). */
 const foldWord = (w: string) => {
   const x = w.replace(/ises?$/, (m) => `ize${m.endsWith('s') ? 's' : ''}`).replace(/ies$/, 'y');
@@ -562,7 +561,7 @@ function sameTool(token: string, tool: string): boolean {
   if (token.toLowerCase() !== tool.toLowerCase() && token.replace(/_\d+$/, '').toLowerCase() === tool.toLowerCase()) return true;
   const a = meaningOf(token);
   const b = meaningOf(tool);
-  if (a.verb && b.verb) return (foldWord(a.verb) === foldWord(b.verb) || (READ_FAMILY.has(a.verb) && READ_FAMILY.has(b.verb))) && sameWords(a.rest, b.rest);
+  if (a.verb && b.verb) return foldWord(a.verb) === foldWord(b.verb) && sameWords(a.rest, b.rest);
   if (a.verb || b.verb) return a.rest.length > 0 && sameWords(a.rest, b.rest);
   return sameWords(a.all, b.all);
 }
@@ -590,7 +589,7 @@ export function nameOnlyOwnTools(instructions: string, tools: Array<{ name: stri
       if (new RegExp(`\\b(?:call|invoke|run)\\s+${FIELD_WORD.test(t) ? '' : '(?:(?:the|an?)\\s+)?'}\`?${t}\\b`, 'i').test(current)) return true;
       // AG07: a token the sentence uses as a field ("send_to as the address", "update_time to order them", "the to_email field").
       const at = current.search(new RegExp(`\\b${t}\\b`));
-      if (at >= 0 && FIELD_CONTEXT.test(current.slice(at + t.length))) return false;
+      if (at >= 0 && (!CALL_VERBS.test(t) || FIELD_WORD.test(t)) && FIELD_CONTEXT.test(current.slice(at + t.length))) return false;
       if (CALL_VERBS.test(t) && !FIELD_WORD.test(t) && new RegExp(`\\buse\\s+(?:(?:the|an?)\\s+)?\`?${t}\\b`, 'i').test(current)) return true; // "use `user_id`" is a field
       // AG07: "with send_email", "using send_email": a tool even when it ends in a field word (not a preposition: "send_to").
       if (CALL_VERBS.test(t) && !PREPOSITION_END.test(t) && new RegExp(`\\b(?:with|using|via)\\s+(?:(?:the|an?)\\s+)?\`?${t}\\b`, 'i').test(current)) return true;
@@ -1428,7 +1427,7 @@ function withSpecHints(draft: DraftResult, spec: AgentSpec, input: Pick<Architec
     const several = /^(Send email): (several nodes match \(.*\), pick one)$/.exec(wanted);
     if (several) {
       // AG07: a draft that already has a node tool that sends mail needs no pick: the mail is sent.
-      const mails = tools.some((t) => t.type === 'node' && /^send\b/i.test(types.find((x) => x.type === t.nodeType)?.descriptor.displayName.trim() ?? '') && /\b(?:e-?mail|mail)\b/i.test(types.find((x) => x.type === t.nodeType)?.descriptor.displayName ?? ''));
+      const mails = tools.some((t) => { const d = t.type === 'node' ? types.find((x) => x.type === t.nodeType)?.descriptor : undefined; return Boolean(d) && /e-?mail|smtp|\bmail\b/i.test([d!.displayName, ...(d!.keywords ?? [])].join(' ')); });
       if (!mails) notAdded.push({ name: several[1], reason: several[2] });
       continue;
     }
