@@ -9,6 +9,7 @@
  * - `persona`: Always and Never rules from what people said, as the agent change.
  * - `draft`: a draft workflow from the requests, by the flow builder ("Describe a workflow").
  */
+import { createHash } from 'node:crypto';
 import type { LanguageModel, Workflow } from '@landflow/engine';
 import type { PortDigest, RunDigest } from '../../shared/assistant-ops';
 import { clip } from '../../shared/assistant-ops';
@@ -159,21 +160,29 @@ async function enrichOne(finding: Finding, enrich: Enrichment, model: LanguageMo
       if (!name || name.includes('/')) return finding;
       const draft = await buildPlanFirst(enrich.prompt, name);
       if (!draft.nodes.length) return finding;
-      return { ...finding, proposal: { ...p, draft: draftWorkflow(draft), why: `${p.why} Applying creates a draft workflow “${draft.name}” to start from.`.slice(0, 2_000), model: draft.model } };
+      return { ...finding, proposal: { ...p, draft: draftWorkflow(draft), draftPromptHash: promptHash(enrich.prompt), why: `${p.why} Applying creates a draft workflow “${draft.name}” to start from.`.slice(0, 2_000), model: draft.model } };
     }
   }
 }
 
+/** A short hash of the prompt a draft was built from: a draft is kept only while the prompt is the same. */
+function promptHash(prompt: string): string {
+  return createHash('sha256').update(prompt).digest('hex').slice(0, 16);
+}
+
 /**
- * The draft an open or snoozed suggestion with this fingerprint already carries: a pass that finds the same request again
- * keeps it instead of building the draft once more (a draft is 5 to 15 model calls). Undefined when there is none.
+ * The draft an open or snoozed detector suggestion with this fingerprint and detector already carries, when it was built
+ * from this same prompt: a pass that finds the same request again keeps it instead of building the draft once more (a draft
+ * is 5 to 15 model calls). A prompt that changed (unmet demand lists example requests that leave its 30-day window) or a
+ * draft saved before the hash was kept is rebuilt. Undefined when there is none.
  */
-function savedDraft(fingerprint: string | undefined): { draft: Workflow; model?: string } | undefined {
+function savedDraft(fingerprint: string | undefined, detector: string, prompt: string): { draft: Workflow; model?: string } | undefined {
   if (!fingerprint) return undefined;
   try {
-    for (const row of database().all<{ data: string }>("SELECT data FROM proposals WHERE fingerprint = ? AND status IN ('open', 'snoozed')", fingerprint)) {
-      const saved = JSON.parse(row.data) as { draft?: Workflow; model?: string };
-      if (saved.draft) return { draft: saved.draft, model: saved.model };
+    const rows = database().all<{ data: string }>("SELECT data FROM proposals WHERE fingerprint = ? AND source = 'detector' AND detector = ? AND status IN ('open', 'snoozed')", fingerprint, detector);
+    for (const row of rows) {
+      const saved = JSON.parse(row.data) as { draft?: Workflow; model?: string; draftPromptHash?: string };
+      if (saved.draft && saved.draftPromptHash === promptHash(prompt)) return { draft: saved.draft, model: saved.model };
     }
   } catch {
     // Unreadable or no table: build the draft.
@@ -191,9 +200,10 @@ export async function enrichFindings(findings: Finding[], options: { model?: Lan
     // A draft is built planned first: one plan call and one call per step, each with its send-back, on the brain's local
     // model. So a pass drafts only a few; the rest are kept as they are and drafted by a later pass.
     // A request already drafted (its suggestion is still open) keeps its draft: it is neither rebuilt nor counted.
-    const saved = finding.enrich?.kind === 'draft' ? savedDraft(finding.proposal.fingerprint) : undefined;
+    const draftPrompt = finding.enrich?.kind === 'draft' ? finding.enrich.prompt : undefined;
+    const saved = draftPrompt !== undefined && finding.proposal.detector ? savedDraft(finding.proposal.fingerprint, finding.proposal.detector, draftPrompt) : undefined;
     if (saved) {
-      out.push({ ...finding, proposal: { ...finding.proposal, draft: saved.draft, why: `${finding.proposal.why} Applying creates a draft workflow “${saved.draft.name}” to start from.`.slice(0, 2_000), ...(saved.model && { model: saved.model }) } });
+      out.push({ ...finding, proposal: { ...finding.proposal, draft: saved.draft, draftPromptHash: promptHash(draftPrompt!), why: `${finding.proposal.why} Applying creates a draft workflow “${saved.draft.name}” to start from.`.slice(0, 2_000), ...(saved.model && { model: saved.model }) } });
       continue;
     }
     const skipDraft = finding.enrich?.kind === 'draft' && drafts >= MAX_DRAFTS_PER_PASS;

@@ -26,9 +26,11 @@ show up in the **Suggestions** card, and on the canvas of the workflow they are 
    draft workflow. Every suggestion shows its evidence. A draft workflow is built planned first like Spotlight's (one plan
    call, then one call per step and a send-back each, on `LANDFLOW_BRAIN_MODEL`: usually 5 to 15 calls, at most 26), so a
    pass builds at most 3 drafts (`MAX_DRAFTS_PER_PASS`); a finding past the cap is saved without its draft. The only draft
-   detector, *unmet demand*, already reports at most 3 requests, and a request whose suggestion is still open keeps its
-   saved draft: a pass does not rebuild it (the same fingerprint), so what a pass costs is the drafts of requests not yet
-   drafted.
+   detector, *unmet demand*, already reports at most 3 requests, and a request whose suggestion is still open or snoozed keeps
+   its saved draft while the prompt it was built from is the same (the suggestion stores a hash of it, `draftPromptHash`).
+   When the prompt changes (its example requests change as requests leave the 30-day window) the next pass rebuilds the
+   draft, and the rebuild counts against the cap; so what a pass costs is the drafts of requests not yet drafted plus those
+   whose prompt changed. Dismissing a suggestion does not ask for a new draft: it holds the request back.
 3. **It proposes; it never applies.** A suggestion is a list of [edit operations](assistant.md#edit-operations), checked
    against the workflow as it is now, or a draft workflow, or persona rules. Apply goes through the same governed save
    as an edit by hand (audit source `brain`).

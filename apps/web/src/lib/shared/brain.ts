@@ -437,6 +437,8 @@ export interface Proposal {
   ops: AssistantOp[];
   /** A new workflow to create instead (unmet demand, repeated sequences). */
   draft?: Workflow;
+  /** A hash of the prompt the draft was built from: the brain keeps the draft only while the prompt is the same. */
+  draftPromptHash?: string;
   /** What Spotlight should build (at most 2,000 characters): "Build it" creates an empty workflow and opens Spotlight with this as the first message. */
   buildPrompt?: string;
   /** Rules to add to the target agent's persona (agent quality); applied to its draft. */

@@ -5,6 +5,7 @@
  */
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import type { LanguageModel } from '@landflow/engine';
@@ -21,6 +22,15 @@ afterAll(() => {
     else process.env[key] = previous[key];
   }
 });
+
+const hash = (prompt: string) => createHash('sha256').update(prompt).digest('hex').slice(0, 16);
+const model = { provider: 'test', model: 'brain', generate: async () => ({ text: '{}', toolCalls: [], stopReason: 'stop' as const }) } as unknown as LanguageModel;
+const draft = { id: 'draft', name: 'Saved draft', active: false, nodes: [], connections: [] };
+const saveOne = async (fingerprint: string, over: Record<string, unknown>) => {
+  const { upsertProposal } = await import('@/lib/server/brain/proposals');
+  upsertProposal({ source: 'detector', detector: 'unmet-demand', fingerprint, target: { type: 'instance' }, title: 'Saved', why: 'asked often', evidence: [], ops: [], draft, risk: 'low', confidence: 0.6, score: 1, ...over } as never);
+};
+const again = (fingerprint: string, prompt: string) => ({ proposal: { detector: 'unmet-demand', title: 'Again', why: 'asked often', ops: [], confidence: 0.6, fingerprint }, enrich: { kind: 'draft', prompt } }) as unknown as Parameters<typeof enrichFindings>[0][number];
 
 const finding = (n: number) =>
   ({ proposal: { detector: 'unmet-demand', title: `Build ${n}`, why: 'asked often', ops: [], confidence: 0.6 }, enrich: { kind: 'draft', prompt: `Build workflow ${n}` } }) as unknown as Parameters<typeof enrichFindings>[0][number];
@@ -41,12 +51,41 @@ describe('drafts per pass', () => {
     built.mockClear();
     const { upsertProposal } = await import('@/lib/server/brain/proposals');
     const draft = { id: 'draft', name: 'Saved draft', active: false, nodes: [], connections: [] };
-    upsertProposal({ source: 'detector', detector: 'unmet-demand', fingerprint: 'unmet-demand-saved', target: { type: 'instance' }, title: 'Saved', why: 'asked often', evidence: [], ops: [], draft, risk: 'low', confidence: 0.6, score: 1 } as never);
+    upsertProposal({ source: 'detector', detector: 'unmet-demand', fingerprint: 'unmet-demand-saved', target: { type: 'instance' }, title: 'Saved', why: 'asked often', evidence: [], ops: [], draft, draftPromptHash: hash('Build workflow 0'), risk: 'low', confidence: 0.6, score: 1 } as never);
     const again = { ...finding(0), proposal: { ...finding(0).proposal, fingerprint: 'unmet-demand-saved' } } as ReturnType<typeof finding>;
     const model = { provider: 'test', model: 'brain', generate: async () => ({ text: '{}', toolCalls: [], stopReason: 'stop' as const }) } as unknown as LanguageModel;
     const out = await enrichFindings([again, ...[1, 2, 3, 4].map(finding)], { model });
     expect(out[0].proposal.draft?.name).toBe('Saved draft');
     expect(built).toHaveBeenCalledTimes(MAX_DRAFTS_PER_PASS);
     expect(built.mock.calls.map((c) => c[0])).not.toContain('Build workflow 0');
+  });
+
+  it('rebuilds a draft whose prompt changed, and the rebuild counts against the cap', async () => {
+    built.mockClear();
+    await saveOne('unmet-demand-moved', { draftPromptHash: hash('Build it. Examples: a, b') });
+    const out = await enrichFindings([again('unmet-demand-moved', 'Build it. Examples: a, c')], { model });
+    expect(built).toHaveBeenCalledTimes(1);
+    expect(out[0].proposal.draft?.name).toBe('Draft of Build it. Examples: a, c');
+    expect(out[0].proposal.draftPromptHash).toBe(hash('Build it. Examples: a, c'));
+    built.mockClear();
+    const capped = await enrichFindings([again('unmet-demand-moved', 'Build it. Examples: a, d'), ...[1, 2, 3, 4].map(finding)], { model });
+    expect(built).toHaveBeenCalledTimes(MAX_DRAFTS_PER_PASS);
+    expect(capped.filter((f) => f.proposal.draft)).toHaveLength(MAX_DRAFTS_PER_PASS);
+  });
+
+  it('keeps the draft when the prompt is the same', async () => {
+    built.mockClear();
+    await saveOne('unmet-demand-same', { draftPromptHash: hash('Same prompt') });
+    const out = await enrichFindings([again('unmet-demand-same', 'Same prompt')], { model });
+    expect(built).not.toHaveBeenCalled();
+    expect(out[0].proposal.draft?.name).toBe('Saved draft');
+  });
+
+  it('does not reuse the draft of a suggestion that is not from this detector', async () => {
+    built.mockClear();
+    await saveOne('unmet-demand-other', { source: 'analyst', detector: undefined, draftPromptHash: hash('Other prompt') });
+    const out = await enrichFindings([again('unmet-demand-other', 'Other prompt')], { model });
+    expect(built).toHaveBeenCalledTimes(1);
+    expect(out[0].proposal.draft?.name).toBe('Draft of Other prompt');
   });
 });
