@@ -138,7 +138,7 @@ export function AgentCardView({ itemId, card, busy = false }: { itemId: string; 
                 ))}
               </ul>
             ) : (
-              <span className="text-t3">No change: the agent already has what you asked.</span>
+              <span className="text-t3">{card.notAdded?.length ? 'No change: see Not added above.' /* ag1-int: never "already has" when a named tool was left out */ : 'No change: the agent already has what you asked.'}</span>
             )}
           </Row>
         )}

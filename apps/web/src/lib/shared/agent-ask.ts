@@ -98,7 +98,8 @@ function wordsNamed(message: string, entry: AskCatalogEntry): boolean {
   return words.every((w) => new RegExp(`(?<![\\w-])${escape(w.replace(/e$/i, ''))}(?:e?s|e?d|ing|e)?(?![\\w-])`, 'i').test(message));
 }
 
-function toolsOf(message: string, catalog: AskCatalogEntry[] = []): string[] {
+/** The tools a message names: apps by what it does with them ("Linear: read issues"), and catalog nodes and plugins by name (ag1-int: a revise reads its change with it too). */
+export function toolsOf(message: string, catalog: AskCatalogEntry[] = []): string[] {
   const found: string[] = [];
   const add = (tool: string) => {
     const cut = tool.slice(0, 80);

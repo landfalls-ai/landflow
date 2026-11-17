@@ -6,7 +6,7 @@
  */
 import { api, ApiError } from '@/lib/client/api';
 import { agentChanges } from '@/lib/shared/agent-changes';
-import type { AgentPublish, AgentSmoke } from '@/lib/shared/agent-card';
+import type { AgentNotAdded, AgentPublish, AgentSmoke } from '@/lib/shared/agent-card';
 
 /** What the design route answers for a change. */
 export interface ChangeDesign {
@@ -15,6 +15,8 @@ export interface ChangeDesign {
   needs?: Array<{ text: string }>;
   missing?: Array<{ capability: string }>;
   designed?: boolean;
+  /** ag1-int: the tools the change named that the agent did not get, and why. */
+  notAdded?: AgentNotAdded[];
 }
 
 /** The change as a proposal: the config with the change made, and the lines that differ from the base. */

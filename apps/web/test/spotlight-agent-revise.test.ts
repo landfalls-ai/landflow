@@ -36,7 +36,7 @@ vi.mock('@/lib/server/projects/access', async (importActual) => {
 });
 
 const { draftMoved, designChange } = await import('@/lib/client/agent-change');
-const { cardAskFor, createFromCard, designAgentCard, reviseCardFor, agentCardQuestion, reviseAgentCard, applyAgentChange, publishAgentChange } = await import('@/components/editor/spotlight/agent-ask');
+const { cardAskFor, createFromCard, designAgentCard, reviseCardFor, agentCardQuestion, reviseAgentCard, reviseReply, applyAgentChange, publishAgentChange } = await import('@/components/editor/spotlight/agent-ask');
 const { retryReply } = await import('@/components/editor/spotlight/reply');
 const { keepUnderCard, cardQuestionFor } = await import('@/components/editor/spotlight/agent-ask');
 const { useAssistant } = await import('@/components/editor/assistant');
@@ -146,6 +146,33 @@ describe('POST /api/agents/design with base and change', () => {
     } finally {
       await run.done();
     }
+  });
+
+  it('ag1-int: a proposal that leaves out the tool the change names: the tool is added all the same; one no plugin has is said, not dropped', async () => {
+    const run = await proposing('text-toolkit.changeCase');
+    try {
+      const body = (await (await post({ name: 'Text helper', preview: true, base: { config: baseConfig() }, change: 'add Slugify as a tool' })).json()) as { config: AgentConfig; changes: string[]; notAdded: unknown[] };
+      expect(body.config.tools.some((t) => t.type === 'node' && t.nodeType === 'text-toolkit.slugify')).toBe(true);
+      expect(body.changes).toEqual(['Adds the tool Slugify']);
+      expect(body.notAdded).toEqual([]);
+      expect(body.config.guardrails).toEqual(DEFAULT_BRIEF_GUARDRAILS);
+      const slack = (await (await post({ name: 'Text helper', preview: true, base: { config: baseConfig() }, change: 'also post the result to Slack' })).json()) as { changes: string[]; notAdded: unknown[] };
+      expect(slack.changes).toEqual([]);
+      expect(slack.notAdded).toEqual([{ name: 'Slack', reason: 'no plugin online has it' }]);
+      // A tool the change removes or refuses is never added back.
+      const refused = (await (await post({ name: 'Text helper', preview: true, base: { config: baseConfig() }, change: 'make it shorter, do not use Slugify' })).json()) as { config: AgentConfig; notAdded: unknown[] };
+      expect(refused.config.tools.map((t) => ('name' in t ? t.name : t.type))).toEqual(['Change Case']);
+      expect(refused.notAdded).toEqual([]);
+    } finally {
+      await run.done();
+    }
+  });
+
+  it('ag1-int: the reply says what was not added, and “already has what you asked” only when nothing was left out', () => {
+    expect(reviseReply('Text helper', [], [], false)).toBe('No change: the card above already has what you asked.');
+    expect(reviseReply('Text helper', [], [{ name: 'Slack', reason: 'no plugin online has it' }], false)).toBe('No change to the card above. Not added: Slack (no plugin online has it).');
+    expect(reviseReply('Text helper', ['Adds the tool Slugify'], [{ name: 'Slack', reason: 'no plugin online has it' }], true)).toBe('Here is the change to “Text helper”: adds the tool Slugify. Not added: Slack (no plugin online has it). Review it, then apply it to its draft.');
+    expect(reviseReply('Text helper', [], [], true)).toBe('No change: “Text helper” already has what you asked.');
   });
 
   it('keeps a base tool the proposal left out, and a change that names nothing new changes nothing', async () => {

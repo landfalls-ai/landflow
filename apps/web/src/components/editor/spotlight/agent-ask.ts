@@ -294,6 +294,17 @@ const revising = new Set<string>();
 /** One card's lines of what changed, as the reply says it. */
 const sayChanges = (changes: string[]) => (changes.length ? changes.map((c) => c.charAt(0).toLowerCase() + c.slice(1)).join('; ') : '');
 
+/** ag1-int: the tools a change named that the agent did not get, as the reply says them ("Not added: Slack (no plugin online has it)."). */
+const sayNotAdded = (notAdded: AgentNotAdded[]) => (notAdded.length ? `Not added: ${notAdded.map((n) => `${n.name} (${n.reason})`).join('; ')}.` : '');
+
+/** ag1-int: the reply to a revise. "No change … already has what you asked" only when nothing changed and nothing named was left out. */
+export function reviseReply(name: string, changes: string[], notAdded: AgentNotAdded[], made: boolean): string {
+  const left = sayNotAdded(notAdded);
+  if (!changes.length) return left ? `No change to ${made ? `“${name}”` : 'the card above'}. ${left}` : made ? `No change: “${name}” already has what you asked.` : 'No change: the card above already has what you asked.';
+  const said = made ? `Here is the change to “${name}”: ${sayChanges(changes)}.` : `Changed the card above: ${sayChanges(changes)}.`;
+  return [said, left, made && 'Review it, then apply it to its draft.'].filter(Boolean).join(' ');
+}
+
 /**
  * Revises a card from a follow-up. A designed card is replaced in place with the new design and its `changes`; a created card
  * (an agent that exists) gets a new card below it with `base`, its `changes` and Apply to its draft. A revise is a proposal:
@@ -314,7 +325,8 @@ export async function reviseAgentCard(itemId: string, card: AgentCard, message: 
     // A created card's agent is the base; a pending card's own config is (a card that already proposes a change to an agent keeps its base).
     const base = made && existing ? { agentId: existing } : { config: card.config };
     const design = await designChange({ name: card.name, description: card.description, base, change: message, ...pickedModel() }, abort.signal);
-    const fresh = cardFromPreview({ config: design.config, needs: design.needs ?? [], missing: design.missing ?? [], designed: design.designed ?? true, cases: card.cases } as unknown as Parameters<typeof cardFromPreview>[0], { description: card.description, placed: false, tools: [] }, Boolean(card.starter));
+    const notAdded = design.notAdded ?? []; // ag1-int: the tools the change named and the agent did not get
+    const fresh = cardFromPreview({ config: design.config, needs: design.needs ?? [], missing: design.missing ?? [], designed: design.designed ?? true, cases: card.cases, notAdded } as unknown as Parameters<typeof cardFromPreview>[0], { description: card.description, placed: false, tools: [] }, Boolean(card.starter));
     let changes = design.changes;
     // A pending change to an agent lists what differs from the agent itself, not from the proposal before it.
     if (card.base && !made) {
@@ -327,13 +339,17 @@ export async function reviseAgentCard(itemId: string, card: AgentCard, message: 
     }
     const next: AgentCard = { ...fresh, ...(card.workflowId && { workflowId: card.workflowId }), ...(card.ask && { ask: card.ask }), ...(card.models && { models: card.models }), changes };
     if (!made) {
-      patchCard(itemId, { ...next, state: 'designed', error: undefined, ...(card.base && { base: card.base }) });
-      patchReply(reply.id, { parts: [{ kind: 'text', text: changes.length ? `Changed the card above: ${sayChanges(changes)}.` : 'No change: the card above already has what you asked.' }] });
+      // ag1-int: the card's Not added row is the change's, and what the ask before it named that the agent still lacks.
+      const squash = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const still = (card.notAdded ?? []).filter((n) => !notAdded.some((m) => squash(m.name) === squash(n.name)) && !next.tools.some((t) => squash(`${t.name} ${t.type ?? ''}`).includes(squash(n.name))));
+      const rows = [...notAdded, ...still];
+      patchCard(itemId, { ...next, state: 'designed', error: undefined, notAdded: rows.length ? rows : undefined, ...(card.base && { base: card.base }) });
+      patchReply(reply.id, { parts: [{ kind: 'text', text: reviseReply(card.name, changes, notAdded, false) }] });
     } else {
       const change: AgentCard = { ...next, state: 'designed', base: { agentId: existing as string, name: card.name }, cases: [] };
       patchReply(reply.id, {
         parts: [
-          { kind: 'text', text: changes.length ? `Here is the change to “${card.name}”: ${sayChanges(changes)}. Review it, then apply it to its draft.` : `No change: “${card.name}” already has what you asked.` },
+          { kind: 'text', text: reviseReply(card.name, changes, notAdded, true) },
           { kind: 'agentCard', card: change },
         ],
       });

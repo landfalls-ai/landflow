@@ -23,6 +23,7 @@ type Turn = { id: string; message: string; state: 'designing' | 'ready' | 'savin
 /** The change card: what would change, then Apply to its draft (a small read-only copy of the editor's card rows). */
 function ChangeCard({ name, agentId, turn, onApply, onPublish, onDismiss }: { name: string; agentId: string; turn: Turn; onApply: () => void; onPublish: () => void; onDismiss: () => void }) {
   const changes = turn.design?.changes ?? [];
+  const notAdded = turn.design?.notAdded ?? []; // ag1-int:
   const left = [...(turn.design?.needs ?? []).map((n) => n.text), ...(turn.design?.missing ?? []).map((m) => `Not available here: ${m.capability}`)];
   const saved = turn.state === 'saved';
   return (
@@ -42,10 +43,23 @@ function ChangeCard({ name, agentId, turn, onApply, onPublish, onDismiss }: { na
                 ))}
               </ul>
             ) : (
-              <span className="text-t3">No change: the agent already has what you asked.</span>
+              <span className="text-t3">{notAdded.length ? 'No change.' : 'No change: the agent already has what you asked.'}</span>
             )}
           </div>
         </div>
+        {/* ag1-int: the tools the change named that the agent did not get, and why. */}
+        {notAdded.length > 0 && (
+          <div className="flex gap-2">
+            <span className="w-[68px] shrink-0 text-t3">Not added</span>
+            <ul data-testid="agent-not-added" className="min-w-0 flex-1 space-y-0.5 text-t1 [overflow-wrap:anywhere]">
+              {notAdded.map((n) => (
+                <li key={n.name}>
+                  {n.name}: {n.reason}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {turn.notice && <p role="status" className="text-t2">{turn.notice}</p>}
         {left.length > 0 && (
           <div className="flex gap-2">

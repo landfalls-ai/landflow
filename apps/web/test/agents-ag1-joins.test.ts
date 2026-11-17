@@ -484,6 +484,35 @@ describe('3. revise keeps the design’s rules (AG04 × AG02 × AG05)', () => {
     expect(json(agentStore.get(agentId)!.published)).toBe(publishedBefore);
     expect(json(wire.calls)).not.toContain('skipEval');
   });
+
+  it('a revise whose proposal leaves out the tool the change names still adds it (AG02’s promise), and says what it could not add', async () => {
+    const without = propose({ name: 'Utility helper', instructions: UTILITY_STEPS, model: 'anthropic/claude-opus-5-5', nodeTools: 'go-crypto.jwtDecode, go-crypto.hash, go-crypto.uuid' });
+    architect.design = without;
+    const first = await designOnEmpty('wf_ag1_utility_omit', UTILITY_ASK);
+    expect(first.card.tools.some((t) => t.type === 'text-toolkit.slugify')).toBe(false);
+    const replyText = () => {
+      const last = useAssistant.getState().items.at(-1)!;
+      return last.parts.flatMap((p) => (p.kind === 'text' ? [p.text] : [])).join(' ');
+    };
+
+    // The model's proposal for "add Slugify as a tool" leaves Slugify out (as a real model may): the change's named tool is added anyway.
+    architect.design = without;
+    await reviseAgentCard(first.id, first.card, 'add Slugify as a tool');
+    const revised = cardOf();
+    expect(revised.card.tools.some((t) => t.type === 'text-toolkit.slugify')).toBe(true);
+    expect(revised.card.changes).toEqual(['Adds the tool Slugify']);
+    expect(revised.card.notAdded ?? []).toEqual([]);
+    expect(replyText()).toBe('Changed the card above: adds the tool Slugify.');
+
+    // A tool no plugin online has: not added, said on the card and in the reply, never "already has what you asked".
+    architect.design = propose({ name: 'Utility helper', instructions: UTILITY_STEPS, model: 'anthropic/claude-opus-5-5', nodeTools: 'go-crypto.jwtDecode, go-crypto.hash, go-crypto.uuid, text-toolkit.slugify' });
+    await reviseAgentCard(revised.id, revised.card, 'also create Jira issues');
+    const after = cardOf();
+    expect(after.card.changes).toEqual([]);
+    expect(after.card.notAdded).toEqual([{ name: 'Jira', reason: 'no plugin online has it' }]);
+    expect(replyText()).toBe('No change to the card above. Not added: Jira (no plugin online has it).');
+    expect(replyText()).not.toMatch(/already has what you asked/);
+  });
 });
 
 // ---------------------------------------------------------------------------

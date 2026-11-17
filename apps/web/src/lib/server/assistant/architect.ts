@@ -31,7 +31,7 @@ import { recordUsage } from '../usage/ledger';
 import { assistantScope, isUsageCapError, runInUsageScope, type UsageScope } from '../ai-usage';
 import { recoverToolCalls, withoutInventedIds, withoutRepeats } from './chat';
 import { agentModelOf, builderModel, chooseModel, type AgentResources } from './agent-resources';
-import { readsTokens } from '@/lib/shared/agent-ask'; // AG02:
+import { askCatalog, readsTokens, toolsOf } from '@/lib/shared/agent-ask'; // AG02: ag1-int:
 import { saveCheckpoint } from './checkpoints';
 import { assistantModel, errorText, modelLabel } from './model';
 import { isParseError, parseErrorText } from './parse-retry';
@@ -1183,6 +1183,25 @@ function reviseInstructions(proposed: string, base: string, tools: AgentToolConf
   return proposed.replace(line, `${number}Tools: ${listed}${/; read before you write.*$/.exec(line)?.[0] ?? '.'}`);
 }
 
+const RENAME = /\b(?:call it|rename (?:it )?(?:to|as)?|name it|its name is)\s+["“']?([^"”'.,;\n]{2,60})/i;
+const REFUSES = /\b(?:remove|delete|drop|stop using|get rid of|take away|disable|don['’]?t|do not|never|no longer|without|instead of|not)\b/i;
+
+/**
+ * ag1-int: the tools a change names to add, read as AG02 reads an ask (`toolsOf` with the catalog's names): not one it
+ * removes or refuses ("remove the email tool", "not Hash"), nor the words of a new name ("call it Slack helper").
+ */
+function changeTools(change: string, types: NodeTypeInfo[]): string[] {
+  const text = change.replace(RENAME, ' ');
+  const clauses = text.split(/[.;\n]+/);
+  return toolsOf(text, askCatalog(types)).filter((tool) => {
+    const word = tool.split(':')[0].trim().toLowerCase();
+    return !clauses.some((clause) => {
+      const at = clause.toLowerCase().indexOf(word);
+      return at >= 0 && REFUSES.test(clause.slice(0, at));
+    });
+  });
+}
+
 /**
  * AG04: the proposal of a change as the agent it changes: the base's own tools stay unless the change removes them (least
  * privilege holds for the tools the change does not name), a new tool stays only when the change names it, and the name, model,
@@ -1193,7 +1212,7 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
   const have = new Set(kept.map(toolKey));
   const added: AgentToolConfig[] = [];
   for (const tool of draft.config.tools ?? []) {
-    if (have.has(toolKey(tool))) continue;
+    if (have.has(toolKey(tool)) || removed(change, tool)) continue; // ag1-int: a tool the change removes is not proposed back
     if (tool.type === 'node' && !names(change, tool)) {
       draft.dropped.push(`${'name' in tool && tool.name ? tool.name : tool.nodeType}: the change doesn’t ask for it`);
       continue;
@@ -1202,7 +1221,7 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
     if ('name' in tool && tool.name && kept.some((t) => 'name' in t && t.name === tool.name)) tool.name = `${tool.name.slice(0, 60)}_2`;
     added.push(tool);
   }
-  const renamed = /\b(?:call it|rename (?:it )?(?:to|as)?|name it|its name is)\s+["“']?([^"”'.,;\n]{2,60})/i.exec(change)?.[1]?.trim();
+  const renamed = RENAME.exec(change)?.[1]?.trim();
   const modelNamed = /\b(?:model|haiku|sonnet|opus|gpt|claude|qwen|llama|gemma|mistral|ollama)\b/i.test(change);
   // The base as it is (schedules, channels, memory, persona, guardrails, access: what the change doesn't name), with what the proposal changed.
   const config: Partial<AgentConfig> = {
@@ -1258,7 +1277,7 @@ export function designBrief(spec: AgentSpec, input: Pick<ArchitectInput, 'types'
  * top hit for it when that hit scored 8 or more, else it is named in `missing`; the documents it answers from get a
  * knowledge tool when the model left it out and this host can start one.
  */
-function withSpecHints(draft: DraftResult, spec: AgentSpec, input: Pick<ArchitectInput, 'types' | 'actor' | 'resources'>): AgentNotAdded[] {
+function withSpecHints(draft: DraftResult, spec: AgentSpec, input: Pick<ArchitectInput, 'types' | 'actor' | 'resources'>, base?: Partial<AgentConfig> /* ag1-int: a revise's base */): AgentNotAdded[] {
   const types = input.types.filter(usableAsTool);
   const tools = draft.config.tools ?? [];
   const ask = designWords(spec); // AG02: the whole ask when given
@@ -1325,6 +1344,11 @@ function withSpecHints(draft: DraftResult, spec: AgentSpec, input: Pick<Architec
     const name = info?.descriptor.displayName;
     if (info && name && appNamed(info, ask) && !nodeTool(info) && !notAdded.some((n) => squash(n.name) === squash(name))) notAdded.push({ name, reason: line.replace(/^[^:]*:\s*/, '') });
   }
+  if (base) {
+    // ag1-int: a revise keeps the base's own form: its Tools step (when it has one) lists the tools now, its guardrails stay.
+    draft.config = { ...draft.config, tools, ...(tools.length > before && { instructions: reviseInstructions(draft.config.instructions ?? '', base.instructions ?? '', tools) }) };
+    return notAdded;
+  }
   const tokenJob = readsTokenJob(ask, tools);
   if (tools.length > before) {
     // The Tools line of the steps lists the tools the hints added too.
@@ -1381,8 +1405,11 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
   if (last) {
     const kept: DraftResult = last;
     let notAdded: AgentNotAdded[] = [];
-    if (spec.base && spec.change) reviseDraft(kept, spec.base, spec.change); // AG04: the base's tools stay, a new one only when named
-    else notAdded = withSpecHints(kept, spec, input); // SB17: AG02: what the ask named and the agent did not get
+    if (spec.base && spec.change) {
+      reviseDraft(kept, spec.base, spec.change); // AG04: the base's tools stay, a new one only when named
+      // ag1-int: AG02's promise holds for a change too: a tool it names is added (the same least-privilege rules), or said why not.
+      notAdded = withSpecHints(kept, { name: spec.name, description: '', instructions: '', ask: spec.change, tools: changeTools(spec.change, input.types.filter(usableAsTool)) }, input, spec.base);
+    } else notAdded = withSpecHints(kept, spec, input); // SB17: AG02: what the ask named and the agent did not get
     return { ...kept, config: { ...kept.config, name: spec.base && spec.change ? (kept.config.name ?? spec.name) /* AG04: a rename is the change's */ : spec.name, description: kept.config.description || spec.description }, designed: true, notAdded };
   }
   // AG04: a change nothing proposed is no change: the base as it is.
