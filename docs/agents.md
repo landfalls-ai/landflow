@@ -678,7 +678,7 @@ request: the run goes on when the last one is decided). The Platform analyst's o
   draft differs from what runs. A click on a row opens the agent's page in a new tab at that ability
   (`/agents/<id>?tab=abilities&open=model`, or `&open=capabilities&tool=<tool id>`: the row is scrolled into view and
   outlined for two seconds); the band never edits anything. It reads `GET /api/agents/:id/connections` once per agent
-  and again when the agent changes: a save, a publish, an Apply in Spotlight, in this tab or another (the tabs tell each
+  and again when the agent changes: a save, a publish (the agent page's, the change card's and, since wave ag3's live pass, the Publish on Spotlight's created-agent row), an Apply in Spotlight, in this tab or another (the tabs tell each
   other over a `BroadcastChannel`, which also keeps Spotlight's created card's Left row current after a pick on the
   agent page opened by **Pick it**). A Run a Team node shows its lead's band, and on a phone a Run an Agent step's card
   reads "Run an Agent · claude-sonnet-5-5 · 4 tools · 1 knowledge base".

@@ -11,6 +11,7 @@ import { api, ApiError } from '@/lib/client/api';
 import { publishLine, type AgentPublish, type AgentSmoke } from '@/lib/shared/agent-card'; // SB18: (AG05: publish)
 import type { NewAgentSpec } from '@/lib/shared/assistant-ops';
 import type { AgentCaseDraft } from '@/lib/shared/agent-card'; // SB16:
+import { announceSaved } from '@/lib/client/agent-change'; // ag3 carryover:
 import { useAssistant, type AgentProgress } from './assistant';
 import { useEditor } from './store';
 import { pickedModel } from './spotlight-model'; // SB19:
@@ -133,6 +134,7 @@ export async function publishAgentFor(nodeId: string): Promise<boolean> {
     if (known?.cases?.length) patch({ publish: { state: 'publishing', cases: known.cases.length } });
     await api(`/api/agents/${progress.agentId}/publish`, { method: 'POST' });
     patch({ state: 'published', publish: { state: 'published' }, held: undefined });
+    announceSaved(progress.agentId); // ag3 carryover: the canvas band (and other tabs) leave "Not published" without a reload
     return true;
   } catch (error) {
     const held = heldOf(error);
