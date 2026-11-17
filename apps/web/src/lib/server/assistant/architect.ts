@@ -468,12 +468,13 @@ function mailAddresses(request: string): string[] {
 // AG08: a test case's input that describes an input instead of being one (the same rule as the scenarios' `describesInput`).
 export function describesCase(input: string): boolean {
   const text = input.trim();
-  // A question is an input ('Should I restart web-01?'); a short command is one too ('Make a UUID').
-  if (text.endsWith('?')) return false;
-  // A short noun phrase with an article ('A title', 'An email') names a kind of input; a placeholder is none; so is a line that says what a test should check.
-  if ((text.length < 12 && /^(?:an?|the|some|another|pasted|random|sample|example|generic|typical|plain)\b/i.test(text)) || /<[^<>\n]{1,40}>/.test(text)) return true;
-  if (/^(?:(?:an?|the)\s+)?(?:test|case)s?\s+(?:that|of|for|where|which|to)\b/i.test(text)) return true;
-  if (/^(?:checks?|verif\w*|ensures?|tests?|validates?)\s+that\s+(?:it|the agent)\b/i.test(text) || /^should\s+(?:it|the agent|reply|answer|return|say|ask|refuse|respond|not)\b/i.test(text)) return true;
+  // A question is an input ('Should I restart web-01?') unless it reads as a thing or a person (below); a short command is one too ('Make a UUID').
+  if (!text.endsWith('?')) {
+    // A short noun phrase with an article ('A title', 'An email') names a kind of input; a placeholder is none; so is a line that says what a test checks.
+    if ((text.length < 12 && /^(?:an?|the|some|another|pasted|random|sample|example|generic|typical|plain)\b/i.test(text)) || /<[^<>\n]{1,40}>/.test(text)) return true;
+    if (/^(?:(?:an?|the)\s+)?(?:test|case)s?\s+(?:that|of|for|where|which|to)\b/i.test(text)) return true;
+    if (/^(?:checks?|verif\w*|ensures?|tests?|validates?)\s+(?:whether|if)\b|^(?:checks?|verif\w*|ensures?|tests?|validates?)\s+that\s+(?:it|the agent)\b/i.test(text) || /^should\s+(?:it|the agent|reply|answer|return|say|ask|refuse|respond|not)\b/i.test(text)) return true;
+  }
   if (text.length >= 160 || /:\s*\S.{11,}/.test(text)) return false;
   const thing = /^(?:an?|the|some|another|pasted|random|sample|example|generic|typical|plain)\b[^:]{0,80}?\b(?:alert|e-?mail|message|text|log|ticket|request|question|input|payload|event|notification|report|string|token|jwt|file|data|record|row)s?\b(?:\s+(?:about|for|with|that|from|of|where|which|containing|saying|asking|describing|showing|on|in)\b|\s*$)/i;
   const person = /^(?:an?|the|some)\s+(?:user|customer|person|visitor|engineer|teammate|colleague|client)\s+(?:asks?|says|sends|wants|reports|writes|pastes|requests|needs)\b/i;
