@@ -15,8 +15,11 @@ import { estimatedTokens, largestPrompt, planProblems, type BuildPlan } from '@/
 vi.mock('@/lib/client/api', async (original) => ({ ...(await original<typeof import('@/lib/client/api')>()), api: vi.fn() }));
 
 let queue: Array<string | FakeReply> = [];
+/** Called as the fake model answers: a test moves its clock here. */
+let onAnswer: (() => void) | undefined;
 const fake = await startFakeModels({
   reply: (provider, body) => {
+    onAnswer?.();
     if (body?.model !== undefined && provider === 'ollama' && !queue.length) return { text: '{}' };
     const next = queue.shift() ?? '{}';
     return typeof next === 'string' ? { text: next } : next;
@@ -296,6 +299,29 @@ describe('a build with a plan', () => {
     const wholeSize = Math.max(...chats().map((_, i) => (sent(i).includes('Node catalog:\\n') ? sent(i).length : 0)));
     expect(wholeSize).toBeGreaterThan(0);
     for (let i = 0; i < staged; i++) expect(sent(i).length).toBeLessThan(wholeSize / 3);
+  });
+
+  it('plans and builds inside one LANDFLOW_BUILDER_TIMEOUT_SECONDS: the build starts from the plan\'s start, not afresh', async () => {
+    const { buildPlanFirst } = await import('@/lib/server/assistant/build-plan');
+    const before = process.env.LANDFLOW_BUILDER_TIMEOUT_SECONDS;
+    process.env.LANDFLOW_BUILDER_TIMEOUT_SECONDS = '30';
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() });
+    // The plan takes 25 of the 30 seconds and the first step 10 more: the other steps have no time left.
+    let answers = 0;
+    onAnswer = () => vi.setSystemTime(Date.now() + (++answers === 1 ? 25_000 : answers === 2 ? 10_000 : 0));
+    queue = [reply(GOOD), JSON.stringify({ parameters: { rule: { interval: [{ field: 'cronExpression', expression: '0 8 * * 1-5' }] } } })];
+    try {
+      const draft = await buildPlanFirst(B1, 'qwen3-coder:30b', [], [], { types: availableTypes() });
+      expect(chats()).toHaveLength(2);
+      expect(draft.stages?.map((s) => s.stage)).toEqual(['plan', 'node']);
+      expect(draft.left?.filter((l) => /ran out of time/.test(l.text))).toHaveLength(4);
+      expect(draft.durationMs).toBeGreaterThanOrEqual(35_000);
+    } finally {
+      onAnswer = undefined;
+      vi.useRealTimers();
+      if (before === undefined) delete process.env.LANDFLOW_BUILDER_TIMEOUT_SECONDS;
+      else process.env.LANDFLOW_BUILDER_TIMEOUT_SECONDS = before;
+    }
   });
 
   it('is refused by the build route when the plan has a type the workflow cannot use', async () => {

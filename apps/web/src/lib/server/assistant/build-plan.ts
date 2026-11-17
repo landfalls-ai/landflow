@@ -320,7 +320,8 @@ export function alternativesFor(plan: BuildPlan, offered: ReadonlyMap<string, No
 
 /**
  * Wave sb3 integration: a first draft, planned first. With no `plan` it plans (stage 1, `planFlow`) and then builds in
- * stages (SB14, `buildFlow` with the plan), the calls and their stages counted together; with a `plan` it builds from
+ * stages (SB14, `buildFlow` with the plan) inside one time budget (`LANDFLOW_BUILDER_TIMEOUT_SECONDS` counts from the plan's
+ * start), the calls and their stages counted together; with a `plan` it builds from
  * that plan; `staged: false` is SB13's one-shot draft (`buildFlow` with no plan). The build route and the brain writer
  * call this. It lives here, not in flow-builder.ts, since this module imports flow-builder.ts (no import cycle).
  */
@@ -330,7 +331,8 @@ export async function buildPlanFirst(prompt: string, model: string, teams: reado
   const started = Date.now();
   const planStages: BuildStage[] = [];
   const { plan } = await planFlow(prompt, { model, types: rest.types ?? availableTypes(), agents, teams, stages: planStages });
-  const built = await buildFlow(prompt, model, teams, agents, { ...rest, plan });
+  // One budget for the whole draft (LANDFLOW_BUILDER_TIMEOUT_SECONDS): the build starts from the plan's start, not afresh.
+  const built = await buildFlow(prompt, model, teams, agents, { ...rest, plan, started });
   return { ...built, durationMs: Date.now() - started, calls: planStages.length + (built.calls ?? 0), stages: [...planStages, ...(built.stages ?? [])] };
 }
 

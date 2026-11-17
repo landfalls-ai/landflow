@@ -537,13 +537,13 @@ export function pinTarget(draft: Assembled, byType: Map<string, NodeTypeInfo>): 
  * `teams` and `agents`: the published agent teams and agents the caller can see, so a step that needs an agent runs one
  * that fits, and a Run a Team or Run an Agent node gets a real one (by id, never a guess).
  */
-export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: readonly TeamBrief[] = [], agents: readonly AgentBrief[] = [], options: { types?: NodeTypeInfo[]; plan?: BuildPlan } = {}): Promise<FlowDraft> { // SB02: the workflow's allowed types
+export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: readonly TeamBrief[] = [], agents: readonly AgentBrief[] = [], options: { types?: NodeTypeInfo[]; plan?: BuildPlan; started?: number } = {}): Promise<FlowDraft> { // SB02: the workflow's allowed types
   const types = options.types ?? registry.nodeTypes().filter((t) => t.available); // SB02: same as availableTypes(), with no new import
   const byType = new Map(types.map((t) => [t.type, t]));
   // SB14: with a plan, one small call per step fills its parameters and the wiring is the plan's (assistant/build-nodes.ts).
   if (options.plan) {
     const plan = options.plan;
-    const built = await buildFromPlan(plan, prompt, { kit: { emptyParts, jsonOf, knownAgent, pinsOnTrigger, adapterTimedOut, AGENT_TYPES, PARAMETER_FORMATS }, model, types, agents, teams, timeoutMs: builderTimeoutMs(), started: Date.now() });
+    const built = await buildFromPlan(plan, prompt, { kit: { emptyParts, jsonOf, knownAgent, pinsOnTrigger, adapterTimedOut, AGENT_TYPES, PARAMETER_FORMATS }, model, types, agents, teams, timeoutMs: builderTimeoutMs(), started: options.started ?? Date.now() });
     const staged = { nodes: built.nodes, edges: built.edges, dropped: built.dropped, left: built.left, trigger: built.trigger };
     const stagedLeft = mergeLeft(
       built.left,
