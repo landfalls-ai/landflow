@@ -23,7 +23,6 @@ const PLUGIN_ICONS: Record<string, string[]> = {
   github: ['plugins/github/icons/github.svg', 'plugins/productivity/productivity/icons/github.svg'],
   grafana: ['plugins/grafana/icons/grafana.svg', 'plugins/grafana/icons/get-alerts.svg', 'plugins/grafana/icons/get-alert-details.svg', 'plugins/grafana/icons/acknowledge-alert.svg'],
   attio: ['plugins/attio/icons/attio.svg', 'plugins/attio/icons/attio-trigger.svg'],
-  fathom: ['plugins/fathom/icons/fathom.svg'],
   notion: ['plugins/productivity/productivity/icons/notion.svg'],
   jira: ['plugins/productivity/productivity/icons/jira.svg'],
   airtable: ['plugins/productivity/productivity/icons/airtable.svg'],
@@ -68,6 +67,12 @@ describe('brand marks', () => {
     expect(brandOfApp('Google Workspace')).toBe('google');
     expect(brandOfApp('Postgres')).toBe('postgresql');
     expect(brandOfApp('Slackline')).toBeUndefined();
+    for (const name of ['Slack-like notifier', 'Linear regression', 'linear-algebra', 'notion-of-time', 'stripe-pattern', 'Google-like search', 'google-docstring-linter'])
+      expect(brandOfApp(name), name).toBeUndefined();
+    expect(brandOfApp('Slack')).toBe('slack');
+    expect(brandOfApp('Linear Trigger')).toBe('linear');
+    expect(brandOfApp('Google Sheets')).toBe('googlesheets');
+    expect(brandOfApp('GitHub MCP')).toBe('github');
     expect(brandOfApp(undefined)).toBeUndefined();
   });
 

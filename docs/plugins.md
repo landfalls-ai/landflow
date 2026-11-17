@@ -39,14 +39,14 @@ An app's node wears **the app's real mark**, never a drawn stand-in: the node cr
 
 | Marks | Source | Licence |
 |---|---|---|
-| Linear, Discord, Telegram, WhatsApp, Gmail, Google, Google Calendar, Docs, Drive and Sheets, Grafana, Fathom, Notion, Jira, Airtable, HubSpot, Stripe, RSS, MySQL, Redis (and Ollama, Anthropic, Claude, Gemini, Mistral, Hugging Face, GitHub, Kubernetes, Docker, MCP, PostgreSQL, SQLite) | [Simple Icons](https://simpleicons.org) 16.36.0 | CC0 |
+| Linear, Discord, Telegram, WhatsApp, Gmail, Google, Google Calendar, Docs, Drive and Sheets, Grafana, Notion, Jira, Airtable, HubSpot, Stripe, RSS, MySQL, Redis (and Ollama, Anthropic, Claude, Gemini, Mistral, Hugging Face, GitHub, Kubernetes, Docker, MCP, PostgreSQL, SQLite) | [Simple Icons](https://simpleicons.org) 16.36.0 | CC0 |
 | Slack, Twilio | Simple Icons 15.0.0, the last version that carries them | CC0 |
 | Attio | its own press kit, [attio.com/brand](https://attio.com/brand) (`/brand/v1/attio-logomark.svg`), offered for third-party materials | the brand's terms |
 | OpenAI | [Lobe Icons](https://github.com/lobehub/lobe-icons) 1.101.0 | MIT |
 | kagent | its own repository | Apache-2.0 |
 | the older plugin tiles (Slack, GitHub, Postgres, Gmail, Notion, Jira and others, full colour on a white tile) | [SVG Logos](https://github.com/gilbarbara/logos) through Iconify | CC0 |
 
-Logos identify the integrations they stand for (nominative use); each belongs to its owner, and the notice sits in the header of `brand-icons.ts`. Microsoft Teams (the Microsoft bot credential) has no clean source and keeps a Landflow glyph.
+Logos identify the integrations they stand for (nominative use); each belongs to its owner, and the notice sits in the header of `brand-icons.ts`. Microsoft Teams (the Microsoft bot credential) and Fathom (fathom.video, the meeting recorder; Simple Icons' "Fathom" is Fathom Analytics, a different product, and fathom.video publishes no press kit) have no clean source and keep a Landflow glyph.
 
 **Adding one.** Unpack the Simple Icons package into an empty directory (`npm pack simple-icons@16.36.0`), print the mark with `node scripts/brand-icon.mjs entry <dir> <slug>` and paste the line into `BRANDS` with a comment naming its source. A brand Simple Icons lacks comes from Lobe Icons or the brand's own press page, only where that page is clearly the brand's. Then write the plugin's file with `node scripts/brand-icon.mjs tile <key> plugins/<name>/icons/<name>.svg` (`--trigger` adds the bolt a trigger wears): the mark in its colour on a white rounded tile, 48 by 48. A plugin that bundles several apps (Messaging, Databases, Productivity) uses `bundle` for a 2 by 2 grid of its apps' icons. `apps/web/test/brand-icons.test.ts` fails on a listed app whose icon is still a glyph or whose file is missing.
 

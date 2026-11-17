@@ -39,7 +39,7 @@ const FROM: Record<NonNullable<ActorConnection['from']>, string> = { flow: 'in t
 export function useConnectionIcon() {
   const nodeTypes = useNodeTypes();
   return (c: ActorConnection) => {
-    const app = c.kind === 'tool' || c.kind === 'plugin' ? brandOfApp(c.name) : undefined;
+    const app = !c.nodeType && (c.kind === 'tool' || c.kind === 'plugin') ? brandOfApp(c.name) : undefined;
     return (c.nodeType && nodeTypes?.[c.nodeType]?.descriptor.icon) || c.icon || (app && brandIcon(app)) || KIND_ICON[c.kind];
   };
 }
