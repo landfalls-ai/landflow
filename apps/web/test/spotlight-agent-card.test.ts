@@ -199,6 +199,23 @@ describe('Spotlight on an agent ask', () => {
     expect(useAssistant.getState().agents.filter((a) => a.state === 'designing')).toEqual([]);
   });
 
+  it('an agent ask stops a plan card that is waiting for Build it', async () => {
+    const { draftWholeFlow } = await import('@/components/editor/spotlight/draft-flow');
+    const plan = { name: 'Bugs', steps: [{ key: 's1', type: 'core.manualTrigger', name: 'Start', does: 'Start by hand' }], assumptions: [], cannot: [] };
+    answers = { '/api/ai/build/plan': () => ({ plan, alternatives: {} }), ...answers }; // before '/api/ai/build', which it would match
+    const build = vi.fn(async () => {
+      throw new Error('a stopped plan must not be built');
+    });
+    const waiting = draftWholeFlow('Read bugs from Linear', build as never);
+    const planState = () => useAssistant.getState().items.flatMap((i) => (i.role === 'assistant' ? i.parts : [])).find((p) => p.kind === 'plan');
+    await vi.waitFor(() => expect(planState()).toMatchObject({ plan: { state: 'waiting' } }));
+    await designAgentCard(SB00_PR, cardAskFor(SB00_PR)!, { starter: true });
+    await waiting;
+    expect(planState()).toMatchObject({ plan: { state: 'stopped' } });
+    expect(build).not.toHaveBeenCalled();
+    expect(cardOf()?.card.state).toBe('designed');
+  });
+
   it('an ask without a name still gets one before the design', async () => {
     const message = 'create an agent that sends a weekly report';
     await designAgentCard(message, cardAskFor(message)!, { starter: true });

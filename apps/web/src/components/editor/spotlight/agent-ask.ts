@@ -81,6 +81,8 @@ export async function designAgentCard(message: string, ask: AgentAsk, options: {
   const rowId = `card:${reply.id}`;
   useAssistant.getState().setAgent(rowId, { name: designName, state: 'designing' });
   const workflowAtStart = useEditor.getState().workflowId;
+  // As `draftWholeFlow` does: a plan card still waiting for Build it is stopped by this ask, not left to build later.
+  draftCall.request?.abort();
   const abort = (draftCall.request = new AbortController());
   try {
     const workflow = useEditor.getState().name;
