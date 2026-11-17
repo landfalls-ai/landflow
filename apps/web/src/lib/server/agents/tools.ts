@@ -491,7 +491,9 @@ function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
         variables: variables.forWorkflow(`agent:${ctx.agent.id}`),
         ...(secrets && { secrets }),
       });
-      const overrides = Object.fromEntries(Object.entries(toolArgs).filter(([key]) => descriptor.properties.some((p) => p.name === key)));
+      // AG08: only an argument the tool's own schema offered overrides a parameter (a To the design fixed is not one a $fromAI or toolInputSchema tool takes).
+      const offered = (inputSchema.properties ?? {}) as Record<string, unknown>;
+      const overrides = Object.fromEntries(Object.entries(toolArgs).filter(([key]) => key in offered && descriptor.properties.some((p) => p.name === key)));
       const resolvedParameters = resolver.resolveParameters(config.parameters, 0, skip);
       if (secrets) rememberResolvedParameters(config.parameters, resolvedParameters, skip);
       const parameters = { ...resolvedParameters, ...overrides } as JsonObject;

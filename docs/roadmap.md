@@ -2854,10 +2854,10 @@ account's own console is the figure.
 - Revising teams, and the Agent architect dialog changing agents: wave ag1 changes a single agent from Spotlight only ([limitations.md](limitations.md)).
 - The live pass's leftovers (found by running the four agents; each is a small fix for the next agents wave, none blocks):
   - "Pull out the IOCs" does not name Extract IOCs, so the triage card drops it silently and Not added is empty.
-  - Generated eval cases are descriptions, not inputs, so a good agent is held by the gate.
+  - Generated eval cases were descriptions, not inputs (built in ag2, AG08: the cases are now the alert's or question's own text), but a good agent that ends in an approval-gated send can still be held: the gate runs with approvals denied and the expected answers say the email was sent (live: the alert triager's draft scored 2.5 and 3.0 / 5; a read-only Grafana agent 3.75 / 5 and published).
   - ~~The editor's chat cannot approve a tool call (only the agent page's Test chat shows approval cards).~~ built in ag2, AG10
-  - The Grafana agent's instructions name node types (`grafana.getAlerts`, `core.httpRequest`) instead of tool names, and its HTTP Request tool is preset to `http://127.0.0.1:3000/api/health`.
-  - Send Email's To and From are fixed empty and its Subject and Body unset on the card.
+  - The Grafana agent's instructions name node types (`grafana.getAlerts`, `core.httpRequest`) instead of tool names, and ~~its HTTP Request tool is preset to `http://127.0.0.1:3000/api/health`~~ (built in ag2, AG08).
+  - ~~Send Email's To and From are fixed empty and its Subject and Body unset on the card.~~ built in ag2, AG08 (To is the ask's address, Subject and Body are `$fromAI`; From stays the person's).
   - After an agent-page change is applied the card has no Test button, does not update after a credential pick, its Left row repeats credentials that are set, and it does not say Acknowledge Alert asks first.
   - Spotlight's history loses the smoke row and the card results after a reload.
   - A revise adds a tool to the Tools line without a step for it, and the reply spells "Extract Iocs".
@@ -2869,3 +2869,4 @@ account's own console is the figure.
 ## Agents that work locally, wave ag2 (the leftovers of ag1)
 
 - Run an Agent asks in the editor's chat (AG10): the node's **Tool Approvals** (default *Refuse*; the starter flow lays out *Ask in the editor's chat*) makes a tool that needs approval wait for Approve in a chat-mode run, and resumes the same agent session. Grafana's Acknowledge Alert posts to Alertmanager's `/api/v2/silences` (an Editor token; a Viewer gets a clear message) and Get Alert Details reads the alert by name. Against Grafana 11.4 the old `/api/v2/silence` and `/api/v2/alerts/<name>` answered 404; `/api/v2/silences` answered 202.
+- **AG08, a design fills a tool's settings honestly and writes real test cases.** A node tool's destination holds only what the request gives (Send Email goes to the ask's address with a `$fromAI` subject and body, From stays the person's; HTTP Request's preset URL is left empty and asked for), a property the model fills per call (Acknowledge Alert's Alert ID) is not a need, the eval cases are inputs a person would send, and a node tool takes only the arguments its schema offered ([agents.md](agents.md#agent-architect)).

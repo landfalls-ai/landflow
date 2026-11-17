@@ -11,6 +11,7 @@ import { withCallNote } from '../ai-usage/call-context'; // SP03:
 import { plainDraft } from '../ai-usage/drafts'; // SP03:
 import { defaultParameters, isPropertyVisible } from '@landflow/protocol';
 import type { AgentMessage, LanguageModel, ToolCall, ToolResult, ToolSpec } from '@landflow/engine';
+import { deriveToolSchema } from '@landflow/engine'; // AG08:
 import type { AgentConfig, AgentGuardrails, AgentModel, AgentPersona, AgentTemplate, AgentToolConfig, AnswerLength } from '@/lib/shared/agents';
 import { DEFAULT_BRIEF_GUARDRAILS, isNodeKnowledge } from '@/lib/shared/agents';
 import type { AgentCaseDraft, AgentNotAdded } from '@/lib/shared/agent-card'; // SB17: AG02:
@@ -114,7 +115,8 @@ const TOOL_SCHEMA = {
 // SB17: what propose_agent and propose_design ask for beyond the persona: the four parts and the cases.
 const BRIEF_PARTS =
   'Four parts, each starting a line: "Input:" (what each message or item brings), "Steps:" (numbered, naming its tools), "Output:" (what it answers, how long), "Hand over when:" (what it does not decide alone)';
-const CASES_ASK = '3 to 5 test cases, one plain line each: what a person would send it => what a right answer says';
+// AG08: the cases are the inputs themselves, written out.
+const CASES_ASK = '3 to 5 test cases, one plain line each: what a person would actually send it, written out (the alert, the question, the text itself; never a description of it or a placeholder) => what a right answer says';
 
 const TOOLS: ToolSpec[] = [
   {
@@ -310,14 +312,14 @@ How to work:
 - If the request is too vague to pick tools (no task, or no system to work in), ask one short question. Otherwise don't ask: design.
 - Research before proposing: search_nodes for each thing the agent must do (read tickets, post to Slack, query a database…), get_node_docs for each node you use, list_workflows and list_agents when an existing workflow or agent could do part of the job, list_credentials to see what works right away, list_templates when one fits as a start.
 - Use only node types search_nodes returned, and ids list_workflows and list_agents returned. If nothing online can do a part of the job, leave it out of the tools, list it in propose_agent's "missing" as the app's name, a colon and what the agent would do ("Grafana: read firing alerts"), and say so in one sentence; never invent a node type.
-- A node tool's parameters: set what is fixed for this agent (the operation, a resource); what the agent decides per call is "{{ $fromAI('key', 'what it is', 'string') }}". Never make up ids, channels, URLs or emails the user didn't give: leave those for the user.
+- A node tool's parameters: set what is fixed for this agent (the operation, a resource); what the agent writes or decides per call (a subject, a body, a message, an id) is "{{ $fromAI('key', 'what it is', 'string') }}". A destination (To, URL, channel, path, repository) is set only to a value the request gives, word for word, else left empty. Never make up ids, channels, URLs or emails the user didn't give: leave those for the user.
 - An agent that answers from documents (policies, contracts, docs, past tickets) searches a knowledge base: list_knowledge_bases, use one whose description fits, else start an empty one (type "knowledge" with a new collection name) and tell the user to add documents to it.
 - Give each node tool a snake_case name and a one-sentence description of when to call it.
 - Tools are actions the agent takes. How it is started (a webhook, a schedule, Slack or Teams, a workflow) isn't a tool: the user sets that under the agent's Abilities → Triggers, so say it in your reply instead.
 - The model itself reads, parses, summarises and formats text: don't add a tool (a Code node, a formatter) for that.
 - Keep the agent focused: the fewest tools that do the job, read before write, rules that matter, instructions of a few short steps. Give it a tool only for an app the request names or its job plainly needs: no Slack, email or other agents unless asked.
 - Instructions have four parts, each starting a line: "Input:" (what each message or item brings), "Steps:" (numbered, naming its tools), "Output:" (what it answers, how long) and "Hand over when:" (what it does not decide alone).
-- Send 3 to 5 test cases in "cases": what a person would send it => what a right answer says, one plain line each. On a change, send them again unless the change affects them.
+- Send 3 to 5 test cases in "cases": what a person would actually send it, written out (the alert, the question, the text itself; never a description of it or a placeholder) => what a right answer says, one plain line each. On a change, send them again unless the change affects them.
 - When the request asks for "our practices" (standards, guidelines, conventions), the agent follows the practices the company approved: that is handled for you, don't add a tool for it.
 - propose_agent replaces the whole draft each time: when the user asks for a change, send the complete agent again with the change.
 - After proposing, say in one to three sentences what the agent does and what the user still has to finish (pick credentials, a model, fill in a value). Never say the agent was created. Don't repeat the draft in prose: it shows beside the chat.
@@ -444,6 +446,34 @@ function readDefaults(info: NodeTypeInfo, parameters: Record<string, unknown>, r
   return read ? { ...next, operation: read.value } : parameters;
 }
 
+// AG08: a design fills a node tool's destination (where it sends or reads) only from the request, and a mail node's content per call.
+const DESTINATION_NAME = /^(?:to|cc|bcc|toEmail|ccEmail|bccEmail|recipients?|url|baseUrl|endpoint|endpointUrl|webhookUrl|channel|channelId|chatId|path|filePath|repository|owner|repo)$/i;
+const isMailNode = (info: NodeTypeInfo) => /e-?mail|smtp|\bmail\b/i.test([info.descriptor.displayName, ...(info.descriptor.keywords ?? [])].join(' '));
+/** The addresses a request sends to: the "to <address>" targets (and ones joined by "," or "and") of its sentences that say "email/send … to", in order, once each. Never one ruled out or a cc (a sender is never a "to <address>" target). */
+function mailAddresses(request: string): string[] {
+  const found: string[] = [];
+  const address = '[\\w.+-]+@[\\w-]+(?:\\.[\\w-]+)+';
+  const target = new RegExp(`\\bto\\s+(${address}(?:\\s*(?:,|\\band\\b)\\s*(?:and\\s+)?${address})*)`, 'gi');
+  for (const clause of request.replace(AGENT_ASK, ' ').split(/(?<=[.!?])\s+|[;\n]/)) {
+    if (!MAIL_TO.test(clause)) continue;
+    for (const m of clause.matchAll(target)) {
+      if (/\b(?:never|not|don'?t|do not|except|without|cc|bcc)\s+(?:\w+\s+)?$/i.test(clause.slice(0, m.index))) continue;
+      for (const a of m[1].match(new RegExp(address, 'g')) ?? []) if (!found.some((f) => f.toLowerCase() === a.toLowerCase())) found.push(a);
+    }
+  }
+  return found;
+}
+
+// AG08: a test case's input that describes an input instead of being one (the same rule as the scenarios' `describesInput`).
+export function describesCase(input: string): boolean {
+  const text = input.trim();
+  if (text.length < 12 || /<[^<>\n]{1,40}>/.test(text)) return true;
+  if (text.length >= 160 || /:\s*\S.{11,}/.test(text)) return false;
+  const thing = /^(?:an?|the|some|another|pasted|random|sample|example|generic|typical|plain)\b[^:]{0,80}?\b(?:alert|e-?mail|message|text|log|ticket|request|question|input|payload|event|notification|report|string|token|jwt|file|data|record|row)s?\b(?:\s+(?:about|for|with|that|from|of|where|which|containing|saying|asking|describing|showing|on|in)\b|\s*$)/i;
+  const person = /^(?:an?|the|some)\s+(?:user|customer|person|visitor|engineer|teammate|colleague|client)\s+(?:asks?|says|sends|wants|reports|writes|pastes|requests|needs)\b/i;
+  return thing.test(text) || person.test(text);
+}
+
 /** "what a person would send => what a right answer says", one per line (or a list of such lines): at most 5, each input under 4 000 characters. */
 export function parseCases(value: unknown, needsExpected = false): AgentCaseDraft[] {
   const lines = Array.isArray(value) ? value : typeof value === 'string' ? value.split('\n') : [];
@@ -455,6 +485,7 @@ export function parseCases(value: unknown, needsExpected = false): AgentCaseDraf
     const asked = input.replace(/^["'“]|["'”]$/g, '').trim().slice(0, 4000);
     const expected = rest.join(' => ').replace(/^["'“]|["'”]$/g, '').trim().slice(0, 1000);
     if (asked.length < 3 || (needsExpected && !expected)) continue;
+    if (describesCase(asked)) continue; // AG08:
     if (cases.some((c) => c.input.toLowerCase() === asked.toLowerCase())) continue;
     cases.push({ input: asked, ...(expected && { expected }) });
     if (cases.length === 5) break;
@@ -722,6 +753,40 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
         dropped.push(`${d.displayName} (${String(parameters.operation ?? 'a write')}): the request asks to read or check, not to change anything there`);
         continue;
       }
+      // AG08: a destination the request does not hold word for word is left empty (and asked for); a mail node goes to the request's address, and what it writes per call is $fromAI.
+      const noDestination = new Set<string>();
+      if (request !== undefined) {
+        const said = request.replace(AGENT_ASK, ' ').toLowerCase();
+        const holds = (value: string) => value.split(',').every((part) => !part.trim() || said.includes(part.trim().toLowerCase()));
+        const isText = (value: unknown): value is string => typeof value === 'string' && value.trim() !== '';
+        if (isMailNode(info) && own.has('toEmail') && writes) {
+          const to = mailAddresses(request);
+          if (to.length) {
+            const own1 = isText(parameters.toEmail) ? parameters.toEmail : '';
+            const keeps = own1 !== '' && holds(own1) && own1.split(',').every((part) => !part.trim() || to.some((a) => a.toLowerCase() === part.trim().toLowerCase()));
+            if (!keeps) {
+              if (own1 && !holds(own1)) dropped.push(`“${own1}” as To Email of ${toolLabel}: the request gives ${to.join(', ')}`);
+              parameters = { ...parameters, toEmail: to.join(', ') };
+            }
+          }
+          const fresh = (name: string, key: string, about: string) => {
+            if (own.has(name) && !(isText(parameters[name]) && (/\$fromAI\(/.test(parameters[name] as string) || holds(parameters[name] as string)))) parameters = { ...parameters, [name]: `{{ $fromAI('${key}', '${about}', 'string') }}` };
+          };
+          // The node's own format is html, whose Text field is hidden: a summary the model gave no format for goes out as plain text.
+          if (own.has('emailFormat') && !('emailFormat' in fromModel)) parameters = { ...parameters, emailFormat: 'text' };
+          fresh('subject', 'subject', 'The email subject');
+          fresh(parameters.emailFormat === 'html' ? 'html' : 'text', 'body', 'The email text');
+        }
+        for (const property of d.properties) {
+          const value = parameters[property.name];
+          if (property.type !== 'string' || !isText(value) || !isPropertyVisible(property, parameters)) continue;
+          if (!DESTINATION_NAME.test(property.name) && !(isMailNode(info) && property.name === 'fromEmail')) continue;
+          if (holds(value)) continue;
+          parameters = { ...parameters, [property.name]: '' };
+          noDestination.add(property.name);
+          dropped.push(`“${shorten(value, 60)}” as ${property.displayName} of ${toolLabel}: the request doesn’t give it`);
+        }
+      }
       tools.push({ id: `tl_${nanoid(8)}`, type: 'node', name: toolLabel, description: text(tool.description, 300) ?? d.toolDescription ?? d.description, nodeType: info.type, parameters, ...(writes && { requireApproval: true }) /* SB17: */ });
       for (const slot of d.credentials ?? []) {
         if (!slot.required || !isPropertyVisible(slot, parameters)) continue;
@@ -732,7 +797,13 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
       for (const property of d.properties) {
         const value = parameters[property.name];
         if (!property.required || property.type === 'notice' || !isPropertyVisible(property, parameters)) continue;
-        if (value === undefined || value === '' || (Array.isArray(value) && !value.length)) needs.push({ tool: toolLabel, kind: 'parameter', text: `${toolLabel}: fill in ${property.displayName}` });
+        if (value === undefined || value === '' || (Array.isArray(value) && !value.length)) {
+          // AG08: a property the tool's schema lets the model fill on each call (Acknowledge Alert's Alert ID) is not for the person.
+          const schema = deriveToolSchema(d, parameters);
+          const perCall = Object.keys((d.toolInputSchema?.properties ?? {}) as object).includes(property.name) || (Array.isArray(schema.required) && (schema.required as string[]).includes(property.name));
+          if (perCall) continue;
+          needs.push({ tool: toolLabel, kind: 'parameter', text: noDestination.has(property.name) ? `${toolLabel}: set ${property.displayName} (the request gives none)` : `${toolLabel}: fill in ${property.displayName}` });
+        }
       }
     } else if (kind === 'workflow') {
       const workflow = callableWorkflows(actor).find((w) => w.id === tool.workflowId);
@@ -863,7 +934,7 @@ function modelNamedIn(request: string, models: readonly AgentModel[]): AgentMode
  * It runs inside the architect's scope, so it counts as its calls do; a model that fails leaves the cases to the person.
  */
 async function casesFor(model: LanguageModel, agent: { name: string; description: string; request: string }, usage: { inputTokens: number; outputTokens: number }, signal?: AbortSignal): Promise<AgentCaseDraft[]> {
-  const system = 'You write test cases for an AI agent. Answer with 3 to 5 lines and nothing else, one case per line, plain text: what a person would send it => what a right answer says.';
+  const system = 'You write test cases for an AI agent. Answer with 3 to 5 lines and nothing else, one case per line, plain text: what a person would actually send it, written out (the alert, the question, the text itself; never a description of it or a placeholder) => what a right answer says. Example: [Wazuh] rule 5710 sshd: attempt to login using a non-existent user, src 203.0.113.45 => Names the source address and says it is a login probe.'; // AG08:
   const messages: AgentMessage[] = [{ role: 'user', content: `Agent: ${agent.name}\nWhat it does: ${agent.description}\nThe request it was designed from:\n${agent.request.slice(0, 1500)}` }];
   try {
     const turn = await withCallNote({ purpose: 'answer', draft: plainDraft({ system, tools: [], messages }) }, () => model.generate({ system, messages, tools: [], ...(signal && { signal }) }));
