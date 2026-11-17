@@ -10,7 +10,7 @@ import { nanoid } from 'nanoid';
 import { withCallNote } from '../ai-usage/call-context'; // SP03:
 import { plainDraft } from '../ai-usage/drafts'; // SP03:
 import { defaultParameters, isPropertyVisible } from '@landflow/protocol';
-import type { AgentMessage, LanguageModel, ToolCall, ToolResult, ToolSpec } from '@landflow/engine';
+import { toToolName, type AgentMessage, type LanguageModel, type ToolCall, type ToolResult, type ToolSpec } from '@landflow/engine';
 import { deriveToolSchema } from '@landflow/engine'; // AG08:
 import type { AgentConfig, AgentGuardrails, AgentModel, AgentPersona, AgentTemplate, AgentToolConfig, AnswerLength } from '@/lib/shared/agents';
 import { DEFAULT_BRIEF_GUARDRAILS, isNodeKnowledge } from '@/lib/shared/agents';
@@ -23,6 +23,7 @@ import { agentStore } from '../agents/store';
 import { agentTemplates } from '../agents/templates';
 import { credentials } from '../credentials/vault';
 import { qualifyCredentialType } from '../mcp/bind';
+import { githubAllowedTools } from '../mcp/github'; // AG07:
 import { canResource, withOwnership, type Actor } from '../projects';
 import { store } from '../store';
 import { traceAssistant } from '../telemetry/assistant';
@@ -556,25 +557,73 @@ export function briefParts(
 
 // AG02: the steps name the agent's tools by their call names. A snake_case word that names a tool (it starts like a tool call or follows
 // "call/use/run") and is not one of the agent's tools becomes the tool it plainly means (exactly one shares its words), else its clause goes.
+// AG07: the steps know every call name: a node type ("grafana.getAlerts") is renamed to the agent's call name or its clause goes, a rename
+// needs the same meaning (never one shared word), a sub-agent's `ask_<name>` and an MCP server's names are kept, a foreign name always goes.
 const CALL_VERBS = /^(?:send|get|query|create|list|read|write|post|fetch|find|search|run|call|use|check|comment|update|delete|lookup|extract|normalize|decode|hash|analy[sz]e|summari[sz]e|notify|email|insert|select|count|parse|generate|convert|publish|slack|jira|github)_/;
 const FIELD_WORD = /_(?:id|ids|at|number|name|key|url|date|time|type|status|count|value|index|ref|address|email|body|subject|text|to|by|for|from|of)$/; // a second word that is a preposition ("send_to") reads as a field too
+const PREPOSITION_END = /_(?:to|by|for|from|of|at)$/; // AG07: "send_to", "group_by": a field even after "with"
 const DETERMINERS = '(?:the|each|its|their|a|an|every)';
-const GENERIC_WORDS = new Set(['id', 'get', 'send', 'query', 'create', 'list', 'read', 'write', 'post', 'call', 'run', 'fetch', 'find', 'search', 'message', 'messages', 'data', 'tool', 'item', 'items', 'all', 'one', 'new', 'set', 'update', 'check', 'lookup', 'use']);
-const wordsOf = (value: string) => value.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1);
 
-export function nameOnlyOwnTools(instructions: string, tools: Array<{ name: string; description?: string }>): { text: string; dropped: string[] } {
+/** AG07: what the call to nameOnlyOwnTools knows beyond the tools' names (the contract's `StepsOptions`). */
+export interface StepsOptions {
+  /** Call names known to be someone else's (a revise's removed tools): they read as tools whatever their shape, and are never renamed. */
+  foreign?: string[];
+  /** A node type → the agent's call name for it (`grafana.getAlerts` → `get_alerts`). */
+  nodeTypes?: Record<string, string>;
+  /** Every node type online: a dotted word that is none of them is ordinary text (`landflow.test`, `config.yaml`). */
+  catalog?: string[];
+  /** The agent has an MCP server whose tool list is read only at run time: a name that could be one of its tools is kept. */
+  open?: boolean;
+}
+
+/** AG07: a word without its plural `s` and with -ise as -ize ("alerts" and "alert", "normalise" and "normalize" are one). */
+const foldWord = (w: string) => {
+  const x = w.replace(/ises?$/, (m) => `ize${m.endsWith('s') ? 's' : ''}`).replace(/ies$/, 'y');
+  return x.length > 3 && x.endsWith('s') && !x.endsWith('ss') ? x.slice(0, -1) : x;
+};
+const meaningOf = (name: string) => {
+  const words = name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const verb = CALL_VERBS.test(name.toLowerCase().replace(/^([a-z]+)ise_/, '$1ize_')) && words.length > 1 ? words[0] : undefined;
+  return { verb, rest: words.slice(verb ? 1 : 0).map(foldWord), all: words.map(foldWord) };
+};
+const sameWords = (a: string[], b: string[]) => new Set(a).size === new Set(b).size && a.every((w) => b.includes(w));
+/** AG07: whether a token and a tool mean the same thing: equal content words (plural and -ise folded), or the tool's call name with a `_2` suffix. */
+function sameTool(token: string, tool: string): boolean {
+  if (token.toLowerCase() !== tool.toLowerCase() && token.replace(/_\d+$/, '').toLowerCase() === tool.toLowerCase()) return true;
+  const a = meaningOf(token);
+  const b = meaningOf(tool);
+  if (a.verb && b.verb) return foldWord(a.verb) === foldWord(b.verb) && sameWords(a.rest, b.rest);
+  if (a.verb || b.verb) return a.rest.length > 0 && sameWords(a.rest, b.rest);
+  return sameWords(a.all, b.all);
+}
+const snakeOf = (type: string) => (type.split('.').pop() ?? type).replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/-/g, '_').toLowerCase();
+const FIELD_CONTEXT = /^`?\s*(?:field|value|column|key|parameter)\b|^`?\s+as\s+(?:the|an?)\b|^`?\s+from\s+the\b|^`?\s+to\s+(?:order|sort|group)\b/i; // AG07: what follows a field-shaped token
+
+export function nameOnlyOwnTools(instructions: string, tools: Array<{ name: string; description?: string }>, options: StepsOptions = {}): { text: string; dropped: string[] } {
   const own = new Set(tools.map((t) => t.name));
+  const foreignNames = new Set((options.foreign ?? []).filter((f) => f && !own.has(f)));
+  const catalog = new Set(options.catalog ?? []);
+  const nodeTypes = options.nodeTypes ?? {};
+  const known = new Set([...Object.values(nodeTypes), ...[...catalog].map(snakeOf)]); // AG07: the call names of the nodes online
   const dropped: string[] = [];
   const out: string[] = [];
-  for (const line of instructions.split('\n')) {
+  const fix = (line: string): string => {
     let current = line;
-    const foreign = [...new Set(current.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [])].filter((t) => {
+    const isTool = (t: string): boolean => {
       if (own.has(t)) return false;
+      if (foreignNames.has(t)) return true;
+      if (options.open && !known.has(t)) return false; // AG07: an MCP server's tools are unknown at design time
       // A tool by how it is named, before any field or determiner check: "the get_alerts tool", "call the post_message tool", "use query_logs".
       if (new RegExp(`\\b${t}\`?\\s+(?:tool|node|action|function)\\b`, 'i').test(current)) return true;
+      if (/^ask_/.test(t)) return true; // AG07: a sub-agent's or an A2A agent's call name
       // An article between the verb and the name only for a tool-shaped name: "run the post_id check" and "use the source_ip" are fields.
       if (new RegExp(`\\b(?:call|invoke|run)\\s+${FIELD_WORD.test(t) ? '' : '(?:(?:the|an?)\\s+)?'}\`?${t}\\b`, 'i').test(current)) return true;
+      // AG07: a token the sentence uses as a field ("send_to as the address", "update_time to order them", "the to_email field").
+      const at = current.search(new RegExp(`\\b${t}\\b`));
+      if (at >= 0 && (!CALL_VERBS.test(t) || FIELD_WORD.test(t)) && FIELD_CONTEXT.test(current.slice(at + t.length))) return false;
       if (CALL_VERBS.test(t) && !FIELD_WORD.test(t) && new RegExp(`\\buse\\s+(?:(?:the|an?)\\s+)?\`?${t}\\b`, 'i').test(current)) return true; // "use `user_id`" is a field
+      // AG07: "with send_email", "using send_email": a tool even when it ends in a field word (not a preposition: "send_to").
+      if (CALL_VERBS.test(t) && !PREPOSITION_END.test(t) && new RegExp(`\\b(?:with|using|via)\\s+(?:(?:the|an?)\\s+)?\`?${t}\\b`, 'i').test(current)) return true;
       if (CALL_VERBS.test(t)) {
         if (new RegExp(`\\buse\\s+\`?${t}\\b`, 'i').test(current)) return true;
         // Three or more words ("get_alert_status") read as a tool whatever the suffix; two ("run_id", "update_time", "email_address") are a field when they end like one or follow a determiner.
@@ -584,26 +633,76 @@ export function nameOnlyOwnTools(instructions: string, tools: Array<{ name: stri
       }
       // After "use", or later in the same sentence as "call" ("call jwt_decode, hash or slugify_title"): a tool unless it is shaped like a field.
       return !FIELD_WORD.test(t) && (new RegExp(`\\buse\\s+\`?${t}\\b`, 'i').test(current) || new RegExp(`\\b(?:call|invoke|run)\\b[^.\\n]*?\\b${t}\\b`, 'i').test(current));
-    });
-    for (const token of foreign) {
-      const words = wordsOf(token).filter((w) => !GENERIC_WORDS.has(w));
-      const fits = tools.filter((t) => words.some((w) => wordsOf(t.name).includes(w)));
-      if (fits.length === 1) {
-        current = current.replace(new RegExp(`\\b${token}\\b`, 'g'), fits[0].name);
-        dropped.push(`instructions named ${token}, which it does not have: now ${fits[0].name}`);
+    };
+    // AG07: the tokens: node types the catalog holds, snake_case words that read as tools, and foreign names that are not snake_case ("Call slugify on the title.").
+    const dotted = [...new Set(current.match(/\b[a-z][a-z0-9-]*\.[A-Za-z][A-Za-z0-9]*\b/g) ?? [])].filter((t) => catalog.has(t));
+    const snake = [...new Set(current.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [])].filter(isTool);
+    const plain = [...foreignNames].filter((f) => !f.includes('_') && new RegExp(`\\b(?:call|invoke|run|use|using|with|via)\\s+(?:(?:the|an?)\\s+)?\`?${escapeRegExp(f)}\\b|\\b${escapeRegExp(f)}\`?\\s+(?:tool|node|action|function)\\b`, 'i').test(current));
+    for (const token of [...dotted, ...snake, ...plain]) {
+      const fits = dotted.includes(token) || foreignNames.has(token) ? [] : tools.filter((t) => sameTool(token, t.name));
+      const target = dotted.includes(token) ? nodeTypes[token] : fits.length === 1 ? fits[0].name : undefined;
+      if (target && own.has(target)) {
+        current = current.replace(new RegExp(`\\b${escapeRegExp(token)}\\b`, 'g'), target);
+        dropped.push(`instructions named ${token}, which it does not have: now ${target}`);
         continue;
       }
       const lead = /^(\s*(?:\d+[.)]|[-*•])\s+)?/.exec(current)?.[0] ?? '';
-      const kept = current.slice(lead.length).split(/\s*(?:,|;|\band\b|\bthen\b)\s*/i).filter((piece) => piece && !new RegExp(`\\b${token}\\b`).test(piece));
-      current = kept.length ? `${lead}${kept.join(', ')}${/[.!?]$/.test(current) && !/[.!?]$/.test(kept.join(', ')) ? '.' : ''}` : '';
+      const has = new RegExp(`\\b${escapeRegExp(token)}\\b`);
+      // AG07: the clause goes from its own sentence only; the sentences around it stay.
+      const kept = current
+        .slice(lead.length)
+        .split(/(?<=[.!?])\s+(?=[A-Z0-9`"'(])/)
+        .flatMap((sentence) => {
+          if (!has.test(sentence)) return [sentence];
+          const clauses = sentence.split(/\s*(?:,|;|\band\b|\bthen\b)\s*/i).filter((piece) => piece && !has.test(piece));
+          const joined = clauses.join(', ');
+          return clauses.length ? [`${joined}${/[.!?]$/.test(sentence) && !/[.!?]$/.test(joined) ? '.' : ''}`] : [];
+        });
+      current = kept.length ? `${lead}${kept.join(' ')}` : '';
       dropped.push(`instructions named ${token}, which it does not have`);
     }
-    if (current.trim() || !line.trim()) out.push(current);
+    return current;
+  };
+  for (const line of instructions.split('\n')) {
+    // AG07: steps written on one line ("1. Call a. 2. Call b.") are checked one at a time.
+    const pieces = line.split(/(?<=[.!?])\s+(?=\d+[.)]\s)/);
+    const fixed = pieces.map(fix);
+    if (fixed.every((f, i) => f === pieces[i])) out.push(line);
+    else for (const piece of fixed) if (piece.trim()) out.push(piece);
   }
   // Steps whose clause went leave a gap in the numbering: number the lines again, in order.
   let n = 0;
   const text = out.map((l) => (/^\s*\d+[.)]\s/.test(l) ? l.replace(/^(\s*)\d+([.)])/, (_m, sp: string, dot: string) => `${sp}${++n}${dot}`) : ((n = 0), l))).join('\n');
   return { text, dropped };
+}
+
+/**
+ * AG07: the call names of an agent's tools as the runtime builds them (node, workflow and knowledge tools `toToolName(name)`, an A2A agent and a
+ * sub-agent `toToolName('ask_' + name)`, GitHub's MCP preset the names its access allows), what a node type is called, and whether an MCP
+ * server's tools are unknown until run time (`open`).
+ */
+function stepsToolsOf(tools: AgentToolConfig[], types: NodeTypeInfo[]): { list: Array<{ name: string; description?: string }>; options: Required<Pick<StepsOptions, 'nodeTypes' | 'catalog' | 'open'>> } {
+  const list: Array<{ name: string; description?: string }> = [];
+  const nodeTypes: Record<string, string> = {};
+  let open = false;
+  const put = (name: string | undefined, description?: string) => {
+    if (name && !list.some((t) => t.name === name)) list.push({ name, ...(description && { description }) });
+    return name;
+  };
+  for (const t of tools) {
+    if (t.type === 'mcp') {
+      if (t.preset === 'github') for (const name of githubAllowedTools(t.access)) put(name);
+      else open = true;
+    } else if (t.type === 'a2a') put(toToolName(`ask_${t.name}`));
+    else if (t.type === 'agent') {
+      const target = agentStore.get(t.agentId);
+      if (target) put(toToolName(`ask_${target.name}`));
+    } else if ('name' in t && t.name) {
+      const name = put(toToolName(t.name), 'description' in t ? t.description : undefined);
+      if (name && t.type === 'node' && !(t.nodeType in nodeTypes)) nodeTypes[t.nodeType] = name;
+    }
+  }
+  return { list, options: { nodeTypes, catalog: types.map((t) => t.type), open } };
 }
 
 /** AG02: what each tool is for, in a few words for the steps' Tools line: the first sentence of its description, unless it only repeats the name. */
@@ -888,8 +987,9 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
   // AG02: the steps name only the agent's own tools, by their call names.
   const toolList = tools.flatMap((t) => ('name' in t && t.name ? [{ name: t.name, ...('description' in t && t.description && { description: t.description }) }] : []));
   // A revise proposes the whole agent again, but least privilege leaves out the tools the change does not name: the steps that call the agent's own tools (`keep`'s) are still its own.
-  const keptTools = (context.revise ? (keep?.tools ?? []) : []).flatMap((t) => ('name' in t && t.name && !toolList.some((o) => o.name === t.name) ? [{ name: t.name, ...('description' in t && t.description && { description: t.description }) }] : []));
-  const reconciled = nameOnlyOwnTools(text(args.instructions, 8000) ?? base.instructions ?? '', [...toolList, ...keptTools]);
+  // AG07: the call names of every tool it has (a sub-agent's `ask_…`, GitHub's, an MCP server open at run time), a node type's name, the node types online.
+  const stepsTools = stepsToolsOf([...tools, ...(context.revise ? (keep?.tools ?? []) : [])], types);
+  const reconciled = nameOnlyOwnTools(text(args.instructions, 8000) ?? base.instructions ?? '', stepsTools.list, stepsTools.options);
   dropped.push(...reconciled.dropped);
   const config: Partial<AgentConfig> = {
     ...(template && { ...base, tools: undefined }),
@@ -1318,8 +1418,10 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
     tools: [...kept, ...added],
   };
   // The steps name only the tools the agent ends up with: a tool the change removed leaves no step that calls it.
-  const finalTools = (config.tools ?? []).flatMap((t) => ('name' in t && t.name ? [{ name: t.name, ...('description' in t && t.description && { description: t.description }) }] : []));
-  const reconciled = nameOnlyOwnTools(config.instructions ?? '', finalTools);
+  // AG07: the call names of the final tools, and as foreign the call names of the base's tools that are gone (a revise's removed tool leaves no step).
+  const finalSteps = stepsToolsOf(config.tools ?? [], types);
+  const gone = stepsToolsOf(base.tools ?? [], types).list.map((t) => t.name).filter((n) => !finalSteps.list.some((t) => t.name === n));
+  const reconciled = nameOnlyOwnTools(config.instructions ?? '', finalSteps.list, { ...finalSteps.options, foreign: gone });
   config.instructions = reconciled.text;
   // The base's own tools kept here are not "never asked for": the design's rule for a tool the change does not name does not apply to them.
   const keptNames = kept.flatMap((t) => (t.type === 'node' ? [types.find((x) => x.type === t.nodeType)?.descriptor.displayName] : [])).filter((n): n is string => Boolean(n));
@@ -1393,9 +1495,11 @@ function withSpecHints(draft: DraftResult, spec: AgentSpec, input: Pick<Architec
   };
   for (const wanted of spec.tools ?? []) {
     // toolsOf found several mail nodes for "email … to <address>": said, not guessed.
-    const several = /^(Send email): (several nodes match \(.*\), pick one)$/.exec(wanted);
+    const several = /^([^:]{2,40}): (several nodes match \(.*\), pick one)$/.exec(wanted);
     if (several) {
-      notAdded.push({ name: several[1], reason: several[2] });
+      // AG07: a draft that already has a node tool that sends mail needs no pick: the mail is sent.
+      const mails = several[1] === 'Send email' && tools.some((t) => { const d = t.type === 'node' ? types.find((x) => x.type === t.nodeType)?.descriptor : undefined; return Boolean(d) && /e-?mail|smtp|\bmail\b/i.test([d!.displayName, ...(d!.keywords ?? [])].join(' ')); });
+      if (!mails) notAdded.push({ name: several[1], reason: several[2] });
       continue;
     }
     const [, app, rest] = /^\s*([^:]{2,40}):\s*(.+)$/.exec(wanted) ?? [undefined, undefined, wanted];

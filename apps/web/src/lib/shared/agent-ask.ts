@@ -91,13 +91,33 @@ function names(message: string, name: string): boolean {
   return new RegExp(`(?<![\\w-])${body}(?![\\w-])`, 'i').test(message);
 }
 
-/** AG02: a plugin node of two or more words whose every word is in the message in some form, in any order ("decodes JWTs" names JWT Decode). */
-function wordsNamed(message: string, entry: AskCatalogEntry): boolean {
+const baseWord = (w: string) => w.toLowerCase().replace(/ies$/, 'y').replace(/s$/, '');
+
+/**
+ * AG02: a plugin node of two or more words whose every word is in the message in some form, in any order ("decodes JWTs" names JWT Decode).
+ * AG07: or whose one distinctive word is in the message as a whole word (an acronym in its name: IOCs, JWT, UUID, SQL), the plural folded: "pull out the IOCs" names Extract IOCs. A word two catalog nodes share ("Alert", "Email") names neither.
+ */
+function wordsNamed(message: string, entry: AskCatalogEntry, catalog: AskCatalogEntry[] = []): boolean {
   const words = entry.displayName.trim().split(/\s+/);
   if (entry.core || words.length < 2 || words.some((w) => w.length < 3)) return false;
   // -ise and -ize, -yse and -yze are one word ("normalise" names Normalize Alert, "analyse" Analyze Logs).
   const stem = (w: string) => escape(w.replace(/e$/i, '')).replace(/([iy])[sz]$/i, '$1[sz]');
-  return words.every((w) => new RegExp(`(?<![\\w-])${stem(w)}(?:e?s|e?d|ing|e)?(?![\\w-])`, 'i').test(message));
+  if (words.every((w) => new RegExp(`(?<![\\w-])${stem(w)}(?:e?s|e?d|ing|e)?(?![\\w-])`, 'i').test(message))) return true;
+  // AG07: the distinctive word alone.
+  const others = new Set(catalog.filter((c) => c !== entry && c.displayName !== entry.displayName).flatMap((c) => c.displayName.trim().split(/\s+/).map(baseWord)));
+  return words.some((w) => {
+    const acronym = /^[A-Z0-9]{2,}s?$/.test(w) && /[A-Z]/.test(w);
+    if (!acronym) return false; // AG07: ordinary English never names a node alone ("makes a decision" is not Triage Decision)
+    if (others.has(baseWord(w))) return false;
+    const root = escape(w.replace(/s$/i, ''));
+    return new RegExp(`(?<![\\w-])${root}(?:e?s)?(?![\\w-])`, 'i').test(message);
+  });
+}
+
+/** AG07: an acronym in a node's name ("IOCs", "JWT") that the message has as a whole word, even when other nodes share it. */
+function acronymNamed(message: string, entry: AskCatalogEntry): string | undefined {
+  if (entry.core) return undefined;
+  return entry.displayName.trim().split(/\s+/).find((w) => /^[A-Z0-9]{2,}s?$/.test(w) && /[A-Z]/.test(w) && new RegExp(`(?<![\\w-])${escape(w.replace(/s$/i, ''))}(?:e?s)?(?![\\w-])`, 'i').test(message));
 }
 
 /** AG02: "email/mail/send/forward … to <address>": a message that sends to an address it was given. */
@@ -127,8 +147,19 @@ export function toolsOf(message: string, catalog: AskCatalogEntry[] = []): strin
     }
   }
   // AG02: the nodes and plugins the message names by their display names ("Normalize Alert", "SQLite", "Grafana"): a plugin's name only when none of its nodes is named.
-  const nodes = catalog.filter((c) => names(message, c.displayName) || wordsNamed(message, c));
+  const nodes = catalog.filter((c) => names(message, c.displayName) || wordsNamed(message, c, catalog)); // AG07: the catalog tells which words are distinctive
   for (const entry of nodes) add(entry.displayName);
+  // AG07: an acronym two or more nodes share ("IOCs": Extract IOCs, IOC Enrich) names one only when the full name is given; else the ask says to pick one, so the drop is never silent.
+  const shared = new Map<string, AskCatalogEntry[]>();
+  for (const entry of catalog) {
+    const acro = acronymNamed(message, entry);
+    if (acro) shared.set(baseWord(acro), [...(shared.get(baseWord(acro)) ?? []), entry]);
+  }
+  for (const [, group] of shared) {
+    if (group.some((g) => nodes.includes(g))) continue;
+    if (group.length === 1) add(group[0].displayName);
+    else found.push(`${group[0].displayName.split(/\s+/).find((w) => /^[A-Z0-9]{2,}s?$/.test(w))}: several nodes match (${group.slice(0, 3).map((c) => c.displayName).join(', ')}), pick one`);
+  }
   for (const plugin of new Set(catalog.map((c) => c.pluginName).filter((n): n is string => Boolean(n)))) {
     if (!names(message, plugin) || nodes.some((n) => n.pluginName === plugin)) continue;
     add(plugin);
