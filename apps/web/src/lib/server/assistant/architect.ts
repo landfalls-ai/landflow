@@ -481,6 +481,13 @@ export function describesCase(input: string): boolean {
   return thing.test(text) || person.test(text);
 }
 
+/** A text wrapped whole in quotes ("…", '…', “…”) without them; any other text as it is, trimmed. */
+export function unwrapQuotes(text: string): string {
+  const t = text.trim();
+  const wrapped = /^"[^"]*"$|^'[^']*'$|^“[^“”]*”$/.test(t);
+  return (wrapped ? t.slice(1, -1) : t).trim();
+}
+
 /** "what a person would send => what a right answer says", one per line (or a list of such lines): at most 5, each input under 4 000 characters. */
 export function parseCases(value: unknown, needsExpected = false): AgentCaseDraft[] {
   const lines = Array.isArray(value) ? value : typeof value === 'string' ? value.split('\n') : [];
@@ -489,8 +496,9 @@ export function parseCases(value: unknown, needsExpected = false): AgentCaseDraf
     if (typeof raw !== 'string') continue;
     const line = raw.replace(LEAKED_MARKUP, '').replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim();
     const [input, ...rest] = line.split(/\s*(?:=>|⇒|→)\s*/);
-    const asked = input.replace(/^["'“]|["'”]$/g, '').trim().slice(0, 4000);
-    const expected = rest.join(' => ').replace(/^["'“]|["'”]$/g, '').trim().slice(0, 1000);
+    // ag3 carryover: quotes come off only when they wrap the whole text ('Hash "password"' kept its closing quote cut off)
+    const asked = unwrapQuotes(input).slice(0, 4000);
+    const expected = unwrapQuotes(rest.join(' => ')).slice(0, 1000);
     if (asked.length < 3 || (needsExpected && !expected)) continue;
     if (describesCase(asked)) continue; // AG08:
     if (cases.some((c) => c.input.toLowerCase() === asked.toLowerCase())) continue;
