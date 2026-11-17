@@ -14,7 +14,10 @@ import { error, handler, json, parseBody } from '@/lib/server/http';
 
 export const dynamic = 'force-dynamic';
 
-const Body = z.object({ prompt: z.string().trim().min(3).max(2000), model: z.string().max(100).optional(), workflowId: z.string().max(64).optional() });
+// SB14: a plan (SB13's `BuildPlan`) builds stage 2, one call per step; the shape is the contract's, strings bounded.
+const PlanStepBody = z.object({ key: z.string().max(40), type: z.string().max(120), name: z.string().max(80), does: z.string().max(400), from: z.string().max(40).optional(), output: z.number().int().min(0).max(50).optional(), attach: z.string().max(40).optional(), reads: z.array(z.string().max(120)).max(30).optional() });
+const PlanBody = z.object({ name: z.string().max(80), steps: z.array(PlanStepBody).min(1).max(12), assumptions: z.array(z.string().max(300)).max(20), cannot: z.array(z.string().max(300)).max(20) });
+const Body = z.object({ prompt: z.string().trim().min(3).max(2000), model: z.string().max(100).optional(), workflowId: z.string().max(64).optional(), plan: PlanBody.optional() /* SB14: */ });
 
 /** POST { prompt, workflowId? } → a validated flow draft from the local model, guarded as the chat guards a proposal. */
 export const POST = handler(async (request: Request) => {
@@ -32,7 +35,7 @@ export const POST = handler(async (request: Request) => {
     const userId = currentPrincipal()?.user?.id;
     const workflowId = meteredWorkflowId(parsed.data.workflowId);
     const scope = assistantScope({ surface: 'spotlight', ...(userId && { userId }), ...(workflowId && { workflowId }) });
-    const draft = await runInUsageScope(scope, () => buildFlow(parsed.data.prompt, picked.model, teams, agents, { types }));
+    const draft = await runInUsageScope(scope, () => buildFlow(parsed.data.prompt, picked.model, teams, agents, { types, plan: parsed.data.plan /* SB14: */ }));
     const byType = new Map(types.map((t) => [t.type, t]));
     const credentialNames = new Map(registry.credentialTypes().flatMap((c) => [[c.descriptor.name, c.descriptor.displayName], [c.type, c.descriptor.displayName]] as const));
     const known = [parsed.data.prompt, agents.length ? describeAgents(agents) : '', teams.length ? describeTeams([...teams]) : ''].join('\n');

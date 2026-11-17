@@ -544,7 +544,7 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
 
     if (scenario.via === 'build') {
       const route = await import('@/app/api/ai/build/route');
-      const response = await route.POST(post('/api/ai/build', { prompt: scenario.ask, ...((scenario.start?.model ?? model) && { model: scenario.start?.model ?? model }), /* SB19: */ ...(canvas?.id && { workflowId: canvas.id }) }));
+      const response = await route.POST(post('/api/ai/build', { prompt: scenario.ask, ...((scenario.start?.model ?? model) && { model: scenario.start?.model ?? model }), /* SB19: */ ...(canvas?.id && { workflowId: canvas.id }), /* SB14: */ ...(scenario.start?.plan && { plan: scenario.start.plan }) }));
       const body = (await response.json()) as { draft?: Record<string, unknown>; error?: string };
       if (!response.ok || !body.draft) outcome.error = body.error ?? `build ${response.status}`;
       else {

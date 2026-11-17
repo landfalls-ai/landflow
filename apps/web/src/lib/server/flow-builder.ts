@@ -22,6 +22,8 @@ import type { Workflow } from '@landflow/engine';
 import { collectionWarnings, structuralWarnings } from '@/lib/shared/assistant-ops';
 import { hollowSteps } from '@/lib/shared/run-check';
 import { mergeLeft, type DraftLeft } from '@/lib/shared/draft-left';
+import type { BuildPlan, BuildStage } from '@/lib/shared/build-plan'; // SB14:
+import { buildFromPlan } from './assistant/build-nodes'; // SB14:
 
 export interface DraftNode {
   key: string;
@@ -44,6 +46,10 @@ export interface FlowDraft {
   left?: DraftLeft[];
   /** SB10: how many model calls the draft took: 1, or 2 when the first draft was sent back once. */
   calls?: number;
+  /** SB14: the plan the draft was built from (stage 2 builds one node per step). */
+  plan?: BuildPlan;
+  /** SB14: every model call of the build, as sizes and times (never text). */
+  stages?: BuildStage[];
 }
 
 const DEFAULT_MODEL = process.env.LANDFLOW_BUILDER_MODEL ?? 'qwen3-coder:30b';
@@ -136,7 +142,7 @@ function catalog(types: NodeTypeInfo[]): string {
 }
 
 /** A Run an Agent node keeps only an agent the caller has: an id the model made up is cleared, so the node asks for one. */
-function knownAgent(parameters: Record<string, unknown>, agents: readonly AgentBrief[]): Record<string, unknown> {
+export function knownAgent(parameters: Record<string, unknown>, agents: readonly AgentBrief[]): Record<string, unknown> {
   const id = typeof parameters.agentId === 'string' ? parameters.agentId : '';
   return !id || id.includes('{{') || agents.some((a) => a.id === id) ? parameters : { ...parameters, agentId: '' };
 }
@@ -148,7 +154,7 @@ function knownAgent(parameters: Record<string, unknown>, agents: readonly AgentB
 const PINNED_TRIGGERS = new Set(['core.manualTrigger', 'core.webhook', 'core.formTrigger']);
 
 /** Nodes that run a whole agent (or team) session per item: a test run of a flow with one gets one sample item. */
-const AGENT_TYPES = new Set(['core.aiAgent', 'core.messageAgent', 'core.runTeam', 'core.a2aAgent']);
+export const AGENT_TYPES = new Set(['core.aiAgent', 'core.messageAgent', 'core.runTeam', 'core.a2aAgent']);
 
 function asItems(rows: unknown): NodeItem[] | undefined {
   if (!Array.isArray(rows)) return undefined;
@@ -308,7 +314,7 @@ function nearType(type: string, byType: Map<string, NodeTypeInfo>): NodeTypeInfo
   return found.length === 1 ? found[0] : undefined;
 }
 
-interface Assembled {
+export interface Assembled {
   nodes: DraftNode[];
   edges: FlowDraft['edges'];
   dropped: string[];
@@ -505,7 +511,7 @@ export function pinsOnTrigger(type: string, info: NodeTypeInfo | undefined): boo
  * trigger node): on itself, since its output is the app's event. A schedule: on the app step after it that reads data,
  * so a test runs on sample records instead of needing the app; a schedule's own item is only a time, so otherwise none.
  */
-function pinTarget(draft: Assembled, byType: Map<string, NodeTypeInfo>): DraftNode | undefined {
+export function pinTarget(draft: Assembled, byType: Map<string, NodeTypeInfo>): DraftNode | undefined {
   const { trigger, nodes, edges } = draft;
   if (!trigger) return undefined;
   if (pinsOnTrigger(trigger.type, byType.get(trigger.type))) return trigger;
@@ -523,9 +529,24 @@ function pinTarget(draft: Assembled, byType: Map<string, NodeTypeInfo>): DraftNo
  * `teams` and `agents`: the published agent teams and agents the caller can see, so a step that needs an agent runs one
  * that fits, and a Run a Team or Run an Agent node gets a real one (by id, never a guess).
  */
-export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: readonly TeamBrief[] = [], agents: readonly AgentBrief[] = [], options: { types?: NodeTypeInfo[] } = {}): Promise<FlowDraft> { // SB02: the workflow's allowed types
+export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: readonly TeamBrief[] = [], agents: readonly AgentBrief[] = [], options: { types?: NodeTypeInfo[]; plan?: BuildPlan } = {}): Promise<FlowDraft> { // SB02: the workflow's allowed types
   const types = options.types ?? registry.nodeTypes().filter((t) => t.available); // SB02: same as availableTypes(), with no new import
   const byType = new Map(types.map((t) => [t.type, t]));
+  // SB14: with a plan, one small call per step fills its parameters and the wiring is the plan's (assistant/build-nodes.ts).
+  if (options.plan) {
+    const plan = options.plan;
+    const built = await buildFromPlan(plan, prompt, { kit: { emptyParts, jsonOf, knownAgent, pinsOnTrigger, adapterTimedOut, AGENT_TYPES, PARAMETER_FORMATS }, model, types, agents, teams, timeoutMs: builderTimeoutMs(), started: Date.now() });
+    const staged = { nodes: built.nodes, edges: built.edges, dropped: built.dropped, left: built.left, trigger: built.trigger };
+    const stagedLeft = mergeLeft(
+      built.left,
+      emptyParts(staged, byType)
+        .filter((p) => p.kind === 'empty')
+        .map((p): DraftLeft => ({ node: p.node, field: p.field, kind: 'empty', text: p.left })),
+    );
+    const at = pinTarget(staged, byType);
+    const items = (cleanTestItems(at ? built.testItems[at.key] : undefined, at, built.nodes) ?? sampleItems(at, built.nodes))?.slice(0, built.nodes.some((n) => AGENT_TYPES.has(n.type)) ? 1 : undefined);
+    return { name: plan.name.slice(0, 80), nodes: built.nodes, edges: built.edges, pinData: at && items ? { [at.key]: items } : undefined, model, durationMs: Date.now() - built.started, dropped: built.dropped, left: stagedLeft, calls: built.calls, plan, stages: built.stages };
+  }
   const teamsNote = byType.has('core.runTeam') && teams.length ? `\n\nPublished agent teams (core.runTeam: put the team's teamId in teamId, never its name):\n${describeTeams([...teams])}` : '';
   const started = Date.now();
   const timeoutMs = builderTimeoutMs();
