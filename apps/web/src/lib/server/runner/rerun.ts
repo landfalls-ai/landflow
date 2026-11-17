@@ -23,7 +23,10 @@ export interface RerunRequest {
 function recordedStart(source: ExecutionRecord): { nodeId?: string; items?: NodeItem[] } {
   const nodeId = source.executionOrder.find((id) => source.runData[id]?.some((run: NodeRun) => run.source === 'main'));
   if (!nodeId) return {};
-  const items = source.runData[nodeId].find((run) => run.source === 'main')?.inputs[0];
+  const first = source.runData[nodeId].find((run) => run.source === 'main');
+  // A start that ran on its pin recorded only the seed item: replaying it would beat the pin (AG01), so replay none.
+  if (first?.logs?.some((log) => log.message === 'Using pinned data')) return { nodeId };
+  const items = first?.inputs[0];
   return { nodeId, ...(items?.length && { items }) };
 }
 
