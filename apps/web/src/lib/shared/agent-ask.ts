@@ -226,6 +226,12 @@ export function knowledgeFolderOf(message: string): string | undefined {
   return m ? cleanFolder(m[1]) : undefined;
 }
 
+/** ag3 fix pass: the clause that names the folder says "questions" ("answers questions from the guides folder"): a source, not a place. */
+export function folderClauseAsksQuestions(message: string, folder: string): boolean {
+  const named = new RegExp(`\\b${folder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+  return message.split(/[;,]|\s(?:and|then|but)\s|(?<=[.!?])\s/i).some((c) => named.test(c) && /\bquestions?\b/i.test(c) && !WRITE_VERB.test(c));
+}
+
 /** A folder name as the files directory takes it: relative, no `..`, no URL or drive; undefined for a filler word or anything else. */
 function cleanFolder(match: string): string | undefined {
   const raw = match.replace(/[.!?]+$/, '');

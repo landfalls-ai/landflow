@@ -57,6 +57,13 @@ describe('a first ask', () => {
   });
 });
 
+describe('a folder named in a "questions" clause is a source', () => {
+  it('asks for the source; an email folder still does not', async () => {
+    expect(await design('Make an agent that answers questions from the guides folder')).toMatchObject({ knowledgeFolder: 'guides', knowledgeAsked: true });
+    expect(await design('Make an agent that answers questions grounded in the folder handbook')).toMatchObject({ knowledgeFolder: 'handbook', knowledgeAsked: true });
+  });
+});
+
 describe('a reply under a card', () => {
   const card = (knowledgeSetup?: Record<string, unknown>) => ({ state: 'designed', name: 'Answerer', description: 'Answers.', tools: [], config: {}, ...(knowledgeSetup && { knowledgeSetup }) }) as never;
   const reviseWith = async (message: string, under: never) => {

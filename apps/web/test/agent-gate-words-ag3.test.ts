@@ -28,6 +28,19 @@ describe('a tool word is a whole word', () => {
   });
 });
 
+describe('tool words ending in e, and "that"', () => {
+  it('Acknowledged / Creating / Updating are claims', () => {
+    expect(rewrite('Acknowledged High CPU on web-01 and returns the silence id.', 'Acknowledge Alert')).toMatch(/asks for approval/);
+    expect(rewrite('Creating the ticket for oncall@landflow.test.', 'Create Ticket')).toMatch(/asks for approval/);
+    expect(rewrite('Updating the record with the new owner.', 'Update Record')).toMatch(/asks for approval/);
+  });
+
+  it('"Sends that summary" and "Email that summary" are claims', () => {
+    expect(rewrite('Sends that summary to oncall@landflow.test.')).toMatch(/asks for approval/);
+    expect(rewrite('Email that summary to oncall@landflow.test.')).toMatch(/asks for approval/);
+  });
+});
+
 describe('a leading noun is not the verb', () => {
   it('"Email from / is / was / has …" at the start claims nothing', () => {
     for (const same of ['Email from the on-call lead is read first.', 'Email is the channel it uses for hand-over.', 'Email has the alert host in its subject.']) expect(rewrite(same), same).toBe(same);

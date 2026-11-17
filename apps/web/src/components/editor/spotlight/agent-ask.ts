@@ -9,7 +9,7 @@
  */
 import { nanoid } from 'nanoid';
 import { api } from '@/lib/client/api';
-import { agentAsk, agentChangeAsk, askCatalog, fallbackName, knowledgeFolderOf, knowledgeOf, readsTokens, sourceFolderOf, type AgentAsk, type AskCatalogEntry } from '@/lib/shared/agent-ask';
+import { agentAsk, agentChangeAsk, askCatalog, fallbackName, knowledgeFolderOf, folderClauseAsksQuestions, knowledgeOf, readsTokens, sourceFolderOf, type AgentAsk, type AskCatalogEntry } from '@/lib/shared/agent-ask';
 import { starterFlow, starterSample, type AgentCard, type AgentCardTool, type AgentKnowledgeSetup, type AgentNotAdded } from '@/lib/shared/agent-card';
 import { agentChanges } from '@/lib/shared/agent-changes'; // AG04:
 import { announceChange, announceSaved, designChange, publishChange, saveChange, testDraft } from '@/lib/client/agent-change'; // AG04: AG09: testDraft; ag3 carryover: announceSaved
@@ -113,7 +113,7 @@ export async function designAgentCard(message: string, ask: AgentAsk, options: {
   const abort = (draftCall.request = new AbortController());
   try {
     const workflow = useEditor.getState().name;
-    const spec = { name: designName, description: ask.description, instructions: '', ask: message.slice(0, 4000) /* AG02: the whole ask */, ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }), ...(ask.knowledgeFolder && { knowledgeFolder: ask.knowledgeFolder, ...(ask.knowledge && { knowledgeAsked: true }) }) /* AG13: a folder is a source only when the ask wants knowledge (ag3 fix: 'answers emails from the Inbox folder' is not one) */ };
+    const spec = { name: designName, description: ask.description, instructions: '', ask: message.slice(0, 4000) /* AG02: the whole ask */, ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }), ...(ask.knowledgeFolder && { knowledgeFolder: ask.knowledgeFolder, ...((ask.knowledge || folderClauseAsksQuestions(message, ask.knowledgeFolder)) && { knowledgeAsked: true }) }) /* AG13: a folder is a source only when the ask wants knowledge (ag3 fix: 'answers emails from the Inbox folder' is not one) */ };
     const preview = await designPreview(spec, workflow && !/^untitled/i.test(workflow) ? { workflow } : {}, abort.signal);
     const card = { ...cardFromPreview(preview, ask, options.starter, message), workflowId: workflowAtStart };
     const alone = createsAlone();
