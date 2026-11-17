@@ -257,8 +257,23 @@ export const dismissCard = (itemId: string): void =>
  * is designed (not yet created) or created, the message is a change in words, and it is not a new "create an agent …" (that
  * still makes a new card). A question is not one: it goes to the chat, answered and never applied.
  */
+/**
+ * ag3 carryover: the folder a message under a card names: a knowledge clause ("answers from the folder runbooks"), or a short
+ * answer that is only the source ("from the folder runbooks", "in runbooks/"), read as that clause would be.
+ */
+export function folderAnswerOf(message: string): string | undefined {
+  const text = message.trim();
+  const own = knowledgeFolderOf(text);
+  if (own) return own;
+  const SHORT = /^(?:(?:it\s+)?(?:answers?|reads?|uses?|searches?)\s+)?(?:from|in|under|inside)\s+(?:the\s+|our\s+)?(?:folder\s+\S+|\S+\s+folder|\S+\/)[.!]?$/i;
+  return SHORT.test(text) ? knowledgeFolderOf(`answers questions ${text.replace(/^(?:(?:it\s+)?(?:answers?|reads?|uses?|searches?)\s+)/i, '')}`) : undefined;
+}
+
 export function reviseCardFor(message: string): { itemId: string; card: AgentCard } | undefined {
-  if (agentChangeAsk(message) !== 'change' || cardAskFor(message) || workflowShaped(message)) return undefined;
+  // ag3 carryover (the live pass): an answer that only names a source ("from the folder runbooks") starts with no change verb, so it
+  // went to the flow builder ("Plan: Runbooks folder workflow"); under a card it revises the card's knowledge, as AG13 promised.
+  const change = agentChangeAsk(message) === 'change' || (agentChangeAsk(message) === undefined && !!folderAnswerOf(message));
+  if (!change || cardAskFor(message) || workflowShaped(message)) return undefined;
   return newestCard();
 }
 
@@ -349,7 +364,7 @@ export async function reviseAgentCard(itemId: string, card: AgentCard, message: 
   try {
     // A created card's agent is the base; a pending card's own config is (a card that already proposes a change to an agent keeps its base).
     const base = made && existing ? { agentId: existing } : { config: card.config };
-    const folder = knowledgeFolderOf(message); // AG13: "from the folder runbooks" under a card adds the knowledge base
+    const folder = folderAnswerOf(message); // AG13: "from the folder runbooks" under a card adds the knowledge base (ag3 carryover: a bare answer too)
     const input = { name: card.name, description: card.description, base, change: message, ...pickedModel(), ...(folder && { knowledgeFolder: folder, knowledgeAsked: true }) };
     const design = (await designChange(input, abort.signal)) as Awaited<ReturnType<typeof designChange>> & { knowledge?: Omit<AgentKnowledgeSetup, 'state'> };
     const notAdded = design.notAdded ?? []; // ag1-int: the tools the change named and the agent did not get
