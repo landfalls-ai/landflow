@@ -169,6 +169,22 @@ describe('Run an Agent, Tool Approvals', () => {
     expect(out((last as { record: typeof record }).record).reply).toBe('Both.');
   });
 
+  it('a second chat message to a keyed conversation that waits for approval fails and sends nothing; the first still ends success', async () => {
+    script = (_t, body) => (body.messages.some((m) => m.role === 'tool') ? { text: 'Sent.' } : { toolCalls: [call(WRITE, { to: 'oncall@landflow.test' }, 'c_send')] });
+    const wf = flow({ toolApprovals: 'askInChat', conversation: 'key', sessionKey: 'fixed-key' });
+    const first = await run(wf, 'chat');
+    expect(first.status).toBe('waiting');
+    const asked = turn;
+    const second = await run(wf, 'chat');
+    expect(second.status).toBe('error');
+    expect(second.error?.message).toMatch(/waiting for Approve or Reject on its last tool call/);
+    expect(turn).toBe(0);
+    expect(asked).toBe(1);
+    const outcome = await decideApproval(first.executionId, idOf(first, 0), true);
+    expect(outcome.status).toBe('resumed');
+    expect((outcome as { record: typeof first }).record.status).toBe('success');
+  });
+
   it.each([
     ['chat mode with Refuse (the default)', {}, 'chat'],
     ['webhook mode with Ask in the editor’s chat', { toolApprovals: 'askInChat' }, 'webhook'],

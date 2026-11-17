@@ -280,6 +280,8 @@ export const messageAgentNode = defineNode({
           } else {
             const conversationKey = key ? `${userId}:${key}` : undefined;
             const existing = conversationKey ? agentStore.findConversation(agent.id, conversationKey) : undefined;
+            // AG10: a keyed conversation that waits for Approve or Reject takes no new message: the model would be sent an unanswered tool call.
+            if (existing && (existing.pending || existing.status === 'awaiting_approval')) throw new NodeOperationError(`${agent.name} is waiting for Approve or Reject on its last tool call: decide that first, then send the next message`, { itemIndex: i });
             session = (existing && { ...existing, version: agent.published.version }) ?? newSession(agent, { source: 'workflow', userId, version: agent.published.version, ...(conversationKey && { conversationKey }) });
           }
           session.execution = execution;

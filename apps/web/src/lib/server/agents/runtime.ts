@@ -832,6 +832,7 @@ export async function decide(
   sessionId: string,
   callId: string,
   approved: boolean,
+  // AG10: toolImages keeps the run's image count the same on a resumed run as on the first.
   options: { onEvent?: (event: AgentStreamEvent) => void; signal?: AbortSignal; by?: string; toolImages?: { keep?: number } } = {},
 ): Promise<DecisionResult> {
   const session = agentStore.getSession(sessionId);
