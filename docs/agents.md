@@ -229,6 +229,10 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   change wrote stays when the model's proposal leaves it out. The Changes row says "Adds the tool Extract IOCs (asks
   first)", with acronyms in capitals (IOCs, JWT, UUID, URL, HTTP, API, SQL, SMTP, IP, ID, CPU, JSON, CSV); the added
   step is not counted again as "Instructions rewritten".
+  When the change says the added tool's action ("also let it **acknowledge** an alert"), that verb also leaves the
+  instructions' **Hand over when** line ("The user asks to acknowledge, silence or fix an alert" becomes "… to silence or
+  fix an alert"; a clause with only that verb goes), so the agent no longer hands over what it can now do
+  (`withoutHandOverFor`; wave ag3's live pass found the published Grafana agent answering "I can't acknowledge alerts").
 - **Left** lists what the agent's draft still lacks: a credential slot already set on the agent's tool is not asked again,
   and one set after Apply (in the tool's dialog on the agent's page) drops off the card without a reload (the page's
   save sends `landflow:agent-saved`; the card also re-reads the draft on `landflow:agent-changed`).

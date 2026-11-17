@@ -1445,7 +1445,47 @@ function reviseInstructions(proposed: string, base: string, tools: AgentToolConf
     const line = new RegExp(`^\\s*\\d+[.)]\\s*When .*, call ${escapeRe((t as { name: string }).name)}\\b.*$`, 'm').exec(base)?.[0];
     return line ? [{ tool: t, line }] : [];
   });
-  return add.tools.length || carried.length ? withToolSteps(text, [...carried, ...add.tools.map((tool) => ({ tool }))], add.change) : text;
+  const stepped = add.tools.length || carried.length ? withToolSteps(text, [...carried, ...add.tools.map((tool) => ({ tool }))], add.change) : text;
+  return withoutHandOverFor(stepped, add.tools, add.change); // ag3 carryover:
+}
+
+/**
+ * ag3 carryover (the live pass, Grafana agent): "also let it acknowledge an alert" added Acknowledge Alert and its step, but the
+ * base's "Hand over when: The user asks to acknowledge, silence or fix an alert, …" stayed, so the published agent answered
+ * "I can't acknowledge alerts". For each tool the change adds, whose action verb (the first word of its name, "acknowledge")
+ * the change itself says, that verb leaves the Hand over line: out of a list ("acknowledge, silence or fix" → "silence or
+ * fix"), or its clause when it stands alone. Other words stay as written; a hand-over the change does not touch stays whole.
+ */
+export function withoutHandOverFor(text: string, added: AgentToolConfig[], change: string): string {
+  const verbs = added
+    .map((t) => ('name' in t && t.name ? t.name : '').split(/[_\s-]+/)[0]?.toLowerCase() ?? '')
+    .filter((v) => v.length >= 4 && new RegExp(`\\b${escapeRe(v)}`, 'i').test(change));
+  if (!verbs.length) return text;
+  return text
+    .split('\n')
+    .map((line) => {
+      const head = /^(\s*(?:#{1,4}\s*)?hand[ -]?over(?:\s+when)?\s*:\s*)(.*)$/i.exec(line);
+      if (!head) return line;
+      let body = head[2];
+      for (const verb of verbs) {
+        const word = `${escapeRe(verb)}[a-z]*`;
+        if (!new RegExp(`\\b${word}\\b`, 'i').test(body)) continue;
+        const listed = body
+          .replace(new RegExp(`\\b${word}\\b(?:,\\s*|\\s+(?:or|and)\\s+)(?=[a-z])`, 'i'), '')
+          .replace(new RegExp(`(?:,\\s*(?:or\\s+|and\\s+)?|\\s+(?:or|and)\\s+)\\b${word}\\b`, 'i'), '');
+        if (listed !== body) {
+          body = listed;
+          continue;
+        }
+        // alone in its clause: drop the clause (clauses split at ", or", ";" and sentence ends)
+        const parts = body.split(/(?<=[.;])\s+|,\s+or\s+/);
+        const kept = parts.filter((part) => !new RegExp(`\\b${word}\\b`, 'i').test(part));
+        body = kept.join(' ').trim();
+      }
+      if (body === head[2]) return line;
+      return body ? `${head[1]}${body.charAt(0).toUpperCase()}${body.slice(1)}` : `${head[1]}It cannot do what was asked.`;
+    })
+    .join('\n');
 }
 
 function reviseToolsLine(proposed: string, base: string, tools: AgentToolConfig[]): string {
