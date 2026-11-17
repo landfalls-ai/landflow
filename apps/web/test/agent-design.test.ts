@@ -36,6 +36,8 @@ function scripted(turns: Array<Partial<ModelTurn>>, offered: string[][] = []) {
     provider: 'test',
     model: 'scripted',
     async generate(request) {
+      // SB17: the architect's one follow-up call for test cases (agent-brief.test.ts tests it): answered here without a scripted turn.
+      if (typeof request.system === 'string' && request.system.startsWith('You write test cases')) return { text: 'Hello => A greeting\nWhat can you do? => What it does\nSomething odd => Says it cannot help', toolCalls: [], stopReason: 'stop' as const };
       offered.push((request.tools ?? []).map((t) => t.name));
       const next = turns.shift();
       if (!next) throw new Error('No scripted turn left');
@@ -87,7 +89,8 @@ describe('designing Spotlight’s new agent', () => {
 
   it('asks the architect to design it now, with where it runs', () => {
     const request = designRequest(spec);
-    expect(request).toContain('without asking me anything');
+    expect(request).not.toContain('without asking me anything'); // SB17: it designs from what is written
+    expect(request).toContain('from what is written here');
     expect(request).toContain('in the workflow “Support tickets”, after the step “Webhook Trigger”, before “Triage Ticket”');
     expect(request).toContain('list_models');
   });
@@ -100,13 +103,13 @@ describe('designing Spotlight’s new agent', () => {
     ]);
     const design = await designAgent(spec, { types, actor: TEST_OWNER, resources, model });
     expect(design.designed).toBe(true);
-    expect(design.config).toMatchObject({ name: 'Legal Contract Reviewer', model: { provider: 'ollama', model: 'qwen3.8:latest' }, instructions: 'Search the playbook, then flag clauses.' });
+    expect(design.config).toMatchObject({ name: 'Legal Contract Reviewer', model: { provider: 'ollama', model: 'qwen3.8:latest' }, instructions: expect.stringContaining('Search the playbook, then flag clauses.') }); // SB17: inside the four parts
     expect(design.config.tools).toEqual([expect.objectContaining({ type: 'knowledge', collection: 'policies' })]);
   });
 
   it('leaves an agent on the first model when the architect proposes nothing', async () => {
     const design = await designAgent(spec, { types, actor: TEST_OWNER, resources, model: scripted([{ text: 'Which contracts?' }]) });
-    expect(design).toMatchObject({ designed: false, config: { name: 'Legal Contract Reviewer', instructions: 'Flag auto-renewal and liability caps.', model: { provider: 'ollama', model: 'qwen3-coder:30b' }, tools: [] } });
+    expect(design).toMatchObject({ designed: false, config: { name: 'Legal Contract Reviewer', instructions: expect.stringContaining('Flag auto-renewal and liability caps.'), model: { provider: 'ollama', model: 'qwen3-coder:30b' }, tools: [] } });
   });
 
   it('passes a reached usage cap on instead of making an agent; a failing model still gets the fallback', async () => {

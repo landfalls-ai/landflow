@@ -21,6 +21,25 @@ const draft = JSON.stringify({
   testData: [{ body: { id: 'o-1' } }],
 });
 
+// Integration (sb3): the build plans first by default, so the unit script answers the plan, then one call per step.
+const staged = [
+  {
+    text: JSON.stringify({
+      name: 'Orders seen',
+      steps: [
+        { key: 's1', type: 'core.webhook', name: 'Order in', does: 'Start when a webhook receives an order' },
+        { key: 's2', type: 'core.set', name: 'Mark seen', does: 'Set a field called seen to true', from: 's1' },
+        { key: 's3', type: 'core.respondToWebhook', name: 'Reply ok', does: 'Respond with ok', from: 's2' },
+      ],
+      assumptions: [],
+      cannot: [],
+    }),
+  },
+  { text: JSON.stringify({ parameters: { path: 'orders' }, testData: [{ body: { id: 'o-1' } }] }) },
+  { text: JSON.stringify({ parameters: { mode: 'manual', fields: { values: [{ name: 'seen', type: 'boolean', value: 'true' }] } } }) },
+  { text: JSON.stringify({ parameters: { respondWith: 'text', responseBody: 'ok' } }) },
+];
+
 export default defineScenarios([
   {
     id: 'sb19-unlisted-refused',
@@ -41,7 +60,7 @@ export default defineScenarios([
     via: 'build',
     title: 'With no model asked, Spotlight builds on the local default',
     ask: ASK,
-    script: [{ text: draft }],
+    script: staged, // Integration (sb3): was the one-shot `[draft]`
     checks: [localDefault, noError],
   },
   {

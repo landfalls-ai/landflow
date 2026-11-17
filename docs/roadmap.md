@@ -2057,6 +2057,23 @@ and gateway rows without cache numbers. These wait, each with its reason:
 - **`MIN_CACHEABLE_TOKENS` is one figure (1,024) for every model** (`ai-usage/run-spend.ts`): a newer Claude model's
   higher minimum reads as `not-requested`; documented ([limitations](limitations.md#token-spend-what-it-cannot-do-yet)), a per-model
   table waits for a model that needs it.
+- **Left after the sb3 carryover (2026-11-17)**, each with why it waits:
+  - **A one-line change in long code** (sb2 live: 0 of 3): it needs a line-edit operation, since `setParameters` replaces
+    the whole code string and the local model rewrites it; no op of the set does a line yet.
+  - **The phone Execute/Debug pill over a failed step's card** (the same on main): a phone follow-up in
+    [mobile.md](mobile.md) "What's next"; no sb3 package touched the Steps view.
+  - **`useCanvas` in the diff card is memoised on nodes and edges only**: a diff whose `before` should read workflow
+    settings changed after the card appeared is not re-read until a step changes. Cosmetic.
+  - **The model list's embedding filter is by name only** (`models-list.ts`): a chat model with "embed" in its name is
+    hidden, an embedding model without it is listed.
+  - **The combined diff cache, the `LiveSteps` SSR test and `addNode` "before" in the diff** (SB08's review): small, no
+    owner this wave.
+  - **`expressionMisses` on a renamed step, and its broad regex** (SB09's review): SB14 reuses it as it is; a false
+    send-back on a draft step costs one call and is read in the live numbers.
+  - **The ask chip is marked before the send; the auto-session's destination test** (SB11's review): no owner of `AskRow`.
+  - **SB14's per-step call keeps its own model call** (`build-nodes.ts` `askStep`) instead of the flow builder's
+    `askModel`: the same adapters, usage note and JSON mode, a smaller token cap and its own wording; folding them is a
+    tidy-up with no behaviour to gain.
 - **Two concurrent counts of the same prefix both send a count request** (`ai-usage/count/anthropic.ts`): the results
   stay correct and each request is free; sharing an in-flight count would also have to share its per-minute budget slot.
 - **Long unwrapped doc lines** (`llm-gateway.md`, `projects-and-goals.md`, `run-trace.md`, `agents.md`): cosmetic, there
@@ -2065,8 +2082,10 @@ and gateway rows without cache numbers. These wait, each with its reason:
 ## Company backbone: left open from the Spotlight wave sb1 reviews (2026-11-16)
 
 Wave sb2 took sb1's one-step half (scope, changes that mean what they say, context, the diff, asking, credentials, the
-model) and fixed the protocol-relative URL host the guard kept. These wait for wave sb3, each with the package that owns
-the code:
+model) and fixed the protocol-relative URL host the guard kept. These waited for wave sb3, each with the package that owns
+the code. **Wave sb3 built all six** (SB13/SB14 the Linear/Slack draft, SB16/SB17 a new agent's tools, knowledge and least
+privilege and the dialog's fresh start, SB18 the session's reload, review, loop and one yes per scheme), checked together
+in `spotlight-sb3-joins.test.ts`; the model-dependent readings (k of 3) are the sb3 live pass's:
 
 - **A new agent's tools and knowledge** (sb1 live: tools kept 0 of 3, knowledge base 0 of 3, fed on to the reply 1 of 3,
   Linear added as a main step with an invalid operation): SB16 (agents anywhere, D5) and SB17 (the agent brief) decide
@@ -2677,9 +2696,137 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   one-line change in long code (0 of 3), asking for a Slack channel live (0 of 3, not re-run since the `channelId`
   send-back), sb03's new-destination row (0 of 3, also on the base); a 401 fix once proposed
   `Authorization: Bearer {{ $cred('my-api-key') }}`, a credential name nobody has, which the made-up value check does
-  not catch yet; one click on a credential row's radio did nothing before Apply (the label works; unconfirmed). The
+  not catch yet (**both fixed in the sb3 integration**: `retryProblems` sends back a retry without the asked
+  `retryBackoff: "exponential"`, `authHeaderProblems` a token header with a `$` name expressions do not have; the live
+  re-runs are the sb3 live pass's); one click on a credential row's radio did nothing before Apply (the label works; unconfirmed). The
   phone Execute/Debug pill overlap is the same on main (a phone follow-up). Not Spotlight: after runs the host logged
   "the brain's run failed: NOT NULL constraint failed: brain_facts.subject_type" 6 times. **Fixed in wave 14 (SP13):** `staleFactsBefore` writes the whole row, so the study finishes, is stamped, and the detectors run on the brain's own loop.
+
+## Spotlight wave sb3
+- **SB13, plan first** ([assistant.md](assistant.md#building-a-flow-in-stages)): the first draft on an empty canvas is planned before it is built. The catalog is searched for the ask's words (at most 24 candidate types, one line each, no properties), the model answers a plan of steps (one node type each, what it assumed, what no node here can do), the plan is checked, sent back once and repaired in code, and shown as a plan card that waits for **Build it** in asks-first (autonomous on a brand-new draft builds at once). The build is sent only the plan's types' docs, and every model call's prompt size is recorded (`draft.stages`). Live quality left open (for SB14 and the integrator): the cannot-do ask passes its own check 1 of 3, the chat-support plan has the right types 2 of 3, and the Linear numbers were measured on code a little older than the last build-stage prompt. The interim plan-constrained build sends the plan's lines only (`from`, `output` and `attach` are not sent, so a removed step's rewiring and an If's outputs are honoured when SB14 wires in code), and `askModel`'s note gained a `system` field. A step the card's menu offers is never a sub-node for a main step. Left for the next packages: the parameters step by step (SB14), the summary after the build (SB15); the editor's build route still takes no plan from other callers (the brain's writer), which build in one call.
+- **SB14, build in stages: parameters and wiring (built 2026-11-17):** given a plan, the first draft is one node per step wired exactly as the plan (`planEdges`, no model call draws a connection) and one small call per step: that node's docs only, the fields the step before really writes (its output schema, the trigger's test items, a schedule's `firedAt`), the reply checked (empty If, Set, Switch and schedule lists, option values, expressions against what the step receives, a schedule's days) and sent back once to that step alone. Closes the first-draft side of findings 1.1, 1.4 and 1.6 and the sb1 leftover (`$json.lastRun`, `$json.issues`, "every morning" read as weekdays). Plan first is now the default and the scripts are migrated (the integrator, wave sb3); the one-shot draft stays behind `staged: false`. Left: the limits in `limitations.md` ("What the per-step check does not see").
+- **SB15, the build summary, built (2026-11-17):** a first draft's reply is one sentence and a card: the steps in words (the plan's lines, else one per node), what was assumed, what is left as buttons (**Open “If”** for an empty or made-up item, **Pick a Linear credential** for a credential item, which opens SB12's picker inline and never picks, decision D2) and what no node here can do; a row reads done from the canvas. The build route adds `summary` to the draft after the guards. Scenarios `sb15-linear-summary` and `sb15-nothing-left`.
+- **SB17, an agent brief worth publishing** (closes sb1's finding 3.6 and the sb1 and sb2 leftovers above on the architect's tool choice, the dialog reopening the previous conversation and, for the architect's half, a new agent's tools and knowledge): the Agent architect's drafts, and Spotlight's design, are made to a brief in code: instructions in four parts (Input, Steps, Output, Hand over when), the approved practices and the Check Practices tool when the request asks for "our practices", only the tools the request names or its job needs (a Slack tool or an agent delegation nobody asked for is left out, with its reason), approval on every write, guardrail defaults (secrets masked in messages, instructions in tool results ignored) and 3 to 5 test cases that reach the eval gate on Create. The dialog starts fresh, with the last design offered as "Earlier: … · Continue". Not judged: whether a case is a good one; the practice and write words are English ([limitations.md](limitations.md)). See [agents.md](agents.md#agent-architect).
+- **SB16, agents from Spotlight, anywhere, built:** "create an agent …" is recognised on any canvas (`agentAsk`) and designed as an agent card to review and create (the design route's `preview` form saves nothing; Create imports a draft and its test cases); on an empty canvas it also lays out Chat message → Run an Agent with a pinned sample, one ⌘Z (finding 3.3, decision D5; a brand-new draft in autonomous mode creates alone, D1); the chat's new agent keeps the tools and knowledge the message asked for (sb1's leftover). Docs: [assistant.md](assistant.md#agents-and-teams). Left: the brief's tools, guardrails, practices and cases (SB17), the smoke test and publishing (SB18).
+- **SB18, test before publish (D3):** an agent Spotlight makes is run once on the item that reaches its step
+  (`POST /api/agents/:id/smoke-test`) and published only after a pass, by itself only on a brand-new draft and through the
+  eval gate; asks-first offers **Publish** on the row after the pass; **Undo** removes an agent nothing else uses
+  (`DELETE /api/agents/design`). The test session's leftovers: **Run it for real** goes on with the same session (its
+  fixes are not reset), a review's "no" names what is missing (or reads as a pass), a yes is per `scheme://host:port`, a
+  "Publish … first" at an agent Spotlight made is not a fix round, and a pending **Run it for real** row survives a
+  reload. Left: the smoke test is one item, not the eval gate (SB17's cases are what the gate runs).
+- **Left in `agentUsedBy` (older than sb3, noted at its re-review):** Undo of an agent the starter flow made checks the
+  workflows' published versions and the open ⌘Z steps, but not a scheduled publish or a pending four-eyes publish request
+  whose version contains the step (it would run or be approved against an agent Undo has removed), nor another agent that
+  delegates to this one (its delegation list still names it). Both are older gaps in the same check and are not fixed here.
+
+## Spotlight wave sb3: the live pass on Claude (partly read)
+
+Run on the integrated head (`9d247d44`) on the production profile (`next build`, `next start`, port 3258), on Claude: the
+host with `LANDFLOW_BUILDER_MODEL=anthropic/claude-sonnet-5-5` (the default the design path uses too: an agent Spotlight
+designs takes the model the picker names, else this default), the key read from the environment of the host and the
+runner only. Ollama was stopped by decision, so this pass is not like for like with sb2's numbers (all on
+`qwen3-coder:30b`). The local-only guard was a scratch copy that lets `api.anthropic.com:443` through and nothing else:
+**0 refused** in the host, the three plugins and every runner, **0 aborted** in the browser (every Anthropic call was the
+host's or the runner's). The scorecard was run in-process (`LANDFLOW_INTEGRATION=spotlight`, the model named
+`anthropic/claude-sonnet-5-5`) from a scratch copy of the runner that skips its Ollama check; the repo's runner still
+requires Ollama (see "Left").
+
+**The pass stopped early.** At about 07:38 local time the Anthropic account answered every call with 400 "You have reached
+your specified API usage limits. You will regain access on 2026-12-01", a limit on the key's organisation, not a Landflow
+cap. Nothing was retried or routed elsewhere (no Ollama, no other key). What was read before it, and what was not:
+
+| §4 item | State | k of n |
+|---|---|---|
+| 1. Scorecard, build and fix rows (sb2 as recorded, one-shot path on the sb3 head, sb3) | read for 18 scenarios; the sb3 owners' own scenarios from `sb13-chat-plan` on and `sb03` on are not read (the runs after the limit are API errors, not readings) | table below |
+| 2. B1 to B9 and the prompt budget | the three asks (B1 = B2, B4 = B5, B8 = B9) built 3 of 3 on both paths; B1 through the browser once, asks-first | see below |
+| 3. Leftovers (retry backoff, `$cred` 401, "every morning", the Slack channel) | retry backoff read: right-change 2 of 3 (sb2: 0 of 3); the rest not read | `sb00-fix-retry-backoff` |
+| 4. PR-review ask on an empty canvas | not read: the architect's call was refused, so the card was a fallback design (see below) | the card was asked 3 times, contents not valid |
+| 5. D4, gateway to Ollama | not run: Ollama is stopped by the user's decision; D4 is unit-tested only | n/a |
+| 6. The test session | not run | |
+| 7. Spend rows | plan and node calls read (below); a design preview and a smoke test not run | |
+| 8. Screenshots | desktop for B1's four steps and the three fallback cards; phone only the header (`phone-02-spotlight-header-phone.png`); the plan, summary and agent cards on the phone not taken | |
+
+Evidence: `backbone/live/wave-sb3/` (`tables.md`, `scorecard-after-a.json`, `scorecard-after-b.json`,
+`scorecard-oneshot.json`, `b1.json`, `b1-workflow.json`, `pr-cards.json`, `spend.json`) and `backbone/shots/wave-sb3/`.
+
+**B1 in the browser, asks-first** (`b1-*.png`): the plan card in 5 s (7 steps, the assumptions, **Build it**); the canvas
+stayed visible while it built (the folded card "Building 7 steps…" at the side); the build took 19 s; the summary card
+named the steps, four assumptions (8:00 on weekdays, since the previous run, a generic AI Agent, the agent's fields) and
+two "Left for you" items with **Pick a Linear API credential** and **Pick a Slack API credential**; clicking the first
+opened the picker and no step had a credential until **Use it** (checked through the API). The saved flow had the
+schedule `0 8 * * 1-5`, Linear reading since "" (empty, so listed), Slack text reading `$json.output` and no made-up
+channel or table id. Two findings: the plan and the flow carry a seventh step **Unused (Data Table)** wired after the
+table step, which `no-junk` did not flag in the scorecard (3 of 3 on `sb00-build-linear-bugs`); and my own script guard first refused the flow because a Linear sample item holds
+`https://linear.app/acme/issue/ENG-482` in its pinned data: the guard now reads nodes' parameters and credentials, not
+pinned data.
+
+**Prompt sizes, B1** (the host's `ai_usage` rows, the provider's reported input tokens): plan 3,064; the eight node
+calls 2,216, 3,271, 3,263, 1,796, 4,257, 2,610, 3,121 and 2,548. Largest 4,257, under 6,000; total 26,146 input and
+2,159 output tokens, $0.0739 for 9 calls. The base's one prompt is not measured here (the one-shot runs' own usage went to
+the runner's throw-away data directory); the evaluation measured 88k characters of catalog with these three plugins, about
+22k tokens, so the staged build is about five times smaller at its largest call.
+
+**The scorecard** (n = 3 unless shown; "one-shot" is `staged: false` on the sb3 head, not the base commit, because the
+sb3 harness needs sb3's modules and cannot run on `d98d66e3` without changing it):
+
+| scenario | check | sb2 (Ollama) | one-shot (Claude) | sb3 (Claude) |
+|---|---|---|---|---|
+| sb00-build-linear-bugs | all 8 checks | 1/1 | 3/3 | 3/3 |
+| sb00-build-webhook-branch | all but `runs-right` | 1/1 | 3/3 | 3/3 |
+| sb00-build-webhook-branch | runs-right | 1/1 | 0/3 | 0/3 |
+| sb00-build-chat-support | all 6 | 1/1 | 3/3 | 3/3 |
+| sb13-linear-plan, sb13-webhook-plan | one-trigger, prompt-under, right-types | - | - | 3/3 each |
+| sb13-chat-plan | all 4 | - | - | 1/1 |
+| sb01-webhook-branch | 3 checks | 3/3 | - | 3/3 |
+| sb02-linear-made-up | ids-asked-not-made-up | 1/1 | - | 0/3 |
+| sb02-linear-made-up, sb02-two-triggers | no-junk-nodes, schedule-kept | 1/1 | - | 3/3 |
+| sb19-default-local | local-default | 3/3 | - | 0/3 |
+| sb00-fix-slack-link | 4 checks | 1/1 | - | 3/3 |
+| sb00-fix-schedule | only-asked-node, right-change | 1/1 | - | 0/3 |
+| sb00-fix-schedule | proposed, no-outside | 1/1 | - | 3/3 |
+| sb00-fix-401-selected, -401-autonomous, -retry-only, -retry-vague | all | 3/3 | - | 3/3 |
+| sb00-fix-retry-backoff | right-change | 0/3 | - | 2/3 |
+| sb00-fix-why-last-run, sb02-chat-url-swap | all | 1/1 | - | 3/3 |
+| sb03-blocked-session | needs-blocked / no-change / kept-the-flow | 3/3 / 0/3 / 0/3 | - | 0/1 / 0/1 / 0/1 |
+
+Every check that moved, with its cause:
+- `sb19-default-local` `local-default` 0 of 3 (was 3 of 3): a **reading**, not a product fault. The check asks for a local
+  default, and this host's default is Claude by the user's decision.
+- `sb00-fix-retry-backoff` `right-change` 2 of 3 (was 0 of 3): the model changed and this head carries the integrator's
+  `retryBackoff` send-back, so which one moved it is not separable from this run (the replies were not kept).
+- `sb00-fix-schedule` `only-asked-node` and `right-change` 0 of 3 (was 1 of 1): not established. Both read the step by its
+  old name ("Weekdays at 8"); a change that renames it fails both with a correct cron. The runs' cards were not kept
+  (the scorecard keeps checks, not replies), so this is a hypothesis; re-read it with the replies.
+- `sb02-linear-made-up` `ids-asked-not-made-up` 0 of 3 (was 1 of 1): not established, replies not kept.
+- `sb00-build-webhook-branch` `runs-right` 0 of 3 on both paths (sb2: 1 of 1 on a single run): the same on the one-shot
+  path, so not the staging; not established (the check needs the pinned item to hold every path the If reads).
+- `sb03-blocked-session`: one run only (the other two hit the limit); not a reading.
+- `sb00-build-*` otherwise: the one-shot and the staged paths are equal on Claude (3 of 3 on every check but one); the
+  difference sb3 makes is the prompt (a catalog of about 22k tokens down to 4.3k at most) and the plan the person sees,
+  not these checks.
+
+**The PR-review card was a fallback.** With the architect's call refused (400), `/api/agents/design` answered its
+non-model fallback (`designed: false`): a card with **no tools, no cases**, only the guardrail "Masks secrets in
+messages", the practices line and "Left: Add test cases on the Evaluations tab", and the model row
+`anthropic/claude-opus-5-5` (chosen from the models listed, not the default). The card does not say the design failed.
+That is a product gap worth a line and is the only thing this pass read about the card; the brief's contents (Check
+Practices, a read-only GitHub tool, guardrails in words, 3 to 5 cases), the eval-gate verdict and Undo are not read.
+
+Anthropic spend: the host's AI page shows 9 calls, $0.0739 (the B1 build). The runner's calls (three build asks on two
+paths, 9 scenarios' fixes, the rest) are not in that page: the runner writes to a temporary data directory, and the
+account's own console is the figure.
+
+**Left for a later wave (k of n 3 where a model is involved), with the reason**
+- The whole pass above after `sb13-chat-plan` once the key works again: the sb3 owners' scenarios (sb13 to sb18), items 3
+  to 7 and the browser flows of items 4 and 6; the phone shots of the plan card, the summary card, the agent card and the
+  agent row.
+- The runner (`test/spotlight-scenarios.test.ts`) requires Ollama even for a cloud model name; a guard for `provider/model`
+  names (no Ollama check), the scorecard JSON keeping each run's reply and the stage prompt sizes, and the scenario
+  `sb19-default-local` reading "the default is the one the server names" would make a Claude pass cheaper to read.
+- The seventh **Unused (Data Table)** step in B1's plan and flow (a plan step with no use) and a `no-junk` reading that
+  sees it.
+- The design fallback saying so on the card (and not choosing a different model than the default for it).
 
 
 ## Platform guide and the landflow-dev plugin

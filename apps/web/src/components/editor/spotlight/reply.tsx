@@ -9,13 +9,18 @@ import { afterReply, useAutonomous } from '../autonomous';
 import { LiveSteps, useLive } from '../building';
 import { applyChanges, prefillSpotlight, undos, useAssistant, type AgentProgress, type ChatItem, type Need, type Outcome, type ReplyAction, type TestRun } from '../assistant';
 import { useEditor } from '../store';
-import { useAutonomyFacts } from '../spotlight-autonomy';
+import { autonomyOf, useAutonomyFacts } from '../spotlight-autonomy';
+import { publishAgentFor, smokeTestAgent } from '../new-agent'; // SB18:
 import { ActivityTrace } from '../../ui/activity-trace';
 import { StatusSwap, StreamingText } from '../../ui/chat-motion';
 import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta, ShortReply } from '../../ui/chat';
 import { MAX_FIXES, approveDestinations, productionNote, publishToProduction, testUntilItRuns, undoApplied } from '../test-session'; // SB03:
 import { agentStep, runRow } from '../timeline';
+import { AgentCardView } from './agent-card'; // SB16:
 import { CredentialPicker } from './credential-picker';
+import { PlanCard } from './plan-card'; // SB13:
+import { BuildSummaryCard } from './build-summary'; // SB15:
+import { summaryText } from '@/lib/shared/draft-summary'; // SB15:
 
 import { ProposalCard, ProposalRow } from './proposal';
 import { provisionalText } from '@/lib/shared/leaked-markup';
@@ -51,11 +56,13 @@ function NeedRow({ itemId, index, need }: { itemId: string; /** Where this row's
   const picked = (name: string) => markNeed(itemId, index, { state: 'done', picked: name });
   const goOn = () => {
     mark('done');
-    void testUntilItRuns(need.goal);
+    void testUntilItRuns(need.goal, { resume: true }); // SB18: the same session goes on, with its fixes spent so far
   };
   const primary =
     need.what === 'sends' || need.what === 'destination'
       ? { label: 'Run it for real', act: () => (approveDestinations(useEditor.getState().workflowId, need.destinations ?? [], need.once ?? []), goOn()) } // SB03:
+      : need.what === 'publish'
+        ? { label: 'Publish', act: () => need.nodeId && void publishAgentFor(need.nodeId).then((ok) => ok && goOn()) } // SB18:
       : need.what === 'blocked' || need.what === 'address'
         ? { label: 'Open the step', act: () => need.node && openNodeNamed(need.node) }
         : need.what === 'trigger'
@@ -226,14 +233,39 @@ function RunLine({ run }: { run: TestRun }) {
   );
 }
 
-/** An agent the Agent architect designs for a step: designing, then what it runs on, with its page. */
+/** An agent the Agent architect designs for a step: designing, testing, what it runs on, with its page and, after a pass, Publish (SB18). */
 export function AgentRow({ agent }: { agent: AgentProgress }) {
   const step = agentStep(agent);
+  const busy = useAssistant((s) => s.pending || Boolean(s.testing));
+  const [working, setWorking] = useState(false);
+  // SB18: Publish only after a pass; Test again after a failure; Test when no item reached the step yet.
+  const act = !agent.agentId || agent.taken || busy
+    ? undefined
+    : agent.state === 'tested'
+      ? { label: 'Publish', run: () => publishAgentFor(agent.nodeId) }
+      : agent.state === 'draft' && agent.smoke?.state === 'failed'
+        ? { label: 'Test again', run: () => smokeTestAgent(agent.nodeId, { publish: autonomyOf(useEditor.getState().workflowId) === 'auto' }) }
+        : agent.state === 'untested'
+          ? { label: 'Test', run: () => smokeTestAgent(agent.nodeId, { publish: autonomyOf(useEditor.getState().workflowId) === 'auto' }) }
+          : undefined;
   return (
     <div className="flex animate-in items-start gap-1.5 text-[12.5px] leading-snug">
-      {agent.state === 'designing' ? <Loader2 className="mt-px size-3.5 shrink-0 animate-spin text-viz-7" /> : agent.state === 'failed' ? <CircleX className="mt-px size-3.5 shrink-0 text-rd" /> : <Bot className="mt-px size-3.5 shrink-0 text-viz-7" />}
+      {agent.state === 'designing' || agent.state === 'testing' ? <Loader2 className="mt-px size-3.5 shrink-0 animate-spin text-viz-7" /> : agent.state === 'failed' ? <CircleX className="mt-px size-3.5 shrink-0 text-rd" /> : <Bot className="mt-px size-3.5 shrink-0 text-viz-7" />}
       <span className="min-w-0 flex-1 text-t2 [overflow-wrap:anywhere]">{step.text}</span>
-      {agent.agentId && (
+      {act && (
+        <button
+          type="button"
+          disabled={working}
+          onClick={() => {
+            setWorking(true);
+            void Promise.resolve(act.run()).finally(() => setWorking(false));
+          }}
+          className="min-h-6 shrink-0 rounded-full border border-ac px-2.5 text-[11.5px] font-semibold text-ac hover:bg-acdim disabled:opacity-50 max-md:min-h-11"
+        >
+          {act.label}
+        </button>
+      )}
+      {agent.agentId && !agent.taken?.deleted && (
         <a href={`/agents/${agent.agentId}`} target="_blank" rel="noopener" className="flex shrink-0 items-center gap-0.5 text-[11.5px] font-semibold text-ac hover:underline">
           Open <ExternalLink className="size-3" />
         </a>
@@ -398,6 +430,8 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
   // A session's fix: its row says what it did and opens on the model's words; the prose would say it twice.
   const quietText = Boolean(item.testId) && !live && item.parts.some((p) => p.kind === 'proposal' && p.proposal.state);
   const partsText = item.parts.flatMap((p) => (p.kind === 'text' ? [p.text] : [])).join('\n\n');
+  // SB15: a build's copy text is the summary in words, not only its one sentence.
+  const copyText = [partsText, ...item.parts.flatMap((p) => (p.kind === 'summary' ? [summaryText(p.workflowName, p.summary)] : []))].filter(Boolean).join('\n\n');
   // From the chat stream: the words come in item.text (provisional while streaming), the trace in item.steps.
   const streamed = item.steps !== undefined;
   const provisional = streamed && live && !item.parts.some((p) => p.kind === 'text');
@@ -451,6 +485,15 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
         ) : part.kind === 'ask' ? (
           // SB11:
           <AskRow key={i} itemId={item.id} ask={part.ask} busy={spotlightBusy} />
+        ) : part.kind === 'plan' ? (
+          // SB13:
+          <PlanCard key={i} itemId={item.id} part={part.plan} />
+        ) : part.kind === 'summary' ? (
+          // SB15:
+          <BuildSummaryCard key={i} summary={part.summary} workflowName={part.workflowName} onOpen={openNodeNamed} />
+        ) : part.kind === 'agentCard' ? (
+          // SB16:
+          <AgentCardView key={i} itemId={item.id} card={part.card} busy={spotlightBusy} />
         ) : null,
       )}
       {!streamed && steps && firstProposal < 0 && <LiveSteps live={steps} />}
@@ -461,7 +504,7 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
         </Button>
       )}
       {/* What answered and how: model · time · steps · tokens · cost; a session's fixes are rows, which say what they did. */}
-      {(item.meta ?? item.done) && !live && !item.testId && <ReplyMeta info={item.meta ?? item.done} copy={partsText || undefined} />}
+      {(item.meta ?? item.done) && !live && !item.testId && <ReplyMeta info={item.meta ?? item.done} copy={copyText || undefined} />}
     </AssistantRow>
   );
 }

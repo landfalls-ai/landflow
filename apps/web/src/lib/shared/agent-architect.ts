@@ -3,6 +3,7 @@
  * instance has (every node plugin online, workflows, agents, credentials, persona templates) and proposes a whole agent
  * as a draft the user reviews and creates. The route is POST /api/assistant/agent; its reply streams as SSE.
  */
+import type { AgentCaseDraft } from './agent-card'; // SB17:
 import type { AgentConfig } from './agents';
 import type { AgentFace } from './faces';
 
@@ -65,6 +66,6 @@ export type ArchitectEvent =
   | { type: 'text'; text: string }
   | { type: 'tool'; name: string; label: string; ok: boolean }
   /** A whole agent: it replaces the earlier draft. Tools carry fresh ids and no credentials. */
-  | { type: 'draft'; id: string; summary: string; config: Partial<AgentConfig>; needs: ArchitectNeed[]; dropped: string[]; missing: ArchitectMissing[] }
+  | { type: 'draft'; id: string; summary: string; config: Partial<AgentConfig>; needs: ArchitectNeed[]; dropped: string[]; missing: ArchitectMissing[]; cases?: AgentCaseDraft[] /* SB17: */ }
   | { type: 'done'; model: string; durationMs: number; steps: number; usage: { inputTokens: number; outputTokens: number } }
   | { type: 'error'; message: string };

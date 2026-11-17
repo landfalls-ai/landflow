@@ -4,6 +4,7 @@
  * and the rows of a test-and-fix session. Pure: no React, no store, so it is tested in Node.
  */
 import { opsTitle } from '@/lib/shared/assistant-ops';
+import { smokeLine } from '@/lib/shared/agent-card'; // SB18:
 import type { AgentProgress, ChatItem } from './assistant';
 
 export interface Step {
@@ -100,15 +101,35 @@ export function lastOutcomeOf(items: ChatItem[]): import('./assistant').Outcome 
 export const foldLine = (fold: SessionFold) =>
   `Tested ${fold.runs}×${fold.fixes ? ` · ${fold.fixes} fix${fold.fixes === 1 ? '' : 'es'}` : ''} · ${fold.state === 'passed' ? 'passed' : 'stopped'}`;
 
+// SB18: the row says how the agent's smoke test went (lib/shared/agent-card.ts `smokeLine`), then what became of it.
 export function agentStep(agent: AgentProgress): Step {
-  const text =
-    agent.state === 'designing'
+  const busy = agent.state === 'designing' || agent.state === 'testing';
+  const tested = smokeLine(agent.smoke);
+  const text = agent.taken
+    ? agent.taken.deleted
+      ? `Removed the agent “${agent.name}” (nothing else used it)`
+      : `Kept the agent “${agent.name}”: used by ${agent.taken.usedBy?.slice(0, 2).join(' and ') ?? 'something else'}${(agent.taken.usedBy?.length ?? 0) > 2 ? ` and ${(agent.taken.usedBy?.length ?? 0) - 2} more` : ''}`
+    : agent.state === 'designing'
       ? `Designing the agent “${agent.name}”…`
       : agent.state === 'failed'
         ? `Couldn’t create the agent “${agent.name}”${agent.summary ? `: ${agent.summary}` : ''}`
-        : `Agent “${agent.name}” ${agent.state === 'published' ? 'published' : 'saved as a draft'}${agent.summary ? ` · ${agent.summary}` : ''}`;
-  return { id: `agent:${agent.nodeId}`, kind: 'agent', icon: agent.state === 'designing' ? 'busy' : agent.state === 'failed' ? 'failed' : 'agent', text, ...(agent.agentId && { agentId: agent.agentId }) };
+        : `Agent “${agent.name}” ${agent.smoke ? tested : agent.state === 'published' ? 'published' : 'saved as a draft'}${agent.state === 'published' && agent.smoke ? ' · published' : ''}${agent.held ? ` · ${agent.held}` : ''}${agent.summary ? ` · ${agent.summary}` : ''}`;
+  return { id: `agent:${agent.nodeId}`, kind: 'agent', icon: busy ? 'busy' : agent.state === 'failed' ? 'failed' : 'agent', text, ...(agent.agentId && !agent.taken?.deleted && { agentId: agent.agentId }) };
 }
+
+/**
+ * While Spotlight drafts a flow: "planning" until the plan is there and agreed (the plan call), "building" once the
+ * plan's card says so (the build, one call per step). Read from the newest plan card, so an older, finished plan does
+ * not make a new ask look like a build.
+ */
+export function draftPhase(items: ChatItem[], drafting: boolean): 'planning' | 'building' | undefined {
+  if (!drafting) return undefined;
+  const plan = items.flatMap((i) => (i.role === 'assistant' ? i.parts : [])).findLast((p) => p.kind === 'plan');
+  return plan?.kind === 'plan' && plan.plan.state === 'building' ? 'building' : 'planning';
+}
+
+/** What the live line and the canvas placeholder say about the draft: the plan call or the build. */
+export const draftStatus = (phase: 'planning' | 'building'): string => (phase === 'planning' ? 'Planning the flow…' : 'Building the flow from the plan…');
 
 /**
  * Every step since the user last asked for something, in order: the runs, the fixes, the agents designed (after the turn
@@ -146,7 +167,7 @@ export function stepsOf(items: ChatItem[], options: { live?: boolean; drafting?:
       if (need?.kind === 'needs' && !need.need.state) steps.push({ id: key('needs'), kind: 'needs', icon: 'needs', text: `Needs you · ${need.need.text}`, ...(need.need.node && { nodeName: need.need.node }) });
       if (options.live && i === rest.length - 1) {
         const tool = item.parts.findLast((p) => p.kind === 'tool');
-        steps.push({ id: key('live'), kind: 'note', icon: 'busy', text: tool?.kind === 'tool' ? `${tool.tool.label}…` : options.drafting ? 'Drafting the flow from the node catalog…' : 'Thinking…' });
+        steps.push({ id: key('live'), kind: 'note', icon: 'busy', text: tool?.kind === 'tool' ? `${tool.tool.label}…` : options.drafting ? draftStatus(draftPhase(items, true) ?? 'planning') : 'Thinking…' });
       } else {
         const text = item.parts.find((p) => p.kind === 'text');
         const outcome = item.parts.some((p) => p.kind === 'action' && p.action === 'publish');
@@ -172,7 +193,7 @@ export interface PanelState {
   /** The last run's state, once a session is over. */
   lastRun?: 'passed' | 'failed';
   /** What the person has to do before Spotlight goes on (a credential, a trigger, a yes to sending). */
-  needs?: 'credential' | 'agent' | 'trigger' | 'sends' | 'destination' | 'blocked' | 'address'; // SB03:
+  needs?: 'credential' | 'agent' | 'trigger' | 'sends' | 'destination' | 'blocked' | 'address' | 'publish'; // SB03: SB18:
   /** The node the last session stopped at. */
   stoppedAt?: string;
   /** Anything in the conversation yet. */
@@ -199,7 +220,7 @@ export function titleOf(state: PanelState): string {
   if (state.testing && state.waitingForApply) return 'Needs you: apply the fix?';
   if (state.testing) return state.fixingName ? `Fixing “${state.fixingName}”` : 'Testing the flow';
   if (state.pending) return 'Working on it';
-  if (state.needs) return `Needs you: ${{ credential: 'pick a credential', agent: 'pick an agent', trigger: 'add a trigger', sends: 'OK to send?', destination: 'OK to send there?', blocked: 'blocked by this host', address: 'fill in an address' }[state.needs]}`;
+  if (state.needs) return `Needs you: ${{ credential: 'pick a credential', agent: 'pick an agent', trigger: 'add a trigger', sends: 'OK to send?', destination: 'OK to send there?', blocked: 'blocked by this host', address: 'fill in an address', publish: 'publish the agent?' /* SB18: */ }[state.needs]}`;
   if (state.lastRun === 'passed') return 'Passed';
   if (state.lastRun === 'failed') return state.stoppedAt ? `Stopped at “${state.stoppedAt}”` : 'Stopped';
   return state.hasItems ? 'Spotlight' : 'Ask Spotlight';

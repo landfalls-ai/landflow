@@ -100,7 +100,13 @@ function phrases(ctx: SpotlightContext): Bubble[] {
 
 /** What to offer while the box is empty: at most `limit`, so the canvas stays quiet. */
 export function idleBubbles(ctx: SpotlightContext, limit = 3): Bubble[] {
-  return phrases(ctx).slice(0, limit);
+  const all = phrases(ctx);
+  const top = all.slice(0, limit);
+  const test = all.find((b) => b.id === TEST_BUBBLE);
+  if (!test || top.includes(test)) return top;
+  // SB18: the test bubble takes the last slot when the others hide it, unless something needs attention (a failure, a missing model).
+  if (top.some((b) => b.id.startsWith('why-') || b.id.startsWith('model-'))) return top;
+  return [...top.slice(0, limit - 1), test];
 }
 
 /** The `@` mention being typed at the caret: from the `@` to the caret, spaces allowed while a node name still fits. */

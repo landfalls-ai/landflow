@@ -36,6 +36,8 @@ function scripted(turns: Array<Partial<ModelTurn>>) {
     provider: 'test',
     model: 'scripted',
     async generate(input) {
+      // SB17: the architect's one follow-up call for test cases (agent-brief.test.ts tests it): answered here without a scripted turn.
+      if (typeof input.system === 'string' && input.system.startsWith('You write test cases')) return { text: 'Hello => A greeting\nWhat can you do? => What it does\nSomething odd => Says it cannot help', toolCalls: [], stopReason: 'stop' as const };
       calls.push({ ...input, messages: [...input.messages] });
       const next = turns.shift();
       if (!next) throw new Error('No scripted turn left');
@@ -68,7 +70,7 @@ describe('drafts', () => {
     expect(tool.parameters.method).toBe('GET');
     expect(dropped).toEqual(['“bogus” of fetch_page: not a parameter of HTTP Request', 'core.manualTrigger: not usable as a tool', 'acme.teleport: not a node type online here']);
     expect(needs).toEqual([]);
-    expect(config).toMatchObject({ name: 'Page reader', persona: { role: 'Researcher' }, instructions: 'Fetch the page, then summarise it.', avatar: { kind: 'face' } });
+    expect(config).toMatchObject({ name: 'Page reader', persona: { role: 'Researcher' }, instructions: expect.stringContaining('Fetch the page, then summarise it.') /* SB17: the four parts wrap it */, avatar: { kind: 'face' } });
   });
 
   it('never sets credentials or ids nobody gave: they become what the user still has to do', () => {

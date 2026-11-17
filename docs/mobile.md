@@ -242,3 +242,5 @@ target. The task dialog rises as a bottom sheet with 44 px fields, wake-up choic
 13. ~~The agent page and Settings on a phone~~.
 14. ~~Lighter filters~~.
 15. ~~An accessibility pass~~ (above).
+16. The Execute/Debug pill sits over a failed step's card in the Steps view (seen in the Spotlight sb2 live pass, the same
+    on main; left by the sb3 carryover, since no sb3 package touched the Steps view).

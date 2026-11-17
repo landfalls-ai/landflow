@@ -22,7 +22,8 @@ import { startFakeModels, type FakeReply } from './fake-ai-services';
 
 vi.mock('@/components/canvas/sticky-note', () => ({ STICKY_DEFAULT_CONTENT: '## Note', STICKY_DEFAULT_SIZE: { width: 260, height: 180 } }));
 // The browser's HTTP client: a workflow opened empty reads its versions once (none published here); feedback is dropped.
-vi.mock('@/lib/client/api', () => ({ api: vi.fn(async () => ({ versions: [] })), streamEvents: vi.fn() }));
+// SB13: the first draft plans first, so the plan route answers a one-step plan too.
+vi.mock('@/lib/client/api', () => ({ api: vi.fn(async (path: string) => (path === '/api/ai/build/plan' ? { plan: { name: 'Orders', steps: [{ key: 's1', type: 'core.manualTrigger', name: 'Start', does: 'Start by hand' }], assumptions: [], cannot: [] }, alternatives: {} } : { versions: [] })), streamEvents: vi.fn() }));
 const published = vi.hoisted(() => vi.fn(async () => ({ published: { versionNumber: 1 } })));
 vi.mock('@/components/editor/publish-control', () => ({ publishVersion: published, toastApprovalRequested: vi.fn() }));
 
@@ -80,6 +81,7 @@ const { approveDestinations, publishToProduction, sendsAllowed, testUntilItRuns 
 const { afterReply, holdsForClick, typedSession, useAutonomous } = await import('@/components/editor/autonomous');
 const { autonomyOf, useAutonomyFacts } = await import('@/components/editor/spotlight-autonomy');
 const { draftWholeFlow } = await import('@/components/editor/spotlight/draft-flow');
+const { buildIt } = await import('@/components/editor/spotlight/plan-part'); // SB13:
 
 afterAll(async () => {
   await fake.close();
@@ -289,6 +291,8 @@ describe('sb1-autonomy-join: a brand-new draft with the switch on', () => {
 // 2. The draft (SB01 × SB02): POST /api/ai/build with a fake Ollama
 // ---------------------------------------------------------------------------------------------------------------------
 
+// Integration (sb3): a build without a plan plans first now; these joins check SB01's whole-draft send-back and catalog,
+// which only the one-shot draft has, so they post `staged: false` (the staged build's joins: spotlight-sb3-joins.test.ts).
 describe('the draft join: SB01’s send-back and SB02’s guards in one answer', () => {
   const prompt = 'When an order webhook comes in, check whether its total is over 100, post it to our team chat and send it on to the VIP desk';
   const draftWith = (condition: unknown[]) =>
@@ -317,7 +321,7 @@ describe('the draft join: SB01’s send-back and SB02’s guards in one answer',
     queue.length = 0;
     queue.push({ text: draftWith([]) }, { text: draftWith(filled) });
     const chatsBefore = fake.requests.filter((r) => r.path === '/api/chat').length;
-    const res = await buildRoute.POST(post('/api/ai/build', { prompt }));
+    const res = await buildRoute.POST(post('/api/ai/build', { prompt, staged: false }));
     expect(res.status).toBe(200);
     const { draft } = (await res.json()) as Answer;
     // SB01: one send-back, the second draft stands.
@@ -363,7 +367,7 @@ describe('the draft join: SB01’s send-back and SB02’s guards in one answer',
     });
     queue.length = 0;
     queue.push({ text: withData });
-    const { draft } = (await (await buildRoute.POST(post('/api/ai/build', { prompt: 'Every morning at 9, fetch the orders from http://127.0.0.1:3399/orders' }))).json()) as Answer & { draft: { pinData?: Record<string, unknown> } };
+    const { draft } = (await (await buildRoute.POST(post('/api/ai/build', { prompt: 'Every morning at 9, fetch the orders from http://127.0.0.1:3399/orders', staged: false }))).json()) as Answer & { draft: { pinData?: Record<string, unknown> } };
     expect(draft.nodes.filter((n) => n.type === 'core.manualTrigger' || n.type === 'core.schedule').map((n) => n.name)).toEqual(['Every morning']);
     expect(Object.keys(draft.pinData ?? {})).toEqual([]);
   });
@@ -372,7 +376,7 @@ describe('the draft join: SB01’s send-back and SB02’s guards in one answer',
     queue.length = 0;
     // The model leaves the If empty twice: SB01 says so, SB02 keeps the step and adds its own items.
     queue.push({ text: draftWith([]) }, { text: draftWith([]) });
-    const { draft } = (await (await buildRoute.POST(post('/api/ai/build', { prompt }))).json()) as Answer;
+    const { draft } = (await (await buildRoute.POST(post('/api/ai/build', { prompt, staged: false }))).json()) as Answer;
     expect(draft.left).toEqual(expect.arrayContaining([expect.objectContaining({ node: 'Big order?', kind: 'empty' }), expect.objectContaining({ node: 'Post to chat', kind: 'made-up' })]));
   });
 
@@ -385,7 +389,7 @@ describe('the draft join: SB01’s send-back and SB02’s guards in one answer',
     queue.length = 0;
     queue.push({ text: draftWith(filled) }, { text: draftWith(filled) });
     const before = fake.requests.length;
-    const { draft } = (await (await buildRoute.POST(post('/api/ai/build', { prompt, workflowId: id }))).json()) as Answer;
+    const { draft } = (await (await buildRoute.POST(post('/api/ai/build', { prompt, workflowId: id, staged: false }))).json()) as Answer;
     // The first request's catalog (a send-back repeats the model's own draft, which names the type).
     const first = fake.requests.slice(before).find((r) => r.path === '/api/chat')?.body as { messages: Array<{ role: string; content: string }> };
     const catalog = first.messages.find((m) => m.role === 'user')!.content;
@@ -523,7 +527,12 @@ describe('the draft reply says it tests only where Spotlight does (review fixes)
     useAutonomous.setState({ on: true });
     useAutonomyFacts.setState({ switchOn: true, workflows: { wf_draft_saved: { bornEmpty: false, published: false } } });
     useEditor.setState({ workflowId: 'wf_draft_saved' });
-    await draftWholeFlow('Post big orders', async () => built as never);
+    // SB13: asks-first, the plan card waits for Build it before anything is built.
+    const done = draftWholeFlow('Post big orders', async () => built as never);
+    await vi.waitFor(() => expect(useAssistant.getState().items.some((i) => i.role === 'assistant' && i.parts.some((p) => p.kind === 'plan'))).toBe(true));
+    expect(said()).not.toContain('Built');
+    buildIt(useAssistant.getState().items.find((i) => i.role === 'assistant' && i.parts.some((p) => p.kind === 'plan'))!.id);
+    await done;
     expect(said()).toContain('Built “Orders”');
     expect(said()).not.toContain('Testing it now');
   });

@@ -153,7 +153,7 @@ describe('a destination', () => {
     await testUntilItRuns('Tell the desk about big orders');
     expect(run).toHaveBeenCalledTimes(1);
     expect(needs().map((n) => n.what)).toEqual(['destination']);
-    expect(needs()[0].destinations).toEqual(['127.0.0.1:3400']);
+    expect(needs()[0].destinations).toEqual(['http://127.0.0.1:3400']); // SB18: with its scheme
     expect(needs()[0].fix?.proposals).toHaveLength(1);
   });
 
@@ -161,7 +161,7 @@ describe('a destination', () => {
     approveDestinations(WF, ['somewhere.else:1']);
     await testUntilItRuns(goal);
     expect(needs().map((n) => n.what)).toEqual(['sends']);
-    expect(needs()[0].text).toBe('A test runs “Notify VIP” and “Notify Standard” for real: they send to 127.0.0.1:3399.');
+    expect(needs()[0].text).toBe('A test runs “Notify VIP” and “Notify Standard” for real: they send to http://127.0.0.1:3399.');
     expect(run).not.toHaveBeenCalled();
   });
 });
@@ -263,7 +263,7 @@ describe('an expression destination asks every time (review fixes)', () => {
     await session;
     expect(run).not.toHaveBeenCalled();
     expect(needs().map((n) => n.what)).toContain('destination');
-    expect(needs().at(-1)?.destinations).toEqual(['evil.example:9']);
+    expect(needs().at(-1)?.destinations).toEqual(['http://evil.example:9']); // SB18: with its scheme
   });
 
   it('a step deleted and added back under the same name asks again', async () => {

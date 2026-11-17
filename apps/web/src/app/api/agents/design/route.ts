@@ -2,8 +2,10 @@
  * POST { name, description, instructions, workflow?, after?, before?, tools?, knowledge? } — the agent Spotlight proposes (`newAgent`,
  * docs/assistant.md#agents-and-teams), designed by the Agent architect: a model this host has (a local one first), the
  * tools it needs from the plugins online and a knowledge base when it works from documents. Saved as a draft; the
- * editor publishes it in autonomous mode. Answers `{ agent, needs, missing, dropped, designed }`, or 429 with the cap's
+ * editor publishes it in autonomous mode. Its brief's test cases are saved on it (the eval gate). Answers `{ agent, needs, missing, dropped, designed, cases }`, or 429 with the cap's
  * message when the caller's AI usage cap is reached (no agent is created).
+ * SB16: with `preview: true` the design is answered, not saved: 200 `{ config, needs, missing, dropped, designed, cases }`
+ * (Spotlight's agent card shows it; Create then imports the config).
  */
 import { z } from 'zod';
 import { randomFace } from '@/lib/shared/faces';
@@ -11,9 +13,12 @@ import { agentResources } from '@/lib/server/assistant/agent-resources';
 import { designAgent } from '@/lib/server/assistant/architect';
 import { resolveSpotlightModel } from '@/lib/server/assistant/models-list'; // SB19:
 import { allowedTypes } from '@/lib/server/assistant/scope';
+import { addCase } from '@/lib/server/agents/eval-gate'; // SB17:
+import { agentUsedBy, removeAgent } from '@/lib/server/agents/remove'; // SB18:
 import { agentStore } from '@/lib/server/agents/store';
 import { isUsageCapError } from '@/lib/server/ai-usage';
 import { error, handler, json, parseBody } from '@/lib/server/http';
+import { canResource } from '@/lib/server/projects/access'; // SB18:
 import { createInProject, routeActor } from '@/lib/server/projects/http';
 
 export const dynamic = 'force-dynamic';
@@ -30,6 +35,8 @@ const Body = z.object({
   knowledge: z.string().max(200).optional(),
   // SB19: the model Spotlight picked (a model this server offers); absent, the Settings default.
   model: z.string().max(100).optional(),
+  // SB16: answer the design without saving an agent (Spotlight's agent card).
+  preview: z.boolean().optional(),
 });
 
 export const POST = handler(async (request: Request) => {
@@ -48,6 +55,35 @@ export const POST = handler(async (request: Request) => {
     throw caught;
   }
   const config = { avatar: { kind: 'face' as const, face: randomFace(parsed.data.name) }, ...design.config };
+  if (parsed.data.preview) {
+    // SB16: the card's preview: a face to show, nothing saved; SB17's brief's cases come with it.
+    return json({ config, needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: design.cases ?? [] });
+  }
   const agent = createInProject(request, 'agent', () => agentStore.create(config), (a) => a.id);
-  return json({ agent, needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed }, 201);
+  // SB17: the brief's test cases are saved on the new agent (the eval gate runs them on its first publish); one that fails is a line for the person, not a 500.
+  const cases: NonNullable<typeof design.cases> = [];
+  const needs = [...design.needs];
+  for (const draft of design.cases ?? []) {
+    try {
+      addCase(agent.id, draft);
+      cases.push(draft);
+    } catch {
+      if (!needs.some((n) => n.tool === 'test cases')) needs.push({ tool: 'test cases', kind: 'parameter', text: 'Add test cases on the Evaluations tab' });
+    }
+  }
+  return json({ agent, needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases /* SB17: */ }, 201);
+});
+
+// SB18: take back an agent Spotlight made for a step when its change is undone, only when nothing else uses it.
+const TakeBack = z.object({ agentId: z.string().min(1).max(200), workflowId: z.string().min(1).max(200) });
+
+/** DELETE { agentId, workflowId } — answers `{ deleted: true }`, or `{ deleted: false, usedBy: string[] }` with what still uses it. */
+export const DELETE = handler(async (request: Request) => {
+  const parsed = await parseBody(request, TakeBack);
+  if (!parsed.ok) return parsed.response;
+  const { agentId, workflowId } = parsed.data;
+  if (!agentStore.get(agentId) || !canResource(routeActor(), 'agent', agentId, 'delete')) return error('Agent not found', 404);
+  const usedBy = agentUsedBy(agentId, workflowId);
+  if (usedBy.length) return json({ deleted: false, usedBy });
+  return json({ deleted: await removeAgent(agentId) });
 });

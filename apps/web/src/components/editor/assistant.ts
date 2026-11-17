@@ -15,6 +15,7 @@ import { teamFromLead } from '@/lib/shared/turn-into-team';
 import type { ActivityKind, ActivityStep } from '@/lib/shared/activity';
 import type { NodeRun } from '@/lib/shared/types';
 import type { MentionRef } from '@/lib/shared/mentions';
+import type { AgentCard } from '@/lib/shared/agent-card'; // SB16:
 import { askedLine, type AskEvent, type AskPart } from '@/lib/shared/spotlight-wire'; // SB11: (askedLine: SB09 × SB11)
 import type { ReplyInfo } from '../ui/chat';
 import type { CredentialNeedFields, CredentialOfferEvent } from '@/lib/shared/spotlight-wire'; // SB12:
@@ -22,10 +23,13 @@ import { useEditor } from './store';
 import { pickedModel } from './spotlight-model'; // SB19:
 import { emptyStored, withEarlier, type Stored } from './spotlight-history';
 
-import { saveAgentFor, type AgentPlace } from './new-agent';
+import { saveAgentFor, takeBackAgents, type AgentPlace } from './new-agent'; // SB18:
+import type { AgentSmoke } from '@/lib/shared/agent-card'; // SB18:
 import { saveTeamFor } from './turn-into-team';
 import { defaultCollapsed } from './spotlight/states';
 import type { SpotlightScope } from '@/lib/shared/spotlight-scope'; // SB07:
+import type { PlanPart } from './spotlight/plan-part'; // SB13:
+import type { DraftSummary } from '@/lib/shared/draft-summary'; // SB15:
 
 const freshKept = (): { id?: string; stored: Stored } => ({ stored: emptyStored() });
 
@@ -125,7 +129,17 @@ export function applyChanges(
   // Select what changed: the last node added, else the node edited.
   const focusId = added.at(-1) ?? edited;
   // Spotlight's own applies leave the selection alone: selecting would hide its chip and put the node in the composer.
-  const undo = state.replaceGraph(workflow, focusId && !options.quiet ? { id: focusId, added: added.includes(focusId) } : undefined);
+  const undoGraph = state.replaceGraph(workflow, focusId && !options.quiet ? { id: focusId, added: added.includes(focusId) } : undefined);
+  // SB18: Undo also takes back the agents this change made, when nothing else uses them (the row says which).
+  const madeFor = agents.map((a) => a.nodeId);
+  const workflowOf = useEditor.getState().workflowId;
+  const undo = madeFor.length
+    ? () => {
+        undoGraph();
+        const gone = madeFor.filter((id) => !useEditor.getState().nodes.some((n) => n.id === id));
+        if (gone.length) void takeBackAgents(gone, workflowOf);
+      }
+    : undoGraph;
   for (const { nodeId, config } of teams) void saveTeamFor(nodeId, config);
   for (const { nodeId, spec, place } of agents) void saveAgentFor(nodeId, spec, place, { publish: options.publishAgents });
   options.onApplied?.({ undo, skipped: dropped });
@@ -256,7 +270,7 @@ export interface Proposal {
  * an agent, add a trigger, or say a test may send for real. Its row has the button that does it and one that goes on.
  */
 export interface Need extends CredentialNeedFields { // SB12:
-  what: 'credential' | 'agent' | 'trigger' | 'sends' | 'destination' | 'blocked' | 'address'; // SB03:
+  what: 'credential' | 'agent' | 'trigger' | 'sends' | 'destination' | 'blocked' | 'address' | 'publish'; // SB03: SB18:
   text: string;
   /** `sends` and `destination`: where the test would send; the yes is kept for these (SB03). */
   destinations?: string[];
@@ -319,7 +333,10 @@ export type ReplyPart =
   | { kind: 'needs'; need: Need }
   | { kind: 'outcome'; outcome: Outcome }
   | ({ kind: 'action' } & ReplyAction)
-  | AskPart; // SB11: a question back with its choices
+  | AskPart // SB11: a question back with its choices
+  | { kind: 'plan'; plan: PlanPart } // SB13: the first draft's plan card
+  | { kind: 'summary'; summary: DraftSummary; workflowName: string } // SB15: the build summary
+  | { kind: 'agentCard'; card: AgentCard }; // SB16: an agent Spotlight designed, to review and create (./spotlight/agent-ask.ts)
 
 /**
  * `testId`: the test-and-fix session the turn belongs to; Spotlight folds a finished session into one line.
@@ -488,7 +505,13 @@ export interface AgentProgress {
   /** The Run an Agent node it is for. */
   nodeId: string;
   name: string;
-  state: 'designing' | 'published' | 'draft' | 'failed';
+  state: 'designing' | 'testing' | 'tested' | 'untested' | 'published' | 'draft' | 'failed'; // SB18:
+  /** SB18: what its smoke test said (lib/shared/agent-card.ts). */
+  smoke?: AgentSmoke;
+  /** SB18: why a publish after a pass was held (the eval gate's score), in words. */
+  held?: string;
+  /** SB18: Undo took it back: removed, or kept because something else uses it. */
+  taken?: { deleted: boolean; usedBy?: string[] };
   /** "ollama/qwen3-coder:30b · 1 knowledge base", or why it failed. */
   summary?: string;
   agentId?: string;
@@ -569,7 +592,7 @@ interface AssistantState {
 }
 
 /** What the model sees of earlier turns: the text, plus a note of each proposal and whether it was applied. */
-function historyOf(items: ChatItem[]) {
+export function historyOf(items: ChatItem[]) {
   return items.map((item) => {
     if (item.role === 'user') return { role: 'user' as const, content: item.text };
     const content = item.parts
@@ -577,6 +600,8 @@ function historyOf(items: ChatItem[]) {
         if (part.kind === 'text') return part.text;
         if (part.kind === 'proposal') return `[Proposed “${part.proposal.summary}”: ${part.proposal.state ?? 'not applied yet'}]`;
         if (part.kind === 'run' && part.run.state !== 'running') return `[Test run ${part.run.round} ${part.run.state}: ${part.run.summary ?? ''}]`;
+        // The plan card: the steps the person was shown, so the builder chat knows the flow that was agreed.
+        if (part.kind === 'plan') return `[Plan “${part.plan.plan.name}” (${part.plan.state}): ${part.plan.plan.steps.map((s, i) => `${i + 1}. ${s.name}: ${s.does}`).join('; ')}]`;
         if (part.kind === 'ask') return askedLine(part.ask.choices); // SB09 × SB11: the next message is the answer, the server reads the request across it
         return '';
       })

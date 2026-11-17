@@ -58,18 +58,42 @@ const draft = (nodes: Array<Record<string, unknown>>) => JSON.stringify({ name: 
 const withSet = draft([{ key: 'set', type: 'core.set', name: 'Set', parameters: { mode: 'manual', fields: { field: [{ name: 'a', value: '1' }] } } }]);
 const emptyIf = draft([{ key: 'if', type: 'core.if', name: 'Check', parameters: {} }]);
 
+// Integration (sb3): a draft plans first by default (SB13), then one call per step (SB14): a row for every call.
+const plan = (steps: Array<{ key: string; type: string; name: string }>) =>
+  JSON.stringify({ name: 'Draft', steps: steps.map((st, i) => ({ ...st, does: st.name, ...(i && { from: steps[i - 1].key }) })), assumptions: [], cannot: [] });
+const params = (parameters: Record<string, unknown>, testData?: unknown[]) => JSON.stringify({ parameters, ...(testData && { testData }) });
+
 describe('the first draft is counted', () => {
-  it('writes one ai_usage row for a draft, with surface spotlight, purpose answer and the model', async () => {
-    queue = [draft([])];
-    const response = await (buildRoute.POST as unknown as Route)(post('/api/ai/build', { prompt: 'a flow with a trigger' }));
+  it('writes an ai_usage row for each call of a draft (the plan, then each step), with surface spotlight, purpose answer and the model', async () => {
+    queue = [plan([{ key: 's1', type: 'core.manualTrigger', name: 'Start' }, { key: 's2', type: 'core.set', name: 'Set' }]), params({}, [{ q: 'one' }]), params({ mode: 'manual', fields: { values: [{ name: 'a', value: '1' }] } })];
+    const response = await (buildRoute.POST as unknown as Route)(post('/api/ai/build', { prompt: 'a flow with a trigger that sets a field' }));
     expect(response.status).toBe(200);
-    expect(rows()).toEqual([{ surface: 'spotlight', purpose: 'answer', provider: 'ollama', model: 'qwen3-coder:30b' }]);
+    const { draft: built } = (await response.json()) as { draft: { calls: number; stages: Array<{ stage: string }> } };
+    const calls = fake.requests.filter((r) => r.path === '/api/chat').length;
+    expect(built.stages[0].stage).toBe('plan');
+    expect(built.calls).toBe(calls);
+    expect(rows()).toEqual(Array.from({ length: calls }, () => ({ surface: 'spotlight', purpose: 'answer', provider: 'ollama', model: 'qwen3-coder:30b' })));
   });
 
-  it('writes two rows when the draft is sent back once', async () => {
-    queue = [emptyIf, withSet];
+  it('writes a row for a step sent back once too', async () => {
+    queue = [plan([{ key: 's1', type: 'core.manualTrigger', name: 'Start' }, { key: 's2', type: 'core.if', name: 'Check' }]), params({}), params({ conditions: { condition: [] }, combinator: 'and' }), params({ conditions: { condition: [{ left: '{{ $json.q }}', operator: 'equals', right: 'one' }] }, combinator: 'and' })];
     const response = await (buildRoute.POST as unknown as Route)(post('/api/ai/build', { prompt: 'check something' }));
     expect(response.status).toBe(200);
+    const { draft: built } = (await response.json()) as { draft: { calls: number; stages: Array<{ stage: string }> } };
+    expect(built.stages.filter((st) => st.stage === 'send-back')).toHaveLength(1);
+    const calls = fake.requests.filter((r) => r.path === '/api/chat').length;
+    expect(built.calls).toBe(calls);
+    expect(rows().map((r) => `${r.surface}/${r.purpose}`)).toEqual(Array.from({ length: calls }, () => 'spotlight/answer'));
+  });
+
+  it('the one-shot draft (`staged: false`) writes one row, and two when it is sent back once', async () => {
+    queue = [draft([])];
+    expect((await (buildRoute.POST as unknown as Route)(post('/api/ai/build', { prompt: 'a flow with a trigger', staged: false }))).status).toBe(200);
+    expect(rows()).toEqual([{ surface: 'spotlight', purpose: 'answer', provider: 'ollama', model: 'qwen3-coder:30b' }]);
+    database().sqlite.exec('DELETE FROM ai_usage');
+    fake.requests.length = 0;
+    queue = [emptyIf, withSet];
+    expect((await (buildRoute.POST as unknown as Route)(post('/api/ai/build', { prompt: 'check something', staged: false }))).status).toBe(200);
     expect(fake.requests.filter((r) => r.path === '/api/chat')).toHaveLength(2);
     expect(rows().map((r) => `${r.surface}/${r.purpose}`)).toEqual(['spotlight/answer', 'spotlight/answer']);
   });

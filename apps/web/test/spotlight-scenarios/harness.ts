@@ -8,6 +8,7 @@
  * Nothing here talks to anything but this machine; the live form runs with ./local-only.cjs loaded by the runner.
  */
 import './env';
+import { summaryText, type DraftSummary } from '@/lib/shared/draft-summary'; // SB15:
 import { createRequire } from 'node:module';
 import { nanoid } from 'nanoid';
 import { definePlugin, defineNode, type PropertyDescriptor } from '@landflow/sdk';
@@ -20,8 +21,13 @@ import { corePlugin } from '@/lib/server/nodes';
 import { registry } from '@/lib/server/plugins/registry';
 import { registryLookup } from '@/lib/server/assistant/ops';
 import { agentStore } from '@/lib/server/agents/store';
+import { listCases } from '@/lib/server/agents/eval-gate'; // SB17:
+import { guardrailWords } from '@/lib/shared/agents'; // SB17:
+import { agentAsk } from '@/lib/shared/agent-ask'; // SB16:
+import { starterFlow, starterSample } from '@/lib/shared/agent-card'; // SB16:
 import { handler } from '@/lib/server/http';
 import { startFakeModels, readSse, type FakeModels } from '../fake-ai-services';
+import { estimatedTokens } from '@/lib/shared/build-plan'; // SB13:
 import { scriptedModel, touchedNodes, type Check, type Job, type Outcome, type Scenario, type Start, type ScriptTurn } from './scenario';
 
 export type Form = 'unit' | 'live';
@@ -234,12 +240,13 @@ interface Collected {
   done?: { steps: number; model?: string; usage: { inputTokens: number; outputTokens: number } };
   error?: string;
   drafts: Array<Partial<AgentConfig>>;
+  draftCases: number[]; // SB17: the cases each draft came with
   asked: Array<{ question: string; choices: string[] }>; // SB11:
   offers: NonNullable<Outcome['offers']>; // SB12:
 }
 
 function collect(events: Array<{ event: string; data: any }>): Collected { // eslint-disable-line @typescript-eslint/no-explicit-any
-  const out: Collected = { text: '', tools: [], proposals: [], drafts: [], asked: [], offers: [] };
+  const out: Collected = { text: '', tools: [], proposals: [], drafts: [], draftCases: [] /* SB17: */, asked: [], offers: [] };
   for (const { data } of events) {
     switch (data.type) {
       case 'text':
@@ -256,6 +263,7 @@ function collect(events: Array<{ event: string; data: any }>): Collected { // es
         break;
       case 'draft':
         out.drafts.push(data.config);
+        out.draftCases.push(Array.isArray(data.cases) ? data.cases.length : 0); // SB17:
         break;
       case 'credential': out.offers.push({ node: data.node, credentialTypes: data.credentialTypes }); break; // SB12:
       case 'done':
@@ -269,12 +277,19 @@ function collect(events: Array<{ event: string; data: any }>): Collected { // es
   return out;
 }
 
-const agentOf = (config: Partial<AgentConfig>, published = false): Outcome['agents'][number] => ({
+const agentOf = (config: Partial<AgentConfig>, published = false, draftCases = 0, id?: string): Outcome['agents'][number] => ({
   name: config.name ?? '',
   ...(config.model && { model: `${config.model.provider}/${config.model.model}` }),
   tools: (config.tools ?? []).filter((t) => t.type !== 'knowledge').map((t) => ('name' in t && t.name ? t.name : t.type)),
   knowledge: (config.tools ?? []).some((t) => t.type === 'knowledge'),
   published,
+  // SB17: what the brief put in the agent: each tool's type, operation and approval, the cases (saved ones when it exists), the practices and the guardrails.
+  toolsDetail: (config.tools ?? []).flatMap((t) =>
+    t.type === 'node' ? [{ name: t.name, type: t.nodeType, ...(typeof t.parameters?.operation === 'string' && { operation: t.parameters.operation }), requireApproval: t.requireApproval === true }] : [],
+  ),
+  cases: id ? listCases(id).length : draftCases,
+  practices: config.practices === 'on',
+  guardrails: guardrailWords(config.guardrails),
 });
 
 // ---------------------------------------------------------------------------
@@ -313,7 +328,7 @@ async function chatOnce(call: ChatCall, form: Form, scripted: Scripted | undefin
     ...(call.scope !== undefined && { scope: call.scope }), // SB07:
     ...(call.tagged?.length && { mentions: { refs: call.tagged.map((id) => ({ type: 'node' as const, id, workflowId: call.workflow.id })) } }), // SB07:
   };
-  if (form === 'live') {
+  if (form === 'live' && !scripted) { // SB18: a `-scripted` scenario's model is scripted in the live form
     const route = await import('@/app/api/assistant/chat/route');
     const response = await route.POST(post('/api/assistant/chat', { ...body, model: call.model ?? options.model ?? 'qwen3-coder:30b' /* SB19: */ }));
     if (!response.ok) return { ...collect([]), error: `chat ${response.status}`, calls: 0 };
@@ -513,7 +528,8 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
   const refusedBefore = refusedNow().length;
   const echoBefore = options.echo?.log.length ?? 0;
   const outcome: Outcome = { scenario: scenario.id, form, ms: 0, text: '', tools: [], proposals: [], needs: [], sent: [], refused: [], agents: [], modelCalls: 0, tokens: { input: 0, output: 0 } };
-  const script = form === 'unit' ? (scenario.script ?? []) : undefined;
+  // SB18: a scenario whose id ends in `-scripted` keeps its scripted model in the live form too (the product's runner and the echo server are real).
+  const script = form === 'unit' || scenario.id.endsWith('-scripted') ? (scenario.script ?? []) : undefined;
   // One scripted model per scenario: the script is its replies in order, across the first message and every session reply.
   const scripted = script ? scriptedModel(script) : undefined;
   const canvas = canvasOf(scenario, options);
@@ -544,17 +560,37 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
 
     if (scenario.via === 'build') {
       const route = await import('@/app/api/ai/build/route');
-      const response = await route.POST(post('/api/ai/build', { prompt: scenario.ask, ...((scenario.start?.model ?? model) && { model: scenario.start?.model ?? model }), /* SB19: */ ...(canvas?.id && { workflowId: canvas.id }) }));
-      const body = (await response.json()) as { draft?: Record<string, unknown>; error?: string };
-      if (!response.ok || !body.draft) outcome.error = body.error ?? `build ${response.status}`;
-      else {
+      const buildModel = (scenario.start?.model ?? model) && { model: scenario.start?.model ?? model };
+      // SB13: staged, as the editor builds from sb3 on: the plan route first, then the build with that plan. `start.plan` is stage 2's own input (SB14 posts it); `LANDFLOW_SPOTLIGHT_STAGED=false` never plans (the one-shot draft, the "before" of a live comparison).
+      const planned: { plan?: Record<string, unknown>; stages: Array<{ stage: string; inputTokens: number; promptChars: number }> } = { stages: [] };
+      // Integration (sb3): staged is the default in both forms now (the unit scripts answer `[plan, node…]`); `staged: false` posts `staged: false`, the server's one-shot draft.
+      const oneShot = process.env.LANDFLOW_SPOTLIGHT_STAGED === 'false' || scenario.start?.staged === false;
+      if (!scenario.start?.plan && !oneShot) {
+        const planRoute = await import('@/app/api/ai/build/plan/route');
+        const planResponse = await planRoute.POST(post('/api/ai/build/plan', { prompt: scenario.ask, ...buildModel, ...(canvas?.id && { workflowId: canvas.id }) }));
+        const planBody = (await planResponse.json()) as { plan?: Record<string, unknown>; stages?: typeof planned.stages; error?: string };
+        planned.stages = planBody.stages ?? [];
+        if (!planResponse.ok || !planBody.plan) outcome.error = planBody.error ?? `plan ${planResponse.status}`;
+        else planned.plan = planBody.plan;
+      }
+      const response = outcome.error ? undefined : await route.POST(post('/api/ai/build', { prompt: scenario.ask, ...buildModel, /* SB19: */ ...(canvas?.id && { workflowId: canvas.id }), ...(planned.plan && { plan: planned.plan }) /* SB13: */, /* SB14: */ ...(scenario.start?.plan && { plan: scenario.start.plan }), ...(oneShot && !scenario.start?.plan && { staged: false }) }));
+      const body = response ? ((await response.json()) as { draft?: Record<string, unknown>; error?: string }) : {};
+      if (response && (!response.ok || !body.draft)) outcome.error = body.error ?? `build ${response.status}`;
+      else if (body.draft) {
         outcome.draft = body.draft;
         outcome.after = draftToWorkflow(body.draft as never);
         outcome.text = `Built ${(body.draft.nodes as unknown[]).length} nodes`;
+        if (body.draft.summary) outcome.text = summaryText(String(body.draft.name), body.draft.summary as DraftSummary); // SB15: a build's text is what the person reads
         outcome.model = typeof body.draft.model === 'string' ? body.draft.model : undefined; // SB19:
       }
-      // SB10 (carryover item 4): the calls the draft took (`draft.calls`), live and unit; the fake's count only when the route sent none.
-      outcome.modelCalls = typeof body.draft?.calls === 'number' ? body.draft.calls : fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 1;
+      // SB13: the plan as the draft reports it, and every call's prompt size (the plan route's calls first).
+      const drafted = body.draft as { plan?: { steps: Array<{ name: string; type: string }>; cannot: string[] }; stages?: Array<{ stage: string; inputTokens: number; promptChars: number }> } | undefined;
+      const shown = drafted?.plan ?? (planned.plan as { steps: Array<{ name: string; type: string }>; cannot: string[] } | undefined);
+      if (shown) outcome.plan = { steps: shown.steps.map(({ name, type }) => ({ name, type })), cannot: shown.cannot ?? [] };
+      const sizes = [...planned.stages, ...(drafted?.stages ?? [])];
+      if (sizes.length) outcome.prompts = sizes.map((st) => ({ stage: st.stage, tokens: Math.max(st.inputTokens, estimatedTokens(st.promptChars)) }));
+      // SB10 (carryover item 4): the calls the draft took (`draft.calls`), live and unit; the fake's count only when the route sent none. SB13: the plan route's calls count too.
+      outcome.modelCalls = (typeof body.draft?.calls === 'number' ? body.draft.calls : fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 1) + planned.stages.length;
       if (typeof body.draft?.model === 'string') outcome.model = body.draft.model;
     } else if (scenario.via === 'chat' || scenario.via === 'session') {
       if (!canvas) throw new Error(`${scenario.id}: a chat scenario needs start.workflow`);
@@ -577,14 +613,65 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
       const response = await route.POST(post('/api/agents/design', { name: nameOfAsk(scenario.ask), description: scenario.ask, instructions: '', ...(canvas && { workflow: canvas.name }), ...(scenario.start?.model && { model: scenario.start.model }) /* SB19: */ }));
       const body = (await response.json()) as { agent?: { id: string; name: string; tools: AgentConfig['tools']; model?: AgentConfig['model'] }; error?: string };
       if (!body.agent) outcome.error = body.error ?? `design ${response.status}`;
-      else outcome.agents.push(agentOf(body.agent as Partial<AgentConfig>));
+      else {
+        outcome.agents.push(agentOf(body.agent as Partial<AgentConfig>, false, 0, body.agent.id /* SB17: */));
+        outcome.draft = { instructions: (body.agent as Partial<AgentConfig>).instructions ?? '' }; // SB17: the brief's four parts are read from it
+        // SB18 (D3): what the editor does once the agent is designed: the smoke test on the item that reaches its step, and
+        // (autonomous) the publish after a pass. A scenario that names an autonomy is a flow's step; asks-first never publishes.
+        // The unit form's fake Ollama lists no models, so a design has none: it gets the scenario's own, as a person's pick would.
+        if (scenario.start?.autonomy && !body.agent.model) agentStore.saveDraft(body.agent.id, { model: { provider: 'ollama', model: 'qwen3-coder:30b' } });
+        if (scenario.start?.autonomy) {
+          const item = Object.values(canvas?.pinData ?? {})[0]?.[0]?.json as Record<string, unknown> | undefined;
+          const message = String(item?.chatInput ?? item?.text ?? scenario.ask);
+          const smokeRoute = await import('@/app/api/agents/[id]/smoke-test/route');
+          const smoked = await smokeRoute.POST(post(`/api/agents/${body.agent.id}/smoke-test`, { message }), { params: Promise.resolve({ id: body.agent.id }) });
+          const smoke = ((await smoked.json()) as { smoke?: { state: 'passed' | 'failed' | 'untested' } }).smoke;
+          outcome.smoke = smoke?.state ?? 'failed';
+          if (outcome.smoke === 'passed' && scenario.start.autonomy === 'auto') {
+            const publishRoute = await import('@/app/api/agents/[id]/publish/route');
+            const done = await publishRoute.POST(post(`/api/agents/${body.agent.id}/publish`, {}), { params: Promise.resolve({ id: body.agent.id }) });
+            if (done.ok) outcome.agents[outcome.agents.length - 1].published = true;
+          }
+        }
+      }
       outcome.modelCalls = fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 1;
+    } else if (scenario.via === 'agent-ask') {
+      // SB16: what the editor does with a typed "create an agent …": read the ask, design the agent as a card (the route's preview), then the card's Create (the import route, a test case each), and on an empty canvas the starter flow.
+      const names = canvas?.nodes.map((n) => n.name) ?? [];
+      const ask = agentAsk(scenario.ask, names);
+      // The composer's rule (spotlight/agent-ask.ts `cardAskFor`): a placed ask on a canvas with steps stays the chat's.
+      if (!ask || (ask.placed && names.length)) {
+        outcome.text = ask ? 'placed: the chat' : 'not an agent ask';
+        if (canvas) outcome.after = canvas;
+      } else {
+        const designed = await import('@/app/api/agents/design/route');
+        const spec = { name: ask.name ?? 'New agent', description: ask.description, instructions: '', ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }), ...((scenario.start?.model ?? model) && { model: scenario.start?.model ?? model }), preview: true };
+        const response = await designed.POST(post('/api/agents/design', spec));
+        const body = (await response.json()) as { config?: Partial<AgentConfig>; cases?: Array<{ input: string; expected?: string }>; error?: string };
+        outcome.modelCalls = fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 1;
+        if (!response.ok || !body.config) outcome.error = body.error ?? `design ${response.status}`;
+        else {
+          const starter = !names.length;
+          outcome.card = { starter };
+          outcome.text = `Designed ${body.config.name ?? spec.name}`;
+          const imported = await (await import('@/app/api/agents/import/route')).POST(post('/api/agents/import', { config: body.config }));
+          const made = (await imported.json()) as { agent?: AgentConfig & { id: string }; error?: string };
+          if (!imported.ok || !made.agent) outcome.error = made.error ?? `import ${imported.status}`;
+          else {
+            const gate = await import('@/app/api/agents/[id]/eval-gate/route');
+            for (const c of body.cases ?? []) await gate.POST(post(`/api/agents/${made.agent.id}/eval-gate`, c), { params: Promise.resolve({ id: made.agent.id }) });
+            outcome.agents.push({ ...agentOf(made.agent), cases: (body.cases ?? []).length });
+            outcome.after = starter ? draftToWorkflow(starterFlow({ id: made.agent.id, name: made.agent.name }, starterSample({ name: made.agent.name, cases: body.cases ?? [] }))) : canvas;
+          }
+        }
+      }
     } else {
       const route = await import('@/app/api/assistant/agent/route');
       const response = await route.POST(post('/api/assistant/agent', { messages: [{ role: 'user', content: scenario.ask }], ...(model && { model }) }));
       const result = collect(await readSse(response));
       Object.assign(outcome, { text: result.text, tools: result.tools, ...(result.error && { error: result.error }) });
-      outcome.agents.push(...result.drafts.map((d) => agentOf(d)));
+      outcome.agents.push(...result.drafts.map((d, i) => agentOf(d, false, result.draftCases[i] ?? 0 /* SB17: */)));
+      if (result.drafts.length) outcome.draft = { instructions: result.drafts.at(-1)?.instructions ?? '' }; // SB17: the brief's four parts are read from it
       withDone({ ...result, calls: result.done?.steps ?? 0 });
     }
   } catch (e) {

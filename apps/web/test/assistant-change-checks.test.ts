@@ -69,6 +69,20 @@ describe('retry settings', () => {
     expect(lines).toHaveLength(4);
     expect(retryProblems(ops, flow(), flow(), { latest: 'retry 3 times and continue on error, then disable it' })).toHaveLength(2);
   });
+
+  it('retry asked "with exponential backoff" without retryBackoff goes back, naming the field and its values (carryover sb3)', () => {
+    const tries: AssistantOp[] = [{ op: 'setNodeSettings', node: 'Open status incident', settings: { maxTries: 3, retryOnFail: true } }];
+    const lines = retryProblems(tries, flow(), apply(tries).workflow, { latest: 'Retry the incident call 3 times with exponential backoff' });
+    expect(lines).toEqual(['“Open status incident” retries without the exponential backoff the request asked for: set retryBackoff to "exponential" (its values: "fixed", "exponential") in the same setNodeSettings']);
+    expect(retryProblems(tries, flow(), flow(), { latest: 'retry it with a back-off' })).toHaveLength(1);
+    const right: AssistantOp[] = [{ op: 'setNodeSettings', node: 'Open status incident', settings: { maxTries: 3, retryOnFail: true, retryBackoff: 'exponential' } }];
+    expect(retryProblems(right, flow(), apply(right).workflow, { latest: 'retry 3 times with exponential backoff' })).toEqual([]);
+    expect(retryProblems(tries, flow(), flow(), { latest: 'retry 3 times' })).toEqual([]);
+    expect(retryProblems(tries, flow(), flow(), { latest: 'retry 3 times with a fixed backoff' })).toEqual([]);
+    const kept = flow();
+    kept.nodes[2].retryBackoff = 'exponential';
+    expect(retryProblems(tries, kept, kept, { latest: 'retry 3 times with exponential backoff' })).toEqual([]);
+  });
 });
 
 describe('expressions against the step input', () => {
@@ -198,6 +212,19 @@ describe('Authorization headers', () => {
     const lines = authHeaderProblems(ops, wf, apply(ops, wf).workflow, {}, 'data');
     expect(lines[0]).toMatch(/builds its Authorization header from the data/);
     expect(authHeaderProblems(ops, wf, apply(ops, wf).workflow, {}, 'credential')).toEqual([]);
+  });
+
+  it('a token header calling $cred(…), $secret or $env is made up and names the credential slot (carryover sb3)', () => {
+    const wf = flow();
+    const ops = [set({ headers: { header: [{ name: 'Authorization', value: "Bearer {{ $cred('my-api-key') }}" }] } })];
+    expect(authHeaderProblems(ops, wf, apply(ops, wf).workflow, {}, 'data')).toEqual([
+      '“Open status incident” builds a token header with $cred, which expressions here do not have (it is made up): drop that header and set authentication to "genericCredentialType" with genericAuthType "httpBearerAuth" or "httpHeaderAuth" and leave the credential to the person',
+    ]);
+    expect(authHeaderProblems(ops, wf, apply(ops, wf).workflow, {}, 'credential')).toEqual([]);
+    const key = [set({ headers: { header: [{ name: 'X-API-Key', value: '{{ $env.API_KEY }}{{ $secret("k") }}' }] } })];
+    expect(authHeaderProblems(key, wf, apply(key, wf).workflow, {}, 'data')[0]).toMatch(/with \$env, \$secret, which expressions here do not have/);
+    const fine = [set({ headers: { header: [{ name: 'Authorization', value: 'Bearer {{ $vars.STATUS_TOKEN }}' }, { name: 'X-Trace', value: '{{ $cred(1) }}' }] } })];
+    expect(authHeaderProblems(fine, wf, apply(fine, wf).workflow, {}, 'data')).toEqual([]);
   });
 });
 

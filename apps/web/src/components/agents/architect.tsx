@@ -5,16 +5,17 @@
  */
 import { Fragment, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { BookOpen, Bot, Check, ChevronLeft, Plug, RadioTower, SquarePen, TriangleAlert, Workflow, X } from 'lucide-react';
+import { BookOpen, Bot, Check, ChevronLeft, Plug, RadioTower, ShieldCheck, SquarePen, TriangleAlert, Workflow, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, streamEvents } from '@/lib/client/api';
 import { useConversation } from '@/lib/client/conversations';
 import type { ActivityStep } from '@/lib/shared/activity';
-import type { ConversationItem, ConversationItemInput, ConversationPart } from '@/lib/shared/conversations';
+import type { ConversationItem, ConversationItemInput, ConversationPart, ConversationRecord } from '@/lib/shared/conversations';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import { cn } from '@/lib/utils';
 import type { AgentConfig, AgentToolConfig } from '@/lib/shared/agents';
-import { isNodeKnowledge } from '@/lib/shared/agents';
+import { followsPractices, guardrailWords, isNodeKnowledge } from '@/lib/shared/agents'; // SB17: one wording for the guardrails and practices
+import type { AgentCaseDraft } from '@/lib/shared/agent-card'; // SB17:
 import { ARCHITECT, type ArchitectMissing, type ArchitectNeed, type ArchitectRequest, type ArchitectTurn } from '@/lib/shared/agent-architect';
 import { randomFace } from '@/lib/shared/faces';
 import type { NodeTypeInfo } from '@/lib/shared/types';
@@ -45,6 +46,8 @@ export interface Draft {
   needs: ArchitectNeed[];
   dropped: string[];
   missing: ArchitectMissing[];
+  /** SB17: the test cases the brief proposes: edited or removed here, then posted to the eval gate by Create. */
+  cases: AgentCaseDraft[];
 }
 
 /** What the stream says when a reply fails: the kind of failure, and (after some steps) the checkpoint that continues it. */
@@ -119,7 +122,7 @@ export function restore(items: ConversationItem[]): { messages: Message[]; draft
     const proposal = item.parts.find((p) => p.type === 'proposal');
     if (proposal?.type === 'proposal') {
       const kept = proposal.ops[0] as Partial<Draft> | undefined;
-      if (kept && typeof kept === 'object' && kept.config) draft = { id: proposal.id, summary: proposal.summary, config: kept.config, needs: kept.needs ?? [], dropped: kept.dropped ?? [], missing: kept.missing ?? [] };
+      if (kept && typeof kept === 'object' && kept.config) draft = { id: proposal.id, summary: proposal.summary, config: kept.config, needs: kept.needs ?? [], dropped: kept.dropped ?? [], missing: kept.missing ?? [], cases: kept.cases ?? [] /* SB17: */ };
     }
     const failure = item.parts.find((p) => p.type === 'error');
     const meta = item.meta;
@@ -135,6 +138,44 @@ export function restore(items: ConversationItem[]): { messages: Message[]; draft
     };
   });
   return { messages, ...(draft && { draft }) };
+}
+
+/** SB17: whether the "Earlier: … · Continue" line shows: only on a fresh dialog, before anything is said. */
+export const showEarlier = (latest: { id: string; title: string } | undefined, messageCount: number, streaming: boolean) => Boolean(latest) && messageCount === 0 && !streaming;
+
+/** SB17: Continue reopens the kept conversation. */
+export const continueLatest = (latest: { id: string }, open: (id: string) => Promise<unknown>) => open(latest.id);
+
+/** SB17: the line under the fresh dialog that offers the last conversation. */
+export function EarlierLine({ latest, onContinue }: { latest: { id: string; title: string }; onContinue: () => void }) {
+  return (
+    <p className="mt-2 flex min-w-0 items-center gap-1.5 px-1 pb-2 text-[12px] text-t3">
+      <span className="shrink-0">Earlier:</span>
+      <span className="min-w-0 truncate text-t2">{latest.title || 'Untitled design'}</span>
+      <span aria-hidden="true">·</span>
+      <button type="button" onClick={onContinue} className="shrink-0 rounded font-semibold text-ac hover:underline focus-visible:outline-2 focus-visible:outline-ac max-md:min-h-11">
+        Continue
+      </button>
+    </p>
+  );
+}
+
+/**
+ * SB17: Create posts each test case to the agent's eval gate after the import. A case that fails does not undo the agent:
+ * what failed comes back as lines for a toast.
+ */
+export async function postCases(agentId: string, cases: AgentCaseDraft[], post: (url: string, json: AgentCaseDraft) => Promise<unknown>): Promise<string[]> {
+  const failed: string[] = [];
+  for (const c of cases) {
+    const input = c.input.trim();
+    if (!input) continue;
+    try {
+      await post(`/api/agents/${agentId}/eval-gate`, { input, ...(c.expected?.trim() && { expected: c.expected.trim() }) });
+    } catch (e) {
+      failed.push(`“${input.slice(0, 40)}${input.length > 40 ? '…' : ''}”: ${(e as Error).message}`);
+    }
+  }
+  return failed;
 }
 
 function ToolTile({ info, size = 32 }: { info?: NodeTypeInfo; size?: number }) {
@@ -201,11 +242,13 @@ function ToolRow({ tool }: { tool: AgentToolConfig }) {
         <span className="block truncate text-[13px] font-semibold text-t1">{title}</span>
         <span className="block truncate text-[12px] text-t3">{subtitle}</span>
       </span>
+      {/* SB17: */}
+      {tool.requireApproval && <span className="ml-auto shrink-0 rounded-full border border-warnbd bg-warndim px-2 py-0.5 text-[11px] font-semibold text-t1">asks first</span>}
     </li>
   );
 }
 
-function DraftPreview({ draft, seed, fresh, onPick }: { draft: Draft; seed: string; fresh: boolean; onPick: () => void }) {
+function DraftPreview({ draft, seed, fresh, onPick, onCases }: { draft: Draft; seed: string; fresh: boolean; onPick: () => void; onCases: (cases: AgentCaseDraft[]) => void }) {
   const c = draft.config;
   const p = c.persona;
   const [open, setOpen] = useState(false);
@@ -266,6 +309,47 @@ function DraftPreview({ draft, seed, fresh, onPick }: { draft: Draft; seed: stri
           <p className="text-[12px] text-t3">No tools in this draft.</p>
         )}
       </div>
+      {/* SB17: the brief's guardrails, practices and test cases */}
+      {(guardrailWords(c.guardrails).length > 0 || followsPractices(c.practices)) && (
+        <div>
+          <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Guardrails</h4>
+          <ul className="space-y-1">
+            {followsPractices(c.practices) && (
+              <li className="flex gap-1.5 text-[12px] leading-snug text-t2">
+                <ShieldCheck className="mt-0.5 size-3 shrink-0 text-gn" /> Follows your approved practices
+              </li>
+            )}
+            {guardrailWords(c.guardrails).map((w) => (
+              <li key={w} className="flex gap-1.5 text-[12px] leading-snug text-t2">
+                <ShieldCheck className="mt-0.5 size-3 shrink-0 text-gn" /> {w}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {draft.cases.length > 0 && (
+        <div>
+          <h4 className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Test cases · {draft.cases.length}</h4>
+          <ul className="space-y-1.5" aria-label="Test cases">
+            {draft.cases.map((tc, i) => (
+              <li key={i} className="flex items-start gap-1.5 rounded-xl border border-hair bg-wl p-2">
+                <span className="grid min-w-0 flex-1 gap-1">
+                  <Input aria-label={`Test case ${i + 1}: what a person sends`} value={tc.input} maxLength={4000} onChange={(e) => onCases(draft.cases.map((x, j) => (j === i ? { ...x, input: e.target.value } : x)))} className="h-8 text-[12px]" />
+                  <Input aria-label={`Test case ${i + 1}: what a right answer says`} value={tc.expected ?? ''} placeholder="A right answer says…" maxLength={1000} onChange={(e) => onCases(draft.cases.map((x, j) => (j === i ? { ...x, expected: e.target.value } : x)))} className="h-8 text-[12px]" />
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Remove test case ${i + 1}`}
+                  onClick={() => onCases(draft.cases.filter((_, j) => j !== i))}
+                  className="grid size-8 shrink-0 place-items-center rounded-lg text-t3 hover:bg-sf2 hover:text-t1 focus-visible:outline-2 focus-visible:outline-ac max-md:size-11"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {draft.needs.length > 0 && (
         <ul className="space-y-1.5" aria-label="Still to do">
           {draft.needs.map((n, i) => (
@@ -307,8 +391,10 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
   draftRef.current = draft;
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
-  // The conversation is kept (when the person keeps conversations): reopening the architect brings the last one back.
+  // The conversation is kept (when the person keeps conversations). SB17: the dialog starts a new one every time; the last
+  // kept one is offered as one line under the input ("Earlier: <title> · Continue").
   const kept = useConversation(SCOPE);
+  const [latest, setLatest] = useState<{ id: string; title: string }>();
 
   useEffect(() => () => abort.current?.abort(), []);
   useEffect(() => {
@@ -342,22 +428,19 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
     asked.current = null;
     if (want.force || !started.current) show(kept.items);
   }, [kept.items]); // eslint-disable-line react-hooks/exhaustive-deps
-  const resumed = useRef(false);
+  // SB17: the newest kept conversation, read only for its title; nothing of it is shown until the person continues it.
   useEffect(() => {
-    if (resumed.current) return;
-    resumed.current = true;
-    ask(false);
-    void kept
-      .resumeLatest()
-      .then((found) => {
-        if (!found) asked.current = null;
-        // The person started a design while it loaded: theirs stays, and later messages go to a new conversation.
-        else if (started.current && !shown.current) kept.startNew();
+    let live = true;
+    const params = new URLSearchParams({ surface: SCOPE.surface, subjectType: SCOPE.subjectType, subjectId: SCOPE.subjectId, limit: '1' });
+    void api<{ conversations: ConversationRecord[] }>(`/api/conversations?${params}`, { background: true })
+      .then(({ conversations }) => {
+        if (live && conversations[0]) setLatest({ id: conversations[0].id, title: conversations[0].title });
       })
-      .catch(() => {
-        asked.current = null;
-      });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
 
   /** Change the last (streaming) message. */
   const patch = (fn: (m: Message) => Message) => setMessages((list) => list.map((m, i) => (i === list.length - 1 ? fn(m) : m)));
@@ -370,6 +453,7 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
     const content = text.trim();
     if (!content || streaming) return;
     started.current = true;
+    setLatest(undefined); // SB17: what the person starts now is the newest
     const sent = resume ? base : [...base, { role: 'user' as const, text: content, steps: [] }];
     // A continued reply is the failed one, its error cleared.
     const failed = resume ? sent.at(-1) : undefined;
@@ -414,7 +498,7 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
             }));
           else if (event === 'draft') {
             const next = d as unknown as Draft;
-            proposal = { id: next.id, summary: next.summary, config: next.config ?? {}, needs: next.needs ?? [], dropped: next.dropped ?? [], missing: next.missing ?? [] };
+            proposal = { id: next.id, summary: next.summary, config: next.config ?? {}, needs: next.needs ?? [], dropped: next.dropped ?? [], missing: next.missing ?? [], cases: next.cases ?? [] /* SB17: */ };
             setDraft(proposal);
             setFresh(true);
             setPane('draft');
@@ -472,6 +556,9 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
         method: 'POST',
         json: { config: { ...draft.config, avatar: draft.config.avatar ?? { kind: 'face', face: randomFace(seed) }, ...(team.trim() && { team: team.trim() }) } },
       });
+      // SB17: the test cases go to the eval gate; one that fails leaves a line, the agent stays created.
+      const failed = await postCases(agent.id, draft.cases, (url, json) => api(url, { method: 'POST', json }));
+      if (failed.length) toast.error(`Created “${agent.name}”, but ${failed.length === 1 ? 'a test case' : `${failed.length} test cases`} did not save: ${failed.join('; ')}. Add ${failed.length === 1 ? 'it' : 'them'} on the Evaluations tab.`);
       toast.success(draft.needs.length ? `Created “${agent.name}”. Finish ${draft.needs.length === 1 ? 'its open item' : `its ${draft.needs.length} open items`} on the Abilities tab.` : `Created “${agent.name}”`);
       router.push(`/agents/${agent.id}`);
       onClose();
@@ -645,11 +732,24 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
                 label="Message the Agent architect"
                 chip={lastInfo?.model ? <ModelChip model={lastInfo.model} local={lastInfo.local} /> : undefined}
               />
+              {/* SB17: */}
+              {showEarlier(latest, messages.length, streaming) && (
+                <EarlierLine
+                  latest={latest!}
+                  onContinue={() => {
+                    ask(true);
+                    void continueLatest(latest!, kept.open).catch(() => {
+                      asked.current = null;
+                    });
+                    setLatest(undefined);
+                  }}
+                />
+              )}
             </div>
           </section>
           <section aria-label="Draft agent" className={cn('min-h-[260px] min-w-0 flex-1 overflow-y-auto bg-wl p-4', pane !== 'draft' && 'max-md:hidden')}>
             {draft ? (
-              <DraftPreview draft={draft} seed={seed} fresh={fresh} onPick={() => setPicking(true)} />
+              <DraftPreview draft={draft} seed={seed} fresh={fresh} onPick={() => setPicking(true)} onCases={(cases) => setDraft((d) => d && { ...d, cases })} />
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
                 <span className="grid size-12 place-items-center rounded-2xl border border-hair bg-sf text-t3">

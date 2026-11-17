@@ -30,7 +30,8 @@ const TRIGGER_WORDS: Record<string, RegExp> = {
   manual: /\b(manual(?:ly)?|by hand|button|click)\b/i,
 };
 
-function names(info: NodeTypeInfo | undefined, prompt: string): boolean {
+/** Whether the prompt names this trigger ("every morning" a schedule, "webhook" a webhook, an app's name its own trigger); the plan's repair reads it too. */
+export function names(info: NodeTypeInfo | undefined, prompt: string): boolean {
   if (!info) return false;
   const { triggerSource } = info.descriptor;
   if (triggerSource && TRIGGER_WORDS[triggerSource]?.test(prompt)) return true;

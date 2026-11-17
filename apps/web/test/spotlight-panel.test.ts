@@ -12,10 +12,10 @@ vi.mock('@/components/editor/assistant', async (original) => ({
   applyChanges: vi.fn(() => true),
 }));
 
-const { fixedNodes, ownRun, spotlightOwnsRun, useAssistant } = await import('@/components/editor/assistant');
+const { fixedNodes, historyOf, ownRun, spotlightOwnsRun, useAssistant } = await import('@/components/editor/assistant');
 const { useEditor } = await import('@/components/editor/store');
 const { afterReply, useAutonomous } = await import('@/components/editor/autonomous');
-const { agentStep, lastRunOf, sessionIsWaiting, sessionWaitsForApply, stepsOf, titleOf } = await import('@/components/editor/timeline');
+const { agentStep, draftPhase, draftStatus, lastRunOf, sessionIsWaiting, sessionWaitsForApply, stepsOf, titleOf } = await import('@/components/editor/timeline');
 type ChatItem = import('@/components/editor/assistant').ChatItem;
 
 const session: ChatItem[] = [
@@ -147,5 +147,36 @@ describe('the panel stays where the person put it', () => {
     expect(spotlightOwnsRun()).toBe(true);
     useEditor.setState({ executionId: 'ex_2' });
     expect(spotlightOwnsRun()).toBe(false);
+  });
+});
+
+describe('the status while a flow is drafted', () => {
+  const plan = { name: 'Bugs', steps: [], assumptions: [], cannot: [] };
+  const asked: ChatItem[] = [{ id: 'u', role: 'user', text: 'Read bugs from Linear' }, { id: 'c', role: 'assistant', parts: [] }];
+  const card = (state: 'waiting' | 'building' | 'built'): ChatItem => ({ id: 'c', role: 'assistant', parts: [{ kind: 'plan', plan: { plan, alternatives: {}, state, prompt: 'Read bugs from Linear' } }] });
+  const liveLine = (items: ChatItem[]) => stepsOf(items, { live: true, drafting: true }).steps.at(-1)?.text;
+
+  it('says "Planning the flow…" while the plan is made and the build wording once building', () => {
+    // The plan call: the card is empty, nothing is planned yet.
+    expect(draftPhase(asked, true)).toBe('planning');
+    expect(draftStatus(draftPhase(asked, true)!)).toBe('Planning the flow…');
+    expect(liveLine(asked)).toBe('Planning the flow…');
+    // The plan is agreed and the build runs.
+    const building = [asked[0], card('building'), { id: 'r', role: 'assistant', parts: [] } as ChatItem];
+    expect(draftPhase(building, true)).toBe('building');
+    expect(draftStatus('building')).toBe('Building the flow from the plan…');
+    expect(liveLine(building)).toBe('Building the flow from the plan…');
+    // An older, finished plan does not make the next ask's plan call look like a build; nothing drafting says nothing.
+    expect(draftPhase([card('built'), ...asked], true)).toBe('planning');
+    expect(draftPhase(building, false)).toBeUndefined();
+  });
+});
+
+describe('what the builder chat is told about earlier turns', () => {
+  it('gives a plan card a line with its steps, not "(no reply)"', () => {
+    const plan = { name: 'Bug triage', steps: [{ key: 's1', type: 'core.schedule', name: 'Every weekday', does: 'Run at 8' }, { key: 's2', type: 'linear.linear', name: 'Get bugs', does: 'Read new bugs', from: 's1' }], assumptions: [], cannot: [] };
+    const items: ChatItem[] = [{ id: 'u', role: 'user', text: 'Triage bugs' }, { id: 'c', role: 'assistant', parts: [{ kind: 'plan', plan: { plan, alternatives: {}, state: 'built', prompt: 'Triage bugs' } }] }];
+    const [, said] = historyOf(items);
+    expect(said.content).toBe('[Plan “Bug triage” (built): 1. Every weekday: Run at 8; 2. Get bugs: Read new bugs]');
   });
 });

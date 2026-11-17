@@ -118,6 +118,9 @@ function sends(step: CheckedStep): boolean {
   return typeof p.operation === 'string' && writes.test(p.operation);
 }
 
+// SB17: one heuristic for the session's "sends" and the agent brief's "writes" (it asks first).
+export const writesOutside = (step: Pick<CheckedStep, 'type' | 'parameters'>) => sends({ ...step, name: '' });
+
 /**
  * Steps that reach outside the flow when they run: an HTTP call that isn't a GET, or an app operation that sends,
  * posts, creates, changes or deletes. A test run executes them for real, so Spotlight asks first. A heuristic: a

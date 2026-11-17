@@ -13,6 +13,7 @@ import { completeBubbles, idleBubbles, liveMentions, TEST_BUBBLE, type Bubble, t
 import { useBuildFlow } from '../ai-builder';
 import { afterReply, typedSession } from '../autonomous';
 import { answeredQuestion } from './answered-question';
+import { cardAskFor, designAgentCard } from './agent-ask'; // SB16:
 import { draftWholeFlow } from './draft-flow';
 import { suggestionKey, useAssistant, useSuggestions, useWorking, type ChatItem, type KeptMention, type Suggestion } from '../assistant';
 import { useEditor } from '../store';
@@ -134,7 +135,8 @@ export function Composer() {
   // The `@` picker (docs/spotlight.md): the canvas's nodes first ("On this page"), then everything else the caller may tag.
   const canvasHits = useMemo<MentionHit[]>(() => ctx.nodes.map((n) => ({ type: 'node', id: n.id, workflowId, name: n.name, hint: 'on the canvas' })), [ctx.nodes, workflowId]);
   const picker = useMentionPicker({ value: draft, onChange: (next) => setDraft(next), inputRef: input, scope: { workflowId: workflowId || undefined, local: canvasHits } });
-  const live = pending || drafting;
+  const designing = useAssistant((s) => s.agents.some((a) => a.state === 'designing'));
+  const live = pending || drafting || designing;
   // The model that answered last: no route says which one answers before the first reply.
   const model = useAssistant((s) => lastModel(s.items)?.name);
   const local = useAssistant((s) => lastModel(s.items)?.local);
@@ -215,6 +217,12 @@ export function Composer() {
     setDraft('');
     setCaret(0);
     setMentions([]);
+    // SB16: "create an agent …" on any canvas: the agent as a card to review (and, on an empty canvas, a starter flow with it); a placed ask stays the chat's new agent.
+    const agent = cardAskFor(message);
+    if (agent) {
+      await designAgentCard(message, agent, { starter: !useEditor.getState().nodes.length });
+      return;
+    }
     if (!useEditor.getState().nodes.length) {
       // An empty canvas: the builder drafts the whole flow in one go, with test data on the trigger.
       await draftWholeFlow(message, build);
@@ -289,7 +297,7 @@ export function Composer() {
     }
   };
 
-    const placeholder = drafting || pending ? 'Spotlight is working on the flow…' : empty ? 'Describe the workflow you want…' : 'Ask or describe a change';
+    const placeholder = designing && !drafting && !pending ? 'Spotlight is designing the agent…' : drafting || pending ? 'Spotlight is working on the flow…' : empty ? 'Describe the workflow you want…' : 'Ask or describe a change';
 
   return (
     <div className="shrink-0 space-y-2 border-t border-hair p-2.5">
