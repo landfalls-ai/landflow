@@ -590,6 +590,11 @@ switch: new sessions appear on their own every few seconds, except while the poi
 scrolled.
 Only one run can be active per session.
 
+**What each call reached.** Each tool row says where its call went (the credential's name, its type and host, port or
+file, never a secret), and a knowledge search shows its passages with their source: see
+[What a tool call reached](run-trace.md#what-a-tool-call-reached). The agent page's timeline and Test chat read the same
+`target` the journal records.
+
 ### Test chat
 
 The request may carry `projectId`: the chat then runs as if the agent was called from that project, and the block names it. A project you have no role in is a 404 "Project not found". A project the agent is not available in (not its home, not shared with it, not shared with all) is a 403.

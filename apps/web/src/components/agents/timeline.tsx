@@ -17,6 +17,7 @@ import { NodeIcon } from '../ui/icon';
 import { JsonView } from '../ui/json-view';
 import { shortArg, snippetOf } from '@/lib/client/node-progress';
 import { useNodeTypes } from './use-agent-data';
+import { Passages, passagesFor, ViaLine } from '../run-trace/passages'; // AG14:
 
 export type ToolEntry = Extract<TimelineEntry, { type: 'tool' }>;
 
@@ -270,6 +271,7 @@ function ToolRow({
         {entry.durationMs !== undefined && <span className="font-mono text-[11px] text-t3">{duration(entry.durationMs)}</span>}
         <ToolStatusIcon status={entry.status} />
       </button>
+      {entry.target && <ViaLine target={entry.target} className="px-3 pb-1.5 pl-[38px] text-[11px]" />}{/* AG14: where the call went, under its name */}
       {(entry.remote ?? (entry.status === 'running' ? live : undefined)) && <RemoteSteps remote={(entry.remote ?? live)!} />}
       {waiting && (
         <div className="border-t border-warnbd bg-warndim px-3 py-2.5">
@@ -332,6 +334,11 @@ function ToolRow({
               <div className="whitespace-pre-wrap rounded-lg border border-rdbd bg-rddim px-2.5 py-1.5 font-mono text-[12px] text-rd [overflow-wrap:anywhere]">
                 {entry.error}
               </div>
+            </div>
+          ) : entry.output !== undefined && passagesFor(entry.output).length > 0 ? (
+            <div>
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Passages</div>
+              <Passages output={entry.output} />
             </div>
           ) : entry.output !== undefined ? (
             <div>

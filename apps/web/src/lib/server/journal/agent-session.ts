@@ -128,7 +128,7 @@ export function agentSessionJournal(session: Pick<AgentSession, 'execution'>, ag
         actor: target,
         ...(delegate && { caller: actor }),
         input: why ? asked : entry.input,
-        attrs: { tool: entry.tool, toolKind: entry.kind, ...(entry.nodeType && { nodeType: entry.nodeType }), ...(why && { reason: why }) },
+        attrs: { tool: entry.tool, toolKind: entry.kind, ...(entry.nodeType && { nodeType: entry.nodeType }), ...(entry.target && { target: entry.target }), /* AG14: */ ...(why && { reason: why }) },
         at: entry.at,
       });
     }

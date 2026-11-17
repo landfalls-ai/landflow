@@ -9,7 +9,7 @@ import type { AgentMemory, AgentTool, LanguageModel } from '@landflow/engine';
 import { approvalSubject, type AgentSession, type AgentStreamEvent } from '../../shared/agents';
 import { agentAllowedBy } from '../../shared/project-policy';
 // AG10: the chat approval (the AI Agent node's own wait, reused).
-import { approvalSettings, askForApproval, decisionsOf } from './ai';
+import { approvalSettings, askForApproval, decisionsOf, toolTargets } from './ai';
 
 const main = [{ type: 'main' as const }];
 
@@ -218,6 +218,8 @@ export const messageAgentNode = defineNode({
     const [model] = connection ? await connection<LanguageModel>('ai_languageModel') : [];
     const [memory] = connection ? await connection<AgentMemory>('ai_memory') : [];
     const tools = connection ? await connection<AgentTool>('ai_tool') : [];
+    // AG14: what each wired tool reaches (its sub-node's credential and host), for the via line.
+    const flowTargets = await toolTargets(ctx, tools);
     const send = ctx.sendChunk;
     const items = ctx.getInputData();
     // AG10: back from a wait for the person's Approve in the editor's chat (WaitRequest.rerun): the items done, and the session to go on with.
@@ -295,7 +297,7 @@ export const messageAgentNode = defineNode({
             // AG10: 'ask' only in the editor's chat with Tool Approvals set to ask there.
             approvals: askInChat ? 'ask' : 'deny',
             toolImages: { keep: Number(ctx.getNodeParameter('toolImagesKept', i, 2)) },
-            ...((model || tools.length) && { flow: { ...(model && { model }), ...(tools.length && { tools }) } }),
+            ...((model || tools.length) && { flow: { ...(model && { model }), ...(tools.length && { tools, targets: flowTargets }) } }),
             // The chat panel and streaming triggers get the agent's answers and tool calls as they happen.
             ...(onEvent && { onEvent }),
           });
@@ -406,7 +408,7 @@ export function streamer(send: NonNullable<IExecuteContext['sendChunk']>, itemIn
       // A call waiting for a person is not a failure, and a denied one is a decision (the chat's step list reads 'Waiting for approval' and 'Denied').
       const status = entry.status === 'running' ? 'started' : entry.status === 'success' ? 'finished' : entry.status === 'awaiting_approval' ? 'approval' : entry.status === 'denied' ? 'denied' : 'failed';
       const output = entry.error ?? (entry.output === undefined ? undefined : typeof entry.output === 'string' ? entry.output : JSON.stringify(entry.output));
-      send({ type: 'tool', itemIndex, ...label, tool: { id: entry.callId, name: entry.tool, status, input: entry.input as JsonObject, ...(output !== undefined && { output: output.slice(0, 2_000) }) } });
+      send({ type: 'tool', itemIndex, ...label, tool: { id: entry.callId, name: entry.tool, status, input: entry.input as JsonObject, ...(output !== undefined && { output: output.slice(0, entry.target?.knowledge ? 12_000 : 2_000) }), ...(entry.target && { target: entry.target }) } }); // AG14:
     }
   };
 }

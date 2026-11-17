@@ -715,3 +715,14 @@ own sections are [call attribution](#call-attribution-wave-11) and [the gateway'
 - **Names**: an app a Marketplace entry or an agent tool is named after gets its mark only when the whole name says it
   ("Slack", "Linear Trigger", "GitHub MCP"); "Linear regression" or "Slack-like notifier" get none, and neither does an
   app with no entry in `brand-icons.ts`.
+
+## What a tool call's target cannot say
+
+- A target says where the host sent the call, not what the system then reached: an MCP server's own downstream systems
+  and a plugin that does not say where it connects show only the server's or the plugin's host (or its name).
+- A credential that keeps its address in a secret field (a made-up type with a secret `url`) gives no endpoint; the row
+  shows the credential's name and type alone.
+- A run from before wave ag3 has no target, so its calls show no via line and no Reached row. The AI Agent node reads a
+  sub-node's credential from the saved workflow in manual and chat runs (the published one in production runs), so an unsaved edit shows the saved credential. The public Chat trigger and webhook streams drop a tool's target.
+- A knowledge search's passages come from the chat's output text, which is cut at 12,000 characters for a standalone agent's
+  knowledge base (2,000 for other tools); a longer answer shows its raw text.

@@ -15,6 +15,7 @@ import { fileDocuments, type FileInput } from '../rag/files';
 import { recursiveCharacterSplit } from '../rag/splitters';
 import { insertDocuments, MemoryVectorStore, PgVectorStore, SqliteVectorStore, type VectorStore } from '../rag/stores';
 import type { BuiltTool } from './tools';
+import { targetOfKnowledge } from './tool-target'; // AG14:
 import { ollamaUrl } from '../config';
 
 /** The vector store node each kind of store matches (its icon in the timeline, its credential requirement). */
@@ -70,6 +71,8 @@ export function knowledgeTool(config: KnowledgeBaseToolConfig): BuiltTool | { er
   return {
     kind: 'node',
     knowledge: true,
+    // AG14: the collection, the store and how it searched; the document count comes with each call (cheap on SQLite only).
+    target: targetOfKnowledge({ collection: config.collection.trim(), store: config.store, embeddings: config.embeddings }),
     nodeType: KNOWLEDGE_STORE_NODE[config.store],
     name: toToolName(config.name || `search_${config.collection}`),
     label,
@@ -86,7 +89,12 @@ export function knowledgeTool(config: KnowledgeBaseToolConfig): BuiltTool | { er
         String(input.query ?? ''),
         topK,
       );
-      return { output: { results: documents.map((doc) => ({ pageContent: doc.pageContent, metadata: doc.metadata, ...(doc.score !== undefined && { score: doc.score }) })) } };
+      // AG14: with the document count, when it is cheap to read (the SQLite store).
+      const count = config.store === 'sqlite' ? await listKnowledgeDocuments(config).then((r) => r.documents.length, () => undefined) : undefined;
+      return {
+        output: { results: documents.map((doc) => ({ pageContent: doc.pageContent, metadata: doc.metadata, ...(doc.score !== undefined && { score: doc.score }) })) },
+        ...(count !== undefined && { target: targetOfKnowledge({ collection: config.collection.trim(), store: config.store, embeddings: config.embeddings }, count) }),
+      };
     },
   };
 }
