@@ -2854,7 +2854,7 @@ account's own console is the figure.
 - Revising teams, and the Agent architect dialog changing agents: wave ag1 changes a single agent from Spotlight only ([limitations.md](limitations.md)).
 - The live pass's leftovers (found by running the four agents; each is a small fix for the next agents wave, none blocks):
   - "Pull out the IOCs" does not name Extract IOCs, so the triage card drops it silently and Not added is empty.
-  - ~~Generated eval cases are descriptions, not inputs, so a good agent is held by the gate.~~ built in ag2, AG08
+  - Generated eval cases were descriptions, not inputs (built in ag2, AG08: the cases are now the alert's or question's own text), but a good agent that ends in an approval-gated send can still be held: the gate runs with approvals denied and the expected answers say the email was sent (live: the alert triager's draft scored 2.5 and 3.0 / 5; a read-only Grafana agent 3.75 / 5 and published).
   - The editor's chat cannot approve a tool call (only the agent page's Test chat shows approval cards).
   - The Grafana agent's instructions name node types (`grafana.getAlerts`, `core.httpRequest`) instead of tool names, and ~~its HTTP Request tool is preset to `http://127.0.0.1:3000/api/health`~~ (built in ag2, AG08).
   - ~~Send Email's To and From are fixed empty and its Subject and Body unset on the card.~~ built in ag2, AG08 (To is the ask's address, Subject and Body are `$fromAI`; From stays the person's).

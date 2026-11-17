@@ -74,7 +74,12 @@ another). A required property the tool's schema lets the model fill on each call
 `$fromAI` value) is not on the Left row. The test cases are the inputs themselves (an alert's text, the question as asked),
 never a description of one ("Pasted alert about high CPU"), a `<placeholder>` or a line under 12 characters: such a case is
 dropped, and a proposal left with fewer than 3 gets one follow-up call that asks for real inputs, so a good agent is not
-held by the gate for a description it cannot answer.
+held by the gate for a description it cannot answer. A `$fromAI` value in a destination is emptied too (the request gave
+none), so an HTTP Request tool meant to fetch a page the user pastes comes out with an empty URL and a Left row to set
+it: say the URL in the request, or set it on the tool. A case's expected answer may still say an approval tool ran (the
+email was sent) although the gate runs with approvals denied, so an agent whose job ends in a send can score 2.5 to 3 / 5
+at the gate (limitations.md); the live pass of AG08 read 3.75 / 5 for a read-only Grafana agent and 2.5 and 3.0 / 5
+(drafts) for the alert triager.
 
 On a local (Ollama) model the architect proposes with the flat `propose_design` instead: the same agent with every
 value as plain text (name, audience, mission, Always and Never one rule per line, answer length `short`, `medium` or
@@ -851,7 +856,9 @@ matches is allowed, so an agent without rules behaves exactly as before.
 parameters of the same name only when the tool's own schema offered them. A tool whose node declares a `toolInputSchema`
 (Acknowledge Alert) or whose parameters hold `$fromAI` placeholders (a Send Email a design made: Subject and Body) takes
 exactly those arguments, so a To the design fixed stays fixed. A tool with neither keeps the generic schema, whose
-"Optional override" arguments name each primitive parameter, so a saved agent whose node tool uses it runs as before. The
+"Optional override" arguments name each primitive parameter, so a saved agent's node tool runs as before for its primitive
+parameters (a field-name parameter such as `textField`, or a collection or JSON one such as HTTP Request's `headers`, is
+not offered by that schema, so an argument of that name no longer overrides). The
 only saved agents this touches are those whose node tool has `$fromAI` placeholders or a node with a `toolInputSchema`
 **and** whose model passed an argument named like a parameter the schema never offered (it was applied before, and is now
 ignored). The workflow AI Agent's tool sub-nodes keep their own rule.

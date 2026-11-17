@@ -82,6 +82,9 @@ describe('Send Email: the ask’s address, a subject and a body the agent writes
   it('does not put the sender in To', () => {
     expect(toOf('Create an agent that sends a summary to oncall@landflow.test from alerts@landflow.test. Use the Send Email tool.', '')).toBe('oncall@landflow.test');
   });
+  it('keeps a target after a "from <source>" phrase', () => {
+    expect(toOf('Create an agent that emails a summary from Grafana to oncall@landflow.test. Use the Send Email tool.', '')).toBe('oncall@landflow.test');
+  });
   it('does not put a cc aside in To', () => {
     expect(toOf('Create an agent that emails a summary to oncall@landflow.test (cc me at me@landflow.test only if critical). Use the Send Email tool.', 'oncall@landflow.test')).toBe('oncall@landflow.test');
   });

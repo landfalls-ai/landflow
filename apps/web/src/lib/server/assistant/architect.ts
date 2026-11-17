@@ -449,7 +449,7 @@ function readDefaults(info: NodeTypeInfo, parameters: Record<string, unknown>, r
 // AG08: a design fills a node tool's destination (where it sends or reads) only from the request, and a mail node's content per call.
 const DESTINATION_NAME = /^(?:to|cc|bcc|toEmail|ccEmail|bccEmail|recipients?|url|baseUrl|endpoint|endpointUrl|webhookUrl|channel|channelId|chatId|path|filePath|repository|owner|repo)$/i;
 const isMailNode = (info: NodeTypeInfo) => /e-?mail|smtp|\bmail\b/i.test([info.descriptor.displayName, ...(info.descriptor.keywords ?? [])].join(' '));
-/** The addresses a request sends to: the "to <address>" targets (and ones joined by "," or "and") of its sentences that say "email/send … to", in order, once each. Never one ruled out, a sender (from) or a cc. */
+/** The addresses a request sends to: the "to <address>" targets (and ones joined by "," or "and") of its sentences that say "email/send … to", in order, once each. Never one ruled out or a cc (a sender is never a "to <address>" target). */
 function mailAddresses(request: string): string[] {
   const found: string[] = [];
   const address = '[\\w.+-]+@[\\w-]+(?:\\.[\\w-]+)+';
@@ -457,7 +457,7 @@ function mailAddresses(request: string): string[] {
   for (const clause of request.replace(AGENT_ASK, ' ').split(/(?<=[.!?])\s+|[;\n]/)) {
     if (!MAIL_TO.test(clause)) continue;
     for (const m of clause.matchAll(target)) {
-      if (/\b(?:never|not|don'?t|do not|except|without|cc|bcc|from)\s+(?:\w+\s+)?$/i.test(clause.slice(0, m.index))) continue;
+      if (/\b(?:never|not|don'?t|do not|except|without|cc|bcc)\s+(?:\w+\s+)?$/i.test(clause.slice(0, m.index))) continue;
       for (const a of m[1].match(new RegExp(address, 'g')) ?? []) if (!found.some((f) => f.toLowerCase() === a.toLowerCase())) found.push(a);
     }
   }
