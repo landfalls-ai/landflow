@@ -2680,3 +2680,7 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   not catch yet; one click on a credential row's radio did nothing before Apply (the label works; unconfirmed). The
   phone Execute/Debug pill overlap is the same on main (a phone follow-up). Not Spotlight: after runs the host logged
   "the brain's run failed: NOT NULL constraint failed: brain_facts.subject_type" 6 times. **Fixed in wave 14 (SP13):** `staleFactsBefore` writes the whole row, so the study finishes, is stamped, and the detectors run on the brain's own loop.
+
+## Spotlight wave sb3
+
+- **SB15, the build summary, built (2026-11-17):** a first draft's reply is one sentence and a card: the steps in words (the plan's lines, else one per node), what was assumed, what is left as buttons (**Open “If”** for an empty or made-up item, **Pick a Linear credential** for a credential item, which opens SB12's picker inline and never picks, decision D2) and what no node here can do; a row reads done from the canvas. The build route adds `summary` to the draft after the guards. Scenarios `sb15-linear-summary` and `sb15-nothing-left`.
