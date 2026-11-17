@@ -73,7 +73,10 @@ export function targetOfNode(nodeType: string, refs: Refs, parameters: JsonObjec
   const display = 'error' in node ? undefined : node.descriptor.displayName;
   // A node the host runs itself (core.*) has no plugin: it is named by what it is.
   if (pluginIdOf(nodeType) === 'core') return { name: display ?? nodeType, ...(endpoint && { endpoint }) };
-  return { name: `${plugin?.id ?? pluginIdOf(nodeType)} plugin`, ...(display && { system: display }), ...(endpoint && { endpoint }), ...(plugin && { plugin }) };
+  // ag3 carryover (the live pass): with no URL or file of its own, the call goes to the plugin, so its line says where the
+  // plugin answers ("triage plugin · Normalize Alert 127.0.0.1:7798"); targetLine shows the system and drops the plugin's part.
+  const at = endpoint ?? plugin?.endpoint;
+  return { name: `${plugin?.id ?? pluginIdOf(nodeType)} plugin`, ...(display && { system: display }), ...(at && { endpoint: at }), ...(plugin && { plugin }) };
 }
 
 export interface KnowledgeTargetInput {

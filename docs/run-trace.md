@@ -333,7 +333,7 @@ is given a `target` (`ToolTarget`, `lib/shared/tool-target.ts`) when it is built
 it points. A target is made only of non-secret facts: of a credential only the fields that are not secret
 (`secretFieldsOf` excludes them) and are named `host`, `port`, `url`, `baseUrl`, `endpoint`, `server`, `database` or
 `path`; a URL is cut to `host:port` (its user, password, path, query and fragment never reach it), a file path to its last
-part (`/x/y/sales.db` becomes `sales.db`). A node with no credential names its plugin and where the plugin answers; a
+part (`/x/y/sales.db` becomes `sales.db`). A node with no credential names its plugin and where the plugin answers (its `endpoint` is the plugin's when the node names no URL or file of its own, so the line reads `triage plugin · Normalize Alert 127.0.0.1:7798`); a
 workflow, a sub-agent, an MCP server and an A2A agent name themselves and their host. An HTTP Request whose URL the model
 gives is read per call, from the call's input, as a host only. A target never depends on the journal's redaction.
 
