@@ -24,6 +24,8 @@ function scripted(provider: string, turns: Array<Partial<ModelTurn> | (() => nev
     provider,
     model: 'scripted',
     async generate(request) {
+      // SB17: the architect's one follow-up call for test cases (agent-brief.test.ts tests it): answered here without a scripted turn.
+      if (typeof request.system === 'string' && request.system.startsWith('You write test cases')) return { text: 'Hello => A greeting\nWhat can you do? => What it does\nSomething odd => Says it cannot help', toolCalls: [], stopReason: 'stop' as const };
       offered.push((request.tools ?? []).map((t) => t.name));
       const next = turns.shift();
       if (!next) throw new Error('No scripted turn left');

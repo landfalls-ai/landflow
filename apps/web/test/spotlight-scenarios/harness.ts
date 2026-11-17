@@ -21,6 +21,8 @@ import { corePlugin } from '@/lib/server/nodes';
 import { registry } from '@/lib/server/plugins/registry';
 import { registryLookup } from '@/lib/server/assistant/ops';
 import { agentStore } from '@/lib/server/agents/store';
+import { listCases } from '@/lib/server/agents/eval-gate'; // SB17:
+import { guardrailWords } from '@/lib/shared/agents'; // SB17:
 import { handler } from '@/lib/server/http';
 import { startFakeModels, readSse, type FakeModels } from '../fake-ai-services';
 import { estimatedTokens } from '@/lib/shared/build-plan'; // SB13:
@@ -236,12 +238,13 @@ interface Collected {
   done?: { steps: number; model?: string; usage: { inputTokens: number; outputTokens: number } };
   error?: string;
   drafts: Array<Partial<AgentConfig>>;
+  draftCases: number[]; // SB17: the cases each draft came with
   asked: Array<{ question: string; choices: string[] }>; // SB11:
   offers: NonNullable<Outcome['offers']>; // SB12:
 }
 
 function collect(events: Array<{ event: string; data: any }>): Collected { // eslint-disable-line @typescript-eslint/no-explicit-any
-  const out: Collected = { text: '', tools: [], proposals: [], drafts: [], asked: [], offers: [] };
+  const out: Collected = { text: '', tools: [], proposals: [], drafts: [], draftCases: [] /* SB17: */, asked: [], offers: [] };
   for (const { data } of events) {
     switch (data.type) {
       case 'text':
@@ -258,6 +261,7 @@ function collect(events: Array<{ event: string; data: any }>): Collected { // es
         break;
       case 'draft':
         out.drafts.push(data.config);
+        out.draftCases.push(Array.isArray(data.cases) ? data.cases.length : 0); // SB17:
         break;
       case 'credential': out.offers.push({ node: data.node, credentialTypes: data.credentialTypes }); break; // SB12:
       case 'done':
@@ -271,12 +275,19 @@ function collect(events: Array<{ event: string; data: any }>): Collected { // es
   return out;
 }
 
-const agentOf = (config: Partial<AgentConfig>, published = false): Outcome['agents'][number] => ({
+const agentOf = (config: Partial<AgentConfig>, published = false, draftCases = 0, id?: string): Outcome['agents'][number] => ({
   name: config.name ?? '',
   ...(config.model && { model: `${config.model.provider}/${config.model.model}` }),
   tools: (config.tools ?? []).filter((t) => t.type !== 'knowledge').map((t) => ('name' in t && t.name ? t.name : t.type)),
   knowledge: (config.tools ?? []).some((t) => t.type === 'knowledge'),
   published,
+  // SB17: what the brief put in the agent: each tool's type, operation and approval, the cases (saved ones when it exists), the practices and the guardrails.
+  toolsDetail: (config.tools ?? []).flatMap((t) =>
+    t.type === 'node' ? [{ name: t.name, type: t.nodeType, ...(typeof t.parameters?.operation === 'string' && { operation: t.parameters.operation }), requireApproval: t.requireApproval === true }] : [],
+  ),
+  cases: id ? listCases(id).length : draftCases,
+  practices: config.practices === 'on',
+  guardrails: guardrailWords(config.guardrails),
 });
 
 // ---------------------------------------------------------------------------
@@ -597,14 +608,18 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
       const response = await route.POST(post('/api/agents/design', { name: nameOfAsk(scenario.ask), description: scenario.ask, instructions: '', ...(canvas && { workflow: canvas.name }), ...(scenario.start?.model && { model: scenario.start.model }) /* SB19: */ }));
       const body = (await response.json()) as { agent?: { id: string; name: string; tools: AgentConfig['tools']; model?: AgentConfig['model'] }; error?: string };
       if (!body.agent) outcome.error = body.error ?? `design ${response.status}`;
-      else outcome.agents.push(agentOf(body.agent as Partial<AgentConfig>));
+      else {
+        outcome.agents.push(agentOf(body.agent as Partial<AgentConfig>, false, 0, body.agent.id /* SB17: */));
+        outcome.draft = { instructions: (body.agent as Partial<AgentConfig>).instructions ?? '' }; // SB17: the brief's four parts are read from it
+      }
       outcome.modelCalls = fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 1;
     } else {
       const route = await import('@/app/api/assistant/agent/route');
       const response = await route.POST(post('/api/assistant/agent', { messages: [{ role: 'user', content: scenario.ask }], ...(model && { model }) }));
       const result = collect(await readSse(response));
       Object.assign(outcome, { text: result.text, tools: result.tools, ...(result.error && { error: result.error }) });
-      outcome.agents.push(...result.drafts.map((d) => agentOf(d)));
+      outcome.agents.push(...result.drafts.map((d, i) => agentOf(d, false, result.draftCases[i] ?? 0 /* SB17: */)));
+      if (result.drafts.length) outcome.draft = { instructions: result.drafts.at(-1)?.instructions ?? '' }; // SB17: the brief's four parts are read from it
       withDone({ ...result, calls: result.done?.steps ?? 0 });
     }
   } catch (e) {

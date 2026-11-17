@@ -76,11 +76,52 @@ retried. A draft with no summary is shown as "Draft: <name>", and "none" for the
 The chat is on the chat kit ([assistant.md](assistant.md#chat-surfaces)): the tools it used are one line ("6 steps ·
 24.8 s") that opens into each step with its time, a footer under the reply gives the model, time, steps, tokens and
 cost, and a model chip sits in the box. It **keeps its conversation** with the others
-([assistant.md](assistant.md#conversation-history), surface `architect`, subject `agent` / `new`): close the dialog and
-open it again and the latest design is there under an **Earlier** divider, with its last draft on the right, and the
-clock button lists the older ones (architect conversations only: a Spotlight or brain conversation is not offered here). When the model fails after some steps, the error offers **Continue from step N**
+([assistant.md](assistant.md#conversation-history), surface `architect`, subject `agent` / `new`), but the dialog **starts
+fresh** every time it opens: the newest kept design is offered as one line under the box, "Earlier: <its title> ·
+Continue", which brings it back under an **Earlier** divider with its last draft on the right; the clock button lists the
+older ones (architect conversations only: a Spotlight or brain conversation is not offered here). When the model fails after some steps, the error offers **Continue from step N**
 (the request carries `resume: { checkpoint }`, so no tool runs twice; the checkpoint lives 15 minutes in the host's
 memory) beside **Try again**. A failure read back from a kept conversation can only be tried again.
+
+**The brief.** An agent worth publishing is more than a paragraph and whatever tools the model liked, so every draft (the
+dialog's and Spotlight's design) is made to a brief in code (`architect.ts`, marked `SB17`), whatever the model sent:
+- **Instructions in four parts**, each starting a line, in this order: `Input:` (what each message or item brings),
+  `Steps:` (numbered, naming its tools), `Output:` (what it answers, how long) and `Hand over when:` (what it does not
+  decide alone). Both proposal tools ask for them; a part the draft lacks is written from the draft's own fields (its
+  audience, mission, description, answer length and tools' names), never left empty, and a part it has is kept.
+- **Approved practices for "our practices".** When what you wrote asks for "our practices", "our standards", "our
+  guidelines" or "our conventions" (`PRACTICES_ASK`; English only), the draft keeps `practices: 'on'` and gets the
+  **Check Practices** node (`core.practiceCheck`, tool `check_practices`) with `changedFiles` filled by the model per call
+  (`$fromAI('changedFiles', …, 'json')`); the repository is yours to give (an `owner/name` in your words is used, else
+  it is listed under what you still have to finish). A request that doesn't ask gets no practice tool, and the model's
+  own is left out. See [practices.md](practices.md).
+- **Least privilege.** A node tool is kept only for an app the request names (its name, plugin id or a specific keyword:
+  "pull requests" names GitHub) and a write only when the request asks for one (post, send, comment, create, update,
+  delete, merge, notify …; "create an agent" is not one); an agent delegation (a Run an Agent or Run a Team node, or
+  an `agent` tool) only when it asks to hand work over (or names that agent); a knowledge base only when it says what the agent answers
+  from (docs, documents, a wiki, policies …: `KNOWLEDGE_ASK`). What is left out is listed under "Left
+  out" with its reason ("Slack: the request never asks for it (it would change things there)"). A tool the model left
+  on the node's defaults, which would write, becomes a read when the request doesn't ask to write (the pull request
+  resource and its first read operation for "pull requests"). The prompt says "the fewest tools; read before write".
+  On Spotlight's design path the request is only the new agent's own fields (name, description, instructions, tools, knowledge), never `designRequest`'s fixed sentences.
+- **Writes behind approval.** Every node tool that writes gets `requireApproval: true`, so a person approves each call;
+  reads get none. A write is what the session's heuristic calls one (`writesOutside`, the HTTP method and the
+  operation's name: [assistant.md](assistant.md#autonomous-mode)) or, for a plugin that marks its reads
+  (`idempotent: true`), an operation it doesn't mark. The preview shows **asks first** on them.
+- **Guardrail defaults.** Every draft gets an input guardrail that masks secrets in messages (`sanitize`, balanced), and,
+  when it has any tool, a tool-result guardrail that blocks text that looks like instructions
+  (`jailbreak` with `useModel: false`: pattern checks only, no extra model call). A draft's own guardrails are kept. The
+  preview lists them in words ("Masks secrets in messages", "Ignores instructions inside tool results").
+- **Test cases.** Each proposal asks for 3 to 5 cases, one plain line each (`what a person would send => what a right
+  answer says`; at most 5, each input under 4 000 characters). With fewer than 3 the architect makes one small
+  follow-up call for cases alone (counted in the same scope); still fewer, the draft says "Add test cases on the
+  Evaluations tab" rather than inventing any. The preview lists them, each editable and removable; **Create agent**
+  posts each to the [eval gate](#eval-gate) after the import (a case that fails is a toast line, the agent stays
+  created). Spotlight's design (`POST /api/agents/design`) saves them on the new agent and answers them as `cases`.
+  So a designed agent's first publish runs the gate.
+
+The brief does not judge whether a case is a good one, and it reads app names in the words you wrote (see
+[limitations.md](limitations.md)).
 
 Every draft is checked before you see it:
 - node types that aren't online or can't be tools are left out, and so are workflows an agent can't call and agents
@@ -114,7 +155,8 @@ name (SQLite store, embedded with a local embeddings model: `nomic-embed-text`, 
 model pulled, the draft gets no knowledge base and says why.
 
 **For Spotlight.** When Spotlight proposes a new agent ([newAgent](assistant.md#agents-and-teams)), the editor calls
-`POST /api/agents/design` and the architect designs it without a conversation (`designAgent`): the name, what it does,
+`POST /api/agents/design` and the architect designs it without a conversation (`designAgent`), from what is written (what
+only the person can give, a repository or a channel, is left for them, not invented): the name, what it does,
 its instructions and where its step sits in the flow. The first try hands the model what it would otherwise look up
 (`designBrief`: the models, the knowledge bases, and the nodes whose name, type or keywords match the request, with
 two-letter and filler words left out of the search) and offers one call, `propose_design`, whose values are all plain
@@ -124,7 +166,9 @@ tools. If neither does, the agent is what Spotlight gave, on the first model. Th
 face, and is saved in your project; tool-call markup a model leaks into a value (`<parameter=0>`) is dropped.
 Spotlight's request also carries the apps the agent needs (`tools`, "It needs: Linear: read issues.") and the documents
 it answers from (`knowledge`, which asks for a knowledge base, or for a mention of none that fits); the brief puts the
-node types matching the tool hints first.
+node types matching the tool hints first. A tool it named that the model left out is added from the brief's top hit for
+that app when the hit scored 8 or more and is that app's, else it is listed as missing; the documents it answers from get
+a knowledge tool as above.
 
 The avatar, colour and team you change in the dialog stay through later drafts. **Create agent** makes a draft agent
 from it (`POST /api/agents/import`); finish the open items on its page. The architect never creates or
@@ -132,7 +176,7 @@ changes an agent itself. It uses the assistant's model (`LANDFLOW_BUILDER_MODEL`
 [editor assistant](assistant.md)), at most 10 model calls a message. Each message is recorded in the
 [second brain](second-brain.md) as a `spotlight.asked` event with `architect: true`. Code:
 `apps/web/src/lib/server/assistant/architect.ts`, `apps/web/src/lib/server/assistant/agent-resources.ts`,
-`apps/web/src/components/agents/architect.tsx`. Tests: `test/agent-architect.test.ts`, `test/agent-design.test.ts`.
+`apps/web/src/components/agents/architect.tsx`. Tests: `test/agent-architect.test.ts`, `test/agent-design.test.ts`, `test/agent-brief.test.ts`; the scenarios `sb17-*` in `test/spotlight-scenarios/sb17.ts`.
 
 ### Avatars
 
@@ -795,7 +839,8 @@ model, else the agent's own.
 **Publish** runs the same check when the agent has cases. The publish is held (409, with the verdict and the run) when
 the draft averages under 3 / 5, or more than 0.5 under the published version's last average. The builder says why and
 offers **Publish anyway** (`{ "skipEval": true }`). A publish that passes saves its run as the new version's baseline;
-a first publish is held only by the 3 / 5 floor. An agent without cases publishes as before.
+a first publish is held only by the 3 / 5 floor. An agent without cases publishes as before. An agent the Agent architect
+designed has its 3 to 5 cases from the start ([the brief](#agent-architect)), so its first publish runs the gate.
 
 Routes: `GET/POST/PUT/DELETE /api/agents/:id/eval-gate` (cases and runs; `PUT { version? }` runs the draft or a
 published version). Cases (at most 50 per agent) and the last 30 runs live in `agent_eval_cases` and

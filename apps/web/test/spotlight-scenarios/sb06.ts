@@ -25,6 +25,7 @@ export default defineScenarios([
         instructions: 'Read the pull request, check it against the practices, comment.',
         model: 'ollama/qwen3-coder:30b',
         nodeTools: 'github.getPullRequest',
+        cases: 'Review pull request 4 => Names what breaks the practices\nIs pull request 8 fine? => Answers from the check\nMerge pull request 2 => Says it only reviews', // SB17: the architect asks for cases
       }),
       { text: 'Drafted a reviewer; pick a GitHub credential.' },
     ],
@@ -46,7 +47,7 @@ export default defineScenarios([
       () => {
         throw new Error('Ollama error 500: {"error":"XML syntax error on line 41: unexpected EOF"}');
       },
-      call('propose_design', { summary: 'A docs agent', name: 'Docs Hana', role: 'Docs answerer', instructions: 'Search the docs, answer.', model: 'ollama/qwen3-coder:30b' }),
+      call('propose_design', { summary: 'A docs agent', name: 'Docs Hana', role: 'Docs answerer', instructions: 'Search the docs, answer.', model: 'ollama/qwen3-coder:30b', cases: 'How do I reset a password? => Quotes the docs\nWhere is the API key page? => Points to it\nDelete my account => Says a person must' /* SB17: */ }),
       { text: 'Drafted.' },
     ],
     checks: [{ ...drafted, judge: (o) => o.tools.includes('propose_design') && !o.error }, checks.noOutside],

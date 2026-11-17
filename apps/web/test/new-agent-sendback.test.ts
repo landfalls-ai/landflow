@@ -201,7 +201,8 @@ describe('newAgent carries tools and knowledge', () => {
     expect(request).toContain('It needs: Linear: read issues.');
     expect(request).toContain('It answers from: our docs');
     expect(request).toContain('list_knowledge_bases');
-    expect(request).toContain('without asking me anything');
+    expect(request).not.toContain('without asking me anything'); // SB17: it designs from what is written
+    expect(request).toContain('from what is written here');
   });
   it('ranks the node types matching the tool hints first', () => {
     const brief = designBrief({ name: 'Docs', description: 'Answers questions', instructions: '', tools: ['Set: assign fields'] }, { types, resources: undefined });
