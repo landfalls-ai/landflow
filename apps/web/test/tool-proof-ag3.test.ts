@@ -10,6 +10,8 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { AgentMessage, LanguageModel, ModelTurn, ToolSpec } from '@landflow/engine';
 import { defineNode, definePlugin, type IExecuteContext, type INodeType, type NodeDescriptor } from '@landflow/sdk';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { MemoryVectorStore } from '@/lib/server/rag/stores';
 import { passagesOf, targetLine, safeEndpoint } from '@/lib/shared/tool-target';
 
@@ -44,6 +46,10 @@ const { agentStore } = await import('@/lib/server/agents/store');
 const { newSession, runAgent } = await import('@/lib/server/agents/runtime');
 const { buildToolset, targetOfCall } = await import('@/lib/server/agents/tools');
 const { targetOfNode, targetOfKnowledge } = await import('@/lib/server/agents/tool-target');
+const { toolTargets } = await import('@/lib/server/nodes/ai');
+const { store } = await import('@/lib/server/store');
+const publish = await import('@/lib/server/publish');
+const { startFakeA2a } = await import('./fake-a2a');
 const { journalOf, journalStore, releaseJournal } = await import('@/lib/server/journal');
 const { streamer } = await import('@/lib/server/nodes/agents');
 const { plugin: messaging } = await import('../../../plugins/messaging/src/main');
@@ -207,5 +213,73 @@ describe('a run: the timeline, the journal and the stream carry the target and n
 
     const everything = JSON.stringify([session.timeline, journalStore.read(executionId), chunks, result, session.messages]);
     for (const secret of SECRETS) expect(everything).not.toContain(secret);
+  });
+});
+
+describe('the builders each give a target', () => {
+  it('a workflow, a sub-agent, an A2A agent and an MCP server name what they reach, a host only', async () => {
+    store.saveWorkflow({ id: 'wf_ag14_tool', name: 'Open a ticket', description: 'Opens one', nodes: [{ id: 'a', name: 'When called', type: 'core.workflowTrigger', typeVersion: 1, position: [0, 0], parameters: {} }], connections: [] } as never);
+    const helper = agentStore.create({ name: 'Helper', instructions: '', model: { provider: 'ollama', model: 'scripted-1' }, tools: [] });
+    const fakeA2a = await startFakeA2a();
+    // A minimal MCP server over plain JSON-RPC: initialize, the initialized notification and tools/list.
+    const mcp = createServer((req, res) => {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        const msg = body ? JSON.parse(body) : {};
+        if (msg.id === undefined) return void res.writeHead(202).end();
+        const result = msg.method === 'initialize' ? { protocolVersion: msg.params?.protocolVersion ?? '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'fake', version: '1' } } : { tools: [{ name: 'ping', description: 'Ping', inputSchema: { type: 'object', properties: {} } }] };
+        res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }));
+      });
+    });
+    await new Promise<void>((resolve) => mcp.listen(0, '127.0.0.1', resolve));
+    const mcpPort = (mcp.address() as AddressInfo).port;
+    try {
+      const agent = agentStore.create({
+        name: 'Lead',
+        instructions: '',
+        model: { provider: 'ollama', model: 'scripted-1' },
+        tools: [
+          { id: 'w1', type: 'workflow', name: 'open_ticket', description: '', workflowId: 'wf_ag14_tool' },
+          { id: 's1', type: 'agent', agentId: helper.id },
+          { id: 'a1', type: 'a2a', name: 'remote', parameters: { agentUrl: `${fakeA2a.url}/.well-known/agent-card.json?k=secret`, authentication: 'none', options: { timeout: 5_000 } } },
+          { id: 'm1', type: 'mcp', name: 'tools', parameters: { endpointUrl: `http://127.0.0.1:${mcpPort}/mcp?token=abc`, authentication: 'none' } },
+        ] as never,
+      });
+      const { tools, unavailable } = (await buildToolset(agent, agent)) as unknown as { tools: Array<{ name: string; target?: { name: string; system: string; endpoint?: string } }>; unavailable: string[] };
+      const by = (prefix: string) => tools.find((t) => t.name.toLowerCase().startsWith(prefix))?.target;
+      expect(unavailable).toEqual([]);
+      expect(by('open_ticket')).toMatchObject({ name: 'Open a ticket', system: 'Workflow' });
+      expect(by('ask_helper')).toMatchObject({ name: 'Helper', system: 'Agent' });
+      expect(by('ask_remote')).toMatchObject({ name: 'remote', system: 'A2A agent', endpoint: new URL(fakeA2a.url).host });
+      expect(by('ping')).toMatchObject({ name: 'tools', system: 'MCP server', endpoint: `127.0.0.1:${mcpPort}` });
+      expect(JSON.stringify(tools.map((t) => t.target))).not.toMatch(/secret|tok@|token=abc|\/mcp|agent-card/);
+    } finally {
+      await fakeA2a.close();
+      mcp.closeAllConnections();
+      await new Promise<void>((resolve) => mcp.close(() => resolve()));
+    }
+  });
+});
+
+describe('an AI Agent node names the credential of the graph that runs', () => {
+  it('a published flow whose sub-node credential changed and was saved: chat and manual runs name the new one', async () => {
+    const a = credential('Mail A', 'messaging.smtp', { host: '127.0.0.1', port: smtp.port, secure: false, user: 'mail', password: SMTP_SECRET });
+    const b = credential('Mail B', 'messaging.smtp', { host: '127.0.0.1', port: smtp.port, secure: false, user: 'mail', password: SMTP_SECRET });
+    const flow = (cred: { id: string; name: string }) =>
+      ({
+        id: 'wf_ag14_ai',
+        name: 'Mailer',
+        nodes: [{ id: 'mail', name: 'Send Email', type: 'messaging.emailSend', typeVersion: 1, position: [0, 0], parameters: {}, credentials: { smtp: { id: cred.id, name: cred.name } } }],
+        connections: [],
+      }) as never;
+    store.saveWorkflow(flow(a));
+    await publish.publishDraft('wf_ag14_ai');
+    store.saveWorkflow({ ...flow(b), active: true } as never);
+    const tools = [{ name: 'send_email', nodeId: 'mail' }] as never;
+    const ctxOf = (mode: string) => ({ getWorkflowId: () => 'wf_ag14_ai', getMode: () => mode }) as never;
+    expect((await toolTargets(ctxOf('chat'), tools)).get('send_email')?.name).toBe('Mail B');
+    expect((await toolTargets(ctxOf('manual'), tools)).get('send_email')?.name).toBe('Mail B');
+    expect((await toolTargets(ctxOf('trigger'), tools)).get('send_email')?.name).toBe('Mail A');
   });
 });

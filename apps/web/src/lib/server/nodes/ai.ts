@@ -710,14 +710,17 @@ export const calculatorToolNode = defineNode({
   },
 });
 
-/** AG14: the target of each tool of an AI Agent node, from the sub-node that supplies it (the saved workflow's node: its type, credentials and parameters). */
-async function toolTargets(ctx: IExecuteContext, tools: AgentTool[]): Promise<Map<string, ToolTarget>> {
+/** AG14: the target of each tool of an AI Agent node, from the sub-node that supplies it (the node of the graph that runs: the saved workflow in the editor's manual and chat runs, the published one otherwise: its type, credentials and parameters). */
+export async function toolTargets(ctx: IExecuteContext, tools: AgentTool[]): Promise<Map<string, ToolTarget>> {
   const found = new Map<string, ToolTarget>();
   try {
     const workflowId = ctx.getWorkflowId();
     if (!workflowId || tools.length === 0) return found;
-    const [{ workflowForCall }, { targetOfNode }] = await Promise.all([import('../publish'), import('../agents/tool-target')]);
-    const nodes = workflowForCall(workflowId, undefined)?.nodes ?? [];
+    const [{ workflowForCall }, { targetOfNode }, { store }] = await Promise.all([import('../publish'), import('../agents/tool-target'), import('../store')]);
+    // AG14: the graph that runs. The editor's manual and chat runs run the saved workflow; production modes run the published one.
+    const mode = ctx.getMode();
+    const saved = mode === 'manual' || mode === 'chat';
+    const nodes = (saved ? store.getWorkflow(workflowId) : workflowForCall(workflowId, mode))?.nodes ?? [];
     for (const tool of tools) {
       const node = tool.nodeId ? nodes.find((n) => n.id === tool.nodeId) : undefined;
       if (node) found.set(tool.name, targetOfNode(node.type, node.credentials, node.parameters));

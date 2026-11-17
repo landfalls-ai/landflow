@@ -44,7 +44,8 @@ export function wireChunk(event: Extract<ExecutionEvent, { type: 'node.chunk' }>
   return {
     type: chunk.type,
     ...(chunk.content !== undefined && { content: chunk.content }),
-    ...(chunk.tool && { tool: chunk.tool as unknown as JsonObject }),
+    // AG14: a tool's target (credential, internal host) stays inside; the public wire carries the call, not where it went.
+    ...(chunk.tool && { tool: (({ target: _target, ...rest }) => rest)(chunk.tool as unknown as JsonObject & { target?: unknown }) as JsonObject }),
     ...(agent && { agent: agent as unknown as JsonObject }),
     metadata: { nodeId: event.nodeId, nodeName: event.nodeName, itemIndex: chunk.itemIndex ?? 0, timestamp: Date.parse(event.at) || Date.now() },
   };
