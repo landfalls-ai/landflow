@@ -383,7 +383,7 @@ export function appNamed(info: NodeTypeInfo, request: string): boolean {
   const d = info.descriptor;
   const names = [info.pluginId, d.displayName].map((n) => n?.toLowerCase().trim()).filter((n): n is string => Boolean(n) && n.length >= 3);
   const words = (d.keywords ?? []).map((k) => k.toLowerCase().trim()).filter((k) => (k.length >= 5 || k.includes(' ')) && !GENERIC_KEYWORDS.has(k));
-  return [...names, ...words].some((n) => new RegExp(`(?<![a-z0-9])${escapeRegExp(n)}(?:e?s)?(?![a-z0-9])`).test(asked));
+  return [...names, ...words].some((n) => new RegExp(`(?<![a-z0-9])${/[^aeiou]y$/.test(n) ? `${escapeRegExp(n.slice(0, -1))}(?:y|ies|ied)` : `${escapeRegExp(n)}(?:e?s)?`}(?![a-z0-9])`).test(asked));
 }
 
 /** Whether the request asks the agent to change something outside (not counting "create an agent"). */
@@ -520,7 +520,8 @@ export function briefParts(
 // AG02: the steps name the agent's tools by their call names. A snake_case word that names a tool (it starts like a tool call or follows
 // "call/use/run") and is not one of the agent's tools becomes the tool it plainly means (exactly one shares its words), else its clause goes.
 const CALL_VERBS = /^(?:send|get|query|create|list|read|write|post|fetch|find|search|run|call|use|check|comment|update|delete|lookup|extract|normalize|decode|hash|analy[sz]e|summari[sz]e|notify|email|insert|select|count|parse|generate|convert|publish|slack|jira|github)_/;
-const GENERIC_WORDS = new Set(['get', 'send', 'query', 'create', 'list', 'read', 'write', 'post', 'call', 'run', 'fetch', 'find', 'search', 'message', 'messages', 'data', 'tool', 'item', 'items', 'all', 'one', 'new', 'set', 'update', 'check', 'lookup', 'use']);
+const FIELD_WORD = /_(?:id|ids|at|number|name|key|url|date|time|type|status|count|value|index|ref)$/;
+const GENERIC_WORDS = new Set(['id', 'get', 'send', 'query', 'create', 'list', 'read', 'write', 'post', 'call', 'run', 'fetch', 'find', 'search', 'message', 'messages', 'data', 'tool', 'item', 'items', 'all', 'one', 'new', 'set', 'update', 'check', 'lookup', 'use']);
 const wordsOf = (value: string) => value.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1);
 
 export function nameOnlyOwnTools(instructions: string, tools: Array<{ name: string; description?: string }>): { text: string; dropped: string[] } {
@@ -529,12 +530,13 @@ export function nameOnlyOwnTools(instructions: string, tools: Array<{ name: stri
   const out: string[] = [];
   for (const line of instructions.split('\n')) {
     let current = line;
-    const foreign = [...new Set(current.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [])].filter((t) => !own.has(t) && (CALL_VERBS.test(`${t}`) || new RegExp(`\\b(?:call|use|run|invoke|with|via|using)\\s+\`?${t}\\b`, 'i').test(current)));
+    const foreign = [...new Set(current.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [])].filter((t) => !own.has(t) && !FIELD_WORD.test(t) && (CALL_VERBS.test(`${t}`) || new RegExp(`\\b(?:call|use|run|invoke)\\s+\`?${t}\\b`, 'i').test(current)));
     for (const token of foreign) {
       const words = wordsOf(token).filter((w) => !GENERIC_WORDS.has(w));
-      const fits = tools.filter((t) => words.some((w) => wordsOf(t.name).includes(w) || wordsOf(t.description ?? '').includes(w)));
+      const fits = tools.filter((t) => words.some((w) => wordsOf(t.name).includes(w)));
       if (fits.length === 1) {
         current = current.replace(new RegExp(`\\b${token}\\b`, 'g'), fits[0].name);
+        dropped.push(`instructions named ${token}, which it does not have: now ${fits[0].name}`);
         continue;
       }
       const lead = /^(\s*(?:\d+[.)]|[-*•])\s+)?/.exec(current)?.[0] ?? '';
@@ -1226,7 +1228,7 @@ function withSpecHints(draft: DraftResult, spec: AgentSpec, input: Pick<Architec
     });
   }
   draft.config = { ...draft.config, tools };
-  if (tools.length && (!draft.config.guardrails?.toolResult || (tokenJob && draft.config.guardrails?.input))) draft.config.guardrails = briefGuardrails(draft.config.guardrails, true, tokenJob);
+  if (tools.length && !draft.config.guardrails?.toolResult) draft.config.guardrails = briefGuardrails(draft.config.guardrails, true, tokenJob);
   return notAdded;
 }
 

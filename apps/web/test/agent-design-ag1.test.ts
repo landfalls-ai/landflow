@@ -136,6 +136,28 @@ describe('the ask: read whole, the address kept (finding 4)', () => {
   });
 });
 
+describe('the asks as typed (shots 10a, 30d)', () => {
+  const TYPED_TRIAGE = 'Create an agent that triages an alert I paste: normalise it, pull out the IOCs, judge how serious it is, and email a short summary to oncall@landflow.test.';
+  const TYPED_UTILITY = 'Create an agent that decodes JWTs, hashes strings, makes UUIDs and slugifies titles.';
+
+  it('names Slugify from "slugifies" in the ask', () => {
+    const read = agentAsk(TYPED_UTILITY, [], catalog())!;
+    expect(read.tools).toEqual(expect.arrayContaining(['Hash', 'UUID', 'Slugify']));
+  });
+
+  it('puts Slugify on the agent or in notAdded when the architect proposes it', async () => {
+    const { model } = scripted([design({ name: 'Utility helper', nodeTools: 'go-crypto.jwtDecode, text-toolkit.slugify' }), { text: 'Designed.' }]);
+    const result = await designAgent(spec(TYPED_UTILITY), { types, actor: TEST_OWNER, model });
+    const on = (config: { tools?: unknown[] }) => JSON.stringify(config.tools ?? []);
+    expect(on(result.config) + JSON.stringify(result.notAdded ?? [])).toMatch(/slugify/i);
+  });
+
+  it('keeps the address and names the triage agent as a triager', () => {
+    const read = agentAsk(TYPED_TRIAGE, [], catalog())!;
+    expect(read.description).toContain('oncall@landflow.test');
+  });
+});
+
 describe('the tools: added from the ask, or said why not (finding 9)', () => {
   it('adds Field Statistics and Sentiment when the architect proposes only SQLite', async () => {
     const { model } = scripted([design({ name: 'Sales data analyst', nodeTools: 'databases.sqlite' }), { text: 'Designed.' }]);
@@ -172,7 +194,16 @@ describe('the instructions name only the agent’s tools (finding 3)', () => {
   it('turns a near name into the tool it plainly means', () => {
     const { text, dropped } = nameOnlyOwnTools('Steps:\n1. Call comment_sentiment on the text.', [{ name: 'sentiment', description: 'Sentiment of a text' }]);
     expect(text).toContain('Call sentiment on the text.');
-    expect(dropped).toEqual([]);
+    expect(dropped.join(' ')).toContain('now sentiment'); // a replacement is said too
+  });
+
+  it('leaves field names alone: customer_id, user_id, ticket_number are not tools', () => {
+    const tools = [{ name: 'get_user', description: 'Get a user by id from the CRM.' }, { name: 'send_email' }];
+    for (const line of ['Look up the customer with customer_id, then summarise.', 'Use `user_id` from the input.', 'Check the ticket via ticket_number and decide.']) {
+      const { text, dropped } = nameOnlyOwnTools(`Steps:\n1. ${line}`, tools);
+      expect(text).toContain(line);
+      expect(dropped).toEqual([]);
+    }
   });
 });
 

@@ -75,7 +75,8 @@ export interface AskCatalogEntry {
 function names(message: string, name: string): boolean {
   const text = name.trim();
   if (text.length < 4) return false;
-  return new RegExp(`(?<![\\w-])${escape(text).replace(/\s+/g, '[\\s-]+')}(?:e?s)?(?![\\w-])`, 'i').test(message);
+  const body = /[^aeiou]y$/i.test(text) ? `${escape(text.slice(0, -1)).replace(/\s+/g, '[\\s-]+')}(?:y|ies|ied)` : `${escape(text).replace(/\s+/g, '[\\s-]+')}(?:e?s)?`;
+  return new RegExp(`(?<![\\w-])${body}(?![\\w-])`, 'i').test(message);
 }
 
 function toolsOf(message: string, catalog: AskCatalogEntry[] = []): string[] {
