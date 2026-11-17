@@ -44,6 +44,7 @@ const credentialTransferRoute = await import('@/app/api/credentials/[id]/transfe
 const credentialTestRoute = await import('@/app/api/credentials/test/route');
 const dataTablesRoute = await import('@/app/api/data-tables/route');
 const agentsRoute = await import('@/app/api/agents/route');
+const agentDesignRoute = await import('@/app/api/agents/design/route');
 const executionsRoute = await import('@/app/api/executions/route');
 const projectsRoute = await import('@/app/api/projects/route');
 const projectRoute = await import('@/app/api/projects/[id]/route');
@@ -256,6 +257,19 @@ describe('every resource route checks project access', () => {
     // Stopping every project's runs is instance-wide: admins only (policy.ts).
     expect(guard('POST', '/api/executions/stop-all', dave)).toBe(403);
     expect(guard('POST', '/api/executions/stop-all', admin)).toBe('ok');
+  });
+
+  it('Spotlight\'s /api/agents/design is a route, not an agent called "design": an editor of a team project (and no one else\'s) reaches it, and its DELETE takes back an agent of their project', async () => {
+    for (const method of ['POST', 'DELETE']) expect([method, guard(method, '/api/agents/design', dave)]).toEqual([method, 'ok']);
+    expect(guard('DELETE', '/api/agents/design', bob)).toBe('ok');
+    const made = await call(agentsRoute.POST, `/api/agents?projectId=${team}`, 'POST', bob, { name: 'Spotlight made this' });
+    const id = made.body.agent.id as string;
+    // The route's own check: the agent's project says who may delete it.
+    expect((await call(agentDesignRoute.DELETE, '/api/agents/design', 'DELETE', dave, { agentId: id, workflowId: 'wf_none' })).status).toBe(404);
+    expect((await call(agentDesignRoute.DELETE, '/api/agents/design', 'DELETE', carol, { agentId: id, workflowId: 'wf_none' })).status).toBe(404);
+    const taken = await call(agentDesignRoute.DELETE, '/api/agents/design', 'DELETE', bob, { agentId: id, workflowId: 'wf_none' });
+    expect(taken.status).toBe(200);
+    expect(taken.body).toEqual({ deleted: true });
   });
 
   it('unknown ids answer 404 to members (nothing leaks) and reach the handler for owners and admins', () => {

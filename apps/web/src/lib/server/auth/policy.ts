@@ -147,7 +147,7 @@ const RESOURCE_ROUTES: Array<{ pattern: RegExp; kind: ResourceRule['kind']; rese
   { pattern: /^\/api\/brain\/workflows\/([^/]+)(\/.*)?$/, kind: 'workflow', reserved: [] },
   { pattern: /^\/api\/credentials\/([^/]+)(\/.*)?$/, kind: 'credential', reserved: ['test'] },
   { pattern: /^\/api\/data-tables\/([^/]+)(\/.*)?$/, kind: 'dataTable', reserved: [] },
-  { pattern: /^\/api\/agents\/([^/]+)(\/.*)?$/, kind: 'agent', reserved: ['import', 'models', 'workflow-tools'] },
+  { pattern: /^\/api\/agents\/([^/]+)(\/.*)?$/, kind: 'agent', reserved: ['import', 'models', 'workflow-tools', 'design'] },
   { pattern: /^\/api\/agent-teams\/([^/]+)(\/.*)?$/, kind: 'agentTeam', reserved: [] },
   { pattern: /^\/api\/executions\/([^/]+)(\/.*)?$/, kind: 'execution', reserved: ['stop-all'] },
 ];
