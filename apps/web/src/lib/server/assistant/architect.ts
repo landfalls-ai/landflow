@@ -86,6 +86,8 @@ export interface ArchitectInput {
   /** SB17: the person's own words, for the least-privilege rules (which apps the request names, whether it asks to write or
    * to hand over). Absent: the conversation's user messages. Spotlight's design passes its request alone, never the brief's hints. */
   request?: string;
+  /** AG04: a change to an agent that exists writes no test cases (the agent keeps its own): no follow-up call for them. */
+  noCases?: boolean;
 }
 
 const TOOL_SCHEMA = {
@@ -877,11 +879,11 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
         }
         // SB17: 3 to 5 cases from the proposal, else the ones of the last proposal, else one small follow-up call; still fewer: say so.
         cases = proposed.length >= 3 ? proposed : cases.length >= 3 ? cases : proposed;
-        if (cases.length < 3) {
+        if (cases.length < 3 && !input.noCases /* AG04: */) {
           const more = await casesFor(model, { name: config.name ?? '', description: config.description ?? '', request: requestText }, usage, input.signal);
           cases = more.length > proposed.length ? more : proposed;
         }
-        if (cases.length < 3) needs.push({ tool: 'test cases', kind: 'parameter', text: 'Add test cases on the Evaluations tab' });
+        if (cases.length < 3 && !input.noCases /* AG04: */) needs.push({ tool: 'test cases', kind: 'parameter', text: 'Add test cases on the Evaluations tab' });
         onEvent({ type: 'draft', id: `dr_${nanoid(8)}`, summary, config, needs, dropped, missing, cases });
         const notes = [dropped.length ? `Left out: ${dropped.join('; ')}.` : '', missing.length ? `Noted as missing (the user sees it): ${missing.map((m) => m.capability).join('; ')}.` : '', needs.length ? `The user still has to: ${needs.map((n) => n.text).join('; ')}.` : ''].filter(Boolean).join(' ');
         return result(`Shown to the user beside the chat with a Create button (${config.tools?.length ?? 0} tools). ${notes} Don't repeat the draft or say it was created.`, `Proposed “${shorten(config.name ?? 'agent', 40)}” with ${config.tools?.length ?? 0} tools`);
@@ -982,6 +984,9 @@ export interface AgentSpec {
   /** SB05: the apps or actions it needs ("Linear: read issues"), and the documents it answers from. */
   tools?: string[];
   knowledge?: string;
+  /** AG04: a change to an agent that exists (or to a card's config): the config it starts from and what the person asked to change. */
+  base?: Partial<AgentConfig>;
+  change?: string;
 }
 
 /** The person's own words for an agent (no fixed sentences): the text the least-privilege rules read. */
@@ -991,6 +996,7 @@ export function designWords(spec: AgentSpec): string {
 
 /** The request the architect gets for Spotlight's newAgent: design it now, model, tools and knowledge included. */
 export function designRequest(spec: AgentSpec): string {
+  if (spec.base && spec.change) return reviseRequest(spec.base, spec.change); // AG04:
   const where = [spec.workflow && `in the workflow “${spec.workflow}”`, spec.after && `after the step “${spec.after}”`, spec.before && `before “${spec.before}”`].filter(Boolean).join(', ');
   return [
     // SB17: design from what is written; what only the person can give is left out (it is listed for them), never invented.
@@ -1005,6 +1011,90 @@ export function designRequest(spec: AgentSpec): string {
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+// AG04:
+/** The agent as its own words and tool names, for a change request. */
+function baseAsk(base: Partial<AgentConfig>): string {
+  const tools = (base.tools ?? []).flatMap((t) => ('name' in t && t.name ? [t.name] : []));
+  return [
+    `Name: ${base.name ?? 'the agent'}`,
+    `What it does: ${base.description || '(see the instructions)'}`,
+    base.instructions && `How: ${base.instructions.slice(0, 3000)}`,
+    tools.length ? `Its tools: ${tools.join(', ')}.` : 'It has no tools.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+/** AG04: the request for a change: the agent as it is, then the change, with every tool proposed again. */
+function reviseRequest(base: Partial<AgentConfig>, change: string): string {
+  return [
+    'Change this agent now and propose the whole agent again, with the change made and nothing else touched. Keep its name, model, instructions, guardrails and every tool the change does not name; leave out a tool only if the change removes it. Leave out what only I can give (a repository, a channel, an id): it is listed for me to fill in.',
+    baseAsk(base),
+    `The change: ${change}`,
+  ].join('\n');
+}
+
+const REMOVES = /\b(?:remove|delete|drop|without|no longer|stop using|get rid of|take away|disable)\b/i;
+const GENERIC = new Set(['tool', 'tools', 'node', 'agent', 'with', 'from', 'that', 'this', 'also', 'make', 'give', 'get', 'set', 'list']);
+/** The words of a tool's name and node type that say what it is ("send_email", "grafana.getAlerts" -> send, email, grafana, alerts). */
+const toolWords = (tool: AgentToolConfig): string[] =>
+  [('name' in tool && tool.name) || '', tool.type === 'node' ? tool.nodeType : '']
+    .join(' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 4 && !GENERIC.has(w));
+const toolKey = (tool: AgentToolConfig) => (tool.type === 'node' ? `node|${tool.nodeType}|${String(tool.parameters?.operation ?? '')}` : `${tool.type}|${'name' in tool ? tool.name : ''}|${'agentId' in tool ? tool.agentId : ''}|${'workflowId' in tool ? tool.workflowId : ''}`);
+const names = (change: string, tool: AgentToolConfig) => toolWords(tool).some((w) => change.toLowerCase().includes(w.replace(/s$/, '')));
+
+const TOOLS_STEP = /^\d+\. Tools: [^\n]*$/m;
+
+/**
+ * AG04: the proposal's instructions with the tools step as the final tools make it. The design adds a "Tools: …" step to
+ * instructions that name none of the tools it was given: for a change that is only the new tool, so one the base never had is
+ * dropped again, and one the base had (from its own design) names every tool now.
+ */
+function reviseInstructions(proposed: string, base: string, tools: AgentToolConfig[]): string {
+  const line = TOOLS_STEP.exec(proposed)?.[0];
+  if (!line) return proposed;
+  if (!TOOLS_STEP.test(base)) return proposed.replace(`${line}\n`, '').replace(line, '').trim();
+  const names = tools.flatMap((t) => ('name' in t && t.name ? [t.name] : []));
+  return proposed.replace(line, `${line.replace(/Tools: [^;.]*/, `Tools: ${names.join(', ')}`)}`);
+}
+
+/**
+ * AG04: the proposal of a change as the agent it changes: the base's own tools stay unless the change removes them (least
+ * privilege holds for the tools the change does not name), a new tool stays only when the change names it, and the name, model,
+ * practices, look and team stay unless the change names them.
+ */
+function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: string): void {
+  const kept = (base.tools ?? []).filter((t) => !(REMOVES.test(change) && names(change, t)));
+  const have = new Set(kept.map(toolKey));
+  const added: AgentToolConfig[] = [];
+  for (const tool of draft.config.tools ?? []) {
+    if (have.has(toolKey(tool))) continue;
+    if (tool.type === 'node' && !names(change, tool)) {
+      draft.dropped.push(`${'name' in tool && tool.name ? tool.name : tool.nodeType}: the change doesn’t ask for it`);
+      continue;
+    }
+    // A name a base tool already has is not reused.
+    if ('name' in tool && tool.name && kept.some((t) => 'name' in t && t.name === tool.name)) tool.name = `${tool.name.slice(0, 60)}_2`;
+    added.push(tool);
+  }
+  const renamed = /\b(?:call it|rename (?:it )?(?:to|as)?|name it|its name is)\s+["“']?([^"”'.,;\n]{2,60})/i.exec(change)?.[1]?.trim();
+  const modelNamed = /\b(?:model|haiku|sonnet|opus|gpt|claude|qwen|llama|gemma|mistral|ollama)\b/i.test(change);
+  // The base as it is (schedules, channels, memory, persona, guardrails, access: what the change doesn't name), with what the proposal changed.
+  const config: Partial<AgentConfig> = {
+    ...base,
+    name: renamed ?? base.name ?? draft.config.name,
+    description: draft.config.description || base.description || '',
+    instructions: reviseInstructions(draft.config.instructions ?? base.instructions ?? '', base.instructions ?? '', [...kept, ...added]),
+    tools: [...kept, ...added],
+  };
+  if (modelNamed && draft.config.model) config.model = draft.config.model;
+  draft.config = config;
 }
 
 /**
@@ -1103,22 +1193,25 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
     if (event.type === 'draft') last = { config: event.config, needs: event.needs, dropped: event.dropped, missing: event.missing, cases: event.cases ?? [] /* SB17: */ };
   };
   const attempts: Array<Pick<ArchitectInput, 'messages' | 'only'>> = [
-    { messages: [{ role: 'user', content: `${designRequest(spec)}\n\n${designBrief(spec, input)}\n\nPropose it in one propose_design call now: short instructions, only the tools it needs.` }], only: [DESIGN_TOOL.name] },
+    { messages: [{ role: 'user', content: `${designRequest(spec)}\n\n${designBrief(spec.change ? { name: spec.name, description: spec.change, instructions: '' } /* AG04: the nodes the change matches */ : spec, input)}\n\nPropose it in one propose_design call now: short instructions, only the tools it needs.` }], only: [DESIGN_TOOL.name] },
     { messages: [{ role: 'user', content: designRequest(spec) }] },
   ];
   for (const attempt of attempts) {
     if (last || input.signal?.aborted) break;
     // A model that fails gets the fallback below; a reached usage cap is the caller's answer (the route says 429).
     // SB17: `request` is the least-privilege rules' text: the request alone, not the brief's hints.
-    await runArchitect({ ...input, ...attempt, request: designWords(spec), onEvent }).catch((caught: unknown) => {
+    await runArchitect({ ...input, ...attempt, ...(spec.base && spec.change && { draft: spec.base, noCases: true }) /* AG04: */, request: spec.change ? `${designWords(spec)}\n${spec.change}` /* AG04: */ : designWords(spec), onEvent }).catch((caught: unknown) => {
       if (isUsageCapError(caught)) throw caught;
     });
   }
   if (last) {
     const kept: DraftResult = last;
-    withSpecHints(kept, spec, input); // SB17:
-    return { ...kept, config: { ...kept.config, name: spec.name, description: kept.config.description || spec.description }, designed: true };
+    if (spec.base && spec.change) reviseDraft(kept, spec.base, spec.change); // AG04: the base's tools stay, a new one only when named
+    else withSpecHints(kept, spec, input); // SB17:
+    return { ...kept, config: { ...kept.config, name: spec.base && spec.change ? (kept.config.name ?? spec.name) /* AG04: a rename is the change's */ : spec.name, description: kept.config.description || spec.description }, designed: true };
   }
+  // AG04: a change nothing proposed is no change: the base as it is.
+  if (spec.base && spec.change) return { config: spec.base, needs: [], dropped: [], missing: [], cases: [], designed: false };
   const model = input.resources ? chooseModel(undefined, input.resources.models) : undefined;
   const instructions = briefParts(spec.instructions || spec.description, { ...(spec.description && { description: spec.description }), tools: [], writes: false }); // SB17:
   return { config: { name: spec.name, description: spec.description, instructions, tools: [], guardrails: briefGuardrails(undefined, false) /* SB17: */, ...(model && { model }) }, needs: [{ tool: 'test cases', kind: 'parameter', text: 'Add test cases on the Evaluations tab' }], dropped: [], missing: [], cases: [], designed: false };
