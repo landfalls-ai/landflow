@@ -137,6 +137,8 @@ describe('test cases are inputs, not descriptions of them', () => {
   it('keeps a short real input and drops what reads as a description of a test', () => {
     expect(describesCase('Make a UUID')).toBe(false);
     expect(describesCase('Decode this JWT')).toBe(false);
+    for (const text of ['Should I restart web-01?', 'Verify that my order 1234 shipped', 'Is it safe to restart?']) expect(describesCase(text), text).toBe(false);
+    expect(describesCase('A title')).toBe(true);
     for (const text of ['A test that the agent replies politely', 'Checks that it asks for the order number', 'Should reply with a UUID', 'Test of a long input']) expect(describesCase(text), text).toBe(true);
     expect(parseCases(['Make a UUID => Gives one', 'Checks that it replies => Replies']).map((c) => c.input)).toEqual(['Make a UUID']);
   });
