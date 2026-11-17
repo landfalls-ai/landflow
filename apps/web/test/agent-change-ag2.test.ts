@@ -401,3 +401,25 @@ describe('the pending card’s name is the design’s, and Create names the agen
     }
   });
 });
+
+describe('a provider’s usage limit is said, not "proposed nothing"', () => {
+  it('the design route answers the limit in the provider’s words on a change, and a card’s fallback names it', async () => {
+    const fake = await startFakeModels({ reply: () => ({ error: { status: 400, body: JSON.stringify({ error: { message: 'You have reached your specified API usage limits. You will regain access on 2026-12-01 at 00:00 UTC.' } }) } }) });
+    const previous = process.env.OLLAMA_URL;
+    process.env.OLLAMA_URL = fake.origin;
+    try {
+      const body = (await (await post({ name: 'Alert triage agent', preview: true, base: { config: triageBase() }, change: 'also pull out the IOCs' })).json()) as Body & { designed: boolean; failure?: string };
+      expect(body.designed).toBe(false);
+      expect(body.failure).toMatch(/usage limit was reached: .*regain access on 2026-12-01/);
+      const { designChange } = await import('@/lib/client/agent-change');
+      wire.answers['POST /api/agents/design'] = () => body;
+      await expect(designChange({ name: 'x', base: { config: {} }, change: 'y' })).rejects.toThrow(/^The model’s usage limit was reached: .*2026-12-01/);
+      const fresh = (await (await post({ name: 'Helper', description: 'x', preview: true })).json()) as Body & { needs: Array<{ text: string }> };
+      expect(fresh.needs.map((n) => n.text).join(' ')).toMatch(/usage limit was reached/);
+    } finally {
+      if (previous === undefined) delete process.env.OLLAMA_URL;
+      else process.env.OLLAMA_URL = previous;
+      await fake.close();
+    }
+  });
+});

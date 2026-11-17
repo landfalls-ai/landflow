@@ -1692,8 +1692,13 @@ function withSpecHints(draft: DraftResult, spec: AgentSpec, input: Pick<Architec
 }
 
 /** ag1-int: a failed architect call in one short clause for the card ("the model call failed: 400 …"), never more than one line. */
+/** A provider's usage or rate limit in its own words ("You have reached your specified API usage limits", a 429), not a failed design. */
+const PROVIDER_LIMIT = /usage limits?|rate.?limit|\b429\b|quota|credit balance|too many requests|exceeded your (?:current )?(?:limit|quota)/i;
+
 function designFailure(caught: unknown): string {
   const text = (typeof caught === 'string' ? caught : errorText(caught)).split('\n')[0].replace(/\s+/g, ' ').trim();
+  // The provider's message only: an Authorization header or key never reaches errorText, and one that did is cut out.
+  if (PROVIDER_LIMIT.test(text)) return `the model’s usage limit was reached: ${text.replace(/\b(?:sk|key)-[A-Za-z0-9_-]{8,}/g, '…').slice(0, 200)}`;
   return text ? `the model call failed: ${text.length > 160 ? `${text.slice(0, 159)}…` : text}` : 'the model call failed';
 }
 
@@ -1705,7 +1710,7 @@ function designFailure(caught: unknown): string {
  * what Spotlight gave, on the first model the host has, so the step still has an agent to run. A reached usage cap is
  * thrown, not swallowed.
  */
-export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, 'messages' | 'onEvent' | 'draft' | 'only' | 'request'>): Promise<DraftResult & { designed: boolean; notAdded: AgentNotAdded[] /* AG02: */ }> {
+export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, 'messages' | 'onEvent' | 'draft' | 'only' | 'request'>): Promise<DraftResult & { designed: boolean; notAdded: AgentNotAdded[] /* AG02: */; failure?: string }> {
   // AG02: the agent runs on Spotlight's model (the picker's, else the builder model); the whole ask goes to the architect beside the short spec.
   const agentModel = typeof input.model === 'string' && input.model.trim() ? input.model.trim() : builderModel();
   const asked = spec.ask ? `\n\nThe person's own words, all of it (keep every address, name and id exactly as written):\n${spec.ask}` : '';
@@ -1739,7 +1744,7 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
     return { ...kept, config: { ...kept.config, name: spec.base && spec.change ? (kept.config.name ?? spec.name) /* AG04: a rename is the change's */ : spec.name, description: kept.config.description || spec.description }, designed: true, notAdded };
   }
   // AG04: a change nothing proposed is no change: the base as it is.
-  if (spec.base && spec.change) return { config: spec.base, needs: [], dropped: [], missing: [], cases: [], designed: false, notAdded: [] };
+  if (spec.base && spec.change) return { config: spec.base, needs: [], dropped: [], missing: [], cases: [], designed: false, notAdded: [], ...(failure && { failure }) };
   const model = agentModelOf(agentModel) ?? (input.resources ? chooseModel(undefined, input.resources.models) : undefined); // AG02:
   const instructions = briefParts(spec.instructions || spec.description, { ...(spec.description && { description: spec.description }), tools: [], writes: false }); // SB17:
   // ag1-int: the card says the design was not the architect's, and why, before what is left (sb3's live pass: the fallback card did not say so).

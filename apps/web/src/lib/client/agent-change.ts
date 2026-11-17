@@ -16,6 +16,8 @@ export interface ChangeDesign {
   needs?: Array<{ text: string }>;
   missing?: Array<{ capability: string }>;
   designed?: boolean;
+  /** Why the model made no design when it failed (a usage limit in the provider's words). */
+  failure?: string;
   /** ag1-int: the tools the change named that the agent did not get, and why. */
   notAdded?: AgentNotAdded[];
 }
@@ -25,7 +27,7 @@ export function designChange(input: { name: string; description?: string; base: 
   const { model, ...rest } = input;
   return api<ChangeDesign>('/api/agents/design', { method: 'POST', json: { description: '', instructions: '', ...rest, ...(model && { model }), preview: true }, signal }).then((design) => {
     // A design that ran and matched the base has `designed: true` and no changes ("No change"); one the model never proposed is a failure, not "already has it".
-    if (design.designed === false) throw new Error('the model proposed nothing; nothing was changed');
+    if (design.designed === false) throw new Error(design.failure && /usage limit/.test(design.failure) ? `${design.failure.charAt(0).toUpperCase()}${design.failure.slice(1)}; nothing was changed` : 'the model proposed nothing; nothing was changed');
     return design;
   });
 }
