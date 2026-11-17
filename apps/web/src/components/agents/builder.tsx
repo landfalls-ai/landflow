@@ -47,6 +47,7 @@ import { AvatarDialog } from './avatar-dialog';
 import { CapabilitiesCard } from './capabilities-card';
 import { GuardrailsCard } from './guardrails-card';
 import { KagentCard } from './kagent-card';
+import { publishLine, type AgentPublish } from '@/lib/shared/agent-card'; // AG05:
 import { Dialog, Field } from './dialog';
 import { ModelCard } from './model-card';
 import { RouterCard } from './router-card';
@@ -253,6 +254,8 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
   const [sessionId, setSessionId] = useState(initialSession);
   const [testing, setTesting] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  // AG05: the publish as the page follows it: the eval gate's cases while it runs, the held verdict until the next publish.
+  const [gate, setGate] = useState<AgentPublish | undefined>();
   const [modal, setModal] = useState<
     { kind: 'description' } | { kind: 'delete' } | { kind: 'template' } | { kind: 'plugin' } | { kind: 'availability' } | { kind: 'import'; config: Partial<AgentConfig>; file: string } | null
   >(null);
@@ -374,20 +377,30 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
     window.history.replaceState(null, '', `/agents/${agentId}${query ? `?${query}` : ''}`);
   };
 
+  // AG05: `skipEval` is only ever the person's own click on "Publish anyway" in the held notice.
   const publish = async (skipEval = false) => {
     setPublishing(true);
+    setGate({ state: 'publishing' });
     try {
       await persist();
+      if (!skipEval) {
+        const known = await api<{ cases?: unknown[] }>(`/api/agents/${agentId}/eval-gate`).catch(() => undefined);
+        if (known?.cases?.length) setGate({ state: 'publishing', cases: known.cases.length });
+      }
       const { agent: next, kagent } = await api<{ agent: Agent; kagent?: KagentStatus | { error: string } }>(`/api/agents/${agentId}/publish`, { method: 'POST', json: { skipEval } });
       setAgent(next);
+      setGate(undefined);
       if (kagent && 'error' in kagent) toast.warning(`Published v${next.published?.version ?? ''}, but kagent still has v${next.kagent?.version ?? '?'}: ${kagent.error}`);
       else toast.success(`Published v${next.published?.version ?? ''}${kagent ? ' and written to kagent' : ''}`);
       void useAgentData.getState().loadAgents();
     } catch (e) {
-      // The eval gate held the publish: say why, and offer to go ahead.
-      const verdict = e instanceof ApiError && e.status === 409 ? (e.body as { gate?: { verdict?: { reason?: string } } } | undefined)?.gate?.verdict : undefined;
-      if (verdict) toast.warning(`Held by the eval gate. ${verdict.reason ?? ''}`, { duration: 15_000, action: { label: 'Publish anyway', onClick: () => void publish(true) } });
-      else toast.error((e as Error).message);
+      // The eval gate held the publish: the verdict stays on the page (a notice) until the next publish.
+      const verdict = e instanceof ApiError && e.status === 409 ? (e.body as { gate?: { verdict?: { average?: number; reason?: string } } } | undefined)?.gate?.verdict : undefined;
+      if (verdict) setGate({ state: 'held', ...(verdict.average !== undefined && { score: verdict.average }), ...(verdict.reason && { reason: verdict.reason }) });
+      else {
+        setGate(undefined);
+        toast.error((e as Error).message);
+      }
     } finally {
       setPublishing(false);
     }
@@ -592,7 +605,19 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
                 title={changed ? `Publish the draft as v${nextVersion}` : 'The live version matches the draft'}
               >
                 {!publishing && <Rocket className="size-3.5" />}
-                <span>{publishLabel(published, changed, nextVersion)}</span>
+                {/* AG05: while the gate runs the button says so (short on a phone; the notice below has the whole line). */}
+                {gate?.state === 'publishing' ? (
+                  gate.cases ? (
+                    <>
+                      <span className="md:hidden">Publishing…</span>
+                      <span className="hidden md:inline">Publishing: the eval gate runs {gate.cases} case{gate.cases === 1 ? '' : 's'}…</span>
+                    </>
+                  ) : (
+                    <span>Publishing…</span>
+                  )
+                ) : (
+                  <span>{publishLabel(published, changed, nextVersion)}</span>
+                )}
               </Button>
               <Popover
                 trigger={({ toggle }) => (
@@ -750,6 +775,27 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
         </header>
         <input ref={fileInput} type="file" accept=".json,application/json" className="hidden" onChange={(e) => void importFile(e.target.files?.[0])} />
 
+        {/* AG05: the publish, followed: the gate running, then its verdict until the next publish. */}
+        {gate && (gate.state === 'held' || gate.state === 'publishing') && (
+          <div
+            role={gate.state === 'held' ? 'alert' : 'status'}
+            data-testid="publish-notice"
+            className={cn('mx-auto mt-4 flex w-[calc(100%-2rem)] max-w-[680px] flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border px-3 py-2 text-[12.5px] leading-snug sm:w-[calc(100%-3rem)]', gate.state === 'held' ? 'border-warn text-warn' : 'border-hair text-t2')}
+          >
+            {gate.state === 'publishing' && <Loader2 className="size-3.5 shrink-0 animate-spin" />}
+            <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{gate.state === 'publishing' && !gate.cases ? 'Publishing…' : publishLine(gate)}</span>
+            {gate.state === 'held' && (
+              <>
+                <button type="button" onClick={() => go('activity', undefined, 'evaluations')} className="min-h-7 font-semibold text-ac hover:underline max-md:min-h-11">
+                  See the cases
+                </button>
+                <button type="button" disabled={publishing} onClick={() => void publish(true)} className="min-h-7 font-semibold text-t1 hover:underline disabled:opacity-50 max-md:min-h-11">
+                  Publish anyway
+                </button>
+              </>
+            )}
+          </div>
+        )}
         <div className={cn('mx-auto w-full px-4 pb-16 pt-7 sm:px-6', tab === 'persona' ? 'max-w-[1160px]' : tab === 'activity' ? 'max-w-[960px]' : 'max-w-[680px]')}>
           <div className="flex animate-fade-up items-center gap-4">
             <AvatarButton agentId={agentId} config={draft} update={update} />

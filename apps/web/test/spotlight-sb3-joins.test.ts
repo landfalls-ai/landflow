@@ -101,6 +101,7 @@ const { database } = await import('@/lib/server/db');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { listCases } = await import('@/lib/server/agents/eval-gate');
 const { store } = await import('@/lib/server/store');
+const { credentials } = await import('@/lib/server/credentials/vault'); // AG05:
 const { runWorkflow } = await import('@/lib/server/runner');
 const { replyText } = await import('@/lib/server/streaming');
 const { buildPlanFirst } = await import('@/lib/server/assistant/build-plan');
@@ -137,6 +138,9 @@ const call = async (route: unknown, method: string, path: string, body?: unknown
   return { status: response.status, body: (text ? JSON.parse(text) : undefined) as Record<string, any> };
 };
 
+let github_: { id: string; name: string } | undefined;
+const pickedGithub = () => (github_ ??= (({ id, name }) => ({ id, name }))(credentials.create({ name: 'GitHub (picked)', type: 'github.githubApi', data: { accessToken: 'ghp_made_up_for_the_test' } })));
+
 wire.impl = async (path, init) => {
   const method = init.method ?? 'GET';
   if (!/\/versions$/.test(path)) wire.calls.push({ method, path, json: init.json });
@@ -146,7 +150,12 @@ wire.impl = async (path, init) => {
   if (/^\/api\/workflows\/[^/]+\/versions$/.test(path)) return { versions: [] };
   if (path === '/api/ai/build/plan') result = await call(planRoute.POST, 'POST', path, init.json);
   else if (path === '/api/ai/build') result = await call(buildRoute.POST, 'POST', path, init.json);
-  else if (path === '/api/agents/design') result = await call(method === 'DELETE' ? designRoute.DELETE : designRoute.POST, method, path, init.json);
+  else if (path === '/api/agents/design') {
+    result = await call(method === 'DELETE' ? designRoute.DELETE : designRoute.POST, method, path, init.json);
+    // AG05: the smoke test is honest now (a node tool with no credential is not tested), so the person's pick of a GitHub credential is part of the story.
+    const config = result.body.config as { tools?: Array<{ type: string; nodeType?: string; credentials?: unknown }> } | undefined;
+    for (const tool of config?.tools ?? []) if (tool.type === 'node' && tool.nodeType === 'github.github') tool.credentials = { githubApi: pickedGithub() };
+  }
   else if (path === '/api/agents/import') result = await call(importRoute.POST, 'POST', path, init.json);
   else if (path === '/api/expressions/preview') result = await call(previewRoute.POST, 'POST', path, init.json);
   else if (id && path.endsWith('/eval-gate')) result = await call(evalGateRoute.POST, 'POST', path, init.json, { id });
@@ -417,7 +426,7 @@ describe('2. brief → card → smoke test → publish (SB17 → SB16 → SB18)'
     await designCard('wf_sb3_pr_held');
     await vi.waitFor(() => expect(agentRow(cardOf().card.agentId ?? '')?.held).toBeDefined());
     const agentId = cardOf().card.agentId!;
-    expect(agentRow(agentId)?.held).toMatch(/held by the eval gate: scored 2\.0 of 5/);
+    expect(agentRow(agentId)?.held).toMatch(/held by the eval gate: 2\.0 \/ 5/);
     expect(agentStore.get(agentId)?.published).toBeUndefined();
     const held = await call(publishRoute.POST, 'POST', `/api/agents/${agentId}/publish`, undefined, { id: agentId });
     expect(held.status).toBe(409);

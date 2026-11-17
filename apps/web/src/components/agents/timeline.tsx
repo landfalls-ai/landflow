@@ -101,6 +101,10 @@ export interface TimelineProps {
   childHref?: (entry: ToolEntry) => string | undefined;
   onDecide?: (callId: string, approved: boolean) => void;
   deciding?: boolean;
+  /** AG05: what was already decided on the waiting calls (their buttons go; the row reads Approved or Denied). */
+  decisions?: Record<string, 'approved' | 'denied'>;
+  /** AG05: with two or more calls waiting, one Approve all (n) and Deny all above them. */
+  onDecideAll?: (callIds: string[], approved: boolean) => void;
   /** Wider bubbles, for the Sessions tab. */
   wide?: boolean;
   /** Ratings by assistant entry id, and the handler that rates a reply (null takes it back); both given: thumbs under each reply. */
@@ -231,9 +235,12 @@ function ToolRow({
   childHref,
   onDecide,
   deciding,
+  decision,
   live,
 }: {
   entry: ToolEntry;
+  /** AG05: this call was decided already. */
+  decision?: 'approved' | 'denied';
   /** The tool is a workflow sub-node reporting progress (no `remote` of its own): its steps so far. */
   live?: RemoteRun;
   childHref?: (entry: ToolEntry) => string | undefined;
@@ -259,6 +266,7 @@ function ToolRow({
           {entry.label !== entry.tool && <span className="ml-1.5 font-mono text-[11px] font-normal text-t3">{entry.tool}</span>}
         </span>
         {entry.status === 'denied' && <span className="text-[11px] text-t3">Denied</span>}
+        {waiting && decision && entry.status !== 'denied' && <span className="text-[11px] text-t3">{decision === 'approved' ? 'Approved' : 'Denied'}</span>}{/* AG05: */}
         {entry.durationMs !== undefined && <span className="font-mono text-[11px] text-t3">{duration(entry.durationMs)}</span>}
         <ToolStatusIcon status={entry.status} />
       </button>
@@ -291,7 +299,14 @@ function ToolRow({
                   <JsonView value={step.args} />
                 </div>
               ))}
-          {onDecide && (
+          {/* AG05: a decided call keeps no buttons; it reads what it was decided as. */}
+          {decision && (
+            <p className="mt-2 text-[12px] font-semibold text-t2" data-testid="tool-decision">
+              {decision === 'approved' ? 'Approved' : 'Denied'}
+              <span className="font-normal text-t3"> · it goes on once every call this turn is decided</span>
+            </p>
+          )}
+          {onDecide && !decision && (
             <div className="mt-2.5 flex gap-2">
               <Button size="sm" variant="primary" className="max-md:min-h-11" loading={deciding} onClick={() => onDecide(entry.callId, true)}>
                 {!deciding && <Check className="size-3.5" />} Approve
@@ -363,10 +378,12 @@ function ToolRow({
 }
 
 /** The timeline as keyed items, for a list that animates each one (ChatList) or a plain stack (TimelineView). */
-export function timelineItems({ entries, childHref, onDecide, deciding, wide, feedback, onRate, liveSteps, trace }: TimelineProps): ReactNode[] {
+export function timelineItems({ entries, childHref, onDecide, deciding, decisions, onDecideAll, wide, feedback, onRate, liveSteps, trace }: TimelineProps): ReactNode[] {
   // The Sessions tab is wide: a reply keeps a readable line length.
   const measure = wide ? 'max-w-[680px]' : undefined;
   const items: ReactNode[] = [];
+  // AG05: the calls still waiting for a person's yes or no (not decided yet), in order.
+  const undecided = entries.flatMap((e) => (e.type === 'tool' && e.status === 'awaiting_approval' && !decisions?.[e.callId] ? [e.callId] : []));
   let group: ToolEntry[] = [];
   const flush = (last: boolean) => {
     if (!group.length) return;
@@ -424,9 +441,22 @@ export function timelineItems({ entries, childHref, onDecide, deciding, wide, fe
         );
         break;
       case 'tool':
+        // AG05: one bar above the first of two or more waiting calls.
+        if (onDecide && onDecideAll && undecided.length >= 2 && undecided[0] === entry.callId) {
+          items.push(
+            <div key={`all-${entry.id}`} className={cn('flex items-center gap-2 pl-7', !wide && 'pr-1', measure)} data-testid="decide-all">
+              <Button size="sm" variant="primary" className="max-md:min-h-11" loading={deciding} onClick={() => onDecideAll(undecided, true)}>
+                {!deciding && <Check className="size-3.5" />} Approve all ({undecided.length})
+              </Button>
+              <Button size="sm" variant="outline" className="max-md:min-h-11" disabled={deciding} onClick={() => onDecideAll(undecided, false)}>
+                <Ban className="size-3.5" /> Deny all
+              </Button>
+            </div>,
+          );
+        }
         items.push(
           <div key={entry.id} className={cn('pl-7', !wide && 'pr-1', measure)}>
-            <ToolRow entry={entry} childHref={childHref} onDecide={onDecide} deciding={deciding} live={liveSteps?.(entry)} />
+            <ToolRow entry={entry} childHref={childHref} onDecide={onDecide} deciding={deciding} decision={decisions?.[entry.callId]} live={liveSteps?.(entry)} />
           </div>,
         );
         break;

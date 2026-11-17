@@ -4,7 +4,7 @@
  * and the rows of a test-and-fix session. Pure: no React, no store, so it is tested in Node.
  */
 import { opsTitle } from '@/lib/shared/assistant-ops';
-import { smokeLine } from '@/lib/shared/agent-card'; // SB18:
+import { publishLine, smokeLine } from '@/lib/shared/agent-card'; // SB18:
 import type { AgentProgress, ChatItem } from './assistant';
 
 export interface Step {
@@ -103,8 +103,11 @@ export const foldLine = (fold: SessionFold) =>
 
 // SB18: the row says how the agent's smoke test went (lib/shared/agent-card.ts `smokeLine`), then what became of it.
 export function agentStep(agent: AgentProgress): Step {
-  const busy = agent.state === 'designing' || agent.state === 'testing';
-  const tested = smokeLine(agent.smoke);
+  const busy = agent.state === 'designing' || agent.state === 'testing' || agent.state === 'publishing'; // AG05: publishing
+  // AG05: a denied write is named (the test sent nothing), and what followed the pass in `publishLine`'s words.
+  const tested = `${smokeLine(agent.smoke)}${agent.smoke?.state === 'passed' && agent.smoke.reason ? ` · ${agent.smoke.reason}` : ''}`;
+  const publishing = agent.publish ? publishLine(agent.publish) : agent.held;
+  const after = agent.state === 'published' && agent.smoke ? ' · published' : publishing && agent.publish?.state !== 'published' ? ` · ${publishing}` : '';
   const text = agent.taken
     ? agent.taken.deleted
       ? `Removed the agent “${agent.name}” (nothing else used it)`
@@ -113,7 +116,9 @@ export function agentStep(agent: AgentProgress): Step {
       ? `Designing the agent “${agent.name}”…`
       : agent.state === 'failed'
         ? `Couldn’t create the agent “${agent.name}”${agent.summary ? `: ${agent.summary}` : ''}`
-        : `Agent “${agent.name}” ${agent.smoke ? tested : agent.state === 'published' ? 'published' : 'saved as a draft'}${agent.state === 'published' && agent.smoke ? ' · published' : ''}${agent.held ? ` · ${agent.held}` : ''}${agent.summary ? ` · ${agent.summary}` : ''}`;
+        : agent.state === 'publishing'
+          ? `Agent “${agent.name}” ${publishing || 'publishing…'}`
+          : `Agent “${agent.name}” ${agent.smoke ? tested : agent.state === 'published' ? 'published' : 'saved as a draft'}${after}${agent.summary ? ` · ${agent.summary}` : ''}`;
   return { id: `agent:${agent.nodeId}`, kind: 'agent', icon: busy ? 'busy' : agent.state === 'failed' ? 'failed' : 'agent', text, ...(agent.agentId && !agent.taken?.deleted && { agentId: agent.agentId }) };
 }
 

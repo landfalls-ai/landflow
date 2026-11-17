@@ -149,6 +149,17 @@ export function TestChat({
     }
   };
 
+  // AG05: Approve all (n) / Deny all: the waiting calls decided in order, each once.
+  const decideAll = async (callIds: string[], approved: boolean) => {
+    setDeciding(true);
+    try {
+      await run.decideAll(callIds, approved);
+      onSessionChange?.();
+    } finally {
+      setDeciding(false);
+    }
+  };
+
   const last = run.entries[run.entries.length - 1];
   // A tool call has its own live line; "Thinking…" is for before the first one and between a person's answer and the next step.
   const thinking = run.running && last?.type !== 'tool';
@@ -171,7 +182,7 @@ export function TestChat({
           />,
         ]
       : []
-    : timelineItems({ entries: run.entries, childHref, onDecide: (callId, approved) => void decide(callId, approved), deciding, trace: { running: run.running, traceUrl } });
+    : timelineItems({ entries: run.entries, childHref, onDecide: (callId, approved) => void decide(callId, approved), deciding, decisions: run.decisions, onDecideAll: (ids, approved) => void decideAll(ids, approved), trace: { running: run.running, traceUrl } });
 
   return (
     <aside

@@ -247,9 +247,9 @@ describe('a new agent is tested before it is published', () => {
     }
     expect(wire.calls.filter((c) => /smoke-test|publish/.test(c))).toEqual(['POST /api/agents/:id/smoke-test', 'POST /api/agents/:id/publish']);
     expect(agentRow().state).toBe('tested');
-    expect(agentRow().held).toMatch(/held by the eval gate: scored 2\.0 of 5/);
+    expect(agentRow().held).toMatch(/held by the eval gate: 2\.0 \/ 5/);
     expect(agentOf().published).toBeUndefined();
-    expect(agentStep(agentRow()).text).toMatch(/tested, 1 of 1 passed · held by the eval gate: scored 2\.0 of 5/);
+    expect(agentStep(agentRow()).text).toMatch(/tested, 1 of 1 passed · held by the eval gate: 2\.0 \/ 5/);
   });
 
   it('asks-first never publishes by itself: the row offers Publish after the pass, and Publish does it', async () => {
