@@ -47,12 +47,15 @@ export function listCases(agentId: string): AgentEvalCase[] {
     .flatMap((row) => parse<AgentEvalCase>(row.data) ?? []);
 }
 
+/** ag3 carryover: cases added in the same millisecond (a design saves several at once) keep the order they were added in (listCases sorts by created_at, then a random id). */
+let lastCaseAt = 0;
+
 export function addCase(agentId: string, input: { input: string; expected?: string }): AgentEvalCase {
   const text = input.input.trim();
   if (!text) throw new EvalGateError('A test case needs a question');
   if (listCases(agentId).length >= MAX_EVAL_CASES) throw new EvalGateError(`An agent keeps at most ${MAX_EVAL_CASES} test cases`);
   const expected = input.expected?.trim();
-  const testCase: AgentEvalCase = { id: `ec_${nanoid(10)}`, input: clip(text), ...(expected && { expected: clip(expected) }), createdAt: new Date().toISOString() };
+  const testCase: AgentEvalCase = { id: `ec_${nanoid(10)}`, input: clip(text), ...(expected && { expected: clip(expected) }), createdAt: new Date((lastCaseAt = Math.max(Date.now(), lastCaseAt + 1))).toISOString() };
   db().upsert('agent_eval_cases', { id: testCase.id, agent_id: agentId, created_at: testCase.createdAt, data: JSON.stringify(testCase) });
   return testCase;
 }
