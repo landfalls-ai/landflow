@@ -23,7 +23,7 @@ Landflow follows n8n's model (items flowing between nodes, typed ports, cluster 
 |---|---|
 | **Build** | A canvas editor with a node creator, pinned data, a Logs panel, debugging with breakpoints, versions, templates and import from n8n and Flowise. **Spotlight**, the AI bar at the bottom of the canvas, drafts flows, proposes changes as reviewable diffs, tests and fixes them, and takes dictation. |
 | **Run** | A durable engine: checkpoints after every node, retries, waits for time, forms and approvals, crash recovery, schedules, polling, webhooks, hosted chat, MCP triggers. Queue mode adds workers and high availability. |
-| **Extend** | Plugins in TypeScript, Python and Go over HTTP, gRPC and ten message brokers, autodiscovered. A marketplace installs Claude Code plugin marketplaces as agents, skills, node plugins and flows. Composite nodes group nodes under a typed contract. |
+| **Extend** | Plugins in TypeScript, Python and Go over HTTP, gRPC and ten message brokers (eleven transport kinds: JetStream is its own kind on the NATS server), autodiscovered. A marketplace installs Claude Code plugin marketplaces as agents, skills, node plugins and flows. Composite nodes group nodes under a typed contract. |
 | **AI** | The AI Agent and its model, memory, tool, retriever and reranker sub-nodes; RAG; guardrails; evaluations; standalone **agents** with personas, skills and channels; **agent teams** with a lead, reporting lines and reviewers; remote agents over A2A. |
 | **Understand** | **Run Trace** tells a run as a story a person can follow. A **second brain** studies usage and suggests fixes. Insights, OpenTelemetry traces, metrics and logs across the host and every plugin. |
 | **Integrate** | Messaging, productivity, Google Workspace, databases, GitHub, alert triage and Landfall war rooms, each a plugin, with OAuth2 and live pickers. |
@@ -112,7 +112,11 @@ The Marketplace installs from Claude Code plugin marketplaces: a plugin's agents
 
 ## The platform, area by area
 
-Each area has a page under [docs/](docs/README.md) with the details.
+Each area has a page under [docs/](docs/README.md) with the details. For a guided tour of the platform, the host's
+layers, the Kubernetes components and the SDKs, start at the [platform guide](docs/platform/README.md); it comes with
+the `landflow-dev` Claude Code plugin (`/plugin marketplace add landfalls-ai/landflow`, then
+`/plugin install landflow-dev@landflow-soc`), whose skills and agents also load on their own when you open this
+repository with Claude Code.
 
 ### Editor and assistant
 

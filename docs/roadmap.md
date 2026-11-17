@@ -2680,3 +2680,9 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   not catch yet; one click on a credential row's radio did nothing before Apply (the label works; unconfirmed). The
   phone Execute/Debug pill overlap is the same on main (a phone follow-up). Not Spotlight: after runs the host logged
   "the brain's run failed: NOT NULL constraint failed: brain_facts.subject_type" 6 times. **Fixed in wave 14 (SP13):** `staleFactsBefore` writes the whole row, so the study finishes, is stamped, and the detectors run on the brain's own loop.
+
+
+## Platform guide and the landflow-dev plugin
+
+- **Built (2026-11-17):** [`docs/platform/`](platform/README.md), a guided tour of the platform (overview, the host's layers, agents, Kubernetes, the three SDKs with runnable samples in `examples/sdk/`), and `claude-plugins/landflow-dev`, a Claude Code plugin with a skill for each topic and two agents (`landflow-platform-guide`, `landflow-plugin-builder`). The plugin is in the repository's marketplace; opening the repository with Claude Code loads the same skills and agents from `.claude/` (`scripts/sync-claude-plugin.mjs`, run by `pnpm check`, keeps the copies equal).
+- **Left open:** the queue overlay's workers get no code runner, SMTP or LLM gateway settings (see [limitations.md](limitations.md)); the plugin has no `LICENSE` file, which the Claude plugin directory asks for before a listing; the skills have no eval suite.

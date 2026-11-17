@@ -1,0 +1,11 @@
+[
+  "agents/landflow-platform-guide.md",
+  "agents/landflow-plugin-builder.md",
+  "skills/landflow-agents",
+  "skills/landflow-kubernetes",
+  "skills/landflow-platform-overview",
+  "skills/landflow-plugin-go",
+  "skills/landflow-plugin-python",
+  "skills/landflow-plugin-typescript",
+  "skills/landflow-server-change"
+]

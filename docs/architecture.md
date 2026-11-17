@@ -167,7 +167,8 @@ announcing. An expired lease turns a plugin offline: its nodes grey out and its 
 ## Transports
 
 The host reaches a plugin directly (HTTP, gRPC: the host connects to the plugin) or through a broker (both connect out,
-so the plugin needs no inbound port). Eleven broker kinds have drivers: Kafka, RabbitMQ (AMQP 0-9-1), NATS, JetStream,
+so the plugin needs no inbound port). Ten brokers have drivers, eleven transport kinds in all, because JetStream is a kind of its own
+on the NATS server (`packages/transports/package.json` exports them): Kafka, RabbitMQ (AMQP 0-9-1), NATS, JetStream,
 Valkey Streams, MQTT 5, SQS, Google Pub/Sub, Pulsar, Azure Service Bus and AMQP 1.0 ([transports.md](transports.md)).
 
 ```
@@ -373,7 +374,7 @@ AI usage and every plugin; logs carry the trace id. `/api/metrics` serves Promet
 | Docker | `deploy/compose.yml`: the host (:53000) with the gateway sidecar (:54000), seven plugins and the code runner (:53300) |
 | Queue mode | `deploy/compose.queue.yml`: two mains, two workers, a load balancer (:53080), gateway sidecars |
 | Infrastructure | `deploy/compose.infra.yml`: Postgres, Valkey (and a six-node Valkey Cluster, profile `valkey-cluster`), MinIO, Mailpit, Keycloak, OpenBao, LocalStack, Jaeger, MySQL, GreenMail, a Git SSH server (profile `git`), every broker (one profile each), agentgateway |
-| Kubernetes | `deploy/k8s`: a base (the host with its gateway sidecar and a namespaced Role, seven plugins), components (Postgres, Valkey, MinIO, the brokers, broker transports, queue mode, Ingress, Gateway API routes, gateway sign-in with one or two issuers, cluster-wide discovery) and overlays for OrbStack (`orbstack`, `orbstack-brokers`, `orbstack-queue`…); KEDA examples scale plugins on broker backlog and workers on the queue's |
+| Kubernetes | `deploy/k8s`: a base (the host with its gateway sidecar and a namespaced Role, twelve plugins), components (Postgres, Valkey, MinIO, the brokers, broker transports, queue mode, Ingress, Gateway API routes, gateway sign-in with one or two issuers, cluster-wide discovery) and overlays for OrbStack (`orbstack`, `orbstack-brokers`, `orbstack-queue`…); KEDA examples scale plugins on broker backlog and workers on the queue's |
 
 See [deployment.md](deployment.md) for every stack and how each was checked.
 

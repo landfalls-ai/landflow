@@ -10,6 +10,12 @@ engine, protocol, SDK, transports and CLI are in `packages/`, the Go and Python 
 - `docs/constitution.md`: the rules every research and implementation starts from (non-negotiables, architecture,
   security, observability, UI, tests, docs, definition of done, the feature workflow). Loaded into every session:
   @docs/constitution.md
+- `docs/platform/README.md`: the platform guide: overview, server layers, agents, Kubernetes and the three SDKs, each
+  page paired with a skill.
+- `.claude/skills/` and `.claude/agents/` hold two kinds of files. The 14 contributor agents (`landflow-researcher`,
+  `landflow-planner`, ... for working on this repository) and the `landflow-feature` skill are edited in place. The seven
+  other skills and the two plugin agents (`landflow-platform-guide`, `landflow-plugin-builder`, for people building on
+  Landflow) are copies of `claude-plugins/landflow-dev`: edit there, then run `node scripts/sync-claude-plugin.mjs --write`.
 - `docs/README.md`: the docs index, with a feature map that names the page for each feature.
 - `docs/architecture.md`: the processes, a run end to end, every subsystem and a code map.
 - `docs/development.md`: setup, where each area's code starts, conventions, every test command and the
