@@ -126,7 +126,8 @@ describe('draftSummary', () => {
 describe('the build route', () => {
   it('answers a summary whose left equals the guarded left, with the credential item the route added after buildFlow', async () => {
     const route = await import('@/app/api/ai/build/route');
-    const response = await route.POST(new Request('http://sb15.test/api/ai/build', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'Every weekday at 8, get the status and mark it' }) }));
+    const response = await route.POST(new Request('http://sb15.test/api/ai/build', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'Every weekday at 8, get the status and mark it', plan: { name: 'Status', steps: [{ key: 's1', type: 'core.manualTrigger', name: 'Start', does: 'Start by hand' }], assumptions: [], cannot: [] } }) }));
+    // (With a plan in the body the route goes straight to the recorded builder: with none it plans first, and that call needs a model.)
     expect(response.status).toBe(200);
     const { draft } = (await response.json()) as { draft: { left: DraftLeft[]; summary: { left: DraftLeft[]; steps: string[] } } };
     expect(draft.summary.left).toEqual(draft.left);
