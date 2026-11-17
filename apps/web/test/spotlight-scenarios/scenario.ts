@@ -428,14 +428,19 @@ export const checks = {
 export const DESTINATION = /^(?:to|cc|bcc|toEmail|ccEmail|bccEmail|recipients?|url|baseUrl|endpoint|endpointUrl|webhookUrl|channel|channelId|chatId|path|filePath|repository|owner|repo)$/i;
 
 /**
- * Wave ag2 (AG08): a test case's input that describes an input instead of being one: a `<placeholder>`, under 12
- * characters, a line that starts like a description of a thing ("Pasted Grafana alert about high CPU on web-01", "An email
- * from a customer", "Random text that is not an alert") or of a person sending it ("A user asks how to reset their
- * password"), unless it then holds the thing itself after a colon ("An alert from Wazuh: [Wazuh] rule 5710 …").
+ * Wave ag2 (AG08): a test case's input that describes an input instead of being one (the same rule as the host's
+ * `describesCase`): a `<placeholder>`, a short noun phrase with an article ("A title"), a line that says what a test checks
+ * ("A test that …", "Checks that it …", "Should reply …"), a line that starts like a description of a thing ("Pasted Grafana
+ * alert about high CPU on web-01", "An email from a customer", "Random text that is not an alert") or of a person sending it
+ * ("A user asks how to reset their password"), unless it then holds the thing itself after a colon ("An alert from Wazuh:
+ * [Wazuh] rule 5710 …"). A question ("Should I restart web-01?") and a short command ("Make a UUID") are inputs.
  */
 export function describesInput(input: string): boolean {
   const text = input.trim();
-  if (text.length < 12 || /<[^<>\n]{1,40}>/.test(text)) return true;
+  if (text.endsWith('?')) return false;
+  if ((text.length < 12 && /^(?:an?|the|some|another|pasted|random|sample|example|generic|typical|plain)\b/i.test(text)) || /<[^<>\n]{1,40}>/.test(text)) return true;
+  if (/^(?:(?:an?|the)\s+)?(?:test|case)s?\s+(?:that|of|for|where|which|to)\b/i.test(text)) return true;
+  if (/^(?:checks?|verif\w*|ensures?|tests?|validates?)\s+that\s+(?:it|the agent)\b/i.test(text) || /^should\s+(?:it|the agent|reply|answer|return|say|ask|refuse|respond|not)\b/i.test(text)) return true;
   if (text.length >= 160 || /:\s*\S.{11,}/.test(text)) return false;
   const thing = /^(?:an?|the|some|another|pasted|random|sample|example|generic|typical|plain)\b[^:]{0,80}?\b(?:alert|e-?mail|message|text|log|ticket|request|question|input|payload|event|notification|report|string|token|jwt|file|data|record|row)s?\b(?:\s+(?:about|for|with|that|from|of|where|which|containing|saying|asking|describing|showing|on|in)\b|\s*$)/i;
   const person = /^(?:an?|the|some)\s+(?:user|customer|person|visitor|engineer|teammate|colleague|client)\s+(?:asks?|says|sends|wants|reports|writes|pastes|requests|needs)\b/i;

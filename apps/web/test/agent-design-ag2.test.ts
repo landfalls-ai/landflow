@@ -143,6 +143,13 @@ describe('test cases are inputs, not descriptions of them', () => {
     expect(parseCases(['Make a UUID => Gives one', 'Checks that it replies => Replies']).map((c) => c.input)).toEqual(['Make a UUID']);
   });
 
+  it('the scenarios’ describesInput reads every line as the host’s describesCase does', async () => {
+    const { describesInput } = await import('./spotlight-scenarios/scenario');
+    for (const text of ['Make a UUID', 'Decode this JWT', 'Should I restart web-01?', 'Verify that my order 1234 shipped', 'A title', 'An email', 'A test that the agent replies politely', 'Checks that it asks for the order number', 'Should reply politely', '<alert text>', 'Pasted Grafana alert about high CPU on web-01', 'An alert from Wazuh: [Wazuh] rule 5710 sshd, src 203.0.113.45', 'A user asks how to reset a password']) {
+      expect(describesInput(text), text).toBe(describesCase(text));
+    }
+  });
+
   it('a proposal with only description cases makes one follow-up call, once', async () => {
     let followUps = 0;
     const turns: Array<Partial<ModelTurn>> = [
