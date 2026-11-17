@@ -4,6 +4,7 @@ import { agentEventStream } from '@/lib/server/agents/http';
 import { isRunning, newSession, runAgent } from '@/lib/server/agents/runtime';
 import { agentStore } from '@/lib/server/agents/store';
 import { currentActorId } from '@/lib/server/auth/context';
+import { assistantScope, runInUsageScope } from '@/lib/server/ai-usage'; // AG15:
 import { error, handler, parseBody } from '@/lib/server/http';
 import { canContinueSession, sessionProjectId } from '@/lib/server/agents/session-scope';
 import { agentAvailableIn, projectRole } from '@/lib/server/projects/access';
@@ -38,5 +39,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const projectId = session.messages.length ? (session.context?.projectId ?? asked) : asked;
   // The person chatting: workflows the agent's tools run are theirs (agents/tools.ts, ToolCaller).
   const by = currentActorId();
-  return agentEventStream((onEvent) => runAgent({ agent, session: start, message: body.data.message, onEvent, rootTrace: true, ...(projectId && { context: { caller: 'chat', agentId: agent.id, projectId } }), ...(by && { caller: { startedBy: by } }) }));
+  // AG15: the test chat wrote no surface before (its calls fell under "workflow and agent runs"); now `agent-test`.
+  const testScope = assistantScope({ surface: 'agent-test', agentId: agent.id, ...(by && { userId: by }) });
+  return agentEventStream((onEvent) => runInUsageScope(testScope, () => runAgent({ agent, session: start, message: body.data.message, onEvent, rootTrace: true, ...(projectId && { context: { caller: 'chat', agentId: agent.id, projectId } }), ...(by && { caller: { startedBy: by } }) })));
 });

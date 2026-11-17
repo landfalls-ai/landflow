@@ -1039,8 +1039,8 @@ function modelNamedIn(request: string, models: readonly AgentModel[]): AgentMode
  * SB17: one small call for the cases alone (the agent's description and the request), when a proposal came with fewer than 3.
  * It runs inside the architect's scope, so it counts as its calls do; a model that fails leaves the cases to the person.
  */
-async function casesFor(model: LanguageModel, agent: { name: string; description: string; request: string }, usage: { inputTokens: number; outputTokens: number }, signal?: AbortSignal): Promise<AgentCaseDraft[]> {
-  const system = 'You write test cases for an AI agent. Answer with 3 to 5 lines and nothing else, one case per line, plain text: what a person would actually send it, written out (the alert, the question, the text itself; never a description of it or a placeholder) => what a right answer says. Example: [Wazuh] rule 5710 sshd: attempt to login using a non-existent user, src 203.0.113.45 => Names the source address and says it is a login probe.'; // AG08:
+async function casesFor(model: LanguageModel, agent: { name: string; description: string; request: string; asksFirst?: string[] /* AG15: */ }, usage: { inputTokens: number; outputTokens: number }, signal?: AbortSignal): Promise<AgentCaseDraft[]> {
+  const system = 'You write test cases for an AI agent. Answer with 3 to 5 lines and nothing else, one case per line, plain text: what a person would actually send it, written out (the alert, the question, the text itself; never a description of it or a placeholder) => what a right answer says. Example: [Wazuh] rule 5710 sshd: attempt to login using a non-existent user, src 203.0.113.45 => Names the source address and says it is a login probe.' + (agent.asksFirst?.length ? ` The agent's tools ${agent.asksFirst.join(', ')} ask the person first: a case about that action expects the agent to say what it would do and that it waits for the person's approval, never that it was done.` : ''); // AG08: AG15:
   const messages: AgentMessage[] = [{ role: 'user', content: `Agent: ${agent.name}\nWhat it does: ${agent.description}\nThe request it was designed from:\n${agent.request.slice(0, 1500)}` }];
   try {
     const turn = await withCallNote({ purpose: 'answer', draft: plainDraft({ system, tools: [], messages }) }, () => model.generate({ system, messages, tools: [], ...(signal && { signal }) }));
@@ -1051,6 +1051,40 @@ async function casesFor(model: LanguageModel, agent: { name: string; description
     if (isUsageCapError(caught)) throw caught;
     return [];
   }
+}
+
+// AG15: the tools of a config that ask the person first (a write): their names as the card shows them.
+const asksFirstNames = (config: Partial<AgentConfig>): string[] => (config.tools ?? []).flatMap((t) => (t.type === 'node' && t.requireApproval ? [t.name] : []));
+const VERB = 'sen[dt]s?|emails?|posts?|creates?|updates?|deletes?|acknowledg\\w*|silenc\\w*';
+// A claim that the action happened: a verb opening the text or following "and"/"then"/a comma, or a past-tense word. A noun "email" mid-sentence is no claim.
+const EFFECT = new RegExp(`^(?:${VERB})\\b|(?:\\band|\\bthen|[,;])\\s+(?:${VERB})\\b|\\b(?:sent|emailed|posted|created|deleted|updated|acknowledged|silenced)\\b`, 'i');
+const NEGATION = /\b(?:no|not|never|nothing|without|none|doesn'?t|don'?t|won'?t|wouldn'?t|didn'?t|cannot|can'?t)\b|n't\b/i;
+const GERUND: Record<string, string> = { send: 'sending', sent: 'sending', sends: 'sending', email: 'sending', emails: 'sending', emailed: 'sending', post: 'posting', posts: 'posting', posted: 'posting', create: 'creating', creates: 'creating', created: 'creating', delete: 'deleting', deletes: 'deleting', deleted: 'deleting', update: 'updating', updates: 'updating', updated: 'updating' };
+/**
+ * AG15: a case whose expected answer says a tool that asks first did its work ("Emails a summary to oncall@landflow.test") is
+ * rewritten to what an honest run does when approvals are denied: it says what it would do and waits. Addresses, names and ids
+ * stay exactly; the input and every other case are untouched.
+ */
+export function asksFirstCases(cases: AgentCaseDraft[], config: Partial<AgentConfig>): AgentCaseDraft[] {
+  const asks = asksFirstNames(config);
+  if (!asks.length) return cases;
+  const words = asks.flatMap((n) => n.toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 2).flatMap((w) => (w === 'send' ? ['send', 'sent'] : [w])));
+  return cases.map((c) => {
+    const expected = c.expected?.trim();
+    if (!expected) return c;
+    if (!EFFECT.test(expected) || NEGATION.test(expected) || !words.some((w) => new RegExp(`\\b${escapeRegExp(w)}`, 'i').test(expected))) return c;
+    const toAddress = /^(sends?|emails?|posts?)\s+(\S+@\S+?)\s+(?!(?:sent|posted)\b)(.+?)\s*\.?$/i.exec(expected);
+    if (toAddress) {
+      const [, verb = '', who = '', what = ''] = toAddress;
+      return { ...c, expected: `Drafts ${what} for ${who} and asks for approval before ${GERUND[verb.toLowerCase()] ?? 'doing'} it` };
+    }
+    const lead = /^(sends?|emails?|posts?|creates?|updates?|deletes?)\s+(?!(?:sent|posted|created|updated|deleted|delivered)\b)(.+?)(?:\s+(?:to|for)\s+(\S.*?))?\s*\.?$/i.exec(expected);
+    if (lead) {
+      const [, verb = '', what = '', who] = lead;
+      return { ...c, expected: `Drafts ${what}${who ? ` for ${who}` : ''} and asks for approval before ${GERUND[verb.toLowerCase()] ?? 'doing'} it` };
+    }
+    return { ...c, expected: `Says what it would do and asks for approval first, without claiming it was done (${expected.replace(/\.$/, '')})` };
+  });
 }
 
 /** The architect: its model calls count in AI usage (surface `architect`) and under the caller's caps. */
@@ -1177,7 +1211,7 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
         // SB17: 3 to 5 cases from the proposal, else the ones of the last proposal, else one small follow-up call; still fewer: say so.
         cases = proposed.length >= 3 ? proposed : cases.length >= 3 ? cases : proposed;
         if (cases.length < 3 && !input.noCases /* AG04: */) {
-          const more = await casesFor(model, { name: config.name ?? '', description: config.description ?? '', request: requestText }, usage, input.signal);
+          const more = await casesFor(model, { name: config.name ?? '', description: config.description ?? '', request: requestText, asksFirst: asksFirstNames(config) /* AG15: */ }, usage, input.signal);
           cases = more.length > proposed.length ? more : proposed;
         }
         if (cases.length < 3 && !input.noCases /* AG04: */) needs.push({ tool: 'test cases', kind: 'parameter', text: 'Add test cases on the Evaluations tab' });
@@ -1762,6 +1796,7 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
       // ag1-int: AG02's promise holds for a change too: a tool it names is added (the same least-privilege rules), or said why not.
       notAdded = withSpecHints(kept, { name: spec.name, description: '', instructions: '', ask: spec.change, tools: changeTools(spec.change, input.types.filter(usableAsTool)) }, input, spec.base);
     } else notAdded = withSpecHints(kept, spec, input); // SB17: AG02: what the ask named and the agent did not get
+    kept.cases = asksFirstCases(kept.cases, kept.config); // AG15: a case about a tool that asks first expects the ask
     return { ...kept, config: { ...kept.config, name: spec.base && spec.change ? (kept.config.name ?? spec.name) /* AG04: a rename is the change's */ : spec.name, description: kept.config.description || spec.description }, designed: true, notAdded };
   }
   // AG04: a change nothing proposed is no change: the base as it is.

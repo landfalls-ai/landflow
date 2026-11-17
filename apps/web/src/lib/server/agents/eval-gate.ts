@@ -22,6 +22,9 @@ import { getOnlineConfig } from '../evaluations/store';
 import { agentModel } from './models';
 import { runAgent, newSession } from './runtime';
 import { agentStore } from './store';
+import { assistantScope, runInUsageScope } from '../ai-usage'; // AG15:
+import { withCallNote } from '../ai-usage/call-context'; // AG15:
+import { currentActorId } from '../auth/context'; // AG15:
 import { HttpError } from '../errors';
 
 const db = () => database();
@@ -87,7 +90,14 @@ export function baselineOf(agentId: string, version: number): number | undefined
 }
 
 /** Run every case on the draft or a published version, judge the replies and save the run. */
-export async function runEval(agentId: string, version: 'draft' | number = 'draft', options: { signal?: AbortSignal } = {}): Promise<AgentEvalRun> {
+export function runEval(agentId: string, version: 'draft' | number = 'draft', options: { signal?: AbortSignal } = {}): Promise<AgentEvalRun> {
+  // AG15: the gate's runs and the judge's calls are the agent's tests: surface `agent-test`.
+  const by = currentActorId();
+  const scope = assistantScope({ surface: 'agent-test', agentId, ...(by && { userId: by }) });
+  return runInUsageScope(scope, () => withCallNote({ purpose: 'eval' }, () => runEvalCases(agentId, version, options)));
+}
+
+async function runEvalCases(agentId: string, version: 'draft' | number, options: { signal?: AbortSignal }): Promise<AgentEvalRun> {
   const agent = agentStore.get(agentId);
   if (!agent) throw new EvalGateError('Agent not found', 404);
   const cases = listCases(agentId);

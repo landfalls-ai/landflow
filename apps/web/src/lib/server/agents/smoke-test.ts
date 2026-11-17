@@ -8,6 +8,9 @@ import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import type { AgentSmoke, AgentSmokeTool } from '../../shared/agent-card';
 import { shown } from '../../shared/agent-changes'; // ag1-int: the reason names a tool as a person reads it
 import type { NodeToolConfig } from '../../shared/agents';
+import { assistantScope, runInUsageScope } from '../ai-usage'; // AG15:
+import { withCallNote } from '../ai-usage/call-context'; // AG15:
+import { currentActorId } from '../auth/context'; // AG15:
 import { HttpError } from '../errors';
 import { registry } from '../plugins/registry';
 import { newSession, runAgent } from './runtime';
@@ -52,7 +55,14 @@ function tooLittleCredential(agent: { tools?: unknown[] }): { label: string; mor
 }
 
 /** Runs the draft once on `message`. Throws 404 for an unknown agent and 400 for one with no model; every other outcome is an `AgentSmoke`. */
-export async function smokeTest(agentId: string, message: string, options: { signal?: AbortSignal } = {}): Promise<AgentSmoke> {
+export function smokeTest(agentId: string, message: string, options: { signal?: AbortSignal } = {}): Promise<AgentSmoke> {
+  // AG15: the smoke test is the agent's own test: its calls are `agent-test` spend, not "workflow and agent runs".
+  const by = currentActorId();
+  const scope = assistantScope({ surface: 'agent-test', agentId, ...(by && { userId: by }) });
+  return runInUsageScope(scope, () => withCallNote({ purpose: 'eval' }, () => smokeTestRun(agentId, message, options)));
+}
+
+async function smokeTestRun(agentId: string, message: string, options: { signal?: AbortSignal }): Promise<AgentSmoke> {
   const agent = agentStore.get(agentId);
   if (!agent) throw new SmokeTestError('Agent not found', 404);
   if (!agent.model?.model) throw new SmokeTestError('Choose a model for this agent first');

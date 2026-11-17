@@ -69,6 +69,8 @@ The **Guardrails** node (`core.guardrails`) follows n8n's: **Check Text for Viol
 
 ## Evaluations
 
+In Insights → AI an agent's tests (its smoke test, the eval gate's runs and judge, and the agent page's test chat) are their own line, **agent tests** (`ai_usage.surface = agent-test`), apart from workflow and agent runs (AG15, [agents.md](../agents.md#eval-gate)).
+
 **Offline**, after n8n's evaluations: the **Evaluation Trigger** (`core.evaluationTrigger`) reads test cases from a Data Table (the default) or from an uploaded **CSV or JSON file** (the trigger's Dataset: Uploaded file; the file is uploaded on the Tests tab, up to 10 MB, kept in the binary store, JSON as an array of objects or JSONL, the first 1000 rows used per run) and the workflow runs once per row (sequentially, each an execution marked with the run and the case). The **Evaluation** node (`core.evaluation`) has three operations:
 
 - **Set Outputs**: records what the workflow answered (to the run, or written back to the row);
