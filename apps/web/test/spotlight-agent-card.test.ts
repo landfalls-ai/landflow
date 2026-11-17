@@ -7,6 +7,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LanguageModel, ModelTurn, Workflow } from '@landflow/engine';
 import { agentAsk } from '@/lib/shared/agent-ask';
 import { starterFlow, starterSample, type AgentCard } from '@/lib/shared/agent-card';
+import { writesOutside } from '@/lib/shared/run-check';
 import type { NodeTypeInfo } from '@/lib/shared/types';
 import { agentStore } from '@/lib/server/agents/store';
 import { corePlugin } from '@/lib/server/nodes';
@@ -152,16 +153,20 @@ const cardOf = () => {
 beforeEach(() => {
   calls.length = 0;
   answers = {
-    '/api/agents/design': () => preview(),
     '/api/agents/import': () => created,
     '/api/agents/ag_new/eval-gate': () => ({ case: { id: 'k1' } }),
+    // Integration (sb3): Create ends with SB18's smoke test on the starter's pinned item.
+    '/api/expressions/preview': () => ({ ok: true, value: 'Review PR 12' }),
+    '/api/agents/ag_new/smoke-test': () => ({ smoke: { state: 'passed', reply: 'Looks fine.', ms: 5 } }),
+    '/api/agents/ag_new/publish': () => ({ ok: true }),
+    '/api/agents/design': () => preview(),
     '/api/ai/build': () => {
       throw new Error('the builder must not be called');
     },
   };
   registry.registerBuiltin(corePlugin);
   useAssistant.getState().reset();
-  useEditor.setState({ nodes: [], edges: [], pinData: {}, name: 'Untitled workflow', description: '', workflowId: 'wf_sb16', nodeTypes: { 'core.chatTrigger': info('core.chatTrigger'), 'core.messageAgent': info('core.messageAgent') } as never });
+  useEditor.setState({ nodes: [], edges: [], pinData: {}, name: 'Untitled workflow', description: '', workflowId: 'wf_sb16', nodeTypes: { 'core.chatTrigger': { ...info('core.chatTrigger'), descriptor: { ...info('core.chatTrigger').descriptor, kind: 'trigger' } }, 'core.messageAgent': info('core.messageAgent') } as never });
   useAutonomous.setState({ on: false });
 });
 
@@ -176,6 +181,9 @@ describe('Spotlight on an agent ask', () => {
     expect(shown).toMatchObject({ name: 'PR reviewer', state: 'designed', starter: true, model: 'ollama/qwen3-coder:30b', needs: ['Pick a GitHub credential'] });
     // A node tool that writes is marked; a read is not.
     expect(shown.tools.map((t) => [t.name, t.writes])).toEqual([['github_pull_request', false], ['github_comment', true]]);
+    // Integration (sb3): the card's "writes" is SB17's `writesOutside`, the one heuristic the brief puts behind approval.
+    const configTools = (preview().config.tools as Array<{ nodeType: string; parameters: Record<string, unknown> }>).map((t) => writesOutside({ type: t.nodeType, parameters: t.parameters }));
+    expect(shown.tools.map((t) => t.writes)).toEqual(configTools);
     expect(useEditor.getState().nodes).toHaveLength(0);
   });
 
@@ -233,8 +241,31 @@ describe('Spotlight on an agent ask', () => {
     expect(pinData[nodes[0].id]?.[0]?.json).toMatchObject({ chatInput: 'Review PR 12' });
     expect(useEditor.getState().name).toBe('Chat with PR reviewer');
     expect(cardOf()!.card).toMatchObject({ state: 'created', agentId: 'ag_new' });
+    // Integration (sb3): SB18's smoke test on the pinned item, then (asks-first) the row's Publish, never a publish alone.
+    expect(calls.find((c) => c.path === '/api/agents/ag_new/smoke-test')?.json).toEqual({ message: 'Review PR 12' });
+    expect(cardOf()!.card.smoke).toMatchObject({ state: 'passed' });
+    expect(useAssistant.getState().agents.find((a) => a.agentId === 'ag_new')).toMatchObject({ nodeId: nodes[1].id, state: 'tested' });
+    expect(calls.some((c) => c.path === '/api/agents/ag_new/publish')).toBe(false);
+    answers['/api/agents/design'] = () => ({ deleted: true });
     useEditor.getState().undo();
     expect(useEditor.getState().nodes).toHaveLength(0);
+    // ⌘Z of the starter flow takes the agent back (SB18's DELETE, which keeps one something else uses).
+    await vi.waitFor(() => expect(calls.find((c) => c.path === '/api/agents/design' && c.json?.agentId === 'ag_new')?.json).toEqual({ agentId: 'ag_new', workflowId: 'wf_sb16' }));
+    await vi.waitFor(() => expect(useAssistant.getState().agents.find((a) => a.agentId === 'ag_new')?.taken).toEqual({ deleted: true }));
+  });
+
+  it('a step deleted by hand (not ⌘Z) keeps the agent; a failed smoke test is never published', async () => {
+    answers['/api/agents/ag_new/smoke-test'] = () => ({ smoke: { state: 'failed', reason: 'The run ended with an error: no model' } });
+    useAutonomous.setState({ on: true });
+    noteOpened('wf_sb16', 0);
+    await designAgentCard(SB00_PR, cardAskFor(SB00_PR)!, { starter: true });
+    await vi.waitFor(() => expect(cardOf()!.card.smoke?.state).toBe('failed'));
+    expect(calls.some((c) => c.path === '/api/agents/ag_new/publish')).toBe(false);
+    const step = useEditor.getState().nodes.find((n) => n.data.wf.type === 'core.messageAgent')!;
+    useEditor.getState().removeNodes([step.id]);
+    expect(useEditor.getState().nodes.some((n) => n.id === step.id)).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls.some((c) => c.path === '/api/agents/design' && c.json?.agentId)).toBe(false);
   });
 
   it('asks first waits for Create; a failed import leaves the canvas as it was', async () => {
@@ -255,6 +286,10 @@ describe('Spotlight on an agent ask', () => {
     await designAgentCard(SB00_PR, cardAskFor(SB00_PR)!, { starter: true });
     await vi.waitFor(() => expect(cardOf()!.card.state).toBe('created'));
     expect(useEditor.getState().nodes).toHaveLength(2);
+    // Integration (sb3): created alone, then smoke-tested, then published after the pass, in that order (D3).
+    await vi.waitFor(() => expect(useAssistant.getState().agents.find((a) => a.agentId === 'ag_new')?.state).toBe('published'));
+    const order = calls.map((c) => c.path).filter((p) => /import|smoke-test|publish/.test(p));
+    expect(order).toEqual(['/api/agents/import', '/api/agents/ag_new/smoke-test', '/api/agents/ag_new/publish']);
 
     // A saved flow (published, with steps): the person decides.
     calls.length = 0;

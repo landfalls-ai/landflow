@@ -13,6 +13,7 @@ import type { AgentConfig } from '@/lib/shared/agents';
 import { AgentAvatar } from '../../agents/avatar';
 import { Button } from '../../ui/button';
 import { createFromCard, dismissCard } from './agent-ask';
+import { useAssistant } from '../assistant';
 
 const CASES_SHOWN = 2;
 
@@ -32,6 +33,10 @@ export function AgentCardView({ itemId, card, busy = false }: { itemId: string; 
   const creating = card.state === 'creating';
   const cases = allCases ? card.cases : card.cases.slice(0, CASES_SHOWN);
   const left = [...card.needs, ...card.missing.map((m) => `Not available here: ${m}`)];
+  // Integration (sb3): after Create the line is SB18's smoke line, live from the agent's row ("tested, 1 of 1 passed · published").
+  const row = useAssistant((s) => (card.agentId ? s.agents.find((a) => a.agentId === card.agentId) : undefined));
+  const smoke = row?.smoke ?? card.smoke;
+  const createdLine = smoke ? `${smokeLine(smoke)}${row?.state === 'published' ? ' · published' : ''}` : 'Created as a draft';
   return (
     <div data-testid="agent-card" className={cn('animate-fade-up rounded-xl border bg-sf p-2.5 transition-colors duration-200 motion-reduce:transition-none', created ? 'border-gnbd' : 'border-acbd')}>
       <div className="flex items-start gap-2">
@@ -98,13 +103,12 @@ export function AgentCardView({ itemId, card, busy = false }: { itemId: string; 
       <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
         {created ? (
           <>
-            <span className="text-[12px] font-semibold text-gn">Created as a draft</span>
+            <span className={cn('min-w-0 text-[12px] font-semibold [overflow-wrap:anywhere]', smoke?.state === 'failed' ? 'text-rd' : !smoke || smoke.state === 'passed' ? 'text-gn' : 'text-t2')}>{createdLine}</span>
             {card.agentId && (
               <a href={`/agents/${card.agentId}`} target="_blank" rel="noopener" className="flex min-h-7 items-center gap-0.5 text-[12px] font-semibold text-ac hover:underline max-md:min-h-11">
                 Open <ExternalLink className="size-3" />
               </a>
             )}
-            {card.smoke && <span className="basis-full text-[11.5px] text-t3">{smokeLine(card.smoke)}</span>}
           </>
         ) : (
           <>

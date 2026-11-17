@@ -4,6 +4,8 @@
  * (`agentAsk`), the Agent architect designs the agent without saving it, and the reply shows it as a card to review.
  * Create imports it as a draft with its test cases; on an empty canvas it also lays out the starter flow (Chat message,
  * then Run an Agent) that runs it. On a brand-new draft in autonomous mode (decision D1) Create runs by itself.
+ * Integration (wave sb3): Create ends with SB18's smoke test on the starter's pinned item, then the publish on a pass
+ * when Spotlight creates alone (D3), else the row's Publish; ⌘Z of the starter flow takes the agent back (SB18).
  */
 import { nanoid } from 'nanoid';
 import { api } from '@/lib/client/api';
@@ -12,13 +14,11 @@ import { starterFlow, starterSample, type AgentCard, type AgentCardTool } from '
 import type { AgentConfig } from '@/lib/shared/agents';
 import { draft as draftCall, useAssistant, type ChatItem } from '../assistant';
 import { useAutonomous } from '../autonomous';
-import { designPreview } from '../new-agent';
+import { designPreview, smokeTestAgent, takeBackAgents } from '../new-agent';
+import { writesOutside } from '@/lib/shared/run-check';
 import { autonomyOf } from '../spotlight-autonomy';
 import { useEditor } from '../store';
 import type { Reply } from './reply';
-
-/** Operations that send, create, change or delete outside: the verbs of `run-check.ts` `sends`, kept here until the integrator points this at `writesOutside`. */
-const WRITES = /^(send|post|create|update|delete|remove|upload|write|publish|comment|add|merge|archive|reply|invite|insert|upsert|append|move|close|assign|execute|trigger)/i;
 
 type ToolConfig = AgentConfig['tools'][number];
 
@@ -28,7 +28,8 @@ function cardTool(tool: ToolConfig): AgentCardTool {
   const operation = typeof node?.parameters?.operation === 'string' ? node.parameters.operation : undefined;
   const requireApproval = Boolean(tool.requireApproval);
   const name = 'name' in tool && tool.name ? tool.name : tool.type;
-  return { name, ...(node && { type: node.nodeType }), ...(operation && { operation }), writes: Boolean(node && (requireApproval || (operation && WRITES.test(operation)))), requireApproval };
+  // A write is what SB17's brief puts behind approval: `run-check.ts` `writesOutside`, one heuristic for both.
+  return { name, ...(node && { type: node.nodeType }), ...(operation && { operation }), writes: Boolean(node && (requireApproval || writesOutside({ type: node.nodeType, parameters: node.parameters ?? {} }))), requireApproval };
 }
 
 /** The guardrails in words ("Masks secrets in messages", "Ignores instructions inside tool results"). */
@@ -135,6 +136,9 @@ const creating = new Set<string>();
 export async function createFromCard(itemId: string, card: AgentCard): Promise<void> {
   if (creating.has(itemId)) return;
   creating.add(itemId);
+  // D1/D3: published after a passing smoke test only when Spotlight creates alone (a brand-new draft, the switch on).
+  const publish = createsAlone();
+  let step: string | undefined;
   patchCard(itemId, { state: 'creating', error: undefined });
   try {
     const { agent } = await api<{ agent: { id: string; name: string } }>('/api/agents/import', { method: 'POST', json: { config: card.config } });
@@ -159,15 +163,40 @@ export async function createFromCard(itemId: string, card: AgentCard): Promise<v
         if (!state.description?.trim()) state.setMeta({ description: card.description });
         state.applyTemplate({ id: 'agent-starter', title: flow.name, description: card.description, icon: 'lucide:bot', color: 'var(--viz-7)', nodes: flow.nodes, edges: flow.edges as never, pinData: flow.pinData as never });
         if (blocked.length) notes.push(`This workflow does not allow ${blocked.join(' and ')}, so the starter flow is incomplete.`);
+        // Integration (sb3): the Run an Agent step gets SB18's row (smoke test, Publish, Undo), as a step the chat adds does.
+        step = useEditor.getState().nodes.find((n) => n.data.wf.type === 'core.messageAgent' && n.data.wf.parameters.agentId === agent.id)?.id;
+        if (step) {
+          useAssistant.getState().setAgent(step, { name: card.name, state: 'draft', agentId: agent.id, ...(card.model && { summary: card.model }) });
+          takeBackOnUndo(step, useEditor.getState().workflowId);
+        }
       }
     }
     const extra = [...unsaved.length ? [`${unsaved.length} test case${unsaved.length === 1 ? '' : 's'} not saved: ${unsaved[0]}`] : [], ...notes];
     patchCard(itemId, { state: 'created', agentId: agent.id, ...(extra.length && { needs: [...card.needs, ...extra] }) });
+    // D3: the smoke test on the starter's pinned item; the card's line then reads what the row reads.
+    if (step) {
+      const smoke = await smokeTestAgent(step, { publish });
+      if (smoke) patchCard(itemId, { smoke });
+    }
   } catch (e) {
     patchCard(itemId, { state: 'failed', error: (e as Error).message });
   } finally {
     creating.delete(itemId);
   }
+}
+
+/**
+ * ⌘Z of the starter flow (the editor's own undo, not a Spotlight change) takes the agent back like SB18's Undo: the step is
+ * gone and the redo stack grew. A step the person deletes by hand is not an undo and keeps the agent. Watches one workflow.
+ */
+function takeBackOnUndo(nodeId: string, workflowId: string): void {
+  const stop = useEditor.subscribe((now, before) => {
+    if (now.workflowId !== workflowId) return stop();
+    const gone = before.nodes.some((n) => n.id === nodeId) && !now.nodes.some((n) => n.id === nodeId);
+    if (!gone) return;
+    stop();
+    if (now.history.future > before.history.future) void takeBackAgents([nodeId], workflowId);
+  });
 }
 
 /** Dismiss: the card goes away from the reply; nothing was created. */

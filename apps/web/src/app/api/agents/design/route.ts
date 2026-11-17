@@ -56,8 +56,8 @@ export const POST = handler(async (request: Request) => {
   }
   const config = { avatar: { kind: 'face' as const, face: randomFace(parsed.data.name) }, ...design.config };
   if (parsed.data.preview) {
-    // SB16: the card's preview: a face to show, nothing saved. SB17 adds `cases` to the design; the integrator drops the cast.
-    return json({ config, needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: (design as { cases?: unknown[] }).cases ?? [] });
+    // SB16: the card's preview: a face to show, nothing saved; SB17's brief's cases come with it.
+    return json({ config, needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: design.cases ?? [] });
   }
   const agent = createInProject(request, 'agent', () => agentStore.create(config), (a) => a.id);
   // SB17: the brief's test cases are saved on the new agent (the eval gate runs them on its first publish); one that fails is a line for the person, not a 500.
