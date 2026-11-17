@@ -24,6 +24,12 @@ import { store } from '../store';
 import { logger } from '../telemetry/logger';
 import type { Enrichment, Finding } from './detectors';
 
+/**
+ * How many findings a pass builds a draft workflow for. Each draft is a plan call, one call per step (at most 12) and a
+ * send-back for the plan and each step: up to 26 calls, usually 5 to 15, on the brain's model.
+ */
+export const MAX_DRAFTS_PER_PASS = 3;
+
 /** LANDFLOW_BRAIN_MODEL: `off`, a model name (`provider/model` or an Ollama model), or the builder model. */
 export function brainModelName(): string | undefined {
   const name = process.env.LANDFLOW_BRAIN_MODEL?.trim();
@@ -162,11 +168,16 @@ export async function enrichFindings(findings: Finding[], options: { model?: Lan
   const model = brainModel(options.model);
   if (!model) return findings;
   const out: Finding[] = [];
+  let drafts = 0;
   for (const finding of findings) {
-    if (!finding.enrich || options.signal?.aborted) {
+    // A draft is built planned first: one plan call and one call per step, each with its send-back, on the brain's local
+    // model. So a pass drafts only a few; the rest are kept as they are and drafted by a later pass.
+    const skipDraft = finding.enrich?.kind === 'draft' && drafts >= MAX_DRAFTS_PER_PASS;
+    if (!finding.enrich || options.signal?.aborted || skipDraft) {
       out.push(finding);
       continue;
     }
+    if (finding.enrich.kind === 'draft') drafts++;
     try {
       out.push(await enrichOne(finding, finding.enrich, model, options.signal));
     } catch (error) {
