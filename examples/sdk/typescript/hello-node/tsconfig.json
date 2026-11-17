@@ -1,0 +1,15 @@
+{
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "typeRoots": ["../../../../packages/sdk/node_modules/@types"],
+    "baseUrl": ".",
+    "paths": {
+      "@landflow/sdk": ["../../../../packages/sdk/src/index.ts"],
+      "@landflow/sdk/*": ["../../../../packages/sdk/src/*.ts"],
+      "@landflow/protocol": ["../../../../packages/protocol/src/index.ts"],
+      "vitest": ["../../../../packages/sdk/node_modules/vitest"]
+    }
+  },
+  "include": ["src", "test", "vitest.config.ts"]
+}
