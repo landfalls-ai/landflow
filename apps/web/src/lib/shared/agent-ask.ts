@@ -227,7 +227,9 @@ export function agentAsk(message: string, nodeNames: string[] = [], catalog: Ask
 export function fallbackName(description: string, tools: string[] = [], catalog: AskCatalogEntry[] = []): string {
   const plugins = new Set<string>();
   for (const tool of tools) {
-    const entry = catalog.find((c) => c.displayName.toLowerCase() === tool.toLowerCase());
+    // Two plugins can have a node of the same name (Grafana's Get Alerts and another's): the one whose plugin the ask names wins.
+    const same = catalog.filter((c) => c.displayName.toLowerCase() === tool.toLowerCase());
+    const entry = same.find((c) => c.pluginName && description.toLowerCase().includes(c.pluginName.toLowerCase())) ?? same[0];
     if (entry?.core) continue; // a core node (HTTP Request) belongs to no plugin
     plugins.add(entry?.pluginName ?? entry?.displayName ?? tool.split(':')[0]);
   }
