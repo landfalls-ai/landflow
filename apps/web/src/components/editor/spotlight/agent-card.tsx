@@ -8,11 +8,11 @@
 import { useState } from 'react';
 import { Check, ExternalLink, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { smokeLine, type AgentCard as AgentCardData } from '@/lib/shared/agent-card';
+import { publishLine, smokeLine, type AgentCard as AgentCardData } from '@/lib/shared/agent-card'; // AG04: publishLine
 import type { AgentConfig } from '@/lib/shared/agents';
 import { AgentAvatar } from '../../agents/avatar';
 import { Button } from '../../ui/button';
-import { createFromCard, dismissCard } from './agent-ask';
+import { applyAgentChange, createFromCard, dismissCard, publishAgentChange } from './agent-ask'; // AG04:
 import { useAssistant } from '../assistant';
 
 const CASES_SHOWN = 2;
@@ -94,14 +94,59 @@ export function AgentCardView({ itemId, card, busy = false }: { itemId: string; 
           </Row>
         )}
         {left.length > 0 && <Row label="Left">{left.slice(0, 4).join('; ')}</Row>}
+        {/* AG04: what a revised card (or a change to an agent that exists) differs by; none is "no change", with nothing to apply. */}
+        {card.changes && (
+          <Row label="Changes">
+            {card.changes.length ? (
+              <ul data-testid="agent-changes" className="space-y-0.5">
+                {card.changes.map((c) => (
+                  <li key={c}>{c}</li>
+                ))}
+              </ul>
+            ) : (
+              <span className="text-t3">No change: the agent already has what you asked.</span>
+            )}
+          </Row>
+        )}
       </div>
       {card.state === 'failed' && card.error && (
         <p role="alert" className="mt-2 text-[12px] leading-snug text-rd [overflow-wrap:anywhere]">
-          Couldn’t create it: {card.error}
+          {card.base ? 'Couldn’t apply it' : 'Couldn’t create it'}: {card.error}
         </p>
       )}
       <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-        {created ? (
+        {card.base ? (
+          // AG04: a change to an agent that exists: Apply saves its draft and tests it; Publish only after a pass, through the eval gate.
+          created ? (
+            <>
+              <span className={cn('min-w-0 text-[12px] font-semibold [overflow-wrap:anywhere]', card.smoke?.state === 'failed' || card.publish?.state === 'held' || card.publish?.state === 'failed' ? 'text-rd' : card.smoke?.state === 'passed' ? 'text-gn' : 'text-t2')}>
+                Saved to its draft · {smokeLine(card.smoke)}
+                {card.publish && ` · ${publishLine(card.publish)}`}
+              </span>
+              {card.smoke?.state === 'passed' && card.publish?.state !== 'published' && (
+                <Button size="sm" variant="primary" disabled={card.publish?.state === 'publishing'} onClick={() => void publishAgentChange(itemId, card)} className="max-md:h-11 max-md:px-4">
+                  {card.publish?.state === 'publishing' ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                  Publish
+                </Button>
+              )}
+              <a href={`/agents/${card.base.agentId}`} target="_blank" rel="noopener" className="flex min-h-7 items-center gap-0.5 text-[12px] font-semibold text-ac hover:underline max-md:min-h-11">
+                Open <ExternalLink className="size-3" />
+              </a>
+            </>
+          ) : (
+            <>
+              {card.changes?.length !== 0 && (
+                <Button size="sm" variant="primary" disabled={busy || creating} onClick={() => void applyAgentChange(itemId, card)} className="max-md:h-11 max-md:px-4">
+                  {creating && <Loader2 className="size-3.5 animate-spin" />}
+                  {creating ? 'Applying…' : card.state === 'failed' ? 'Try again' : 'Apply to its draft'}
+                </Button>
+              )}
+              <Button size="sm" variant="ghost" disabled={creating} onClick={() => dismissCard(itemId)} className="max-md:h-11 max-md:px-4">
+                Dismiss
+              </Button>
+            </>
+          )
+        ) : created ? (
           <>
             <span className={cn('min-w-0 text-[12px] font-semibold [overflow-wrap:anywhere]', smoke?.state === 'failed' ? 'text-rd' : !smoke || smoke.state === 'passed' ? 'text-gn' : 'text-t2')}>{createdLine}</span>
             {card.agentId && (
