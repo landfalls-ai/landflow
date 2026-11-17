@@ -1,5 +1,6 @@
 # The OrbStack overlay with the tier 1 brokers (Kafka, RabbitMQ, NATS JetStream, Valkey) in landflow-dev, and the host and
-# the TypeScript plugins (text-toolkit, messaging) connected to them:
+# seven plugins (text-toolkit, messaging, go-crypto, google-workspace, databases, py-insights, productivity) connected to them;
+# the other five base plugins (github, linear, attio, fathom, clickland) keep http,grpc:
 #
 #   kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-brokers
 #

@@ -148,7 +148,7 @@ on the agent's page to pick one of four kinds:
 - **Image**: a PNG, JPEG or WebP, cropped to a square and scaled to 256 px in the browser (WebP when the browser can
   encode it), at most 200 KB as a data URL in the agent's config.
 
-An agent made without an avatar through `POST /api/agents` (a script, the CLI, another agent) gets a face drawn from its
+An agent made without an avatar through `POST /api/agents` (a script, another agent; the CLI has no agent commands) gets a face drawn from its
 name, the way the New agent dialog gives one, so it doesn't show as a bare robot in team charts; an avatar sent with the
 request, an icon too, is kept.
 
@@ -949,7 +949,7 @@ through the infra Mailpit (`apps/web/test/approval-email-mailpit.test.ts`, skipp
 | `GET/PUT/DELETE /api/agents/:id/kagent` | the agent on kagent: status (`KagentStatus`: deployment, drift, Ready, A2A URL) / deploy the published version `{ credentialId?, name?, harness? }` / remove; `GET ?credentialId=` also lists that cluster's Harnesses (`harnesses`, or `harnessError`) ([a2a.md](a2a.md#landflow-agents-on-kagent)) |
 | `POST /api/mcp/agents/:id` | the agent's tools over MCP, for kagent (the bearer token in the agent's kagent Secret only); `?tools=free` / `?tools=approval` serve only the tools that run freely / need approval (Claude Code's two servers) |
 | `GET /v2/…` | Landflow's OCI registry, pull only: the images of Claude Code plugins packed for kagent, by digest (public) ([a2a.md](a2a.md#on-claude-code)) |
-| `POST /api/agents/:id/chat` | `{ message, sessionId? }` → SSE of `AgentStreamEvent` (draft, source `test`) |
+| `POST /api/agents/:id/chat` | `{ message, sessionId? }` → SSE of `AgentStreamEvent`. Always runs the **draft** (`version: 'draft'`, source `test`), never the published version: use a channel, a schedule or the Run an Agent node for that |
 | `POST /api/agents/:id/sessions/:sid/approvals` | `{ callId, approved }` → the same SSE stream once the run resumes |
 | `POST /api/slack/events/:agentId/:channelId` | Slack Events API of the agent's Slack channel (signed by Slack) |
 | `POST /api/slack/commands/:agentId/:channelId` | Slack slash commands of the agent's Slack channel (signed by Slack; answered on the `response_url`) |

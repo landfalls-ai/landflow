@@ -3,6 +3,16 @@
 Everything about Landflow, the low-code workflow platform where every node is a plugin: what it does, how it is built,
 how to run it and how to change it. The [project README](../README.md) has the quick start.
 
+## Platform guide
+
+**[platform/README.md](platform/README.md)** is the guided tour of the whole platform: an [overview](platform/overview.md),
+the [layers of the host server](platform/server-layers.md), [agents](platform/agents.md), the
+[Kubernetes components](platform/kubernetes.md) and the three [SDKs](platform/sdk/README.md) with runnable samples in
+[`examples/sdk/`](../examples/sdk/README.md). Each page has a matching skill for Claude in the `landflow-dev` plugin
+([`claude-plugins/landflow-dev`](../claude-plugins/landflow-dev/README.md)): open this repository with Claude Code and
+the skills and agents load from `.claude/`; in another repository, install the plugin from this repository's
+marketplace.
+
 ## Start here
 
 1. **[architecture.md](architecture.md)**: the processes and what each owns, a run from trigger to result, every
@@ -35,7 +45,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 | Postgres mode's write queue: the spool, the blocked state, recovery and metrics | [features/postgres-write-queue.md](features/postgres-write-queue.md) | [features/engine.md](features/engine.md) |
 | Engine: data model, durable runtime, queue mode and HA, triggers and flow nodes (Ask a Person), debounce and rate limits, Code node | [features/engine.md](features/engine.md) | [architecture.md](architecture.md) |
 | Plugins: the node interface in each SDK, autodiscovery, branding | [plugins.md](plugins.md) | [protocol.md](protocol.md) |
-| Transports: HTTP, gRPC, ten brokers, Auto, the claim check, MCP faces | [transports.md](transports.md) | [protocol.md](protocol.md) §14–15 |
+| Transports: HTTP, gRPC, ten brokers (eleven kinds, JetStream counted apart from NATS), Auto, the claim check, MCP faces | [transports.md](transports.md) | [protocol.md](protocol.md) §14–15 |
 | LLM gateway (LiteLLM): run it, image pin, models, Kubernetes example | [llm-gateway.md](llm-gateway.md) | [deployment.md](deployment.md#the-llm-gateway) |
 | MCP gateway (agentgateway): sync, identity, tokens | [mcp-gateway.md](mcp-gateway.md) | [transports.md](transports.md) |
 | AI: AI Agent and sub-nodes, hosted chat and widget, RAG, guardrails, evaluations, MCP | [features/ai.md](features/ai.md) | |

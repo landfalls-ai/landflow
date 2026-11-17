@@ -288,18 +288,18 @@ Each was checked against the manifests or the code on this branch.
 - **Landledger and Clickland need their own projects** running (`landledger-api` on the Mac, `clickland-dev`
   namespace); the overlay only points at them.
 
-## Where the docs and the code disagree
+## Where the docs and the code disagreed
 
-The code wins. These were found while writing this page; they are not fixed here.
+The code wins. These were found while writing this page and are fixed in the docs and in the manifests' comments (no
+manifest value changed):
 
-- `deploy/k8s/base/kustomization.yaml:1` says "the eight example plugins" and `docs/architecture.md:376` says "seven
-  plugins"; the base lists twelve.
-- `deploy/k8s/overlays/orbstack-brokers/kustomization.yaml:2` and [deployment.md, "Brokers on
-  Kubernetes"](../deployment.md#brokers-on-kubernetes) say the host and "the TypeScript plugins (text-toolkit,
-  messaging)" are connected; `components/broker-transports` writes a face list for seven plugins, two of them Go and
-  two Python (text-toolkit, messaging, go-crypto, google-workspace, databases, py-insights, productivity). The other
-  five base plugins (github, linear, attio, fathom, clickland) get none.
-- `components/broker-transports` says "every bundled plugin is listed"; it lists seven of the twelve base plugins.
+- The base lists twelve plugins; `deploy/k8s/base/kustomization.yaml`, `docs/architecture.md` and
+  [deployment.md](../deployment.md#kubernetes) said eight or seven.
+- `components/broker-transports` writes a face list for seven plugins (text-toolkit, messaging, go-crypto,
+  google-workspace, databases, py-insights, productivity). The other five (github, linear, attio, fathom, clickland)
+  keep `http,grpc`. The `orbstack-brokers` header, its comment and deployment.md now say so.
+- Still true, and in [limitations.md](../limitations.md): the queue overlay's workers get no code runner, SMTP or LLM
+  gateway settings, which only the host Deployment has.
 
 ## Change it
 
