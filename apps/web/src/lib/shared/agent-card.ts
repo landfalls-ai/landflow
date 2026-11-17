@@ -4,9 +4,10 @@
  * guardrails in words, test cases), the smoke test's result (SB18, decision D3) and, on an empty canvas, the starter
  * flow that runs it (SB16, decision D5).
  *
- * Contract file: backbone/contracts/sb3/agent-card.ts, copied byte for byte to apps/web/src/lib/shared/agent-card.ts by
- * SB16 (owner), SB17 and SB18. Change it in the contracts folder first (the owner only), then copy. Types and pure
- * helpers only: no import, no zod (the browser loads it), no I/O.
+ * Contract file: backbone/contracts/ag1/agent-card.ts (wave ag1; sb3's was backbone/contracts/sb3/agent-card.ts, owner
+ * SB16), copied byte for byte to apps/web/src/lib/shared/agent-card.ts by AG02 (owner this wave), AG04 and AG05. Wave
+ * ag1 only adds optional fields and helpers, so every sb3 caller still type-checks. Change it in the contracts folder
+ * first (the owner only), then copy. Types and pure helpers only: no import, no zod (the browser loads it), no I/O.
  *
  * The wire, for reference (each route is its owner's):
  * - `POST /api/agents/design` with `preview: true` (SB16) answers 200 `{ config, needs, missing, dropped, designed, cases }`
@@ -17,6 +18,21 @@
  *   message with approvals denied, its session deleted after; 404 for an agent the caller cannot see.
  * - `DELETE /api/agents/design` `{ agentId, workflowId }` (SB18) deletes an agent Spotlight made only when nothing else
  *   uses it: answers `{ deleted: true }` or `{ deleted: false, usedBy: string[] }`.
+ *
+ * Wave ag1 adds, each by its owner:
+ * - AG02: the design body's `ask` (the person's whole message, 1–4000 characters; the architect reads it, not only the
+ *   short description) and the preview answer's `notAdded` (`AgentNotAdded[]`: every tool the ask named that the agent
+ *   did not get, with why) and `models` (the `provider/model` names the card's Model select offers, the host's builder
+ *   model, `LANDFLOW_BUILDER_MODEL`, first). The agent's model is the one Spotlight's picker names, else the builder
+ *   model; never one the architect upgraded to.
+ * - AG04: the design body's `base` (`{ agentId }` an existing agent, or `{ config }` the pending card's) and `change`
+ *   (what the person asked to change, 1–4000 characters); the preview answer then also carries `changes` (each
+ *   difference from the base in words, `AgentCard.changes`) and saves nothing. Applying it is the person's click: a
+ *   pending card is replaced in place; an existing agent gets `PUT /api/agents/:id` (its draft), never a publish.
+ * - AG05: the smoke test's answer carries `tools` (each tool call the run made, `AgentSmokeTool`); `passed` needs every
+ *   call to have succeeded with some output; a node tool whose visible required credential is unset makes it `untested`
+ *   with "needs a credential: <tool>" before anything runs. Publishing is followed on the card and the row as an
+ *   `AgentPublish` (`publishLine`).
  */
 
 /** A test case the brief proposes for the eval gate: what a person would send, and what a right answer says. */
@@ -38,6 +54,16 @@ export interface AgentCardTool {
   requireApproval: boolean;
 }
 
+/** Wave ag1 (AG05): one tool call of the smoke test's run, as the timeline recorded it. */
+export interface AgentSmokeTool {
+  /** As the agent's config names it. */
+  name: string;
+  /** `empty`: it succeeded but put out nothing (no item, or only empty fields); `denied`: it needed approval (approvals are denied in a smoke test). */
+  status: 'success' | 'error' | 'empty' | 'denied';
+  /** The error, or what was empty, in one sentence. */
+  note?: string;
+}
+
 /** What the smoke test said (D3). `untested`: there was no sample item yet; `reason` says what is missing. */
 export interface AgentSmoke {
   state: 'testing' | 'passed' | 'failed' | 'untested';
@@ -46,6 +72,26 @@ export interface AgentSmoke {
   /** Why it failed or was not run, in one sentence ("The run ended with an error: …", "No sample item: run the step before it once"). */
   reason?: string;
   ms?: number;
+  /** Wave ag1 (AG05): every tool call the run made, in order; absent before ag1 and when it made none. */
+  tools?: AgentSmokeTool[];
+}
+
+/** Wave ag1 (AG02): a tool the ask named that the agent did not get, and why, in one sentence ("no plugin online has Jira"). */
+export interface AgentNotAdded {
+  name: string;
+  reason: string;
+}
+
+/**
+ * Wave ag1 (AG05): a publish as the card, the row and the agent page follow it. `publishing` while the eval gate runs
+ * (`cases` of them), `held` when it held the draft (`score` of 5, `reason` the gate's verdict in words), `failed` when the
+ * publish itself failed (`reason`).
+ */
+export interface AgentPublish {
+  state: 'publishing' | 'published' | 'held' | 'failed';
+  cases?: number;
+  score?: number;
+  reason?: string;
 }
 
 /** The card's own state: designed and waiting for Create, being created, created (with `agentId`), or failed (`error`). */
@@ -77,6 +123,18 @@ export interface AgentCard {
   starter?: boolean;
   /** The workflow that was open when the card was designed: Create lays the starter flow out only if it still is. */
   workflowId?: string;
+  /** Wave ag1 (AG02): the person's whole ask, as the design route got it (a follow-up revises from it, AG04). */
+  ask?: string;
+  /** Wave ag1 (AG02): the tools the ask named that the agent did not get, with why; shown as "Not added". */
+  notAdded?: AgentNotAdded[];
+  /** Wave ag1 (AG02): the models the card's Model select offers (`provider/model`), the host's builder model first. */
+  models?: string[];
+  /** Wave ag1 (AG04): the agent this card changes (a proposal for an existing agent), absent for a new one. */
+  base?: { agentId: string; name: string };
+  /** Wave ag1 (AG04): what this card changes from the pending card or the existing agent, one line each ("Adds the tool Slugify"). */
+  changes?: string[];
+  /** Wave ag1 (AG05): the publish after Create (or after Apply of a change), as it goes. */
+  publish?: AgentPublish;
 }
 
 /** The agent's row text for its smoke test: "tested, 1 of 1 passed", "test failed: <reason>", "not tested yet: <reason>". */
@@ -86,6 +144,15 @@ export function smokeLine(smoke: AgentSmoke | undefined): string {
   if (smoke.state === 'passed') return 'tested, 1 of 1 passed';
   if (smoke.state === 'failed') return `test failed: ${smoke.reason ?? 'no reply'}`;
   return `not tested yet${smoke.reason ? `: ${smoke.reason}` : ''}`;
+}
+
+/** Wave ag1 (AG05): the publish in words: "publishing: the eval gate runs 3 cases…", "held by the eval gate: 2.3 / 5 · <the verdict>", "published". */
+export function publishLine(publish: AgentPublish | undefined): string {
+  if (!publish) return '';
+  if (publish.state === 'publishing') return `publishing: the eval gate runs ${publish.cases ? `${publish.cases} case${publish.cases === 1 ? '' : 's'}` : 'its cases'}…`;
+  if (publish.state === 'published') return 'published';
+  if (publish.state === 'held') return `held by the eval gate${publish.score !== undefined ? `: ${publish.score.toFixed(1)} / 5` : ''}${publish.reason ? ` · ${publish.reason}` : ''}`;
+  return `publish failed${publish.reason ? `: ${publish.reason}` : ''}`;
 }
 
 /** The sample chat message the starter flow pins: the first test case's input, else a plain greeting naming the agent. */
