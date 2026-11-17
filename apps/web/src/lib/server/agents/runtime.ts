@@ -792,7 +792,11 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       const result = await execute(asCall, tool, ctx);
       // A person's edit that added a field the tool does not take: said, not silently dropped.
       const ignored = tool.shownInput ? Object.keys(call.input).filter((k) => !(k in tool.shownInput!(call.input))) : [];
-      if (ignored.length && isResult(result)) return { ...result, content: `${result.content}\nNote: ${ignored.join(', ')} ${ignored.length === 1 ? 'is' : 'are'} not something this tool takes; ignored.` };
+      if (ignored.length) {
+        const note = `${ignored.join(', ')} ${ignored.length === 1 ? 'is' : 'are'} not something ${tool.label} takes; ignored.`;
+        upsert({ id: entryId(), type: 'notice', message: note, at: now() }); // the person's step row says it too
+        if (isResult(result)) return { ...result, content: `${result.content}\nNote: ${ignored.join(', ')} ${ignored.length === 1 ? 'is' : 'are'} not something this tool takes; ignored.` };
+      }
       return result;
     }
     upsert(toolEntry(asCall, tool, { status: 'denied', error: 'Denied by a person' }));

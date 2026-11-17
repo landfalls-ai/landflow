@@ -242,6 +242,8 @@ describe('Run an Agent, Tool Approvals', () => {
     const outcome = await decideApproval(record.executionId, idOf(record, 0), true, { input: { text: 'edited', other: 'x' } });
     expect((outcome as { record: typeof record }).record.status).toBe('success');
     expect(toolResults.join('\n')).toMatch(/other is not something this tool takes; ignored/);
+    const after = agentStore.getSession(summary.id)!;
+    expect(after.timeline.some((e) => e.type === 'notice' && /other is not something Post Note takes; ignored/.test(e.message))).toBe(true);
   });
 
   it('a keyed conversation whose waiting run was cancelled is not locked: the orphan call is settled as cancelled and the next message goes on', async () => {

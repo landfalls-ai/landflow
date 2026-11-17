@@ -265,7 +265,10 @@ export function ChatPanel({
         throw error;
       }
     });
-    if (failed) mark(undefined);
+    if (failed) {
+      mark(undefined);
+      setCalls(shown); // a Deny that did not go through leaves the row as it was
+    }
   };
 
   const attach = async (list: FileList | null) => {
