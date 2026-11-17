@@ -1,11 +1,11 @@
 /**
  * The Spotlight scenario suite's API: what a scenario is, what running it gives, and the checks the scorecards count.
  *
- * Contract file: backbone/contracts/sb2/spotlight-scenario.ts (version 2, wave sb2), copied byte for byte to
- * apps/web/test/spotlight-scenarios/scenario.ts by SB10 (owner this wave: the harness) and by every sb2 package that
- * adds scenarios (SB07, SB08, SB09, SB11, SB12, SB19). Version 1 was backbone/contracts/sb1/spotlight-scenario.ts
- * (SB00); version 2 only adds optional fields and helpers, so every sb1 scenario still type-checks. Change it in the
- * contracts folder first. Types and pure helpers only: no server import, no I/O. SB00's runner
+ * Contract file: backbone/contracts/sb3/spotlight-scenario.ts (version 3, wave sb3), copied byte for byte to
+ * apps/web/test/spotlight-scenarios/scenario.ts by SB13 (owner this wave) and by every sb3 package that adds scenarios
+ * (SB14, SB15, SB16, SB17, SB18). Version 2 was backbone/contracts/sb2/spotlight-scenario.ts (SB10), version 1
+ * backbone/contracts/sb1/spotlight-scenario.ts (SB00); each version only adds optional fields and helpers, so every
+ * earlier scenario still type-checks. Change it in the contracts folder first. Types and pure helpers only: no server import, no I/O. SB00's runner
  * (apps/web/test/spotlight-scenarios.test.ts, with apps/web/test/spotlight-scenarios/harness.ts) finds every
  * `apps/web/test/spotlight-scenarios/<owner>.ts` (lower case, e.g. `sb03.ts`) with `import.meta.glob`, so packages never
  * edit a shared index: each adds one file that `export default defineScenarios([...])`.
@@ -27,9 +27,13 @@ export type Job = 'build' | 'fix' | 'agent';
  * - `chat`: POST /api/assistant/chat, then the proposals applied with the product's `applyOps`;
  * - `session`: a chat as above, then Spotlight's test-and-fix session on the result (the editor stores in Node, runs
  *   from `start.runs` in the unit form, real in-process runs in the live form);
- * - `design`: POST /api/agents/design (Spotlight's newAgent); `architect`: POST /api/assistant/agent (the dialog).
+ * - `design`: POST /api/agents/design (Spotlight's newAgent); `architect`: POST /api/assistant/agent (the dialog);
+ * - `agent-ask` (wave sb3, SB16): what the editor does with a typed "create an agent …": `agentAsk` on the message, POST
+ *   /api/agents/design with `preview: true` (the card), then the card's Create (POST /api/agents/import and the cases),
+ *   on an empty `start.workflow` (or none) the starter flow as `after`, and with `start.autonomy: 'auto'` also SB18's
+ *   smoke test on the starter flow's sample item and the publish that follows a pass.
  */
-export type Via = 'build' | 'chat' | 'session' | 'design' | 'architect';
+export type Via = 'build' | 'chat' | 'session' | 'design' | 'architect' | 'agent-ask';
 
 /** One model reply in the unit form; a function sees what the model was asked. */
 export type ScriptTurn = Partial<ModelTurn> | ((input: Parameters<LanguageModel['generate']>[0]) => Partial<ModelTurn>);
@@ -73,6 +77,19 @@ export interface Start {
    * Live, only a model this machine serves: Ollama or the local LiteLLM container routing to it.
    */
   model?: string;
+  /**
+   * Wave sb3 (SB13): the `build` via plans first, as the editor does from sb3 on: POST /api/ai/build/plan, then POST
+   * /api/ai/build with that plan. Absent: the live form plans first and the unit form posts the prompt alone (the base's
+   * one-shot draft, so sb1's and sb2's scripts still hold) until the integrator migrates those scripts at the merge
+   * (carryover-sb3.md §1) and makes planning the default for both forms. `false`: never plans (the one-shot fallback).
+   */
+  staged?: boolean;
+  /**
+   * Wave sb3 (SB14): a plan given outright (a `BuildPlan`, lib/shared/build-plan.ts, as JSON), posted with the prompt to
+   * POST /api/ai/build so stage 2 is measured on its own; the plan route is not called. Kept untyped here so a package
+   * that does not copy build-plan.ts still compiles this file.
+   */
+  plan?: Record<string, unknown>;
 }
 
 /** What running a scenario once gave. Every list is empty, never absent. */
@@ -95,8 +112,22 @@ export interface Outcome {
   /** Destinations the run tried to reach (host:port) and the ones the local-only guard refused. */
   sent: string[];
   refused: string[];
-  /** Agents that exist after it, made by this scenario. */
-  agents: Array<{ name: string; model?: string; tools: string[]; knowledge: boolean; published: boolean }>;
+  /**
+   * Agents that exist after it, made by this scenario. Wave sb3 adds optional fields (read them with `?? []` / `?? 0`):
+   * `toolsDetail` (SB17: each tool's node type, operation and whether it needs approval), `cases` (SB17: test cases
+   * saved for the eval gate), `practices` (SB17: approved practices in its prompt), `guardrails` (SB17: in words).
+   */
+  agents: Array<{
+    name: string;
+    model?: string;
+    tools: string[];
+    knowledge: boolean;
+    published: boolean;
+    toolsDetail?: Array<{ name: string; type?: string; operation?: string; requireApproval: boolean }>;
+    cases?: number;
+    practices?: boolean;
+    guardrails?: string[];
+  }>;
   /** Model calls, and tokens in and out as AI usage recorded them. */
   modelCalls: number;
   tokens: { input: number; output: number };
@@ -118,6 +149,14 @@ export interface Outcome {
    * cards reads "changed nothing".
    */
   unapplied?: number;
+  /** Wave sb3 (SB13): a build's plan as the draft reports it (`draft.plan`): each step's name and node type in order (the trigger first), and what no node could do. */
+  plan?: { steps: Array<{ name: string; type: string }>; cannot: string[] };
+  /** Wave sb3 (SB13): a build's model calls in order (`draft.stages`): the stage and the prompt's size in tokens (the greater of the reported and the estimated count). */
+  prompts?: Array<{ stage: string; tokens: number }>;
+  /** Wave sb3 (SB16): an agent card was shown (`agent-ask`), and whether the starter flow came with it. */
+  card?: { starter: boolean };
+  /** Wave sb3 (SB18): the smoke test of the agent it made, as the row reads it (lib/shared/agent-card.ts `AgentSmoke.state`). */
+  smoke?: 'passed' | 'failed' | 'untested';
 }
 
 /** A check: true, false, or 'n/a' (it does not apply to this outcome; not counted). */
@@ -220,6 +259,32 @@ export const checks = {
     judge: (o) => {
       const count = (wf: Workflow | undefined) => Object.keys(wf?.nodes.find((n) => n.name === node)?.credentials ?? {}).length;
       return (o.offers ?? []).some((c) => c.node === node) && count(o.after) <= count(o.before);
+    },
+  }),
+  /** Wave sb3 (SB13): every model call of the build sent at most `tokens` (6000 by the plan); 'n/a' when no call was reported. */
+  promptUnder: (tokens: number): Check => ({
+    id: 'prompt-under',
+    label: `Every prompt under ${tokens} tokens`,
+    judge: (o) => (o.prompts?.length ? o.prompts.every((p) => p.tokens <= tokens) : 'n/a'),
+  }),
+  /** Wave sb3 (SB13): the plan has exactly one trigger, and it is the first step. */
+  oneTrigger: {
+    id: 'one-trigger',
+    label: 'Planned one trigger',
+    judge: (o: Outcome) => {
+      const trigger = (type: string) => /manualTrigger|webhook|schedule|chatTrigger|Trigger$/.test(type);
+      return o.plan ? o.plan.steps.filter((s) => trigger(s.type)).length === 1 && trigger(o.plan.steps[0]?.type ?? '') : 'n/a';
+    },
+  } satisfies Check,
+  /** Wave sb3 (SB16): an agent card, and on an empty canvas the starter flow with a Run an Agent step pointing at the new agent. */
+  agentCard: (starter: boolean): Check => ({
+    id: starter ? 'card-and-starter' : 'agent-card',
+    label: starter ? 'Agent card and a starter flow that runs it' : 'Agent card',
+    judge: (o) => {
+      if (!o.card) return false;
+      if (!starter) return true;
+      const step = o.after?.nodes.find((n) => n.type === 'core.messageAgent');
+      return o.card.starter && Boolean(o.after?.nodes.some((n) => n.type === 'core.chatTrigger')) && typeof step?.parameters?.agentId === 'string' && step.parameters.agentId !== '';
     },
   }),
 };
