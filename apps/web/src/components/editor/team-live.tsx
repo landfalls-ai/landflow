@@ -498,8 +498,8 @@ export interface TeamTileOptions {
   onDecide?: DecideFn;
   /** Open the Run Trace in a new tab (from the editor, so the flow stays open). */
   newTab?: boolean;
-  /** The editor: before any run the node shows who is on the team and how its last run ended. */
-  idleRoster?: boolean;
+  /** The editor: before any run the node shows who is on the team and how its last run ended. `'compact'` (the lead's band is on the tile): one line, so the tile stays near 140 px. */
+  idleRoster?: boolean | 'compact';
 }
 
 /** What a waiting run's node waits on, from its wait's data (nodes/run-team.ts): a member's question, or a tool's approval. */
@@ -660,7 +660,7 @@ export function useTeamTile(teamId: string | undefined, live: TeamProgress | und
       },
     };
   }
-  if (options.idleRoster && teamId) return { tile: { body: <TeamIdle teamId={teamId} faces={faces} /> }, roster: true };
+  if (options.idleRoster && teamId) return { tile: { body: <TeamIdle teamId={teamId} faces={faces} compact={options.idleRoster === 'compact'} /> }, roster: true };
   return {};
 }
 
@@ -668,12 +668,32 @@ export function useTeamTile(teamId: string | undefined, live: TeamProgress | und
  * A team node before it runs, in the editor: the members after the lead (whose face is the node's), and how
  * the team's last run ended. The strip above the node then stays away (flow-node.tsx), since this says the same.
  */
-function TeamIdle({ teamId, faces }: { teamId: string; faces: TeamFace[] }) {
+function TeamIdle({ teamId, faces, compact }: { teamId: string; faces: TeamFace[]; compact?: boolean }) {
   const run = useLastTeamRun(teamId);
   const lines = useRunLines(run && !run.live ? [run.executionId] : []);
   const others = faces.slice(1);
   const line = run ? lines?.[run.executionId] : undefined;
   const tone = line?.out.tone === 'bad' || run?.status === 'error' ? 'text-rd' : line?.out.tone === 'warn' || run?.status === 'waiting' ? 'text-warn' : 'text-gn';
+  const lastRun = run && (
+    <div className="truncate text-[11px] text-t3" title={`${run.workflowName} · ${timeAgo(run.startedAt)}`}>
+      Last run: <span className={cn('font-semibold', tone)}>{lastRunWords(run, line)}</span>
+    </div>
+  );
+  if (compact) {
+    // The lead's band is on the tile: the members' faces and the last run share one line (the names are the hover), so the tile stays near 140 px.
+    return (
+      <div className="mx-4 flex min-w-0 items-center gap-1.5 pb-2 text-[11px] text-t3" data-testid="team-idle" title={faces.map((f) => f.title).join(', ')}>
+        {others.length > 0 && (
+          <span className="flex shrink-0">
+            {others.slice(0, 5).map((f, i) => (
+              <AgentAvatar key={f.member.id} agent={f.face} size={18} round className={cn('ring-2 ring-sf', i && '-ml-1.5')} />
+            ))}
+          </span>
+        )}
+        <span className="min-w-0 flex-1 truncate">{run ? lastRun : others.length > 0 ? rosterText(others.map((f) => f.title)) : null}</span>
+      </div>
+    );
+  }
   return (
     <div className="mx-4 flex flex-col gap-1.5 border-t border-hair pb-6 pt-2" data-testid="team-idle">
       {others.length > 0 && (
@@ -686,11 +706,7 @@ function TeamIdle({ teamId, faces }: { teamId: string; faces: TeamFace[] }) {
           <span className="truncate">{rosterText(others.map((f) => f.title))}</span>
         </div>
       )}
-      {run && (
-        <div className="truncate text-[11px] text-t3" title={`${run.workflowName} · ${timeAgo(run.startedAt)}`}>
-          Last run: <span className={cn('font-semibold', tone)}>{lastRunWords(run, line)}</span>
-        </div>
-      )}
+      {lastRun}
     </div>
   );
 }

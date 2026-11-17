@@ -6,9 +6,9 @@
  * it) or Dismiss. Created, it is a draft with a link to its page.
  */
 import { useState } from 'react';
-import { Check, ExternalLink, Loader2 } from 'lucide-react';
+import { Check, ChevronDown, ExternalLink, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { publishLine, smokeLine, type AgentCard as AgentCardData } from '@/lib/shared/agent-card'; // AG04: publishLine
+import { knowledgeLine, publishLine, smokeLine, type AgentCard as AgentCardData } from '@/lib/shared/agent-card'; // AG04: publishLine
 import type { AgentConfig } from '@/lib/shared/agents';
 import { AgentAvatar } from '../../agents/avatar';
 import { Button } from '../../ui/button';
@@ -35,8 +35,9 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
   const creating = card.state === 'creating';
   const cases = allCases ? card.cases : card.cases.slice(0, CASES_SHOWN);
   // AG11: a card brought back from history offers Publish only after Test again passed in this page load.
-  const draft = useAgentDraft(card.base?.agentId); // AG09: a change card's Left row is what the agent's draft still lacks
-  const left = [...(card.base ? stillLeft(card.needs, draft) : card.needs) /* AG09: */, ...card.missing.map((m) => `Not available here: ${m}`)];
+  const followed = card.base?.agentId ?? (created ? card.agentId : undefined); // AG12: a created card follows its agent too (the pick on the agent page opened by Pick it)
+  const draft = useAgentDraft(followed); // AG09: a change card's Left row is what the agent's draft still lacks
+  const left = [...(followed ? stillLeft(card.needs, draft) : card.needs) /* AG09: */, ...card.missing.map((m) => `Not available here: ${m}`)];
   // Integration (sb3): after Create the line is SB18's smoke line, live from the agent's row ("tested, 1 of 1 passed · published").
   const row = useAssistant((s) => (card.agentId ? s.agents.find((a) => a.agentId === card.agentId) : undefined));
   const smoke = row?.smoke ?? card.smoke;
@@ -104,7 +105,28 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
             </ul>
           </Row>
         )}
-        {card.knowledge && <Row label="Knows">The “{card.knowledge}” knowledge base</Row>}
+        {/* AG13: what will be indexed, from where, how it is searched, and after Create how the indexing went; a card without it reads as before. */}
+        {card.knowledgeSetup ? (
+          <Row label="Knowledge">
+            <span data-testid="agent-knowledge" className={cn(card.knowledgeSetup.problem || card.knowledgeSetup.state === 'failed' ? 'text-rd' : card.knowledgeSetup.state === 'indexed' && 'text-gn')}>{knowledgeLine(card.knowledgeSetup)}</span>
+            {card.knowledgeSetup.files && card.knowledgeSetup.files.length > 0 && (
+              <details data-testid="agent-knowledge-files" className="group mt-0.5">
+                <summary className="inline-flex min-h-5 cursor-pointer items-center gap-0.5 text-[11.5px] font-semibold text-ac hover:underline max-md:min-h-9">
+                  {card.knowledgeSetup.fileCount ?? card.knowledgeSetup.files.length} file{(card.knowledgeSetup.fileCount ?? card.knowledgeSetup.files.length) === 1 ? '' : 's'}
+                  <ChevronDown className="size-3 transition-transform group-open:rotate-180 motion-reduce:transition-none" />
+                </summary>
+                <ul className="mt-0.5 space-y-0.5 text-t2">
+                  {card.knowledgeSetup.files.map((f) => (
+                    <li key={f}>{f}</li>
+                  ))}
+                  {(card.knowledgeSetup.fileCount ?? 0) > card.knowledgeSetup.files.length && <li>and {(card.knowledgeSetup.fileCount ?? 0) - card.knowledgeSetup.files.length} more</li>}
+                </ul>
+              </details>
+            )}
+          </Row>
+        ) : (
+          card.knowledge && <Row label="Knows">The “{card.knowledge}” knowledge base</Row>
+        )}
         {card.practices && <Row label="Practices">Follows your approved practices</Row>}
         {card.guardrails.length > 0 && (
           <Row label="Guardrails">

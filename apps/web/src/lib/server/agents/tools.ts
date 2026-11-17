@@ -55,6 +55,8 @@ import {
 import { traceFor, usageOfTrace, withMarker } from '../a2a/agent-trace';
 import { callAgent, landflowTags, remoteRunOf, throttled } from '../a2a/traced';
 import { credentials } from '../credentials/vault';
+import { safeEndpoint, type ToolTarget } from '../../shared/tool-target'; // AG14:
+import { targetOfA2a, targetOfAgent, targetOfMcp, targetOfNode, targetOfWorkflow } from './tool-target'; // AG14:
 import { agentToolsFrom, endpointFrom, listMcpTools, resourceAndPromptTools, selectTools } from '../mcp/client';
 import { githubMcpUrl, githubToolsOf, isGithubPreset } from '../mcp/github';
 import { registry } from '../plugins/registry';
@@ -111,6 +113,8 @@ export interface ToolOutcome {
   output: unknown;
   /** Images the tool returned (a screenshot): inline bytes or references; the runtime stores them and shows them to a model that sees. */
   images?: ToolImage[];
+  /** AG14: what this call reached, when only the call knows it (a knowledge search's document count). */
+  target?: ToolTarget;
   workflowId?: string;
   executionId?: string;
   childAgentId?: string;
@@ -126,6 +130,10 @@ export interface BuiltTool extends ToolSpec {
   /** What the builder calls it. */
   label: string;
   nodeType?: string;
+  /** AG14: what the tool reaches (the credential or system and where), set when it is built from its config; never a secret. */
+  target?: ToolTarget;
+  /** AG14: the target when the model gives the place (an HTTP Request's URL): per call, from the call's input. */
+  targetOf?(input: Record<string, unknown>): ToolTarget | undefined;
   requireApproval: boolean;
   /** A knowledge base search: what it returns is what the output guardrail's grounded check judges an answer against. */
   knowledge?: boolean;
@@ -136,6 +144,15 @@ export interface BuiltTool extends ToolSpec {
   resume?(state: Record<string, unknown>, approved: boolean, ctx: ToolContext, answer?: string): Promise<ToolOutcome>;
   /** A remote agent: stop the task it works on (A2A CancelTask), so a person can redirect it (agent-teams/pause.ts). */
   cancelTask?(taskId: string): Promise<void>;
+}
+
+/** AG14: what a call reached: the per-call target (the model's URL), else the one set when the tool was built. */
+export function targetOfCall(tool: BuiltTool, input: Record<string, unknown>): ToolTarget | undefined {
+  try {
+    return tool.targetOf?.(input) ?? tool.target;
+  } catch {
+    return tool.target;
+  }
 }
 
 export interface Toolset {
@@ -178,7 +195,7 @@ export function dedupe(tools: BuiltTool[]): BuiltTool[] {
 }
 
 /** buildTools plus the tools of the agent's MCP servers and A2A agents, read from each (in parallel), and the flow's. */
-export async function buildToolset(agent: Agent, config: AgentConfig, flow: AgentTool[] = []): Promise<Toolset> {
+export async function buildToolset(agent: Agent, config: AgentConfig, flow: AgentTool[] = [], flowTargets?: Map<string, ToolTarget>): Promise<Toolset> {
   const listed = await Promise.all(
     config.tools.flatMap((tool) => (tool.type === 'mcp' ? [mcpServerTools(tool)] : tool.type === 'a2a' ? [a2aAgentTool(tool).then((t) => ('error' in t ? t : [t]))] : [])),
   );
@@ -188,15 +205,16 @@ export async function buildToolset(agent: Agent, config: AgentConfig, flow: Agen
     else remote.tools.push(...result);
   }
   const built = buildTools(agent, config, remote);
-  return flow.length ? { ...built, tools: dedupe([...built.tools, ...flow.map(flowTool)]) } : built;
+  return flow.length ? { ...built, tools: dedupe([...built.tools, ...flow.map((tool) => flowTool(tool, flowTargets?.get(tool.name)))]) } : built;
 }
 
 /**
  * A tool connected to the agent's node in a workflow (Run an Agent): a tool node or a vector store searched as a tool.
  * The engine runs it as the node's sub-node, so it lights up on the canvas like an AI Agent's tools.
  */
-export function flowTool(tool: AgentTool): BuiltTool {
+export function flowTool(tool: AgentTool, target?: ToolTarget): BuiltTool {
   return {
+    ...(target && { target }), // AG14: what the wired sub-node reaches
     name: tool.name,
     description: tool.description,
     inputSchema: tool.inputSchema,
@@ -253,6 +271,7 @@ async function mcpServerTools(config: McpServerToolConfig): Promise<BuiltTool[] 
       label: `${config.name} · ${tool.name}`,
       description: tool.description,
       inputSchema: tool.inputSchema,
+      target: targetOfMcp(config.name, parameters, config.credentials), // AG14:
       requireApproval: Boolean(config.requireApproval),
       async invoke(input, ctx) {
         return { output: await tool.invoke(input, ctx.signal) };
@@ -406,6 +425,7 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
   return {
     kind: 'a2a',
     nodeType: A2A_AGENT,
+    target: targetOfA2a(config.name, config.parameters, config.credentials), // AG14:
     name,
     label: config.name,
     description: describeCard(card, config.useWhen),
@@ -470,6 +490,11 @@ function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
     name: toToolName(config.name),
     label: config.name,
     nodeType: config.nodeType,
+    // AG14: where the call goes, from the credential and the node's own parameters; a URL the model gives (HTTP Request) is read per call.
+    target: targetOfNode(config.nodeType, config.credentials, config.parameters),
+    ...(descriptor.properties.some((p) => p.name === 'url') && !safeEndpoint(config.parameters.url) && {
+      targetOf: (given: Record<string, unknown>) => targetOfNode(config.nodeType, config.credentials, { ...config.parameters, url: given.url }),
+    }),
     description: config.description || descriptor.toolDescription || descriptor.description,
     inputSchema,
     requireApproval: Boolean(config.requireApproval),
@@ -619,6 +644,7 @@ function workflowTool(config: WorkflowToolConfig): BuiltTool | { error: string }
   if (!info.eligible) return { error: `${config.name}: ${info.reason}` };
   return {
     kind: 'workflow',
+    target: targetOfWorkflow(info.workflow.name), // AG14:
     name: toToolName(config.name || info.workflow.name),
     label: config.name || info.workflow.name,
     description: config.description || info.workflow.description || `Run the “${info.workflow.name}” workflow`,
@@ -656,6 +682,7 @@ function subAgentTool(config: SubAgentConfig, self: Agent): BuiltTool | { error:
   if (target.id === self.id) return { error: `${target.name} can't delegate to itself` };
   return {
     kind: 'agent',
+    target: targetOfAgent(target.name), // AG14:
     name: toToolName(`ask_${target.name}`),
     label: target.name,
     description: config.useWhen || target.description || `Delegate a task to the ${target.name} agent and get its answer`,

@@ -69,6 +69,7 @@ export async function publishChange(agentId: string): Promise<AgentPublish> {
 export const AGENT_CHANGED = 'landflow:agent-changed';
 export function announceChange(agentId: string): void {
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(AGENT_CHANGED, { detail: { agentId } }));
+  tellOtherTabs(AGENT_CHANGED, agentId); // AG12
 }
 
 /** The draft without what the server stamps on it (times, versions, the kagent deployment). */
@@ -97,7 +98,31 @@ export async function draftMoved(agentId: string, snapshot: string | undefined, 
 export const AGENT_SAVED = 'landflow:agent-saved';
 export function announceSaved(agentId: string): void {
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(AGENT_SAVED, { detail: { agentId } }));
+  tellOtherTabs(AGENT_SAVED, agentId); // AG12
 }
+
+// AG12: the events are window-local, so a change made in another tab (the agent page opened by "Pick it") reached no card, band
+// or page here. Both announcements also post `{ type, agentId }` on a BroadcastChannel; the one listener below turns another
+// tab's message into the same window event. It never posts, so two tabs cannot echo each other.
+const CHANNEL = 'landflow-agents';
+let channel: BroadcastChannel | undefined;
+function bridge(): BroadcastChannel | undefined {
+  if (channel || typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') return channel;
+  channel = new BroadcastChannel(CHANNEL);
+  channel.onmessage = (message: MessageEvent<{ type?: unknown; agentId?: unknown }>) => {
+    const { type, agentId } = message.data ?? {};
+    if ((type === AGENT_CHANGED || type === AGENT_SAVED) && typeof agentId === 'string') window.dispatchEvent(new CustomEvent(type, { detail: { agentId } }));
+  };
+  return channel;
+}
+function tellOtherTabs(type: string, agentId: string): void {
+  try {
+    bridge()?.postMessage({ type, agentId });
+  } catch {
+    /* a closed channel: this tab's own listeners already heard it */
+  }
+}
+bridge();
 
 /**
  * The Left row's lines as the agent's draft leaves them: a "<tool>: pick a <slot> credential" line is dropped when that tool of
@@ -107,6 +132,14 @@ export function stillLeft(lines: string[], draft: Record<string, unknown> | unde
   if (!draft) return lines;
   const tools = (Array.isArray(draft.tools) ? draft.tools : []) as Array<Record<string, unknown>>;
   return lines.filter((line) => {
+    // ag3 carryover: "send_email: fill in From Email" goes once the draft's tool has that field (a Spotlight change set it).
+    const field = /^(.+?): (?:fill in|set) (.+?)(?: \(the request gives none\))?$/.exec(line);
+    if (field) {
+      const parameters = tools.find((t) => t.name === field[1])?.parameters;
+      const key = field[2].replace(/\s+/g, '').toLowerCase();
+      const value = parameters && typeof parameters === 'object' ? Object.entries(parameters as Record<string, unknown>).find(([k]) => k.toLowerCase() === key)?.[1] : undefined;
+      return !(typeof value === 'string' ? value.trim() : value !== undefined && value !== null && !(Array.isArray(value) && !value.length));
+    }
     const m = /^(.+?): pick an? (.+?) credential/.exec(line);
     if (!m) return true;
     const tool = tools.find((t) => t.name === m[1]);

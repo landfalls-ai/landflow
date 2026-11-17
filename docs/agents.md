@@ -179,8 +179,16 @@ first: Ollama's, the assistant's own model first, then those that call tools; th
 `list_knowledge_bases` gives the knowledge bases other agents you can read already search (one per store and
 collection, with who uses them). A `knowledge` tool reuses one of those, or starts an empty one under a new collection
 name (SQLite store, embedded with a local embeddings model: `nomic-embed-text`, else `mxbai-embed-large`, else any
-`*embed*` model) and adds "add documents to the new … knowledge base" to what you still have to do. With no embeddings
-model pulled, the draft gets no knowledge base and says why.
+`*embed*` model) and adds "add documents to the new … knowledge base" to what you still have to do. A new knowledge
+base can always be started: with no embeddings model pulled (Ollama off) it is searched by keywords (Landflow's own
+BM25, embeddings provider `none`; see [Knowledge bases](#building-an-agent)), so it is never dropped for want of a
+model. Spotlight's design (`POST /api/agents/design`) goes further ([assistant.md](assistant.md#agents-and-teams)): a
+folder the ask names ("in the folder runbooks") becomes the new knowledge base's source (collection = the folder's name,
+`indexedFrom` = the folder), the "add documents" need is replaced by nothing because Create indexes the folder, and the
+instructions get one rule ("Answer from what the search returns, and name the file (its `source`) each answer comes
+from; if it finds nothing, say so."); an ask that says what it answers from and names no folder, with no knowledge base
+that fits, gets no knowledge base and one need asking which folder (nothing is invented, nothing is indexed). The Agent
+architect dialog keeps its own behaviour (an empty new knowledge base and the need to add documents).
 
 **For Spotlight.** When Spotlight proposes a new agent ([newAgent](assistant.md#agents-and-teams)), the editor calls
 `POST /api/agents/design` and the architect designs it without a conversation (`designAgent`), from what is written (what
@@ -221,9 +229,19 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   change wrote stays when the model's proposal leaves it out. The Changes row says "Adds the tool Extract IOCs (asks
   first)", with acronyms in capitals (IOCs, JWT, UUID, URL, HTTP, API, SQL, SMTP, IP, ID, CPU, JSON, CSV); the added
   step is not counted again as "Instructions rewritten".
+  When the change says the added tool's action ("also let it **acknowledge** an alert"), that verb also leaves the
+  instructions' **Hand over when** line ("The user asks to acknowledge, silence or fix an alert" becomes "… to silence or
+  fix an alert"; a clause with only that verb goes), so the agent no longer hands over what it can now do
+  (`withoutHandOverFor`; wave ag3's live pass found the published Grafana agent answering "I can't acknowledge alerts").
 - **Left** lists what the agent's draft still lacks: a credential slot already set on the agent's tool is not asked again,
   and one set after Apply (in the tool's dialog on the agent's page) drops off the card without a reload (the page's
   save sends `landflow:agent-saved`; the card also re-reads the draft on `landflow:agent-changed`).
+- A change that gives a mail tool its sender ("send the email from landflow@landflow.test", "set Send Email's From Email
+  to …") sets that tool's **From Email** when it is still empty, and the Changes row says "Send Email: From Email set to
+  landflow@landflow.test"; a From you already set is never rewritten, and a change that names no sender, or two, sets
+  none (wave ag3's live pass found the change said "No change" instead).
+  The card's **Left** row then drops "fill in From Email" (any "fill in" or "set" line whose field the agent's draft now
+  holds), as it drops a credential line once the slot is set.
 - After Apply the card offers **Test again** next to Publish: the smoke test on the draft as it is, no save. Publish
   waits for a pass as before.
 - A pending card's name that the design made ("Crypto Toolkit agent") is made again from the tools the card has now
@@ -394,7 +412,16 @@ absent from an agent without any). Publishing needs a model, and a persona part 
     read, split, embedded and added to the collection (metadata `documentId`, `fileName`, `page`,
     `chunk`), and a document can be deleted again (`GET/POST/DELETE
     /api/agents/:id/knowledge/:toolId/documents`). The store must be one that supports deletion
-    by metadata (all three do). The timeline shows searches with
+    by metadata (all three do). **Keyword search** (wave ag3): embeddings provider **Keyword search (built in, no
+    model)** (`embeddings: { provider: 'none', model: 'bm25' }`, search mode `keyword`) stores each passage with a
+    one-number vector and ranks by Landflow's BM25 over the stored passages: no model, no key, no call, but it finds
+    the words in the question, not their meaning. SQLite and in-memory stores only: a `none` knowledge base on
+    Postgres PGVector is refused ("Postgres needs real vectors"). **Indexing a folder**: `POST
+    /api/agents/:id/knowledge/:toolId/folder { folder }` reads every Markdown, text, PDF, DOCX, HTML, CSV or JSON file
+    under a folder of the files directory (`LANDFLOW_FILES_DIR`; recursive, dotfiles and symlinks that lead out are
+    skipped, at most 200 files of 25 MB), each chunk's metadata gaining `source` (its path relative to the files
+    directory, `runbooks/disk-full.md`); indexing again replaces a file's chunks, never doubles them, and the tool's
+    `indexedFrom` records the folder (the dialog shows "Indexed from runbooks"). The timeline shows searches with
     the vector store's icon. In the workflow editor the same collection is reachable from an AI
     Agent with the vector store in **Retrieve Documents (As Tool)** mode. A knowledge base can
     also come [from a plugin](#knowledge-bases-from-a-plugin) (Clickland), with nothing to upload.
@@ -590,6 +617,11 @@ switch: new sessions appear on their own every few seconds, except while the poi
 scrolled.
 Only one run can be active per session.
 
+**What each call reached.** Each tool row says where its call went (the credential's name, its type and host, port or
+file, never a secret), and a knowledge search shows its passages with their source: see
+[What a tool call reached](run-trace.md#what-a-tool-call-reached). The agent page's timeline and Test chat read the same
+`target` the journal records.
+
 ### Test chat
 
 The request may carry `projectId`: the chat then runs as if the agent was called from that project, and the block names it. A project you have no role in is a 404 "Project not found". A project the agent is not available in (not its home, not shared with it, not shared with all) is a 403.
@@ -636,6 +668,24 @@ request: the run goes on when the last one is decided). The Platform analyst's o
     history (under the *Session Key* with *Continue by key*, else `default`) and saves back to
     it. Without one, *Continue by key* keeps one agent session per key (for example
     `{{ $json.sessionId }}`).
+
+  **What the node shows** (AG12, wave ag3): under its name, a dashed **band** says what the agent is connected to,
+  read-only, in three columns straight above the Chat Model, Memory and Tool slots: the model (the provider's logo and
+  the name, *project default* when the agent has none and the project gives one), memory (*Remembers across sessions* or
+  *This conversation*) and the tools and knowledge bases (each with its icon, a lock for a tool that
+  waits for approval (*asks first* is in its hover title), a knowledge base's count as *N docs*, and a credential's name and a
+  withheld tool's reason in the hover title; one line each, the ones that ask first leading, at most
+  two rows, then *+N more*, so the node ends above where wired sub-nodes sit (a tall node, such as a team's, pushes sub-nodes placed by Tidy up or by a slot's + further down); a tool the project's settings keep out is greyed with the reason). A **Chat Model** or
+  **Memory** wired to the node shows the agent's own struck through and *replaced by* that node; wired tools add
+  (*+ 1 wired*). The node runs the **published** version, so the band shows it: *Not published* for an agent never
+  published (the band shows its draft and the node says "Publish X first" when run), *Draft has changes* when the
+  draft differs from what runs. A click on a row opens the agent's page in a new tab at that ability
+  (`/agents/<id>?tab=abilities&open=model`, or `&open=capabilities&tool=<tool id>`: the row is scrolled into view and
+  outlined for two seconds); the band never edits anything. It reads `GET /api/agents/:id/connections` once per agent
+  and again when the agent changes: a save, a publish (the agent page's, the change card's and, since wave ag3's live pass, the Publish on Spotlight's created-agent row), an Apply in Spotlight, in this tab or another (the tabs tell each
+  other over a `BroadcastChannel`, which also keeps Spotlight's created card's Left row current after a pick on the
+  agent page opened by **Pick it**). A Run a Team node shows its lead's band, and on a phone a Run an Agent step's card
+  reads "Run an Agent · claude-sonnet-5-5 · 4 tools · 1 knowledge base".
 
   It outputs `{ reply, sessionId, agentId, version, model, endReason, usage, steps }`, where
   `steps` lists each tool call with its kind and status. Answers and tool calls stream to the
@@ -926,6 +976,12 @@ offers **Publish anyway** (`{ "skipEval": true }`, only ever the person's own cl
 a first publish is held only by the 3 / 5 floor. An agent without cases publishes as before. An agent the Agent architect
 designed has its 3 to 5 cases from the start ([the brief](#agent-architect)), so its first publish runs the gate.
 
+**A tool that asks first, and the cases** (AG15, wave ag3). The gate denies approvals, as it must: a test never sends mail. An agent that ends in an approval-gated tool (Send Email) therefore answers "here is the summary; I will send it once you approve", and a case that expects "emails a summary to oncall@landflow.test" would score it as a failure. So the Agent architect's cases for an agent with such a tool expect the ask: its prompt for the cases names the tools that ask first, and Spotlight's design rewrites any case whose expected answer says that tool's effect happened ("Emails a short summary to oncall@landflow.test") to "Drafts a short summary for oncall@landflow.test and asks for approval before sending it" (`asksFirstCases`, `lib/server/assistant/architect.ts`). The input is never changed and addresses, names and ids are kept exactly; a case with no such claim is left as it is, and a case a person wrote or edited is never rewritten. The gate's runs, its judge's calls and the smoke test's count as **agent tests** in Insights → AI (`surface` `agent-test`); a workflow's Run an Agent call stays under workflow and agent runs. A case that negates the effect ("sends no email") or only names an email ("names the phishing email's sender") is left alone. A negation counts only in its own clause (since wave ag3's live pass): in "Normalises it, no IOCs, sev1 with reason, emails oncall@landflow.test." the send's clause becomes "drafts the email for oncall@landflow.test and asks for approval before sending it" and the other clauses stay as written. The judge's calls carry the agent's id, so they count toward its daily and monthly caps and its per-agent spend. The chat route also serves continuations of sessions started by a schedule or a channel, which are labelled agent-test too; calls resumed after Approve open no such scope.
+
+A case's text keeps its own quotes (`Hash "password"`); only a pair that wraps the whole input or answer is taken off (`unwrapQuotes`, since wave ag3's live pass, where a case read `Hash "password`).
+
+**A case never names a URL nobody gave** (wave ag3's live pass). The smoke test and the gate run the cases for real, so a case that asks about "the dashboard at https://grafana.example.com/…" would send the agent's HTTP Request to a place nobody named. Spotlight's design drops any case whose input or expected answer names a URL whose host is not in the ask (or the change) nor in a tool's own settings (`casesWithoutMadeUpUrls`, `lib/server/assistant/architect.ts`); the other cases stay as they are, and when fewer than three are left the card's Left row says *Add test cases on the Evaluations tab*.
+
 **The publish is followed** (AG05, wave ag1). The gate runs every case, so a publish takes a while (about 30 s for 3 cases
 on a local model). Before it the editor reads the case count (`GET /api/agents/:id/eval-gate`); the agent page's button then
 reads *Publishing: the eval gate runs 3 cases…* (short on a phone) and a notice says the same, and Spotlight's row and the
@@ -937,7 +993,7 @@ test. Spotlight never sends `skipEval`.
 
 **Smoke test.** Beside the gate, `POST /api/agents/:id/smoke-test { message }` runs the draft once on one message (a throwaway `test` session titled *Smoke test*, approvals denied, deleted after, so it never shows in Sessions) and answers `{ smoke: { state: 'passed' | 'failed' | 'untested', reply?, reason?, ms, tools? } }`. Honest rules (AG05, wave ag1): *untested* with *needs a credential: <tool>* (the first such tool, *and N more*) before anything runs, with no model call, when a node tool's visible required credential slot is unset (the slots the node panel shows for its parameters: an auth method not chosen does not count). After the run, `tools` lists each tool call (`success`, `error` with the error's first sentence, `empty` when the output is nothing or only empty fields, `denied` for a call that needed approval: approvals are always denied here and nothing is sent). *passed* needs a reply and no `error` call and not every call `empty`; else *failed* with the first cause (*Get Alerts failed: …*, *Get Alerts returned nothing to work with*, or *The run ended with an error: …*, *No reply*, *It stopped at its step limit*). A `denied` write no longer fails the test by itself (it did in SB18): it is named in `reason` (*Send Email needs approval: not sent*) and the rest decides; a reason names a tool as a person reads it (the architect's `send_email` is *Send Email*), while `tools` keeps the config's names; a run that ends with no reply because it waited for approval still fails. 400 without a model. Spotlight uses it before it publishes an agent it made ([assistant.md](assistant.md#agents-and-teams)). It is one item with no judge, not the gate: a pass says the agent answers, the gate says it answers well.
 
-Routes: `GET/POST/PUT/DELETE /api/agents/:id/eval-gate` (cases and runs; `PUT { version? }` runs the draft or a
+Test: `test/agent-gate-ag3.test.ts`. Routes: `GET/POST/PUT/DELETE /api/agents/:id/eval-gate` (cases and runs; `PUT { version? }` runs the draft or a
 published version). Cases (at most 50 per agent) and the last 30 runs live in `agent_eval_cases` and
 `agent_eval_runs` (migration 2042); deleting the agent removes them.
 

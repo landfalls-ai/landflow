@@ -84,7 +84,7 @@ export interface UsageScopeInfo {
   /** Who started the run (a signed-in user), for the caps per user. */
   userId?: string;
   /** What made the call when no execution or agent did: Spotlight, the Agent architect or the brain (`ai_usage.surface`). */
-  surface?: 'spotlight' | 'architect' | 'brain';
+  surface?: 'spotlight' | 'architect' | 'brain' | 'agent-test'; // AG15: an agent's smoke test, eval gate and test chat
   /** The project the call belongs to, when the opener knows it (else the agent's or workflow's home project). */
   projectId?: string;
   /** The goal the run serves (the run's context), when it has one. */

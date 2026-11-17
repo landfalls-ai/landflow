@@ -481,6 +481,13 @@ export function describesCase(input: string): boolean {
   return thing.test(text) || person.test(text);
 }
 
+/** A text wrapped whole in quotes ("…", '…', “…”) without them; any other text as it is, trimmed. */
+export function unwrapQuotes(text: string): string {
+  const t = text.trim();
+  const wrapped = /^"[^"]*"$|^'[^']*'$|^“[^“”]*”$/.test(t);
+  return (wrapped ? t.slice(1, -1) : t).trim();
+}
+
 /** "what a person would send => what a right answer says", one per line (or a list of such lines): at most 5, each input under 4 000 characters. */
 export function parseCases(value: unknown, needsExpected = false): AgentCaseDraft[] {
   const lines = Array.isArray(value) ? value : typeof value === 'string' ? value.split('\n') : [];
@@ -489,8 +496,9 @@ export function parseCases(value: unknown, needsExpected = false): AgentCaseDraf
     if (typeof raw !== 'string') continue;
     const line = raw.replace(LEAKED_MARKUP, '').replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim();
     const [input, ...rest] = line.split(/\s*(?:=>|⇒|→)\s*/);
-    const asked = input.replace(/^["'“]|["'”]$/g, '').trim().slice(0, 4000);
-    const expected = rest.join(' => ').replace(/^["'“]|["'”]$/g, '').trim().slice(0, 1000);
+    // ag3 carryover: quotes come off only when they wrap the whole text ('Hash "password"' kept its closing quote cut off)
+    const asked = unwrapQuotes(input).slice(0, 4000);
+    const expected = unwrapQuotes(rest.join(' => ')).slice(0, 1000);
     if (asked.length < 3 || (needsExpected && !expected)) continue;
     if (describesCase(asked)) continue; // AG08:
     if (cases.some((c) => c.input.toLowerCase() === asked.toLowerCase())) continue;
@@ -1039,8 +1047,8 @@ function modelNamedIn(request: string, models: readonly AgentModel[]): AgentMode
  * SB17: one small call for the cases alone (the agent's description and the request), when a proposal came with fewer than 3.
  * It runs inside the architect's scope, so it counts as its calls do; a model that fails leaves the cases to the person.
  */
-async function casesFor(model: LanguageModel, agent: { name: string; description: string; request: string }, usage: { inputTokens: number; outputTokens: number }, signal?: AbortSignal): Promise<AgentCaseDraft[]> {
-  const system = 'You write test cases for an AI agent. Answer with 3 to 5 lines and nothing else, one case per line, plain text: what a person would actually send it, written out (the alert, the question, the text itself; never a description of it or a placeholder) => what a right answer says. Example: [Wazuh] rule 5710 sshd: attempt to login using a non-existent user, src 203.0.113.45 => Names the source address and says it is a login probe.'; // AG08:
+async function casesFor(model: LanguageModel, agent: { name: string; description: string; request: string; asksFirst?: string[] /* AG15: */ }, usage: { inputTokens: number; outputTokens: number }, signal?: AbortSignal): Promise<AgentCaseDraft[]> {
+  const system = 'You write test cases for an AI agent. Answer with 3 to 5 lines and nothing else, one case per line, plain text: what a person would actually send it, written out (the alert, the question, the text itself; never a description of it or a placeholder) => what a right answer says. Example: [Wazuh] rule 5710 sshd: attempt to login using a non-existent user, src 203.0.113.45 => Names the source address and says it is a login probe.' + (agent.asksFirst?.length ? ` The agent's tools ${agent.asksFirst.join(', ')} ask the person first: a case about that action expects the agent to say what it would do and that it waits for the person's approval, never that it was done.` : ''); // AG08: AG15:
   const messages: AgentMessage[] = [{ role: 'user', content: `Agent: ${agent.name}\nWhat it does: ${agent.description}\nThe request it was designed from:\n${agent.request.slice(0, 1500)}` }];
   try {
     const turn = await withCallNote({ purpose: 'answer', draft: plainDraft({ system, tools: [], messages }) }, () => model.generate({ system, messages, tools: [], ...(signal && { signal }) }));
@@ -1051,6 +1059,81 @@ async function casesFor(model: LanguageModel, agent: { name: string; description
     if (isUsageCapError(caught)) throw caught;
     return [];
   }
+}
+
+// AG15: the tools of a config that ask the person first (a write): their names as the card shows them.
+const asksFirstNames = (config: Partial<AgentConfig>): string[] => (config.tools ?? []).flatMap((t) => (t.type === 'node' && t.requireApproval ? [t.name] : []));
+const VERB = 'sen[dt]s?|sending|emails?|emailing|posts?|posting|creat(?:es?|ing)|updat(?:es?|ing)|delet(?:es?|ing)|acknowledg\\w*|silenc\\w*';
+// A claim that the action happened: a verb opening the text or following "and"/"then"/a comma, or a past-tense word. A noun "email" mid-sentence is no claim.
+// ag3 fix pass: a leading noun ("Email from the on-call lead is read", "Email has the alert's host") is no verb: the verb is not followed by a word that makes it a subject.
+const NOUN_NEXT = '(?!\\s+(?:from|is|was|has|had|are|were|will|would|can|could|should|must|may|might|does|did)\\b)';
+const EFFECT = new RegExp(`^(?:${VERB})\\b${NOUN_NEXT}|(?:\\band|\\bthen|[,;])\\s+(?:${VERB})\\b|\\b(?:sent|emailed|posted|created|deleted|updated|acknowledged|silenced)\\b`, 'i');
+const NEGATION = /\b(?:no|not|never|nothing|without|none|doesn'?t|don'?t|won'?t|wouldn'?t|didn'?t|cannot|can'?t)\b|n't\b/i;
+const GERUND: Record<string, string> = { send: 'sending', sent: 'sending', sends: 'sending', email: 'sending', emails: 'sending', emailed: 'sending', post: 'posting', posts: 'posting', posted: 'posting', create: 'creating', creates: 'creating', created: 'creating', delete: 'deleting', deletes: 'deleting', deleted: 'deleting', update: 'updating', updates: 'updating', updated: 'updating' };
+/**
+ * ag3 carryover (the live pass, Grafana agent): a test case that names a URL nobody gave ("What does the dashboard at
+ * https://grafana.example.com/… show?") would have the smoke test and the gate send the agent's HTTP Request there (lesson 21:
+ * never a destination nobody gave). A case whose input or expected answer names a URL whose host is not in what the person
+ * wrote, nor in a tool's own settings, is dropped; the rest stay as they are, in order.
+ */
+export function casesWithoutMadeUpUrls(cases: AgentCaseDraft[], written: string, config: Partial<AgentConfig>): AgentCaseDraft[] {
+  const hostOf = (url: string) => {
+    try {
+      return new URL(url).host.toLowerCase();
+    } catch {
+      return url.toLowerCase();
+    }
+  };
+  const given = `${written}\n${JSON.stringify(config.tools ?? [])}`.toLowerCase();
+  const madeUp = (text: string | undefined) => (text?.match(/\bhttps?:\/\/[^\s"'<>)\]]+/gi) ?? []).some((url) => !given.includes(hostOf(url)));
+  return cases.filter((c) => !madeUp(c.input) && !madeUp(c.expected));
+}
+
+/**
+ * AG15: a case whose expected answer says a tool that asks first did its work ("Emails a summary to oncall@landflow.test") is
+ * rewritten to what an honest run does when approvals are denied: it says what it would do and waits. Addresses, names and ids
+ * stay exactly; the input and every other case are untouched.
+ */
+export function asksFirstCases(cases: AgentCaseDraft[], config: Partial<AgentConfig>): AgentCaseDraft[] {
+  const asks = asksFirstNames(config);
+  if (!asks.length) return cases;
+  const words = asks.flatMap((n) => n.toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 2).flatMap((w) => (w === 'send' ? ['send', 'sent'] : [w])));
+  return cases.map((c) => {
+    const expected = c.expected?.trim();
+    if (!expected) return c;
+    // A tool word matches itself and its plain endings, never a longer word ("send" is not "sender").
+    const names = (text: string) => words.some((w) => new RegExp(`\\b(?:${escapeRegExp(w)}(?:s|es|d|ed|ing)?|${escapeRegExp(w.replace(/e$/, ''))}ing)\\b`, 'i').test(text));
+    if (!EFFECT.test(expected) || !names(expected)) return c;
+    // ag3 carryover (the live pass): a negation elsewhere in a compound case ("Normalises it, no IOCs, sev1 with reason, emails
+    // oncall@landflow.test.") left the send's claim standing and the gate held the agent; a negation counts in its own clause.
+    if (NEGATION.test(expected)) {
+      const parts = expected.split(/(,\s+|;\s+)/);
+      let changed = false;
+      const out = parts.map((part, i) => {
+        if (i % 2 === 1) return part;
+        const clause = part.trim().replace(/\.$/, '');
+        if (!EFFECT.test(clause) || NEGATION.test(clause) || !names(clause)) return part;
+        changed = true;
+        const verbAddress = /^(sends?|emails?|posts?)\s+(?:it\s+)?(?:to\s+)?(\S+@[^\s,;]+?)\.?$/i.exec(clause);
+        if (verbAddress) return `drafts the email for ${verbAddress[2]} and asks for approval before ${GERUND[verbAddress[1]!.toLowerCase()] ?? 'sending'} it`;
+        const done = /^(.+?)\s+(sent|emailed|posted)(?:\s+to\s+(\S.*?))?$/i.exec(clause);
+        if (done) return `drafts ${done[1]}${done[3] ? ` for ${done[3]}` : ''} and asks for approval before ${GERUND[done[2]!.toLowerCase()] ?? 'sending'} it (not ${done[2]!.toLowerCase()})`;
+        return `asks for approval before it acts, without claiming it was done (${clause})`;
+      });
+      return changed ? { ...c, expected: out.join('').replace(/\.?$/, '.') } : c;
+    }
+    const toAddress = /^(sends?|emails?|posts?)\s+(\S+@\S+?)\s+(?!(?:sent|posted)\b)(.+?)\s*\.?$/i.exec(expected);
+    if (toAddress) {
+      const [, verb = '', who = '', what = ''] = toAddress;
+      return { ...c, expected: `Drafts ${what} for ${who} and asks for approval before ${GERUND[verb.toLowerCase()] ?? 'doing'} it` };
+    }
+    const lead = /^(sends?|emails?|posts?|creates?|updates?|deletes?)\s+(?!(?:sent|posted|created|updated|deleted|delivered)\b)(.+?)(?:\s+(?:to|for)\s+(\S.*?))?\s*\.?$/i.exec(expected);
+    if (lead) {
+      const [, verb = '', what = '', who] = lead;
+      return { ...c, expected: `Drafts ${what}${who ? ` for ${who}` : ''} and asks for approval before ${GERUND[verb.toLowerCase()] ?? 'doing'} it` };
+    }
+    return { ...c, expected: `Says what it would do and asks for approval first, without claiming it was done (${expected.replace(/\.$/, '')})` };
+  });
 }
 
 /** The architect: its model calls count in AI usage (surface `architect`) and under the caller's caps. */
@@ -1147,7 +1230,8 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
       }
       case 'list_knowledge_bases': {
         const list = input.resources?.knowledge ?? [];
-        const fresh = input.resources?.embeddings ? `A new empty one can be started (type "knowledge" with a new collection name), embedded with ${input.resources.embeddings.model}.` : 'No embeddings model is pulled, so no new one can be started.';
+        // AG13: a new knowledge base can always be started: with the host's embeddings model, or searched by keywords (built in) when it has none
+        const fresh = `A new empty one can be started (type "knowledge" with a new collection name), ${input.resources?.embeddings?.provider === 'none' || !input.resources?.embeddings ? 'searched by keywords (built in, no embeddings model needed)' : `embedded with ${input.resources.embeddings.model}`}.`;
         return result(`${list.length ? JSON.stringify(list.map((k) => ({ collection: k.collection, description: k.description, store: k.store, usedBy: k.usedBy }))) : 'No agent searches a knowledge base yet.'} ${fresh}`, `Listed ${list.length} knowledge base${list.length === 1 ? '' : 's'}`);
       }
       case 'list_templates': {
@@ -1177,7 +1261,7 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
         // SB17: 3 to 5 cases from the proposal, else the ones of the last proposal, else one small follow-up call; still fewer: say so.
         cases = proposed.length >= 3 ? proposed : cases.length >= 3 ? cases : proposed;
         if (cases.length < 3 && !input.noCases /* AG04: */) {
-          const more = await casesFor(model, { name: config.name ?? '', description: config.description ?? '', request: requestText }, usage, input.signal);
+          const more = await casesFor(model, { name: config.name ?? '', description: config.description ?? '', request: requestText, asksFirst: asksFirstNames(config) /* AG15: */ }, usage, input.signal);
           cases = more.length > proposed.length ? more : proposed;
         }
         if (cases.length < 3 && !input.noCases /* AG04: */) needs.push({ tool: 'test cases', kind: 'parameter', text: 'Add test cases on the Evaluations tab' });
@@ -1372,7 +1456,47 @@ function reviseInstructions(proposed: string, base: string, tools: AgentToolConf
     const line = new RegExp(`^\\s*\\d+[.)]\\s*When .*, call ${escapeRe((t as { name: string }).name)}\\b.*$`, 'm').exec(base)?.[0];
     return line ? [{ tool: t, line }] : [];
   });
-  return add.tools.length || carried.length ? withToolSteps(text, [...carried, ...add.tools.map((tool) => ({ tool }))], add.change) : text;
+  const stepped = add.tools.length || carried.length ? withToolSteps(text, [...carried, ...add.tools.map((tool) => ({ tool }))], add.change) : text;
+  return withoutHandOverFor(stepped, add.tools, add.change); // ag3 carryover:
+}
+
+/**
+ * ag3 carryover (the live pass, Grafana agent): "also let it acknowledge an alert" added Acknowledge Alert and its step, but the
+ * base's "Hand over when: The user asks to acknowledge, silence or fix an alert, …" stayed, so the published agent answered
+ * "I can't acknowledge alerts". For each tool the change adds, whose action verb (the first word of its name, "acknowledge")
+ * the change itself says, that verb leaves the Hand over line: out of a list ("acknowledge, silence or fix" → "silence or
+ * fix"), or its clause when it stands alone. Other words stay as written; a hand-over the change does not touch stays whole.
+ */
+export function withoutHandOverFor(text: string, added: AgentToolConfig[], change: string): string {
+  const verbs = added
+    .map((t) => ('name' in t && t.name ? t.name : '').split(/[_\s-]+/)[0]?.toLowerCase() ?? '')
+    .filter((v) => v.length >= 4 && new RegExp(`\\b${escapeRe(v)}`, 'i').test(change));
+  if (!verbs.length) return text;
+  return text
+    .split('\n')
+    .map((line) => {
+      const head = /^(\s*(?:#{1,4}\s*)?hand[ -]?over(?:\s+when)?\s*:\s*)(.*)$/i.exec(line);
+      if (!head) return line;
+      let body = head[2];
+      for (const verb of verbs) {
+        const word = `${escapeRe(verb)}[a-z]*`;
+        if (!new RegExp(`\\b${word}\\b`, 'i').test(body)) continue;
+        const listed = body
+          .replace(new RegExp(`\\b${word}\\b(?:,\\s*|\\s+(?:or|and)\\s+)(?=[a-z])`, 'i'), '')
+          .replace(new RegExp(`(?:,\\s*(?:or\\s+|and\\s+)?|\\s+(?:or|and)\\s+)\\b${word}\\b`, 'i'), '');
+        if (listed !== body) {
+          body = listed;
+          continue;
+        }
+        // alone in its clause: drop the clause (clauses split at ", or", ";" and sentence ends)
+        const parts = body.split(/(?<=[.;])\s+|,\s+or\s+/);
+        const kept = parts.filter((part) => !new RegExp(`\\b${word}\\b`, 'i').test(part));
+        body = kept.join(' ').trim();
+      }
+      if (body === head[2]) return line;
+      return body ? `${head[1]}${body.charAt(0).toUpperCase()}${body.slice(1)}` : `${head[1]}It cannot do what was asked.`;
+    })
+    .join('\n');
 }
 
 function reviseToolsLine(proposed: string, base: string, tools: AgentToolConfig[]): string {
@@ -1496,12 +1620,31 @@ function madeAgain(base: Partial<AgentConfig>, tools: AgentToolConfig[], types: 
 }
 
 /**
+ * ag3 carryover (the live pass): a change that gives a kept mail tool its sender ("send the email from a@b.test") sets that
+ * tool's From where it is still empty. The design's flat proposal carries no parameters, so without this a revise kept the
+ * base's tool as it was and said "No change". Only an address the change itself holds after "from", only into an empty From:
+ * a From the person already set is never rewritten, and nothing else of the tool changes.
+ */
+function withSenderGiven(tool: AgentToolConfig, change: string, types: NodeTypeInfo[]): AgentToolConfig {
+  if (tool.type !== 'node') return tool;
+  const info = types.find((x) => x.type === tool.nodeType);
+  if (!info || !isMailNode(info) || !info.descriptor.properties.some((p) => p.name === 'fromEmail')) return tool;
+  const current = (tool.parameters as Record<string, unknown> | undefined)?.fromEmail;
+  if (typeof current === 'string' ? current.trim() !== '' : current !== undefined && current !== null) return tool;
+  const said = change.replace(AGENT_ASK, ' ');
+  const senders = [...said.matchAll(/\bfrom(?:\s+(?:the\s+)?(?:address|e-?mail(?:\s+address)?|sender))?(?:\s+(?:to|as|be|is))?\s*:?\s+([\w.+-]+@[\w-]+(?:\.[\w-]+)+)/gi)].map((m) => m[1]);
+  const distinct = [...new Set(senders.map((a) => a.toLowerCase()))];
+  if (distinct.length !== 1) return tool; // none, or two different senders: ask, never guess
+  return { ...tool, parameters: { ...((tool.parameters as Record<string, unknown> | undefined) ?? {}), fromEmail: senders[0] } } as AgentToolConfig;
+}
+
+/**
  * AG04: the proposal of a change as the agent it changes: the base's own tools stay unless the change removes them (least
  * privilege holds for the tools the change does not name), a new tool stays only when the change names it, and the name, model,
  * practices, look and team stay unless the change names them.
  */
 function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: string, types: NodeTypeInfo[] = []): void {
-  const kept = (base.tools ?? []).filter((t) => !removed(change, t));
+  const kept = (base.tools ?? []).filter((t) => !removed(change, t)).map((t) => withSenderGiven(t, change, types)); // ag3 carryover:
   const have = new Set(kept.map(toolKey));
   const added: AgentToolConfig[] = [];
   const addedLabels = new Set<string>(); // AG09:
@@ -1541,7 +1684,7 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
   // AG09: the card's Left row is what this change leaves: the needs of a tool it adds, and of a kept tool only a credential slot still unset on the base's tool.
   draft.needs = draft.needs.filter((need) => {
     if (addedLabels.has(need.tool)) return true;
-    const own = ownBy.get(need.tool) ?? (base.tools ?? []).find((t) => 'name' in t && t.name === need.tool);
+    const own = ownBy.get(need.tool) ?? kept.find((t) => 'name' in t && t.name === need.tool) ?? (base.tools ?? []).find((t) => 'name' in t && t.name === need.tool); // ag3 carryover: a kept tool as the change left it
     if (!own) return true; // a need of no tool (the model, a design failure) stays
     if (need.kind === 'parameter') {
       // AG09: a kept tool keeps a parameter need (Send Email's From Email) while that parameter is still empty on the base's tool.
@@ -1588,9 +1731,8 @@ export function designBrief(spec: AgentSpec, input: Pick<ArchitectInput, 'types'
   return [
     models.length ? `Models (pick one, the first is best here): ${models.map((m) => `${m.provider}/${m.model} (${m.note})`).join('; ')}` : 'Models: none known; leave the model out.',
     knowledge.length ? `Knowledge bases: ${knowledge.map((k) => `${k.collection}: ${k.description}`).join('; ')}` : 'Knowledge bases: none yet.',
-    input.resources?.embeddings
-      ? 'Knowledge: only if its job means looking things up in documents (policies, contracts, playbooks, past answers). Use an existing collection only if it holds those documents; else a new name (lowercase-dashes) for an empty one the user fills. Most agents that act need none: leave knowledge empty.'
-      : 'No new knowledge base can be started here (no embeddings model): leave knowledge empty.',
+    // AG13: a new knowledge base can always be started (the host's embeddings model, else keyword search), so the brief never says it cannot
+    'Knowledge: only if its job means looking things up in documents (policies, contracts, playbooks, past answers). Use an existing collection only if it holds those documents; else a new name (lowercase-dashes) for an empty one the user fills (it is searched with the host\'s embeddings model, or by keywords when it has none). Most agents that act need none: leave knowledge empty.',
     'Node tools: only for what it must do outside its reply (post a message, create a ticket, fetch a record). Reading, judging or summarising the message it gets needs no tool: then leave nodeTools empty.',
     hits.size ? `Nodes that matched the request (most are probably not needed): ${[...hits.values()].join('; ')}` : 'No node matched the request.',
     'If it must act in an app none of these nodes covers (Slack, Jira…), name it in missing ("Slack: post a message") instead of picking a node that doesn\'t do it.',
@@ -1762,6 +1904,11 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
       // ag1-int: AG02's promise holds for a change too: a tool it names is added (the same least-privilege rules), or said why not.
       notAdded = withSpecHints(kept, { name: spec.name, description: '', instructions: '', ask: spec.change, tools: changeTools(spec.change, input.types.filter(usableAsTool)) }, input, spec.base);
     } else notAdded = withSpecHints(kept, spec, input); // SB17: AG02: what the ask named and the agent did not get
+    kept.cases = asksFirstCases(kept.cases, kept.config); // AG15: a case about a tool that asks first expects the ask
+    // ag3 carryover: a case naming a URL nobody gave is dropped (never a destination nobody gave); too few left → the card asks for cases.
+    const before = kept.cases.length;
+    kept.cases = casesWithoutMadeUpUrls(kept.cases, spec.change ? `${designWords(spec)}\n${spec.change}` : designWords(spec), kept.config);
+    if (before >= 3 && kept.cases.length < 3 && !(spec.base && spec.change) && !kept.needs.some((n) => n.tool === 'test cases')) kept.needs.push({ tool: 'test cases', kind: 'parameter', text: 'Add test cases on the Evaluations tab' });
     return { ...kept, config: { ...kept.config, name: spec.base && spec.change ? (kept.config.name ?? spec.name) /* AG04: a rename is the change's */ : spec.name, description: kept.config.description || spec.description }, designed: true, notAdded };
   }
   // AG04: a change nothing proposed is no change: the base as it is.

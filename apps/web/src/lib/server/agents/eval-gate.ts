@@ -22,6 +22,9 @@ import { getOnlineConfig } from '../evaluations/store';
 import { agentModel } from './models';
 import { runAgent, newSession } from './runtime';
 import { agentStore } from './store';
+import { assistantScope, runInUsageScope } from '../ai-usage'; // AG15:
+import { withCallNote } from '../ai-usage/call-context'; // AG15:
+import { currentActorId } from '../auth/context'; // AG15:
 import { HttpError } from '../errors';
 
 const db = () => database();
@@ -44,12 +47,15 @@ export function listCases(agentId: string): AgentEvalCase[] {
     .flatMap((row) => parse<AgentEvalCase>(row.data) ?? []);
 }
 
+/** ag3 carryover: cases added in the same millisecond (a design saves several at once) keep the order they were added in (listCases sorts by created_at, then a random id). */
+let lastCaseAt = 0;
+
 export function addCase(agentId: string, input: { input: string; expected?: string }): AgentEvalCase {
   const text = input.input.trim();
   if (!text) throw new EvalGateError('A test case needs a question');
   if (listCases(agentId).length >= MAX_EVAL_CASES) throw new EvalGateError(`An agent keeps at most ${MAX_EVAL_CASES} test cases`);
   const expected = input.expected?.trim();
-  const testCase: AgentEvalCase = { id: `ec_${nanoid(10)}`, input: clip(text), ...(expected && { expected: clip(expected) }), createdAt: new Date().toISOString() };
+  const testCase: AgentEvalCase = { id: `ec_${nanoid(10)}`, input: clip(text), ...(expected && { expected: clip(expected) }), createdAt: new Date((lastCaseAt = Math.max(Date.now(), lastCaseAt + 1))).toISOString() };
   db().upsert('agent_eval_cases', { id: testCase.id, agent_id: agentId, created_at: testCase.createdAt, data: JSON.stringify(testCase) });
   return testCase;
 }
@@ -87,7 +93,14 @@ export function baselineOf(agentId: string, version: number): number | undefined
 }
 
 /** Run every case on the draft or a published version, judge the replies and save the run. */
-export async function runEval(agentId: string, version: 'draft' | number = 'draft', options: { signal?: AbortSignal } = {}): Promise<AgentEvalRun> {
+export function runEval(agentId: string, version: 'draft' | number = 'draft', options: { signal?: AbortSignal } = {}): Promise<AgentEvalRun> {
+  // AG15: the gate's runs and the judge's calls are the agent's tests: surface `agent-test`.
+  const by = currentActorId();
+  const scope = assistantScope({ surface: 'agent-test', agentId, ...(by && { userId: by }) });
+  return runInUsageScope(scope, () => withCallNote({ purpose: 'eval' }, () => runEvalCases(agentId, version, options)));
+}
+
+async function runEvalCases(agentId: string, version: 'draft' | number, options: { signal?: AbortSignal }): Promise<AgentEvalRun> {
   const agent = agentStore.get(agentId);
   if (!agent) throw new EvalGateError('Agent not found', 404);
   const cases = listCases(agentId);

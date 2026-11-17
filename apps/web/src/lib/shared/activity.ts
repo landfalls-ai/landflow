@@ -12,6 +12,8 @@ export interface ActivityStep {
   durationMs?: number;
   /** A line or two of what happened, 300 characters at most. */
   detail?: string;
+  /** ag3 carryover: what a tool call reached ("Mailpit SMTP · SMTP 127.0.0.1:51188", targetLine of its ToolTarget); never a secret. */
+  via?: string;
 }
 
 /** "0.4 s", "14.5 s", "2 min 5 s". */

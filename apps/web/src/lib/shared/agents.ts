@@ -3,6 +3,7 @@
  * Types shared by the API routes and the React client. No runtime imports.
  */
 import type { AgentMessage } from '@landflow/engine';
+import type { ToolTarget } from './tool-target'; // AG14:
 import type { GuardrailsConfig, Replacement } from '../server/guardrails';
 import type { AgentAccess } from './agent-access';
 import type { AgentCache } from './agent-cache';
@@ -114,7 +115,7 @@ export interface VectorKnowledgeBaseConfig extends ToolBase {
   tableName?: string;
   /** Must be the model the documents were inserted with. */
   embeddings: {
-    provider: 'ollama' | 'openai';
+    provider: 'ollama' | 'openai' | 'none'; // AG13: `none` (model `bm25`) is keyword search: no embeddings model, no key (SQLite or in-memory store only)
     model: string;
     /** ollama: the server, default OLLAMA_URL or http://127.0.0.1:11434 */
     baseUrl?: string;
@@ -125,7 +126,9 @@ export interface VectorKnowledgeBaseConfig extends ToolBase {
     dimensions?: number;
   };
   topK?: number;
-  searchMode?: 'vector' | 'hybrid';
+  searchMode?: 'vector' | 'hybrid' | 'keyword'; // AG13: `keyword` ranks by BM25 alone and never embeds the query
+  /** AG13: the folder this knowledge base was indexed from, relative to the files directory (`runbooks`). */
+  indexedFrom?: string;
 }
 
 /**
@@ -723,6 +726,8 @@ export type TimelineEntry =
       error?: string;
       status: 'running' | 'success' | 'error' | 'awaiting_approval' | 'denied';
       durationMs?: number;
+      /** AG14: what the call reached (the credential or system and where; never a secret). */
+      target?: ToolTarget;
       /** A workflow tool's workflow and execution, or a sub-agent and its session. */
       workflowId?: string;
       executionId?: string;

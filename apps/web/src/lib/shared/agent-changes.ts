@@ -80,6 +80,12 @@ export function agentChanges(before: Config, after: Config): string[] {
     if (!old) continue;
     if (operationOf(old) !== operationOf(tool)) out.push(`${shown(name)}: ${operationOf(old) || 'no operation'} becomes ${operationOf(tool) || 'no operation'}`);
     if (Boolean(old.requireApproval) !== Boolean(tool.requireApproval)) out.push(tool.requireApproval ? `${shown(name)} now asks first` : `${shown(name)} no longer asks first`);
+    // ag3 carryover: a value the change gives a kept tool where it had none (Send Email's From) is said, value and all.
+    const prior = record(old.parameters);
+    for (const [key, value] of Object.entries(record(tool.parameters))) {
+      if (key === 'operation' || typeof value !== 'string' || !value.trim() || /\$fromAI\(/.test(value) || str(prior[key])) continue;
+      out.push(`${shown(name)}: ${key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase())} set to ${value}`);
+    }
   }
   const knowledge = (config: Config) => (Array.isArray(config.tools) ? config.tools : []).map(record).filter((t) => t.type === 'knowledge').map((t) => str(t.collection) || str(t.name)).sort().join(', ');
   if (knowledge(before) !== knowledge(after)) out.push(knowledge(after) ? `Knowledge base: ${knowledge(after)}` : 'Removes its knowledge base');

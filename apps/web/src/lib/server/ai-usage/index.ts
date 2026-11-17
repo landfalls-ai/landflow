@@ -501,10 +501,10 @@ export function agentScope(info: { agentId: string; agentName: string; sessionId
  * Open a scope for the assistant's own model calls (Spotlight, the Agent architect, the brain): the calls write
  * `ai_usage` rows with the `surface`, and the caller's per-user caps apply. Run the work with `runInUsageScope`.
  */
-export function assistantScope(info: { userId?: string; surface: 'spotlight' | 'architect' | 'brain'; workflowId?: string; projectId?: string }, meter: AiUsageMeter = aiUsageMeter()): UsageScope {
+export function assistantScope(info: { userId?: string; surface: 'spotlight' | 'architect' | 'brain' | 'agent-test' /* AG15: */; workflowId?: string; projectId?: string; agentId?: string /* AG15: */ }, meter: AiUsageMeter = aiUsageMeter()): UsageScope {
   const parent = currentUsageScope();
   const projectId = info.projectId ?? (info.workflowId ? homeProjectId('workflow', info.workflowId) : undefined);
-  return new UsageScope({ surface: info.surface, ...(projectId && { projectId }), ...(info.workflowId && { workflowId: info.workflowId }), ...(info.userId && { userId: info.userId }) }, [], parent, parent ? undefined : meter);
+  return new UsageScope({ surface: info.surface, ...(info.agentId && { agentId: info.agentId }) /* AG15: */, ...(projectId && { projectId }), ...(info.workflowId && { workflowId: info.workflowId }), ...(info.userId && { userId: info.userId }) }, [], parent, parent ? undefined : meter);
 }
 
 export { runInUsageScope };

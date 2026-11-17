@@ -745,8 +745,9 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
       subtitle = `Sub-agent · ${tool.useWhen || agent?.description || 'No description'}`;
     }
     return (
+      // AG12: the canvas's band links to a tool's row (`?open=capabilities&tool=<id>`): the builder scrolls to it and outlines it.
+      <div key={tool.id} id={`tool-${tool.id}`} className="rounded-xl transition-shadow">
       <ItemRow
-        key={tool.id}
         icon={icon}
         title={title}
         subtitle={subtitle}
@@ -781,6 +782,7 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
           </>
         }
       />
+      </div>
     );
   };
 

@@ -495,7 +495,7 @@ export class PgVectorStore implements VectorStore {
 // Traced insert and search (vector or hybrid)
 // ---------------------------------------------------------------------------
 
-export type SearchMode = 'vector' | 'hybrid';
+export type SearchMode = 'vector' | 'hybrid' | 'keyword'; // AG13: keyword = BM25 only
 
 export interface SearchOptions {
   query: string;
@@ -529,6 +529,7 @@ export function searchStore(store: VectorStore, collection: string, options: Sea
       attributes: { 'landflow.retrieval.mode': options.mode, 'landflow.retrieval.top_k': k, ...(options.filter && { 'landflow.retrieval.filtered': true }) },
     },
     async () => {
+      if (options.mode === 'keyword') return store.keywordSearch(collection, options.query, k, options.filter); // AG13
       if (options.mode !== 'hybrid') return store.similaritySearch(collection, options.vector, k, options.filter);
       const pool = Math.max(k, options.candidates ?? Math.max(4 * k, 20));
       const [byVector, byKeyword] = await Promise.all([

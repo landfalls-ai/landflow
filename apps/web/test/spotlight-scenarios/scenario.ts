@@ -1,20 +1,22 @@
 /**
  * The Spotlight scenario suite's API: what a scenario is, what running it gives, and the checks the scorecards count.
  *
- * Contract file: backbone/contracts/ag2/spotlight-scenario.ts (version 5, wave ag2), copied byte for byte to
- * apps/web/test/spotlight-scenarios/scenario.ts by AG08 (owner this wave; no other ag2 package copies it: AG07's and AG09's
- * scenario files use version 4's fields only). Version 4 was backbone/contracts/ag1/spotlight-scenario.ts (AG02), version 3
+ * Contract file: backbone/contracts/ag3/spotlight-scenario.ts (version 6, wave ag3), copied byte for byte to
+ * apps/web/test/spotlight-scenarios/scenario.ts by AG13 (owner this wave; no other ag3 package copies it: AG15's scenario
+ * file uses version 5's fields only). Version 5 was backbone/contracts/ag2/spotlight-scenario.ts (AG08), version 4
+ * backbone/contracts/ag1/spotlight-scenario.ts (AG02), version 3
  * backbone/contracts/sb3/spotlight-scenario.ts (SB13), version 2 backbone/contracts/sb2/spotlight-scenario.ts (SB10),
  * version 1 backbone/contracts/sb1/spotlight-scenario.ts (SB00); each version only adds optional fields and helpers, so
- * every earlier scenario still type-checks. Wave ag1's and ag2's scenario files are named `sb-ag0N.ts` (ag2: sb-ag07,
- * sb-ag08, sb-ag09; the runner globs `sb*.ts`; nobody changes the glob) with `owner: 'AG0N'`. Change it in the contracts folder first. Types and pure helpers only: no server import, no I/O. SB00's runner
+ * every earlier scenario still type-checks. Wave ag1's, ag2's and ag3's scenario files are named `sb-agNN.ts` (ag2: sb-ag07,
+ * sb-ag08, sb-ag09; ag3: sb-ag13, sb-ag15; the runner globs `sb*.ts`; nobody changes the glob) with `owner: 'AGNN'`. Change it in the contracts folder first. Types and pure helpers only: no server import, no I/O. SB00's runner
  * (apps/web/test/spotlight-scenarios.test.ts, with apps/web/test/spotlight-scenarios/harness.ts) finds every
  * `apps/web/test/spotlight-scenarios/<owner>.ts` (lower case, e.g. `sb03.ts`) with `import.meta.glob`, so packages never
  * edit a shared index: each adds one file that `export default defineScenarios([...])`.
  *
  * Two forms of one scenario: the unit form (always run) answers with `script`, a scripted model, and every check must
- * hold; the live form (only with LANDFLOW_INTEGRATION=spotlight) asks the local model (qwen3-coder:30b on Ollama by
- * default) `live.runs` times and the checks are counted into the scorecard. A scenario without `script` is live only.
+ * hold; the live form (only with LANDFLOW_INTEGRATION=spotlight) asks the host's builder model (waves ag1–ag3:
+ * `anthropic/claude-sonnet-5-5`, backbone/contracts/ag3/live-host.md) `live.runs` times and the checks are counted into the
+ * scorecard. A scenario without `script` is live only.
  */
 import type { LanguageModel, ModelTurn, Workflow } from '@landflow/engine';
 import type { AssistantOp, RunDigest } from '@/lib/shared/assistant-ops';
@@ -152,6 +154,8 @@ export interface Outcome {
     caseInputs?: string[];
     /** Wave ag2 (AG08): each node tool's parameters as the design set them, by tool name (read with `?? {}`). */
     toolParameters?: Record<string, Record<string, unknown>>;
+    /** Wave ag3 (AG13): each knowledge base's collection and the `source` of every document indexed into it (`runbooks/disk-full.md`), read with `?? []`. */
+    knowledgeDocs?: Array<{ collection: string; sources: string[] }>;
   }>;
   /** Model calls, and tokens in and out as AI usage recorded them. */
   modelCalls: number;
@@ -183,7 +187,7 @@ export interface Outcome {
    * the card shows them: `model` and `models` (AG02: the Model row and its select), `notAdded` (AG02: the tools asked for
    * and not added, by name) and `changes` (AG04: a revised card's lines).
    */
-  card?: { starter: boolean; model?: string; models?: string[]; notAdded?: string[]; changes?: string[]; needs?: string[] /* ag2 (AG08): the card's Left row, in order */ };
+  card?: { starter: boolean; model?: string; models?: string[]; notAdded?: string[]; changes?: string[]; needs?: string[] /* ag2 (AG08): the card's Left row, in order */; knowledge?: { folder?: string; files?: string[]; search?: 'vector' | 'keyword'; embeddings?: string; problem?: string } /* ag3 (AG13): the preview's `knowledge` */ };
   /** Wave sb3 (SB18): the smoke test of the agent it made, as the row reads it (lib/shared/agent-card.ts `AgentSmoke.state`). */
   smoke?: 'passed' | 'failed' | 'untested';
   /** Wave ag1 (AG05): the smoke test's reason, and each tool call's status (`AgentSmokeTool`), when there was one. */
@@ -422,6 +426,37 @@ export const checks = {
       );
     },
   }),
+  /**
+   * Wave ag3 (AG13): the ask named `folder`: the card lists files under it and says how it is searched (an embeddings model
+   * or the built-in keyword search), and the agent it made
+   * has a knowledge base whose documents all come from that folder (none from anywhere else); 'n/a' before Create.
+   */
+  knowledgeFromAsk: (folder: string): Check => ({
+    id: 'knowledge-from-ask',
+    label: `Knowledge indexed from ${folder}/ only`,
+    judge: (o) => {
+      const card = o.card?.knowledge;
+      if (!card?.folder || card.folder.replace(/\/+$/, '') !== folder || !card.files?.length || !card.embeddings) return false;
+      if (!card.files.every((f) => f.startsWith(`${folder}/`))) return false;
+      const docs = o.agents.flatMap((a) => a.knowledgeDocs ?? []);
+      if (!docs.length) return 'n/a';
+      const sources = docs.flatMap((d) => d.sources);
+      return sources.length > 0 && sources.every((s) => s.startsWith(`${folder}/`));
+    },
+  }),
+  /**
+   * Wave ag3 (AG13): the ask said what the agent answers from but gave no source: the card asks for one in its Left row and
+   * nothing was indexed or invented (no folder, no files, no documents).
+   */
+  knowledgeAsked: {
+    id: 'knowledge-asked',
+    label: 'Asked where its knowledge comes from, indexed nothing',
+    judge: (o: Outcome) => {
+      const card = o.card?.knowledge;
+      const docs = o.agents.flatMap((a) => a.knowledgeDocs ?? []).flatMap((d) => d.sources);
+      return !card?.folder && !(card?.files?.length) && docs.length === 0 && (o.card?.needs ?? []).some((n) => /\b(?:folder|source|documents?|files?)\b/i.test(n));
+    },
+  } satisfies Check,
 };
 
 /** Wave ag2 (AG08): the parameter names that say where a tool sends or reads (checked by `destinationsGiven`). */

@@ -128,7 +128,7 @@ export function agentSessionJournal(session: Pick<AgentSession, 'execution'>, ag
         actor: target,
         ...(delegate && { caller: actor }),
         input: why ? asked : entry.input,
-        attrs: { tool: entry.tool, toolKind: entry.kind, ...(entry.nodeType && { nodeType: entry.nodeType }), ...(why && { reason: why }) },
+        attrs: { tool: entry.tool, toolKind: entry.kind, ...(entry.nodeType && { nodeType: entry.nodeType }), ...(entry.target && { target: entry.target }), /* AG14: */ ...(why && { reason: why }) },
         at: entry.at,
       });
     }
@@ -206,6 +206,8 @@ export function agentSessionJournal(session: Pick<AgentSession, 'execution'>, ag
       ...(remote?.usage && { usage: remote.usage }),
       attrs: {
         ...(entry.durationMs !== undefined && { durationMs: entry.durationMs }),
+        // Wave ag3 integration: the settled call's target (a knowledge search's document count comes with the call, AG14) replaces the started one.
+        ...(entry.target && { target: entry.target }),
         ...(entry.childSessionId && { childSessionId: entry.childSessionId }),
         ...(entry.executionId && { executionId: entry.executionId }),
         ...(entry.workflowId && { workflowId: entry.workflowId }),

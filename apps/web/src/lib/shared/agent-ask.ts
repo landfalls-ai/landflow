@@ -20,6 +20,8 @@ export interface AgentAsk {
   tools: string[];
   /** What it answers from ("docs"). */
   knowledge?: string;
+  /** AG13: a folder the ask named, relative to the files directory (`runbooks`, `runbooks/ops`); never an absolute path. */
+  knowledgeFolder?: string;
 }
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -186,7 +188,7 @@ export function toolsOf(message: string, catalog: AskCatalogEntry[] = []): strin
 const LEAD_WORDS = /^(?:(?:the|our|a|an|your|its|my|from|in|on|with|and|to|using|of)\s+)+/i;
 
 /** What it answers from: "from our docs", "the docs knowledge base", "from the product wiki". */
-function knowledgeOf(message: string): string | undefined {
+export function knowledgeOf(message: string): string | undefined {
   const base = /((?:[\w-]+\s+){1,2})knowledge\s*base\b/i.exec(message);
   if (base) {
     const words = base[1].trim().replace(LEAD_WORDS, '').trim();
@@ -198,6 +200,64 @@ function knowledgeOf(message: string): string | undefined {
     return `${from[1].trim().toLowerCase()} ${kind}`.trim().slice(0, 60);
   }
   return undefined;
+}
+
+const WRITE_VERB = /\b(?:sav(?:e|es|ing)|mov(?:e|es|ing)|put|puts|stor(?:e|es|ing)|writ(?:e|es|ing)|cop(?:y|ies|ying)|send|sends|upload|uploads|archiv(?:e|es|ing)|fil(?:e|es|ing)|drop|drops|export|exports)\b/i;
+
+/** AG13: whether the ask wants knowledge at all; a bare "<word> folder" (the junk folder, the right folder) is not a source. */
+export function asksKnowledge(message: string): boolean {
+  return Boolean(knowledgeOf(message)) || /\b(?:knowledge|answers?|answering|looks?\s+(?:\w+\s+)?up|search(?:es)?|cites?|grounded|based\s+on|learns?\s+from|index(?:es)?)\b/i.test(message);
+}
+
+/**
+ * AG13: the folder the ask names: "in the folder runbooks", "from the folder runbooks/ops", "the runbooks folder", "in runbooks/".
+ * Relative paths only: an absolute path, `..`, `~`, a URL or a drive letter gives none (the design says why).
+ */
+export function knowledgeFolderOf(message: string): string | undefined {
+  const PATH = '([^\\s"“”\'‘’,;()]+)';
+  const wantsKnowledge = Boolean(knowledgeOf(message));
+  // The folder is a source only in a clause that asks for knowledge and writes nothing: "moves spam to the junk folder" and "saves it in the reports folder" name a destination.
+  const clause = message.split(/[;,]|\s(?:and|then|but)\s|(?<=[.!?])\s/i).find((c) => asksKnowledge(c) && !WRITE_VERB.test(c) && /\bfolder\b|\b(?:in|from|under)\s+["“'‘]?[\w.-]+(?:\/[\w.-]+)*\/["”'’]?(?![\w/])/i.test(c));
+  if (!clause) return undefined;
+  const m = new RegExp(`\\b(?:in|from|under|inside|at|of)\\s+(?:the\\s+|our\\s+)?folder\\s+(?:called\\s+|named\\s+)?["“'‘]?${PATH}`, 'i').exec(clause)
+    ?? new RegExp(`\\b(?:in|from|under|inside)\\s+(?:the\\s+|our\\s+)?["“'‘]?([\\w.~:/\\\\-]+?)["”'’]?\\s+(?:folder|directory)\\b`, 'i').exec(clause)
+    ?? (wantsKnowledge ? new RegExp(`\\b(?:the\\s+|our\\s+)?["“'‘]?([\\w.-]+?)["”'’]?\\s+folder\\b`, 'i').exec(clause) : null)
+    ?? new RegExp(`\\b(?:in|from|under)\\s+["“'‘]?([\\w.-]+(?:/[\\w.-]+)*/)["”'’]?(?![\\w/])`, 'i').exec(clause);
+  return m ? cleanFolder(m[1]) : undefined;
+}
+
+/** A clause about mail ("questions from emails in the Inbox folder") names a mailbox, not a source; knowledge words (`knowledgeOf`) still ask for one. */
+const MAIL_WORD = /\b(?:e-?mails?|mail|messages?|inbox)\b/i;
+
+/** ag3 fix pass: the clause that names the folder says "questions" ("answers questions from the guides folder"): a source, not a place. */
+export function folderClauseAsksQuestions(message: string, folder: string): boolean {
+  const named = new RegExp(`\\b${folder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+  return message.split(/[;,]|\s(?:and|then|but)\s|(?<=[.!?])\s/i).some((c) => named.test(c) && /\bquestions?\b/i.test(c) && !MAIL_WORD.test(c) && !WRITE_VERB.test(c));
+}
+
+/** A folder name as the files directory takes it: relative, no `..`, no URL or drive; undefined for a filler word or anything else. */
+function cleanFolder(match: string): string | undefined {
+  const raw = match.replace(/[.!?]+$/, '');
+  if (!raw || /^(?:the|a|an|this|that|our|your|its|new|same|another|files?|shared|local|specific|is|are|called|named)$/i.test(raw)) return undefined;
+  if (/^[\\/~]/.test(raw) || /^[a-z]:/i.test(raw) || /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) || raw.split(/[\\/]/).includes('..')) return undefined;
+  const path = raw.replace(/\/+$/, '');
+  return /^[\w.-]+(?:\/[\w.-]+)*$/.test(path) && path.length <= 200 ? path : undefined;
+}
+
+/**
+ * ag3 fix pass: the folder a reply names when a card has just asked "which folder does it answer from?": "from the folder runbooks",
+ * "answer from the folder runbooks", "The folder is runbooks", "use the folder guides", "from the guides folder", "in the folder manuals".
+ * No knowledge-clause gate (the card's question is the clause), but a write verb ("save it in the reports folder") names a destination.
+ */
+export function sourceFolderOf(message: string): string | undefined {
+  const text = message.trim();
+  if (!text || WRITE_VERB.test(text)) return undefined;
+  const PATH = '([^\\s"“”\'‘’,;()]+)';
+  const m = new RegExp(`\\b(?:in|from|under|inside|at|of|use|uses|using)\\s+(?:the\\s+|our\\s+)?folder\\s+(?:called\\s+|named\\s+)?["“'‘]?${PATH}`, 'i').exec(text)
+    ?? new RegExp(`\\bfolder\\s+(?:is|=|:)\\s*(?:called\\s+|named\\s+)?["“'‘]?${PATH}`, 'i').exec(text)
+    ?? new RegExp(`\\b(?:in|from|under|inside|use|uses|using)\\s+(?:the\\s+|our\\s+)?["“'‘]?([\\w.~:/\\\\-]+?)["”'’]?\\s+(?:folder|directory)\\b`, 'i').exec(text)
+    ?? new RegExp(`\\b(?:in|from|under)\\s+["“'‘]?([\\w.-]+(?:/[\\w.-]+)*/)["”'’]?(?![\\w/])`, 'i').exec(text);
+  return m ? cleanFolder(m[1]) : undefined;
 }
 
 const AGENT_NOUN: Record<string, string> = { review: 'reviewer', answer: 'answerer', summari: 'summariser', triage: 'triager', monitor: 'monitor', watch: 'watcher', write: 'writer', draft: 'drafter', classify: 'classifier', route: 'router', check: 'checker', label: 'labeller', translate: 'translator', research: 'researcher', report: 'reporter', plan: 'planner', find: 'finder', track: 'tracker', prioriti: 'prioritiser', respond: 'responder', reply: 'replier', handle: 'handler', analy: 'analyst', extract: 'extractor' };
@@ -265,11 +325,12 @@ export function agentAsk(message: string, nodeNames: string[] = [], catalog: Ask
   if (!text || askKind(text) === 'question') return undefined;
   if (!AS_OBJECT.test(text) && !AS_SUBJECT.test(text)) return undefined;
   const knowledge = knowledgeOf(text);
+  const knowledgeFolder = knowledgeFolderOf(text); // AG13: only a folder that is a source (a knowledge clause, no write verb)
   const job = jobOf(text);
   const tools = toolsOf(text, catalog);
   const description = descriptionOf(text, job);
   const name = named ? named[1].trim() : nameOf(sentencesOf(job)[0] ?? job, knowledge); // none when the job names no thing: the card then uses `fallbackName`
-  return { ...(name && { name }), description, placed: isPlaced(text, nodeNames), tools, ...(knowledge && { knowledge }) };
+  return { ...(name && { name }), description, placed: isPlaced(text, nodeNames), tools, ...(knowledge && { knowledge }), ...(knowledgeFolder && { knowledgeFolder }) };
 }
 
 /**

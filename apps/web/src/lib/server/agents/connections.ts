@@ -11,6 +11,11 @@ import { brandIcon, brandOfProvider } from '../../shared/brand-icons';
 import { mergeConnections, type ActorConnection } from '../../shared/run-trace';
 import { PACKAGE_POLICY } from '../../shared/team-progress';
 import { agentStore } from './store';
+import { listKnowledgeDocuments } from './knowledge';
+// AG12: the vault's names (never data), and what a project's settings change for a run.
+import { credentials } from '../credentials/vault';
+import type { ProjectAgentRules } from '../project-context/project-settings';
+import { PROJECT_TOOL_KIND_LABELS, toolKindAllowedBy, type ProjectToolKind } from '../../shared/project-policy';
 
 const PROVIDER: Record<string, string> = { anthropic: 'Anthropic', openai: 'OpenAI', ollama: 'Ollama' };
 
@@ -37,7 +42,7 @@ export function modelConnection(model: AgentConfig['model'], from: ActorConnecti
   return { kind: 'model', name: model.model, ...(detail && { detail }), ...(icon && { icon }), from };
 }
 
-function toolConnection(tool: AgentToolConfig): ActorConnection {
+function toolShape(tool: AgentToolConfig): ActorConnection {
   switch (tool.type) {
     case 'node': {
       const p = tool.parameters ?? {};
@@ -61,7 +66,8 @@ function toolConnection(tool: AgentToolConfig): ActorConnection {
         const plugin = tool.nodeType.split('.')[0] ?? tool.nodeType;
         return { kind: 'knowledge', name: tool.name || preset?.label || tool.nodeType, detail: `${preset?.label ?? plugin} · plugin knowledge`, icon: preset?.icon ?? 'lucide:library', from: 'agent' };
       }
-      const embeddings = `${PROVIDER[tool.embeddings.provider] ?? tool.embeddings.provider} ${tool.embeddings.model}`;
+      const keyword = tool.embeddings.provider === 'none';
+      const embeddings = keyword ? 'keyword search (BM25, built in)' : `${PROVIDER[tool.embeddings.provider] ?? tool.embeddings.provider} ${tool.embeddings.model}`;
       const store = { memory: 'in memory', sqlite: 'SQLite', pgvector: 'Postgres pgvector' }[tool.store] ?? tool.store;
       const icon = tool.store === 'pgvector' ? brandIcon('postgresql') : tool.store === 'sqlite' ? brandIcon('sqlite') : 'lucide:library';
       return { kind: 'knowledge', name: tool.collection, detail: `${store} · ${embeddings}`, icon, from: 'agent' };
@@ -73,19 +79,85 @@ function toolConnection(tool: AgentToolConfig): ActorConnection {
   }
 }
 
+type CredentialLookup = { get(id: string): string | undefined };
+
+/** AG12: the name of the first credential a tool is given, as the vault knows it ("credential missing" for a deleted one); never data. */
+function credentialName(tool: AgentToolConfig, known: CredentialLookup): string | undefined {
+  const refs = 'credentials' in tool && tool.credentials ? Object.values(tool.credentials) : tool.type === 'knowledge' && !isNodeKnowledge(tool) && tool.credential ? [tool.credential] : [];
+  const ref = refs.find((r) => r?.id);
+  if (!ref) return undefined;
+  return known.get(ref.id) ?? 'credential missing';
+}
+
+/** AG12: the kind a project's settings can withhold, for a tool of the agent's settings (`projectToolKind`'s rule, on the config). */
+const projectKindOf = (tool: AgentToolConfig): ProjectToolKind => tool.type;
+
+function toolConnection(tool: AgentToolConfig, known: CredentialLookup = { get: () => undefined }): ActorConnection {
+  const shape = toolShape(tool);
+  const credential = credentialName(tool, known);
+  return { ...shape, toolId: tool.id, ...(tool.requireApproval && { asksFirst: true }), ...(credential && { credential }) };
+}
+
+/** AG12: what a Run an Agent node's flow and project change for the agent's own settings. */
+export interface ConnectionOptions {
+  /**
+   * What the workflow's project changes for a run (`projectAgentRules(projectId)`: its default model, its knowledge base and the
+   * tool kinds it withholds). The caller reads it, so this module stays out of the project settings' import cycle (the journal
+   * loads it).
+   */
+  project?: ProjectAgentRules;
+  /** The name of the flow's wired Chat Model / Memory sub-node: the agent's own stays listed, `overriddenBy` it. */
+  wired?: { model?: string; memory?: string };
+}
+
 /**
  * What an agent's published settings connect it to. `skip`: what the flow gives it instead (a model or memory sub-node),
  * and `tools: false` to leave its tools out (a team member's asks are the chart's lines).
  */
-export function agentConnections(agent: Agent, skip: { model?: boolean; memory?: boolean; tools?: boolean } = {}): ActorConnection[] {
+export function agentConnections(agent: Agent, skip: { model?: boolean; memory?: boolean; tools?: boolean } = {}, options: ConnectionOptions = {}): ActorConnection[] {
   const config = agent.published?.config ?? agent;
   const out: ActorConnection[] = [];
-  const model = skip.model ? undefined : modelConnection(config.model);
-  if (model) out.push(model);
-  if (!skip.memory && config.memory?.crossSession) out.push({ kind: 'memory', name: 'Remembers across sessions', icon: 'lucide:brain', from: 'agent' });
-  if (!skip.tools) for (const tool of config.tools ?? []) out.push(toolConnection(tool));
+  // AG12: with `options.wired` the agent's own model and memory stay in the list, marked as replaced; `skip` still drops them.
+  const rules = options.project;
+  const own = modelConnection(config.model) ?? (rules?.settings.defaultModel ? modelConnection(rules.settings.defaultModel, 'project') : undefined);
+  const model = skip.model ? undefined : own;
+  if (model) out.push(options.wired?.model ? { ...model, overriddenBy: options.wired.model } : model);
+  if (!skip.memory && config.memory?.crossSession) out.push({ kind: 'memory', name: 'Remembers across sessions', icon: 'lucide:brain', from: 'agent', ...(options.wired?.memory && { overriddenBy: options.wired.memory }) });
+  if (!skip.tools) {
+    // Only a tool with a credential reference asks the vault (list() decrypts and counts usage), and only once.
+    let names: Map<string, string> | undefined;
+    const known = { get: (id: string) => (names ??= new Map(credentials.list().map((c) => [c.id, c.name]))).get(id) };
+    for (const tool of config.tools ?? []) {
+      const connection = toolConnection(tool, known);
+      const kind = projectKindOf(tool);
+      out.push(rules && !toolKindAllowedBy(rules.settings, kind) ? { ...connection, withheld: `project “${rules.projectName}” does not allow ${PROJECT_TOOL_KIND_LABELS[kind].toLowerCase()}` } : connection);
+    }
+    // The runtime adds the project's own knowledge base to every agent run there (runtime.ts, PROJECT_KNOWLEDGE_TOOL).
+    const knowledge = rules?.settings.knowledge;
+    if (knowledge?.enabled) out.push({ ...toolShape(knowledge.tool as AgentToolConfig), name: 'Project knowledge', from: 'project' });
+  }
   for (const skill of config.skills ?? []) out.push({ kind: 'skill', name: skill.name, icon: 'lucide:graduation-cap', from: 'agent' });
   return out;
+}
+
+/**
+ * AG12: a vector knowledge base's document count, for the canvas's band. Async because the store answers asynchronously (the
+ * Run Trace's own path stays synchronous and leaves it out); a store that does not answer leaves the count unset, never throws.
+ */
+export async function withDocumentCounts(agent: Agent, connections: ActorConnection[]): Promise<ActorConnection[]> {
+  const config = agent.published?.config ?? agent;
+  const bases = new Map((config.tools ?? []).flatMap((t) => (t.type === 'knowledge' && !isNodeKnowledge(t) ? [[t.id, t] as const] : [])));
+  return Promise.all(
+    connections.map(async (c) => {
+      const tool = c.kind === 'knowledge' && c.from === 'agent' && c.toolId ? bases.get(c.toolId) : undefined;
+      if (!tool) return c;
+      try {
+        return { ...c, documents: (await listKnowledgeDocuments(tool)).documents.length };
+      } catch {
+        return c;
+      }
+    }),
+  );
 }
 
 /** What an EgressPolicy opens, by the names Landflow's setup gives them (deploy/kind). */

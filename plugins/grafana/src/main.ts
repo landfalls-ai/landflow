@@ -32,6 +32,7 @@ export const plugin = definePlugin({
           displayName: 'API Token',
           type: 'string',
           required: true,
+          typeOptions: { password: true }, // AG14: a pasted token is masked on screen and never returned by the vault
           description: 'API token for authentication'
         }
       ]

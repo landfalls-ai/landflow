@@ -33,7 +33,7 @@ export const KIND_LABEL: Record<ActorConnection['kind'], string> = {
   network: 'May reach',
 };
 
-const FROM: Record<NonNullable<ActorConnection['from']>, string> = { flow: 'in the flow', agent: 'in its settings', kagent: 'on kagent' };
+const FROM: Record<NonNullable<ActorConnection['from']>, string> = { flow: 'in the flow', agent: 'in its settings', kagent: 'on kagent', project: 'in the project’s settings' }; // AG12: the project's default model and knowledge base
 
 /** The icon of a connection: its node type's, else its own, else the real mark of the app a tool or plugin is named after, else its kind's. */
 export function useConnectionIcon() {

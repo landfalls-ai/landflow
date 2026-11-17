@@ -308,6 +308,15 @@ GitHub, Kubernetes, Docker, MCP, kagent, PostgreSQL, SQLite), else its kind's.
 | An A2A Agent node or tool, a team's remote member | When the URL is a Landflow agent deployed to kagent (by the URL its deployment recorded, else the kagent name it ends with): **Claude Code** (when it has plugins, the mod or a Claude harness) and **kagent** (the deployment's name, sandbox and hot start), its Claude Code plugins (the landflow-harness mod among them), each EgressPolicy (GitHub, the package cache, Landflow) and the agent's own model, tools and skills. Any other URL: an A2A agent and its host. |
 | A team | Each member's connections on the chart the node's span records (`attrs.team.members[].connections`); the lead's leaves out the model and memory the flow gives. The model folds them onto the member's actor by title. |
 
+A connection may also say (AG12, wave ag3; the Run an Agent node's canvas band reads the same list from `agentConnections`):
+`asksFirst` (the tool waits for approval), `credential` (the credential's name, never its data; *credential missing* for
+a deleted one), `toolId` (for the link to its row on the agent page), `overriddenBy` and `withheld` (set only where a
+flow and project are given: the canvas route; a run's own list leaves the model and memory a sub-node gives out), a
+project's default model (`from: 'project'`) and its knowledge base (*Project knowledge*), and a vector knowledge base's
+document count. `overriddenBy`, `withheld`, the project's default model, *Project knowledge* and the document count are
+route-only: the Run Trace's path passes no project. `withheld` follows the project's tool kinds on the saved tool, not the
+runtime's per-caller tool access. A knowledge base without an embeddings model reads *SQLite · keyword search (BM25, built in)*.
+
 **GitHub MCP** is its own row for an agent that has GitHub's MCP tools (`preset: 'github'`, [a2a.md](a2a.md#githubs-mcp-tools-for-agents)),
 with the GitHub mark and kind *Tool*: *Tool · pull requests, reviews, line comments* at *Read and review*, *Tool ·
 repositories, pull requests, issues (read)* at *Read*. It sits beside the *May reach · GitHub* row of the agent's kagent
@@ -315,6 +324,31 @@ deployment (the gateway adds the token) and is never shown as an ordinary MCP se
 
 A team node's usage names the lead's model, and an agent session counts each of its model calls, so the lead's card and
 the report say "3 model calls · 5,443 in · 714 out · $0 · qwen3-coder:30b" beside a member's reported usage.
+
+### What a tool call reached
+
+A tool call says **where it went**, so a person can tell that an agent's tools are connected to something real. Each tool
+is given a `target` (`ToolTarget`, `lib/shared/tool-target.ts`) when it is built, from its config and its credential
+(`lib/server/agents/tool-target.ts`): the credential's **name** and its type's display name, `credentialId`, and **where**
+it points. A target is made only of non-secret facts: of a credential only the fields that are not secret
+(`secretFieldsOf` excludes them) and are named `host`, `port`, `url`, `baseUrl`, `endpoint`, `server`, `database` or
+`path`; a URL is cut to `host:port` (its user, password, path, query and fragment never reach it), a file path to its last
+part (`/x/y/sales.db` becomes `sales.db`). A node with no credential names its plugin and where the plugin answers (its `endpoint` is the plugin's when the node names no URL or file of its own, so the line reads `triage plugin · Normalize Alert 127.0.0.1:7798`); a
+workflow, a sub-agent, an MCP server and an A2A agent name themselves and their host. An HTTP Request whose URL the model
+gives is read per call, from the call's input, as a host only. A target never depends on the journal's redaction.
+
+It reads the same in three places: the **via line** under the tool's name in the editor's chat (`via Mailpit SMTP · SMTP
+127.0.0.1:51183`, the credential in bold), the **Reached** row of a tool span's sheet (from `attrs.target`, written by
+the agent session and, for an AI Agent node's sub-node tools, by the translator), and the agent page's timeline, where the
+**Test chat** folds settled calls into one activity line whose steps each say `via …` too (since wave ag3's live pass). The Run an
+Agent and AI Agent nodes' `tool` stream chunks carry `tool.target`. A run from before this has no `target` and shows no row.
+
+A **knowledge search** names its collection, its store and how it searched (the embeddings `provider/model`, or `keyword
+search (BM25, built in)` for a base with no embeddings model) and, on SQLite, how many documents it holds (counted with
+the call, so the tool span's end carries the settled target and the Reached row shows the count). Its output is
+shown as **passages** (`components/run-trace/passages.tsx`): the source file as a chip (`metadata.source`, else the upload's
+`fileName`), the page, the score to two places, and the text clamped to four lines with **Show all**. The raw JSON stays
+behind **Raw**. It is in the chat, the span's **Came back** and the timeline.
 
 ## What it saw
 
