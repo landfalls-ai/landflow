@@ -184,8 +184,9 @@ export default defineScenarios([
       r(CONDITION('{{ $json.output }}', 'contains', 'P0')),
       r({ resource: 'message', operation: 'post', text: '{{ $json.output }}' }),
       r({ operation: 'insert', columns: { column: [{ column: 'title', value: '{{ $json.title }}' }] } }),
+      r({ operation: 'insert', columns: { column: [{ column: 'title', value: "{{ $('Get new bug issues').item.json.title }}" }] } }),
     ],
-    checks: [planBuilt(6), collectionsFilled, readsRight, scheduleAsAsked, idsAsked, oneCallPerStep(), checks.noOutside],
+    checks: [planBuilt(6), collectionsFilled, readsRight, scheduleAsAsked, idsAsked, oneCallPerStep(['s6']), checks.noOutside],
     live: { runs: 3 },
   },
   {

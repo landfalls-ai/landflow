@@ -201,6 +201,27 @@ describe('SB14: a plan becomes nodes, one call per step', () => {
     expect(stuck.left).toEqual([expect.objectContaining({ node: 'Set since', kind: 'made-up', text: expect.stringContaining('lastRun') })]);
   });
 
+  it('sends a Slack step that reads $json.title after an agent back once, to that step alone, naming title', async () => {
+    const plan: BuildPlan = {
+      name: 'Triage',
+      steps: [step('s1', 'core.schedule', 'Every day', 'Run daily'), step('s2', 'core.aiAgent', 'Triage agent', 'Triage the bug', 's1'), step('s3', 'sb14app.slack', 'Tell Slack', 'Post the answer', 's2')],
+      assumptions: [],
+      cannot: [],
+    };
+    script = {
+      'Every day': [reply({ unit: 'rules', rule: { interval: [{ field: 'days', daysInterval: 1, triggerAtHour: 8, triggerAtMinute: 0 }] } })],
+      'Triage agent': [reply({ prompt: 'Triage this bug' })],
+      'Tell Slack': [reply({ text: '{{ $json.title }}' }), reply({ text: '{{ $json.output }}' })],
+    };
+    const draft = await buildFlow('every day triage a bug with an agent and post it to Slack', undefined, [], [], { plan });
+    expect(callsFor('Tell Slack')).toHaveLength(2);
+    expect(callsFor('Triage agent')).toHaveLength(1);
+    expect(callsFor('Every day')).toHaveLength(1);
+    expect(callsFor('Tell Slack')[1].body.messages.at(-1).content as string).toContain('title');
+    expect(draft.stages!.filter((s) => s.stage === 'send-back').map((s) => s.step)).toEqual(['s3']);
+    expect(JSON.stringify(draft.nodes.find((n) => n.key === 's3')!.parameters)).toContain('output');
+  });
+
   it('sends a weekday cron back when the request said "every morning", and keeps a daily rule', async () => {
     const plan: BuildPlan = { name: 'Morning', steps: [step('s1', 'core.schedule', 'Every morning', 'Run every morning at 9')], assumptions: [], cannot: [] };
     const weekdays = reply({ unit: 'rules', rule: { interval: [{ field: 'cronExpression', expression: '0 9 * * 1-5' }] } });

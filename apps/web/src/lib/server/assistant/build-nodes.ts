@@ -80,8 +80,8 @@ const TRIGGER_FIELDS: Record<string, Record<string, unknown>> = {
 };
 /** What an agent step writes (nodes/ai.ts, nodes/agents.ts): its answer is `output`, never the fields of the item it read. */
 const AGENT_FIELDS: Record<string, Record<string, unknown>> = {
-  'core.aiAgent': { output: '', sessionId: '', model: '', iterations: 0, usage: {}, steps: [] },
-  'core.messageAgent': { output: '', sessionId: '', model: '', iterations: 0, usage: {}, steps: [] },
+  'core.aiAgent': { output: '', sessionId: '', model: '', iterations: 0, usage: {}, steps: [], fallbackUsed: false },
+  'core.messageAgent': { output: '', sessionId: '', model: '', iterations: 0, usage: {}, steps: [], fallbackUsed: false },
 };
 
 // ---------------------------------------------------------------------------
