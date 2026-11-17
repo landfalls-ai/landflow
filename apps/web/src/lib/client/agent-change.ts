@@ -71,6 +71,9 @@ export function announceChange(agentId: string): void {
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(AGENT_CHANGED, { detail: { agentId } }));
 }
 
+/** The draft without what the server stamps on it (times, versions, the kagent deployment). */
+const settings = ({ updatedAt: _u, createdAt: _c, published: _p, history: _h, kagent: _k, ...rest }: Record<string, unknown>) => rest;
+
 /**
  * Before Apply saves `config`: has the draft moved since the change was designed (`snapshot` is the draft's JSON then)? If so
  * nothing is saved and the card must show what applying does against the draft as it is now (`changes`, `snapshot`), then wait
@@ -79,7 +82,8 @@ export function announceChange(agentId: string): void {
 export async function draftMoved(agentId: string, snapshot: string | undefined, config: Record<string, unknown>): Promise<{ snapshot: string; changes: string[] } | undefined> {
   if (!snapshot) return undefined;
   const current = await readDraft(agentId);
-  if (!current || JSON.stringify(current) === snapshot) return undefined;
+  // The draft's own settings are what Apply overwrites: a bumped updatedAt (the page opening, a smoke test) or a new published version is not a move, and never costs a first click.
+  if (!current || JSON.stringify(settings(current)) === JSON.stringify(settings(JSON.parse(snapshot) as Record<string, unknown>))) return undefined;
   return { snapshot: JSON.stringify(current), changes: agentChanges(current, config) };
 }
 
