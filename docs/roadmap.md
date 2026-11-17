@@ -2859,9 +2859,12 @@ account's own console is the figure.
   - The Grafana agent's instructions name node types (`grafana.getAlerts`, `core.httpRequest`) instead of tool names, and its HTTP Request tool is preset to `http://127.0.0.1:3000/api/health`.
   - Send Email's To and From are fixed empty and its Subject and Body unset on the card.
   - After an agent-page change is applied the card has no Test button, does not update after a credential pick, its Left row repeats credentials that are set, and it does not say Acknowledge Alert asks first.
-  - Spotlight's history loses the smoke row and the card results after a reload.
+  - ~~Spotlight's history loses the smoke row and the card results after a reload.~~ built in ag2, AG11
   - A revise adds a tool to the Tools line without a step for it, and the reply spells "Extract Iocs".
   - The created agent's name can differ from the card's ("Crypto Toolkit agent" against "Utility helper").
   - Grafana 11.4's Acknowledge Alert returns 404 from the plugin.
   - The before/after scorecard and the phone screenshots were not run in the ag1 live pass.
 - Owed to a person, not the pipeline: whether a denied write may count as a pass in a smoke test (AG05's rule; SB18 said no); whether the agent page keeps its own **Publish anyway** (Spotlight never offers it); whether the Grafana observer should ever get Acknowledge Alert by default (it writes: today only when asked, with approval).
+
+## Agents that work locally, wave ag2 (the leftovers of ag1)
+- **Built (AG11):** Spotlight's history keeps the agents it designed: the card with its smoke test and publish rows comes back after a reload, a card still waiting offers Create only while it fits, and a created one says what happened and opens the agent, or says it was deleted ([assistant.md](assistant.md#conversation-history)).

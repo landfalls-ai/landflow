@@ -174,6 +174,8 @@ More guards cover what local models get wrong (all in `lib/server/assistant/guar
 
 Spotlight works out whether a step needs one of your agents, a plain AI Agent, or a new agent of its own. Both its chat and the first-draft builder (`lib/server/flow-builder.ts`) get the caller's published agents and teams (`roster()` in `lib/server/assistant/roster.ts`, at most 30 of each, only those the caller can see). Each agent is one line from `agentBrief()` in `lib/shared/agent-brief.ts`: its name, `agentId`, version, team, what it does (its description, else its persona's mission), its role, its skills with their "use when", and its tools (by name, and "asks <agent>" for the agents it delegates to). Agents nobody has published are left out, because a flow runs the published version.
 
+A card, its smoke test and its publish are kept with the conversation and come back after a reload ([Conversation history](#conversation-history)).
+
 The prompt's rule, in both places:
 - **One fits**: if an agent's description, skills and tools cover the step, the flow runs it with Run an Agent (`core.messageAgent`, `agentId` and `message`), or a team with Run a Team. Spotlight says in its closing sentence which agent it picked and why.
 - **A small step**: classify, summarize, extract or draft a reply is a plain AI Agent (`core.aiAgent`); it needs no specialist.
@@ -410,6 +412,7 @@ mounts it.
 - **Only yours**: a conversation belongs to the person who had it. Nobody else can open it, an owner or an admin
   included: another person's id answers 404. API keys are refused too (the routes need a session). Deleting a person
   deletes their conversations and preferences.
+- **Agent cards are kept** (AG11): an agent Spotlight designed comes back under "Earlier" with its tools, Left row, smoke test and publish lines, and the row of its Run an Agent step. A later state (created, its smoke test, its publish, Applied for a change card) is stored as one more item holding only that card. A card still waiting keeps **Create** only in the workflow it was designed in and while no agent was made from it; a card too big for an item (its config is left out first), one for another workflow and a change to an agent that exists come back stale, saying "Ask again to design it". A created card looks its agent up once (at most 10 cards a reload): it shows the stored lines and **Open**, or "This agent was deleted".
 - **A question back comes back as words**: Spotlight's question (`ask_user`) is kept as the reply's text; its chips are not kept, so a reopened conversation shows the question without them and typing the answer works the same.
 - **The brain re-checks links**: when you reopen a brain answer, a page you can no longer open loses its link, and the
   reply says how many were left out. Tags (`mentions` parts) are checked the way the @ picker checked them: a brain

@@ -143,12 +143,12 @@ describe('planning what to store', () => {
     const stored = emptyStored();
     const items = [user('u1', 'hello'), reply('a1')];
     recordPlan(stored, planKeeping(items, stored, { keeping: true, live: false }));
-    expect(planKeeping(items, stored, { keeping: true, live: false })).toEqual({ inputs: [], turns: [], proposals: [] });
+    expect(planKeeping(items, stored, { keeping: true, live: false })).toEqual({ inputs: [], turns: [], proposals: [], cards: [] });
   });
 
   it('stores nothing, and shows no divider, when the person keeps nothing', () => {
     const items = [user('u1', 'hello'), reply('a1')];
-    expect(planKeeping(items, emptyStored(), { keeping: false, live: false })).toEqual({ inputs: [], turns: [], proposals: [] });
+    expect(planKeeping(items, emptyStored(), { keeping: false, live: false })).toEqual({ inputs: [], turns: [], proposals: [], cards: [] });
     expect(shouldResume(false, [])).toBe(false);
     expect(items.some((_, i) => dividerBefore(items, i))).toBe(false);
   });

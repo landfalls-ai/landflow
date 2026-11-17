@@ -20,6 +20,51 @@ const text = z.string().max(MAX_ITEM_BYTES);
 /** One step of what the assistant did (the shape of an activity step; declared here so this file stands alone). */
 export const stepSchema = z.object({ id: z.string().max(200), label: z.string().max(500), kind: z.string().max(100), status: z.string().max(50), durationMs: z.number().optional() });
 
+// AG11: an agent card Spotlight designed, trimmed to what a person reads (docs/assistant.md "Conversation history"), and the
+// row of its Run an Agent step. Bounded strings and arrays like the other parts; `config` only while the item fits.
+const short = (max: number) => z.string().max(max);
+const smokeSchema = z.object({
+  state: z.enum(['testing', 'passed', 'failed', 'untested']),
+  reply: short(300).optional(),
+  reason: short(1000).optional(),
+  ms: z.number().optional(),
+  tools: z.array(z.object({ name: short(200), status: z.enum(['success', 'error', 'empty', 'denied']), note: short(500).optional() })).max(30).optional(),
+});
+const publishSchema = z.object({ state: z.enum(['publishing', 'published', 'held', 'failed']), cases: z.number().optional(), score: z.number().optional(), reason: short(1000).optional() });
+export const agentCardPartSchema = z.object({
+  name: short(200),
+  description: short(2000),
+  model: short(200).optional(),
+  tools: z.array(z.object({ name: short(200), type: short(200).optional(), operation: short(200).optional(), writes: z.boolean(), requireApproval: z.boolean() })).max(60),
+  knowledge: short(300).optional(),
+  practices: z.boolean(),
+  guardrails: z.array(short(500)).max(30),
+  cases: z.array(z.object({ input: short(2000), expected: short(2000).optional() })).max(30),
+  needs: z.array(short(1000)).max(30),
+  missing: z.array(short(500)).max(30),
+  notAdded: z.array(z.object({ name: short(200), reason: short(500) })).max(30).optional(),
+  changes: z.array(short(500)).max(50).optional(),
+  models: z.array(short(200)).max(30).optional(),
+  state: z.enum(['designed', 'creating', 'created', 'failed']),
+  agentId: short(200).optional(),
+  workflowId: short(200).optional(),
+  error: short(2000).optional(),
+  smoke: smokeSchema.optional(),
+  publish: publishSchema.optional(),
+  starter: z.boolean().optional(),
+  ask: short(4000).optional(),
+  base: z.object({ agentId: short(200), name: short(200) }).optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
+});
+export const agentRowPartSchema = z.object({
+  nodeId: short(200).optional(),
+  state: z.enum(['designing', 'testing', 'tested', 'untested', 'publishing', 'published', 'draft', 'failed']),
+  smoke: smokeSchema.optional(),
+  publish: publishSchema.optional(),
+  summary: short(1000).optional(),
+  agentId: short(200).optional(),
+});
+
 export const conversationPartSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text }),
   z.object({ type: z.literal('steps'), steps: z.array(stepSchema).max(200) }),
@@ -31,6 +76,7 @@ export const conversationPartSchema = z.discriminatedUnion('type', [
     links: z.array(z.object({ type: z.string().max(100), id: z.string().max(200), name: z.string().max(500) })).max(100),
     sources: z.array(z.object({ n: z.number(), title: z.string().max(500), url: z.string().max(2000).optional() })).max(100).optional(),
   }),
+  z.object({ type: z.literal('agentCard'), id: z.string().max(200), card: agentCardPartSchema, row: agentRowPartSchema.optional() }), // AG11:
   z.object({ type: z.literal('error'), message: z.string().max(4000), kind: z.string().max(100).optional() }),
 ]);
 export type ConversationPart = z.infer<typeof conversationPartSchema>;

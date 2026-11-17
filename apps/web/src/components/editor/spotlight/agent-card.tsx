@@ -14,6 +14,7 @@ import { AgentAvatar } from '../../agents/avatar';
 import { Button } from '../../ui/button';
 import { applyAgentChange, createFromCard, dismissCard, publishAgentChange, setCardModel } from './agent-ask'; // AG02: setCardModel; AG04: applyAgentChange, publishAgentChange
 import { useAssistant } from '../assistant';
+import { isStaleCard } from '../spotlight-history'; // AG11:
 
 const CASES_SHOWN = 2;
 
@@ -143,13 +144,19 @@ export function AgentCardView({ itemId, card, busy = false }: { itemId: string; 
           </Row>
         )}
       </div>
-      {card.state === 'failed' && card.error && (
+      {card.state === 'failed' && card.error && !isStaleCard(card) && (
         <p role="alert" className="mt-2 text-[12px] leading-snug text-rd [overflow-wrap:anywhere]">
           {card.base ? 'Couldn’t apply it' : 'Couldn’t create it'}: {card.error}
         </p>
       )}
       <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-        {card.base ? (
+        {isStaleCard(card) ? (
+          // AG11: a card brought back without what Create needs (too big to keep, or another workflow's): it says so and offers nothing.
+          <span className="min-w-0 text-[12px] font-semibold text-t2 [overflow-wrap:anywhere]">{card.error}</span>
+        ) : created && card.error ? (
+          // AG11: its agent was looked up when the conversation came back, and is gone.
+          <span className="min-w-0 text-[12px] font-semibold text-warn [overflow-wrap:anywhere]">{card.error}</span>
+        ) : card.base ? (
           // AG04: a change to an agent that exists: Apply saves its draft and tests it; Publish only after a pass, through the eval gate.
           created ? (
             <>
