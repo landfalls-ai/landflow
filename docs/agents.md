@@ -607,7 +607,11 @@ request: the run goes on when the last one is decided). The Platform analyst's o
   It outputs `{ reply, sessionId, agentId, version, model, endReason, usage, steps }`, where
   `steps` lists each tool call with its kind and status. Answers and tool calls stream to the
   editor's chat panel and to streaming triggers. Tools that require approval are refused,
-  because a workflow run has nobody to approve them. Each run is an agent session from the
+  because a workflow run has nobody to approve them, unless **Tool Approvals** is *Ask in the editor's chat*
+  (default *Refuse*, so a saved flow runs as before): then, in a run started from the editor's Chat only, the
+  execution waits with the approval card in the chat, and Approve or Reject resumes the same agent session (a second
+  approval waits again). The hosted chat page, webhooks, schedules and manual runs still refuse, and so does a node
+  with a chat model or tools connected to it. Each run is an agent session from the
   workflow. The node is `usableAsTool`, so an AI Agent node can delegate to an agent. It runs
   the agent on Landflow's runtime, also when the agent is deployed to kagent; to call it there,
   use the **A2A Agent** node ([a2a.md](a2a.md)).

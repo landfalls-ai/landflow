@@ -63,7 +63,8 @@ export class GetAlertDetails implements INodeType {
     }
 
     // Construct the URL for fetching alert details
-    const alertUrl = `${String(url).replace(/\/+$/, '')}/api/v2/alerts/${alertId}`;
+    // AG10: Alertmanager v2 has no alert-by-id path; the list takes a filter, so the alert is found by its name.
+    const alertUrl = `${String(url).replace(/\/+$/, '')}/api/v2/alerts?filter=${encodeURIComponent(`alertname="${alertId}"`)}`;
 
     try {
       const response = await ctx.http(alertUrl, {
@@ -80,7 +81,19 @@ export class GetAlertDetails implements INodeType {
         });
       }
 
-      const alertDetails = await response.json();
+      const found = (await response.json()) as Array<{ labels?: Record<string, string>; annotations?: Record<string, string>; startsAt?: string; endsAt?: string; fingerprint?: string; status?: { state?: string } }>;
+      const first = Array.isArray(found) ? found[0] : undefined;
+      if (!first) {
+        throw new NodeOperationError(`No firing alert named ${alertId}`, { description: 'Alertmanager has no active alert with this alertname.' });
+      }
+      const alertDetails = {
+        alertId,
+        labels: first.labels ?? {},
+        annotations: first.annotations ?? {},
+        state: first.status?.state ?? null,
+        startsAt: first.startsAt ?? null,
+        ...(first.fingerprint && { fingerprint: first.fingerprint }),
+      };
 
       return items.map((item: any) => ({
         json: {
@@ -89,6 +102,7 @@ export class GetAlertDetails implements INodeType {
         }
       }));
     } catch (error) {
+      if (error instanceof NodeOperationError) throw error;
       throw new NodeOperationError(`Failed to fetch alert details from Grafana Alertmanager API: ${error instanceof Error ? error.message : String(error)}`, {
         description: 'Could not connect to the Grafana Alertmanager API',
       });
