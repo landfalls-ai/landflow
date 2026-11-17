@@ -12,8 +12,10 @@ import { publishLine, smokeLine, type AgentCard as AgentCardData } from '@/lib/s
 import type { AgentConfig } from '@/lib/shared/agents';
 import { AgentAvatar } from '../../agents/avatar';
 import { Button } from '../../ui/button';
-import { applyAgentChange, createFromCard, dismissCard, publishAgentChange, setCardModel } from './agent-ask'; // AG02: setCardModel; AG04: applyAgentChange, publishAgentChange
+import { applyAgentChange, createFromCard, dismissCard, publishAgentChange, setCardModel, testAgentChange, testedThisLoad } from './agent-ask'; // AG02: setCardModel; AG04: applyAgentChange, publishAgentChange; AG09: testAgentChange
+import { stillLeft, useAgentDraft } from '@/lib/client/agent-change'; // AG09:
 import { useAssistant } from '../assistant';
+import { isStaleCard } from '../spotlight-history'; // AG11:
 
 const CASES_SHOWN = 2;
 
@@ -26,13 +28,15 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-export function AgentCardView({ itemId, card, busy = false }: { itemId: string; card: AgentCardData; busy?: boolean }) {
+export function AgentCardView({ itemId, card, busy = false, earlier = false }: { itemId: string; card: AgentCardData; busy?: boolean; earlier?: boolean }) {
   const [allCases, setAllCases] = useState(false);
   const config = card.config as Partial<AgentConfig>;
   const created = card.state === 'created';
   const creating = card.state === 'creating';
   const cases = allCases ? card.cases : card.cases.slice(0, CASES_SHOWN);
-  const left = [...card.needs, ...card.missing.map((m) => `Not available here: ${m}`)];
+  // AG11: a card brought back from history offers Publish only after Test again passed in this page load.
+  const draft = useAgentDraft(card.base?.agentId); // AG09: a change card's Left row is what the agent's draft still lacks
+  const left = [...(card.base ? stillLeft(card.needs, draft) : card.needs) /* AG09: */, ...card.missing.map((m) => `Not available here: ${m}`)];
   // Integration (sb3): after Create the line is SB18's smoke line, live from the agent's row ("tested, 1 of 1 passed · published").
   const row = useAssistant((s) => (card.agentId ? s.agents.find((a) => a.agentId === card.agentId) : undefined));
   const smoke = row?.smoke ?? card.smoke;
@@ -143,13 +147,19 @@ export function AgentCardView({ itemId, card, busy = false }: { itemId: string; 
           </Row>
         )}
       </div>
-      {card.state === 'failed' && card.error && (
+      {card.state === 'failed' && card.error && !isStaleCard(card) && (
         <p role="alert" className="mt-2 text-[12px] leading-snug text-rd [overflow-wrap:anywhere]">
           {card.base ? 'Couldn’t apply it' : 'Couldn’t create it'}: {card.error}
         </p>
       )}
       <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-        {card.base ? (
+        {isStaleCard(card) ? (
+          // AG11: a card brought back without what Create needs (too big to keep, or another workflow's): it says so and offers nothing.
+          <span className="min-w-0 text-[12px] font-semibold text-t2 [overflow-wrap:anywhere]">{card.error}</span>
+        ) : created && card.error ? (
+          // AG11: its agent was looked up when the conversation came back, and is gone.
+          <span className="min-w-0 text-[12px] font-semibold text-warn [overflow-wrap:anywhere]">{card.error}</span>
+        ) : card.base ? (
           // AG04: a change to an agent that exists: Apply saves its draft and tests it; Publish only after a pass, through the eval gate.
           created ? (
             <>
@@ -157,10 +167,16 @@ export function AgentCardView({ itemId, card, busy = false }: { itemId: string; 
                 Saved to its draft · {smokeLine(card.smoke)}
                 {card.publish && ` · ${publishLine(card.publish)}`}
               </span>
-              {card.smoke?.state === 'passed' && card.publish?.state !== 'published' && (
+              {card.smoke?.state === 'passed' && card.publish?.state !== 'published' && (!earlier || testedThisLoad(itemId)) && (
                 <Button size="sm" variant="primary" disabled={card.publish?.state === 'publishing'} onClick={() => void publishAgentChange(itemId, card)} className="max-md:h-11 max-md:px-4">
                   {card.publish?.state === 'publishing' ? <Loader2 className="size-3.5 animate-spin" /> : null}
                   Publish
+                </Button>
+              )}
+              {/* AG09: the smoke test again on the draft as it is (a credential picked since); nothing is saved. */}
+              {card.smoke?.state !== 'testing' && (
+                <Button size="sm" variant="ghost" onClick={() => void testAgentChange(itemId, card)} className="max-md:h-11 max-md:px-4">
+                  Test again
                 </Button>
               )}
               <a href={`/agents/${card.base.agentId}`} target="_blank" rel="noopener" className="flex min-h-7 items-center gap-0.5 text-[12px] font-semibold text-ac hover:underline max-md:min-h-11">

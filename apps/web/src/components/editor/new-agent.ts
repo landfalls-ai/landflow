@@ -39,6 +39,12 @@ export async function agentsSettled(): Promise<void> {
   while (inFlight.size) await Promise.allSettled([...inFlight]);
 }
 
+/** The row's words when the architect made no design: a provider's usage limit is said as that, not as "proposed nothing". */
+export function notDesignedNote(designed: boolean, needs: Array<{ text: string }>): string {
+  if (designed) return '';
+  return needs.some((n) => /usage limit was reached/.test(n.text)) ? 'only its instructions (the model’s usage limit was reached)' : 'only its instructions (the architect proposed nothing)';
+}
+
 /** SB16: the design the card shows: `POST /api/agents/design` with `preview: true`, which saves nothing. */
 export function designPreview(spec: NewAgentSpec, place: AgentPlace = {}, signal?: AbortSignal): Promise<Designed> {
   return api<Designed>('/api/agents/design', { method: 'POST', json: { ...spec, ...place, ...pickedModel(), preview: true }, signal });
@@ -65,7 +71,7 @@ export function saveAgentFor(nodeId: string, spec: NewAgentSpec, place: AgentPla
       const summary = [
         agent.model ? `${agent.model.provider}/${agent.model.model}` : 'no model yet',
         has,
-        designed ? '' : 'only its instructions (the architect proposed nothing)',
+        notDesignedNote(designed, needs),
         left.length ? `still to do: ${left.slice(0, 2).join('; ')}` : '',
       ]
         .filter(Boolean)
@@ -148,12 +154,12 @@ export async function smokeTestAgent(nodeId: string, options: { publish?: boolea
   if (!progress?.agentId || !node) return undefined;
   const patch = (p: Partial<AgentProgress>) => useAssistant.getState().setAgent(nodeId, p);
   const done = (smoke: AgentSmoke, state: AgentProgress['state'] = smoke.state === 'passed' ? 'tested' : smoke.state === 'untested' ? 'untested' : 'draft') => {
-    patch({ state, smoke, held: undefined, publish: undefined });
+    patch({ state, smoke, held: undefined, publish: undefined, restored: false });
     return smoke;
   };
   const sample = itemReaching(nodeId);
   if (!sample) return done({ state: 'untested', reason: 'run the step before it once' });
-  patch({ state: 'testing', smoke: { state: 'testing' }, held: undefined, publish: undefined });
+  patch({ state: 'testing', smoke: { state: 'testing' }, held: undefined, publish: undefined, restored: false });
   try {
     const wanted = node.data.wf.parameters.message;
     const template = typeof wanted === 'string' && wanted.trim() ? wanted : '{{ $json.chatInput ?? $json.text }}';

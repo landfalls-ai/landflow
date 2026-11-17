@@ -8,11 +8,11 @@ import { applyChanges, editorLookup, undos, useAssistant } from '../assistant';
 import { ChatEmpty } from '../../ui/chat';
 import { Button } from '../../ui/button';
 import { EMPTY_LINE, foldedBar } from './states';
-import { markStale, planKeeping, recordPlan, restore, shouldResume } from '../spotlight-history';
+import { checkCards, DELETED_AGENT_NOTE, deletedCards, markStale, planKeeping, recordPlan, restore, shouldResume } from '../spotlight-history';
 import { ConversationHistory } from '../../ui/conversation-history';
 import { useConversation } from '@/lib/client/conversations';
 import { usePreference } from '@/lib/client/preferences';
-import { api } from '@/lib/client/api';
+import { api, ApiError } from '@/lib/client/api';
 import type { ConversationItem, ConversationRecord } from '@/lib/shared/conversations';
 import { useEditor } from '../store';
 import { isPhone } from '@/lib/client/use-phone';
@@ -125,6 +125,7 @@ function useSpotlightKeeping() {
   const keeping = usePreference('keepConversations');
   const conversation = useConversation({ surface: 'spotlight', subjectType: 'workflow', subjectId: workflowId || undefined });
   const items = useAssistant((s) => s.items);
+  const agents = useAssistant((s) => s.agents); // AG11:
   const live = useAssistant((s) => s.pending || s.drafting);
   const boundTo = useAssistant((s) => s.workflowId);
   const appendRef = useRef(conversation.append);
@@ -135,11 +136,19 @@ function useSpotlightKeeping() {
   const show = useCallback((turns: Parameters<typeof restore>[0], replace: boolean, id: string) => {
     const back = restore(turns);
     const editor = useEditor.getState();
-    const checked = markStale(back.items, editor.toWorkflow(), editorLookup());
+    const checked = checkCards(markStale(back.items, editor.toWorkflow(), editorLookup()), editor.workflowId); // AG11: a waiting card keeps Create only here
     const before = useAssistant.getState().kept.stored;
-    const next = replace ? back.stored : { turns: new Set([...before.turns, ...back.stored.turns]), proposals: new Map([...before.proposals, ...back.stored.proposals]) };
-    useAssistant.getState().showEarlier(checked, { replace });
+    const next = replace ? back.stored : { turns: new Set([...before.turns, ...back.stored.turns]), proposals: new Map([...before.proposals, ...back.stored.proposals]), cards: new Map([...before.cards, ...back.stored.cards]) /* AG11: */ };
+    useAssistant.getState().showEarlier(checked, { replace, agents: back.agents /* AG11: */ });
     useAssistant.getState().setKept(id, next);
+    // AG11: a created card looks at its agent once: a 404 says it was deleted, and its row goes.
+    void deletedCards(checked, (agentId) => api(`/api/agents/${agentId}`, { background: true }).then(() => false, (e) => (e instanceof ApiError && e.status === 404 ? true : Promise.reject(e)))).then((gone) => {
+      if (useAssistant.getState().kept.id !== id) return; // AG11: another conversation was opened meanwhile: its cards are not these
+      for (const [itemId, agentId] of gone) {
+        useAssistant.getState().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'agentCard' ? { ...p, card: { ...p.card, error: DELETED_AGENT_NOTE } } : p)));
+        useAssistant.setState((st) => ({ agents: st.agents.filter((a) => a.agentId !== agentId) }));
+      }
+    });
   }, []);
 
   // A panel that mounts again over the same chat (Home, then Back) follows the conversation it is already kept in. The kept
@@ -190,11 +199,11 @@ function useSpotlightKeeping() {
   // Store the turns as they are said and finished.
   useEffect(() => {
     if (!here) return;
-    const plan = planKeeping(items, useAssistant.getState().kept.stored, { keeping, live });
+    const plan = planKeeping(items, useAssistant.getState().kept.stored, { keeping, live, agents: useAssistant.getState().agents /* AG11: */ });
     if (!plan.inputs.length && !plan.turns.length) return;
     recordPlan(useAssistant.getState().kept.stored, plan);
     if (plan.inputs.length) void appendRef.current(plan.inputs).catch(() => undefined);
-  }, [items, live, keeping, here]);
+  }, [items, live, keeping, here, agents /* AG11: */]);
 
   const open = async (id: string) => {
     if (useAssistant.getState().pending || useAssistant.getState().testing) return;

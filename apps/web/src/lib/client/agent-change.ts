@@ -4,6 +4,7 @@
  * draft and smoke-test it (Apply), and publish it (only after a pass, through the eval gate, never skipping it: decision D3).
  * No store and no server import: both surfaces keep their own state.
  */
+import { useEffect, useState } from 'react'; // AG09:
 import { api, ApiError } from '@/lib/client/api';
 import { agentChanges } from '@/lib/shared/agent-changes';
 import type { AgentNotAdded, AgentPublish, AgentSmoke } from '@/lib/shared/agent-card';
@@ -15,6 +16,8 @@ export interface ChangeDesign {
   needs?: Array<{ text: string }>;
   missing?: Array<{ capability: string }>;
   designed?: boolean;
+  /** Why the model made no design when it failed (a usage limit in the provider's words). */
+  failure?: string;
   /** ag1-int: the tools the change named that the agent did not get, and why. */
   notAdded?: AgentNotAdded[];
 }
@@ -24,7 +27,7 @@ export function designChange(input: { name: string; description?: string; base: 
   const { model, ...rest } = input;
   return api<ChangeDesign>('/api/agents/design', { method: 'POST', json: { description: '', instructions: '', ...rest, ...(model && { model }), preview: true }, signal }).then((design) => {
     // A design that ran and matched the base has `designed: true` and no changes ("No change"); one the model never proposed is a failure, not "already has it".
-    if (design.designed === false) throw new Error('the model proposed nothing; nothing was changed');
+    if (design.designed === false) throw new Error(design.failure && /usage limit/.test(design.failure) ? `${design.failure.charAt(0).toUpperCase()}${design.failure.slice(1)}; nothing was changed` : 'the model proposed nothing; nothing was changed');
     return design;
   });
 }
@@ -32,7 +35,7 @@ export function designChange(input: { name: string; description?: string; base: 
 /** The agent's saved draft as it is now, or undefined when it cannot be read. */
 export async function readDraft(agentId: string): Promise<Record<string, unknown> | undefined> {
   try {
-    return (await api<{ agent: Record<string, unknown> }>(`/api/agents/${agentId}`)).agent;
+    return (await api<{ agent: Record<string, unknown> }>(`/api/agents/${agentId}`, { background: true })).agent; // AG11's lookup does the same: a background read shows no global progress or error
   } catch {
     return undefined;
   }
@@ -68,6 +71,13 @@ export function announceChange(agentId: string): void {
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(AGENT_CHANGED, { detail: { agentId } }));
 }
 
+/** The draft without what the server stamps on it (times, versions, the kagent deployment). */
+const settings = ({ updatedAt: _u, createdAt: _c, published: _p, history: _h, kagent: _k, ...rest }: Record<string, unknown>) => rest;
+
+/** Equal as data: the same keys and values whatever order the server wrote them in (a save moves model, persona and guardrails to the end). */
+const canonical = (value: unknown): unknown => (Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, v]) => [k, canonical(v)])) : value);
+const same = (a: unknown, b: unknown) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+
 /**
  * Before Apply saves `config`: has the draft moved since the change was designed (`snapshot` is the draft's JSON then)? If so
  * nothing is saved and the card must show what applying does against the draft as it is now (`changes`, `snapshot`), then wait
@@ -76,6 +86,63 @@ export function announceChange(agentId: string): void {
 export async function draftMoved(agentId: string, snapshot: string | undefined, config: Record<string, unknown>): Promise<{ snapshot: string; changes: string[] } | undefined> {
   if (!snapshot) return undefined;
   const current = await readDraft(agentId);
-  if (!current || JSON.stringify(current) === snapshot) return undefined;
+  // The draft's own settings are what Apply overwrites: a bumped updatedAt (the page opening, a smoke test) or a new published version is not a move, and never costs a first click.
+  if (!current || same(settings(current), settings(JSON.parse(snapshot) as Record<string, unknown>))) return undefined;
   return { snapshot: JSON.stringify(current), changes: agentChanges(current, config) };
+}
+
+// AG09: the change card follows the agent's draft: what is left is what its draft still lacks, and Test again runs the draft as it is.
+
+/** The agent page saved its draft (a credential picked in a tool dialog, say): `AGENT_CHANGED` makes the page reload itself, this one only tells the cards. */
+export const AGENT_SAVED = 'landflow:agent-saved';
+export function announceSaved(agentId: string): void {
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(AGENT_SAVED, { detail: { agentId } }));
+}
+
+/**
+ * The Left row's lines as the agent's draft leaves them: a "<tool>: pick a <slot> credential" line is dropped when that tool of
+ * the draft has the slot set. Every other line stays (a credential is the person's pick; nothing here sets one).
+ */
+export function stillLeft(lines: string[], draft: Record<string, unknown> | undefined): string[] {
+  if (!draft) return lines;
+  const tools = (Array.isArray(draft.tools) ? draft.tools : []) as Array<Record<string, unknown>>;
+  return lines.filter((line) => {
+    const m = /^(.+?): pick an? (.+?) credential/.exec(line);
+    if (!m) return true;
+    const tool = tools.find((t) => t.name === m[1]);
+    const given = tool?.credentials;
+    return !(given && typeof given === 'object' && (given as Record<string, unknown>)[m[2]]);
+  });
+}
+
+/** The draft the card reads its Left row against: read when the card shows, and again on `AGENT_CHANGED` and `AGENT_SAVED` for this agent. */
+export function useAgentDraft(agentId: string | undefined, reload = 0): Record<string, unknown> | undefined {
+  const [draft, setDraft] = useState<Record<string, unknown>>();
+  useEffect(() => {
+    if (!agentId) return;
+    let live = true;
+    const read = () => void readDraft(agentId).then((d) => live && d && setDraft(d));
+    read();
+    const onEvent = (e: Event) => {
+      if ((e as CustomEvent<{ agentId?: string }>).detail?.agentId === agentId) read();
+    };
+    window.addEventListener(AGENT_CHANGED, onEvent);
+    window.addEventListener(AGENT_SAVED, onEvent);
+    return () => {
+      live = false;
+      window.removeEventListener(AGENT_CHANGED, onEvent);
+      window.removeEventListener(AGENT_SAVED, onEvent);
+    };
+  }, [agentId, reload]);
+  return draft;
+}
+
+/** Test again: the smoke test on the draft as it is now (no save, no publish). */
+export async function testDraft(agentId: string, sample: string): Promise<AgentSmoke> {
+  try {
+    const { smoke } = await api<{ smoke: AgentSmoke }>(`/api/agents/${agentId}/smoke-test`, { method: 'POST', json: { message: sample.slice(0, 4000) } });
+    return smoke;
+  } catch (e) {
+    return { state: 'failed', reason: (e as Error).message };
+  }
 }

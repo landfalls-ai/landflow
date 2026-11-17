@@ -4,10 +4,11 @@
  * guardrails in words, test cases), the smoke test's result (SB18, decision D3) and, on an empty canvas, the starter
  * flow that runs it (SB16, decision D5).
  *
- * Contract file: backbone/contracts/ag1/agent-card.ts (wave ag1; sb3's was backbone/contracts/sb3/agent-card.ts, owner
- * SB16), copied byte for byte to apps/web/src/lib/shared/agent-card.ts by AG02 (owner this wave), AG04 and AG05. Wave
- * ag1 only adds optional fields and helpers, so every sb3 caller still type-checks. Change it in the contracts folder
- * first (the owner only), then copy. Types and pure helpers only: no import, no zod (the browser loads it), no I/O.
+ * Contract file: backbone/contracts/ag2/agent-card.ts (wave ag2, owner AG10, nobody copies it this wave; ag1's was
+ * backbone/contracts/ag1/agent-card.ts, owner AG02; sb3's backbone/contracts/sb3/agent-card.ts, owner SB16), copied byte
+ * for byte to apps/web/src/lib/shared/agent-card.ts. Each wave only adds optional fields and helpers or changes what a
+ * helper returns, so every earlier caller still type-checks. Change it in the contracts folder first (the owner only),
+ * then copy. Types and pure helpers only: no import, no zod (the browser loads it), no I/O.
  *
  * The wire, for reference (each route is its owner's):
  * - `POST /api/agents/design` with `preview: true` (SB16) answers 200 `{ config, needs, missing, dropped, designed, cases }`
@@ -33,6 +34,10 @@
  *   call to have succeeded with some output; a node tool whose visible required credential is unset makes it `untested`
  *   with "needs a credential: <tool>" before anything runs. Publishing is followed on the card and the row as an
  *   `AgentPublish` (`publishLine`).
+ *
+ * Wave ag2 adds (AG10): the starter flow's Run an Agent step asks in the editor's chat (`toolApprovals: 'askInChat'`): a tool
+ * that needs approval waits for the person's Approve in the chat, in the editor's chat runs only (every other run refuses
+ * it, as before); a starter flow laid out before wave ag2 keeps refusing.
  */
 
 /** A test case the brief proposes for the eval gate: what a person would send, and what a right answer says. */
@@ -163,7 +168,8 @@ export function starterSample(card: Pick<AgentCard, 'name' | 'cases'>): string {
 /**
  * The starter flow of decision D5, in the template form the editor applies (`applyTemplate`, laid out left to right): a Chat Message trigger and
  * a Run an Agent step that runs the new agent on each message, with one sample chat item pinned on the trigger. The chat
- * shows the agent's `reply` (the last step's output), so no third step is needed.
+ * shows the agent's `reply` (the last step's output), so no third step is needed. Wave ag2: the step asks in the editor's
+ * chat for a tool that needs approval (`toolApprovals: 'askInChat'`).
  */
 export function starterFlow(agent: { id: string; name: string }, sample: string): {
   name: string;
@@ -175,7 +181,8 @@ export function starterFlow(agent: { id: string; name: string }, sample: string)
     name: `Chat with ${agent.name}`.slice(0, 80),
     nodes: [
       { key: 'chat', type: 'core.chatTrigger', name: 'Chat message', x: 0, y: 0, parameters: {} },
-      { key: 'agent', type: 'core.messageAgent', name: agent.name.slice(0, 60), x: 280, y: 0, parameters: { agentId: agent.id } },
+      // Wave ag2 (AG10): a tool that needs approval waits for the person in the editor's chat (other runs still refuse it).
+      { key: 'agent', type: 'core.messageAgent', name: agent.name.slice(0, 60), x: 280, y: 0, parameters: { agentId: agent.id, toolApprovals: 'askInChat' } },
     ],
     edges: [['chat', 'agent', 0, 'main']],
     pinData: { chat: [{ json: { chatInput: sample, sessionId: 'sample' } }] },

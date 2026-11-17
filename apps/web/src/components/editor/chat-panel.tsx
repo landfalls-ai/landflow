@@ -19,7 +19,7 @@ export type ChatChunk = Extract<ExecutionEvent, { type: 'node.chunk' }>['chunk']
 export interface ChatTool {
   id: string;
   name: string;
-  status: 'started' | 'finished' | 'failed' | 'approval';
+  status: 'started' | 'finished' | 'failed' | 'approval' | 'denied';
   input?: unknown;
   output?: string;
 }
@@ -100,6 +100,18 @@ function applyChunk(current: { text: string; calls: ChatTool[]; error?: string }
   }
   return current;
 }
+
+/**
+ * A resumed run streams the same call ids again: a tool chunk for a call the earlier message already shows updates that row
+ * (Waiting for approval becomes Done or Denied) and is not part of the new reply. Undefined when the chunk is not such a chunk.
+ */
+export function settleEarlierCall(calls: readonly ChatTool[], chunk: ChatChunk): ChatTool[] | undefined {
+  if (chunk.type !== 'tool' || !chunk.tool || !calls.some((c) => c.id === chunk.tool!.id)) return undefined;
+  return applyChunk({ text: '', calls: [...calls] }, chunk).calls;
+}
+
+/** The person's Deny, as the row reads at once (the run's own 'denied' chunk confirms it). */
+export const markCallDenied = (calls: readonly ChatTool[], callId: string): ChatTool[] => calls.map((c) => (c.id === callId ? { ...c, status: 'denied' as const } : c));
 
 /** An engine failure in plain words; a provider's raw error goes through the kit's ChatError. */
 function plainRunError(message: string): string {
@@ -228,9 +240,24 @@ export function ChatPanel({
       );
     mark('busy');
     let failed = false;
+    const shown = messages.find((msg) => msg.id === messageId)?.calls ?? [];
+    const setCalls = (next: ChatTool[]) => setMessages((m) => m.map((msg) => (msg.id === messageId ? { ...msg, calls: next } : msg)));
+    let rows = shown;
+    // The resumed run's chunks for the calls this message shows update those rows; the rest is the new reply.
+    const decideChunk = (chunk: ChatChunk) => {
+      const next = settleEarlierCall(rows, chunk);
+      if (next) {
+        rows = next;
+        setCalls(next);
+      } else onChunk(chunk);
+    };
     await converse(async () => {
       try {
-        const outcome = await onDecide(executionId, callId, approved, onChunk);
+        if (!approved && rows.length) {
+          rows = markCallDenied(rows, callId);
+          setCalls(rows);
+        }
+        const outcome = await onDecide(executionId, callId, approved, decideChunk);
         mark(approved);
         return outcome;
       } catch (error) {
@@ -238,7 +265,10 @@ export function ChatPanel({
         throw error;
       }
     });
-    if (failed) mark(undefined);
+    if (failed) {
+      mark(undefined);
+      setCalls(shown); // a Deny that did not go through leaves the row as it was
+    }
   };
 
   const attach = async (list: FileList | null) => {
@@ -398,11 +428,12 @@ const STATUS: Record<ChatTool['status'], { label: string; tone: string }> = {
   started: { label: 'Running', tone: 'text-t3' },
   finished: { label: 'Done', tone: 'text-gn' },
   failed: { label: 'Failed', tone: 'text-rd' },
-  approval: { label: 'Needs you', tone: 'text-warn' },
+  approval: { label: 'Waiting for approval', tone: 'text-warn' },
+  denied: { label: 'Denied', tone: 'text-t3' },
 };
 
 /** Streamed tool calls: name and status, input and output on demand. */
-function ToolCalls({ calls }: { calls: ChatTool[] }) {
+export function ToolCalls({ calls }: { calls: ChatTool[] }) {
   return (
     <div className="space-y-1">
       {calls.map((call) => (

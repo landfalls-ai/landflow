@@ -63,6 +63,24 @@ call (those starting with **When Called by a Workflow or Agent**), the other age
 never values) and the persona templates. Then it proposes the whole agent (`propose_agent`); asking for a change sends
 the whole agent again, built on the draft so far.
 
+**A design fills what you gave and nothing else** (AG08, wave ag2). A node tool's destination (To, CC, BCC, URL, channel,
+chat id, path, repository) holds only a value the request gives word for word: a value it does not hold (the model's
+guess, or the node's own preset such as HTTP Request's `http://127.0.0.1:3000/api/health`) is left empty, named under
+*Left out*, and the card's **Left** row says "set URL (the request gives none)". A mail node (Send Email) goes to the
+address the request says to send to (two or more: the ones it names, as given), its From stays empty for you ("fill in
+From Email"; an invented one is dropped), and its Subject and Text are `{{ $fromAI('subject', …) }}` and
+`{{ $fromAI('body', …) }}`, so the agent writes them on each call (the format is plain text unless the model chose
+another). A required property the tool's schema lets the model fill on each call (Acknowledge Alert's Alert Name, a
+`$fromAI` value) is not on the Left row. The test cases are the inputs themselves (an alert's text, the question as asked),
+never a description of one ("Pasted alert about high CPU"), a `<placeholder>` or a line under 12 characters: such a case is
+dropped, and a proposal left with fewer than 3 gets one follow-up call that asks for real inputs, so a good agent is not
+held by the gate for a description it cannot answer. A `$fromAI` value in a destination is emptied too (the request gave
+none), so an HTTP Request tool meant to fetch a page the user pastes comes out with an empty URL and a Left row to set
+it: say the URL in the request, or set it on the tool. A case's expected answer may still say an approval tool ran (the
+email was sent) although the gate runs with approvals denied, so an agent whose job ends in a send can score 2.5 to 3 / 5
+at the gate (limitations.md); the live pass of AG08 read 3.75 / 5 for a read-only Grafana agent and 2.5 and 3.0 / 5
+(drafts) for the alert triager.
+
 On a local (Ollama) model the architect proposes with the flat `propose_design` instead: the same agent with every
 value as plain text (name, audience, mission, Always and Never one rule per line, answer length `short`, `medium` or
 `long` (a sentence, a paragraph, detailed), node, workflow and agent tool ids comma-separated), because the nested
@@ -106,7 +124,7 @@ dialog's and Spotlight's design) is made to a brief in code (`architect.ts`, mar
   On Spotlight's design path the request is the person's whole ask (`ask`) with the tools and knowledge it named, never `designRequest`'s fixed sentences.
   **A write is asked per tool** (`asksToWriteTo`): a write verb in the sentence that names the tool's app, or "email … to <address>" for a mail tool. Nouns alone ("customer comments", "an alert", "the email") are not write asks, so "the sentiment of customer comments" reads SQLite's **Select**. A tool whose operation writes where the ask does not ask to write becomes its read whether the model wrote the operation or left it out, and is dropped (and said) only when the node has no read.
   **Every tool the ask names** (Spotlight sends them by their display names, `spec.tools`) that the draft lacks is added when exactly one node type matches by display or plugin name, else it is listed as **Not added** with why ("Jira: no plugin online has it"); one the ask never named stays out, and is not listed there.
-- **Instructions name only its tools.** The steps name the agent's tools by their call names; a `snake_case` word that is not one of them (the model wrote `send_slack_message` on an agent that only has Send Email) becomes the tool it plainly means when exactly one shares its words, else its clause is dropped and "instructions named send_slack_message, which it does not have" is listed under left out. A `Tools:` line always ends the steps and lists the real tools with what each is for.
+- **Instructions name only its tools.** The steps name the agent's tools by their call names; a `snake_case` word that is not one of them (the model wrote `send_slack_message` on an agent that only has Send Email) becomes the tool it plainly means when exactly one has the same meaning (the same words, a plural or -ise folded), else its clause is dropped and "instructions named send_slack_message, which it does not have" is listed under left out. A `Tools:` line always ends the steps and lists the real tools with what each is for. A node type in a step (`grafana.getAlerts`, `core.httpRequest`) is renamed to the agent's call name for that type (`get_alerts`), or its clause goes when the agent has none; an address's domain or a file name (`oncall@landflow.test`, `config.yaml`) is text. A rename needs the same meaning (the same verb and words, a plural or -ise folded, or the call name with a `_2` suffix): `get_alert_status` is never turned into `normalize_alert`. `send_email` after "with" or "using" is a tool, `send_to` as an address is a field. A sub-agent's and an A2A agent's call name (`ask_<agent>`) and GitHub's allowed names are the agent's own; with another MCP server (its tools are read when the agent runs) a name that is no node's is kept. In a revise, a tool the change removes is gone from the steps. A node is named by its distinctive word, an acronym of three or more letters matched as written ("pull out the IOCs" is Extract IOCs; JWT, UUID and SQL work the same; AI, API, SDK, URL, ID, HTTP, JSON, XML, CSV, LLM and UI never name a node, so "an AI agent" or "the Slack SDK" adds no Generate with AI SDK; an acronym two nodes share, such as IOC Enrich, is a "several nodes match, pick one" line unless the full name is given; "alert" alone names neither Normalize Alert nor Get Alerts), and a mail node already on the agent settles "Send email: several nodes match". Tests: `test/agent-steps-ag2.test.ts`.
 - **Writes behind approval.** Every node tool that writes gets `requireApproval: true`, so a person approves each call;
   reads never do. A write is what the session's heuristic calls one (`writesOutside`, the HTTP method and the
   operation's name: [assistant.md](assistant.md#autonomous-mode)) or, for a plugin that marks its reads
@@ -196,6 +214,21 @@ agent's page, or under the card of an agent it made, "also let it get one alert'
 draft** saves it as the agent's draft only (the page shows it) and runs the smoke test; **Publish** is offered only after a
 pass and goes through the [eval gate](#eval-gate), which can hold it. The published version stays what it was until then.
 The Agent architect dialog still designs new agents only.
+
+The card says what applying does and follows the agent (wave ag2, AG09):
+- A tool the change adds that no step names gets one: "N. When <the task you named, or the first sentence of what the tool is for>, call `extract_iocs`." goes before the
+  Tools line (with "(it asks the person first)" for a tool that writes), and the steps are renumbered. A step an earlier
+  change wrote stays when the model's proposal leaves it out. The Changes row says "Adds the tool Extract IOCs (asks
+  first)", with acronyms in capitals (IOCs, JWT, UUID, URL, HTTP, API, SQL, SMTP, IP, ID, CPU, JSON, CSV); the added
+  step is not counted again as "Instructions rewritten".
+- **Left** lists what the agent's draft still lacks: a credential slot already set on the agent's tool is not asked again,
+  and one set after Apply (in the tool's dialog on the agent's page) drops off the card without a reload (the page's
+  save sends `landflow:agent-saved`; the card also re-reads the draft on `landflow:agent-changed`).
+- After Apply the card offers **Test again** next to Publish: the smoke test on the draft as it is, no save. Publish
+  waits for a pass as before.
+- A pending card's name that the design made ("Crypto Toolkit agent") is made again from the tools the card has now
+  ("Utility helper"), and the Changes row says "Renames it to Utility helper (its tools changed)"; a name you gave, and an
+  agent that exists, are renamed only by "call it …". Create names the agent what the card shows.
 
 ### Avatars
 
@@ -607,7 +640,11 @@ request: the run goes on when the last one is decided). The Platform analyst's o
   It outputs `{ reply, sessionId, agentId, version, model, endReason, usage, steps }`, where
   `steps` lists each tool call with its kind and status. Answers and tool calls stream to the
   editor's chat panel and to streaming triggers. Tools that require approval are refused,
-  because a workflow run has nobody to approve them. Each run is an agent session from the
+  because a workflow run has nobody to approve them, unless **Tool Approvals** is *Ask in the editor's chat*
+  (default *Refuse*, so a saved flow runs as before): then, in a run started from the editor's Chat only, the
+  execution waits with the approval card in the chat, and Approve or Reject resumes the same agent session (a second
+  approval waits again). In the chat's step list the waiting call reads *Waiting for approval*, then *Done* after Approve and *Denied* after Reject (it never reads *Failed*; the hosted chat page says the same). The hosted chat page, webhooks, schedules and manual runs still refuse, and so does a node
+  with a chat model or tools connected to it. Each run is an agent session from the
   workflow. The node is `usableAsTool`, so an AI Agent node can delegate to an agent. It runs
   the agent on Landflow's runtime, also when the agent is deployed to kagent; to call it there,
   use the **A2A Agent** node ([a2a.md](a2a.md)).
@@ -833,6 +870,17 @@ only for admins. Each rule names a **tool** (as the model sees it, or `*`), **wh
 source such as the test chat, a schedule, Telegram, Slack, a workflow or the API; every field given must match) and an
 **effect**: *may use it*, *needs approval* or *may not use it*. The first rule that matches decides; a tool no rule
 matches is allowed, so an agent without rules behaves exactly as before.
+
+**A node tool takes only the arguments its schema offers** (AG08, wave ag2). The model's arguments fill the node's
+parameters of the same name only when the tool's own schema offered them. A tool whose node declares a `toolInputSchema`
+(Acknowledge Alert) or whose parameters hold `$fromAI` placeholders (a Send Email a design made: Subject and Body) takes
+exactly those arguments, so a To the design fixed stays fixed. A tool with neither keeps the generic schema, whose
+"Optional override" arguments name each primitive parameter, so a saved agent's node tool runs as before for its primitive
+parameters (a field-name parameter such as `textField`, or a collection or JSON one such as HTTP Request's `headers`, is
+not offered by that schema, so an argument of that name no longer overrides). The
+only saved agents this touches are those whose node tool has `$fromAI` placeholders or a node with a `toolInputSchema`
+**and** whose model passed an argument named like a parameter the schema never offered (it was applied before, and is now
+ignored). The workflow AI Agent's tool sub-nodes keep their own rule.
 
 The check runs once at the start of a run, before the model sees any tool. A denied tool is withheld (the session shows
 `<tool> is not available to you`), and an *ask* tool is offered behind the approval flow that already exists (so in a

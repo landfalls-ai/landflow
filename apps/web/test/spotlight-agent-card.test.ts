@@ -455,3 +455,27 @@ describe('one wording for the guardrails and practices (the agent card and the A
     expect(dialog).not.toContain("c.practices === 'on'");
   });
 });
+
+describe('the bubbles fold after the input loses focus (a click on a card lands)', () => {
+  it('stay for the delay, then fold; a focus in between keeps them', async () => {
+    const { foldLater, FOLD_DELAY_MS } = await import('@/components/editor/spotlight/composer');
+    vi.useFakeTimers();
+    try {
+      const timer: { current: ReturnType<typeof setTimeout> | undefined } = { current: undefined };
+      let focused = true;
+      foldLater(timer, () => (focused = false));
+      expect(focused).toBe(true); // the click's mousedown and mouseup find the timeline where it was
+      vi.advanceTimersByTime(FOLD_DELAY_MS - 1);
+      expect(focused).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(focused).toBe(false); // desktop still folds
+      focused = true;
+      foldLater(timer, () => (focused = false));
+      clearTimeout(timer.current); // onFocus
+      vi.advanceTimersByTime(1000);
+      expect(focused).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

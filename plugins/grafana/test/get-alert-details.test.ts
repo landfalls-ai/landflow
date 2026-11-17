@@ -22,7 +22,7 @@ describe('GetAlertDetails node', () => {
       ok: true,
       status: 200,
       statusText: 'OK',
-      json: vi.fn().mockResolvedValue({ id: 'alert123', status: 'firing', labels: { job: 'test' } }),
+      json: vi.fn().mockResolvedValue([{ labels: { alertname: 'alert123', job: 'test' }, annotations: {}, startsAt: '2026-01-01T00:00:00Z', status: { state: 'active' } }]),
     };
 
     mockContext.getCredentials.mockReturnValue({
@@ -35,8 +35,8 @@ describe('GetAlertDetails node', () => {
     const result = await node.execute(mockContext);
 
     expect(result).toHaveLength(1);
-    expect(result[0].json.alertDetails).toEqual({ id: 'alert123', status: 'firing', labels: { job: 'test' } });
-    expect(mockContext.http).toHaveBeenCalledWith('https://grafana.example.com/api/v2/alerts/alert123', {
+    expect(result[0].json.alertDetails).toEqual({ alertId: 'alert123', labels: { alertname: 'alert123', job: 'test' }, annotations: {}, state: 'active', startsAt: '2026-01-01T00:00:00Z' });
+    expect(mockContext.http).toHaveBeenCalledWith('https://grafana.example.com/api/v2/alerts?filter=alertname%3D%22alert123%22', {
       method: 'GET',
       headers: {
         'Authorization': 'Bearer test-token',

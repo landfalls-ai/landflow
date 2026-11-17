@@ -347,7 +347,7 @@ live session's test runs, set outright (`LANDFLOW_OUTBOUND_BLOCK_PRIVATE=true`, 
 not block): only `allowed` sets `LANDFLOW_OUTBOUND_ALLOW=127.0.0.1,localhost` (never because an echo server runs). The
 echo answers `?fail=NNN` with that status; a session's "changed nothing" ignores cards that were refused or are waiting. A build's checks read its draft: `credentials-listed` an item of kind `credential` in `draft.left`, `left-listed`
 `draft.left` (n/a when empty), `sent-back-once` `draft.calls` (n/a for one call and nothing empty); `Outcome.model` is the
-reply's `done` model or the draft's. [assistant.md](assistant.md#how-spotlight-is-measured) says what the checks mean.
+reply's `done` model or the draft's. Two shared checks read what a designed agent holds (`Outcome.agents[].caseInputs` and `toolParameters`, `card.needs`): `caseInputsReal` (no test case's input is a description, a `<placeholder>` or under 12 characters) and `destinationsGiven(ask)` (every destination parameter of every node tool is empty or a value the ask holds). [assistant.md](assistant.md#how-spotlight-is-measured) says what the checks mean.
 
 `cluster-runtime.test.ts` always runs: a main and workers through the runner on the in-process coordinator.
 

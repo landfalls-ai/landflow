@@ -17,13 +17,21 @@ import { agentCardQuestion, cardAskFor, cardQuestionFor, keepUnderCard, designAg
 import { draftWholeFlow } from './draft-flow';
 import { suggestionKey, useAssistant, useSuggestions, useWorking, type ChatItem, type KeptMention, type Suggestion } from '../assistant';
 import { useEditor } from '../store';
-import { usePhone } from '@/lib/client/use-phone';
 import { dictationSupported, useDictation } from '../use-dictation';
 import { testUntilItRuns } from '../test-session';
 import { lastOutcomeOf, lastRunOf, openNeedOf } from '../timeline';
 
 
 export const INPUT_ID = 'spotlight-input';
+
+/** How long the bubbles stay after the input loses focus: a click on a card's button (Apply) starts with that blur, and folding at once moves the timeline between mousedown and mouseup. */
+export const FOLD_DELAY_MS = 250;
+
+/** Fold after the delay (desktop and phone alike); a new focus cancels it. */
+export function foldLater(timer: { current: ReturnType<typeof setTimeout> | undefined }, fold: () => void, delay = FOLD_DELAY_MS): void {
+  clearTimeout(timer.current);
+  timer.current = setTimeout(fold, delay);
+}
 
 /** ⌘I and the empty canvas's hint: unfold the panel and put the caret in Spotlight. */
 export function focusSpotlight() {
@@ -110,7 +118,6 @@ export function Composer() {
   const hasItems = useAssistant((s) => s.items.length > 0);
   const pending = useAssistant((s) => s.pending || Boolean(s.testing));
   const drafting = useAssistant((s) => s.drafting);
-  const phone = usePhone();
   const working = useWorking();
   const empty = useEditor((s) => s.nodes.length === 0);
   const selectedName = useEditor((s) => {
@@ -358,8 +365,7 @@ export function Composer() {
           // The bubbles fold a moment after the input loses focus: folding at once moves the timeline under a tap, which
           // then lands on nothing (a phone's first tap on a row after typing).
           onBlur={() => {
-            if (phone) blurTimer.current = setTimeout(() => setFocused(false), 250);
-            else setFocused(false);
+            foldLater(blurTimer, () => setFocused(false));
           }}
           top={
             picker.chips.length || scope || (selectedName && !withoutSelection && !empty) || (model && !drafting && !pending) ? (

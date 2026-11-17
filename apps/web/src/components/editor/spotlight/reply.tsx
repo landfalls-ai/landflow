@@ -242,7 +242,9 @@ export function AgentRow({ agent }: { agent: AgentProgress }) {
   // SB18: Publish only after a pass; Test again after a failure; Test when no item reached the step yet.
   const act = !agent.agentId || agent.taken || busy || agent.state === 'publishing'
     ? undefined
-    : agent.state === 'tested'
+    : agent.state === 'tested' && agent.restored
+      ? { label: 'Test again', run: () => smokeTestAgent(agent.nodeId, { publish: autonomyOf(useEditor.getState().workflowId) === 'auto' }) } // AG11: a restored pass is not this page's
+      : agent.state === 'tested'
       ? { label: 'Publish', run: () => publishAgentFor(agent.nodeId) }
       : agent.state === 'draft' && agent.smoke?.state === 'failed'
         ? { label: 'Test again', run: () => smokeTestAgent(agent.nodeId, { publish: autonomyOf(useEditor.getState().workflowId) === 'auto' }) }
@@ -515,7 +517,7 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
           <BuildSummaryCard key={i} summary={part.summary} workflowName={part.workflowName} onOpen={openNodeNamed} />
         ) : part.kind === 'agentCard' ? (
           // SB16:
-          <AgentCardView key={i} itemId={item.id} card={part.card} busy={spotlightBusy} />
+          <AgentCardView key={i} itemId={item.id} card={part.card} busy={spotlightBusy} earlier={Boolean(item.earlier)} />
         ) : null,
       )}
       {!streamed && steps && firstProposal < 0 && <LiveSteps live={steps} />}

@@ -130,6 +130,8 @@ export interface BuiltTool extends ToolSpec {
   /** A knowledge base search: what it returns is what the output guardrail's grounded check judges an answer against. */
   knowledge?: boolean;
   invoke(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome>;
+  /** A node tool that takes only what its schema offered ($fromAI, toolInputSchema): the call's input without the rest, so an approval card shows what runs. */
+  shownInput?(input: Record<string, unknown>): Record<string, unknown>;
   /** After a pause (ToolOutcome.pause): send the person's decision and carry on. */
   resume?(state: Record<string, unknown>, approved: boolean, ctx: ToolContext, answer?: string): Promise<ToolOutcome>;
   /** A remote agent: stop the task it works on (A2A CancelTask), so a person can redirect it (agent-teams/pause.ts). */
@@ -471,6 +473,10 @@ function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
     description: config.description || descriptor.toolDescription || descriptor.description,
     inputSchema,
     requireApproval: Boolean(config.requireApproval),
+    // AG08: the arguments the tool's schema did not offer are never used, so they are not shown for approval either.
+    ...((descriptor.toolInputSchema || JSON.stringify(config.parameters).includes('$fromAI')) && {
+      shownInput: (given: Record<string, unknown>) => Object.fromEntries(Object.entries(given).filter(([key]) => key in ((inputSchema.properties ?? {}) as Record<string, unknown>))),
+    }),
     async invoke(given, ctx) {
       // A delegating node's `reason` is for the record (the timeline shows the call's input), not for the node.
       const { reason: _reason, ...rest } = given;
@@ -491,7 +497,9 @@ function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
         variables: variables.forWorkflow(`agent:${ctx.agent.id}`),
         ...(secrets && { secrets }),
       });
-      const overrides = Object.fromEntries(Object.entries(toolArgs).filter(([key]) => descriptor.properties.some((p) => p.name === key)));
+      // AG08: only an argument the tool's own schema offered overrides a parameter (a To the design fixed is not one a $fromAI or toolInputSchema tool takes).
+      const offered = (inputSchema.properties ?? {}) as Record<string, unknown>;
+      const overrides = Object.fromEntries(Object.entries(toolArgs).filter(([key]) => key in offered && descriptor.properties.some((p) => p.name === key)));
       const resolvedParameters = resolver.resolveParameters(config.parameters, 0, skip);
       if (secrets) rememberResolvedParameters(config.parameters, resolvedParameters, skip);
       const parameters = { ...resolvedParameters, ...overrides } as JsonObject;

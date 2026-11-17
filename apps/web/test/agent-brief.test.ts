@@ -272,8 +272,9 @@ describe('guardrail defaults', () => {
 
 describe('test cases', () => {
   it('reads "input => expected" lines, at most 5, each input under 4 000 characters', () => {
-    expect(parseCases('- A question => An answer\n2) Another one\nno\n=> only an answer')).toEqual([{ input: 'A question', expected: 'An answer' }, { input: 'Another one' }]);
-    expect(parseCases(Array.from({ length: 8 }, (_, i) => `Question ${i} => Answer ${i}`))).toHaveLength(5);
+    // AG08: the inputs are written out (a case that only describes its input is dropped), so the fixtures are real ones.
+    expect(parseCases('- How do I rotate the staging key? => An answer\n2) Check pull request 14 for secrets\nno\n=> only an answer')).toEqual([{ input: 'How do I rotate the staging key?', expected: 'An answer' }, { input: 'Check pull request 14 for secrets' }]);
+    expect(parseCases(Array.from({ length: 8 }, (_, i) => `Is pull request ${i + 10} safe to merge? => Answer ${i}`))).toHaveLength(5);
     expect(parseCases(`${'x'.repeat(5000)} => ok`)[0].input).toHaveLength(4000);
   });
 
@@ -305,7 +306,7 @@ describe('test cases', () => {
   });
 
   it('cuts more than 5 to 5', async () => {
-    const eight = Array.from({ length: 8 }, (_, i) => `Question ${i} => Answer ${i}`);
+    const eight = Array.from({ length: 8 }, (_, i) => `Is pull request ${i + 10} safe to merge? => Answer ${i}`);
     const { draft } = await architect(REVIEWER, [propose({ cases: eight }), { text: 'Done.' }]);
     expect(draft.cases).toHaveLength(5);
   });

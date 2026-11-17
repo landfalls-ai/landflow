@@ -1,12 +1,13 @@
 /**
  * The Spotlight scenario suite's API: what a scenario is, what running it gives, and the checks the scorecards count.
  *
- * Contract file: backbone/contracts/ag1/spotlight-scenario.ts (version 4, wave ag1), copied byte for byte to
- * apps/web/test/spotlight-scenarios/scenario.ts by AG02 (owner this wave) and by every ag1 package that adds scenarios
- * (AG04, AG05). Version 3 was backbone/contracts/sb3/spotlight-scenario.ts (SB13), version 2
- * backbone/contracts/sb2/spotlight-scenario.ts (SB10), version 1 backbone/contracts/sb1/spotlight-scenario.ts (SB00);
- * each version only adds optional fields and helpers, so every earlier scenario still type-checks. Wave ag1's scenario
- * files are named `sb-ag0N.ts` (the runner globs `sb*.ts`; nobody changes the glob) with `owner: 'AG0N'`. Change it in the contracts folder first. Types and pure helpers only: no server import, no I/O. SB00's runner
+ * Contract file: backbone/contracts/ag2/spotlight-scenario.ts (version 5, wave ag2), copied byte for byte to
+ * apps/web/test/spotlight-scenarios/scenario.ts by AG08 (owner this wave; no other ag2 package copies it: AG07's and AG09's
+ * scenario files use version 4's fields only). Version 4 was backbone/contracts/ag1/spotlight-scenario.ts (AG02), version 3
+ * backbone/contracts/sb3/spotlight-scenario.ts (SB13), version 2 backbone/contracts/sb2/spotlight-scenario.ts (SB10),
+ * version 1 backbone/contracts/sb1/spotlight-scenario.ts (SB00); each version only adds optional fields and helpers, so
+ * every earlier scenario still type-checks. Wave ag1's and ag2's scenario files are named `sb-ag0N.ts` (ag2: sb-ag07,
+ * sb-ag08, sb-ag09; the runner globs `sb*.ts`; nobody changes the glob) with `owner: 'AG0N'`. Change it in the contracts folder first. Types and pure helpers only: no server import, no I/O. SB00's runner
  * (apps/web/test/spotlight-scenarios.test.ts, with apps/web/test/spotlight-scenarios/harness.ts) finds every
  * `apps/web/test/spotlight-scenarios/<owner>.ts` (lower case, e.g. `sb03.ts`) with `import.meta.glob`, so packages never
  * edit a shared index: each adds one file that `export default defineScenarios([...])`.
@@ -147,6 +148,10 @@ export interface Outcome {
     /** Wave ag1 (AG02): the description and the instructions as saved (or as the card's config holds them). */
     description?: string;
     instructions?: string;
+    /** Wave ag2 (AG08): each test case's input, as saved for the eval gate (or as the card holds them), in order. */
+    caseInputs?: string[];
+    /** Wave ag2 (AG08): each node tool's parameters as the design set them, by tool name (read with `?? {}`). */
+    toolParameters?: Record<string, Record<string, unknown>>;
   }>;
   /** Model calls, and tokens in and out as AI usage recorded them. */
   modelCalls: number;
@@ -178,7 +183,7 @@ export interface Outcome {
    * the card shows them: `model` and `models` (AG02: the Model row and its select), `notAdded` (AG02: the tools asked for
    * and not added, by name) and `changes` (AG04: a revised card's lines).
    */
-  card?: { starter: boolean; model?: string; models?: string[]; notAdded?: string[]; changes?: string[] };
+  card?: { starter: boolean; model?: string; models?: string[]; notAdded?: string[]; changes?: string[]; needs?: string[] /* ag2 (AG08): the card's Left row, in order */ };
   /** Wave sb3 (SB18): the smoke test of the agent it made, as the row reads it (lib/shared/agent-card.ts `AgentSmoke.state`). */
   smoke?: 'passed' | 'failed' | 'untested';
   /** Wave ag1 (AG05): the smoke test's reason, and each tool call's status (`AgentSmokeTool`), when there was one. */
@@ -386,4 +391,59 @@ export const checks = {
     label: 'The change was saved as a draft, not published',
     judge: (o: Outcome) => (o.revised ? o.revised.savedDraft && !o.revised.published : 'n/a'),
   } satisfies Check,
+  /**
+   * Wave ag2 (AG08): every test case is an input a person would send (the alert itself), never a description of one ("Pasted
+   * alert about high CPU"), a `<placeholder>` or a line under 12 characters; 'n/a' when the harness read no case inputs.
+   */
+  caseInputsReal: {
+    id: 'case-inputs-real',
+    label: 'Test cases are real inputs, not descriptions',
+    judge: (o: Outcome) => {
+      const inputs = o.agents.flatMap((a) => a.caseInputs ?? []);
+      if (!inputs.length) return 'n/a';
+      return inputs.every((input) => !describesInput(input));
+    },
+  } satisfies Check,
+  /**
+   * Wave ag2 (AG08): every destination parameter of every node tool (To, CC, BCC, URL, channel, chat id, path, repository)
+   * is empty, or a value `ask` holds word for word (lesson 21: never a destination nobody gave); 'n/a' without parameters.
+   */
+  destinationsGiven: (ask: string): Check => ({
+    id: 'destinations-given',
+    label: 'Destinations only from the ask',
+    judge: (o) => {
+      const all = o.agents.flatMap((a) => Object.values(a.toolParameters ?? {}));
+      if (!all.length) return 'n/a';
+      return all.every((parameters) =>
+        Object.entries(parameters).every(([key, value]) => {
+          if (!DESTINATION.test(key) || value === undefined || value === null || value === '') return true;
+          return typeof value === 'string' && ask.toLowerCase().includes(value.trim().toLowerCase());
+        }),
+      );
+    },
+  }),
 };
+
+/** Wave ag2 (AG08): the parameter names that say where a tool sends or reads (checked by `destinationsGiven`). */
+export const DESTINATION = /^(?:to|cc|bcc|toEmail|ccEmail|bccEmail|recipients?|url|baseUrl|endpoint|endpointUrl|webhookUrl|channel|channelId|chatId|path|filePath|repository|owner|repo)$/i;
+
+/**
+ * Wave ag2 (AG08): a test case's input that describes an input instead of being one (the same rule as the host's
+ * `describesCase`): a `<placeholder>`, a short noun phrase with an article ("A title"), a line that says what a test checks
+ * ("A test that …", "Checks that it …", "Should reply …"), a line that starts like a description of a thing ("Pasted Grafana
+ * alert about high CPU on web-01", "An email from a customer", "Random text that is not an alert") or of a person sending it
+ * ("A user asks how to reset their password"), unless it then holds the thing itself after a colon ("An alert from Wazuh:
+ * [Wazuh] rule 5710 …"). A question ("Should I restart web-01?") and a short command ("Make a UUID") are inputs, unless the question reads as a description ("A user asks how to reset their password?").
+ */
+export function describesInput(input: string): boolean {
+  const text = input.trim();
+  if (!text.endsWith('?')) {
+    if ((text.length < 12 && /^(?:an?|the|some|another|pasted|random|sample|example|generic|typical|plain)\b/i.test(text)) || /<[^<>\n]{1,40}>/.test(text)) return true;
+    if (/^(?:(?:an?|the)\s+)?(?:test|case)s?\s+(?:that|of|for|where|which|to)\b/i.test(text)) return true;
+    if (/^(?:checks?|verif\w*|ensures?|tests?|validates?)\s+(?:whether|if)\b|^(?:checks?|verif\w*|ensures?|tests?|validates?)\s+that\s+(?:it|the agent)\b/i.test(text) || /^should\s+(?:it|the agent|reply|answer|return|say|ask|refuse|respond|not)\b/i.test(text)) return true;
+  }
+  if (text.length >= 160 || /:\s*\S.{11,}/.test(text)) return false;
+  const thing = /^(?:an?|the|some|another|pasted|random|sample|example|generic|typical|plain)\b[^:]{0,80}?\b(?:alert|e-?mail|message|text|log|ticket|request|question|input|payload|event|notification|report|string|token|jwt|file|data|record|row)s?\b(?:\s+(?:about|for|with|that|from|of|where|which|containing|saying|asking|describing|showing|on|in)\b|\s*$)/i;
+  const person = /^(?:an?|the|some)\s+(?:user|customer|person|visitor|engineer|teammate|colleague|client)\s+(?:asks?|says|sends|wants|reports|writes|pastes|requests|needs)\b/i;
+  return thing.test(text) || person.test(text);
+}

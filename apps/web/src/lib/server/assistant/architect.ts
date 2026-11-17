@@ -10,7 +10,8 @@ import { nanoid } from 'nanoid';
 import { withCallNote } from '../ai-usage/call-context'; // SP03:
 import { plainDraft } from '../ai-usage/drafts'; // SP03:
 import { defaultParameters, isPropertyVisible } from '@landflow/protocol';
-import type { AgentMessage, LanguageModel, ToolCall, ToolResult, ToolSpec } from '@landflow/engine';
+import { toToolName, type AgentMessage, type LanguageModel, type ToolCall, type ToolResult, type ToolSpec } from '@landflow/engine';
+import { deriveToolSchema } from '@landflow/engine'; // AG08:
 import type { AgentConfig, AgentGuardrails, AgentModel, AgentPersona, AgentTemplate, AgentToolConfig, AnswerLength } from '@/lib/shared/agents';
 import { DEFAULT_BRIEF_GUARDRAILS, isNodeKnowledge } from '@/lib/shared/agents';
 import type { AgentCaseDraft, AgentNotAdded } from '@/lib/shared/agent-card'; // SB17: AG02:
@@ -22,6 +23,7 @@ import { agentStore } from '../agents/store';
 import { agentTemplates } from '../agents/templates';
 import { credentials } from '../credentials/vault';
 import { qualifyCredentialType } from '../mcp/bind';
+import { githubAllowedTools } from '../mcp/github'; // AG07:
 import { canResource, withOwnership, type Actor } from '../projects';
 import { store } from '../store';
 import { traceAssistant } from '../telemetry/assistant';
@@ -31,7 +33,7 @@ import { recordUsage } from '../usage/ledger';
 import { assistantScope, isUsageCapError, runInUsageScope, type UsageScope } from '../ai-usage';
 import { recoverToolCalls, withoutInventedIds, withoutRepeats } from './chat';
 import { agentModelOf, builderModel, chooseModel, type AgentResources } from './agent-resources';
-import { askCatalog, MAIL_TO, readsTokens, toolsOf } from '@/lib/shared/agent-ask'; // AG02: ag1-int:
+import { askCatalog, fallbackName, MAIL_TO, readsTokens, toolsOf } from '@/lib/shared/agent-ask'; // AG02: ag1-int: AG09: fallbackName
 import { saveCheckpoint } from './checkpoints';
 import { assistantModel, errorText, modelLabel } from './model';
 import { isParseError, parseErrorText } from './parse-retry';
@@ -114,7 +116,8 @@ const TOOL_SCHEMA = {
 // SB17: what propose_agent and propose_design ask for beyond the persona: the four parts and the cases.
 const BRIEF_PARTS =
   'Four parts, each starting a line: "Input:" (what each message or item brings), "Steps:" (numbered, naming its tools), "Output:" (what it answers, how long), "Hand over when:" (what it does not decide alone)';
-const CASES_ASK = '3 to 5 test cases, one plain line each: what a person would send it => what a right answer says';
+// AG08: the cases are the inputs themselves, written out.
+const CASES_ASK = '3 to 5 test cases, one plain line each: what a person would actually send it, written out (the alert, the question, the text itself; never a description of it or a placeholder) => what a right answer says';
 
 const TOOLS: ToolSpec[] = [
   {
@@ -310,14 +313,14 @@ How to work:
 - If the request is too vague to pick tools (no task, or no system to work in), ask one short question. Otherwise don't ask: design.
 - Research before proposing: search_nodes for each thing the agent must do (read tickets, post to Slack, query a database…), get_node_docs for each node you use, list_workflows and list_agents when an existing workflow or agent could do part of the job, list_credentials to see what works right away, list_templates when one fits as a start.
 - Use only node types search_nodes returned, and ids list_workflows and list_agents returned. If nothing online can do a part of the job, leave it out of the tools, list it in propose_agent's "missing" as the app's name, a colon and what the agent would do ("Grafana: read firing alerts"), and say so in one sentence; never invent a node type.
-- A node tool's parameters: set what is fixed for this agent (the operation, a resource); what the agent decides per call is "{{ $fromAI('key', 'what it is', 'string') }}". Never make up ids, channels, URLs or emails the user didn't give: leave those for the user.
+- A node tool's parameters: set what is fixed for this agent (the operation, a resource); what the agent writes or decides per call (a subject, a body, a message, an id) is "{{ $fromAI('key', 'what it is', 'string') }}". A destination (To, URL, channel, path, repository) is set only to a value the request gives, word for word, else left empty. Never make up ids, channels, URLs or emails the user didn't give: leave those for the user.
 - An agent that answers from documents (policies, contracts, docs, past tickets) searches a knowledge base: list_knowledge_bases, use one whose description fits, else start an empty one (type "knowledge" with a new collection name) and tell the user to add documents to it.
 - Give each node tool a snake_case name and a one-sentence description of when to call it.
 - Tools are actions the agent takes. How it is started (a webhook, a schedule, Slack or Teams, a workflow) isn't a tool: the user sets that under the agent's Abilities → Triggers, so say it in your reply instead.
 - The model itself reads, parses, summarises and formats text: don't add a tool (a Code node, a formatter) for that.
 - Keep the agent focused: the fewest tools that do the job, read before write, rules that matter, instructions of a few short steps. Give it a tool only for an app the request names or its job plainly needs: no Slack, email or other agents unless asked.
 - Instructions have four parts, each starting a line: "Input:" (what each message or item brings), "Steps:" (numbered, naming its tools), "Output:" (what it answers, how long) and "Hand over when:" (what it does not decide alone).
-- Send 3 to 5 test cases in "cases": what a person would send it => what a right answer says, one plain line each. On a change, send them again unless the change affects them.
+- Send 3 to 5 test cases in "cases": what a person would actually send it, written out (the alert, the question, the text itself; never a description of it or a placeholder) => what a right answer says, one plain line each. On a change, send them again unless the change affects them.
 - When the request asks for "our practices" (standards, guidelines, conventions), the agent follows the practices the company approved: that is handled for you, don't add a tool for it.
 - propose_agent replaces the whole draft each time: when the user asks for a change, send the complete agent again with the change.
 - After proposing, say in one to three sentences what the agent does and what the user still has to finish (pick credentials, a model, fill in a value). Never say the agent was created. Don't repeat the draft in prose: it shows beside the chat.
@@ -444,6 +447,40 @@ function readDefaults(info: NodeTypeInfo, parameters: Record<string, unknown>, r
   return read ? { ...next, operation: read.value } : parameters;
 }
 
+// AG08: a design fills a node tool's destination (where it sends or reads) only from the request, and a mail node's content per call.
+const DESTINATION_NAME = /^(?:to|cc|bcc|toEmail|ccEmail|bccEmail|recipients?|url|baseUrl|endpoint|endpointUrl|webhookUrl|channel|channelId|chatId|path|filePath|repository|owner|repo)$/i;
+const isMailNode = (info: NodeTypeInfo) => /e-?mail|smtp|\bmail\b/i.test([info.descriptor.displayName, ...(info.descriptor.keywords ?? [])].join(' '));
+/** The addresses a request sends to: the "to <address>" targets (and ones joined by "," or "and") of its sentences that say "email/send … to", in order, once each. Never one ruled out or a cc (a sender is never a "to <address>" target). */
+function mailAddresses(request: string): string[] {
+  const found: string[] = [];
+  const address = '[\\w.+-]+@[\\w-]+(?:\\.[\\w-]+)+';
+  const target = new RegExp(`\\bto\\s+(${address}(?:\\s*(?:,|\\band\\b)\\s*(?:and\\s+)?${address})*)`, 'gi');
+  for (const clause of request.replace(AGENT_ASK, ' ').split(/(?<=[.!?])\s+|[;\n]/)) {
+    if (!MAIL_TO.test(clause)) continue;
+    for (const m of clause.matchAll(target)) {
+      if (/\b(?:never|not|don'?t|do not|except|without|cc|bcc)\s+(?:\w+\s+)?$/i.test(clause.slice(0, m.index))) continue;
+      for (const a of m[1].match(new RegExp(address, 'g')) ?? []) if (!found.some((f) => f.toLowerCase() === a.toLowerCase())) found.push(a);
+    }
+  }
+  return found;
+}
+
+// AG08: a test case's input that describes an input instead of being one (the same rule as the scenarios' `describesInput`).
+export function describesCase(input: string): boolean {
+  const text = input.trim();
+  // A question is an input ('Should I restart web-01?') unless it reads as a thing or a person (below); a short command is one too ('Make a UUID').
+  if (!text.endsWith('?')) {
+    // A short noun phrase with an article ('A title', 'An email') names a kind of input; a placeholder is none; so is a line that says what a test checks.
+    if ((text.length < 12 && /^(?:an?|the|some|another|pasted|random|sample|example|generic|typical|plain)\b/i.test(text)) || /<[^<>\n]{1,40}>/.test(text)) return true;
+    if (/^(?:(?:an?|the)\s+)?(?:test|case)s?\s+(?:that|of|for|where|which|to)\b/i.test(text)) return true;
+    if (/^(?:checks?|verif\w*|ensures?|tests?|validates?)\s+(?:whether|if)\b|^(?:checks?|verif\w*|ensures?|tests?|validates?)\s+that\s+(?:it|the agent)\b/i.test(text) || /^should\s+(?:it|the agent|reply|answer|return|say|ask|refuse|respond|not)\b/i.test(text)) return true;
+  }
+  if (text.length >= 160 || /:\s*\S.{11,}/.test(text)) return false;
+  const thing = /^(?:an?|the|some|another|pasted|random|sample|example|generic|typical|plain)\b[^:]{0,80}?\b(?:alert|e-?mail|message|text|log|ticket|request|question|input|payload|event|notification|report|string|token|jwt|file|data|record|row)s?\b(?:\s+(?:about|for|with|that|from|of|where|which|containing|saying|asking|describing|showing|on|in)\b|\s*$)/i;
+  const person = /^(?:an?|the|some)\s+(?:user|customer|person|visitor|engineer|teammate|colleague|client)\s+(?:asks?|says|sends|wants|reports|writes|pastes|requests|needs)\b/i;
+  return thing.test(text) || person.test(text);
+}
+
 /** "what a person would send => what a right answer says", one per line (or a list of such lines): at most 5, each input under 4 000 characters. */
 export function parseCases(value: unknown, needsExpected = false): AgentCaseDraft[] {
   const lines = Array.isArray(value) ? value : typeof value === 'string' ? value.split('\n') : [];
@@ -455,6 +492,7 @@ export function parseCases(value: unknown, needsExpected = false): AgentCaseDraf
     const asked = input.replace(/^["'“]|["'”]$/g, '').trim().slice(0, 4000);
     const expected = rest.join(' => ').replace(/^["'“]|["'”]$/g, '').trim().slice(0, 1000);
     if (asked.length < 3 || (needsExpected && !expected)) continue;
+    if (describesCase(asked)) continue; // AG08:
     if (cases.some((c) => c.input.toLowerCase() === asked.toLowerCase())) continue;
     cases.push({ input: asked, ...(expected && { expected }) });
     if (cases.length === 5) break;
@@ -525,25 +563,73 @@ export function briefParts(
 
 // AG02: the steps name the agent's tools by their call names. A snake_case word that names a tool (it starts like a tool call or follows
 // "call/use/run") and is not one of the agent's tools becomes the tool it plainly means (exactly one shares its words), else its clause goes.
+// AG07: the steps know every call name: a node type ("grafana.getAlerts") is renamed to the agent's call name or its clause goes, a rename
+// needs the same meaning (never one shared word), a sub-agent's `ask_<name>` and an MCP server's names are kept, a foreign name always goes.
 const CALL_VERBS = /^(?:send|get|query|create|list|read|write|post|fetch|find|search|run|call|use|check|comment|update|delete|lookup|extract|normalize|decode|hash|analy[sz]e|summari[sz]e|notify|email|insert|select|count|parse|generate|convert|publish|slack|jira|github)_/;
 const FIELD_WORD = /_(?:id|ids|at|number|name|key|url|date|time|type|status|count|value|index|ref|address|email|body|subject|text|to|by|for|from|of)$/; // a second word that is a preposition ("send_to") reads as a field too
+const PREPOSITION_END = /_(?:to|by|for|from|of|at)$/; // AG07: "send_to", "group_by": a field even after "with"
 const DETERMINERS = '(?:the|each|its|their|a|an|every)';
-const GENERIC_WORDS = new Set(['id', 'get', 'send', 'query', 'create', 'list', 'read', 'write', 'post', 'call', 'run', 'fetch', 'find', 'search', 'message', 'messages', 'data', 'tool', 'item', 'items', 'all', 'one', 'new', 'set', 'update', 'check', 'lookup', 'use']);
-const wordsOf = (value: string) => value.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1);
 
-export function nameOnlyOwnTools(instructions: string, tools: Array<{ name: string; description?: string }>): { text: string; dropped: string[] } {
+/** AG07: what the call to nameOnlyOwnTools knows beyond the tools' names (the contract's `StepsOptions`). */
+export interface StepsOptions {
+  /** Call names known to be someone else's (a revise's removed tools): they read as tools whatever their shape, and are never renamed. */
+  foreign?: string[];
+  /** A node type → the agent's call name for it (`grafana.getAlerts` → `get_alerts`). */
+  nodeTypes?: Record<string, string>;
+  /** Every node type online: a dotted word that is none of them is ordinary text (`landflow.test`, `config.yaml`). */
+  catalog?: string[];
+  /** The agent has an MCP server whose tool list is read only at run time: a name that could be one of its tools is kept. */
+  open?: boolean;
+}
+
+/** AG07: a word without its plural `s` and with -ise as -ize ("alerts" and "alert", "normalise" and "normalize" are one). */
+const foldWord = (w: string) => {
+  const x = w.replace(/ises?$/, (m) => `ize${m.endsWith('s') ? 's' : ''}`).replace(/ies$/, 'y');
+  return x.length > 3 && x.endsWith('s') && !x.endsWith('ss') ? x.slice(0, -1) : x;
+};
+const meaningOf = (name: string) => {
+  const words = name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const verb = CALL_VERBS.test(name.toLowerCase().replace(/^([a-z]+)ise_/, '$1ize_')) && words.length > 1 ? words[0] : undefined;
+  return { verb, rest: words.slice(verb ? 1 : 0).map(foldWord), all: words.map(foldWord) };
+};
+const sameWords = (a: string[], b: string[]) => new Set(a).size === new Set(b).size && a.every((w) => b.includes(w));
+/** AG07: whether a token and a tool mean the same thing: equal content words (plural and -ise folded), or the tool's call name with a `_2` suffix. */
+function sameTool(token: string, tool: string): boolean {
+  if (token.toLowerCase() !== tool.toLowerCase() && token.replace(/_\d+$/, '').toLowerCase() === tool.toLowerCase()) return true;
+  const a = meaningOf(token);
+  const b = meaningOf(tool);
+  if (a.verb && b.verb) return foldWord(a.verb) === foldWord(b.verb) && sameWords(a.rest, b.rest);
+  if (a.verb || b.verb) return a.rest.length > 0 && sameWords(a.rest, b.rest);
+  return sameWords(a.all, b.all);
+}
+const snakeOf = (type: string) => (type.split('.').pop() ?? type).replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/-/g, '_').toLowerCase();
+const FIELD_CONTEXT = /^`?\s*(?:field|value|column|key|parameter)\b|^`?\s+as\s+(?:the|an?)\b|^`?\s+from\s+the\b|^`?\s+to\s+(?:order|sort|group)\b/i; // AG07: what follows a field-shaped token
+
+export function nameOnlyOwnTools(instructions: string, tools: Array<{ name: string; description?: string }>, options: StepsOptions = {}): { text: string; dropped: string[] } {
   const own = new Set(tools.map((t) => t.name));
+  const foreignNames = new Set((options.foreign ?? []).filter((f) => f && !own.has(f)));
+  const catalog = new Set(options.catalog ?? []);
+  const nodeTypes = options.nodeTypes ?? {};
+  const known = new Set([...Object.values(nodeTypes), ...[...catalog].map(snakeOf)]); // AG07: the call names of the nodes online
   const dropped: string[] = [];
   const out: string[] = [];
-  for (const line of instructions.split('\n')) {
+  const fix = (line: string): string => {
     let current = line;
-    const foreign = [...new Set(current.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [])].filter((t) => {
+    const isTool = (t: string): boolean => {
       if (own.has(t)) return false;
+      if (foreignNames.has(t)) return true;
+      if (options.open && !known.has(t)) return false; // AG07: an MCP server's tools are unknown at design time
       // A tool by how it is named, before any field or determiner check: "the get_alerts tool", "call the post_message tool", "use query_logs".
       if (new RegExp(`\\b${t}\`?\\s+(?:tool|node|action|function)\\b`, 'i').test(current)) return true;
+      if (/^ask_/.test(t)) return true; // AG07: a sub-agent's or an A2A agent's call name
       // An article between the verb and the name only for a tool-shaped name: "run the post_id check" and "use the source_ip" are fields.
       if (new RegExp(`\\b(?:call|invoke|run)\\s+${FIELD_WORD.test(t) ? '' : '(?:(?:the|an?)\\s+)?'}\`?${t}\\b`, 'i').test(current)) return true;
+      // AG07: a token the sentence uses as a field ("send_to as the address", "update_time to order them", "the to_email field").
+      const at = current.search(new RegExp(`\\b${t}\\b`));
+      if (at >= 0 && (!CALL_VERBS.test(t) || FIELD_WORD.test(t)) && FIELD_CONTEXT.test(current.slice(at + t.length))) return false;
       if (CALL_VERBS.test(t) && !FIELD_WORD.test(t) && new RegExp(`\\buse\\s+(?:(?:the|an?)\\s+)?\`?${t}\\b`, 'i').test(current)) return true; // "use `user_id`" is a field
+      // AG07: "with send_email", "using send_email": a tool even when it ends in a field word (not a preposition: "send_to").
+      if (CALL_VERBS.test(t) && !PREPOSITION_END.test(t) && new RegExp(`\\b(?:with|using|via)\\s+(?:(?:the|an?)\\s+)?\`?${t}\\b`, 'i').test(current)) return true;
       if (CALL_VERBS.test(t)) {
         if (new RegExp(`\\buse\\s+\`?${t}\\b`, 'i').test(current)) return true;
         // Three or more words ("get_alert_status") read as a tool whatever the suffix; two ("run_id", "update_time", "email_address") are a field when they end like one or follow a determiner.
@@ -553,26 +639,76 @@ export function nameOnlyOwnTools(instructions: string, tools: Array<{ name: stri
       }
       // After "use", or later in the same sentence as "call" ("call jwt_decode, hash or slugify_title"): a tool unless it is shaped like a field.
       return !FIELD_WORD.test(t) && (new RegExp(`\\buse\\s+\`?${t}\\b`, 'i').test(current) || new RegExp(`\\b(?:call|invoke|run)\\b[^.\\n]*?\\b${t}\\b`, 'i').test(current));
-    });
-    for (const token of foreign) {
-      const words = wordsOf(token).filter((w) => !GENERIC_WORDS.has(w));
-      const fits = tools.filter((t) => words.some((w) => wordsOf(t.name).includes(w)));
-      if (fits.length === 1) {
-        current = current.replace(new RegExp(`\\b${token}\\b`, 'g'), fits[0].name);
-        dropped.push(`instructions named ${token}, which it does not have: now ${fits[0].name}`);
+    };
+    // AG07: the tokens: node types the catalog holds, snake_case words that read as tools, and foreign names that are not snake_case ("Call slugify on the title.").
+    const dotted = [...new Set(current.match(/\b[a-z][a-z0-9-]*\.[A-Za-z][A-Za-z0-9]*\b/g) ?? [])].filter((t) => catalog.has(t));
+    const snake = [...new Set(current.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [])].filter(isTool);
+    const plain = [...foreignNames].filter((f) => !f.includes('_') && new RegExp(`\\b(?:call|invoke|run|use|using|with|via)\\s+(?:(?:the|an?)\\s+)?\`?${escapeRegExp(f)}\\b|\\b${escapeRegExp(f)}\`?\\s+(?:tool|node|action|function)\\b`, 'i').test(current));
+    for (const token of [...dotted, ...snake, ...plain]) {
+      const fits = dotted.includes(token) || foreignNames.has(token) ? [] : tools.filter((t) => sameTool(token, t.name));
+      const target = dotted.includes(token) ? nodeTypes[token] : fits.length === 1 ? fits[0].name : undefined;
+      if (target && own.has(target)) {
+        current = current.replace(new RegExp(`\\b${escapeRegExp(token)}\\b`, 'g'), target);
+        dropped.push(`instructions named ${token}, which it does not have: now ${target}`);
         continue;
       }
       const lead = /^(\s*(?:\d+[.)]|[-*•])\s+)?/.exec(current)?.[0] ?? '';
-      const kept = current.slice(lead.length).split(/\s*(?:,|;|\band\b|\bthen\b)\s*/i).filter((piece) => piece && !new RegExp(`\\b${token}\\b`).test(piece));
-      current = kept.length ? `${lead}${kept.join(', ')}${/[.!?]$/.test(current) && !/[.!?]$/.test(kept.join(', ')) ? '.' : ''}` : '';
+      const has = new RegExp(`\\b${escapeRegExp(token)}\\b`);
+      // AG07: the clause goes from its own sentence only; the sentences around it stay.
+      const kept = current
+        .slice(lead.length)
+        .split(/(?<=[.!?])\s+(?=[A-Z0-9`"'(])/)
+        .flatMap((sentence) => {
+          if (!has.test(sentence)) return [sentence];
+          const clauses = sentence.split(/\s*(?:,|;|\band\b|\bthen\b)\s*/i).filter((piece) => piece && !has.test(piece));
+          const joined = clauses.join(', ');
+          return clauses.length ? [`${joined}${/[.!?]$/.test(sentence) && !/[.!?]$/.test(joined) ? '.' : ''}`] : [];
+        });
+      current = kept.length ? `${lead}${kept.join(' ')}` : '';
       dropped.push(`instructions named ${token}, which it does not have`);
     }
-    if (current.trim() || !line.trim()) out.push(current);
+    return current;
+  };
+  for (const line of instructions.split('\n')) {
+    // AG07: steps written on one line ("1. Call a. 2. Call b.") are checked one at a time.
+    const pieces = line.split(/(?<=[.!?])\s+(?=\d+[.)]\s)/);
+    const fixed = pieces.map(fix);
+    if (fixed.every((f, i) => f === pieces[i])) out.push(line);
+    else for (const piece of fixed) if (piece.trim()) out.push(piece);
   }
   // Steps whose clause went leave a gap in the numbering: number the lines again, in order.
   let n = 0;
   const text = out.map((l) => (/^\s*\d+[.)]\s/.test(l) ? l.replace(/^(\s*)\d+([.)])/, (_m, sp: string, dot: string) => `${sp}${++n}${dot}`) : ((n = 0), l))).join('\n');
   return { text, dropped };
+}
+
+/**
+ * AG07: the call names of an agent's tools as the runtime builds them (node, workflow and knowledge tools `toToolName(name)`, an A2A agent and a
+ * sub-agent `toToolName('ask_' + name)`, GitHub's MCP preset the names its access allows), what a node type is called, and whether an MCP
+ * server's tools are unknown until run time (`open`).
+ */
+function stepsToolsOf(tools: AgentToolConfig[], types: NodeTypeInfo[]): { list: Array<{ name: string; description?: string }>; options: Required<Pick<StepsOptions, 'nodeTypes' | 'catalog' | 'open'>> } {
+  const list: Array<{ name: string; description?: string }> = [];
+  const nodeTypes: Record<string, string> = {};
+  let open = false;
+  const put = (name: string | undefined, description?: string) => {
+    if (name && !list.some((t) => t.name === name)) list.push({ name, ...(description && { description }) });
+    return name;
+  };
+  for (const t of tools) {
+    if (t.type === 'mcp') {
+      if (t.preset === 'github') for (const name of githubAllowedTools(t.access)) put(name);
+      else open = true;
+    } else if (t.type === 'a2a') put(toToolName(`ask_${t.name}`));
+    else if (t.type === 'agent') {
+      const target = agentStore.get(t.agentId);
+      if (target) put(toToolName(`ask_${target.name}`));
+    } else if ('name' in t && t.name) {
+      const name = put(toToolName(t.name), 'description' in t ? t.description : undefined);
+      if (name && t.type === 'node' && !(t.nodeType in nodeTypes)) nodeTypes[t.nodeType] = name;
+    }
+  }
+  return { list, options: { nodeTypes, catalog: types.map((t) => t.type), open } };
 }
 
 /** AG02: what each tool is for, in a few words for the steps' Tools line: the first sentence of its description, unless it only repeats the name. */
@@ -722,6 +858,40 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
         dropped.push(`${d.displayName} (${String(parameters.operation ?? 'a write')}): the request asks to read or check, not to change anything there`);
         continue;
       }
+      // AG08: a destination the request does not hold word for word is left empty (and asked for); a mail node goes to the request's address, and what it writes per call is $fromAI.
+      const noDestination = new Set<string>();
+      if (request !== undefined) {
+        const said = request.replace(AGENT_ASK, ' ').toLowerCase();
+        const holds = (value: string) => value.split(',').every((part) => !part.trim() || said.includes(part.trim().toLowerCase()));
+        const isText = (value: unknown): value is string => typeof value === 'string' && value.trim() !== '';
+        if (isMailNode(info) && own.has('toEmail') && writes) {
+          const to = mailAddresses(request);
+          if (to.length) {
+            const own1 = isText(parameters.toEmail) ? parameters.toEmail : '';
+            const keeps = own1 !== '' && holds(own1) && own1.split(',').every((part) => !part.trim() || to.some((a) => a.toLowerCase() === part.trim().toLowerCase()));
+            if (!keeps) {
+              if (own1 && !holds(own1)) dropped.push(`“${own1}” as To Email of ${toolLabel}: the request gives ${to.join(', ')}`);
+              parameters = { ...parameters, toEmail: to.join(', ') };
+            }
+          }
+          const fresh = (name: string, key: string, about: string) => {
+            if (own.has(name) && !(isText(parameters[name]) && (/\$fromAI\(/.test(parameters[name] as string) || holds(parameters[name] as string)))) parameters = { ...parameters, [name]: `{{ $fromAI('${key}', '${about}', 'string') }}` };
+          };
+          // The node's own format is html, whose Text field is hidden: a summary the model gave no format for goes out as plain text.
+          if (own.has('emailFormat') && !('emailFormat' in fromModel)) parameters = { ...parameters, emailFormat: 'text' };
+          fresh('subject', 'subject', 'The email subject');
+          fresh(parameters.emailFormat === 'html' ? 'html' : 'text', 'body', 'The email text');
+        }
+        for (const property of d.properties) {
+          const value = parameters[property.name];
+          if (property.type !== 'string' || !isText(value) || !isPropertyVisible(property, parameters)) continue;
+          if (!DESTINATION_NAME.test(property.name) && !(isMailNode(info) && property.name === 'fromEmail')) continue;
+          if (holds(value)) continue;
+          parameters = { ...parameters, [property.name]: '' };
+          noDestination.add(property.name);
+          dropped.push(`“${shorten(value, 60)}” as ${property.displayName} of ${toolLabel}: the request doesn’t give it`);
+        }
+      }
       tools.push({ id: `tl_${nanoid(8)}`, type: 'node', name: toolLabel, description: text(tool.description, 300) ?? d.toolDescription ?? d.description, nodeType: info.type, parameters, ...(writes && { requireApproval: true }) /* SB17: */ });
       for (const slot of d.credentials ?? []) {
         if (!slot.required || !isPropertyVisible(slot, parameters)) continue;
@@ -732,7 +902,13 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
       for (const property of d.properties) {
         const value = parameters[property.name];
         if (!property.required || property.type === 'notice' || !isPropertyVisible(property, parameters)) continue;
-        if (value === undefined || value === '' || (Array.isArray(value) && !value.length)) needs.push({ tool: toolLabel, kind: 'parameter', text: `${toolLabel}: fill in ${property.displayName}` });
+        if (value === undefined || value === '' || (Array.isArray(value) && !value.length)) {
+          // AG08: a property the tool's schema lets the model fill on each call (Acknowledge Alert's Alert Name) is not for the person.
+          const schema = deriveToolSchema(d, parameters);
+          const perCall = Object.keys((d.toolInputSchema?.properties ?? {}) as object).includes(property.name) || (Array.isArray(schema.required) && (schema.required as string[]).includes(property.name));
+          if (perCall) continue;
+          needs.push({ tool: toolLabel, kind: 'parameter', text: noDestination.has(property.name) ? `${toolLabel}: set ${property.displayName} (the request gives none)` : `${toolLabel}: fill in ${property.displayName}` });
+        }
       }
     } else if (kind === 'workflow') {
       const workflow = callableWorkflows(actor).find((w) => w.id === tool.workflowId);
@@ -817,8 +993,9 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
   // AG02: the steps name only the agent's own tools, by their call names.
   const toolList = tools.flatMap((t) => ('name' in t && t.name ? [{ name: t.name, ...('description' in t && t.description && { description: t.description }) }] : []));
   // A revise proposes the whole agent again, but least privilege leaves out the tools the change does not name: the steps that call the agent's own tools (`keep`'s) are still its own.
-  const keptTools = (context.revise ? (keep?.tools ?? []) : []).flatMap((t) => ('name' in t && t.name && !toolList.some((o) => o.name === t.name) ? [{ name: t.name, ...('description' in t && t.description && { description: t.description }) }] : []));
-  const reconciled = nameOnlyOwnTools(text(args.instructions, 8000) ?? base.instructions ?? '', [...toolList, ...keptTools]);
+  // AG07: the call names of every tool it has (a sub-agent's `ask_…`, GitHub's, an MCP server open at run time), a node type's name, the node types online.
+  const stepsTools = stepsToolsOf([...tools, ...(context.revise ? (keep?.tools ?? []) : [])], types);
+  const reconciled = nameOnlyOwnTools(text(args.instructions, 8000) ?? base.instructions ?? '', stepsTools.list, stepsTools.options);
   dropped.push(...reconciled.dropped);
   const config: Partial<AgentConfig> = {
     ...(template && { ...base, tools: undefined }),
@@ -863,7 +1040,7 @@ function modelNamedIn(request: string, models: readonly AgentModel[]): AgentMode
  * It runs inside the architect's scope, so it counts as its calls do; a model that fails leaves the cases to the person.
  */
 async function casesFor(model: LanguageModel, agent: { name: string; description: string; request: string }, usage: { inputTokens: number; outputTokens: number }, signal?: AbortSignal): Promise<AgentCaseDraft[]> {
-  const system = 'You write test cases for an AI agent. Answer with 3 to 5 lines and nothing else, one case per line, plain text: what a person would send it => what a right answer says.';
+  const system = 'You write test cases for an AI agent. Answer with 3 to 5 lines and nothing else, one case per line, plain text: what a person would actually send it, written out (the alert, the question, the text itself; never a description of it or a placeholder) => what a right answer says. Example: [Wazuh] rule 5710 sshd: attempt to login using a non-existent user, src 203.0.113.45 => Names the source address and says it is a login probe.'; // AG08:
   const messages: AgentMessage[] = [{ role: 'user', content: `Agent: ${agent.name}\nWhat it does: ${agent.description}\nThe request it was designed from:\n${agent.request.slice(0, 1500)}` }];
   try {
     const turn = await withCallNote({ purpose: 'answer', draft: plainDraft({ system, tools: [], messages }) }, () => model.generate({ system, messages, tools: [], ...(signal && { signal }) }));
@@ -1185,8 +1362,20 @@ const TOOLS_STEP = /^\d+\. Tools: [^\n]*$/m;
  * AG04: the proposal's instructions with the tools step as the final tools make it. The design adds a "Tools: …" step to
  * instructions that name none of the tools it was given: for a change that is only the new tool, so one the base never had is
  * dropped again, and one the base had (from its own design) names every tool now.
+ * AG09: a tool the change adds (`add`) that no step but the Tools line names gets a step of its own.
  */
-function reviseInstructions(proposed: string, base: string, tools: AgentToolConfig[]): string {
+function reviseInstructions(proposed: string, base: string, tools: AgentToolConfig[], add?: { tools: AgentToolConfig[]; change: string } /* AG09: */): string {
+  const text = reviseToolsLine(proposed, base, tools);
+  if (!add) return text;
+  // AG09: a step an earlier revise wrote for a tool the base has is kept when the proposal left it out.
+  const carried = tools.filter((t) => 'name' in t && t.name && !add.tools.includes(t)).flatMap((t) => {
+    const line = new RegExp(`^\\s*\\d+[.)]\\s*When .*, call ${escapeRe((t as { name: string }).name)}\\b.*$`, 'm').exec(base)?.[0];
+    return line ? [{ tool: t, line }] : [];
+  });
+  return add.tools.length || carried.length ? withToolSteps(text, [...carried, ...add.tools.map((tool) => ({ tool }))], add.change) : text;
+}
+
+function reviseToolsLine(proposed: string, base: string, tools: AgentToolConfig[]): string {
   const line = TOOLS_STEP.exec(proposed)?.[0];
   if (!line) return proposed;
   if (!TOOLS_STEP.test(base)) return proposed.replace(`${line}\n`, '').replace(line, '').trim();
@@ -1196,6 +1385,80 @@ function reviseInstructions(proposed: string, base: string, tools: AgentToolConf
   const listed = list.map((t) => (notes[t.name] ? `${t.name} (${notes[t.name]})` : t.name)).join(', ');
   const number = /^\d+\. /.exec(line)?.[0] ?? '';
   return proposed.replace(line, `${number}Tools: ${listed}${/; read before you write.*$/.exec(line)?.[0] ?? '.'}`);
+}
+
+// AG09: a tool a change adds gets a step of its own ("N. When <what the change asked>, call <name>."), before the Output part.
+const escapeRe = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const TOOLS_LINE = /^\s*\d+[.)]\s*Tools:/i;
+const STEPS_HEAD = /^\s*(?:#{1,4}\s*)?steps\s*:/i;
+const AFTER_STEPS = /^\s*(?:#{1,4}\s*)?(?:output|hand[ -]?over(?:\s+when)?)\s*:/i;
+const NUMBERED = /^(\s*)\d+([.)]\s)/;
+
+/** What the change asked, cut to one clause that reads after "When": the clause that names the tool, its leading "also"/"please" dropped, "let it X" as "it should X". */
+function changeClause(change: string, tool: AgentToolConfig): string {
+  const clauses = change.split(/[.;\n]+/).map((c) => c.trim()).filter(Boolean);
+  const clause = clauses.find((c) => names(c, tool)) ?? clauses[0] ?? '';
+  const piece = clause.split(/,|\s+(?:and|but|then)\s+/i).map((c) => c.trim()).find((c) => names(c, tool)) ?? clause;
+  const text = piece.replace(/^(?:(?:also|and|please|now|then|just)\s+)+/i, '').replace(/[\s,.:;!?]+$/, '');
+  // AG09: "add Slugify as a tool" configures the agent; it is no task, so the step comes from what the tool does.
+  // AG09: the shape "a tool that/to/which/for …" is read before its article is stripped.
+  const bare = text
+    .replace(/^(?:(?:add|attach|include|install|enable|connect|use)\b|give\s+(?:it|the agent)\b)\s*/i, '')
+    .replace(/\s+(?:as\s+(?:a|an|another|one more)\s+tools?|tools?)\s*$/i, '')
+    // "a tool to the agent that …" / "a tool to it that …": the agent is who gets it, not what the tool does.
+    .replace(/(\btools?)\s+to\s+(?:(?:the|this|my|our)\s+(?:agent|bot|assistant)|it)\b/i, '$1');
+  const toolShape = /^(?:(?:a|an|the|another)\s+)?tools?\s+(?:that|which|to|for)\b/i.test(bare);
+  const left = bare.replace(/^(?:the|a|an|another|one more)\s+/i, '');
+  const wordsLeft = left.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const known = new Set([...toolWords(tool), 'tool', 'tools', 'the', 'a', 'an', 'to', 'it', 'too', 'also']);
+  const configAsk = CONFIG_VERB.test(text) && (wordsLeft.every((w) => known.has(w) || toolWords(tool).some((k) => w.replace(/s$/, '') === k.replace(/s$/, ''))) || toolShape);
+  if (configAsk) {
+    const toTask = /^(?:(?:a|an|the|another)\s+)?tools?\s+to\s+(?!(?:the|this|my|our)\s+(?:agent|bot|assistant)\b|it\b)(.+)$/i.exec(bare)?.[1];
+    if (toTask) return `asked to ${toTask.split(/\s+/).slice(0, 14).join(' ')}`;
+    // the first sentence of what the tool says it is for, without a lead-in such as "Use this to" or "When you need to"
+    const first = ('description' in tool && tool.description ? tool.description : '').replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s/)[0].replace(/[\s.!?]+$/, '').replace(/`/g, '');
+    const task = first.replace(/^(?:use|call)\s+(?:this|it)\s+(?:when|to|for|if)\s+/i, '').replace(/^(?:use\s+when|when|if)\s+(?:you\s+|the\s+agent\s+)?(?:need\s+to\s+|needs?\s+to\s+)?/i, '').trim();
+    if (task) {
+      const cut = task.length > 90 ? `${task.slice(0, 90).replace(/\s+\S*$/, '')}…` : task;
+      return `you need to ${cut.charAt(0).toLowerCase()}${cut.slice(1)}`;
+    }
+    return `the job needs ${'name' in tool && tool.name ? tool.name.replace(/[_-]+/g, ' ') : 'it'}`;
+  }
+  const said = /^(?:let|have|make)\s+(?:it|the agent)\s+/i.test(text) ? text.replace(/^(?:let|have|make)\s+(?:it|the agent)\s+/i, 'it should ') : `asked to ${text}`;
+  const words = said.split(/\s+/).slice(0, 16).join(' ');
+  return words.length > 100 ? `${words.slice(0, 99).trimEnd()}…` : words;
+}
+const CONFIG_VERB = /^(?:add|attach|include|install|enable|connect|use|give\s+(?:it|the agent))\b/i;
+
+function withToolSteps(text: string, added: Array<{ tool: AgentToolConfig; line?: string }>, change: string): string {
+  const lines = text.split('\n');
+  const stepsAt = lines.findIndex((l) => STEPS_HEAD.test(l));
+  const outputAt = lines.findIndex((l, i) => i > stepsAt && AFTER_STEPS.test(l));
+  const start = stepsAt + 1;
+  const end = outputAt >= 0 ? outputAt : lines.length;
+  const others = lines.filter((l) => !TOOLS_LINE.test(l)).join('\n');
+  const missing = added.filter(({ tool: t }) => 'name' in t && t.name && !new RegExp(`(?<![A-Za-z0-9_])${escapeRe(t.name)}(?![A-Za-z0-9_])`, 'i').test(others));
+  if (!missing.length) return text;
+  const steps = missing.map(({ tool: t, line }) => line ?? `0. When ${changeClause(change, t)}, call ${'name' in t ? t.name : ''}${'requireApproval' in t && t.requireApproval ? ' (it asks the person first)' : ''}.`);
+  const toolsAt = lines.findIndex((l, i) => i >= start && i < end && TOOLS_LINE.test(l));
+  let at = toolsAt;
+  if (at < 0) {
+    at = end;
+    while (at > start && !lines[at - 1].trim()) at--;
+  }
+  lines.splice(at, 0, ...steps);
+  let n = 0;
+  let from = start;
+  let to = end + steps.length;
+  if (stepsAt < 0) {
+    // no Steps header: renumber only the run of numbered lines around the insertion, not other lists
+    from = Math.min(at, lines.length - 1);
+    while (from > 0 && NUMBERED.test(lines[from - 1])) from--;
+    to = at + steps.length;
+    while (to < lines.length && NUMBERED.test(lines[to])) to++;
+  }
+  for (let i = from; i < to; i++) if (NUMBERED.test(lines[i])) lines[i] = lines[i].replace(NUMBERED, (_m, lead: string, dot: string) => `${lead}${++n}${dot}`);
+  return lines.join('\n');
 }
 
 const RENAME = /\b(?:call it|rename (?:it )?(?:to|as)?|name it|its name is)\s+["“']?([^"”'.,;\n]{2,60})/i;
@@ -1218,6 +1481,21 @@ function changeTools(change: string, types: NodeTypeInfo[]): string[] {
 }
 
 /**
+ * AG09: a pending card's name that the design made (it is what `fallbackName` says of the card's description and tools) is made
+ * again from the tools the card now has; a name the person gave, and an agent that exists (its config is the saved one, whole
+ * with `memory` and `settings`), keep theirs: only a RENAME renames them.
+ */
+function madeAgain(base: Partial<AgentConfig>, tools: AgentToolConfig[], types: NodeTypeInfo[]): string | undefined {
+  if (!base.name || ('memory' in base && 'settings' in base)) return undefined;
+  const catalog = askCatalog(types);
+  const shownNames = (list: AgentToolConfig[]) => list.flatMap((t) => (t.type === 'node' ? [types.find((x) => x.type === t.nodeType)?.descriptor.displayName ?? ''] : [])).filter(Boolean);
+  const before = fallbackName(base.description ?? '', shownNames(base.tools ?? []), catalog);
+  if (base.name !== before && base.name !== 'New agent' /* the design's placeholder when the ask gave no words for a name */) return undefined;
+  const after = fallbackName(base.description ?? '', shownNames(tools), catalog);
+  return after !== before ? after : undefined;
+}
+
+/**
  * AG04: the proposal of a change as the agent it changes: the base's own tools stay unless the change removes them (least
  * privilege holds for the tools the change does not name), a new tool stays only when the change names it, and the name, model,
  * practices, look and team stay unless the change names them.
@@ -1226,12 +1504,16 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
   const kept = (base.tools ?? []).filter((t) => !removed(change, t));
   const have = new Set(kept.map(toolKey));
   const added: AgentToolConfig[] = [];
+  const addedLabels = new Set<string>(); // AG09:
+  const ownBy = new Map<string, AgentToolConfig | undefined>(); // AG09:
   for (const tool of draft.config.tools ?? []) {
+    if (have.has(toolKey(tool)) && 'name' in tool && tool.name) ownBy.set(tool.name, kept.find((t) => toolKey(t) === toolKey(tool))); // AG09: the base's own tool under the name the design gave it
     if (have.has(toolKey(tool)) || removed(change, tool)) continue; // ag1-int: a tool the change removes is not proposed back
     if (tool.type === 'node' && !names(change, tool)) {
       draft.dropped.push(`${'name' in tool && tool.name ? tool.name : tool.nodeType}: the change doesn’t ask for it`);
       continue;
     }
+    if ('name' in tool && tool.name) addedLabels.add(tool.name); // AG09: the needs of a tool the change adds are the card's
     // A name a base tool already has is not reused.
     if ('name' in tool && tool.name && kept.some((t) => 'name' in t && t.name === tool.name)) tool.name = `${tool.name.slice(0, 60)}_2`;
     added.push(tool);
@@ -1241,19 +1523,39 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
   // The base as it is (schedules, channels, memory, persona, guardrails, access: what the change doesn't name), with what the proposal changed.
   const config: Partial<AgentConfig> = {
     ...base,
-    name: renamed ?? base.name ?? draft.config.name,
+    name: renamed ?? madeAgain(base, [...kept, ...added], types) /* AG09: */ ?? base.name ?? draft.config.name,
     description: draft.config.description || base.description || '',
-    instructions: reviseInstructions(draft.config.instructions ?? base.instructions ?? '', base.instructions ?? '', [...kept, ...added]),
+    instructions: reviseInstructions(draft.config.instructions ?? base.instructions ?? '', base.instructions ?? '', [...kept, ...added], { tools: added, change } /* AG09: */),
     tools: [...kept, ...added],
   };
   // The steps name only the tools the agent ends up with: a tool the change removed leaves no step that calls it.
-  const finalTools = (config.tools ?? []).flatMap((t) => ('name' in t && t.name ? [{ name: t.name, ...('description' in t && t.description && { description: t.description }) }] : []));
-  const reconciled = nameOnlyOwnTools(config.instructions ?? '', finalTools);
+  // AG07: the call names of the final tools, and as foreign the call names of the base's tools that are gone (a revise's removed tool leaves no step).
+  const finalSteps = stepsToolsOf(config.tools ?? [], types);
+  const gone = stepsToolsOf(base.tools ?? [], types).list.map((t) => t.name).filter((n) => !finalSteps.list.some((t) => t.name === n));
+  const reconciled = nameOnlyOwnTools(config.instructions ?? '', finalSteps.list, { ...finalSteps.options, foreign: gone });
   config.instructions = reconciled.text;
   // The base's own tools kept here are not "never asked for": the design's rule for a tool the change does not name does not apply to them.
   const keptNames = kept.flatMap((t) => (t.type === 'node' ? [types.find((x) => x.type === t.nodeType)?.descriptor.displayName] : [])).filter((n): n is string => Boolean(n));
   draft.dropped = draft.dropped.filter((line) => !(/the request (?:never asks for it|asks to read or check)/.test(line) && keptNames.some((n) => line.startsWith(`${n}:`) || line.startsWith(`${n} (`))));
   draft.dropped.push(...reconciled.dropped);
+  // AG09: the card's Left row is what this change leaves: the needs of a tool it adds, and of a kept tool only a credential slot still unset on the base's tool.
+  draft.needs = draft.needs.filter((need) => {
+    if (addedLabels.has(need.tool)) return true;
+    const own = ownBy.get(need.tool) ?? (base.tools ?? []).find((t) => 'name' in t && t.name === need.tool);
+    if (!own) return true; // a need of no tool (the model, a design failure) stays
+    if (need.kind === 'parameter') {
+      // AG09: a kept tool keeps a parameter need (Send Email's From Email) while that parameter is still empty on the base's tool.
+      if (own.type !== 'node') return false;
+      const info = types.find((x) => x.type === own.nodeType);
+      const property = info?.descriptor.properties.find((pr) => new RegExp(`(?:set|fill in) ${escapeRe(pr.displayName)}(?:\\s|$)`).test(need.text));
+      const value = property ? (own.parameters as Record<string, unknown> | undefined)?.[property.name] : undefined;
+      return Boolean(property) && (value === undefined || value === '' || (Array.isArray(value) && !value.length));
+    }
+    if (need.kind !== 'credential') return false;
+    const slot = /pick an? (.+?) credential/.exec(need.text)?.[1];
+    const given = 'credentials' in own ? (own.credentials as Record<string, unknown> | undefined) : undefined;
+    return !(slot && given && given[slot]);
+  });
   if (modelNamed && draft.config.model) config.model = draft.config.model;
   draft.config = config;
 }
@@ -1322,9 +1624,11 @@ function withSpecHints(draft: DraftResult, spec: AgentSpec, input: Pick<Architec
   };
   for (const wanted of spec.tools ?? []) {
     // toolsOf found several mail nodes for "email … to <address>": said, not guessed.
-    const several = /^(Send email): (several nodes match \(.*\), pick one)$/.exec(wanted);
+    const several = /^([^:]{2,40}): (several nodes match \(.*\), pick one)$/.exec(wanted);
     if (several) {
-      notAdded.push({ name: several[1], reason: several[2] });
+      // AG07: a draft that already has a node tool that sends mail needs no pick: the mail is sent.
+      const mails = several[1] === 'Send email' && tools.some((t) => { const d = t.type === 'node' ? types.find((x) => x.type === t.nodeType)?.descriptor : undefined; return Boolean(d) && /e-?mail|smtp|\bmail\b/i.test([d!.displayName, ...(d!.keywords ?? [])].join(' ')); });
+      if (!mails) notAdded.push({ name: several[1], reason: several[2] });
       continue;
     }
     const [, app, rest] = /^\s*([^:]{2,40}):\s*(.+)$/.exec(wanted) ?? [undefined, undefined, wanted];
@@ -1375,7 +1679,7 @@ function withSpecHints(draft: DraftResult, spec: AgentSpec, input: Pick<Architec
   }
   if (base) {
     // ag1-int: a revise keeps the base's own form: its Tools step (when it has one) lists the tools now, its guardrails stay.
-    draft.config = { ...draft.config, tools, ...(tools.length > before && { instructions: reviseInstructions(draft.config.instructions ?? '', base.instructions ?? '', tools) }) };
+    draft.config = { ...draft.config, tools, ...(tools.length > before && { instructions: reviseInstructions(draft.config.instructions ?? '', base.instructions ?? '', tools, { tools: tools.slice(before), change: spec.ask ?? '' } /* AG09: */) }) };
     return notAdded;
   }
   const tokenJob = readsTokenJob(ask, tools);
@@ -1395,8 +1699,27 @@ function withSpecHints(draft: DraftResult, spec: AgentSpec, input: Pick<Architec
 }
 
 /** ag1-int: a failed architect call in one short clause for the card ("the model call failed: 400 …"), never more than one line. */
-function designFailure(caught: unknown): string {
-  const text = (typeof caught === 'string' ? caught : errorText(caught)).split('\n')[0].replace(/\s+/g, ' ').trim();
+/** A provider's usage or rate limit in its own words ("You have reached your specified API usage limits", a 429), not a failed design. */
+const PROVIDER_LIMIT = /usage limits?|rate.?limit|\b429\b|quota|credit balance|too many requests|exceeded your (?:current )?(?:limit|quota)/i;
+
+/** A provider's message with anything that looks like a credential cut out: header and JSON values, Bearer/Basic tokens, prefixed keys, and the password of a URL. */
+export function scrubSecrets(text: string): string {
+  return text
+    // x-api-key, api_key and authorization, as a header, an assignment or a JSON member, with or without a scheme word
+    .replace(/(["']?)\b(x-api-key|api[-_]?key|authorization)\1\s*[:=]\s*["']?(?:(?:bearer|basic|token)\s+)?[^\s,;'"}]+["']?/gi, (_m, _q, name: string) => `${name}: …`)
+    .replace(/\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{6,}/gi, (m) => `${m.split(/\s/)[0]} …`)
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, '…')
+    // 'key-' only with a digit in what follows: an ordinary word such as key-value_pairs is not a key
+    .replace(/\bkey-(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{8,}/g, '…')
+    .replace(/\bAIza[A-Za-z0-9_-]{20,}/g, '…')
+    // a provider's request and message ids (req_…, msg_…) stay: they are what you quote to its support
+    .replace(/\b(?!(?:req|msg)_)[a-z]{2,4}_(?=[A-Za-z0-9]*[A-Z0-9])[A-Za-z0-9]{16,}/g, '…')
+    .replace(/\/\/[^/\s:@]+:[^/\s@]+@/g, '//…@');
+}
+
+export function designFailure(caught: unknown): string {
+  const text = scrubSecrets((typeof caught === 'string' ? caught : errorText(caught)).split('\n')[0].replace(/\s+/g, ' ').trim());
+  if (PROVIDER_LIMIT.test(text)) return `the model’s usage limit was reached: ${text.slice(0, 200)}`;
   return text ? `the model call failed: ${text.length > 160 ? `${text.slice(0, 159)}…` : text}` : 'the model call failed';
 }
 
@@ -1408,7 +1731,7 @@ function designFailure(caught: unknown): string {
  * what Spotlight gave, on the first model the host has, so the step still has an agent to run. A reached usage cap is
  * thrown, not swallowed.
  */
-export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, 'messages' | 'onEvent' | 'draft' | 'only' | 'request'>): Promise<DraftResult & { designed: boolean; notAdded: AgentNotAdded[] /* AG02: */ }> {
+export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, 'messages' | 'onEvent' | 'draft' | 'only' | 'request'>): Promise<DraftResult & { designed: boolean; notAdded: AgentNotAdded[] /* AG02: */; failure?: string }> {
   // AG02: the agent runs on Spotlight's model (the picker's, else the builder model); the whole ask goes to the architect beside the short spec.
   const agentModel = typeof input.model === 'string' && input.model.trim() ? input.model.trim() : builderModel();
   const asked = spec.ask ? `\n\nThe person's own words, all of it (keep every address, name and id exactly as written):\n${spec.ask}` : '';
@@ -1442,7 +1765,7 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
     return { ...kept, config: { ...kept.config, name: spec.base && spec.change ? (kept.config.name ?? spec.name) /* AG04: a rename is the change's */ : spec.name, description: kept.config.description || spec.description }, designed: true, notAdded };
   }
   // AG04: a change nothing proposed is no change: the base as it is.
-  if (spec.base && spec.change) return { config: spec.base, needs: [], dropped: [], missing: [], cases: [], designed: false, notAdded: [] };
+  if (spec.base && spec.change) return { config: spec.base, needs: [], dropped: [], missing: [], cases: [], designed: false, notAdded: [], ...(failure && { failure }) };
   const model = agentModelOf(agentModel) ?? (input.resources ? chooseModel(undefined, input.resources.models) : undefined); // AG02:
   const instructions = briefParts(spec.instructions || spec.description, { ...(spec.description && { description: spec.description }), tools: [], writes: false }); // SB17:
   // ag1-int: the card says the design was not the architect's, and why, before what is left (sb3's live pass: the fallback card did not say so).

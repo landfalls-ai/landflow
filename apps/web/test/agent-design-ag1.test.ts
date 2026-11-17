@@ -196,6 +196,13 @@ describe('every typed ask (10a, 60b, 30d, 50c): a sensible name, and each asked 
     for (const wanted of [/getAlerts/, /getAlertDetails|alert.?details/i, /httpRequest|HTTP Request/i]) expect(have).toMatch(wanted);
   });
 
+  it('an acronym two nodes share asks which one, never drops silently (IOC Enrich next to Extract IOCs)', () => {
+    const withEnrich = [...catalog(), { displayName: 'IOC Enrich', pluginName: 'Threat Intel' }];
+    const said = toolsOf('Create an agent that triages an alert: pull out the IOCs and judge it.', withEnrich);
+    expect(said.join(' ')).toMatch(/IOCs: several nodes match \(.*Extract IOCs.*IOC Enrich.*\), pick one/);
+    expect(toolsOf('Create an agent that uses the Extract IOCs tool.', withEnrich)).toContain('Extract IOCs');
+  });
+
   it('reads "email a short summary to <address>" as Send Email and "normalise" as Normalize Alert', () => {
     const tools = agentAsk(TYPED.triage, [], catalog())!.tools;
     expect(tools).toEqual(expect.arrayContaining(['Normalize Alert', 'Send Email']));

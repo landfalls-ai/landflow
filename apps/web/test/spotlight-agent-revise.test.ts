@@ -455,6 +455,21 @@ describe('Apply on an agent’s page against a draft that moved', () => {
     expect(calls.some((c) => c.method === 'PUT')).toBe(false);
   });
 
+  it('a draft whose updatedAt moved (nothing of its settings) is not a move: the first Apply saves', async () => {
+    const d0 = cardConfig();
+    const snapshot = JSON.stringify({ ...draftOf(d0), updatedAt: '2026-11-17T10:00:00.000Z', history: [] });
+    answers = { '/api/agents/ag_p': () => ({ agent: { ...draftOf(d0), updatedAt: '2026-11-17T10:00:09.000Z', history: [], published: { version: 1 } } }) };
+    expect(await draftMoved('ag_p', snapshot, d0)).toBeUndefined();
+  });
+
+  it('a re-save of the same config in another key order is not a move', async () => {
+    const d0 = cardConfig();
+    const snapshot = JSON.stringify(draftOf(d0));
+    const { name, ...rest } = d0 as Record<string, unknown>;
+    answers = { '/api/agents/ag_p': () => ({ agent: { id: 'ag_p', ...rest, name } }) }; // saveDraft wrote the same settings with name last
+    expect(await draftMoved('ag_p', snapshot, d0)).toBeUndefined();
+  });
+
   it('designChange fails when the model proposed nothing', async () => {
     answers = { '/api/agents/design': () => ({ config: cardConfig(), changes: [], designed: false }) };
     await expect(designChange({ name: 'x', base: { agentId: 'ag_p' }, change: 'add Slugify as a tool' })).rejects.toThrow('the model proposed nothing');

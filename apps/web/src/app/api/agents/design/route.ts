@@ -81,7 +81,7 @@ export const POST = handler(async (request: Request) => {
   if (parsed.data.preview) {
     // SB16: the card's preview: a face to show, nothing saved; SB17's brief's cases come with it.
     // AG04: a change also says what it changes from the base; nothing is saved.
-    if (baseConfig) return json({ config, changes: agentChanges(baseConfig, config as Record<string, unknown>), needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: [], notAdded: design.notAdded, models /* AG02: */ });
+    if (baseConfig) return json({ config, changes: agentChanges(baseConfig, config as Record<string, unknown>), needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: [], notAdded: design.notAdded, models /* AG02: */, ...(design.failure && { failure: design.failure }) });
     return json({ config, needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: design.cases ?? [], notAdded: design.notAdded, models /* AG02: */ });
   }
   const agent = createInProject(request, 'agent', () => agentStore.create(config), (a) => a.id);
