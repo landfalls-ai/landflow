@@ -167,6 +167,8 @@ describe('POST /api/ai/build', () => {
   const reply = JSON.stringify({ name: 'D', nodes: [{ key: 'start', type: 'core.manualTrigger', name: 'Start' }, { key: 'set', type: 'core.set', name: 'Edit', parameters: { mode: 'manual', fields: { values: [{ name: 'a', type: 'string', value: 'x' }] } } }], connections: [{ from: 'start', to: 'set' }] });
   const post = (json: unknown) => buildRoute.POST(new Request('http://localhost/api/ai/build', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(json) }));
 
+  // Integration (sb3): a build without a plan plans first now; this checks the one-shot draft's catalog (`staged: false`).
+  // The staged build's own filter is build-plan.test.ts ("refused by the build route when the plan has a type the workflow cannot use").
   it('offers a workflow’s allowed types only, and leaves the others out', async () => {
     const created = await workflowsRoute.POST(new Request('http://localhost/api/workflows', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'W', nodes: [], connections: [] }) }));
     const id = ((await created.json()) as { workflow: { id: string } }).workflow.id;
@@ -174,12 +176,12 @@ describe('POST /api/ai/build', () => {
     expect(saved.status).toBe(200);
 
     answer = reply;
-    const limited = (await (await post({ prompt: 'copy the fields', workflowId: id })).json()) as { draft: { nodes: Array<{ type: string }>; left?: Array<{ kind: string }> } };
+    const limited = (await (await post({ prompt: 'copy the fields', workflowId: id, staged: false })).json()) as { draft: { nodes: Array<{ type: string }>; left?: Array<{ kind: string }> } };
     expect(limited.draft.nodes.map((n) => n.type)).toEqual(['core.manualTrigger']);
     expect(limited.draft.left?.some((l) => l.kind === 'dropped')).toBe(true);
     expect(JSON.stringify(fake.last('/api/chat')?.body)).not.toContain('- core.set —');
 
-    const open = (await (await post({ prompt: 'copy the fields' })).json()) as { draft: { nodes: Array<{ type: string }> } };
+    const open = (await (await post({ prompt: 'copy the fields', staged: false })).json()) as { draft: { nodes: Array<{ type: string }> } };
     expect(open.draft.nodes.map((n) => n.type)).toEqual(['core.manualTrigger', 'core.set']);
     expect(JSON.stringify(fake.last('/api/chat')?.body)).toContain('- core.set —');
   });
