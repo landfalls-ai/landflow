@@ -195,7 +195,7 @@ export function dedupe(tools: BuiltTool[]): BuiltTool[] {
 }
 
 /** buildTools plus the tools of the agent's MCP servers and A2A agents, read from each (in parallel), and the flow's. */
-export async function buildToolset(agent: Agent, config: AgentConfig, flow: AgentTool[] = []): Promise<Toolset> {
+export async function buildToolset(agent: Agent, config: AgentConfig, flow: AgentTool[] = [], flowTargets?: Map<string, ToolTarget>): Promise<Toolset> {
   const listed = await Promise.all(
     config.tools.flatMap((tool) => (tool.type === 'mcp' ? [mcpServerTools(tool)] : tool.type === 'a2a' ? [a2aAgentTool(tool).then((t) => ('error' in t ? t : [t]))] : [])),
   );
@@ -205,15 +205,16 @@ export async function buildToolset(agent: Agent, config: AgentConfig, flow: Agen
     else remote.tools.push(...result);
   }
   const built = buildTools(agent, config, remote);
-  return flow.length ? { ...built, tools: dedupe([...built.tools, ...flow.map(flowTool)]) } : built;
+  return flow.length ? { ...built, tools: dedupe([...built.tools, ...flow.map((tool) => flowTool(tool, flowTargets?.get(tool.name)))]) } : built;
 }
 
 /**
  * A tool connected to the agent's node in a workflow (Run an Agent): a tool node or a vector store searched as a tool.
  * The engine runs it as the node's sub-node, so it lights up on the canvas like an AI Agent's tools.
  */
-export function flowTool(tool: AgentTool): BuiltTool {
+export function flowTool(tool: AgentTool, target?: ToolTarget): BuiltTool {
   return {
+    ...(target && { target }), // AG14: what the wired sub-node reaches
     name: tool.name,
     description: tool.description,
     inputSchema: tool.inputSchema,

@@ -43,6 +43,7 @@ import { cleanPersona, personaPrompt, personaPromptParts } from '../../shared/pe
 import { sawPersona } from '../../shared/what-it-saw-sections';
 import { agentStore, configOf } from './store';
 import type { MemberPause } from '../agent-teams/pause';
+import type { ToolTarget } from '../../shared/tool-target';
 import { buildToolset, binaryScopeFor, targetOfCall, dedupe, nodeKnowledgeTool, type BuiltTool, type ToolCaller, type ToolContext } from './tools';
 import { knowledgeTool } from './knowledge';
 import { agentNotAllowedMessage, projectAgentRules } from '../project-context/project-settings';
@@ -77,7 +78,7 @@ export interface RunRequest {
   /** Start a new trace (schedules, channels) instead of joining the caller's. */
   rootTrace?: boolean;
   /** What a workflow connected to the agent's node (Run an Agent): a chat model that replaces the agent's, and more tools. */
-  flow?: { model?: LanguageModel; tools?: AgentTool[] };
+  flow?: { model?: LanguageModel; tools?: AgentTool[]; /** AG14: what each wired tool reaches, by tool name. */ targets?: Map<string, ToolTarget> };
   /** What a team run adds to a member (agent-teams/runtime.ts): the tools for its reports, how it shows in the journal, a check before its answer. */
   team?: TeamRole;
   /**
@@ -468,7 +469,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       return { reason: 'error' };
     }
     try {
-      toolset = await buildToolset(agent, config, request.flow?.tools);
+      toolset = await buildToolset(agent, config, request.flow?.tools, request.flow?.targets);
       // A team's own tools (reports, consults, hand-offs, notebook), by the names they have after the merge: an agent tool
       // named like one keeps the name, so the team's copy is the renamed one and only it is exempt from the kinds below.
       let teamNames = new Set<string>();

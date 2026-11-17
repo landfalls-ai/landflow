@@ -283,3 +283,43 @@ describe('an AI Agent node names the credential of the graph that runs', () => {
     expect((await toolTargets(ctxOf('trigger'), tools)).get('send_email')?.name).toBe('Mail A');
   });
 });
+
+describe('a Run an Agent node names what its wired tools reach', () => {
+  it('a Send Email sub-node in the Tool slot has a tool chunk and a timeline entry naming its credential', async () => {
+    const c = credential('Slot Mail', 'messaging.smtp', { host: '127.0.0.1', port: smtp.port, secure: false, user: 'mail', password: SMTP_SECRET });
+    store.saveWorkflow({
+      id: 'wf_ag14_slot',
+      name: 'Slot',
+      nodes: [{ id: 'mail', name: 'Send Email', type: 'messaging.emailSend', typeVersion: 1, position: [0, 0], parameters: {}, credentials: { smtp: { id: c.id, name: c.name } } }],
+      connections: [],
+    } as never);
+    const wired = [{ name: 'send_email', description: 'Send an email', inputSchema: { type: 'object', properties: {} }, nodeId: 'mail', invoke: async () => ({ sent: true }) }] as never;
+    const targets = await toolTargets({ getWorkflowId: () => 'wf_ag14_slot', getMode: () => 'chat' } as never, wired);
+    const agent = agentStore.create({ name: 'Slot agent', instructions: 'Send.', model: { provider: 'ollama', model: 'scripted-1' } });
+    const session = newSession(agent, { source: 'workflow', userId: 'you', version: 'draft' });
+    script.push(() => ({ toolCalls: [{ id: 's1', name: 'send_email', input: {} }] }));
+    script.push(() => ({ text: 'Sent.' }));
+    const chunks: unknown[] = [];
+    await runAgent({ agent, session, message: 'Email', flow: { tools: wired, targets }, onEvent: streamer((chunk) => chunks.push(chunk), 0) });
+    const expected = { name: 'Slot Mail', system: 'SMTP', endpoint: `127.0.0.1:${smtp.port}`, credentialId: c.id };
+    expect(session.timeline.find((e) => e.type === 'tool')).toMatchObject({ target: expected });
+    expect(chunks.filter((x) => (x as { type: string }).type === 'tool')).toEqual(expect.arrayContaining([expect.objectContaining({ tool: expect.objectContaining({ target: expected }) })]));
+    expect(JSON.stringify([session.timeline, chunks])).not.toContain(SMTP_SECRET);
+  });
+});
+
+describe('the public stream', () => {
+  it('wireChunk drops a tool chunk’s target', async () => {
+    const { wireChunk } = await import('@/lib/server/streaming');
+    const wire = wireChunk({
+      type: 'node.chunk',
+      nodeId: 'n',
+      nodeName: 'N',
+      at: new Date().toISOString(),
+      chunk: { type: 'tool', tool: { name: 'send_email', status: 'finished', target: { name: 'Mailpit SMTP', system: 'SMTP', endpoint: '127.0.0.1:1025' } } },
+    } as never);
+    expect(wire.tool).toMatchObject({ name: 'send_email' });
+    expect(wire.tool).not.toHaveProperty('target');
+    expect(JSON.stringify(wire)).not.toContain('Mailpit');
+  });
+});

@@ -723,6 +723,6 @@ own sections are [call attribution](#call-attribution-wave-11) and [the gateway'
 - A credential that keeps its address in a secret field (a made-up type with a secret `url`) gives no endpoint; the row
   shows the credential's name and type alone.
 - A run from before wave ag3 has no target, so its calls show no via line and no Reached row. The AI Agent node reads a
-  sub-node's credential from the saved workflow in manual and chat runs (the published one in production runs), so an unsaved edit shows the saved credential. A Run an Agent node's wired tools (its Tool slot) carry no target yet, so they show no via line. The public Chat trigger and webhook streams drop a tool's target.
+  sub-node's credential from the saved workflow in manual and chat runs (the published one in production runs), so an unsaved edit shows the saved credential. The public Chat trigger and webhook streams drop a tool's target.
 - A knowledge search's passages come from the chat's output text, which is cut at 12,000 characters for a standalone agent's
   knowledge base (2,000 for other tools); a longer answer shows its raw text.
