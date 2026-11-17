@@ -4,7 +4,7 @@ export class AcknowledgeAlert implements INodeType {
   readonly description: NodeDescriptor = {
     name: 'acknowledgeAlert',
     displayName: 'Acknowledge Alert',
-    description: 'Acknowledges or silences a specific alert in Grafana Alertmanager',
+    description: 'Acknowledges or silences the alerts with a given name (alertname label) in Grafana Alertmanager',
     version: 1,
     kind: 'action',
     idempotent: false,
@@ -16,21 +16,21 @@ export class AcknowledgeAlert implements INodeType {
     inputs: [{ type: 'main' }],
     outputs: [{ type: 'main' }],
     usableAsTool: true,
-    toolDescription: 'Create a silence for the specified alert to prevent further notifications.',
+    toolDescription: 'Create a silence for the alert with the given name (alertname label, not fingerprint) to prevent further notifications.',
     toolInputSchema: {
       type: 'object',
       properties: {
-        alertId: { type: 'string', description: 'The unique identifier of the alert to acknowledge' }
+        alertId: { type: 'string', description: "The alert's name (its alertname label, e.g. High CPU on web-01), not its fingerprint" }
       },
       required: ['alertId'],
     },
     properties: [
       {
         name: 'alertId',
-        displayName: 'Alert ID',
+        displayName: 'Alert Name',
         type: 'string',
         required: true,
-        description: 'The unique identifier of the alert to acknowledge'
+        description: "The alert's name (its alertname label, e.g. High CPU on web-01), not its fingerprint"
       }
     ],
   };

@@ -4,7 +4,7 @@ export class GetAlertDetails implements INodeType {
   readonly description: NodeDescriptor = {
     name: 'getAlertDetails',
     displayName: 'Get Alert Details',
-    description: 'Retrieves detailed information for a specific alert by its ID',
+    description: 'Retrieves detailed information for a specific firing alert by its name (its alertname label)',
     version: 1,
     kind: 'action',
     idempotent: true,
@@ -16,21 +16,21 @@ export class GetAlertDetails implements INodeType {
     inputs: [{ type: 'main' }],
     outputs: [{ type: 'main' }],
     usableAsTool: true,
-    toolDescription: 'Retrieve detailed information for a specific alert by its ID.',
+    toolDescription: 'Retrieve detailed information for a specific alert by its name (its alertname label), not its fingerprint.',
     toolInputSchema: {
       type: 'object',
       properties: {
-        alertId: { type: 'string', description: 'The unique identifier of the alert' }
+        alertId: { type: 'string', description: "The alert's name (its alertname label, e.g. High CPU on web-01), not its fingerprint" }
       },
       required: ['alertId'],
     },
     properties: [
       {
         name: 'alertId',
-        displayName: 'Alert ID',
+        displayName: 'Alert Name',
         type: 'string',
         required: true,
-        description: 'The unique identifier of the alert to retrieve details for'
+        description: "The alert's name (its alertname label, e.g. High CPU on web-01), not its fingerprint"
       }
     ],
   };
@@ -64,7 +64,7 @@ export class GetAlertDetails implements INodeType {
 
     // Construct the URL for fetching alert details
     // AG10: Alertmanager v2 has no alert-by-id path; the list takes a filter, so the alert is found by its name.
-    const alertUrl = `${String(url).replace(/\/+$/, '')}/api/v2/alerts?filter=${encodeURIComponent(`alertname="${alertId}"`)}`;
+    const alertUrl = `${String(url).replace(/\/+$/, '')}/api/v2/alerts?filter=${encodeURIComponent(`alertname="${alertId.replace(/[\\"]/g, '\\$&')}"`)}`;
 
     try {
       const response = await ctx.http(alertUrl, {

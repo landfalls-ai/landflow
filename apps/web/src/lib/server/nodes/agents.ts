@@ -256,6 +256,14 @@ export const messageAgentNode = defineNode({
           for (const pendingCall of calls) {
             const decision = decisions[pendingCall.callId];
             if (!decision) continue;
+            // A person who approved with changes: the tool runs with their input, not the model's. A remote agent's pause keeps its own state, so the edit is ignored there.
+            if (decision.approved && decision.input && stored?.pending && !pendingCall.remote) {
+              const target = stored.pending.calls.find((c) => c.callId === pendingCall.callId);
+              if (target) {
+                target.input = decision.input as typeof target.input;
+                agentStore.saveSession(stored);
+              }
+            }
             resumed = await decide(agent, waited.sessionId, pendingCall.callId, decision.approved, { ...(decision.by && { by: decision.by }), ...(onEvent && { onEvent }), ...(ctx.signal && { signal: ctx.signal }) });
           }
           if (!resumed || resumed.status !== 'resumed') throw new NodeOperationError('The approval was not decided for every tool call', { itemIndex: i });

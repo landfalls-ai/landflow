@@ -75,3 +75,12 @@ describe('Get Alert Details', () => {
     await expect(new GetAlertDetails().execute(ctx('Disk full', 'viewer'))).rejects.toThrow('No firing alert named Disk full');
   });
 });
+
+describe('descriptors', () => {
+  it.each([new AcknowledgeAlert(), new GetAlertDetails()])('say the parameter is the alert name, not an ID or fingerprint', (node) => {
+    const d = node.description as any;
+    expect(d.toolInputSchema.properties.alertId.description).toMatch(/alertname.*not its fingerprint/);
+    expect(d.properties[0].displayName).toBe('Alert Name');
+    expect(JSON.stringify(d)).not.toMatch(/unique identifier/);
+  });
+});

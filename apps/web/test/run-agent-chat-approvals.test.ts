@@ -107,6 +107,17 @@ describe('Run an Agent, Tool Approvals', () => {
     expect(out(done).steps).toEqual([expect.objectContaining({ tool: WRITE, status: 'success' })]);
   });
 
+  it('Approve with changes runs the tool with the person’s input', async () => {
+    script = (t) => (t === 1 ? { toolCalls: [call(WRITE, { to: 'model@x' }, 'c_send')] } : { text: 'Sent.' });
+    const record = await run(flow({ toolApprovals: 'askInChat' }), 'chat');
+    const outcome = await decideApproval(record.executionId, idOf(record, 0), true, { input: { to: 'oncall@landflow.test' } });
+    const done = (outcome as { record: typeof record }).record;
+    expect(done.status).toBe('success');
+    expect(toolResults).toHaveLength(1);
+    expect(toolResults[0]).toContain('oncall@landflow.test');
+    expect(toolResults[0]).not.toContain('model@x');
+  });
+
   it('on Reject the tool never runs and the model answers', async () => {
     script = (t) => (t === 1 ? { toolCalls: [call(WRITE, { to: 'oncall@landflow.test' }, 'c_send')] } : { text: 'I did not send it.' });
     const record = await run(flow({ toolApprovals: 'askInChat' }), 'chat');
