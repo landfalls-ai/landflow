@@ -57,6 +57,8 @@ const { agentStore } = await import('@/lib/server/agents/store');
 const { agentTeamStore } = await import('@/lib/server/agent-teams/store');
 const { addCase } = await import('@/lib/server/agents/eval-gate');
 const { store } = await import('@/lib/server/store');
+const { recordVersion, versionFor } = await import('@/lib/server/versions');
+const { setPublication, clearPublication } = await import('@/lib/server/publications');
 const { enableTestAuth, TEST_OWNER } = await import('@/lib/server/auth/test-bypass');
 const smokeRoute = await import('@/app/api/agents/[id]/smoke-test/route');
 const publishRoute = await import('@/app/api/agents/[id]/publish/route');
@@ -283,6 +285,22 @@ describe('Undo takes back an agent nothing else uses', () => {
     expect(agentRow().taken).toEqual({ deleted: false, usedBy: ['the workflow “Support desk”'] });
     expect(agentStep(agentRow()).text).toBe('Kept the agent “Refund policy answerer”: used by the workflow “Support desk”');
     store.deleteWorkflow('wf_other');
+  });
+
+  it('keeps it when the workflow\'s own published version still has the agent\'s step, and names that version', async () => {
+    const undo = await addTheAgent(true);
+    const id = agentRow().agentId!;
+    // The workflow was published with the agent's step; Undo then takes the step out of the draft only.
+    const withStep: Workflow = { id: WF, name: 'Refunds', nodes: [node('s', 'Ask', 'core.messageAgent', { agentId: id })], connections: [] };
+    store.saveWorkflow(withStep);
+    const version = recordVersion(withStep) ?? versionFor(withStep)!;
+    setPublication(WF, version.id);
+    undo();
+    await vi.waitFor(() => expect(agentRow().taken).toBeDefined());
+    expect(agentStore.get(id)).toBeDefined();
+    expect(agentRow().taken).toEqual({ deleted: false, usedBy: ['the published version of “Refunds”'] });
+    expect(agentStep(agentRow()).text).toBe('Kept the agent “Refund policy answerer”: used by the published version of “Refunds”');
+    clearPublication(WF);
   });
 
   it('keeps it when a team has it as a member, or when a later version was published', async () => {

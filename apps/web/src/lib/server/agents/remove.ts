@@ -38,18 +38,23 @@ export async function removeAgent(id: string): Promise<boolean> {
 const stepsUsing = (workflow: Workflow | undefined, agentId: string) => (workflow?.nodes ?? []).some((n) => n.parameters?.agentId === agentId);
 
 /**
- * What else uses an agent, by name: a step of another workflow (its draft or its published version), a team, an enabled
+ * What else uses an agent, by name: a step of another workflow (its draft or its published version), a step of the workflow's own published version, a team, an enabled
  * schedule or channel, or a published version beyond the first (Spotlight's own pass publishes version 1 and no more). Empty
  * when nothing does.
  */
 export function agentUsedBy(agentId: string, exceptWorkflowId?: string): string[] {
   const used: string[] = [];
   for (const workflow of store.listWorkflows()) {
-    if (workflow.id === exceptWorkflowId) continue;
-    let hit = stepsUsing(workflow, agentId);
+    // The workflow whose change is being undone: its draft is what the undo takes the step out of, but a version already
+    // published still runs the agent's step, so that one keeps the agent.
+    const own = workflow.id === exceptWorkflowId;
+    let hit = !own && stepsUsing(workflow, agentId);
     if (!hit && publishedVersionId(workflow.id)) {
       const published = getPublication(workflow.id);
-      hit = Boolean(published && stepsUsing(getVersion(workflow.id, published.versionId)?.workflow, agentId));
+      if (published && stepsUsing(getVersion(workflow.id, published.versionId)?.workflow, agentId)) {
+        used.push(own ? `the published version of “${workflow.name}”` : `the workflow “${workflow.name}”`);
+        continue;
+      }
     }
     if (hit) used.push(`the workflow “${workflow.name}”`);
   }

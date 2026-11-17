@@ -222,6 +222,28 @@ describe('SB14: a plan becomes nodes, one call per step', () => {
     expect(JSON.stringify(draft.nodes.find((n) => n.key === 's3')!.parameters)).toContain('output');
   });
 
+  it('a message to an agent writes `reply`: a step reading $json.output gets one send-back naming output, one reading $json.reply gets none', async () => {
+    const plan: BuildPlan = {
+      name: 'Agent answer',
+      steps: [step('s1', 'core.schedule', 'Every day', 'Run daily'), step('s2', 'core.messageAgent', 'Ask the agent', 'Have the agent answer', 's1'), step('s3', 'sb14app.slack', 'Tell Slack', 'Post the answer', 's2')],
+      assumptions: [],
+      cannot: [],
+    };
+    const day = reply({ unit: 'rules', rule: { interval: [{ field: 'days', daysInterval: 1, triggerAtHour: 8, triggerAtMinute: 0 }] } });
+    script = { 'Every day': [day], 'Ask the agent': [reply({ message: 'Answer today' })], 'Tell Slack': [reply({ text: '{{ $json.output }}' }), reply({ text: '{{ $json.reply }}' })] };
+    const draft = await buildFlow('every day ask the agent and post the answer to Slack', undefined, [], [], { plan });
+    expect(callsFor('Tell Slack')).toHaveLength(2);
+    const back = callsFor('Tell Slack')[1].body.messages.at(-1).content as string;
+    expect(back).toContain('output');
+    expect(JSON.stringify(draft.nodes.find((n) => n.key === 's3')!.parameters)).toContain('$json.reply');
+    // Reading `reply` the first time is right: no send-back.
+    for (const key of Object.keys(asked)) delete asked[key];
+    fake.requests.length = 0;
+    script = { 'Every day': [day], 'Ask the agent': [reply({ message: 'Answer today' })], 'Tell Slack': [reply({ text: '{{ $json.reply }}' })] };
+    await buildFlow('every day ask the agent and post the answer to Slack', undefined, [], [], { plan });
+    expect(callsFor('Tell Slack')).toHaveLength(1);
+  });
+
   it('sends a weekday cron back when the request said "every morning", and keeps a daily rule', async () => {
     const plan: BuildPlan = { name: 'Morning', steps: [step('s1', 'core.schedule', 'Every morning', 'Run every morning at 9')], assumptions: [], cannot: [] };
     const weekdays = reply({ unit: 'rules', rule: { interval: [{ field: 'cronExpression', expression: '0 9 * * 1-5' }] } });

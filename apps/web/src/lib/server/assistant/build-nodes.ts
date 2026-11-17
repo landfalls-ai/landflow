@@ -78,10 +78,14 @@ const TRIGGER_FIELDS: Record<string, Record<string, unknown>> = {
   'core.webhook': { method: '', path: '', headers: {}, query: {} },
   'core.chatTrigger': { chatInput: '', sessionId: '', action: '' },
 };
-/** What an agent step writes (nodes/ai.ts, nodes/agents.ts): its answer is `output`, never the fields of the item it read. */
+/**
+ * What an agent step writes, as the node does (nodes/ai.ts, nodes/agents.ts, nodes/run-team.ts): the AI Agent's answer is
+ * `output`, a message to an agent or a team writes `reply`; never the fields of the item the step read.
+ */
 const AGENT_FIELDS: Record<string, Record<string, unknown>> = {
   'core.aiAgent': { output: '', sessionId: '', model: '', iterations: 0, usage: {}, steps: [], fallbackUsed: false },
-  'core.messageAgent': { output: '', sessionId: '', model: '', iterations: 0, usage: {}, steps: [], fallbackUsed: false },
+  'core.messageAgent': { reply: '', sessionId: '', agentId: '', version: 0, model: '', endReason: '', usage: {}, steps: [] },
+  'core.runTeam': { reply: '', team: {}, members: [], usage: {}, activity: {} },
 };
 
 // ---------------------------------------------------------------------------

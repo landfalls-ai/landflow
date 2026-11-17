@@ -117,14 +117,14 @@ export default defineScenarios([
         steps: [
           { key: 's1', type: 'core.chatTrigger', name: 'Chat message', does: 'Start when a chat message arrives' },
           { key: 's2', type: 'core.messageAgent', name: 'Support triage', does: 'Have the Support triage agent answer the message', from: 's1' },
-          { key: 's3', type: 'core.if', name: 'Could it answer', does: 'Tell an answer from a handover', from: 's2', reads: ['output'] },
+          { key: 's3', type: 'core.if', name: 'Could it answer', does: 'Tell an answer from a handover', from: 's2', reads: ['reply'] },
         ],
         assumptions: ['a person approves by hand: no approval node was named'],
         cannot: [],
       }),
       step({}),
       step({ agentId: 'Support triage', message: '{{ $json.chatInput }}' }),
-      step(condition('{{ $json.output }}', 'isNotEmpty', '')),
+      step(condition('{{ $json.reply }}', 'isNotEmpty', '')),
     ],
     checks: [
       checks.oneTrigger,

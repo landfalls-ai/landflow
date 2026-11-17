@@ -49,13 +49,16 @@ function sourceOf(o: Outcome, id: string): string | undefined {
   return undefined;
 }
 
-const AGENT_OUTPUT = ['output', 'sessionId', 'model', 'iterations', 'usage', 'steps', 'fallbackUsed'];
-const AGENT_TYPES = new Set(['core.aiAgent', 'core.messageAgent']);
+/** What each agent step writes: the AI Agent's `output`, a message to an agent's `reply` (nodes/ai.ts, nodes/agents.ts). */
+const AGENT_OUTPUT: Record<string, string[]> = {
+  'core.aiAgent': ['output', 'sessionId', 'model', 'iterations', 'usage', 'steps', 'fallbackUsed'],
+  'core.messageAgent': ['reply', 'sessionId', 'agentId', 'version', 'model', 'endReason', 'usage', 'steps'],
+};
 
 /** The fields a node writes, when known: Linear's schema (and `text`), an agent's output fields; undefined when not known. */
 function fieldsOf(node: DraftNode | undefined): Set<string> | undefined {
   if (node?.type === 'linear.linear') return new Set([...Object.keys((ACTIVITY_ITEM_SCHEMA.properties ?? {}) as object), 'text']);
-  if (node && AGENT_TYPES.has(node.type)) return new Set(AGENT_OUTPUT);
+  if (node && AGENT_OUTPUT[node.type]) return new Set(AGENT_OUTPUT[node.type]);
   return undefined;
 }
 
@@ -218,8 +221,8 @@ export default defineScenarios([
     script: [
       r({}),
       r({ agentId: 'Support triage', message: '{{ $json.chatInput }}' }),
-      r(CONDITION('{{ $json.output }}', 'contains', 'cannot answer')),
-      r({ draft: '{{ $json.output }}', title: 'The agent could not answer' }),
+      r(CONDITION('{{ $json.reply }}', 'contains', 'cannot answer')),
+      r({ draft: '{{ $json.reply }}', title: 'The agent could not answer' }),
     ],
     checks: [planBuilt(4), collectionsFilled, runsRightB8, oneCallPerStep(), checks.noOutside],
     live: { runs: 3 },
