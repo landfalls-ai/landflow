@@ -14,6 +14,7 @@ import { conversationItemInputSchema, MAX_ITEM_BYTES, type ConversationItem } fr
 import type { AgentProgress, AssistantTurn, ChatItem } from '@/components/editor/assistant';
 import { checkCards, deletedCards, DELETED_AGENT_NOTE, emptyStored, planKeeping, recordPlan, replyInput, restore, STALE_CARD_NOTE } from '@/components/editor/spotlight-history';
 import { AgentCardView } from '@/components/editor/spotlight/agent-card';
+import { AgentRow } from '@/components/editor/spotlight/reply';
 import { enableTestAuth } from '@/lib/server/auth/test-bypass';
 
 const previousDir = process.env.LANDFLOW_DATA_DIR;
@@ -219,5 +220,30 @@ describe('the route', () => {
     const post = (p: unknown) => items.POST(req(`/api/conversations/${id}/items`, { items: [{ role: 'assistant', parts: [p] }] }), { params: Promise.resolve({ id }) });
     expect((await post(part('Reads an alert.'))).status).toBe(200);
     expect((await post(part('x'.repeat(40 * 1024)))).status).toBe(400);
+  });
+});
+
+describe('a restored pass is not this page’s (AG11, integration review)', () => {
+  const changed = (extra: Partial<AgentCard> = {}) => card({ state: 'created', agentId: 'agt_1', base: { agentId: 'agt_1', name: 'Alert triager' }, changes: ['Adds the tool Slugify'], smoke: { state: 'passed', reply: 'ok' }, ...extra });
+  const render = (id: string, earlier: boolean, c: AgentCard) => {
+    return renderToStaticMarkup(createElement(AgentCardView, { itemId: id, card: c, earlier }));
+  };
+
+  it('a restored change card shows Test again only; one tested in this load shows Publish', () => {
+    const restored = render('k2', true, changed());
+    expect(restored).toContain('Test again');
+    expect(restored).not.toContain('>Publish<');
+    expect(render('a2', false, changed())).toContain('>Publish<');
+  });
+
+  it('a restored agent row offers Test again, not Publish; a row tested in this load offers Publish', () => {
+    const marker = { seq: 3, role: 'assistant', parts: [{ type: 'agentCard', id: 'a1', card: { name: 'Alert triager', description: 'd', tools: [], practices: false, guardrails: [], cases: [], needs: [], missing: [], state: 'created', agentId: 'agt_1', workflowId: 'wf_a', smoke: { state: 'passed' } }, row: { nodeId: 'n_agent', state: 'tested', smoke: { state: 'passed' }, agentId: 'agt_1' } }], at: '2026-11-17T08:05:00.000Z' };
+    const designed = { seq: 2, role: 'assistant', parts: [{ type: 'agentCard', id: 'a1', card: { name: 'Alert triager', description: 'd', tools: [], practices: false, guardrails: [], cases: [], needs: [], missing: [], state: 'designed', workflowId: 'wf_a', config: { name: 'Alert triager' } } }], at: '2026-11-17T08:00:01.000Z' };
+    const back = restore([designed, marker] as never);
+    expect(back.agents[0]).toMatchObject({ state: 'tested', restored: true });
+    const html = renderToStaticMarkup(createElement(AgentRow, { agent: back.agents[0] }));
+    expect(html).toContain('Test again');
+    expect(html).not.toContain('>Publish<');
+    expect(renderToStaticMarkup(createElement(AgentRow, { agent: { ...back.agents[0], restored: false } }))).toContain('>Publish<');
   });
 });

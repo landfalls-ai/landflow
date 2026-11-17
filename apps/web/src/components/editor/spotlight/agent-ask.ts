@@ -89,8 +89,11 @@ export function cardAskFor(message: string): AgentAsk | undefined {
 }
 
 const patchReply = (id: string, fields: Partial<Reply>) => useAssistant.setState((s) => ({ items: s.items.map((i) => (i.id === id ? { ...(i as Reply), ...fields } : i)) }));
+/** AG11: the cards whose smoke test passed in this page load: a card brought back from history offers Publish only after one of these. */
+const testedHere = new Set<string>();
+export const testedThisLoad = (itemId: string) => testedHere.has(itemId);
 const patchCard = (itemId: string, fields: Partial<AgentCard>) =>
-  useAssistant.getState().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'agentCard' ? { ...p, card: { ...p.card, ...fields } } : p)));
+  (fields.smoke?.state === 'passed' && testedHere.add(itemId), useAssistant.getState().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'agentCard' ? { ...p, card: { ...p.card, ...fields } } : p))));
 
 /** D1: Spotlight creates by itself only on a brand-new draft with the switch on. */
 const createsAlone = () => useAutonomous.getState().on && autonomyOf(useEditor.getState().workflowId) === 'auto';

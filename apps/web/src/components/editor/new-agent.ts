@@ -148,12 +148,12 @@ export async function smokeTestAgent(nodeId: string, options: { publish?: boolea
   if (!progress?.agentId || !node) return undefined;
   const patch = (p: Partial<AgentProgress>) => useAssistant.getState().setAgent(nodeId, p);
   const done = (smoke: AgentSmoke, state: AgentProgress['state'] = smoke.state === 'passed' ? 'tested' : smoke.state === 'untested' ? 'untested' : 'draft') => {
-    patch({ state, smoke, held: undefined, publish: undefined });
+    patch({ state, smoke, held: undefined, publish: undefined, restored: false });
     return smoke;
   };
   const sample = itemReaching(nodeId);
   if (!sample) return done({ state: 'untested', reason: 'run the step before it once' });
-  patch({ state: 'testing', smoke: { state: 'testing' }, held: undefined, publish: undefined });
+  patch({ state: 'testing', smoke: { state: 'testing' }, held: undefined, publish: undefined, restored: false });
   try {
     const wanted = node.data.wf.parameters.message;
     const template = typeof wanted === 'string' && wanted.trim() ? wanted : '{{ $json.chatInput ?? $json.text }}';

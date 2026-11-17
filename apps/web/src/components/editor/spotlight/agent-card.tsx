@@ -12,7 +12,7 @@ import { publishLine, smokeLine, type AgentCard as AgentCardData } from '@/lib/s
 import type { AgentConfig } from '@/lib/shared/agents';
 import { AgentAvatar } from '../../agents/avatar';
 import { Button } from '../../ui/button';
-import { applyAgentChange, createFromCard, dismissCard, publishAgentChange, setCardModel, testAgentChange } from './agent-ask'; // AG02: setCardModel; AG04: applyAgentChange, publishAgentChange; AG09: testAgentChange
+import { applyAgentChange, createFromCard, dismissCard, publishAgentChange, setCardModel, testAgentChange, testedThisLoad } from './agent-ask'; // AG02: setCardModel; AG04: applyAgentChange, publishAgentChange; AG09: testAgentChange
 import { stillLeft, useAgentDraft } from '@/lib/client/agent-change'; // AG09:
 import { useAssistant } from '../assistant';
 import { isStaleCard } from '../spotlight-history'; // AG11:
@@ -28,12 +28,13 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-export function AgentCardView({ itemId, card, busy = false }: { itemId: string; card: AgentCardData; busy?: boolean }) {
+export function AgentCardView({ itemId, card, busy = false, earlier = false }: { itemId: string; card: AgentCardData; busy?: boolean; earlier?: boolean }) {
   const [allCases, setAllCases] = useState(false);
   const config = card.config as Partial<AgentConfig>;
   const created = card.state === 'created';
   const creating = card.state === 'creating';
   const cases = allCases ? card.cases : card.cases.slice(0, CASES_SHOWN);
+  // AG11: a card brought back from history offers Publish only after Test again passed in this page load.
   const draft = useAgentDraft(card.base?.agentId); // AG09: a change card's Left row is what the agent's draft still lacks
   const left = [...(card.base ? stillLeft(card.needs, draft) : card.needs) /* AG09: */, ...card.missing.map((m) => `Not available here: ${m}`)];
   // Integration (sb3): after Create the line is SB18's smoke line, live from the agent's row ("tested, 1 of 1 passed · published").
@@ -166,7 +167,7 @@ export function AgentCardView({ itemId, card, busy = false }: { itemId: string; 
                 Saved to its draft · {smokeLine(card.smoke)}
                 {card.publish && ` · ${publishLine(card.publish)}`}
               </span>
-              {card.smoke?.state === 'passed' && card.publish?.state !== 'published' && (
+              {card.smoke?.state === 'passed' && card.publish?.state !== 'published' && (!earlier || testedThisLoad(itemId)) && (
                 <Button size="sm" variant="primary" disabled={card.publish?.state === 'publishing'} onClick={() => void publishAgentChange(itemId, card)} className="max-md:h-11 max-md:px-4">
                   {card.publish?.state === 'publishing' ? <Loader2 className="size-3.5 animate-spin" /> : null}
                   Publish

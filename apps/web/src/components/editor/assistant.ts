@@ -521,6 +521,8 @@ export interface AgentProgress {
   /** "ollama/qwen3-coder:30b · 1 knowledge base", or why it failed. */
   summary?: string;
   agentId?: string;
+  /** AG11: brought back from a stored conversation as tested: Publish waits for Test again to pass in this page load. */
+  restored?: boolean;
   /** The conversation item it follows. */
   after?: string;
 }

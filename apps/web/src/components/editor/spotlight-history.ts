@@ -359,7 +359,7 @@ function cardFrom(c: StoredCard): AgentCard {
 
 /** AG11: the stored row of a card's step as the chat's row, after the item that holds the card. */
 function rowFrom(r: StoredRow, card: AgentCard, after: string): AgentProgress {
-  return { nodeId: r.nodeId ?? `card:${after}`, name: card.name, state: r.state, ...(r.smoke && { smoke: r.smoke }), ...(r.publish && { publish: r.publish }), ...(r.summary && { summary: r.summary }), ...(r.agentId && { agentId: r.agentId }), after };
+  return { nodeId: r.nodeId ?? `card:${after}`, name: card.name, state: r.state, ...(r.smoke && { smoke: r.smoke }), ...(r.publish && { publish: r.publish }), ...(r.summary && { summary: r.summary }), ...(r.agentId && { agentId: r.agentId }), ...(r.state === 'tested' && { restored: true }), after };
 }
 
 /**
