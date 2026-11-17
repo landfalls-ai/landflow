@@ -111,6 +111,13 @@ describe('plugin flows', () => {
           expect(loaded.unsupported.map((u) => u.kind), entry.name).toContain('hooks');
           continue;
         }
+        if (entry.source.startsWith('./claude-plugins/')) {
+          // Skills and agents for people building on Landflow (landflow-dev): no node plugin and no flows.
+          expect(loaded.nodePlugin, entry.name).toBeUndefined();
+          expect(loaded.flows, entry.name).toEqual([]);
+          expect(entry.flows, entry.name).toBeUndefined();
+          continue;
+        }
         expect(entry.source, entry.name).toMatch(/^\.\/plugins\//);
         expect(loaded.nodePlugin?.id, entry.name).toBe(entry.name);
         expect(loaded.flows.map((f) => `./${f.path}`).sort(), entry.name).toEqual([...(entry.flows ?? [])].sort());
