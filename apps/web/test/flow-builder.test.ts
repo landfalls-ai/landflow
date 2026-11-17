@@ -24,7 +24,11 @@ Object.assign(process.env, ENV);
 
 const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
-const { buildFlow, builderTimeoutMs, jsonOf, emptyParts } = await import('@/lib/server/flow-builder');
+const { buildFlow: builder, builderTimeoutMs, jsonOf, emptyParts } = await import('@/lib/server/flow-builder');
+// Integration (sb3): `buildFlow` plans first by default; this file checks the one-shot draft (SB01's whole-draft send-back,
+// near-miss types, pins), which stays for `staged: false`. The staged build's own checks are flow-builder-staged.test.ts,
+// build-plan.test.ts and spotlight-sb3-joins.test.ts.
+const buildFlow = (...[prompt, model, teams = [], agents = [], options = {}]: Parameters<typeof builder>) => builder(prompt, model, teams, agents, { staged: false, ...options });
 const { defineNode, definePlugin } = await import('@landflow/sdk');
 registry.registerBuiltin(corePlugin);
 

@@ -57,7 +57,11 @@ const DRAFT = JSON.stringify({
   connections: [{ from: 'start', to: 'set' }],
   testData: [{ q: 'one' }],
 });
-const gateway = await startFakeLiteLlm({ models: ['qwen3-coder:30b'], answer: () => DRAFT });
+// Integration (sb3): a build plans first by default, then one call per step: the gateway answers the plan, then each
+// step's parameters (the one-shot DRAFT stays for any other prompt).
+const PLAN = JSON.stringify({ name: 'Draft', steps: [{ key: 's1', type: 'core.manualTrigger', name: 'Start', does: 'Start by hand' }, { key: 's2', type: 'core.set', name: 'Set', does: 'Set a field', from: 's1' }], assumptions: [], cannot: [] });
+const STEP = (last: string) => JSON.stringify(/“Set”/.test(last) ? { parameters: { mode: 'manual', fields: { values: [{ name: 'a', value: '1' }] } } } : { parameters: {}, testData: [{ q: 'one' }] });
+const gateway = await startFakeLiteLlm({ models: ['qwen3-coder:30b'], answer: (_model, last) => (/Plan this workflow/.test(last) ? PLAN : /^Request: /.test(last) ? STEP(last) : DRAFT) });
 
 const ENV = {
   LANDFLOW_DATA_DIR: mkdtempSync(join(tmpdir(), 'landflow-sb2-joins-')),
@@ -331,7 +335,8 @@ describe('3. the model pick', () => {
     const before = ollamaAsked.filter((a) => a.path === '/api/chat').length;
     const built = await call(buildRoute.POST, post('/api/ai/build', { prompt: 'set a field', model: 'litellm/qwen3-coder:30b' }));
     expect(built.status).toBe(200);
-    const { draft } = (await built.json()) as { draft: { calls?: number } };
+    const { draft } = (await built.json()) as { draft: { calls?: number; stages?: Array<{ stage: string }> } };
+    expect(draft.stages?.[0]?.stage).toBe('plan'); // Integration (sb3): planned first, every call (plan and steps) a row
     expect(ollamaAsked.filter((a) => a.path === '/api/chat').length).toBe(before);
     expect(gateway.requests.some((r) => r.path === '/v1/chat/completions')).toBe(true);
     const drafted = usage().filter((r) => r.surface === 'spotlight' && r.provider === 'litellm');

@@ -170,7 +170,8 @@ describe('the plan call', () => {
     const offered = new Set(types.map((t) => t.type));
     expect(plan.steps.every((s) => offered.has(s.type))).toBe(true);
     expect(plan.steps.filter((s) => types.find((t) => t.type === s.type)?.descriptor.kind === 'trigger')).toHaveLength(1);
-    expect(plan.steps[0].type).toBe('core.manualTrigger');
+    // Integration (sb3): the trigger the request names ("every weekday": the schedule) stays, as SB02's draft guard keeps it; was the first (manual).
+    expect(plan.steps[0].type).toBe('core.schedule');
     // The second trigger is gone and said so; the unknown Linear type stood in by a real one; Teams is named, not invented.
     expect(plan.assumptions.some((a) => /second trigger/.test(a))).toBe(true);
     expect(plan.assumptions.some((a) => /linear\.getIssues/.test(a) && /stands in/.test(a))).toBe(true);
@@ -190,6 +191,12 @@ describe('the plan call', () => {
     const many = repairPlan({ name: 'X', steps: [{ key: 't', type: 'core.manualTrigger', name: 'T', does: 'T' }, ...Array.from({ length: 14 }, (_, i) => ({ key: `n${i}`, type: 'core.noOp', name: `N${i}`, does: 'x', from: i ? `n${i - 1}` : 't' }))], assumptions: [], cannot: [] }, ctx);
     expect(many.steps).toHaveLength(12);
     expect(many.cannot).toHaveLength(3);
+    // Integration (sb3): of two triggers, the one the request names stays; with none named, the first.
+    const two = { name: 'X', steps: [{ key: 'm', type: 'core.manualTrigger', name: 'Run', does: 'Run' }, { key: 's', type: 'core.schedule', name: 'Every morning', does: 'Every morning' }, { key: 'a', type: 'core.noOp', name: 'Fetch', does: 'Fetch', from: 'm' }], assumptions: [], cannot: [] };
+    const named = repairPlan(two, { ...ctx, named: (t: string) => t === 'core.schedule' });
+    expect(named.steps.map((s) => [s.type, s.from])).toEqual([['core.schedule', undefined], ['core.noOp', 's1']]);
+    expect(named.assumptions.some((a) => /second trigger \(Run\)/.test(a))).toBe(true);
+    expect(repairPlan(two, ctx).steps[0].type).toBe('core.manualTrigger');
   });
 
   it('answers the person\'s change with a corrected plan, checked the same way', async () => {
@@ -262,7 +269,7 @@ describe('a build with a plan', () => {
   const buildReply = (types: string[]) => reply({ name: 'Bug triage', nodes: types.map((type, i) => ({ key: `s${i + 1}`, type, name: `Step ${i + 1}`, parameters: type === 'core.schedule' ? { unit: 'rules', rule: { interval: [{ field: 'cronExpression', expression: '0 8 * * 1-5' }] } } : {} })), connections: types.slice(1).map((_, i) => ({ from: 's1', to: `s${i + 2}` })), testData: [{ title: 'Login fails' }] });
 
   // Wave sb3 integration: SB14 builds a plan one call per step (lib/server/assistant/build-nodes.ts), so each call
-  // carries one plan step's node docs and sentence; the whole catalog goes only to a build without a plan.
+  // carries one plan step's node docs and sentence; the whole catalog goes only to the one-shot draft (`staged: false`, since a build without a plan now plans first).
   it('sends each step\'s call only its own node\'s docs (under a third of the catalog) and its step in words, and returns plan and stages', async () => {
     const types = availableTypes();
     const stepReply = (parameters: unknown) => JSON.stringify({ parameters });
@@ -281,9 +288,9 @@ describe('a build with a plan', () => {
     expect(linear).toBeGreaterThanOrEqual(0);
     expect(sent(linear)).toContain('linear.linear');
     expect(sent(linear)).not.toContain('messaging.slack');
-    // The same ask without a plan sends the whole catalog.
+    // The same ask as the one-shot draft sends the whole catalog.
     queue = [{ text: buildReply(['core.manualTrigger']) }];
-    const whole = await buildFlow(B1, 'qwen3-coder:30b', [], [], { types });
+    const whole = await buildFlow(B1, 'qwen3-coder:30b', [], [], { types, staged: false });
     expect(whole.plan).toBeUndefined();
     expect(whole.stages?.[0].stage).toBe('one-shot');
     const wholeSize = Math.max(...chats().map((_, i) => (sent(i).includes('Node catalog:\\n') ? sent(i).length : 0)));

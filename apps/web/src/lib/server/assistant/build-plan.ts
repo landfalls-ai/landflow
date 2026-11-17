@@ -14,6 +14,7 @@ import { withoutStep } from '@/lib/shared/plan-edit';
 import { PLAN_STEP_LIMIT, planProblems, type BuildPlan, type BuildStage, type PlanProblem, type PlanStep } from '@/lib/shared/build-plan';
 import { askModel, builderTimeoutMs, jsonOf } from '../flow-builder';
 import { catalogSummary, searchNodes } from './research';
+import { names as triggerNamed } from './draft-guards';
 
 /** At most this many non-trigger candidates are offered (the triggers come with them). */
 export const CANDIDATE_LIMIT = 24;
@@ -176,6 +177,8 @@ export interface RepairContext {
   isSubnode?: (type: string) => boolean;
   /** The best offered type for a step's words (a trigger for the first step), or undefined. */
   stand: (step: PlanStep, asTrigger: boolean) => string | undefined;
+  /** Integration (sb3): whether the request names this trigger type: of two triggers that one stays (SB02's rule for drafts), else the first. */
+  named?: (type: string) => boolean;
 }
 
 /**
@@ -221,9 +224,9 @@ export function repairPlan(input: BuildPlan, ctx: RepairContext): BuildPlan {
     return at;
   };
   steps = kept.map((s) => (s.from && dropped.has(s.from) ? { ...s, from: resolve(s.from) } : s));
-  // The trigger: the first trigger step leads, a later one goes and its children follow the first.
+  // The trigger: the one the request names leads (else the first), another goes and its children follow the one kept.
   const triggers = steps.filter((s) => ctx.isTrigger(s.type));
-  const first = triggers[0];
+  const first = triggers.find((s) => ctx.named?.(s.type)) ?? triggers[0];
   if (!first) {
     const manual = ctx.offered.has('core.manualTrigger') ? 'core.manualTrigger' : [...ctx.offered.keys()].find(ctx.isTrigger);
     if (manual) {
@@ -231,8 +234,9 @@ export function repairPlan(input: BuildPlan, ctx: RepairContext): BuildPlan {
       steps = [{ key: 'trigger', type: manual, name: 'Start', does: 'Start the flow by hand' }, ...steps.map((s) => (s.from ? s : { ...s, from: 'trigger' }))];
     }
   } else {
-    for (const extra of triggers.slice(1)) notes.push(`the plan had a second trigger (${extra.name}): the flow has one, ${first.name}`);
-    const extras = new Set(triggers.slice(1).map((s) => s.key));
+    const others = triggers.filter((s) => s !== first);
+    for (const extra of others) notes.push(`the plan had a second trigger (${extra.name}): the flow has one, ${first.name}`);
+    const extras = new Set(others.map((s) => s.key));
     steps = [first, ...steps.filter((s) => s !== first && !extras.has(s.key))].map((s) => (s.from && extras.has(s.from) ? { ...s, from: first.key } : s));
   }
   // `from`: an earlier step; the trigger has none.
@@ -356,6 +360,7 @@ export async function planFlow(prompt: string, input: PlanInput): Promise<PlanRe
     plan = repairPlan(plan, {
       offered,
       isTrigger,
+      named: (type) => triggerNamed(offered.get(type) ?? types.find((t) => t.type === type), prompt),
       isSubnode: (type) => isSubnodeInfo(offered.get(type)),
       stand: (step, asTrigger) => standIn(step, offeredList.filter((t) => isTriggerInfo(t) === asTrigger && !isSubnodeInfo(t))),
     });

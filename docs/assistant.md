@@ -234,7 +234,7 @@ When the first draft is built from a plan (`POST /api/ai/build` with `plan`, or 
 - **When a call fails.** A step whose call fails (or the build's `LANDFLOW_BUILDER_TIMEOUT_SECONDS` ran out) keeps empty parameters and a `left` item, and the build goes on with the rest. When every call fails (a model that is down) the build is an error, as the one-shot draft is.
 - **What the draft reports.** `calls` is the number of model calls (one per step with parameters, plus one per send-back); `stages` has one `node` entry per call (and a `send-back` for a second try, with the step's key): sizes and times, never text. All calls are counted in AI usage as Spotlight's (`purpose: answer`).
 
-The one-shot draft below stays as it is for a call without a plan.
+**Plan first is the default.** Every first draft is planned, then built in stages: the editor's (the plan route, then the build with the plan), a build route call without a `plan` (the server plans first itself, `buildFlow` in `lib/server/flow-builder.ts`, with every plan call in `stages` and `calls`), and the brain writer's draft (`buildFlow(prompt, model)`). The one-shot draft below is kept only for `staged: false` (the build route's body or `buildFlow`'s options): a live comparison's "before".
 
 ### Test and fix
 

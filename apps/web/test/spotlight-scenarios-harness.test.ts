@@ -82,12 +82,27 @@ describe('the live form', () => {
 
 describe('the harness drives the product', () => {
   it('a build: the fake Ollama answers the script and the draft is laid out as a workflow', async () => {
-    const draft = { name: 'D', nodes: [{ key: 'start', type: 'core.manualTrigger', name: 'Start' }, { key: 'set', type: 'core.set', name: 'Set', parameters: { mode: 'manual', fields: { values: [{ name: 'copied', type: 'string', value: '{{ $json.name }}' }] } } }], connections: [{ from: 'start', to: 'set' }] };
-    const scenario: Scenario = { id: 'sb00-h-build', owner: 'SB00', job: 'build', via: 'build', title: 't', ask: 'copy the fields over', script: [{ text: JSON.stringify(draft) }], checks: [] };
+    // Integration (sb3): staged by default: the script answers the plan, then each step's parameters.
+    const plan = { name: 'D', steps: [{ key: 's1', type: 'core.manualTrigger', name: 'Start', does: 'Start by hand' }, { key: 's2', type: 'core.set', name: 'Set', does: 'Copy the name over', from: 's1' }], assumptions: [], cannot: [] };
+    const set = { parameters: { mode: 'manual', fields: { values: [{ name: 'copied', type: 'string', value: '{{ $json.name }}' }] } } };
+    const scenario: Scenario = { id: 'sb00-h-build', owner: 'SB00', job: 'build', via: 'build', title: 't', ask: 'copy the fields over', script: [{ text: JSON.stringify(plan) }, { text: JSON.stringify({ parameters: {}, testData: [{ name: 'Ada' }] }) }, { text: JSON.stringify(set) }], checks: [] };
     const o = await runScenario(scenario, 'unit');
     expect(o.error).toBeUndefined();
     expect(o.after?.nodes.map((n) => n.type)).toEqual(['core.manualTrigger', 'core.set']);
     expect(o.after?.connections).toHaveLength(1);
+    expect(o.plan?.steps.map((st) => st.type)).toEqual(['core.manualTrigger', 'core.set']);
+    // The plan route's call, then the build's calls (one per step that has parameters to fill).
+    expect(o.modelCalls).toBe(1 + (o.draft as { calls: number }).calls);
+    expect(o.prompts?.[0]?.stage).toBe('plan');
+  });
+
+  it('`start.staged: false` posts the one-shot draft: one call, no plan', async () => {
+    const draft = { name: 'D', nodes: [{ key: 'start', type: 'core.manualTrigger', name: 'Start' }, { key: 'set', type: 'core.set', name: 'Set', parameters: { mode: 'manual', fields: { values: [{ name: 'copied', type: 'string', value: '{{ $json.name }}' }] } } }], connections: [{ from: 'start', to: 'set' }] };
+    const scenario: Scenario = { id: 'sb00-h-build-oneshot', owner: 'SB00', job: 'build', via: 'build', title: 't', ask: 'copy the fields over', start: { staged: false }, script: [{ text: JSON.stringify(draft) }], checks: [] };
+    const o = await runScenario(scenario, 'unit');
+    expect(o.error).toBeUndefined();
+    expect(o.after?.nodes.map((n) => n.type)).toEqual(['core.manualTrigger', 'core.set']);
+    expect(o.plan).toBeUndefined();
     expect(o.modelCalls).toBe(1);
   });
 
@@ -347,16 +362,26 @@ describe('the build checks read the draft', () => {
     expect(sentBack.judge(outcome({ modelCalls: 1, draft: { left: [] } }))).toBe('n/a');
     expect(sentBack.judge(outcome({ modelCalls: 2, draft: { left: [] } }))).toBe(true);
     expect(sentBack.judge(outcome({ modelCalls: 1, draft: { left: [{ kind: 'empty' }] } }))).toBe(false);
+    // Integration (sb3): a planned draft reads its stages: one step sent back once.
+    const plan = { name: 'x', steps: [], assumptions: [], cannot: [] };
+    expect(sentBack.judge(outcome({ modelCalls: 6, draft: { plan, left: [], stages: [{ stage: 'node' }, { stage: 'node' }] } }))).toBe('n/a');
+    expect(sentBack.judge(outcome({ modelCalls: 7, draft: { plan, left: [], stages: [{ stage: 'node' }, { stage: 'send-back' }] } }))).toBe(true);
+    expect(sentBack.judge(outcome({ modelCalls: 6, draft: { plan, left: [{ kind: 'empty' }], stages: [{ stage: 'node' }] } }))).toBe(false);
   });
 
-  it('reads a build’s model calls from draft.calls (the unit form: one call when nothing was empty, two after a send-back)', async () => {
+  it('reads a build’s model calls from draft.calls and the plan route’s stages (staged: the plan, each step, a send-back)', async () => {
     // One at a time: each build points OLLAMA_URL at its own fake model.
     const outcomes: Outcome[] = [];
     for (const s of sb01.filter((x) => x.via === 'build' && x.script?.length)) outcomes.push(await runScenario(s, 'unit'));
     expect(outcomes.length).toBeGreaterThan(0);
     for (const o of outcomes) {
       expect(typeof (o.draft as { calls?: number }).calls).toBe('number');
-      expect(o.modelCalls).toBe((o.draft as { calls: number }).calls);
+      // Integration (sb3): the plan route's calls count too; every call has its prompt size.
+      const built = (o.draft as { calls: number; stages: unknown[] });
+      const planCalls = (o.prompts?.length ?? 0) - built.stages.length;
+      expect(planCalls).toBeGreaterThanOrEqual(1);
+      expect(built.calls).toBe(built.stages.length);
+      expect(o.modelCalls).toBe(built.calls + planCalls);
     }
   });
 });

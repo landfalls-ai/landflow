@@ -339,7 +339,7 @@ describe('SB14: the build route', () => {
     expect(built).not.toBe('hung');
   });
 
-  it('gives the staged draft when the body has a plan, and the one-shot draft without one', async () => {
+  it('gives the staged draft when the body has a plan, and the one-shot draft with `staged: false`', async () => {
     script = B4_REPLIES;
     const staged = await (buildRoute.POST as unknown as Route)(post({ prompt: ASK, plan: B4 }));
     expect(staged.status).toBe(200);
@@ -351,7 +351,8 @@ describe('SB14: the build route', () => {
 
     fake.requests.length = 0;
     script = { ...Object.fromEntries(Object.keys(B4_REPLIES).map((n) => [n, ['{}']])) };
-    const oneShot = await (buildRoute.POST as unknown as Route)(post({ prompt: ASK }));
+    // Integration (sb3): a body without a plan plans first now; `staged: false` is the one-shot draft this checked.
+    const oneShot = await (buildRoute.POST as unknown as Route)(post({ prompt: ASK, staged: false }));
     // The base's one-shot draft answers `{}` here: no usable nodes. It is one request, with the catalog.
     expect(oneShot.status).toBe(502);
     expect(chatCalls().length).toBeGreaterThanOrEqual(1);

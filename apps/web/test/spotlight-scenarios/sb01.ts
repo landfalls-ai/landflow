@@ -22,27 +22,46 @@ const collectionsFilled: Check = {
 };
 const noEmptyLeft: Check = { id: 'left-no-empty', label: 'Nothing is left empty', judge: (o) => !((o.draft?.left as Array<{ kind: string }> | undefined) ?? []).some((l) => l.kind === 'empty') };
 // SB10 (carryover item 4): `draft.calls` is 2 when the first draft was sent back; 1 with nothing empty needed no send-back ('n/a').
+// Integration (sb3): a planned draft is sent back per step (SB14), so its reading is the build's stages: one `send-back` stage.
 const sentBack: Check = {
   id: 'sent-back-once',
   label: 'The draft was sent back once',
-  judge: (o) => (o.modelCalls === 1 && !((o.draft?.left as Array<{ kind: string }> | undefined) ?? []).some((l) => l.kind === 'empty') ? 'n/a' : o.modelCalls === 2),
+  judge: (o) => {
+    const emptyLeft = ((o.draft?.left as Array<{ kind: string }> | undefined) ?? []).some((l) => l.kind === 'empty');
+    if (o.draft?.plan) {
+      const backs = ((o.draft.stages as Array<{ stage: string }> | undefined) ?? []).filter((s) => s.stage === 'send-back').length;
+      return backs === 0 && !emptyLeft ? 'n/a' : backs === 1;
+    }
+    return o.modelCalls === 1 && !emptyLeft ? 'n/a' : o.modelCalls === 2;
+  },
 };
 
 const ASK = 'When a webhook receives an order, if body.total is over 1000 POST the whole order with vip: true to http://127.0.0.1:3402/vip, otherwise POST the order to http://127.0.0.1:3402/standard, then respond with ok';
 const http = (url: string, body?: string) => ({ url, method: 'POST', ...(body && { bodyType: 'json', body }) });
-const draft = (condition: unknown[], withBody: boolean) =>
-  JSON.stringify({
-    name: 'Orders by size',
-    nodes: [
-      { key: 'hook', type: 'core.webhook', name: 'Order in', parameters: { path: 'orders' } },
-      { key: 'big', type: 'core.if', name: 'Check total', parameters: { conditions: { condition }, combinator: 'and' } },
-      { key: 'vip', type: 'core.httpRequest', name: 'Send to VIP', parameters: http('http://127.0.0.1:3402/vip', withBody ? '{{ JSON.stringify({ ...$json.body, vip: true }) }}' : undefined) },
-      { key: 'std', type: 'core.httpRequest', name: 'Send to standard', parameters: http('http://127.0.0.1:3402/standard', withBody ? '{{ JSON.stringify($json.body) }}' : undefined) },
-      { key: 'ok', type: 'core.respondToWebhook', name: 'Reply ok', parameters: {} },
-    ],
-    connections: [{ from: 'hook', to: 'big' }, { from: 'big', to: 'vip', output: 0 }, { from: 'big', to: 'std', output: 1 }, { from: 'vip', to: 'ok' }, { from: 'std', to: 'ok' }],
-    testData: [{ body: { id: 'o-1', total: 1500 } }, { body: { id: 'o-2', total: 500 } }],
-  });
+
+// Integration (sb3): the staged script: the plan, then one reply per step, the If sent back once with its condition.
+const reply = (value: unknown) => ({ text: JSON.stringify(value) });
+const plan = reply({
+  name: 'Orders by size',
+  steps: [
+    { key: 's1', type: 'core.webhook', name: 'Order in', does: 'Start when a webhook receives an order' },
+    { key: 's2', type: 'core.if', name: 'Check total', does: 'Tell orders over 1000 from the rest', from: 's1', reads: ['body.total'] },
+    { key: 's3', type: 'core.httpRequest', name: 'Send to VIP', does: 'POST the whole order with vip: true to /vip', from: 's2', output: 0 },
+    { key: 's4', type: 'core.httpRequest', name: 'Send to standard', does: 'POST the order to /standard', from: 's2', output: 1 },
+    { key: 's5', type: 'core.respondToWebhook', name: 'Reply ok', does: 'Respond with ok', from: 's3' },
+  ],
+  assumptions: [],
+  cannot: [],
+});
+const stagedScript = [
+  plan,
+  reply({ parameters: { path: 'orders' }, testData: [{ body: { id: 'o-1', total: 1500 } }, { body: { id: 'o-2', total: 500 } }] }),
+  reply({ parameters: { conditions: { condition: [] }, combinator: 'and' } }),
+  reply({ parameters: { conditions: { condition: [{ left: '{{ $json.body.total }}', operator: 'gt', right: '1000' }] }, combinator: 'and' } }),
+  reply({ parameters: http('http://127.0.0.1:3402/vip', '{{ JSON.stringify({ ...$json.body, vip: true }) }}') }),
+  reply({ parameters: http('http://127.0.0.1:3402/standard', '{{ JSON.stringify($json.body) }}') }),
+  reply({ parameters: {} }),
+];
 
 export default defineScenarios([
   {
@@ -52,7 +71,7 @@ export default defineScenarios([
     via: 'build',
     title: 'A webhook order flow branches on the total with both POSTs filled',
     ask: ASK,
-    script: [{ text: draft([], false) }, { text: draft([{ left: '{{ $json.body.total }}', operator: 'gt', right: '1000' }], true) }],
+    script: stagedScript, // Integration (sb3): was the one-shot `[draft(empty If), draft(filled)]`
     checks: [collectionsFilled, noEmptyLeft, sentBack, checks.noOutside],
   },
   {
@@ -76,8 +95,12 @@ export default defineScenarios([
     via: 'build',
     title: 'core.linear.linear means the Linear plugin\'s linear node',
     ask: 'Get my Linear issues',
+    // Integration (sb3): the plan names the near-miss type; its send-back answers the same, so the plan is repaired in code.
     script: [
-      { text: JSON.stringify({ name: 'Linear issues', nodes: [{ key: 'a', type: 'core.linear.linear', name: 'Get issues', parameters: {} }], connections: [] }) },
+      reply({ name: 'Linear issues', steps: [{ key: 's1', type: 'core.manualTrigger', name: 'Start', does: 'Start by hand' }, { key: 's2', type: 'core.linear.linear', name: 'Get issues', does: 'Get my Linear issues', from: 's1' }], assumptions: [], cannot: [] }),
+      reply({ name: 'Linear issues', steps: [{ key: 's1', type: 'core.manualTrigger', name: 'Start', does: 'Start by hand' }, { key: 's2', type: 'core.linear.linear', name: 'Get issues', does: 'Get my Linear issues', from: 's1' }], assumptions: [], cannot: [] }),
+      reply({ parameters: {} }),
+      reply({ parameters: {} }),
     ],
     checks: [{ id: 'near-miss-mapped', label: 'The step kept, as the linear type', judge: (o) => (nodesOf(o).some((n) => n.name === 'Get issues' && /\.linear$/.test(n.type)) ? true : 'n/a') }],
     live: { skip: 'unit only: needs a fake linear node type registered' },

@@ -561,9 +561,11 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
     if (scenario.via === 'build') {
       const route = await import('@/app/api/ai/build/route');
       const buildModel = (scenario.start?.model ?? model) && { model: scenario.start?.model ?? model };
-      // SB13: staged, as the editor builds from sb3 on: the plan route first, then the build with that plan. `staged` absent: planned in the live form, one-shot in the unit form (sb1's and sb2's scripts); `start.plan` is stage 2's own input (SB14 posts it); `LANDFLOW_SPOTLIGHT_STAGED=false` never plans (the one-shot draft, the "before" of a live comparison).
+      // SB13: staged, as the editor builds from sb3 on: the plan route first, then the build with that plan. `start.plan` is stage 2's own input (SB14 posts it); `LANDFLOW_SPOTLIGHT_STAGED=false` never plans (the one-shot draft, the "before" of a live comparison).
       const planned: { plan?: Record<string, unknown>; stages: Array<{ stage: string; inputTokens: number; promptChars: number }> } = { stages: [] };
-      if (!scenario.start?.plan && process.env.LANDFLOW_SPOTLIGHT_STAGED !== 'false' && (scenario.start?.staged ?? form === 'live')) {
+      // Integration (sb3): staged is the default in both forms now (the unit scripts answer `[plan, node…]`); `staged: false` posts `staged: false`, the server's one-shot draft.
+      const oneShot = process.env.LANDFLOW_SPOTLIGHT_STAGED === 'false' || scenario.start?.staged === false;
+      if (!scenario.start?.plan && !oneShot) {
         const planRoute = await import('@/app/api/ai/build/plan/route');
         const planResponse = await planRoute.POST(post('/api/ai/build/plan', { prompt: scenario.ask, ...buildModel, ...(canvas?.id && { workflowId: canvas.id }) }));
         const planBody = (await planResponse.json()) as { plan?: Record<string, unknown>; stages?: typeof planned.stages; error?: string };
@@ -571,7 +573,7 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
         if (!planResponse.ok || !planBody.plan) outcome.error = planBody.error ?? `plan ${planResponse.status}`;
         else planned.plan = planBody.plan;
       }
-      const response = outcome.error ? undefined : await route.POST(post('/api/ai/build', { prompt: scenario.ask, ...buildModel, /* SB19: */ ...(canvas?.id && { workflowId: canvas.id }), ...(planned.plan && { plan: planned.plan }) /* SB13: */, /* SB14: */ ...(scenario.start?.plan && { plan: scenario.start.plan }) }));
+      const response = outcome.error ? undefined : await route.POST(post('/api/ai/build', { prompt: scenario.ask, ...buildModel, /* SB19: */ ...(canvas?.id && { workflowId: canvas.id }), ...(planned.plan && { plan: planned.plan }) /* SB13: */, /* SB14: */ ...(scenario.start?.plan && { plan: scenario.start.plan }), ...(oneShot && !scenario.start?.plan && { staged: false }) }));
       const body = response ? ((await response.json()) as { draft?: Record<string, unknown>; error?: string }) : {};
       if (response && (!response.ok || !body.draft)) outcome.error = body.error ?? `build ${response.status}`;
       else if (body.draft) {
