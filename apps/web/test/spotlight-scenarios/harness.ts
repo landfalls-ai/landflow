@@ -388,7 +388,7 @@ function collect(events: Array<{ event: string; data: any }>): Collected { // es
   return out;
 }
 
-const agentOf = (config: Partial<AgentConfig>, published = false, draftCases = 0, id?: string): Outcome['agents'][number] => ({
+const agentOf = (config: Partial<AgentConfig>, published = false, draftCases = 0, id?: string, draftInputs?: string[] /* AG08: */): Outcome['agents'][number] => ({
   name: config.name ?? '',
   ...(config.model && { model: `${config.model.provider}/${config.model.model}` }),
   tools: (config.tools ?? []).filter((t) => t.type !== 'knowledge').map((t) => ('name' in t && t.name ? t.name : t.type)),
@@ -399,6 +399,9 @@ const agentOf = (config: Partial<AgentConfig>, published = false, draftCases = 0
     t.type === 'node' ? [{ name: t.name, type: t.nodeType, ...(typeof t.parameters?.operation === 'string' && { operation: t.parameters.operation }), requireApproval: t.requireApproval === true }] : [],
   ),
   cases: id ? listCases(id).length : draftCases,
+  // AG08: each case's input (the saved cases, else the draft's) and each node tool's parameters as the design set them.
+  ...((id || draftInputs) && { caseInputs: id ? listCases(id).map((c) => c.input) : draftInputs }),
+  toolParameters: Object.fromEntries((config.tools ?? []).flatMap((t) => (t.type === 'node' ? [[t.name, { ...t.parameters }] as const] : []))),
   practices: config.practices === 'on',
   guardrails: guardrailWords(config.guardrails),
   description: config.description ?? '', // AG02:
@@ -778,7 +781,7 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
         if (!response.ok || !body.config) outcome.error = body.error ?? `design ${response.status}`;
         else {
           const starter = !names.length;
-          outcome.card = { starter, ...(body.config.model && { model: `${body.config.model.provider}/${body.config.model.model}` }), ...(body.models && { models: body.models }), notAdded: (body.notAdded ?? []).map((n) => n.name) /* AG02: */ };
+          outcome.card = { starter, needs: ((body as { needs?: Array<{ text: string }> }).needs ?? []).map((n) => n.text) /* AG08: */, ...(body.config.model && { model: `${body.config.model.provider}/${body.config.model.model}` }), ...(body.models && { models: body.models }), notAdded: (body.notAdded ?? []).map((n) => n.name) /* AG02: */ };
           outcome.text = `Designed ${body.config.name ?? spec.name}`;
           const imported = await (await import('@/app/api/agents/import/route')).POST(post('/api/agents/import', { config: body.config }));
           const made = (await imported.json()) as { agent?: AgentConfig & { id: string }; error?: string };
@@ -786,7 +789,7 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
           else {
             const gate = await import('@/app/api/agents/[id]/eval-gate/route');
             for (const c of body.cases ?? []) await gate.POST(post(`/api/agents/${made.agent.id}/eval-gate`, c), { params: Promise.resolve({ id: made.agent.id }) });
-            outcome.agents.push({ ...agentOf(made.agent), cases: (body.cases ?? []).length });
+            outcome.agents.push({ ...agentOf(made.agent, false, 0, undefined, (body.cases ?? []).map((c) => c.input) /* AG08: */), cases: (body.cases ?? []).length });
             outcome.after = starter ? draftToWorkflow(starterFlow({ id: made.agent.id, name: made.agent.name }, starterSample({ name: made.agent.name, cases: body.cases ?? [] }))) : canvas;
           }
         }
