@@ -248,4 +248,12 @@ describe('generic tech words name no node (AG07 integration fix)', () => {
     const result = await designAgent({ name: 'Helper', description: 'x', instructions: '', ask, tools: toolsOf(ask, askCatalog(withSdk)) }, { types: withSdk, actor: TEST_OWNER, model: model as never });
     expect(JSON.stringify(result.config.tools ?? [])).not.toMatch(/generate_with_ai_sdk|AiSdk/i);
   });
+
+  it('the several-nodes label names the distinctive acronym, never AI or SDK', () => {
+    const extract = types.find((t) => t.descriptor.displayName === 'Extract IOCs')!;
+    const enrich = { ...extract, type: `${extract.type}AiEnrich`, descriptor: { ...extract.descriptor, displayName: 'AI SDK IOCs Enrich', keywords: [] } } as NodeTypeInfo;
+    const found = toolsOf('Create an agent that triages an alert: pull out the IOCs and judge it.', askCatalog([...types.filter((t) => t !== extract), enrich, extract]));
+    expect(found.join(' ')).toMatch(/IOCs: several nodes match/);
+    expect(found.join(' ')).not.toMatch(/(?:AI|SDK): several/);
+  });
 });

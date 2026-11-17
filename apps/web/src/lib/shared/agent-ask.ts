@@ -168,7 +168,7 @@ export function toolsOf(message: string, catalog: AskCatalogEntry[] = []): strin
   for (const [, group] of shared) {
     if (group.some((g) => nodes.includes(g))) continue;
     if (group.length === 1) add(group[0].displayName);
-    else found.push(`${group[0].displayName.split(/\s+/).find((w) => /^[A-Z0-9]{2,}s?$/.test(w))}: several nodes match (${group.slice(0, 3).map((c) => c.displayName).join(', ')}), pick one`);
+    else found.push(`${group[0].displayName.split(/\s+/).find((w) => distinctiveAcronym(w))}: several nodes match (${group.slice(0, 3).map((c) => c.displayName).join(', ')}), pick one`);
   }
   for (const plugin of new Set(catalog.map((c) => c.pluginName).filter((n): n is string => Boolean(n)))) {
     if (!names(message, plugin) || nodes.some((n) => n.pluginName === plugin)) continue;

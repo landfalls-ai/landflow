@@ -8,14 +8,24 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { smokeLine, publishLine, type AgentCard } from '@/lib/shared/agent-card';
 import { conversationItemInputSchema, MAX_ITEM_BYTES, type ConversationItem } from '@/lib/shared/conversations';
 import type { AgentProgress, AssistantTurn, ChatItem } from '@/components/editor/assistant';
 import { checkCards, deletedCards, DELETED_AGENT_NOTE, emptyStored, planKeeping, recordPlan, replyInput, restore, STALE_CARD_NOTE } from '@/components/editor/spotlight-history';
 import { AgentCardView } from '@/components/editor/spotlight/agent-card';
 import { AgentRow } from '@/components/editor/spotlight/reply';
+import { useAssistant } from '@/components/editor/assistant';
 import { enableTestAuth } from '@/lib/server/auth/test-bypass';
+
+// The editor's one call here (the smoke test of Test again) goes to a recorder.
+vi.mock('@/lib/client/api', async (original) => ({
+  ...(await original<typeof import('@/lib/client/api')>()),
+  api: vi.fn(async (path: string) => {
+    if (path.endsWith('/smoke-test')) return { smoke: { state: 'passed', reply: 'ok' } };
+    throw new Error(`unexpected ${path}`);
+  }),
+}));
 
 const previousDir = process.env.LANDFLOW_DATA_DIR;
 process.env.LANDFLOW_DATA_DIR = mkdtempSync(join(tmpdir(), 'landflow-ag11-'));
@@ -245,5 +255,18 @@ describe('a restored pass is not this page’s (AG11, integration review)', () =
     expect(html).toContain('Test again');
     expect(html).not.toContain('>Publish<');
     expect(renderToStaticMarkup(createElement(AgentRow, { agent: { ...back.agents[0], restored: false } }))).toContain('>Publish<');
+  });
+
+  it('Test again passing in this page load brings Publish back to the restored change card', async () => {
+    const { testAgentChange, testedThisLoad } = await import('@/components/editor/spotlight/agent-ask');
+    const c = changed();
+    useAssistant.setState({ items: [{ ...reply('k9', c), earlier: true } as never] });
+    expect(testedThisLoad('k9')).toBe(false);
+    expect(render('k9', true, c)).not.toContain('>Publish<');
+    await testAgentChange('k9', c);
+    expect(testedThisLoad('k9')).toBe(true);
+    const part = (useAssistant.getState().items[0] as AssistantTurn).parts.find((p) => p.kind === 'agentCard') as { card: AgentCard };
+    expect(part.card.smoke?.state).toBe('passed');
+    expect(render('k9', true, part.card)).toContain('>Publish<');
   });
 });
