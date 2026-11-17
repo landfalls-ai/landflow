@@ -1337,6 +1337,12 @@ function withSpecHints(draft: DraftResult, spec: AgentSpec, input: Pick<Architec
   return notAdded;
 }
 
+/** ag1-int: a failed architect call in one short clause for the card ("the model call failed: 400 …"), never more than one line. */
+function designFailure(caught: unknown): string {
+  const text = (typeof caught === 'string' ? caught : errorText(caught)).split('\n')[0].replace(/\s+/g, ' ').trim();
+  return text ? `the model call failed: ${text.length > 160 ? `${text.slice(0, 159)}…` : text}` : 'the model call failed';
+}
+
 /**
  * Spotlight's newAgent, designed by the architect without a conversation (POST /api/agents/design): its last draft,
  * named as Spotlight named it. The first try hands the model what it would look up (designBrief) and offers only the
@@ -1350,8 +1356,10 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
   const agentModel = typeof input.model === 'string' && input.model.trim() ? input.model.trim() : builderModel();
   const asked = spec.ask ? `\n\nThe person's own words, all of it (keep every address, name and id exactly as written):\n${spec.ask}` : '';
   let last: DraftResult | undefined;
+  let failure: string | undefined; // ag1-int: why the architect made no design, for the card's line
   const onEvent: ArchitectInput['onEvent'] = (event) => {
     if (event.type === 'draft') last = { config: event.config, needs: event.needs, dropped: event.dropped, missing: event.missing, cases: event.cases ?? [] /* SB17: */ };
+    if (event.type === 'error' && !('kind' in event && event.kind === 'cap')) failure = designFailure(event.message); // ag1-int:
   };
   const attempts: Array<Pick<ArchitectInput, 'messages' | 'only'>> = [
     { messages: [{ role: 'user', content: `${designRequest(spec)}${asked}\n\n${designBrief(spec.change ? { name: spec.name, description: spec.change, instructions: '' } /* AG04: the nodes the change matches */ : spec, input)}\n\nPropose it in one propose_design call now: short instructions, only the tools it needs.` }], only: [DESIGN_TOOL.name] },
@@ -1363,6 +1371,7 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
     // SB17: `request` is the least-privilege rules' text: the request alone, not the brief's hints.
     await runArchitect({ ...input, ...attempt, agentModel, ...(spec.base && spec.change && { draft: spec.base, noCases: true }) /* AG04: */, request: spec.change ? `${designWords(spec)}\n${spec.change}` /* AG04: */ : designWords(spec), onEvent }).catch((caught: unknown) => {
       if (isUsageCapError(caught)) throw caught;
+      failure = designFailure(caught); // ag1-int:
     });
   }
   if (last) {
@@ -1376,5 +1385,7 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
   if (spec.base && spec.change) return { config: spec.base, needs: [], dropped: [], missing: [], cases: [], designed: false, notAdded: [] };
   const model = agentModelOf(agentModel) ?? (input.resources ? chooseModel(undefined, input.resources.models) : undefined); // AG02:
   const instructions = briefParts(spec.instructions || spec.description, { ...(spec.description && { description: spec.description }), tools: [], writes: false }); // SB17:
-  return { config: { name: spec.name, description: spec.description, instructions, tools: [], guardrails: briefGuardrails(undefined, false) /* SB17: */, ...(model && { model }) }, needs: [{ tool: 'test cases', kind: 'parameter', text: 'Add test cases on the Evaluations tab' }], dropped: [], missing: [], cases: [], designed: false, notAdded: (spec.tools ?? []).map((t) => ({ name: /^\s*([^:]{2,40}):/.exec(t)?.[1]?.trim() ?? t, reason: 'the design could not be made, so no tool was added' })) /* AG02: */ };
+  // ag1-int: the card says the design was not the architect's, and why, before what is left (sb3's live pass: the fallback card did not say so).
+  const fallbackNeed = { tool: 'design', kind: 'parameter' as const, text: `Designed without the architect: ${input.signal?.aborted ? 'the request was stopped' : (failure ?? 'the model proposed no design')}` };
+  return { config: { name: spec.name, description: spec.description, instructions, tools: [], guardrails: briefGuardrails(undefined, false) /* SB17: */, ...(model && { model }) }, needs: [fallbackNeed, { tool: 'test cases', kind: 'parameter', text: 'Add test cases on the Evaluations tab' }], dropped: [], missing: [], cases: [], designed: false, notAdded: (spec.tools ?? []).map((t) => ({ name: /^\s*([^:]{2,40}):/.exec(t)?.[1]?.trim() ?? t, reason: 'the design could not be made, so no tool was added' })) /* AG02: */ };
 }

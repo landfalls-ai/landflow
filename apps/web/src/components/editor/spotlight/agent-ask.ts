@@ -115,7 +115,8 @@ export async function designAgentCard(message: string, ask: AgentAsk, options: {
     const alone = createsAlone();
     patchReply(reply.id, {
       parts: [
-        { kind: 'text', text: `Designed “${card.name}”. ${alone ? 'Creating it now.' : `Review it, then create it${options.starter ? ' with a flow that runs it' : ''}.`}` },
+        // ag1-int: a fallback design (the architect's call failed or proposed nothing) says so; the card's Left row says why.
+        { kind: 'text', text: `${preview.designed === false ? `Made “${card.name}” from your words only: the Agent architect did not design it, so it has no tools yet.` : `Designed “${card.name}”.`} ${alone ? 'Creating it now.' : `Review it, then create it${options.starter ? ' with a flow that runs it' : ''}.`}` },
         { kind: 'agentCard', card },
       ],
     });

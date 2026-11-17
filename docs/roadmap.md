@@ -2824,7 +2824,7 @@ account's own console is the figure.
 - ~~The runner requires Ollama even for a cloud model name; the scenario `sb19-default-local` reading "the default is the one the server names"~~ done in wave ag1 (AG02): a `provider/model` name needs that provider's key and no Ollama, and `local-default` compares with the server's own default (`hostModel`). Left: the scorecard JSON keeping each run's reply and the stage prompt sizes.
 - The seventh **Unused (Data Table)** step in B1's plan and flow (a plan step with no use) and a `no-junk` reading that
   sees it.
-- ~~The design fallback saying so on the card (and not choosing a different model than the default for it)~~ the fallback now takes the host's model (AG02); saying so on the card is left.
+- ~~The design fallback saying so on the card (and not choosing a different model than the default for it)~~ the fallback now takes the host's model (AG02), and the card says it was designed without the architect, and why (wave ag1 integration).
 
 
 ## Platform guide and the landflow-dev plugin
