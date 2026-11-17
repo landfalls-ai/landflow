@@ -290,6 +290,12 @@ describe('SB14: a plan becomes nodes, one call per step', () => {
     await expect(buildFlow(ASK, undefined, [], [], { plan: B4 })).rejects.toThrow();
   });
 
+  it('fails the build, naming the time, when planning used the whole budget and no step could be asked', async () => {
+    script = B4_REPLIES;
+    await expect(buildFlow(ASK, undefined, [], [], { plan: B4, started: Date.now() - 3_600_000 })).rejects.toThrow(/planning used the whole time budget/);
+    expect(chatCalls()).toHaveLength(0);
+  });
+
   it('leaves out a step whose type is not available, names it, and never replaces it', async () => {
     const plan: BuildPlan = { ...B4, steps: [...B4.steps.slice(0, 4), step('s5', 'nope.teams', 'Post to Teams', 'Tell Teams', 's3')] };
     script = B4_REPLIES;

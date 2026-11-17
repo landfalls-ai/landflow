@@ -389,6 +389,8 @@ export async function buildFromPlan(plan: BuildPlan, prompt: string, options: Bu
 
   // Every call failed (a model that is down): that is an error to say, not a draft of empty steps.
   if (calls > 0 && !succeeded && firstError) throw firstError;
+  // The time was already gone when the first step was asked (planning used the whole budget): no call was made, and a draft of empty steps would say only "ran out of time" on each.
+  if (calls === 0 && !succeeded && firstError) throw new Error('planning used the whole time budget (LANDFLOW_BUILDER_TIMEOUT_SECONDS), so no step was built: try again, or raise the limit');
 
   // The plan's wiring, exactly; an edge to a step that was left out goes with it and the step it fed is named.
   const kept = new Set(nodes.map((n) => n.key));
