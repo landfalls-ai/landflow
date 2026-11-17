@@ -726,6 +726,9 @@ own sections are [call attribution](#call-attribution-wave-11) and [the gateway'
   sub-node's credential from the saved workflow in manual and chat runs (the published one in production runs), so an unsaved edit shows the saved credential. The public Chat trigger and webhook streams drop a tool's target.
 - A knowledge search's passages come from the chat's output text, which is cut at 12,000 characters for a standalone agent's
   knowledge base (2,000 for other tools); a longer answer shows its raw text.
+- A credential whose URL holds a user and password (a Grafana URL `http://admin:pw@…`) cannot be used by a plugin that
+  calls it through the host's HTTP client: fetch refuses a URL with credentials, so the call fails before it leaves and
+  says so (the URL redacted); the target still names the host and port only (found by the ag3 join tests).
 
 ## Agent knowledge from a folder (wave ag3)
 

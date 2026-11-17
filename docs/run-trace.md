@@ -343,7 +343,8 @@ the agent session and, for an AI Agent node's sub-node tools, by the translator)
 Agent and AI Agent nodes' `tool` stream chunks carry `tool.target`. A run from before this has no `target` and shows no row.
 
 A **knowledge search** names its collection, its store and how it searched (the embeddings `provider/model`, or `keyword
-search (BM25, built in)` for a base with no embeddings model) and, on SQLite, how many documents it holds. Its output is
+search (BM25, built in)` for a base with no embeddings model) and, on SQLite, how many documents it holds (counted with
+the call, so the tool span's end carries the settled target and the Reached row shows the count). Its output is
 shown as **passages** (`components/run-trace/passages.tsx`): the source file as a chip (`metadata.source`, else the upload's
 `fileName`), the page, the score to two places, and the text clamped to four lines with **Show all**. The raw JSON stays
 behind **Raw**. It is in the chat, the span's **Came back** and the timeline.
