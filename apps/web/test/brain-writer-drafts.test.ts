@@ -36,4 +36,17 @@ describe('drafts per pass', () => {
     expect(out.slice(3).every((f) => !f.proposal.draft)).toBe(true);
     expect(out).toHaveLength(5);
   });
+
+  it('keeps the draft an open suggestion already has: no rebuild, and it does not count against the cap', async () => {
+    built.mockClear();
+    const { upsertProposal } = await import('@/lib/server/brain/proposals');
+    const draft = { id: 'draft', name: 'Saved draft', active: false, nodes: [], connections: [] };
+    upsertProposal({ source: 'detector', detector: 'unmet-demand', fingerprint: 'unmet-demand-saved', target: { type: 'instance' }, title: 'Saved', why: 'asked often', evidence: [], ops: [], draft, risk: 'low', confidence: 0.6, score: 1 } as never);
+    const again = { ...finding(0), proposal: { ...finding(0).proposal, fingerprint: 'unmet-demand-saved' } } as ReturnType<typeof finding>;
+    const model = { provider: 'test', model: 'brain', generate: async () => ({ text: '{}', toolCalls: [], stopReason: 'stop' as const }) } as unknown as LanguageModel;
+    const out = await enrichFindings([again, ...[1, 2, 3, 4].map(finding)], { model });
+    expect(out[0].proposal.draft?.name).toBe('Saved draft');
+    expect(built).toHaveBeenCalledTimes(MAX_DRAFTS_PER_PASS);
+    expect(built.mock.calls.map((c) => c[0])).not.toContain('Build workflow 0');
+  });
 });

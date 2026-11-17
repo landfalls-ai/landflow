@@ -25,7 +25,10 @@ show up in the **Suggestions** card, and on the canvas of the workflow they are 
    explainable. The model only writes what needs words: a fix for a failure, tips for a slow step, persona rules, a
    draft workflow. Every suggestion shows its evidence. A draft workflow is built planned first like Spotlight's (one plan
    call, then one call per step and a send-back each, on `LANDFLOW_BRAIN_MODEL`: usually 5 to 15 calls, at most 26), so a
-   pass builds at most 3 drafts (`MAX_DRAFTS_PER_PASS`); a finding past the cap is saved without its draft.
+   pass builds at most 3 drafts (`MAX_DRAFTS_PER_PASS`); a finding past the cap is saved without its draft. The only draft
+   detector, *unmet demand*, already reports at most 3 requests, and a request whose suggestion is still open keeps its
+   saved draft: a pass does not rebuild it (the same fingerprint), so what a pass costs is the drafts of requests not yet
+   drafted.
 3. **It proposes; it never applies.** A suggestion is a list of [edit operations](assistant.md#edit-operations), checked
    against the workflow as it is now, or a draft workflow, or persona rules. Apply goes through the same governed save
    as an edit by hand (audit source `brain`).

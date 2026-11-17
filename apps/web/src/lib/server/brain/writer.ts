@@ -13,6 +13,7 @@ import type { LanguageModel, Workflow } from '@landflow/engine';
 import type { PortDigest, RunDigest } from '../../shared/assistant-ops';
 import { clip } from '../../shared/assistant-ops';
 import { agentStore } from '../agents/store';
+import { database } from '../db';
 import { assistantModel, DEFAULT_ASSISTANT_MODEL, modelLabel } from '../assistant/model';
 import { nodeDocs, availableTypes } from '../assistant/research';
 import { suggestAfterRun } from '../assistant/suggest';
@@ -163,6 +164,23 @@ async function enrichOne(finding: Finding, enrich: Enrichment, model: LanguageMo
   }
 }
 
+/**
+ * The draft an open or snoozed suggestion with this fingerprint already carries: a pass that finds the same request again
+ * keeps it instead of building the draft once more (a draft is 5 to 15 model calls). Undefined when there is none.
+ */
+function savedDraft(fingerprint: string | undefined): { draft: Workflow; model?: string } | undefined {
+  if (!fingerprint) return undefined;
+  try {
+    for (const row of database().all<{ data: string }>("SELECT data FROM proposals WHERE fingerprint = ? AND status IN ('open', 'snoozed')", fingerprint)) {
+      const saved = JSON.parse(row.data) as { draft?: Workflow; model?: string };
+      if (saved.draft) return { draft: saved.draft, model: saved.model };
+    }
+  } catch {
+    // Unreadable or no table: build the draft.
+  }
+  return undefined;
+}
+
 /** Enrich the findings that ask for it. Each call is on its own: one failing leaves the others. */
 export async function enrichFindings(findings: Finding[], options: { model?: LanguageModel; signal?: AbortSignal } = {}): Promise<Finding[]> {
   const model = brainModel(options.model);
@@ -172,6 +190,12 @@ export async function enrichFindings(findings: Finding[], options: { model?: Lan
   for (const finding of findings) {
     // A draft is built planned first: one plan call and one call per step, each with its send-back, on the brain's local
     // model. So a pass drafts only a few; the rest are kept as they are and drafted by a later pass.
+    // A request already drafted (its suggestion is still open) keeps its draft: it is neither rebuilt nor counted.
+    const saved = finding.enrich?.kind === 'draft' ? savedDraft(finding.proposal.fingerprint) : undefined;
+    if (saved) {
+      out.push({ ...finding, proposal: { ...finding.proposal, draft: saved.draft, why: `${finding.proposal.why} Applying creates a draft workflow “${saved.draft.name}” to start from.`.slice(0, 2_000), ...(saved.model && { model: saved.model }) } });
+      continue;
+    }
     const skipDraft = finding.enrich?.kind === 'draft' && drafts >= MAX_DRAFTS_PER_PASS;
     if (!finding.enrich || options.signal?.aborted || skipDraft) {
       out.push(finding);
