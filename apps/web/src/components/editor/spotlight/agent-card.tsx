@@ -12,7 +12,7 @@ import { smokeLine, type AgentCard as AgentCardData } from '@/lib/shared/agent-c
 import type { AgentConfig } from '@/lib/shared/agents';
 import { AgentAvatar } from '../../agents/avatar';
 import { Button } from '../../ui/button';
-import { createFromCard, dismissCard } from './agent-ask';
+import { createFromCard, dismissCard, setCardModel } from './agent-ask'; // AG02: setCardModel
 import { useAssistant } from '../assistant';
 
 const CASES_SHOWN = 2;
@@ -50,7 +50,25 @@ export function AgentCardView({ itemId, card, busy = false }: { itemId: string; 
         </div>
       </div>
       <div className="mt-2 space-y-1.5">
-        <Row label="Model">{card.model ?? <span className="text-t3">none yet: pick one on its page</span>}</Row>
+        {/* AG02: a designed card's Model is a select of the models this host offers (the host's builder model first); after Create it is text. */}
+        <Row label="Model">
+          {card.state === 'designed' && card.models && card.models.length > 1 ? (
+            <select
+              aria-label="Model the agent runs on"
+              value={card.model ?? card.models[0]}
+              onChange={(e) => setCardModel(itemId, e.target.value)}
+              className="h-7 w-full min-w-0 max-w-full rounded-md border border-hair bg-sf px-1.5 text-[12px] text-t1 focus:outline-none focus-visible:ring-2 focus-visible:ring-ac/40 max-md:h-11"
+            >
+              {[...new Set([...(card.model ? [card.model] : []), ...card.models])].map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          ) : (
+            (card.model ?? <span className="text-t3">none yet: pick one on its page</span>)
+          )}
+        </Row>
         <Row label="Tools">
           {card.tools.length ? (
             <ul className="space-y-0.5">
@@ -66,6 +84,18 @@ export function AgentCardView({ itemId, card, busy = false }: { itemId: string; 
             <span className="text-t3">none</span>
           )}
         </Row>
+        {/* AG02: the tools the ask named that the agent did not get, and why. */}
+        {card.notAdded && card.notAdded.length > 0 && (
+          <Row label="Not added">
+            <ul className="space-y-0.5">
+              {card.notAdded.map((n) => (
+                <li key={n.name}>
+                  {n.name}: {n.reason}
+                </li>
+              ))}
+            </ul>
+          </Row>
+        )}
         {card.knowledge && <Row label="Knows">The “{card.knowledge}” knowledge base</Row>}
         {card.practices && <Row label="Practices">Follows your approved practices</Row>}
         {card.guardrails.length > 0 && (

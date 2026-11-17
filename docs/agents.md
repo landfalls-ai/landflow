@@ -54,7 +54,7 @@ that designs it with you. Open it from **New agent** → **Design it with the Ag
 architect** on the roster. The chat is on the left; the draft it proposes stays on the right, whole: avatar, name, role,
 tone words, Always / Never rules, instructions, tools, and what you still have to finish.
 
-The architect runs on the model Spotlight uses (Settings → AI → Spotlight, [assistant.md](assistant.md#the-model-spotlight-uses)): the dialog sends none, so the server's default applies. Spotlight's own "new agent" design (`POST /api/agents/design`) takes the model picked in its header.
+The architect runs on the model Spotlight uses (Settings → AI → Spotlight, [assistant.md](assistant.md#the-model-spotlight-uses)): the dialog sends none, so the server's default applies. Spotlight's own "new agent" design (`POST /api/agents/design`) takes the model picked in its header. **The model an agent Spotlight designs runs on** is that one (the picker's, else the host's builder model, `LANDFLOW_BUILDER_MODEL`, `provider/model` or a bare Ollama name), never one the architect upgraded to: its own pick counts only when the ask names a model ("on Haiku", "use claude-opus-5-5"). The models it may choose from list the builder model first (`agentResources`), then the provider's others; on a host set to `anthropic/claude-sonnet-5-5` the card says Sonnet, not Opus. The dialog (no model sent) keeps the architect's own pick from that list.
 
 The architect knows what this instance has. Its prompt lists every plugin online with the nodes an agent can use as
 tools (actions whose only required inputs are main ones: the Abilities tab's own filter), within the node policy for
@@ -103,12 +103,15 @@ dialog's and Spotlight's design) is made to a brief in code (`architect.ts`, mar
   out" with its reason ("Slack: the request never asks for it (it would change things there)"). A tool the model left
   on the node's defaults, which would write, becomes a read when the request doesn't ask to write (the pull request
   resource and its first read operation for "pull requests"). The prompt says "the fewest tools; read before write".
-  On Spotlight's design path the request is only the new agent's own fields (name, description, instructions, tools, knowledge), never `designRequest`'s fixed sentences.
+  On Spotlight's design path the request is the person's whole ask (`ask`) with the tools and knowledge it named, never `designRequest`'s fixed sentences.
+  **A write is asked per tool** (`asksToWriteTo`): a write verb in the sentence that names the tool's app, or "email … to <address>" for a mail tool. Nouns alone ("customer comments", "an alert", "the email") are not write asks, so "the sentiment of customer comments" reads SQLite's **Select**. A tool whose operation writes where the ask does not ask to write becomes its read whether the model wrote the operation or left it out, and is dropped (and said) only when the node has no read.
+  **Every tool the ask names** (Spotlight sends them by their display names, `spec.tools`) that the draft lacks is added when exactly one node type matches by display or plugin name, else it is listed as **Not added** with why ("Jira: no plugin online has it"); one the ask never named stays out, and is not listed there.
+- **Instructions name only its tools.** The steps name the agent's tools by their call names; a `snake_case` word that is not one of them (the model wrote `send_slack_message` on an agent that only has Send Email) becomes the tool it plainly means when exactly one shares its words, else its clause is dropped and "instructions named send_slack_message, which it does not have" is listed under left out. A `Tools:` line always ends the steps and lists the real tools with what each is for.
 - **Writes behind approval.** Every node tool that writes gets `requireApproval: true`, so a person approves each call;
-  reads get none. A write is what the session's heuristic calls one (`writesOutside`, the HTTP method and the
+  reads never do. A write is what the session's heuristic calls one (`writesOutside`, the HTTP method and the
   operation's name: [assistant.md](assistant.md#autonomous-mode)) or, for a plugin that marks its reads
   (`idempotent: true`), an operation it doesn't mark. The preview shows **asks first** on them.
-- **Guardrail defaults.** Every draft gets an input guardrail that masks secrets in messages (`sanitize`, balanced), and,
+- **Guardrail defaults.** Every draft gets an input guardrail that masks secrets in messages (`sanitize`, balanced), except for a job that reads tokens (the ask names a JWT, token, hash, password, API key or decoding, or a tool is `go-crypto.jwtDecode`, `hash` or `base64`): that agent would see `<JWT>` instead of the token, so its messages are not masked, its answers are (`output`: secrets, balanced; a SHA-256, a UUID and a decoded JWT payload are not secrets to it), and the card says "Doesn’t mask tokens in messages: its job reads them". And,
   when it has any tool, a tool-result guardrail that blocks text that looks like instructions
   (`jailbreak` with `useModel: false`: pattern checks only, no extra model call). A draft's own guardrails are kept. The
   preview lists them in words ("Masks secrets in messages", "Ignores instructions inside tool results"). The architect's preview and Spotlight's agent card use one helper for those words (`guardrailWords`) and one condition for "Follows your approved practices" (`followsPractices`: on unless the config says `off`, as a run reads it).

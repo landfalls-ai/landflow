@@ -103,7 +103,7 @@ describe('designing Spotlight’s new agent', () => {
     ]);
     const design = await designAgent(spec, { types, actor: TEST_OWNER, resources, model });
     expect(design.designed).toBe(true);
-    expect(design.config).toMatchObject({ name: 'Legal Contract Reviewer', model: { provider: 'ollama', model: 'qwen3.8:latest' }, instructions: expect.stringContaining('Search the playbook, then flag clauses.') }); // SB17: inside the four parts
+    expect(design.config).toMatchObject({ name: 'Legal Contract Reviewer', model: { provider: 'ollama', model: 'qwen3-coder:30b' } /* AG02: the host's model, not the architect's pick */, instructions: expect.stringContaining('Search the playbook, then flag clauses.') }); // SB17: inside the four parts
     expect(design.config.tools).toEqual([expect.objectContaining({ type: 'knowledge', collection: 'policies' })]);
   });
 
@@ -140,7 +140,7 @@ describe('designing Spotlight’s new agent', () => {
     );
     const design = await designAgent(spec, { types, actor: TEST_OWNER, resources, model });
     expect(offered[0]).toEqual(['propose_design']);
-    expect(design).toMatchObject({ designed: true, config: { name: 'Legal Contract Reviewer', model: { provider: 'ollama', model: 'qwen3.8:latest' }, persona: { whatIDo: ['Reviews contracts', 'Flags risky clauses'] } } });
+    expect(design).toMatchObject({ designed: true, config: { name: 'Legal Contract Reviewer', model: { provider: 'ollama', model: 'qwen3-coder:30b' } /* AG02 */, persona: { whatIDo: ['Reviews contracts', 'Flags risky clauses'] } } });
     expect(design.config.tools).toEqual([expect.objectContaining({ type: 'knowledge', collection: 'policies' })]);
   });
 

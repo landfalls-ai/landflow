@@ -9,8 +9,8 @@
  */
 import { nanoid } from 'nanoid';
 import { api } from '@/lib/client/api';
-import { agentAsk, fallbackName, type AgentAsk } from '@/lib/shared/agent-ask';
-import { starterFlow, starterSample, type AgentCard, type AgentCardTool } from '@/lib/shared/agent-card';
+import { agentAsk, askCatalog, fallbackName, readsTokens, type AgentAsk, type AskCatalogEntry } from '@/lib/shared/agent-ask';
+import { starterFlow, starterSample, type AgentCard, type AgentCardTool, type AgentNotAdded } from '@/lib/shared/agent-card';
 import { followsPractices, guardrailWords, type AgentConfig } from '@/lib/shared/agents';
 import { draft as draftCall, useAssistant, type ChatItem } from '../assistant';
 import { useAutonomous } from '../autonomous';
@@ -33,10 +33,13 @@ function cardTool(tool: ToolConfig): AgentCardTool {
 }
 
 /** The card from what the design route answered (`POST /api/agents/design` with `preview`). */
-export function cardFromPreview(preview: Awaited<ReturnType<typeof designPreview>>, ask: AgentAsk, starter: boolean): AgentCard {
+export function cardFromPreview(preview: Awaited<ReturnType<typeof designPreview>> & { notAdded?: AgentNotAdded[]; models?: string[] /* AG02: */ }, ask: AgentAsk, starter: boolean, message?: string /* AG02: the person's whole ask */): AgentCard {
   const config = (preview.config ?? {}) as Partial<AgentConfig>;
   const tools = config.tools ?? [];
   const knowledge = tools.find((t) => t.type === 'knowledge');
+  // AG02: an agent whose job reads tokens has no secret masking on its messages: the card says why.
+  const guardrails = guardrailWords(config.guardrails);
+  if (!config.guardrails?.input?.enabled && readsTokens(`${message ?? ask.description} ${tools.map((t) => ('name' in t && t.name) || '').join(' ')}`)) guardrails.unshift('Doesn’t mask tokens in messages: its job reads them');
   return {
     name: config.name || ask.name || 'New agent',
     description: config.description || ask.description,
@@ -44,14 +47,31 @@ export function cardFromPreview(preview: Awaited<ReturnType<typeof designPreview
     tools: tools.filter((t) => t.type !== 'knowledge').map(cardTool),
     ...(knowledge && knowledge.type === 'knowledge' && { knowledge: ('collection' in knowledge && knowledge.collection) || knowledge.name }),
     practices: followsPractices(config.practices),
-    guardrails: guardrailWords(config.guardrails),
+    guardrails,
     cases: preview.cases ?? [],
     needs: (preview.needs ?? []).map((n) => n.text),
     missing: (preview.missing ?? []).map((m) => m.capability),
     config: config as Record<string, unknown>,
     state: 'designed',
     ...(starter && { starter: true }),
+    ...(message && { ask: message }), // AG02:
+    ...(preview.notAdded?.length && { notAdded: preview.notAdded }), // AG02:
+    ...(preview.models?.length && { models: preview.models }), // AG02:
   };
+}
+
+/** AG02: the card's Model select: the agent runs on `model` (`provider/model`) from here on; Create sends the config as it is. */
+export function setCardModel(itemId: string, model: string): void {
+  const [provider, ...rest] = model.split('/');
+  if (!['anthropic', 'ollama', 'openai'].includes(provider) || !rest.length) return;
+  useAssistant.getState().updateParts(itemId, (parts) =>
+    parts.map((p) => (p.kind === 'agentCard' && p.card.state === 'designed' ? { ...p, card: { ...p.card, model, config: { ...p.card.config, model: { ...(p.card.config.model as object | undefined), provider, model: rest.join('/') } } } } : p)),
+  );
+}
+
+/** AG02: the nodes the editor offers (core ones only by a name of two or more words), by display name and plugin name: the tools a message may name. */
+function nodeCatalog(): AskCatalogEntry[] {
+  return askCatalog(Object.values(useEditor.getState().nodeTypes));
 }
 
 /**
@@ -61,7 +81,7 @@ export function cardFromPreview(preview: Awaited<ReturnType<typeof designPreview
  */
 export function cardAskFor(message: string): AgentAsk | undefined {
   const nodes = useEditor.getState().nodes;
-  const ask = agentAsk(message, nodes.map((n) => n.data.wf.name));
+  const ask = agentAsk(message, nodes.map((n) => n.data.wf.name), nodeCatalog()); // AG02: the node and plugin names the editor offers
   return ask && (!ask.placed || !nodes.length) ? ask : undefined;
 }
 
@@ -74,7 +94,7 @@ const createsAlone = () => useAutonomous.getState().on && autonomyOf(useEditor.g
 
 /** Designs the agent the message asks for and shows it as a card; the canvas stays as it is until Create. */
 export async function designAgentCard(message: string, ask: AgentAsk, options: { starter: boolean }): Promise<void> {
-  const designName = ask.name ?? fallbackName(ask.description);
+  const designName = ask.name ?? fallbackName(ask.description, ask.tools, nodeCatalog());
   const reply: ChatItem = { id: nanoid(8), role: 'assistant', parts: [{ kind: 'text', text: `Designing “${designName}”…` }] };
   useAssistant.getState().append([{ id: nanoid(8), role: 'user', text: message }, reply]);
   // The design is an agent's, not a flow's: the panel shows "Designing “…”" (the agent row), never the flow placeholder.
@@ -86,9 +106,9 @@ export async function designAgentCard(message: string, ask: AgentAsk, options: {
   const abort = (draftCall.request = new AbortController());
   try {
     const workflow = useEditor.getState().name;
-    const spec = { name: designName, description: ask.description, instructions: '', ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }) };
+    const spec = { name: designName, description: ask.description, instructions: '', ask: message.slice(0, 4000) /* AG02: the whole ask */, ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }) };
     const preview = await designPreview(spec, workflow && !/^untitled/i.test(workflow) ? { workflow } : {}, abort.signal);
-    const card = { ...cardFromPreview(preview, ask, options.starter), workflowId: workflowAtStart };
+    const card = { ...cardFromPreview(preview, ask, options.starter, message), workflowId: workflowAtStart };
     const alone = createsAlone();
     patchReply(reply.id, {
       parts: [

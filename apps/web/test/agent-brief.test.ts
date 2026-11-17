@@ -123,7 +123,7 @@ describe('the four fixed parts', () => {
     const kept = briefParts('Input: A ticket.\nSteps:\n1. Read it.\n2. Reply with reply_tool.', { tools: ['reply_tool'], writes: false });
     expect(kept).toContain('Input: A ticket.');
     expect(kept).toContain('2. Reply with reply_tool.');
-    expect(kept).not.toMatch(/Tools:/);
+    expect(kept).toMatch(/3\. Tools: reply_tool\./); // AG02: the Tools line is always there
     expect(kept).toMatch(/Output: .+/);
     expect(kept).toMatch(/Hand over when: .+/);
     expect(briefParts('', { tools: [], writes: false })).toMatch(/Input: .+\nSteps:\n1\..+\nOutput: .+\nHand over when: .+/s);
@@ -198,7 +198,7 @@ describe('least privilege and approval on writes', () => {
   it('drops a write the request never asked for, and turns a default write into a read', () => {
     const asked = 'an agent that reviews pull requests';
     const { config, dropped } = draftFrom({ name: 'Reviewer', role: 'Reviewer', instructions: 'Review.', tools: [github('comment'), { type: 'node', nodeType: 'github.github', name: 'github' }] }, context(asked));
-    expect(dropped).toEqual([expect.stringContaining('GitHub (comment): the request asks to read or check')]);
+    expect(dropped).toEqual([]); // AG02: a write the request does not ask for becomes the node's read, whether the model wrote it or not
     const [tool] = nodeTools(config);
     expect(tool.parameters).toMatchObject({ resource: 'pullRequest', operation: 'get' });
     expect(tool.requireApproval).toBeUndefined();

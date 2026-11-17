@@ -65,7 +65,40 @@ const baseVerb = (verbs: string, said: string) => verbs.split('|').find((v) => n
 const FILLER = '(?:(?:the|our|its|all|open|new|any|my|your|their|a|an)\\s+)*';
 const NOUN_STOP = new Set(['and', 'or', 'to', 'for', 'from', 'with', 'in', 'on', 'that', 'which', 'when', 'then', 'tool', 'tools', 'integration', 'access', 'as']);
 
-function toolsOf(message: string): string[] {
+/** AG02: a node or plugin the editor offers, by the names a person types ("Send Email", "Grafana"); the editor passes its non-core node types. */
+export interface AskCatalogEntry {
+  displayName: string;
+  pluginName?: string;
+  /** A core node: it names no plugin, so it never decides an agent's name. */
+  core?: boolean;
+}
+
+/**
+ * AG02: the node types a message may name as tools: every plugin node, and a core node whose display name has two or more
+ * words ("HTTP Request"), so a one-word core node ("Code", "Merge") never matches ordinary text.
+ */
+export function askCatalog(types: Array<{ pluginId: string; pluginName?: string; descriptor: { displayName: string } }>): AskCatalogEntry[] {
+  return types
+    .filter((t) => t.pluginId !== 'core' || /\S\s+\S/.test(t.descriptor.displayName.trim()))
+    .map((t) => (t.pluginId === 'core' ? { displayName: t.descriptor.displayName, core: true } : { displayName: t.descriptor.displayName, pluginName: t.pluginName }));
+}
+
+/** AG02: whether `name` is in `message` as whole words ("field statistics"), allowing a plural on its last word. */
+function names(message: string, name: string): boolean {
+  const text = name.trim();
+  if (text.length < 4) return false;
+  const body = /[^aeiou]y$/i.test(text) ? `${escape(text.slice(0, -1)).replace(/\s+/g, '[\\s-]+')}(?:y|ies|ied)` : `${escape(text).replace(/\s+/g, '[\\s-]+')}(?:e?s)?`;
+  return new RegExp(`(?<![\\w-])${body}(?![\\w-])`, 'i').test(message);
+}
+
+/** AG02: a plugin node of two or more words whose every word is in the message in some form, in any order ("decodes JWTs" names JWT Decode). */
+function wordsNamed(message: string, entry: AskCatalogEntry): boolean {
+  const words = entry.displayName.trim().split(/\s+/);
+  if (entry.core || words.length < 2 || words.some((w) => w.length < 3)) return false;
+  return words.every((w) => new RegExp(`(?<![\\w-])${escape(w.replace(/e$/i, ''))}(?:e?s|e?d|ing|e)?(?![\\w-])`, 'i').test(message));
+}
+
+function toolsOf(message: string, catalog: AskCatalogEntry[] = []): string[] {
   const found: string[] = [];
   const add = (tool: string) => {
     const cut = tool.slice(0, 80);
@@ -86,6 +119,13 @@ function toolsOf(message: string): string[] {
     if (new RegExp(`\\b(?:with|using|via|through)\\s+(?:a\\s+|the\\s+|our\\s+)?${name}(?:\\s+(?:tool|integration|access))?\\b|\\b${name}\\s+(?:tool|integration)\\b`, 'i').test(message)) {
       if (!found.some((t) => t.startsWith(`${app.name}:`))) add(`${app.name}: use ${app.noun}`);
     }
+  }
+  // AG02: the nodes and plugins the message names by their display names ("Normalize Alert", "SQLite", "Grafana"): a plugin's name only when none of its nodes is named.
+  const nodes = catalog.filter((c) => names(message, c.displayName) || wordsNamed(message, c));
+  for (const entry of nodes) add(entry.displayName);
+  for (const plugin of new Set(catalog.map((c) => c.pluginName).filter((n): n is string => Boolean(n)))) {
+    if (!names(message, plugin) || nodes.some((n) => n.pluginName === plugin)) continue;
+    add(plugin);
   }
   return found.slice(0, 8);
 }
@@ -111,25 +151,43 @@ const AGENT_NOUN: Record<string, string> = { review: 'reviewer', answer: 'answer
 
 const cap = (text: string) => (text ? text[0].toUpperCase() + text.slice(1) : text);
 
-/** The job after "that|which|to": "reviews pull requests against our practices". */
-function jobOf(message: string): string {
-  const after = /\b(?:agent|assistant)\s+(?:that|which|to|who)\s+([^.!?\n]+)/i.exec(message) ?? /\b(?:that|which|who)\s+([^.!?\n]+)/i.exec(message);
-  return (after?.[1] ?? '').split(/,\s*(?:and\s+)?(?:then\s+)?(?:run|put|add|place|insert|make|use)\b/i)[0].trim();
+/** AG02: the sentences of a text: split only at `.`, `!` or `?` followed by a space or the end, never inside an address, a domain, a number or a file name. */
+export function sentencesOf(text: string): string[] {
+  return text.split(/(?<=[.!?])\s+/).map((t) => t.trim()).filter(Boolean);
 }
 
-/** A short name from the job: "PR reviewer", "Docs answerer", "Incident summariser"; none when the job names no thing. */
+/** The job after "that|which|to", with the sentences that follow it (up to 500 characters): "reviews pull requests against our practices". */
+function jobOf(message: string): string {
+  const after = /\b(?:agent|assistant)\s+(?:that|which|to|who)\s+([\s\S]+)/i.exec(message) ?? /\b(?:that|which|who)\s+([\s\S]+)/i.exec(message); // AG02: the whole ask, not up to the first dot
+  const [first = '', ...others] = sentencesOf(after?.[1] ?? '');
+  const head = first.split(/,\s*(?:and\s+)?(?:then\s+)?(?:run|put|add|place|insert|make|use)\b/i)[0].trim();
+  const kept: string[] = [];
+  for (const sentence of [head, ...others]) {
+    if (kept.length && kept.join(' ').length + sentence.length + 1 > 500) break;
+    kept.push(sentence);
+  }
+  return kept.join(' ').trim();
+}
+
+/** AG02: words a name never starts with or keeps: articles, pronouns, question words, fillers. */
+const NAME_STOP = new Set(['a', 'an', 'the', 'our', 'its', 'my', 'your', 'their', 'his', 'her', 'me', 'us', 'we', 'you', 'it', 'them', 'this', 'that', 'these', 'those', 'what', 'which', 'who', 'whether', 'if', 'is', 'are', 'be', 'been', 'any', 'all', 'each', 'every', 'some', 'new', 'open', 'incoming', 'customer', 'support', 'against', 'about', 'into', 'by', 'of', 'at', 'it', 'everything', 'anything', 'and', 'or', 'to', 'for', 'from', 'with', 'in', 'on', 'then', 'tool', 'tools', 'integration', 'access', 'as']);
+/** AG02: plural nouns that stay plural in a name ("Sales data analyst"). */
+const KEEP_PLURAL = /^(?:sales|news|analytics|metrics|logs|data|status|series)$/;
+
+/** A short name from the job: "Alert triager", "Sales data analyst", "PR reviewer", "Docs answerer"; none when the job names no thing. */
 function nameOf(job: string, knowledge: string | undefined): string | undefined {
-  const m = /^([a-z]+?)(?:e?s)?\s+(?:(?:the|our|all|any|each|every|new|open|incoming|customer|support)\s+)*([a-z-]+(?:\s+[a-z-]+)?)/i.exec(job.toLowerCase());
+  const m = /^([a-z]+?)(?:e?s)?\s+((?:[a-z-]+\s+){0,4}[a-z-]+)/i.exec(job.toLowerCase());
   if (!m) return undefined;
   const verb = Object.keys(AGENT_NOUN).find((v) => m[1].startsWith(v) || (m[1].length >= 4 && v.startsWith(m[1])));
   if (!verb) return undefined;
   const role = AGENT_NOUN[verb];
   // "answers customer questions from the docs" is the Docs answerer; "reviews pull requests" the PR reviewer.
   if (verb === 'answer' && knowledge) return cap(`${knowledge.split(/\s+/).pop()} ${role}`).slice(0, 40);
-  const words = m[2].split(/\s+/);
-  let subject = words.filter((w) => !NOUN_STOP.has(w) && !/^(?:against|about|into|by|of|at|it|them|this|these|those|each|everything|anything)$/.test(w))[0] ?? '';
+  const words = m[2].split(/\s+/).filter((w) => !NAME_STOP.has(w));
+  let subject = words[0] ?? '';
   if (/^pull$/.test(subject)) subject = 'PR';
-  else subject = subject.replace(/ies$/, 'y').replace(/(?<=[^s])s$/, '');
+  else if (role === 'analyst' && words[1] === 'data' && subject !== 'data') subject = `${subject} data`; // "analyses sales data": the Sales data analyst
+  else if (!KEEP_PLURAL.test(subject)) subject = subject.replace(/ies$/, 'y').replace(/(?<=[^s])s$/, '');
   if (/^(?:pr|ci|qa|ui|api|sla|crm|seo|hr)$/i.test(subject)) subject = subject.toUpperCase();
   return subject ? `${subject[0].toUpperCase()}${subject.slice(1)} ${role}`.slice(0, 40) : undefined;
 }
@@ -138,14 +196,15 @@ function nameOf(job: string, knowledge: string | undefined): string | undefined 
 function descriptionOf(message: string, job: string): string {
   const text = (job || message.trim().replace(new RegExp(`^.*?${CREATE}${OBJECT}\\s*(?:called|named)?\\s*`, 'i'), '')).replace(/\s+/g, ' ').trim() || message.trim();
   const sentence = text.replace(/[.!?]+$/, '');
-  return `${cap(sentence)}.`.slice(0, 500);
+  return `${cap(sentence)}.`.slice(0, 500); // AG02: `jobOf` already keeps the whole ask's sentences, an address whole
 }
 
 /**
  * Whether `message` asks for an agent, and what it says about it. `nodeNames` are the steps on the canvas (an empty
- * canvas has none, so nothing is placed by name).
+ * canvas has none, so nothing is placed by name). `catalog` (AG02): the nodes and plugins the editor offers, so the tools
+ * the message names by their display names ("Send Email", "SQLite") are read too.
  */
-export function agentAsk(message: string, nodeNames: string[] = []): AgentAsk | undefined {
+export function agentAsk(message: string, nodeNames: string[] = [], catalog: AskCatalogEntry[] = []): AgentAsk | undefined {
   const full = message.trim();
   // "create a new agent named Sales helper that …": the name is the person's own, and the rest reads as "an agent that …".
   const named = /\b(?:named|called)\s+["“'‘]?([^"”'’,.!?\n]{2,40}?)["”'’]?\s+(?=that\b|which\b|who\b|to\b)/i.exec(full);
@@ -154,16 +213,36 @@ export function agentAsk(message: string, nodeNames: string[] = []): AgentAsk | 
   if (!AS_OBJECT.test(text) && !AS_SUBJECT.test(text)) return undefined;
   const knowledge = knowledgeOf(text);
   const job = jobOf(text);
-  const name = named ? named[1].trim() : nameOf(job, knowledge);
-  return { ...(name && { name }), description: descriptionOf(text, job), placed: isPlaced(text, nodeNames), tools: toolsOf(text), ...(knowledge && { knowledge }) };
+  const tools = toolsOf(text, catalog);
+  const description = descriptionOf(text, job);
+  const name = named ? named[1].trim() : nameOf(sentencesOf(job)[0] ?? job, knowledge); // none when the job names no thing: the card then uses `fallbackName`
+  return { ...(name && { name }), description, placed: isPlaced(text, nodeNames), tools, ...(knowledge && { knowledge }) };
 }
 
-/** A name for the card when the ask gave none (the design route keeps the name it is sent): "Weekly report agent". */
-export function fallbackName(description: string): string {
-  const skip = /^(?:a|an|the|our|its|my|your|their|with|for|to|of|in|on|from|and|or|that|which|about|it|them|new|any|all)$/;
-  const words = description.replace(/[.!?]+$/, '').toLowerCase().split(/\s+/).slice(1).filter((w) => w && !skip.test(w)).slice(0, 2);
+/**
+ * A name for the card when the ask gave none: a short noun name with no article, pronoun or comma. One plugin's nodes
+ * named ("Get Alerts" of Grafana): "Grafana alerts agent"; three or more tools of different plugins: "Utility helper";
+ * else the description's first nouns ("Weekly report agent").
+ */
+export function fallbackName(description: string, tools: string[] = [], catalog: AskCatalogEntry[] = []): string {
+  const plugins = new Set<string>();
+  for (const tool of tools) {
+    const entry = catalog.find((c) => c.displayName.toLowerCase() === tool.toLowerCase());
+    if (entry?.core) continue; // a core node (HTTP Request) belongs to no plugin
+    plugins.add(entry?.pluginName ?? entry?.displayName ?? tool.split(':')[0]);
+  }
+  const [app] = plugins;
+  if (plugins.size === 1 && app) {
+    const noun = tools.map((t) => t.split(/\s+/).pop() ?? '').find((w) => /^[A-Za-z]{4,}s$/.test(w));
+    return `${cap(app)}${noun && noun.toLowerCase() !== app.toLowerCase() ? ` ${noun.toLowerCase()}` : ''} agent`.slice(0, 40);
+  }
+  if (tools.length >= 3 && plugins.size >= 2) return 'Utility helper';
+  const words = description.replace(/[.!?]+$/, '').toLowerCase().split(/\s+/).slice(1).map((w) => w.replace(/[^a-z0-9-]/g, '')).filter((w) => w && !NAME_STOP.has(w)).slice(0, 2);
   return words.length ? `${cap(words.join(' '))} agent`.slice(0, 40) : 'New agent';
 }
+
+/** AG02: the message reads tokens, hashes or keys (a JWT decoder, a hasher): its input is not secret-masked (the agent's own job is to read them). */
+export const readsTokens = (text: string): boolean => /\b(?:jwts?|json web tokens?|tokens?|hash(?:es|ing|ed)?|sha-?\d+|md5|passwords?|api[ -]?keys?|decod(?:e|es|ed|ing)|base-?64)\b/i.test(text);
 
 /**
  * A `newAgent` op (as the chat proposes it: `{ op: 'newAgent' }`, or an `addNode` carrying `newAgent`) that has no `tools`

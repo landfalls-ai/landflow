@@ -327,9 +327,9 @@ writes the same as JSON (sizes and check results only, no reply or ask text). Va
 `LANDFLOW_SPOTLIGHT_ONLY` (comma-separated scenario ids or owners, e.g. `SB03,sb04-why-last-run`),
 `LANDFLOW_SPOTLIGHT_REPORT` (the JSON path; default `$TMPDIR/landflow-spotlight-scorecard.json`),
 `LANDFLOW_SPOTLIGHT_ECHO_PORT` (the suite's echo server, default 3399) and `LANDFLOW_SPOTLIGHT_PLUGINS` (comma-separated
-local plugin endpoints that serve Linear and Messaging; without it the live form registers the bundled Linear and
-Messaging plugins in the test process, so builds see the core nodes plus those two, not the whole bundled catalog; the
-scripted form uses small stand-ins). The guard, `test/spotlight-scenarios/local-only.cjs`, makes every connection to
+local plugin endpoints, the Go and Python plugins a scenario's `start.plugins` names; the live form registers the bundled Linear and
+Messaging plugins in the test process either way, so builds see the core nodes plus those two, not the whole bundled catalog; the
+scripted form uses small stand-ins). **A model of another provider** (`LANDFLOW_SPOTLIGHT_MODEL=anthropic/claude-sonnet-5-5`) needs that provider's key in the environment and no Ollama (the runner stops with the variable's name when the key is missing, and never prints it); a bare or `ollama/` name needs Ollama as before. A scenario's `start.plugins` (AG02, ids `triage`, `grafana`, `text-toolkit`, `databases`, `go-crypto`, `py-insights`, `messaging`) registers the plugins it needs: the scripted form builds stand-ins from the recorded manifests (each records the item it was called with, `Outcome.toolInputs`; Grafana runs its own code in-process), the live form runs the TypeScript ones in-process and the Go and Python ones from `LANDFLOW_SPOTLIGHT_PLUGINS`; a live run whose plugin is not online is listed under "Skipped live" with the reason. Wave ag1's scenario files are `sb-agNN.ts` (the runner globs `sb*.ts`; `owner: 'AGNN'`). The guard, `test/spotlight-scenarios/local-only.cjs`, makes every connection to
 anything but this machine fail with `ECONNREFUSED` (and every lookup of another name with `ENOTFOUND`), printing
 `[local-only] refused <host>:<port>`. It must be on from the process's start: the runner stops with a message when the live form is asked for
 and it is not loaded, so the command above sets `NODE_OPTIONS` (a live check of a running host does the same). It covers

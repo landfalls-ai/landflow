@@ -2821,12 +2821,10 @@ account's own console is the figure.
 - The whole pass above after `sb13-chat-plan` once the key works again: the sb3 owners' scenarios (sb13 to sb18), items 3
   to 7 and the browser flows of items 4 and 6; the phone shots of the plan card, the summary card, the agent card and the
   agent row.
-- The runner (`test/spotlight-scenarios.test.ts`) requires Ollama even for a cloud model name; a guard for `provider/model`
-  names (no Ollama check), the scorecard JSON keeping each run's reply and the stage prompt sizes, and the scenario
-  `sb19-default-local` reading "the default is the one the server names" would make a Claude pass cheaper to read.
+- ~~The runner requires Ollama even for a cloud model name; the scenario `sb19-default-local` reading "the default is the one the server names"~~ done in wave ag1 (AG02): a `provider/model` name needs that provider's key and no Ollama, and `local-default` compares with the server's own default (`hostModel`). Left: the scorecard JSON keeping each run's reply and the stage prompt sizes.
 - The seventh **Unused (Data Table)** step in B1's plan and flow (a plan step with no use) and a `no-junk` reading that
   sees it.
-- The design fallback saying so on the card (and not choosing a different model than the default for it).
+- ~~The design fallback saying so on the card (and not choosing a different model than the default for it)~~ the fallback now takes the host's model (AG02); saying so on the card is left.
 
 
 ## Platform guide and the landflow-dev plugin
@@ -2842,3 +2840,4 @@ account's own console is the figure.
 ## Agents that work locally (wave ag1)
 
 - **Built (2026-11-17, AG01):** the editor chat runs on the typed message: items a run was given (a chat message) beat the start node's pin, and Unpin is saved (the draft always sends `pinData`, `{}` when none are left), so a reload does not bring the pin back ([features/engine.md](features/engine.md), [features/editor.md](features/editor.md)).
+- **AG02, built (2026-11-17):** Spotlight's agent design follows the ask: the agent runs on the host's builder model (or Spotlight's picked one) and the card's Model is a select; the whole ask is read (the address kept, tools named by display name added or listed under Not added); names are short nouns; the steps name only the agent's own tools; writes are asked per app so reads never ask first; a token-reading job is not secret-masked on input; the runner takes a cloud model without Ollama. **Left open:** the live pass on Claude with the Go and Python plugins, and the Opus defaults outside Spotlight's design (the Anthropic Chat Model node, `evaluations/online.ts`, the team builder).
