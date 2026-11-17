@@ -525,7 +525,8 @@ export function briefParts(
 // AG02: the steps name the agent's tools by their call names. A snake_case word that names a tool (it starts like a tool call or follows
 // "call/use/run") and is not one of the agent's tools becomes the tool it plainly means (exactly one shares its words), else its clause goes.
 const CALL_VERBS = /^(?:send|get|query|create|list|read|write|post|fetch|find|search|run|call|use|check|comment|update|delete|lookup|extract|normalize|decode|hash|analy[sz]e|summari[sz]e|notify|email|insert|select|count|parse|generate|convert|publish|slack|jira|github)_/;
-const FIELD_WORD = /_(?:id|ids|at|number|name|key|url|date|time|type|status|count|value|index|ref)$/;
+const FIELD_WORD = /_(?:id|ids|at|number|name|key|url|date|time|type|status|count|value|index|ref|address|email|body|subject|text)$/;
+const DETERMINERS = '(?:the|each|its|their|a|an|every)';
 const GENERIC_WORDS = new Set(['id', 'get', 'send', 'query', 'create', 'list', 'read', 'write', 'post', 'call', 'run', 'fetch', 'find', 'search', 'message', 'messages', 'data', 'tool', 'item', 'items', 'all', 'one', 'new', 'set', 'update', 'check', 'lookup', 'use']);
 const wordsOf = (value: string) => value.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1);
 
@@ -537,7 +538,14 @@ export function nameOnlyOwnTools(instructions: string, tools: Array<{ name: stri
     let current = line;
     const foreign = [...new Set(current.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [])].filter((t) => {
       if (own.has(t)) return false;
-      if (CALL_VERBS.test(t) || new RegExp(`\\b(?:call|invoke|run)\\s+\`?${t}\\b`, 'i').test(current)) return true;
+      if (new RegExp(`\\b(?:call|invoke|run)\\s+\`?${t}\\b`, 'i').test(current)) return true;
+      if (CALL_VERBS.test(t)) {
+        if (new RegExp(`\\buse\\s+\`?${t}\\b`, 'i').test(current)) return true;
+        // Three or more words ("get_alert_status") read as a tool whatever the suffix; two ("run_id", "update_time", "email_address") are a field when they end like one or follow a determiner.
+        if (t.split('_').length >= 3) return true;
+        if (FIELD_WORD.test(t) || new RegExp(`(?:\\b${DETERMINERS}|\\w['’]s)\\s+\`?${t}\\b`, 'i').test(current)) return false;
+        return true;
+      }
       // After "use", or later in the same sentence as "call" ("call jwt_decode, hash or slugify_title"): a tool unless it is shaped like a field.
       return !FIELD_WORD.test(t) && (new RegExp(`\\buse\\s+\`?${t}\\b`, 'i').test(current) || new RegExp(`\\b(?:call|invoke|run)\\b[^.\\n]*?\\b${t}\\b`, 'i').test(current));
     });

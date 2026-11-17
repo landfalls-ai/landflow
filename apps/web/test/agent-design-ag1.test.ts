@@ -196,6 +196,32 @@ describe('every typed ask (10a, 60b, 30d, 50c): a sensible name, and each asked 
     for (const wanted of [/getAlerts/, /getAlertDetails|alert.?details/i, /httpRequest|HTTP Request/i]) expect(have).toMatch(wanted);
   });
 
+  it('reads "email a short summary to <address>" as Send Email and "normalise" as Normalize Alert', () => {
+    const tools = agentAsk(TYPED.triage, [], catalog())!.tools;
+    expect(tools).toEqual(expect.arrayContaining(['Normalize Alert', 'Send Email']));
+    expect(agentAsk('Create an agent that mails the report to ops@landflow.test', [], catalog())!.tools).toContain('Send Email');
+    expect(agentAsk('Create an agent that emails nobody and answers questions', [], catalog())!.tools).not.toContain('Send Email'); // no address, no mail tool
+  });
+
+  it('puts Send Email on the triage agent (asks first), the address untouched, when the architect leaves it out', async () => {
+    const { model } = scripted([design({ name: 'Alert triager', nodeTools: 'triage.normalizeAlert, triage.extractIocs' }), { text: 'Designed.' }]);
+    const result = await designAgent(spec(TYPED.triage), { types, actor: TEST_OWNER, model });
+    const mail = nodeTools(result.config).find((t) => t.nodeType === 'messaging.emailSend');
+    if (mail) expect(mail).toMatchObject({ requireApproval: true });
+    else expect(result.notAdded.map((n) => n.name)).toContain('Send Email');
+    expect(mail, 'Send Email is on the agent').toBeTruthy();
+    expect(JSON.stringify(result.config)).not.toMatch(/oncall@landflow(?!\.test)/);
+  });
+
+  it('does the same for a Jira variant: Jira is not added (no plugin), Send Email is', async () => {
+    const ask = 'Create an agent that triages an alert I paste: normalise it, pull out the IOCs, open a Jira ticket, and email a short summary to oncall@landflow.test.';
+    const { model } = scripted([design({ name: 'Alert triager', nodeTools: 'triage.normalizeAlert, triage.extractIocs' }), { text: 'Designed.' }]);
+    const result = await designAgent(spec(ask), { types, actor: TEST_OWNER, model });
+    const mail = nodeTools(result.config).find((t) => t.nodeType === 'messaging.emailSend');
+    expect(mail ? mail.requireApproval : result.notAdded.map((n) => n.name)).toSatisfy((v: unknown) => v === true || (Array.isArray(v) && v.includes('Send Email')));
+    expect(result.notAdded.map((n) => n.name)).toContain('Jira');
+  });
+
   it('accounts for every tool of the sales ask', async () => {
     const { model } = scripted([design({ name: 'Sales data analyst', nodeTools: 'databases.sqlite' }), { text: 'Designed.' }]);
     const result = await designAgent(spec(TYPED.sales), { types, actor: TEST_OWNER, model });
@@ -219,6 +245,24 @@ describe('instruction tool names that end like a field', () => {
     expect(dropped.join(' ')).toContain('lookup_alert');
     const own = 'Steps:\n1. Call get_alerts and read the customer_id from each.';
     expect(nameOnlyOwnTools(own, tools)).toEqual({ text: own, dropped: [] });
+  });
+  it('leaves a verb_noun field alone: run_id, post_id, list_id, update_time, email_address (the text unchanged, nothing dropped)', () => {
+    for (const line of [
+      'Read the run_id and the post_id from the input.',
+      'Sort by update_time, newest first.',
+      'Read each alert\'s list_id and group by it.',
+      'Reply to the email_address in the message.',
+      'Check the send_time and get_count of the batch.',
+    ]) {
+      const text = `Steps:\n1. ${line}`;
+      expect(nameOnlyOwnTools(text, tools), line).toEqual({ text, dropped: [] });
+    }
+  });
+  it('still reads a three-word or called token as a tool, whatever its suffix', () => {
+    for (const line of ['Use update_ticket_status when it is closed.', 'Then call lookup_customer_name.', 'Run get_alert_status first.']) {
+      const { dropped } = nameOnlyOwnTools(`Steps:\n1. ${line}`, tools);
+      expect(dropped.length, line).toBeGreaterThan(0);
+    }
   });
   it('leaves a bare field word alone', () => {
     const line = 'Steps:\n1. Read the customer_id and `user_id` and ticket_number from the input.';

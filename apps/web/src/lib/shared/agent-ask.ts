@@ -95,8 +95,13 @@ function names(message: string, name: string): boolean {
 function wordsNamed(message: string, entry: AskCatalogEntry): boolean {
   const words = entry.displayName.trim().split(/\s+/);
   if (entry.core || words.length < 2 || words.some((w) => w.length < 3)) return false;
-  return words.every((w) => new RegExp(`(?<![\\w-])${escape(w.replace(/e$/i, ''))}(?:e?s|e?d|ing|e)?(?![\\w-])`, 'i').test(message));
+  // -ise and -ize are one word ("normalise" names Normalize Alert).
+  const stem = (w: string) => escape(w.replace(/e$/i, '')).replace(/i[sz]$/i, 'i[sz]');
+  return words.every((w) => new RegExp(`(?<![\\w-])${stem(w)}(?:e?s|e?d|ing|e)?(?![\\w-])`, 'i').test(message));
 }
+
+/** AG02: "email/mail/send … to <address>": a message that sends to an address it was given. */
+const MAIL_TO = /\b(?:e-?mail|mail|send)(?:e?s|ed)?\b[^.!?\n]*?\bto\s+[^\s@,;]+@[^\s@,;]+/i;
 
 /** The tools a message names: apps by what it does with them ("Linear: read issues"), and catalog nodes and plugins by name (ag1-int: a revise reads its change with it too). */
 export function toolsOf(message: string, catalog: AskCatalogEntry[] = []): string[] {
@@ -127,6 +132,11 @@ export function toolsOf(message: string, catalog: AskCatalogEntry[] = []): strin
   for (const plugin of new Set(catalog.map((c) => c.pluginName).filter((n): n is string => Boolean(n)))) {
     if (!names(message, plugin) || nodes.some((n) => n.pluginName === plugin)) continue;
     add(plugin);
+  }
+  // AG02: "email a short summary to oncall@…" names the catalog's mail-sending node (a plugin node called Send … Email/Mail) even when its name is not typed.
+  if (MAIL_TO.test(message) && !found.some((t) => /^send\s.*\b(?:e-?mail|mail)\b/i.test(t))) {
+    const mailer = catalog.find((c) => !c.core && /^send\b/i.test(c.displayName.trim()) && /\b(?:e-?mail|mail)\b/i.test(c.displayName));
+    if (mailer) add(mailer.displayName);
   }
   return found.slice(0, 8);
 }
