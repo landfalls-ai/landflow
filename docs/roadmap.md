@@ -2853,10 +2853,10 @@ account's own console is the figure.
 - B1's **Unused (Data Table)** plan step that `no-junk` does not flag stays in sb3's list above (the build path, not agents).
 - Revising teams, and the Agent architect dialog changing agents: wave ag1 changes a single agent from Spotlight only ([limitations.md](limitations.md)).
 - The live pass's leftovers (found by running the four agents; each is a small fix for the next agents wave, none blocks):
-  - "Pull out the IOCs" does not name Extract IOCs, so the triage card drops it silently and Not added is empty.
+  - ~~"Pull out the IOCs" does not name Extract IOCs, so the triage card drops it silently and Not added is empty.~~ built in ag2, AG07
   - Generated eval cases are descriptions, not inputs, so a good agent is held by the gate.
   - The editor's chat cannot approve a tool call (only the agent page's Test chat shows approval cards).
-  - The Grafana agent's instructions name node types (`grafana.getAlerts`, `core.httpRequest`) instead of tool names, and its HTTP Request tool is preset to `http://127.0.0.1:3000/api/health`.
+  - ~~The Grafana agent's instructions name node types (`grafana.getAlerts`, `core.httpRequest`) instead of tool names~~ built in ag2, AG07; its HTTP Request tool is preset to `http://127.0.0.1:3000/api/health`.
   - Send Email's To and From are fixed empty and its Subject and Body unset on the card.
   - After an agent-page change is applied the card has no Test button, does not update after a credential pick, its Left row repeats credentials that are set, and it does not say Acknowledge Alert asks first.
   - Spotlight's history loses the smoke row and the card results after a reload.
@@ -2865,3 +2865,7 @@ account's own console is the figure.
   - Grafana 11.4's Acknowledge Alert returns 404 from the plugin.
   - The before/after scorecard and the phone screenshots were not run in the ag1 live pass.
 - Owed to a person, not the pipeline: whether a denied write may count as a pass in a smoke test (AG05's rule; SB18 said no); whether the agent page keeps its own **Publish anyway** (Spotlight never offers it); whether the Grafana observer should ever get Acknowledge Alert by default (it writes: today only when asked, with approval).
+
+## Agents that work locally, wave ag2 (the leftovers of ag1)
+
+- **Built (AG07):** the steps name the agent's own call names: a node type in a step is renamed to its call name or its clause goes, a rename needs the same meaning (never one shared word), a sub-agent's `ask_<agent>`, GitHub's and an open MCP server's names are kept, a revise's removed tool leaves no step, and a node is named by its distinctive word ("pull out the IOCs" is Extract IOCs) ([agents.md](agents.md#agent-architect)).
