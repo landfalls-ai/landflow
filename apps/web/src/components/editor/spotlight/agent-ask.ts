@@ -156,6 +156,9 @@ export async function createFromCard(itemId: string, card: AgentCard): Promise<v
     if (step) {
       const smoke = await smokeTestAgent(step, { publish });
       if (smoke) patchCard(itemId, { smoke });
+      // AG05: and what became of the publish (published, or held with the gate's verdict) stays on the card.
+      const followed = useAssistant.getState().agents.find((a) => a.nodeId === step)?.publish;
+      if (followed) patchCard(itemId, { publish: followed });
     }
   } catch (e) {
     patchCard(itemId, { state: 'failed', error: (e as Error).message });

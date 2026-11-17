@@ -146,6 +146,18 @@ function SessionDetail({
     }
   };
 
+  // AG05: Approve all (n) / Deny all: the waiting calls decided in order, each once.
+  const decideAll = async (callIds: string[], approved: boolean) => {
+    setDeciding(true);
+    try {
+      await run.decideAll(callIds, approved);
+    } finally {
+      setDeciding(false);
+      void load();
+      onChanged();
+    }
+  };
+
   const rate = async (entryId: string, rating: FeedbackRating | null) => {
     try {
       await api(`/api/agents/${agentId}/sessions/${sessionId}/feedback`, { method: 'PUT', json: { entryId, rating } });
@@ -262,6 +274,8 @@ function SessionDetail({
                 childHref={childHref}
                 onDecide={(callId, approved) => void decide(callId, approved)}
                 deciding={deciding}
+                decisions={run.decisions}
+                onDecideAll={(ids, approved) => void decideAll(ids, approved)}
                 wide
                 feedback={feedback}
                 onRate={(entryId, rating) => void rate(entryId, rating)}

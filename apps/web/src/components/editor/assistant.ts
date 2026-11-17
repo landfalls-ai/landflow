@@ -24,7 +24,7 @@ import { pickedModel } from './spotlight-model'; // SB19:
 import { emptyStored, withEarlier, type Stored } from './spotlight-history';
 
 import { saveAgentFor, takeBackAgents, type AgentPlace } from './new-agent'; // SB18:
-import type { AgentSmoke } from '@/lib/shared/agent-card'; // SB18:
+import type { AgentPublish, AgentSmoke } from '@/lib/shared/agent-card'; // SB18: (AG05: publish)
 import { saveTeamFor } from './turn-into-team';
 import { defaultCollapsed } from './spotlight/states';
 import type { SpotlightScope } from '@/lib/shared/spotlight-scope'; // SB07:
@@ -505,11 +505,13 @@ export interface AgentProgress {
   /** The Run an Agent node it is for. */
   nodeId: string;
   name: string;
-  state: 'designing' | 'testing' | 'tested' | 'untested' | 'published' | 'draft' | 'failed'; // SB18:
+  state: 'designing' | 'testing' | 'tested' | 'untested' | 'publishing' | 'published' | 'draft' | 'failed'; // SB18: (AG05: publishing)
   /** SB18: what its smoke test said (lib/shared/agent-card.ts). */
   smoke?: AgentSmoke;
   /** SB18: why a publish after a pass was held (the eval gate's score), in words. */
   held?: string;
+  /** AG05: the publish as it goes and what it ended in (`publishLine`): the eval gate's cases, then published, held with the verdict, or failed. `held` is the same words for older callers. */
+  publish?: AgentPublish;
   /** SB18: Undo took it back: removed, or kept because something else uses it. */
   taken?: { deleted: boolean; usedBy?: string[] };
   /** "ollama/qwen3-coder:30b · 1 knowledge base", or why it failed. */

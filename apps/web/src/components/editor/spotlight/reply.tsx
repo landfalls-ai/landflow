@@ -239,7 +239,7 @@ export function AgentRow({ agent }: { agent: AgentProgress }) {
   const busy = useAssistant((s) => s.pending || Boolean(s.testing));
   const [working, setWorking] = useState(false);
   // SB18: Publish only after a pass; Test again after a failure; Test when no item reached the step yet.
-  const act = !agent.agentId || agent.taken || busy
+  const act = !agent.agentId || agent.taken || busy || agent.state === 'publishing'
     ? undefined
     : agent.state === 'tested'
       ? { label: 'Publish', run: () => publishAgentFor(agent.nodeId) }
@@ -250,8 +250,19 @@ export function AgentRow({ agent }: { agent: AgentProgress }) {
           : undefined;
   return (
     <div className="flex animate-in items-start gap-1.5 text-[12.5px] leading-snug">
-      {agent.state === 'designing' || agent.state === 'testing' ? <Loader2 className="mt-px size-3.5 shrink-0 animate-spin text-viz-7" /> : agent.state === 'failed' ? <CircleX className="mt-px size-3.5 shrink-0 text-rd" /> : <Bot className="mt-px size-3.5 shrink-0 text-viz-7" />}
-      <span className="min-w-0 flex-1 text-t2 [overflow-wrap:anywhere]">{step.text}</span>
+      {agent.state === 'designing' || agent.state === 'testing' || agent.state === 'publishing' ? <Loader2 className="mt-px size-3.5 shrink-0 animate-spin text-viz-7" /> : agent.state === 'failed' ? <CircleX className="mt-px size-3.5 shrink-0 text-rd" /> : <Bot className="mt-px size-3.5 shrink-0 text-viz-7" />}
+      {/* AG05: the held verdict in the warning colour with its cases; a missing credential with where to pick it. */}
+      <span className={cn('min-w-0 flex-1 [overflow-wrap:anywhere]', agent.publish?.state === 'held' || agent.publish?.state === 'failed' ? 'text-warn' : 'text-t2')}>{step.text}</span>
+      {agent.agentId && !agent.taken && agent.publish?.state === 'held' && (
+        <a href={`/agents/${agent.agentId}?tab=activity&view=evaluations`} target="_blank" rel="noopener" className="shrink-0 text-[11.5px] font-semibold text-ac hover:underline max-md:flex max-md:min-h-11 max-md:items-center">
+          See the cases
+        </a>
+      )}
+      {agent.agentId && !agent.taken && agent.smoke?.state === 'untested' && agent.smoke.reason?.startsWith('needs a credential') && (
+        <a href={`/agents/${agent.agentId}?tab=abilities`} target="_blank" rel="noopener" className="shrink-0 text-[11.5px] font-semibold text-ac hover:underline max-md:flex max-md:min-h-11 max-md:items-center">
+          Pick it
+        </a>
+      )}
       {act && (
         <button
           type="button"

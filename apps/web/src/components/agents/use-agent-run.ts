@@ -13,6 +13,11 @@ import type { AgentSession, AgentStreamEvent, RunEndReason, SessionStatus, Timel
 const LOCAL = 'local_';
 const NO_USAGE: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
+/** AG05: what a person already decided on the session's waiting calls, by call id (`session.pending.calls[].decision`). */
+export type Decisions = Record<string, 'approved' | 'denied'>;
+const decisionsOf = (session: Pick<AgentSession, 'pending'> | undefined): Decisions =>
+  Object.fromEntries((session?.pending?.calls ?? []).flatMap((c) => (c.decision ? [[c.callId, c.decision] as const] : [])));
+
 /** `projectId`: the test chat's "Test in project" (the chat is given that project's block; absent: the agent's home). */
 export function useAgentRun(agentId: string, initial?: AgentSession, initialTraceUrls?: Record<string, string>, projectId?: string) {
   const [entries, setEntries] = useState<TimelineEntry[]>(initial?.timeline ?? []);
@@ -24,7 +29,10 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
   const [status, setStatus] = useState<SessionStatus>(initial?.status ?? 'idle');
   const [reason, setReason] = useState<RunEndReason>();
   const [running, setRunning] = useState(false);
+  const sessionIdRef = useRef<string>(undefined); // AG05: the quiet 409 refresh reads the session it was deciding in
   const controller = useRef<AbortController>(undefined);
+  // AG05: the calls already decided, so their Approve and Deny go away; read from the session, updated by each decision.
+  const [decisions, setDecisions] = useState<Decisions>(decisionsOf(initial));
 
   // A different session loaded into the same view (the Sessions tab's detail).
   useEffect(() => {
@@ -35,7 +43,12 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
     setTraceUrls(initialTraceUrls ?? {});
     setUsage(initial.usage);
     setStatus(initial.status);
+    setDecisions(decisionsOf(initial)); // AG05:
   }, [initial, initialTraceUrls]);
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId; // AG05:
+  }, [sessionId]);
 
   useEffect(() => () => controller.current?.abort(), []);
 
@@ -58,7 +71,8 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
   // A session `load` still in flight when a message is sent (or the chat is reset) must not land over the new run.
   const loadToken = useRef(0);
 
-  const consume = async (path: string, body: unknown) => {
+  // AG05: `quiet`: a 409 ("Already approved", "not waiting") means the call was decided elsewhere or a moment ago: refresh, no error.
+  const consume = async (path: string, body: unknown, quiet = false) => {
     loadToken.current++;
     controller.current?.abort();
     const c = new AbortController();
@@ -104,6 +118,15 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
       }
     } catch (error) {
       if (c.signal.aborted) return;
+      if (quiet && error instanceof ApiError && error.status === 409) {
+        // AG05: say what it was decided as, then show the session as it is.
+        const was = /^Already (approved|denied)/.exec(error.message)?.[1] as Decisions[string] | undefined;
+        const callId = (body as { callId?: string }).callId;
+        if (was && callId) setDecisions((d) => ({ ...d, [callId]: was }));
+        const id = sessionIdRef.current;
+        if (id) await load(id).catch(() => {});
+        return;
+      }
       setStatus('error');
       // 403 from the chat route: the agent isn't available in the chosen project (shown in the chat, not only as a toast).
       localError(projectId && error instanceof ApiError && error.status === 403 ? NOT_AVAILABLE_MESSAGE : (error as Error).message);
@@ -130,12 +153,16 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
     });
   };
 
+  // AG05: a call decided once is not decided again; a decision streams the run on only when it was the last one waiting.
   const decide = (callId: string, approved: boolean) => {
-    if (!sessionId) return Promise.resolve();
-    return consume(`/api/agents/${agentId}/sessions/${sessionId}/approvals`, {
-      callId,
-      approved,
-    });
+    if (!sessionId || decisions[callId]) return Promise.resolve();
+    setDecisions((d) => ({ ...d, [callId]: approved ? 'approved' : 'denied' }));
+    return consume(`/api/agents/${agentId}/sessions/${sessionId}/approvals`, { callId, approved }, true);
+  };
+
+  /** AG05: every call still waiting decided the same way, one after the other, each once; the last one resumes the run. */
+  const decideAll = async (callIds: string[], approved: boolean) => {
+    for (const callId of callIds) await decide(callId, approved);
   };
 
   /** Stops reading the stream. */
@@ -152,6 +179,7 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
     setUsage(NO_USAGE);
     setStatus('idle');
     setReason(undefined);
+    setDecisions({}); // AG05:
   };
 
   /** Opens an earlier session of this agent in the chat: what was said so far, and the next message continues it. */
@@ -169,6 +197,7 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
     setUsage(body.session.usage);
     setStatus(body.session.status);
     setReason(undefined);
+    setDecisions(decisionsOf(body.session)); // AG05:
   };
 
   const awaitingApproval = entries.some((e) => e.type === 'tool' && e.status === 'awaiting_approval');
@@ -184,6 +213,8 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
     awaitingApproval,
     send,
     decide,
+    decideAll, // AG05:
+    decisions, // AG05:
     stop,
     reset,
     load,

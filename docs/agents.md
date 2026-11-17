@@ -551,6 +551,14 @@ the earlier test sessions of this agent (per agent, not per person yet; see [lim
 on in the chat. Nothing new is stored for it: the sessions are the record. The Platform analyst's chat uses the same line
 and footer, and keeps its answer card.
 
+**Approvals settle** (AG05, wave ag1). A call waiting for approval shows **Approve** and **Deny** only while it is still
+waiting: once decided it reads *Approved* or *Denied* with no buttons (`use-agent-run.ts` keeps what was decided from the
+session's `pending` calls and from each decision), in the Test chat and the Sessions tab. A decision that answers 409
+(*Already approved*, *That tool call is not waiting for approval*: decided a moment ago, or in another tab) refreshes the
+row quietly, with no error. With two or more calls waiting in one turn, one **Approve all (n)** and **Deny all** above them
+decide them in order, once each, through the same route (`POST /api/agents/:id/sessions/:sid/approvals`, one call id per
+request: the run goes on when the last one is decided). The Platform analyst's own card keeps its per-call buttons.
+
 ## From workflows
 
 - **When Called by a Workflow or Agent** (`core.workflowTrigger`, formerly "When Called by an
@@ -843,11 +851,20 @@ model, else the agent's own.
 
 **Publish** runs the same check when the agent has cases. The publish is held (409, with the verdict and the run) when
 the draft averages under 3 / 5, or more than 0.5 under the published version's last average. The builder says why and
-offers **Publish anyway** (`{ "skipEval": true }`). A publish that passes saves its run as the new version's baseline;
+offers **Publish anyway** (`{ "skipEval": true }`, only ever the person's own click on this page). A publish that passes saves its run as the new version's baseline;
 a first publish is held only by the 3 / 5 floor. An agent without cases publishes as before. An agent the Agent architect
 designed has its 3 to 5 cases from the start ([the brief](#agent-architect)), so its first publish runs the gate.
 
-**Smoke test.** Beside the gate, `POST /api/agents/:id/smoke-test { message }` runs the draft once on one message (a throwaway `test` session titled *Smoke test*, approvals denied, deleted after, so it never shows in Sessions) and answers `{ smoke: { state: 'passed' | 'failed', reply?, reason?, ms } }`: *passed* when the run completes with a reply, else *failed* with one sentence (*The run ended with an error: …*, *No reply*, *It wanted a tool that needs approval: <tool>*, *It stopped at its step limit*); 400 without a model. Spotlight uses it before it publishes an agent it made ([assistant.md](assistant.md#agents-and-teams)). It is one item with no judge, not the gate: a pass says the agent answers, the gate says it answers well.
+**The publish is followed** (AG05, wave ag1). The gate runs every case, so a publish takes a while (about 30 s for 3 cases
+on a local model). Before it the editor reads the case count (`GET /api/agents/:id/eval-gate`); the agent page's button then
+reads *Publishing: the eval gate runs 3 cases…* (short on a phone) and a notice says the same, and Spotlight's row and the
+agent's card read *publishing: the eval gate runs 3 cases…* with a spinner (`AgentPublish`, `publishLine` in
+`lib/shared/agent-card.ts`). A held verdict stays: on the agent page a notice (*held by the eval gate: 2.3 / 5 · <the
+verdict>* with **See the cases** and the person's own **Publish anyway**) until the next publish, not a toast; on the row
+and the card the same words in the warning colour with **See the cases** (the Evaluations tab), until the next publish or
+test. Spotlight never sends `skipEval`.
+
+**Smoke test.** Beside the gate, `POST /api/agents/:id/smoke-test { message }` runs the draft once on one message (a throwaway `test` session titled *Smoke test*, approvals denied, deleted after, so it never shows in Sessions) and answers `{ smoke: { state: 'passed' | 'failed' | 'untested', reply?, reason?, ms, tools? } }`. Honest rules (AG05, wave ag1): *untested* with *needs a credential: <tool>* (the first such tool, *and N more*) before anything runs, with no model call, when a node tool's visible required credential slot is unset (the slots the node panel shows for its parameters: an auth method not chosen does not count). After the run, `tools` lists each tool call (`success`, `error` with the error's first sentence, `empty` when the output is nothing or only empty fields, `denied` for a call that needed approval: approvals are always denied here and nothing is sent). *passed* needs a reply and no `error` call and not every call `empty`; else *failed* with the first cause (*Get Alerts failed: …*, *Get Alerts returned nothing to work with*, or *The run ended with an error: …*, *No reply*, *It stopped at its step limit*). A `denied` write no longer fails the test by itself (it did in SB18): it is named in `reason` (*Send Email needs approval: not sent*) and the rest decides; a run that ends with no reply because it waited for approval still fails. 400 without a model. Spotlight uses it before it publishes an agent it made ([assistant.md](assistant.md#agents-and-teams)). It is one item with no judge, not the gate: a pass says the agent answers, the gate says it answers well.
 
 Routes: `GET/POST/PUT/DELETE /api/agents/:id/eval-gate` (cases and runs; `PUT { version? }` runs the draft or a
 published version). Cases (at most 50 per agent) and the last 30 runs live in `agent_eval_cases` and

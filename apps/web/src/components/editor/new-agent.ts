@@ -8,7 +8,7 @@
  * SB16: Spotlight's agent card (./spotlight/agent-ask.ts) designs the agent without saving it (`designPreview`) and creates it on Create.
  */
 import { api, ApiError } from '@/lib/client/api';
-import type { AgentSmoke } from '@/lib/shared/agent-card'; // SB18:
+import { publishLine, type AgentPublish, type AgentSmoke } from '@/lib/shared/agent-card'; // SB18: (AG05: publish)
 import type { NewAgentSpec } from '@/lib/shared/assistant-ops';
 import type { AgentCaseDraft } from '@/lib/shared/agent-card'; // SB16:
 import { useAssistant, type AgentProgress } from './assistant';
@@ -104,24 +104,34 @@ export function itemReaching(nodeId: string): { item: Record<string, unknown>; n
   return undefined;
 }
 
-/** Why a held publish was held, in words: "held by the eval gate: scored 2.5 of 5". */
-const heldText = (error: unknown): string | undefined => {
+/** Why a held publish was held (AG05: `AgentPublish`, worded by `publishLine`): "held by the eval gate: 2.3 / 5 · <the verdict>". */
+const heldOf = (error: unknown): AgentPublish | undefined => {
   if (!(error instanceof ApiError) || error.status !== 409) return undefined;
   const verdict = (error.body as { gate?: { verdict?: { average?: number; reason?: string } } } | undefined)?.gate?.verdict;
-  return verdict ? `held by the eval gate: scored ${verdict.average?.toFixed(1) ?? '?'} of 5${verdict.reason ? ` (${verdict.reason})` : ''}` : error.message;
+  return verdict ? { state: 'held', ...(verdict.average !== undefined && { score: verdict.average }), ...(verdict.reason && { reason: verdict.reason }) } : undefined;
 };
 
-/** Publish the agent's draft (no `skipEval`: a held eval gate leaves it a draft). True when it is published. */
+/**
+ * Publish the agent's draft (no `skipEval`, ever: a held eval gate leaves it a draft). AG05: the row says it is publishing
+ * (the gate runs its cases, ~30 s) and the held verdict stays on it until the next publish or test. True when it is published.
+ */
 export async function publishAgentFor(nodeId: string): Promise<boolean> {
   const progress = useAssistant.getState().agents.find((a) => a.nodeId === nodeId);
   if (!progress?.agentId) return false;
   const patch = (p: Partial<AgentProgress>) => useAssistant.getState().setAgent(nodeId, p);
+  const back: AgentProgress['state'] = progress.smoke?.state === 'passed' ? 'tested' : 'draft';
+  patch({ state: 'publishing', publish: { state: 'publishing' }, held: undefined });
   try {
+    // The case count before the publish, so the row can say how long the gate will take; not needed to go on.
+    const known = await api<{ cases?: unknown[] }>(`/api/agents/${progress.agentId}/eval-gate`).catch(() => undefined);
+    if (known?.cases?.length) patch({ publish: { state: 'publishing', cases: known.cases.length } });
     await api(`/api/agents/${progress.agentId}/publish`, { method: 'POST' });
-    patch({ state: 'published', held: undefined });
+    patch({ state: 'published', publish: { state: 'published' }, held: undefined });
     return true;
   } catch (error) {
-    patch({ state: progress.smoke?.state === 'passed' ? 'tested' : 'draft', held: heldText(error) ?? (error as Error).message });
+    const held = heldOf(error);
+    const publish: AgentPublish = held ?? { state: 'failed', reason: (error as Error).message };
+    patch({ state: back, publish, held: publishLine(publish) });
     return false;
   }
 }
@@ -138,12 +148,12 @@ export async function smokeTestAgent(nodeId: string, options: { publish?: boolea
   if (!progress?.agentId || !node) return undefined;
   const patch = (p: Partial<AgentProgress>) => useAssistant.getState().setAgent(nodeId, p);
   const done = (smoke: AgentSmoke, state: AgentProgress['state'] = smoke.state === 'passed' ? 'tested' : smoke.state === 'untested' ? 'untested' : 'draft') => {
-    patch({ state, smoke, held: undefined });
+    patch({ state, smoke, held: undefined, publish: undefined });
     return smoke;
   };
   const sample = itemReaching(nodeId);
   if (!sample) return done({ state: 'untested', reason: 'run the step before it once' });
-  patch({ state: 'testing', smoke: { state: 'testing' }, held: undefined });
+  patch({ state: 'testing', smoke: { state: 'testing' }, held: undefined, publish: undefined });
   try {
     const wanted = node.data.wf.parameters.message;
     const template = typeof wanted === 'string' && wanted.trim() ? wanted : '{{ $json.chatInput ?? $json.text }}';

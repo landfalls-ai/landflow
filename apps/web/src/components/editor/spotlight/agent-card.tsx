@@ -8,7 +8,7 @@
 import { useState } from 'react';
 import { Check, ExternalLink, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { smokeLine, type AgentCard as AgentCardData } from '@/lib/shared/agent-card';
+import { publishLine, smokeLine, type AgentCard as AgentCardData } from '@/lib/shared/agent-card';
 import type { AgentConfig } from '@/lib/shared/agents';
 import { AgentAvatar } from '../../agents/avatar';
 import { Button } from '../../ui/button';
@@ -36,7 +36,11 @@ export function AgentCardView({ itemId, card, busy = false }: { itemId: string; 
   // Integration (sb3): after Create the line is SB18's smoke line, live from the agent's row ("tested, 1 of 1 passed · published").
   const row = useAssistant((s) => (card.agentId ? s.agents.find((a) => a.agentId === card.agentId) : undefined));
   const smoke = row?.smoke ?? card.smoke;
-  const createdLine = smoke ? `${smokeLine(smoke)}${row?.state === 'published' ? ' · published' : ''}` : 'Created as a draft';
+  // AG05: what the row says while the eval gate runs and after (held stays); the same words, from `publishLine`.
+  const publish = row?.publish ?? card.publish;
+  const tested = smoke ? `${smokeLine(smoke)}${smoke.state === 'passed' && smoke.reason ? ` · ${smoke.reason}` : ''}` : 'Created as a draft';
+  const createdLine = publish?.state === 'publishing' ? publishLine(publish) : `${tested}${publish && publish.state !== 'published' ? ` · ${publishLine(publish)}` : row?.state === 'published' ? ' · published' : ''}`;
+  const needsCredential = smoke?.state === 'untested' && Boolean(smoke.reason?.startsWith('needs a credential'));
   return (
     <div data-testid="agent-card" className={cn('animate-fade-up rounded-xl border bg-sf p-2.5 transition-colors duration-200 motion-reduce:transition-none', created ? 'border-gnbd' : 'border-acbd')}>
       <div className="flex items-start gap-2">
@@ -103,7 +107,19 @@ export function AgentCardView({ itemId, card, busy = false }: { itemId: string; 
       <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
         {created ? (
           <>
-            <span className={cn('min-w-0 text-[12px] font-semibold [overflow-wrap:anywhere]', smoke?.state === 'failed' ? 'text-rd' : !smoke || smoke.state === 'passed' ? 'text-gn' : 'text-t2')}>{createdLine}</span>
+            {/* AG05: a spinner while the gate runs; a held or failed publish in the warning colour, with its cases. */}
+            {publish?.state === 'publishing' && <Loader2 className="size-3.5 shrink-0 animate-spin text-viz-7" />}
+            <span className={cn('min-w-0 text-[12px] font-semibold [overflow-wrap:anywhere]', publish?.state === 'held' || publish?.state === 'failed' ? 'text-warn' : smoke?.state === 'failed' ? 'text-rd' : !smoke || smoke.state === 'passed' ? 'text-gn' : 'text-t2')}>{createdLine}</span>
+            {card.agentId && publish?.state === 'held' && (
+              <a href={`/agents/${card.agentId}?tab=activity&view=evaluations`} target="_blank" rel="noopener" className="flex min-h-7 items-center text-[12px] font-semibold text-ac hover:underline max-md:min-h-11">
+                See the cases
+              </a>
+            )}
+            {card.agentId && needsCredential && (
+              <a href={`/agents/${card.agentId}?tab=abilities`} target="_blank" rel="noopener" className="flex min-h-7 items-center text-[12px] font-semibold text-ac hover:underline max-md:min-h-11">
+                Pick it
+              </a>
+            )}
             {card.agentId && (
               <a href={`/agents/${card.agentId}`} target="_blank" rel="noopener" className="flex min-h-7 items-center gap-0.5 text-[12px] font-semibold text-ac hover:underline max-md:min-h-11">
                 Open <ExternalLink className="size-3" />
