@@ -259,6 +259,22 @@ describe('Run an Agent, Tool Approvals', () => {
     expect(out(next).reply).toBe('Back again.');
   });
 
+  it('while an Approve is resuming the run (status running), a second message is refused and sends nothing; the Approve still ends success', async () => {
+    script = (_t, body) => (body.messages.some((m) => m.role === 'tool') ? { text: 'Sent.' } : { toolCalls: [call(WRITE, { to: 'oncall@landflow.test' }, 'c_send')] });
+    const wf = flow({ toolApprovals: 'askInChat', conversation: 'key', sessionKey: 'resume-window' });
+    const first = await run(wf, 'chat');
+    expect(first.status).toBe('waiting');
+    const record = store.getExecution(first.executionId)!;
+    store.saveExecution({ ...record, status: 'running' });
+    const second = await run(wf, 'chat');
+    expect(second.error?.message).toMatch(/waiting for Approve or Reject/);
+    expect(turn).toBe(0);
+    store.saveExecution({ ...record, status: 'waiting' });
+    const outcome = await decideApproval(first.executionId, idOf(first, 0), true);
+    expect((outcome as { record: typeof first }).record.status).toBe('success');
+    expect(toolResults.join('\n')).not.toContain('Cancelled');
+  });
+
   it.each([
     ['chat mode with Refuse (the default)', {}, 'chat'],
     ['webhook mode with Ask in the editor’s chat', { toolApprovals: 'askInChat' }, 'webhook'],
