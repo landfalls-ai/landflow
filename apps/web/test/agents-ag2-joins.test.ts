@@ -306,8 +306,8 @@ function saveDraft(workflowId: string): Workflow {
 // The Wazuh alert of the live host's check (contracts/ag1/live-host.md A5).
 const WAZUH = 'Wazuh alert rule 5712 level 10: sshd brute force from 203.0.113.45 against web-01 (user root, 23 failures in 60s); related domain bad-login.example.net';
 
-// The triage ask of backbone/ag1-findings.md (the live pass's, in full).
-const TRIAGE_ASK = 'Create an agent that triages an alert I paste: normalise it, pull out the IOCs, judge how serious it is, and email a short summary to oncall@landflow.test. Use the Normalize Alert, Extract IOCs and Send Email tools.';
+// The triage ask of ag1's live pass (backbone/ag1-findings.md; typed word for word, as live/wave-ag1 recorded it).
+const TRIAGE_ASK = 'Create an agent that triages an alert I paste: normalise it, pull out the IOCs, judge how serious it is, and email a short summary to oncall@landflow.test.';
 // What the ag1 run's architect did: steps naming node types and a made-up send_summary, no Extract IOCs, cases that describe alerts.
 const AG1_TRIAGE = {
   name: 'Alert triage agent',
