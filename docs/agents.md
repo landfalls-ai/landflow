@@ -232,6 +232,10 @@ The card says what applying does and follows the agent (wave ag2, AG09):
 - **Left** lists what the agent's draft still lacks: a credential slot already set on the agent's tool is not asked again,
   and one set after Apply (in the tool's dialog on the agent's page) drops off the card without a reload (the page's
   save sends `landflow:agent-saved`; the card also re-reads the draft on `landflow:agent-changed`).
+- A change that gives a mail tool its sender ("send the email from landflow@landflow.test", "set Send Email's From Email
+  to …") sets that tool's **From Email** when it is still empty, and the Changes row says "Send Email: From Email set to
+  landflow@landflow.test"; a From you already set is never rewritten, and a change that names no sender, or two, sets
+  none (wave ag3's live pass found the change said "No change" instead).
 - After Apply the card offers **Test again** next to Publish: the smoke test on the draft as it is, no save. Publish
   waits for a pass as before.
 - A pending card's name that the design made ("Crypto Toolkit agent") is made again from the tools the card has now

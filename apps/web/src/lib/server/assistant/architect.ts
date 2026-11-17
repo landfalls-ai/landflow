@@ -1531,12 +1531,31 @@ function madeAgain(base: Partial<AgentConfig>, tools: AgentToolConfig[], types: 
 }
 
 /**
+ * ag3 carryover (the live pass): a change that gives a kept mail tool its sender ("send the email from a@b.test") sets that
+ * tool's From where it is still empty. The design's flat proposal carries no parameters, so without this a revise kept the
+ * base's tool as it was and said "No change". Only an address the change itself holds after "from", only into an empty From:
+ * a From the person already set is never rewritten, and nothing else of the tool changes.
+ */
+function withSenderGiven(tool: AgentToolConfig, change: string, types: NodeTypeInfo[]): AgentToolConfig {
+  if (tool.type !== 'node') return tool;
+  const info = types.find((x) => x.type === tool.nodeType);
+  if (!info || !isMailNode(info) || !info.descriptor.properties.some((p) => p.name === 'fromEmail')) return tool;
+  const current = (tool.parameters as Record<string, unknown> | undefined)?.fromEmail;
+  if (typeof current === 'string' ? current.trim() !== '' : current !== undefined && current !== null) return tool;
+  const said = change.replace(AGENT_ASK, ' ');
+  const senders = [...said.matchAll(/\bfrom(?:\s+(?:the\s+)?(?:address|e-?mail(?:\s+address)?|sender))?(?:\s+(?:to|as|be|is))?\s*:?\s+([\w.+-]+@[\w-]+(?:\.[\w-]+)+)/gi)].map((m) => m[1]);
+  const distinct = [...new Set(senders.map((a) => a.toLowerCase()))];
+  if (distinct.length !== 1) return tool; // none, or two different senders: ask, never guess
+  return { ...tool, parameters: { ...((tool.parameters as Record<string, unknown> | undefined) ?? {}), fromEmail: senders[0] } } as AgentToolConfig;
+}
+
+/**
  * AG04: the proposal of a change as the agent it changes: the base's own tools stay unless the change removes them (least
  * privilege holds for the tools the change does not name), a new tool stays only when the change names it, and the name, model,
  * practices, look and team stay unless the change names them.
  */
 function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: string, types: NodeTypeInfo[] = []): void {
-  const kept = (base.tools ?? []).filter((t) => !removed(change, t));
+  const kept = (base.tools ?? []).filter((t) => !removed(change, t)).map((t) => withSenderGiven(t, change, types)); // ag3 carryover:
   const have = new Set(kept.map(toolKey));
   const added: AgentToolConfig[] = [];
   const addedLabels = new Set<string>(); // AG09:
@@ -1576,7 +1595,7 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
   // AG09: the card's Left row is what this change leaves: the needs of a tool it adds, and of a kept tool only a credential slot still unset on the base's tool.
   draft.needs = draft.needs.filter((need) => {
     if (addedLabels.has(need.tool)) return true;
-    const own = ownBy.get(need.tool) ?? (base.tools ?? []).find((t) => 'name' in t && t.name === need.tool);
+    const own = ownBy.get(need.tool) ?? kept.find((t) => 'name' in t && t.name === need.tool) ?? (base.tools ?? []).find((t) => 'name' in t && t.name === need.tool); // ag3 carryover: a kept tool as the change left it
     if (!own) return true; // a need of no tool (the model, a design failure) stays
     if (need.kind === 'parameter') {
       // AG09: a kept tool keeps a parameter need (Send Email's From Email) while that parameter is still empty on the base's tool.
