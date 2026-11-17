@@ -406,7 +406,7 @@ export function streamer(send: NonNullable<IExecuteContext['sendChunk']>, itemIn
       // A call waiting for a person is not a failure, and a denied one is a decision (the chat's step list reads 'Waiting for approval' and 'Denied').
       const status = entry.status === 'running' ? 'started' : entry.status === 'success' ? 'finished' : entry.status === 'awaiting_approval' ? 'approval' : entry.status === 'denied' ? 'denied' : 'failed';
       const output = entry.error ?? (entry.output === undefined ? undefined : typeof entry.output === 'string' ? entry.output : JSON.stringify(entry.output));
-      send({ type: 'tool', itemIndex, ...label, tool: { id: entry.callId, name: entry.tool, status, input: entry.input as JsonObject, ...(output !== undefined && { output: output.slice(0, 2_000) }) } });
+      send({ type: 'tool', itemIndex, ...label, tool: { id: entry.callId, name: entry.tool, status, input: entry.input as JsonObject, ...(output !== undefined && { output: output.slice(0, entry.target?.knowledge ? 12_000 : 2_000) }), ...(entry.target && { target: entry.target }) } }); // AG14:
     }
   };
 }

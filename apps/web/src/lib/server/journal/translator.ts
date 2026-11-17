@@ -9,6 +9,7 @@ import type { BinaryRef, JsonObject } from '@landflow/protocol';
 import type { AgentTraceSummary } from '../../shared/agents';
 import { aiUsageMeter } from '../ai-usage';
 import { traceModelCalls } from './trace-calls';
+import { targetOfNode } from '../agents/tool-target'; // AG14:
 import { mergeConnections, toolInput, type ActorConnection, type JournalDraft, type JournalEvent, type RunActor, type RunCheck, type SpanKind, type SpanStatus, type TokenCounts } from '../../shared/run-trace';
 
 /** Nodes that are agents when they run in the main flow. */
@@ -287,7 +288,7 @@ export function createTranslator(options: TranslatorOptions) {
         const why = str(reason);
         start({ ...base, kind: 'delegate', actor, parent, name: e.nodeName, caller: rootActor, ...(e.input !== undefined && { input: why ? asked : e.input }), attrs: { nodeType: node.type, ...(why && { reason: short(why, 600) }) }, remote: freshRemote() });
       } else {
-        start({ ...base, kind: 'tool', actor: rootActor, parent, name: e.nodeName, ...(e.input !== undefined && { input: e.input }), attrs: { ...(node && { nodeType: node.type }) } });
+        start({ ...base, kind: 'tool', actor: rootActor, parent, name: e.nodeName, ...(e.input !== undefined && { input: e.input }), attrs: { ...(node && { nodeType: node.type }), ...(node && toolTargetAttr(node)) } }); // AG14:
       }
     } else {
       // Memory, retrievers, embeddings…: the agent's plumbing, kept for the trace but out of the story.
@@ -692,4 +693,13 @@ export function createTranslator(options: TranslatorOptions) {
   }
 
   return { feed, seed, spanOfNode, actorOfNode, openSpans: () => [...spans.values()].filter((s) => s.open).map((s) => s.id) };
+}
+
+/** AG14: where a sub-node tool's call went (its credential and parameters, never a secret) as a span attribute; a target is a courtesy, never an error. */
+function toolTargetAttr(node: WorkflowNode): { target?: unknown } {
+  try {
+    return { target: targetOfNode(node.type, node.credentials, node.parameters) };
+  } catch {
+    return {};
+  }
 }

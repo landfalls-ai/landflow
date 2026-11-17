@@ -10,6 +10,8 @@ import { AssistantRow, CHAT_ICON_BUTTON, ChatComposer, ChatEmpty, ChatError, Cha
 import { ChatList, StatusSwap, StreamingText } from '../ui/chat-motion';
 import { NodeIcon } from '../ui/icon';
 import { chatModelOf } from './chrome';
+import { Passages, passagesFor, ViaLine } from '../run-trace/passages'; // AG14:
+import type { ToolTarget } from '@/lib/shared/tool-target'; // AG14:
 import { useEditor } from './store';
 
 /** What AI Agent and chain nodes stream while the run goes on (node.chunk events of the run route SSE). */
@@ -22,6 +24,8 @@ export interface ChatTool {
   status: 'started' | 'finished' | 'failed' | 'approval' | 'denied';
   input?: unknown;
   output?: string;
+  /** AG14: what the call reached (never a secret). */
+  target?: ToolTarget;
 }
 
 /** `result.approval` of a run waiting for tool approvals (AI Agent → Require Approval). */
@@ -95,7 +99,7 @@ function applyChunk(current: { text: string; calls: ChatTool[]; error?: string }
   if (chunk.type === 'tool' && chunk.tool) {
     const tool = chunk.tool;
     const known = current.calls.find((c) => c.id === tool.id);
-    const next: ChatTool = { ...known, id: tool.id, name: tool.name, status: tool.status, ...(tool.input !== undefined && { input: tool.input }), ...(tool.output !== undefined && { output: tool.output }) };
+    const next: ChatTool = { ...known, id: tool.id, name: tool.name, status: tool.status, ...(tool.input !== undefined && { input: tool.input }), ...(tool.output !== undefined && { output: tool.output }), ...(tool.target && { target: tool.target }) };
     return { ...current, calls: known ? current.calls.map((c) => (c.id === tool.id ? next : c)) : [...current.calls, next] };
   }
   return current;
@@ -438,11 +442,15 @@ export function ToolCalls({ calls }: { calls: ChatTool[] }) {
     <div className="space-y-1">
       {calls.map((call) => (
         <details key={call.id} className="group animate-in rounded-[8px] border border-hair bg-wl text-[11px]">
-          <summary className="flex cursor-pointer list-none items-center gap-1.5 px-2 py-1 text-t2 [&::-webkit-details-marker]:hidden">
-            <ChevronRight className="size-3 shrink-0 text-t3 transition-transform group-open:rotate-90" />
-            {call.status === 'started' ? <Loader2 className="size-3 shrink-0 animate-spin text-t3" /> : <Wrench className="size-3 shrink-0 text-t3" />}
-            <span className="truncate font-medium text-t1">{call.name}</span>
-            <span className={cn('ml-auto shrink-0', STATUS[call.status].tone)}>{STATUS[call.status].label}</span>
+          <summary className="cursor-pointer list-none px-2 py-1 text-t2 [&::-webkit-details-marker]:hidden">
+            <div className="flex items-center gap-1.5">
+              <ChevronRight className="size-3 shrink-0 text-t3 transition-transform group-open:rotate-90" />
+              {call.status === 'started' ? <Loader2 className="size-3 shrink-0 animate-spin text-t3" /> : <Wrench className="size-3 shrink-0 text-t3" />}
+              <span className="truncate font-medium text-t1">{call.name}</span>
+              <span className={cn('ml-auto shrink-0', STATUS[call.status].tone)}>{STATUS[call.status].label}</span>
+            </div>
+            {/* AG14: where the call went, under the tool's name */}
+            <ViaLine target={call.target} className="pl-[18px]" />
           </summary>
           <div className="space-y-1 border-t border-hair px-2 py-1.5">
             {call.input !== undefined && (
@@ -451,7 +459,13 @@ export function ToolCalls({ calls }: { calls: ChatTool[] }) {
                 <pre className="max-h-40 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[11px] text-t2">{pretty(call.input)}</pre>
               </div>
             )}
-            {call.output !== undefined && (
+            {call.output !== undefined && passagesFor(call.output).length > 0 && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-t3">Passages</div>
+                <Passages output={call.output} />
+              </div>
+            )}
+            {call.output !== undefined && passagesFor(call.output).length === 0 && (
               <div>
                 <div className="text-[10px] uppercase tracking-wide text-t3">Output</div>
                 <pre className="max-h-40 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[11px] text-t2">{pretty(call.output)}</pre>

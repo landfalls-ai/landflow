@@ -13,6 +13,7 @@ import { BINARY_INPUT_OPTIONS, MEMORY_FILE_OPTIONS, optionalAttachments, reattac
 import { connectedModel, FALLBACK_PORT, FALLBACK_PROPERTY, isFallbackModel } from './fallback';
 import { anthropicModel, ollamaModel } from './models';
 import { ollamaUrl } from '../config';
+import type { ToolTarget } from '../../shared/tool-target'; // AG14:
 
 const main = [{ type: 'main' as const }];
 /** Default Ollama address for new model nodes (OLLAMA_URL, e.g. host.docker.internal in a container). */
@@ -193,6 +194,9 @@ export const aiAgentNode = defineNode({
     const [memory] = await connection<AgentMemory>('ai_memory');
     const tools = dedupe(await connection<AgentTool>('ai_tool'));
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
+    // AG14: what each tool reaches (its sub-node's credential and parameters), for the chat's via line; never a secret.
+    const targets = await toolTargets(ctx, tools);
+    const targetOf = (name: string) => (targets.get(name) ? { target: targets.get(name) } : {});
 
     // Back after a tool approval (WaitRequest.rerun): the loop continues where it stopped.
     const saved = ctx.getNodeState?.() as AgentNodeState | undefined;
@@ -242,7 +246,7 @@ export const aiAgentNode = defineNode({
       const invoke = async (call: ToolCall): Promise<ToolResult> => {
         const tool = byName.get(call.name);
         if (!tool) return { id: call.id, name: call.name, content: `Unknown tool "${call.name}"`, isError: true };
-        send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'started', input: call.input as JsonObject } });
+        send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'started', input: call.input as JsonObject, ...targetOf(call.name) } }); // AG14:
         try {
           const output = await tool.invoke(call.input);
           const { text: content, images: returned } = splitToolOutput(output);
@@ -251,13 +255,13 @@ export const aiAgentNode = defineNode({
           const labels = images.map(imageSizeLabel);
           run.steps.push({ tool: call.name, input: call.input, output: images.length ? content : output, ...(images.length && { images: images.map((image) => ({ mimeType: image.mimeType, size: image.ref?.fileSize ?? 0, ...(image.ref?.id && { ref: image.ref.id }) })) }) });
           const shown = labels.length ? `${content.slice(0, 2_000)}\n[${labels.map((l) => `image: ${l}`).join('; ')}]` : content.slice(0, 2_000);
-          send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'finished', output: shown } });
+          send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'finished', output: shown, ...targetOf(call.name) } }); // AG14:
           return { id: call.id, name: call.name, content, ...(images.length && { images }) };
         } catch (error) {
           const message = (error as Error).message;
           run.steps.push({ tool: call.name, input: call.input, output: message, isError: true });
           ctx.logger.warn(`tool ${call.name} failed: ${message}`);
-          send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'failed', output: message.slice(0, 2_000) } });
+          send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'failed', output: message.slice(0, 2_000), ...targetOf(call.name) } }); // AG14:
           return { id: call.id, name: call.name, content: `Error: ${message}`, isError: true };
         }
       };
@@ -310,7 +314,7 @@ export const aiAgentNode = defineNode({
         const results = await Promise.all(runnable.map(invoke));
         if (waiting.length) {
           await askForApproval(ctx, i, approval, waiting);
-          for (const call of waiting) send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'approval', input: call.input as JsonObject } });
+          for (const call of waiting) send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'approval', input: call.input as JsonObject, ...targetOf(call.name) } }); // AG14:
           send?.({ type: 'end', itemIndex: i });
           ctx.setNodeState?.({
             progress: { item: i, out, ...run, pending: { calls: waiting, results } },
@@ -705,3 +709,21 @@ export const calculatorToolNode = defineNode({
     };
   },
 });
+
+/** AG14: the target of each tool of an AI Agent node, from the sub-node that supplies it (the saved workflow's node: its type, credentials and parameters). */
+async function toolTargets(ctx: IExecuteContext, tools: AgentTool[]): Promise<Map<string, ToolTarget>> {
+  const found = new Map<string, ToolTarget>();
+  try {
+    const workflowId = ctx.getWorkflowId();
+    if (!workflowId || tools.length === 0) return found;
+    const [{ workflowForCall }, { targetOfNode }] = await Promise.all([import('../publish'), import('../agents/tool-target')]);
+    const nodes = workflowForCall(workflowId, undefined)?.nodes ?? [];
+    for (const tool of tools) {
+      const node = tool.nodeId ? nodes.find((n) => n.id === tool.nodeId) : undefined;
+      if (node) found.set(tool.name, targetOfNode(node.type, node.credentials, node.parameters));
+    }
+  } catch {
+    // A target is a courtesy: a run never fails for want of one.
+  }
+  return found;
+}

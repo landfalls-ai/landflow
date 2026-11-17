@@ -18,6 +18,8 @@ import { Doc, TextBlock } from './rich-text';
 import { RunScopeChips, WhatItSaw, sawOf } from './what-it-saw';
 import { imagesOf, ToolImages, withoutImages } from './tool-images';
 import { RerunPanel, useRunControls } from './run-controls';
+import { Passages, passagesFor, ViaLine } from './passages'; // AG14:
+import { targetLine, type ToolTarget } from '@/lib/shared/tool-target'; // AG14:
 import { TeamPauseBar } from '../editor/team-pause';
 import { CallSpend } from './call-spend';
 
@@ -149,6 +151,13 @@ function ChangeSheet({ changes, file, git }: { changes: FileChange[]; file: stri
   );
 }
 
+/** AG14: a span's `target` attribute, read defensively (a journal from before ag3 has none). */
+function targetOfAttr(value: unknown): ToolTarget | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const t = value as ToolTarget;
+  return typeof t.name === 'string' && targetLine(t) ? t : undefined;
+}
+
 function SpanSheet({
   span,
   model,
@@ -169,7 +178,9 @@ function SpanSheet({
   const edits = span.kind === 'tool' ? changes?.files.flatMap((f) => f.changes.filter((c) => c.spanId === span.id).map((c) => ({ file: f.path, c }))) : undefined;
   const kids = span.children.map((id) => model.spans[id]).filter((s) => s && !s.hidden);
   const saw = sawOf(span.attrs.saw);
-  const attrs = Object.entries(span.attrs).filter(([k]) => k !== 'hidden' && k !== 'saw');
+  const attrs = Object.entries(span.attrs).filter(([k]) => k !== 'hidden' && k !== 'saw' && k !== 'target'); // AG14: the target has its own row
+  const target = targetOfAttr(span.attrs.target); // AG14:
+  const passages = span.kind === 'tool' ? passagesFor(span.output) : []; // AG14:
   return (
     <>
       <div className="flex flex-wrap items-center gap-1.5 pb-3">
@@ -201,6 +212,7 @@ function SpanSheet({
           ['Took', fmtMs(span.ms)],
           ['Tokens', span.usage ? `${span.usage.inputTokens.toLocaleString()} in · ${span.usage.outputTokens.toLocaleString()} out${span.usage.cacheReadTokens ? ` · ${span.usage.cacheReadTokens.toLocaleString()} read from cache` : ''}${span.usage.cacheWriteTokens ? ` · ${span.usage.cacheWriteTokens.toLocaleString()} written to cache` : ''}` : undefined],
           ['Now', span.note],
+          ['Reached', target ? <ViaLine key="r" target={target} className="text-[13px] text-t1" /> : undefined], // AG14:
         ]}
       />
       {/* SP07: a model call's composition and cache line. */}
@@ -212,7 +224,14 @@ function SpanSheet({
           <Value label="Asked" value={span.input} repo={repo} />
         )}
         <ToolImages images={imagesOf(span.output)} />
-        <Value label="Came back" value={withoutImages(span.output)} repo={repo} />
+        {passages.length > 0 ? (
+          <section className="min-w-0">
+            <div className="min-h-7 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Came back</div>
+            <Passages output={span.output} passages={passages} />
+          </section>
+        ) : (
+          <Value label="Came back" value={withoutImages(span.output)} repo={repo} />
+        )}{/* AG14: passages with their source, the raw output behind Raw */}
         <Value label="Error" value={span.error} tone="error" repo={repo} />
       </div>
       {saw && <WhatItSaw mode={saw.mode} text={saw.text} persona={saw.persona} practices={saw.practices} executionId={model.executionId} withheld={saw.withheld} />}

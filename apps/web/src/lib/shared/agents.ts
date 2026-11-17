@@ -3,6 +3,7 @@
  * Types shared by the API routes and the React client. No runtime imports.
  */
 import type { AgentMessage } from '@landflow/engine';
+import type { ToolTarget } from './tool-target'; // AG14:
 import type { GuardrailsConfig, Replacement } from '../server/guardrails';
 import type { AgentAccess } from './agent-access';
 import type { AgentCache } from './agent-cache';
@@ -723,6 +724,8 @@ export type TimelineEntry =
       error?: string;
       status: 'running' | 'success' | 'error' | 'awaiting_approval' | 'denied';
       durationMs?: number;
+      /** AG14: what the call reached (the credential or system and where; never a secret). */
+      target?: ToolTarget;
       /** A workflow tool's workflow and execution, or a sub-agent and its session. */
       workflowId?: string;
       executionId?: string;

@@ -43,7 +43,7 @@ import { cleanPersona, personaPrompt, personaPromptParts } from '../../shared/pe
 import { sawPersona } from '../../shared/what-it-saw-sections';
 import { agentStore, configOf } from './store';
 import type { MemberPause } from '../agent-teams/pause';
-import { buildToolset, binaryScopeFor, dedupe, nodeKnowledgeTool, type BuiltTool, type ToolCaller, type ToolContext } from './tools';
+import { buildToolset, binaryScopeFor, targetOfCall, dedupe, nodeKnowledgeTool, type BuiltTool, type ToolCaller, type ToolContext } from './tools';
 import { knowledgeTool } from './knowledge';
 import { agentNotAllowedMessage, projectAgentRules } from '../project-context/project-settings';
 import { isNodeKnowledge } from '../../shared/agents';
@@ -732,6 +732,8 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       label: tool.label,
       kind: tool.kind,
       ...(tool.nodeType && { nodeType: tool.nodeType }),
+      // AG14: what the call reached, from the tool's config (an HTTP Request's URL the model gave: from the call's input).
+      ...(targetOfCall(tool, call.input) && { target: targetOfCall(tool, call.input) }),
       input: call.input,
       status: 'running',
       at: existing?.at ?? now(),
@@ -769,6 +771,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
           ...(outcome.childAgentId && { childAgentId: outcome.childAgentId }),
           ...(outcome.childSessionId && { childSessionId: outcome.childSessionId }),
           ...(outcome.remote && { remote: outcome.remote }),
+          ...(outcome.target && { target: outcome.target }), // AG14:
         }),
       );
       return { id: call.id, name: call.name, content: asContent(outcome.output), ...(images.length && { images }) };
