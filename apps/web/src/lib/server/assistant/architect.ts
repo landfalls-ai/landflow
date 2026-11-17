@@ -1065,7 +1065,9 @@ async function casesFor(model: LanguageModel, agent: { name: string; description
 const asksFirstNames = (config: Partial<AgentConfig>): string[] => (config.tools ?? []).flatMap((t) => (t.type === 'node' && t.requireApproval ? [t.name] : []));
 const VERB = 'sen[dt]s?|emails?|posts?|creates?|updates?|deletes?|acknowledg\\w*|silenc\\w*';
 // A claim that the action happened: a verb opening the text or following "and"/"then"/a comma, or a past-tense word. A noun "email" mid-sentence is no claim.
-const EFFECT = new RegExp(`^(?:${VERB})\\b|(?:\\band|\\bthen|[,;])\\s+(?:${VERB})\\b|\\b(?:sent|emailed|posted|created|deleted|updated|acknowledged|silenced)\\b`, 'i');
+// ag3 fix pass: a leading noun ("Email from the on-call lead is read", "Email has the alert's host") is no verb: the verb is not followed by a word that makes it a subject.
+const NOUN_NEXT = '(?!\\s+(?:from|is|was|has|had|are|were|will|would|can|could|should|must|may|might|does|did|that|which)\\b)';
+const EFFECT = new RegExp(`^(?:${VERB})\\b${NOUN_NEXT}|(?:\\band|\\bthen|[,;])\\s+(?:${VERB})\\b|\\b(?:sent|emailed|posted|created|deleted|updated|acknowledged|silenced)\\b`, 'i');
 const NEGATION = /\b(?:no|not|never|nothing|without|none|doesn'?t|don'?t|won'?t|wouldn'?t|didn'?t|cannot|can'?t)\b|n't\b/i;
 const GERUND: Record<string, string> = { send: 'sending', sent: 'sending', sends: 'sending', email: 'sending', emails: 'sending', emailed: 'sending', post: 'posting', posts: 'posting', posted: 'posting', create: 'creating', creates: 'creating', created: 'creating', delete: 'deleting', deletes: 'deleting', deleted: 'deleting', update: 'updating', updates: 'updating', updated: 'updating' };
 /**
@@ -1099,7 +1101,8 @@ export function asksFirstCases(cases: AgentCaseDraft[], config: Partial<AgentCon
   return cases.map((c) => {
     const expected = c.expected?.trim();
     if (!expected) return c;
-    const names = (text: string) => words.some((w) => new RegExp(`\\b${escapeRegExp(w)}`, 'i').test(text));
+    // A tool word matches itself and its plain endings, never a longer word ("send" is not "sender").
+    const names = (text: string) => words.some((w) => new RegExp(`\\b${escapeRegExp(w)}(?:s|es|ed|ing)?\\b`, 'i').test(text));
     if (!EFFECT.test(expected) || !names(expected)) return c;
     // ag3 carryover (the live pass): a negation elsewhere in a compound case ("Normalises it, no IOCs, sev1 with reason, emails
     // oncall@landflow.test.") left the send's claim standing and the gate held the agent; a negation counts in its own clause.

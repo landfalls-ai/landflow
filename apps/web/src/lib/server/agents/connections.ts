@@ -66,8 +66,7 @@ function toolShape(tool: AgentToolConfig): ActorConnection {
         const plugin = tool.nodeType.split('.')[0] ?? tool.nodeType;
         return { kind: 'knowledge', name: tool.name || preset?.label || tool.nodeType, detail: `${preset?.label ?? plugin} · plugin knowledge`, icon: preset?.icon ?? 'lucide:library', from: 'agent' };
       }
-      // AG12: AG13's keyword search (provider 'none') is written as a string compare so this type-checks before that type lands.
-      const keyword = String(tool.embeddings.provider) === 'none';
+      const keyword = tool.embeddings.provider === 'none';
       const embeddings = keyword ? 'keyword search (BM25, built in)' : `${PROVIDER[tool.embeddings.provider] ?? tool.embeddings.provider} ${tool.embeddings.model}`;
       const store = { memory: 'in memory', sqlite: 'SQLite', pgvector: 'Postgres pgvector' }[tool.store] ?? tool.store;
       const icon = tool.store === 'pgvector' ? brandIcon('postgresql') : tool.store === 'sqlite' ? brandIcon('sqlite') : 'lucide:library';
