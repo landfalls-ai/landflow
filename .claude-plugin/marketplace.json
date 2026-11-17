@@ -102,6 +102,15 @@
       "author": { "name": "Landflow" },
       "category": "development",
       "keywords": ["agents", "harness", "usage", "guardrails"]
+    },
+    {
+      "name": "landflow-dev",
+      "source": "./claude-plugins/landflow-dev",
+      "description": "Skills and agents for building on Landflow: orient in the platform, change the host server, write node plugins in TypeScript, Python or Go, and work on agents and the Kubernetes deployment.",
+      "version": "0.1.0",
+      "author": { "name": "Landflow" },
+      "category": "development",
+      "keywords": ["landflow", "plugins", "sdk", "kubernetes", "agents"]
     }
   ]
 }

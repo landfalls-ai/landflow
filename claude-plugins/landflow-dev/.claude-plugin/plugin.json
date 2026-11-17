@@ -1,0 +1,9 @@
+{
+  "name": "landflow-dev",
+  "version": "0.1.0",
+  "description": "Skills and agents for building on Landflow: orient in the platform, change the host server, write node plugins in TypeScript, Python or Go, work on agents and on the Kubernetes deployment.",
+  "author": {
+    "name": "Landflow"
+  },
+  "keywords": ["landflow", "workflow", "plugins", "sdk", "kubernetes", "agents"]
+}
