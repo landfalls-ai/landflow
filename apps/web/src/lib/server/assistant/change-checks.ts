@@ -45,6 +45,8 @@ function strings(value: unknown, path: string[] = []): Array<{ path: string[]; t
 
 const ASKED_CONTINUE = /\b(continue|carry on|keep going|ignore|swallow|skip|don'?t (stop|fail|abort)|on error|on failure)\b/;
 const ASKED_DISABLE = /\b(disable|turn (it )?off|switch (it )?off|bypass|skip|pause|deactivate)\b/;
+/** "exponential", or "backoff" / "back off" not called fixed: the engine's `retryBackoff: 'exponential'`. */
+const ASKED_EXPONENTIAL = (latest: string) => /\bexponential(ly)?\b/.test(latest) || (/\bback[- ]?off\b/.test(latest) && !/\b(fixed|constant|no) back[- ]?off\b/.test(latest));
 
 /** What a retry change gets wrong: tries out of range or a wait too long, a contradiction, a setting nobody asked for. Reads the ops as proposed. */
 export function retryProblems(ops: AssistantOp[], before: Workflow, _after: Workflow, context: CheckContext = {}): string[] {
@@ -62,6 +64,11 @@ export function retryProblems(ops: AssistantOp[], before: Workflow, _after: Work
     const was = byRef(before, op.node);
     if (s.onError === 'continue' && was?.onError !== 'continue' && !ASKED_CONTINUE.test(latest)) out.push(`${name} is set to continue on error, which the request did not ask for: the failure would be hidden`);
     if (s.disabled === true && !was?.disabled && !ASKED_DISABLE.test(latest)) out.push(`${name} is turned off, which the request did not ask for`);
+    // Carryover sb3 (1): "retry with exponential backoff" got maxTries and retryOnFail but never the backoff the engine has.
+    const retries = s.retryOnFail === true || (typeof tries === 'number' && tries > 1) || wait !== undefined;
+    if (retries && ASKED_EXPONENTIAL(latest) && s.retryBackoff !== 'exponential' && !(was?.retryBackoff === 'exponential' && s.retryBackoff === undefined)) {
+      out.push(`${name} retries without the exponential backoff the request asked for: set retryBackoff to "exponential" (its values: "fixed", "exponential") in the same setNodeSettings`);
+    }
   }
   return out;
 }
@@ -279,6 +286,17 @@ export function cronProblems(ops: AssistantOp[], before: Workflow, after: Workfl
 // ---------------------------------------------------------------------------
 
 const CREDENTIAL_AUTH = new Set(['genericCredentialType', 'predefinedCredentialType']);
+/** Carryover sb3 (6): the `$` names an expression has (packages/engine/src/sandbox/bootstrap.ts); `$cred`, `$secret`, `$env` are not among them. */
+const EXPRESSION_NAMES = new Set(['$json', '$input', '$node', '$now', '$today', '$vars', '$workflow', '$execution', '$parameter', '$secrets', '$fromAI', '$composite', '$itemIndex']);
+/** A header that carries a token. */
+const TOKEN_HEADER = /^(authorization|x-api-key|api-key|apikey)$/i;
+
+/** The `$` names inside a value's `{{ … }}` that expressions do not have, each once. */
+function madeUpNames(value: string): string[] {
+  const names = new Set<string>();
+  for (const [, code] of value.matchAll(/\{\{([\s\S]*?)\}\}/g)) for (const [name] of code.matchAll(/\$[A-Za-z_][\w]*/g)) if (!EXPRESSION_NAMES.has(name)) names.add(name);
+  return [...names];
+}
 
 /** The header rows a step's parameters carry: `{ header: [{ name, value }] }`. */
 function headerRows(parameters: Record<string, unknown>): Array<{ name: string; value: string }> {
@@ -288,7 +306,8 @@ function headerRows(parameters: Record<string, unknown>): Array<{ name: string; 
 
 /**
  * `only: 'data'`: an Authorization header read from the data (`$json`, `$('…')`): a token is a credential the person
- * picks, never a field. `only: 'credential'`: a hand-written Authorization header on a step that already authenticates
+ * picks, never a field; and a token header (Authorization, X-API-Key) whose expression uses a `$` name expressions do not
+ * have (`$cred(…)`, `$secret`, `$env`). `only: 'credential'`: a hand-written Authorization header on a step that already authenticates
  * with a credential (the engine lets the hand-written one win, so the credential is silently unused).
  */
 export function authHeaderProblems(ops: AssistantOp[], before: Workflow, after: Workflow, _context: CheckContext = {}, only?: 'data' | 'credential'): string[] {
@@ -306,6 +325,14 @@ export function authHeaderProblems(ops: AssistantOp[], before: Workflow, after: 
     // An existing header counts when the credential is new or of another kind; otherwise only a new header does.
     const credentialRows = !wasNode || authOf(wasNode) !== authOf(node) ? all : rows;
     if (only !== 'credential' && rows.some((r) => /\$json|\$\(/.test(r.value))) out.push(`“${node.name}” builds its Authorization header from the data: use a credential (the person picks it), not a header read from the data`);
+    // Carryover sb3 (6): `Bearer {{ $cred('my-api-key') }}` calls a function and a credential name nobody has.
+    if (only !== 'credential') {
+      const made = [...new Set(headerRows(node.parameters).filter((r) => TOKEN_HEADER.test(r.name) && !was.some((w) => w.name === r.name && w.value === r.value)).flatMap((r) => madeUpNames(r.value)))];
+      if (made.length) {
+        const slot = node.type === 'core.httpRequest' ? 'set authentication to "genericCredentialType" with genericAuthType "httpBearerAuth" or "httpHeaderAuth" and leave the credential to the person' : 'use the step\'s credential (the person picks it)';
+        out.push(`“${node.name}” builds a token header with ${made.join(', ')}, which expressions here do not have (it is made up): drop that header and ${slot}`);
+      }
+    }
     if (only !== 'data' && credentialed && credentialRows.length) out.push(`“${node.name}” has a credential and a hand-written Authorization header: the header wins, so the credential is not used`);
   }
   return out;
