@@ -16,7 +16,8 @@ import { agentStore } from '../agents/store';
 import { assistantModel, DEFAULT_ASSISTANT_MODEL, modelLabel } from '../assistant/model';
 import { nodeDocs, availableTypes } from '../assistant/research';
 import { suggestAfterRun } from '../assistant/suggest';
-import { buildFlow, type FlowDraft } from '../flow-builder';
+import type { FlowDraft } from '../flow-builder';
+import { buildPlanFirst } from '../assistant/build-plan'; // sb3 integration: the brain's flows are planned first too
 import { getProjectSettings } from '../governance/scopes';
 import { homeProjectId } from '../projects/store';
 import { store } from '../store';
@@ -149,7 +150,7 @@ async function enrichOne(finding: Finding, enrich: Enrichment, model: LanguageMo
     case 'draft': {
       const name = brainModelName();
       if (!name || name.includes('/')) return finding;
-      const draft = await buildFlow(enrich.prompt, name);
+      const draft = await buildPlanFirst(enrich.prompt, name);
       if (!draft.nodes.length) return finding;
       return { ...finding, proposal: { ...p, draft: draftWorkflow(draft), why: `${p.why} Applying creates a draft workflow “${draft.name}” to start from.`.slice(0, 2_000), model: draft.model } };
     }

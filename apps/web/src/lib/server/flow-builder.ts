@@ -537,19 +537,9 @@ export function pinTarget(draft: Assembled, byType: Map<string, NodeTypeInfo>): 
  * `teams` and `agents`: the published agent teams and agents the caller can see, so a step that needs an agent runs one
  * that fits, and a Run a Team or Run an Agent node gets a real one (by id, never a guess).
  */
-export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: readonly TeamBrief[] = [], agents: readonly AgentBrief[] = [], options: { types?: NodeTypeInfo[]; plan?: BuildPlan; staged?: boolean } = {}): Promise<FlowDraft> { // SB02: the workflow's allowed types
+export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: readonly TeamBrief[] = [], agents: readonly AgentBrief[] = [], options: { types?: NodeTypeInfo[]; plan?: BuildPlan } = {}): Promise<FlowDraft> { // SB02: the workflow's allowed types
   const types = options.types ?? registry.nodeTypes().filter((t) => t.available); // SB02: same as availableTypes(), with no new import
   const byType = new Map(types.map((t) => [t.type, t]));
-  // Wave sb3 integration: plan first by default (SB13's stage 1, then SB14's stage 2), for the editor's route and every
-  // other caller (the brain writer's `buildFlow(prompt, name)`); `staged: false` keeps SB13's one-shot draft below.
-  if (!options.plan && options.staged !== false) {
-    const planStarted = Date.now();
-    const { planFlow } = await import('./assistant/build-plan'); // build-plan.ts imports this module: loaded when used
-    const planStages: BuildStage[] = [];
-    const { plan } = await planFlow(prompt, { model, types, agents, teams, stages: planStages });
-    const built = await buildFlow(prompt, model, teams, agents, { types, plan });
-    return { ...built, durationMs: Date.now() - planStarted, calls: planStages.length + (built.calls ?? 0), stages: [...planStages, ...(built.stages ?? [])] };
-  }
   // SB14: with a plan, one small call per step fills its parameters and the wiring is the plan's (assistant/build-nodes.ts).
   if (options.plan) {
     const plan = options.plan;

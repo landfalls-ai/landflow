@@ -12,8 +12,8 @@ import { describeAgents, type AgentBrief } from '@/lib/shared/agent-brief';
 import { describeTeams, type TeamBrief } from '@/lib/shared/agent-teams';
 import { withoutStep } from '@/lib/shared/plan-edit';
 import { PLAN_STEP_LIMIT, planProblems, type BuildPlan, type BuildStage, type PlanProblem, type PlanStep } from '@/lib/shared/build-plan';
-import { askModel, builderTimeoutMs, jsonOf } from '../flow-builder';
-import { catalogSummary, searchNodes } from './research';
+import { askModel, buildFlow, builderTimeoutMs, jsonOf, type FlowDraft } from '../flow-builder';
+import { availableTypes, catalogSummary, searchNodes } from './research';
 import { names as triggerNamed } from './draft-guards';
 
 /** At most this many non-trigger candidates are offered (the triggers come with them). */
@@ -316,6 +316,22 @@ export function alternativesFor(plan: BuildPlan, offered: ReadonlyMap<string, No
     if (list.length) out[step.key] = list.slice(0, 3);
   });
   return out;
+}
+
+/**
+ * Wave sb3 integration: a first draft, planned first. With no `plan` it plans (stage 1, `planFlow`) and then builds in
+ * stages (SB14, `buildFlow` with the plan), the calls and their stages counted together; with a `plan` it builds from
+ * that plan; `staged: false` is SB13's one-shot draft (`buildFlow` with no plan). The build route and the brain writer
+ * call this. It lives here, not in flow-builder.ts, since this module imports flow-builder.ts (no import cycle).
+ */
+export async function buildPlanFirst(prompt: string, model: string, teams: readonly TeamBrief[] = [], agents: readonly AgentBrief[] = [], options: { types?: NodeTypeInfo[]; plan?: BuildPlan; staged?: boolean } = {}): Promise<FlowDraft> {
+  const { staged, ...rest } = options;
+  if (rest.plan || staged === false) return buildFlow(prompt, model, teams, agents, rest);
+  const started = Date.now();
+  const planStages: BuildStage[] = [];
+  const { plan } = await planFlow(prompt, { model, types: rest.types ?? availableTypes(), agents, teams, stages: planStages });
+  const built = await buildFlow(prompt, model, teams, agents, { ...rest, plan });
+  return { ...built, durationMs: Date.now() - started, calls: planStages.length + (built.calls ?? 0), stages: [...planStages, ...(built.stages ?? [])] };
 }
 
 /** Stage 1: the plan for a request (or, with `plan` and `change`, the plan as the person corrected it). */

@@ -5,7 +5,7 @@ import { roster } from '@/lib/server/assistant/roster';
 import { allowedTypes } from '@/lib/server/assistant/scope';
 import { describeAgents } from '@/lib/shared/agent-brief';
 import { describeTeams } from '@/lib/shared/agent-teams';
-import { buildFlow } from '@/lib/server/flow-builder';
+import { buildPlanFirst } from '@/lib/server/assistant/build-plan'; // sb3 integration: plan first unless `staged: false`
 import { CONNECTION_TYPES } from '@landflow/protocol'; // SB14:
 import { draftSummary } from '@/lib/shared/draft-summary'; // SB15:
 import { assistantScope, isUsageCapError, runInUsageScope } from '@/lib/server/ai-usage'; // SB19:
@@ -47,7 +47,7 @@ export const POST = handler(async (request: Request) => {
       const problems = [...planProblems(plan, new Set(offered.keys()), (type) => offered.get(type)?.descriptor.kind === 'trigger'), ...subnodeProblems(plan, (type) => offered.get(type)), ...attachProblems];
       if (problems.length) return error(`The plan cannot be built: ${problems.map((p) => `${p.step ? `${p.step}: ` : ''}${p.problem}`).join('; ')}`, 400);
     }
-    const draft = await runInUsageScope(scope, () => buildFlow(parsed.data.prompt, picked.model, teams, agents, { types, ...(plan && { plan }) /* SB13: */, ...(parsed.data.staged === false && { staged: false }) }));
+    const draft = await runInUsageScope(scope, () => buildPlanFirst(parsed.data.prompt, picked.model, teams, agents, { types, ...(plan && { plan }) /* SB13: */, ...(parsed.data.staged === false && { staged: false }) }));
     const byType = new Map(types.map((t) => [t.type, t]));
     const credentialNames = new Map(registry.credentialTypes().flatMap((c) => [[c.descriptor.name, c.descriptor.displayName], [c.type, c.descriptor.displayName]] as const));
     const known = [parsed.data.prompt, agents.length ? describeAgents(agents) : '', teams.length ? describeTeams([...teams]) : ''].join('\n');

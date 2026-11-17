@@ -103,7 +103,7 @@ const { listCases } = await import('@/lib/server/agents/eval-gate');
 const { store } = await import('@/lib/server/store');
 const { runWorkflow } = await import('@/lib/server/runner');
 const { replyText } = await import('@/lib/server/streaming');
-const { buildFlow } = await import('@/lib/server/flow-builder');
+const { buildPlanFirst } = await import('@/lib/server/assistant/build-plan');
 const { cronProblems } = await import('@/lib/server/assistant/change-checks');
 const { runChat } = await import('@/lib/server/assistant/chat');
 type ChatEvent = Parameters<Parameters<typeof runChat>[0]['onEvent']>[0];
@@ -303,9 +303,9 @@ describe('1. plan → parameters → summary (SB13 → SB14 → SB15)', () => {
     expect(json(useEditor.getState().nodes.map((n) => n.data.wf.credentials ?? null))).not.toMatch(/"id"/);
   });
 
-  it('(e) the brain writer’s buildFlow(prompt, model), with no options, builds staged', async () => {
+  it('(e) the brain writer’s buildPlanFirst(prompt, model), with no options, builds staged', async () => {
     scriptB1();
-    const draft = await buildFlow(B1, 'qwen3-coder:30b');
+    const draft = await buildPlanFirst(B1, 'qwen3-coder:30b');
     expect(draft.plan?.name).toBe('Bug triage');
     expect(draft.stages?.[0].stage).toBe('plan');
     expect(draft.nodes).toHaveLength(6);
