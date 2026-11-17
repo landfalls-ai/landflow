@@ -544,7 +544,7 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
   const stages: BuildStage[] = [];
   const planned = options.plan && types.filter((t) => options.plan!.steps.some((s) => s.type === t.type));
   const request = planned
-    ? `Node catalog (only the nodes of the plan):\n${catalog(planned)}${agentsNote}${teamsNote}\n\nBuild this workflow:\n${prompt}\n\nBuild exactly these steps, with these keys (key: step), each one node of the type named, and no others:\n${planLines(options.plan!, (type) => type).map((line, i) => `${options.plan!.steps[i].key}: ${line}`).join('\n')}`
+    ? `Node catalog (only the nodes of the plan):\n${catalog(planned)}${agentsNote}${teamsNote}\n\nBuild this workflow:\n${prompt}\n\nBuild exactly these steps, with these keys (key: step), each one node of the type named, and no others. Fill every node's parameters from the request above (urls, fields, conditions) and let a step that sends or checks the incoming item read it with a {{ $json... }} expression:\n${planLines(options.plan!, (type) => type).map((line, i) => `${options.plan!.steps[i].key}: ${line}`).join('\n')}`
     : `Node catalog:\n${catalog(types)}${agentsNote}${teamsNote}\n\nBuild this workflow:\n${prompt}`;
   // SB01: the first reply (sent back once when it does not parse), then the draft checked and sent back once.
   const messages: DraftMessage[] = [{ role: 'user', content: request }];
