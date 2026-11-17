@@ -128,6 +128,13 @@ Every draft is checked before you see it:
   that don't exist; the draft says what was left out;
 - a node tool keeps only that node's parameters, over its defaults; what the agent decides per call is a
   `$fromAI('key', 'description', 'type')` placeholder;
+- a node tool that reads its whole input item (Normalize Alert, Extract IOCs, most transforms) and names no field to work
+  on gets a required **`item`** argument: the data the tool works on, as JSON. The model puts the alert, email or record
+  there; an object is the node's input item, a string that parses as a JSON object is that object, any other string
+  becomes `{ text }`, and the other arguments are the per-call overrides of the node's settings. A node that declares
+  its own `toolInputSchema` or names a field (Sentiment's `field`) keeps its schema. The Grafana tools (Get Alerts, Get
+  Alert Details, Acknowledge Alert) declare the `grafana_alertmanager_api_token` credential, so the tool dialog offers
+  the picker (Get Alerts and Get Alert Details are reads, Acknowledge Alert is a write and asks first);
 - an id nobody gave (a table, a channel) is dropped, as in the editor assistant;
 - credentials are never set. A required credential becomes a "pick a … credential" item, naming the ones you have, and
   a required parameter left empty becomes "fill in …";
