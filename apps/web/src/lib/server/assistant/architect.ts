@@ -897,7 +897,7 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
         const value = parameters[property.name];
         if (!property.required || property.type === 'notice' || !isPropertyVisible(property, parameters)) continue;
         if (value === undefined || value === '' || (Array.isArray(value) && !value.length)) {
-          // AG08: a property the tool's schema lets the model fill on each call (Acknowledge Alert's Alert ID) is not for the person.
+          // AG08: a property the tool's schema lets the model fill on each call (Acknowledge Alert's Alert Name) is not for the person.
           const schema = deriveToolSchema(d, parameters);
           const perCall = Object.keys((d.toolInputSchema?.properties ?? {}) as object).includes(property.name) || (Array.isArray(schema.required) && (schema.required as string[]).includes(property.name));
           if (perCall) continue;

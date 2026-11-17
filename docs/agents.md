@@ -70,7 +70,7 @@ guess, or the node's own preset such as HTTP Request's `http://127.0.0.1:3000/ap
 address the request says to send to (two or more: the ones it names, as given), its From stays empty for you ("fill in
 From Email"; an invented one is dropped), and its Subject and Text are `{{ $fromAI('subject', …) }}` and
 `{{ $fromAI('body', …) }}`, so the agent writes them on each call (the format is plain text unless the model chose
-another). A required property the tool's schema lets the model fill on each call (Acknowledge Alert's Alert ID, a
+another). A required property the tool's schema lets the model fill on each call (Acknowledge Alert's Alert Name, a
 `$fromAI` value) is not on the Left row. The test cases are the inputs themselves (an alert's text, the question as asked),
 never a description of one ("Pasted alert about high CPU"), a `<placeholder>` or a line under 12 characters: such a case is
 dropped, and a proposal left with fewer than 3 gets one follow-up call that asks for real inputs, so a good agent is not

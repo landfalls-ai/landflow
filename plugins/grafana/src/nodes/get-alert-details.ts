@@ -40,7 +40,7 @@ export class GetAlertDetails implements INodeType {
     const alertId = ctx.getNodeParameter('alertId', 0);
 
     if (!alertId) {
-      throw new NodeOperationError('Alert ID is required', {
+      throw new NodeOperationError('Alert Name is required', {
         description: 'The "alertId" parameter must be provided.',
       });
     }

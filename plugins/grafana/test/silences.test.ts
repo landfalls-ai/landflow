@@ -84,3 +84,10 @@ describe('descriptors', () => {
     expect(JSON.stringify(d)).not.toMatch(/unique identifier/);
   });
 });
+
+describe('an empty Alert Name', () => {
+  it('says Alert Name is required on both nodes', async () => {
+    await expect(new AcknowledgeAlert().execute(ctx('', 'editor'))).rejects.toThrow('Alert Name is required');
+    await expect(new GetAlertDetails().execute(ctx('', 'editor'))).rejects.toThrow('Alert Name is required');
+  });
+});

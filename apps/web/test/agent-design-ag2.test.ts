@@ -112,10 +112,10 @@ describe('a destination nobody gave', () => {
 
 describe('a property the model fills on each call is not a need', () => {
   const ack = { name: 'Helper', role: 'Helper', instructions: 'Work.', tools: [{ type: 'node', nodeType: 'grafana.acknowledgeAlert', description: 'Acknowledge' }] };
-  it('Acknowledge Alert asks for no Alert ID', () => {
+  it('Acknowledge Alert asks for no Alert Name', () => {
     const result = draft(ack, 'Create an agent that lists the firing alerts in Grafana and acknowledges each one in Grafana.');
     expect(nodeTools(result.config).some((t) => t.nodeType === 'grafana.acknowledgeAlert')).toBe(true);
-    expect(result.needs.map((n) => n.text).join(' ')).not.toMatch(/Alert ID/);
+    expect(result.needs.map((n) => n.text).join(' ')).not.toMatch(/Alert Name/);
   });
   it('Send Email still asks for From', () => {
     expect(draft(mailArgs({}), TRIAGE_ASK).needs.map((n) => n.text)).toContain('send_email: fill in From Email');

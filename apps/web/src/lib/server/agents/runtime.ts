@@ -696,7 +696,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
           upsert(toolEntry(call, tool, { status: 'denied', error: message }));
           immediate.push({ id: call.id, name: call.name, content: message, isError: true });
         } else if (tool.requireApproval) {
-          waiting.push({ callId: call.id, tool: call.name, input: call.input });
+          waiting.push({ callId: call.id, tool: call.name, input: tool.shownInput ? tool.shownInput(call.input) : call.input });
           upsert(toolEntry(call, tool, { status: 'awaiting_approval' }));
         } else runnable.push(call);
       }
@@ -779,7 +779,8 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
 
   async function settlePending(call: PendingCall, tool: BuiltTool | undefined, ctx: ToolContext): Promise<ToolResult | { pending: PendingCall }> {
     if (!tool) return { id: call.callId, name: call.tool, content: `The tool "${call.tool}" is no longer available.`, isError: true };
-    const asCall: ToolCall = { id: call.callId, name: call.tool, input: call.input };
+    // An edit that approved the call with changes meets the same rule as the card: only what the schema offered.
+    const asCall: ToolCall = { id: call.callId, name: call.tool, input: tool.shownInput ? tool.shownInput(call.input) : call.input };
     // A remote agent's pause: the decision goes to that agent either way, and its answer is the tool's result.
     if (call.remote) {
       if (!tool.resume) return { id: call.callId, name: call.tool, content: `The tool "${call.tool}" can no longer answer the agent that paused.`, isError: true };

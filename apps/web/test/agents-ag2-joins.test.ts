@@ -395,9 +395,9 @@ describe('2. revise: add and remove, the steps follow (AG09 × AG07 × AG08)', (
     const change = cardOf(1);
     expect(change.card.base?.agentId).toBe(agentId);
     expect(change.card.changes).toContain('Adds the tool Acknowledge Alert (asks first)');
-    // Left: Acknowledge Alert's credential only; none for Get Alerts (set) and no Alert ID (the model fills it per call, AG08).
+    // Left: Acknowledge Alert's credential only; none for Get Alerts (set) and no Alert Name (the model fills it per call, AG08).
     expect(change.card.needs.some((n) => /^get_alerts: pick/.test(n)), json(change.card.needs)).toBe(false);
-    expect(change.card.needs.some((n) => /Alert ID/i.test(n)), json(change.card.needs)).toBe(false);
+    expect(change.card.needs.some((n) => /Alert Name/i.test(n)), json(change.card.needs)).toBe(false);
     expect(change.card.needs.some((n) => /^acknowledge_alert: pick/.test(n)), json(change.card.needs)).toBe(true);
     // AG09's step for the added tool survived AG07's check: a step calls acknowledge_alert, not only the Tools line.
     const added = String(change.card.config.instructions);
@@ -468,8 +468,9 @@ describe('3. the editor’s chat approves the agent’s write (AG10 × AG08 × S
     const waiting = await chatRun('wf_ag2_chat', WAZUH);
     expect(waiting.status).toBe('waiting');
     expect(agentSide.asked.some((m) => m.includes('203.0.113.45'))).toBe(true);
-    // AG08: the tool offered the model no toEmail; AG10: the approval card holds the call.
+    // AG08: the tool offered the model no toEmail; AG10: the approval card holds the call, and shows only what the schema offered.
     const decided = await decide(waiting.executionId, true);
+    expect(json(decided.call.input)).not.toContain('attacker@example.net');
     expect(decided.call.tool).toMatch(/^(?:send_email|Send Email)$/);
     expect(decided.result?.status).toBe('success');
     expect(smtp.mails).toHaveLength(1);
