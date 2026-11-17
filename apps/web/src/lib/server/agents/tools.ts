@@ -6,7 +6,7 @@
  * plus built-in tools for skills and cross-session memory.
  */
 import { defaultVersionOf, PROTOCOL_VERSION, type ExecuteRequest, type JsonObject, type NodeItem } from '@landflow/protocol';
-import { ExpressionResolver, isToolOutputWithImages, type ToolImage, REASON_DESCRIPTION, deriveToolSchema, toToolName, withReason, type AgentTool, type ToolSpec } from '@landflow/engine';
+import { ExpressionResolver, isToolOutputWithImages, type ToolImage, REASON_DESCRIPTION, deriveToolSchema, toolInputItem, toToolName, withReason, type AgentTool, type ToolSpec } from '@landflow/engine';
 import { binaryAccessFor } from '../binary/access';
 import { withProjectContext } from '../nodes/a2a';
 import { binaryToolImages } from '../nodes/tool-images';
@@ -462,20 +462,23 @@ function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
   if ('error' in resolved) return { error: `${config.name}: ${resolved.error}` };
   const { descriptor } = resolved;
   const skip = new Set(descriptor.properties.filter((p) => p.noDataExpression || p.type === 'code').map((p) => p.name));
+  const inputSchema = descriptor.delegates ? withReason(deriveToolSchema(descriptor, config.parameters)) : deriveToolSchema(descriptor, config.parameters);
   return {
     kind: 'node',
     name: toToolName(config.name),
     label: config.name,
     nodeType: config.nodeType,
     description: config.description || descriptor.toolDescription || descriptor.description,
-    inputSchema: descriptor.delegates ? withReason(deriveToolSchema(descriptor, config.parameters)) : deriveToolSchema(descriptor, config.parameters),
+    inputSchema,
     requireApproval: Boolean(config.requireApproval),
     async invoke(given, ctx) {
       // A delegating node's `reason` is for the record (the timeline shows the call's input), not for the node.
       const { reason: _reason, ...rest } = given;
       const input = descriptor.delegates ? rest : given;
       // The arguments are the node's one input item; $fromAI() reads them and same-named parameters take them.
-      const items: NodeItem[] = [{ json: input as JsonObject }];
+      // AG03: with the generated `item` argument, that is the item and the other arguments are the overrides.
+      const { json: itemJson, rest: toolArgs } = toolInputItem(inputSchema, input);
+      const items: NodeItem[] = [{ json: itemJson }];
       // $secrets in the tool's parameters, when Settings → External secrets allows it.
       const secrets = await parameterSecrets(config.parameters, skip);
       const resolver = new ExpressionResolver({
@@ -484,11 +487,11 @@ function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
         workflow: { id: `agent:${ctx.agent.id}`, name: ctx.agent.name },
         execution: { id: ctx.runId, mode: 'tool' },
         parameters: config.parameters,
-        toolArgs: input,
+        toolArgs,
         variables: variables.forWorkflow(`agent:${ctx.agent.id}`),
         ...(secrets && { secrets }),
       });
-      const overrides = Object.fromEntries(Object.entries(input).filter(([key]) => descriptor.properties.some((p) => p.name === key)));
+      const overrides = Object.fromEntries(Object.entries(toolArgs).filter(([key]) => descriptor.properties.some((p) => p.name === key)));
       const resolvedParameters = resolver.resolveParameters(config.parameters, 0, skip);
       if (secrets) rememberResolvedParameters(config.parameters, resolvedParameters, skip);
       const parameters = { ...resolvedParameters, ...overrides } as JsonObject;

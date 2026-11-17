@@ -1,0 +1,7 @@
+apiVersion: 1
+datasources:
+  - name: TestData
+    uid: landflow-testdata
+    type: grafana-testdata-datasource
+    access: proxy
+    isDefault: true

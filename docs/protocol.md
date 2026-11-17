@@ -132,6 +132,7 @@ SDK environment variables:
   "inputs":  [{ "type": "main" }],
   "outputs": [{ "type": "main" }],       // several main outputs = branches (IF: true/false)
   "usableAsTool": true,                  // can be attached to an AI Agent's ai_tool port
+  "toolInputSchema": { },                // optional: the arguments the model fills as a tool. Without one the schema is derived: a field parameter gives that argument, and a node with none gets a required `item` (the data to work on)
   "delegates": true,                     // optional: hands work to another agent; as a tool it gets a required `reason` argument
   "properties": [
     { "name": "algorithm", "displayName": "Algorithm", "type": "options", "default": "sha256",

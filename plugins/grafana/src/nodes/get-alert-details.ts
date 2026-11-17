@@ -7,7 +7,8 @@ export class GetAlertDetails implements INodeType {
     description: 'Retrieves detailed information for a specific alert by its ID',
     version: 1,
     kind: 'action',
-    idempotent: false,
+    idempotent: true,
+    credentials: [{ name: 'grafana_alertmanager_api_token', required: true }],
     categories: ['Monitoring'],
     icon: 'file:get-alert-details.svg',
     color: '#60a5fa',
@@ -62,7 +63,7 @@ export class GetAlertDetails implements INodeType {
     }
 
     // Construct the URL for fetching alert details
-    const alertUrl = `${url}/api/v2/alerts/${alertId}`;
+    const alertUrl = `${String(url).replace(/\/+$/, '')}/api/v2/alerts/${alertId}`;
 
     try {
       const response = await ctx.http(alertUrl, {

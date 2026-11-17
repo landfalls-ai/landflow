@@ -79,5 +79,38 @@ export function deriveToolSchema(descriptor: NodeDescriptor, parameters: Record<
       ...(property.type === 'options' && property.options && { enum: property.options.map((o) => String(o.value)) }),
     };
   }
+  // AG03: a node that reads its whole input item needs the data to work on: an `item` argument carries it.
+  const hasMain = descriptor.inputs.some((port) => port.type === 'main');
+  if (hasMain && !descriptor.delegates && !required.length && !('item' in properties) && !descriptor.properties.some((p) => p.name === 'item')) {
+    properties.item = { type: 'object', additionalProperties: true, description: TOOL_ITEM_DESCRIPTION };
+    required.push('item');
+  }
   return { type: 'object', properties, ...(required.length && { required }), additionalProperties: true };
+}
+
+// AG03: the `item` argument of a tool whose node reads its whole input item.
+export const TOOL_ITEM_DESCRIPTION =
+  'The data this tool works on, as JSON (for example the alert, email or record you were given). Put the whole thing here.';
+
+/**
+ * AG03: the node's one input item and the overrides, from the model's arguments. When the schema carries the generated
+ * `item` argument, `json` is that item (an object; a string that parses as a JSON object; any other string becomes
+ * `{ text }`, the key free text goes under) and `rest` is every other argument. Otherwise `{ json: given, rest: given }`.
+ */
+export function toolInputItem(schema: JsonObject, given: Record<string, unknown>): { json: JsonObject; rest: Record<string, unknown> } {
+  const item = (schema.properties as Record<string, { description?: string }> | undefined)?.item;
+  if (item?.description !== TOOL_ITEM_DESCRIPTION) return { json: given as JsonObject, rest: given };
+  const { item: value, ...rest } = given;
+  let json: JsonObject;
+  if (value && typeof value === 'object' && !Array.isArray(value)) json = value as JsonObject;
+  else if (typeof value === 'string') {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      parsed = undefined;
+    }
+    json = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as JsonObject) : { text: value };
+  } else json = rest as JsonObject;
+  return { json, rest };
 }

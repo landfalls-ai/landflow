@@ -82,7 +82,7 @@ import { ExpressionError, ExpressionResolver, type ExpressionData } from './expr
 import { sharedRateLimiter } from './rate-limit';
 import { collectSecretReferences, secretParameterPaths, type SecretValues } from './secrets';
 import { engineMetrics, failSpan, recordedIds, SOURCE_ATTRIBUTE, startChild } from './telemetry';
-import { deriveToolSchema, withReason } from './tool-schema';
+import { deriveToolSchema, toolInputItem, withReason } from './tool-schema';
 import type {
   ExecuteWorkflowOptions,
   ExecutionEvent,
@@ -1450,10 +1450,11 @@ class WorkflowRun {
   /** Any `usableAsTool` node (local or remote) becomes an AgentTool. */
   private nodeAsTool(root: WorkflowNode, subNode: WorkflowNode, resolved: ResolvedNodeType): AgentTool {
     const { descriptor } = resolved;
+    const inputSchema = descriptor.delegates ? withReason(deriveToolSchema(descriptor, subNode.parameters)) : deriveToolSchema(descriptor, subNode.parameters);
     return {
       name: toToolName(subNode.name),
       description: subNode.notes || descriptor.toolDescription || descriptor.description,
-      inputSchema: descriptor.delegates ? withReason(deriveToolSchema(descriptor, subNode.parameters)) : deriveToolSchema(descriptor, subNode.parameters),
+      inputSchema,
       nodeId: subNode.id,
       // The recorded input keeps a delegating node's `reason` (the journal says why the agent asked); the node never sees it.
       invoke: (given) =>
@@ -1461,12 +1462,14 @@ class WorkflowRun {
           const { reason: _reason, ...rest } = given;
           const input = descriptor.delegates ? rest : given;
           // Arguments become the item; same-named parameters are overridden; $fromAI() reads them.
-          const items: NodeItem[] = [{ json: input as JsonObject }];
+          // AG03: with the generated `item` argument, that is the item and the other arguments are the overrides.
+          const { json: itemJson, rest: input2 } = toolInputItem(inputSchema, input);
+          const items: NodeItem[] = [{ json: itemJson }];
           const overrides = Object.fromEntries(
-            Object.entries(input).filter(([key]) => descriptor.properties.some((p) => p.name === key)),
+            Object.entries(input2).filter(([key]) => descriptor.properties.some((p) => p.name === key)),
           );
           const secrets = await this.parameterSecrets(subNode, resolved);
-          const request = { ...this.buildRequest(subNode, resolved, [items], items, overrides, input, secrets), mode: 'tool' as const, idempotencyKey: this.stepKey(subNode, 'tool') };
+          const request = { ...this.buildRequest(subNode, resolved, [items], items, overrides, input2, secrets), mode: 'tool' as const, idempotencyKey: this.stepKey(subNode, 'tool') };
           const progress = this.progressSender(subNode, root.id);
           let response;
           try {
