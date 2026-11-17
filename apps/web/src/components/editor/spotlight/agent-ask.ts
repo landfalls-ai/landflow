@@ -12,7 +12,7 @@ import { api } from '@/lib/client/api';
 import { agentAsk, agentChangeAsk, askCatalog, fallbackName, knowledgeFolderOf, readsTokens, type AgentAsk, type AskCatalogEntry } from '@/lib/shared/agent-ask';
 import { starterFlow, starterSample, type AgentCard, type AgentCardTool, type AgentKnowledgeSetup, type AgentNotAdded } from '@/lib/shared/agent-card';
 import { agentChanges } from '@/lib/shared/agent-changes'; // AG04:
-import { announceChange, designChange, publishChange, saveChange, testDraft } from '@/lib/client/agent-change'; // AG04: AG09: testDraft
+import { announceChange, announceSaved, designChange, publishChange, saveChange, testDraft } from '@/lib/client/agent-change'; // AG04: AG09: testDraft; ag3 carryover: announceSaved
 import { pickedModel } from '../spotlight-model'; // AG04:
 import { followsPractices, guardrailWords, type AgentConfig } from '@/lib/shared/agents';
 import { draft as draftCall, useAssistant, type ChatItem } from '../assistant';
@@ -210,6 +210,7 @@ async function indexKnowledge(itemId: string, card: AgentCard, agent: { id: stri
   try {
     const indexed = await api<NonNullable<AgentKnowledgeSetup['indexed']>>(`/api/agents/${agent.id}/knowledge/${tool.id}/folder`, { method: 'POST', json: { folder: setup.folder } });
     patchCard(itemId, { knowledgeSetup: { ...setup, state: 'indexed', indexed } });
+    announceSaved(agent.id); // ag3 carryover: the canvas band read "0 docs" until a reload; it re-reads the documents now
   } catch (e) {
     patchCard(itemId, { knowledgeSetup: { ...setup, state: 'failed', error: (e as Error).message } });
   }

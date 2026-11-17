@@ -422,8 +422,18 @@ describe('1. knowledge agent end to end (AG13 × AG14 × AG12)', () => {
 
     // Create (the client's createFromCard): the folder route indexed the four files, each chunk naming its file under runbooks/.
     agentSide.reply = 'From runbooks/disk-full.md: keep 730 MB of journal.';
-    await createFromCard(id, card);
+    // ag3 carryover: the indexing announces the save, so the canvas band re-reads the documents (live, it read "0 docs").
+    const tab = new EventTarget();
+    const saved: string[] = [];
+    tab.addEventListener(AGENT_SAVED, (e) => saved.push((e as CustomEvent<{ agentId: string }>).detail.agentId));
+    vi.stubGlobal('window', tab);
+    try {
+      await createFromCard(id, card);
+    } finally {
+      vi.unstubAllGlobals();
+    }
     const created = cardOf().card;
+    expect(saved, 'the indexing announced the agent').toContain(created.agentId);
     expect(created.state, json(created)).toBe('created');
     const agentId = created.agentId!;
     seen.agents.push(agentId);
