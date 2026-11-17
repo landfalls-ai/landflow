@@ -391,6 +391,7 @@ export const asksToWrite = (request: string) => WRITE_ASK.test(request.replace(A
 
 // AG02: a write verb aimed at one tool's app, not a noun anywhere in the request ("customer comments", "an alert", "the email" are not write asks).
 const WRITE_VERB = /\b(?:(?:post|send|create|raise|update|edit|write|append|delete|remove|merge|notify|publish|commit|assign|refund|approve|archive|insert|save|store|acknowledge|resolve|silence|upload)(?:e?s|d|ed|ing)?|reply|replies|comment(?:s|ed|ing)?\s+on|leav(?:e|es|ing)|change|push|close|ack|open\s+an?|file\s+an?)\b/i;
+const WRITE_NAME = new RegExp(`^\\s*${WRITE_VERB.source}`, 'i');
 const MAIL_TO = /\b(?:e-?mail|mail|send)\b[^.!?\n]*?\bto\s+[^\s@,;]+@[^\s@,;]+/i;
 
 /**
@@ -417,6 +418,8 @@ function operationsOf(info: NodeTypeInfo, parameters: Record<string, unknown>) {
  */
 function toolWrites(info: NodeTypeInfo, parameters: Record<string, unknown>): boolean {
   if (writesOutside({ type: info.type, parameters })) return true;
+  // A plugin node with no operation to read (Acknowledge Alert) is a write when its own name starts with a write verb.
+  if (info.pluginId !== 'core' && !info.descriptor.properties.some((p) => p.name === 'operation') && WRITE_NAME.test(info.descriptor.displayName)) return true;
   const options = operationsOf(info, parameters);
   const current = options.find((o) => o.value === parameters.operation);
   const marksReads = info.descriptor.properties.some((p) => p.name === 'operation' && p.options?.some((o) => o.idempotent === true));
@@ -530,7 +533,11 @@ export function nameOnlyOwnTools(instructions: string, tools: Array<{ name: stri
   const out: string[] = [];
   for (const line of instructions.split('\n')) {
     let current = line;
-    const foreign = [...new Set(current.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [])].filter((t) => !own.has(t) && !FIELD_WORD.test(t) && (CALL_VERBS.test(`${t}`) || new RegExp(`\\b(?:call|use|run|invoke)\\s+\`?${t}\\b`, 'i').test(current)));
+    const foreign = [...new Set(current.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [])].filter((t) => {
+      if (own.has(t)) return false;
+      if (CALL_VERBS.test(t) || new RegExp(`\\b(?:call|invoke|run)\\s+\`?${t}\\b`, 'i').test(current)) return true;
+      return !FIELD_WORD.test(t) && new RegExp(`\\buse\\s+\`?${t}\\b`, 'i').test(current);
+    });
     for (const token of foreign) {
       const words = wordsOf(token).filter((w) => !GENERIC_WORDS.has(w));
       const fits = tools.filter((t) => words.some((w) => wordsOf(t.name).includes(w)));

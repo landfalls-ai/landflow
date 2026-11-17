@@ -9,7 +9,7 @@
  */
 import { nanoid } from 'nanoid';
 import { api } from '@/lib/client/api';
-import { agentAsk, fallbackName, readsTokens, type AgentAsk, type AskCatalogEntry } from '@/lib/shared/agent-ask';
+import { agentAsk, askCatalog, fallbackName, readsTokens, type AgentAsk, type AskCatalogEntry } from '@/lib/shared/agent-ask';
 import { starterFlow, starterSample, type AgentCard, type AgentCardTool, type AgentNotAdded } from '@/lib/shared/agent-card';
 import { followsPractices, guardrailWords, type AgentConfig } from '@/lib/shared/agents';
 import { draft as draftCall, useAssistant, type ChatItem } from '../assistant';
@@ -69,11 +69,9 @@ export function setCardModel(itemId: string, model: string): void {
   );
 }
 
-/** AG02: the nodes the editor offers outside core, by display name and plugin name: the tools a message may name. */
+/** AG02: the nodes the editor offers (core ones only by a name of two or more words), by display name and plugin name: the tools a message may name. */
 function nodeCatalog(): AskCatalogEntry[] {
-  return Object.values(useEditor.getState().nodeTypes)
-    .filter((t) => t.pluginId !== 'core')
-    .map((t) => ({ displayName: t.descriptor.displayName, pluginName: t.pluginName }));
+  return askCatalog(Object.values(useEditor.getState().nodeTypes));
 }
 
 /**

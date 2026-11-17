@@ -23,7 +23,7 @@ import { registryLookup } from '@/lib/server/assistant/ops';
 import { agentStore } from '@/lib/server/agents/store';
 import { listCases } from '@/lib/server/agents/eval-gate'; // SB17:
 import { guardrailWords } from '@/lib/shared/agents'; // SB17:
-import { agentAsk, fallbackName } from '@/lib/shared/agent-ask'; // SB16: AG02: fallbackName
+import { agentAsk, askCatalog, fallbackName } from '@/lib/shared/agent-ask'; // SB16: AG02: fallbackName
 import { readFileSync } from 'node:fs'; // AG02:
 import { builderModel } from '@/lib/server/assistant/agent-resources'; // AG02:
 import { starterFlow, starterSample } from '@/lib/shared/agent-card'; // SB16:
@@ -729,7 +729,7 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
     } else if (scenario.via === 'agent-ask') {
       // SB16: what the editor does with a typed "create an agent …": read the ask, design the agent as a card (the route's preview), then the card's Create (the import route, a test case each), and on an empty canvas the starter flow.
       const names = canvas?.nodes.map((n) => n.name) ?? [];
-      const catalog = registry.nodeTypes().filter((t) => t.pluginId !== 'core').map((t) => ({ displayName: t.descriptor.displayName, pluginName: t.pluginName })); // AG02: the editor's catalog
+      const catalog = askCatalog(registry.nodeTypes()); // AG02: the editor's catalog
       const ask = agentAsk(scenario.ask, names, catalog);
       // The composer's rule (spotlight/agent-ask.ts `cardAskFor`): a placed ask on a canvas with steps stays the chat's.
       if (!ask || (ask.placed && names.length)) {

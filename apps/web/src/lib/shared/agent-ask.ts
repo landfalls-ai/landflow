@@ -71,6 +71,16 @@ export interface AskCatalogEntry {
   pluginName?: string;
 }
 
+/**
+ * AG02: the node types a message may name as tools: every plugin node, and a core node whose display name has two or more
+ * words ("HTTP Request"), so a one-word core node ("Code", "Merge") never matches ordinary text.
+ */
+export function askCatalog(types: Array<{ pluginId: string; pluginName?: string; descriptor: { displayName: string } }>): AskCatalogEntry[] {
+  return types
+    .filter((t) => t.pluginId !== 'core' || /\S\s+\S/.test(t.descriptor.displayName.trim()))
+    .map((t) => ({ displayName: t.descriptor.displayName, pluginName: t.pluginId === 'core' ? undefined : t.pluginName }));
+}
+
 /** AG02: whether `name` is in `message` as whole words ("field statistics"), allowing a plural on its last word. */
 function names(message: string, name: string): boolean {
   const text = name.trim();

@@ -30,7 +30,7 @@ const { corePlugin } = await import('@/lib/server/nodes');
 const { registry } = await import('@/lib/server/plugins/registry');
 const { agentResources, agentModelOf } = await import('@/lib/server/assistant/agent-resources');
 const { designAgent, draftFrom, nameOnlyOwnTools, asksToWriteTo } = await import('@/lib/server/assistant/architect');
-const { agentAsk, fallbackName } = await import('@/lib/shared/agent-ask');
+const { agentAsk, askCatalog, fallbackName } = await import('@/lib/shared/agent-ask');
 const { TEST_OWNER } = await import('@/lib/server/auth/test-bypass');
 const { prepare, addScenarioPlugins, checkRunnerModel } = await import('./spotlight-scenarios/harness');
 const { agentStore } = await import('@/lib/server/agents/store');
@@ -48,7 +48,7 @@ beforeAll(async () => {
   await addScenarioPlugins({ start: { plugins: ['triage', 'messaging', 'databases', 'py-insights', 'go-crypto', 'text-toolkit', 'grafana'] } }, 'unit');
   types = registry.nodeTypes();
 });
-const catalog = () => types.filter((t) => t.pluginId !== 'core').map((t) => ({ displayName: t.descriptor.displayName, pluginName: t.pluginName }));
+const catalog = () => askCatalog(types);
 
 const ENV = ['LANDFLOW_BUILDER_MODEL', 'ANTHROPIC_API_KEY', 'OLLAMA_URL'] as const;
 const saved = Object.fromEntries(ENV.map((k) => [k, process.env[k]]));
@@ -155,6 +155,78 @@ describe('the asks as typed (shots 10a, 30d)', () => {
   it('keeps the address and names the triage agent as a triager', () => {
     const read = agentAsk(TYPED_TRIAGE, [], catalog())!;
     expect(read.description).toContain('oncall@landflow.test');
+    expect(read.name).toBe('Alert triager');
+  });
+});
+
+describe('every typed ask (10a, 60b, 30d, 50c): a sensible name, and each asked tool on the agent or in notAdded', () => {
+  const TYPED = {
+    triage: 'Create an agent that triages an alert I paste: normalise it, pull out the IOCs, judge how serious it is, and email a short summary to oncall@landflow.test.',
+    sales: 'Create an agent that answers questions about our sales table in SQLite, with stats and the sentiment of customer comments. Its tools are the SQLite node from the Databases plugin and the Field Statistics and Sentiment nodes from Insights.',
+    utility: 'Create an agent that decodes JWTs, hashes strings, makes UUIDs and slugifies titles.',
+    grafana: 'Create an agent that tells me which Grafana alerts are firing and what the dashboards show. Its tools are the Grafana plugin’s Get Alerts and Get Alert Details nodes, plus HTTP Request to read the dashboards.',
+  };
+
+  it('names each with a noun: no article, pronoun or comma', () => {
+    for (const ask of Object.values(TYPED)) {
+      const name = spec(ask).name;
+      expect(name, ask).toBeTruthy();
+      expect(name.length).toBeLessThanOrEqual(40);
+      expect(name).not.toMatch(/,|^(?:an?|the|me|my|our|its|your|i)\b/i);
+    }
+    expect(spec(TYPED.triage).name).toBe('Alert triager');
+    expect(spec(TYPED.utility).name).toBe('Utility helper');
+  });
+
+  it('reads HTTP Request (a core node of two words) as an asked tool, and Get Alerts, Get Alert Details', () => {
+    const tools = agentAsk(TYPED.grafana, [], catalog())!.tools;
+    expect(tools).toEqual(expect.arrayContaining(['Get Alerts', 'Get Alert Details', 'HTTP Request']));
+    expect(agentAsk('Create an agent that merges code reviews', [], catalog())!.tools).not.toContain('Merge');
+  });
+
+  it('puts HTTP Request on the Grafana agent or says why not, even when the architect leaves it out', async () => {
+    const { model } = scripted([design({ name: 'Grafana alerts agent', nodeTools: 'grafana.getAlerts' }), { text: 'Designed.' }]);
+    const result = await designAgent(spec(TYPED.grafana), { types, actor: TEST_OWNER, model });
+    const have = JSON.stringify(result.config.tools ?? []) + JSON.stringify(result.notAdded ?? []);
+    for (const wanted of [/getAlerts/, /getAlertDetails|alert.?details/i, /httpRequest|HTTP Request/i]) expect(have).toMatch(wanted);
+  });
+
+  it('accounts for every tool of the sales ask', async () => {
+    const { model } = scripted([design({ name: 'Sales data analyst', nodeTools: 'databases.sqlite' }), { text: 'Designed.' }]);
+    const result = await designAgent(spec(TYPED.sales), { types, actor: TEST_OWNER, model });
+    const have = JSON.stringify(result.config.tools ?? []) + JSON.stringify(result.notAdded ?? []);
+    for (const wanted of [/sqlite/i, /stats/i, /sentiment/i]) expect(have).toMatch(wanted);
+  });
+});
+
+describe('instruction tool names that end like a field', () => {
+  const tools = [{ name: 'get_alerts' }, { name: 'get_alert_details' }, { name: 'send_email' }];
+  it('replaces or drops a called tool whatever its suffix', () => {
+    for (const bad of ['get_alert_status', 'get_user_by_id', 'get_order_status', 'update_ticket_status', 'lookup_customer_name']) {
+      const { text, dropped } = nameOnlyOwnTools(`Steps:\n1. Call ${bad} for each alert.`, tools);
+      expect(text, bad).not.toContain(bad);
+      expect(dropped.join(' '), bad).toContain(bad);
+    }
+  });
+  it('leaves a bare field word alone', () => {
+    const line = 'Steps:\n1. Read the customer_id and `user_id` and ticket_number from the input.';
+    expect(nameOnlyOwnTools(line, tools)).toEqual({ text: line, dropped: [] });
+  });
+});
+
+describe('a write tool with no operation (Acknowledge Alert)', () => {
+  const GRAFANA_READ = 'Create an agent that lists the firing alerts in Grafana and explains what each one means.';
+  const ack = { name: 'Helper', role: 'Helper', instructions: 'Work.', tools: [{ type: 'node', nodeType: 'grafana.acknowledgeAlert', description: 'Acknowledge' }] };
+  const run = (request: string) => draftFrom(ack as never, { types, actor: TEST_OWNER, known: '', request });
+  it('is dropped, and said, when the ask only reads', () => {
+    const draft = run(GRAFANA_READ);
+    expect(JSON.stringify(draft.config.tools ?? [])).not.toMatch(/acknowledge/i);
+    expect(draft.dropped.join(' ')).toMatch(/Acknowledge Alert/);
+  });
+  it('is kept behind approval when the ask is to acknowledge', () => {
+    const draft = run('Create an agent that lists the firing alerts in Grafana and acknowledges each one in Grafana.');
+    const tool = (draft.config.tools ?? []).find((t) => t.type === 'node' && t.nodeType === 'grafana.acknowledgeAlert');
+    expect(tool).toMatchObject({ requireApproval: true });
   });
 });
 
