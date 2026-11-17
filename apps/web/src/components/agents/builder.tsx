@@ -305,6 +305,34 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
     setSessionId(initialSession);
   }, [initialTarget.tab, initialTarget.view, initialTarget.open, initialSession]);
 
+  // AG12: the canvas's band links to a tool (`?tab=abilities&open=capabilities&tool=<id>`): once its row is on the page, scroll to it and outline it for two seconds.
+  const loaded = Boolean(agent);
+  useEffect(() => {
+    const toolId = initialTarget.tool;
+    if (!toolId || !loaded) return;
+    const outline = ['ring-2', 'ring-ac'];
+    let tries = 0;
+    let looking: ReturnType<typeof setTimeout> | undefined;
+    let clearing: ReturnType<typeof setTimeout> | undefined;
+    let el: HTMLElement | null = null;
+    const find = () => {
+      el = document.getElementById(`tool-${toolId}`);
+      if (!el) {
+        if (++tries < 30) looking = setTimeout(find, 100);
+        return;
+      }
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add(...outline);
+      clearing = setTimeout(() => el?.classList.remove(...outline), 2000);
+    };
+    find();
+    return () => {
+      clearTimeout(looking);
+      clearTimeout(clearing);
+      el?.classList.remove(...outline);
+    };
+  }, [initialTarget.tool, loaded]);
+
   /** Saves the draft now (waiting for any save in flight). */
   const persist = useCallback(() => {
     clearTimeout(timer.current);
@@ -391,6 +419,7 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
       const { agent: next, kagent } = await api<{ agent: Agent; kagent?: KagentStatus | { error: string } }>(`/api/agents/${agentId}/publish`, { method: 'POST', json: { skipEval } });
       setAgent(next);
       setGate(undefined);
+      announceSaved(agentId); // AG12: a Run an Agent node's band reads the published version: it follows a publish too
       if (kagent && 'error' in kagent) toast.warning(`Published v${next.published?.version ?? ''}, but kagent still has v${next.kagent?.version ?? '?'}: ${kagent.error}`);
       else toast.success(`Published v${next.published?.version ?? ''}${kagent ? ' and written to kagent' : ''}`);
       void useAgentData.getState().loadAgents();
@@ -412,6 +441,7 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
     try {
       const { agent: next } = await api<{ agent: Agent }>(`/api/agents/${agentId}/publish`, { method: 'DELETE' });
       setAgent(next);
+      announceSaved(agentId); // AG12
       toast('Unpublished: triggers and channels are off');
       void useAgentData.getState().loadAgents();
     } catch (e) {

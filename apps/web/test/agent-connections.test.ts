@@ -45,12 +45,12 @@ describe('an agent’s connections', () => {
     expect(agentConnections(lead)).toEqual([
       { kind: 'model', name: 'qwen3-coder:30b', detail: 'Ollama · host.docker.internal:11434', icon: 'brand:ollama', from: 'agent' },
       { kind: 'memory', name: 'Remembers across sessions', icon: 'lucide:brain', from: 'agent' },
-      { kind: 'tool', name: 'check_branch', detail: 'branch · get', nodeType: 'github.github', from: 'agent' },
-      { kind: 'knowledge', name: 'handbook', detail: 'Postgres pgvector · Ollama nomic-embed-text', icon: 'brand:postgresql', from: 'agent' },
-      { kind: 'tool', name: 'Grafana', detail: 'MCP server · grafana-mcp:8000', icon: 'brand:mcp', from: 'agent' },
-      { kind: 'agent', name: 'Formatter', detail: 'a Landflow agent', icon: 'lucide:bot', from: 'agent' },
-      { kind: 'agent', name: 'Planner', detail: 'A2A · kagent:8083', icon: 'lucide:radio-tower', from: 'agent' },
-      { kind: 'tool', name: 'open_ticket', detail: 'a workflow', icon: 'lucide:workflow', from: 'agent' },
+      { kind: 'tool', name: 'check_branch', detail: 'branch · get', nodeType: 'github.github', from: 'agent', toolId: 't1' },
+      { kind: 'knowledge', name: 'handbook', detail: 'Postgres pgvector · Ollama nomic-embed-text', icon: 'brand:postgresql', from: 'agent', toolId: 't2' },
+      { kind: 'tool', name: 'Grafana', detail: 'MCP server · grafana-mcp:8000', icon: 'brand:mcp', from: 'agent', toolId: 't3' },
+      { kind: 'agent', name: 'Formatter', detail: 'a Landflow agent', icon: 'lucide:bot', from: 'agent', toolId: 't4' },
+      { kind: 'agent', name: 'Planner', detail: 'A2A · kagent:8083', icon: 'lucide:radio-tower', from: 'agent', toolId: 't5' },
+      { kind: 'tool', name: 'open_ticket', detail: 'a workflow', icon: 'lucide:workflow', from: 'agent', toolId: 't6' },
       { kind: 'skill', name: 'Review a PR', icon: 'lucide:graduation-cap', from: 'agent' },
     ]);
   });
@@ -69,8 +69,8 @@ describe('GitHub MCP in an agent’s connections', () => {
   const reader = agentStore.publish(agentStore.create({ name: 'Code Reader', tools: [github('g2', 'read')] }).id)!;
 
   it('is its own row with the GitHub mark: reviews and line comments at Read and review, reads at Read', () => {
-    expect(agentConnections(reviewer)).toEqual([{ kind: 'tool', name: 'GitHub MCP', detail: 'Tool · pull requests, reviews, line comments', icon: 'brand:github', from: 'agent' }]);
-    expect(agentConnections(reader)).toEqual([{ kind: 'tool', name: 'GitHub MCP', detail: 'Tool · repositories, pull requests, issues (read)', icon: 'brand:github', from: 'agent' }]);
+    expect(agentConnections(reviewer)).toEqual([{ kind: 'tool', name: 'GitHub MCP', detail: 'Tool · pull requests, reviews, line comments', icon: 'brand:github', from: 'agent', toolId: 'g1' }]);
+    expect(agentConnections(reader)).toEqual([{ kind: 'tool', name: 'GitHub MCP', detail: 'Tool · repositories, pull requests, issues (read)', icon: 'brand:github', from: 'agent', toolId: 'g2' }]);
   });
 
   it('sits beside the May reach row of the kagent deployment, and is not an ordinary MCP server', () => {

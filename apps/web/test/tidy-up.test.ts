@@ -44,6 +44,17 @@ describe('tidy up', () => {
     expect(pos('t2').y).toBe(pos('yes').y + 200);
   });
 
+  it('AG12: a tall parent (a banded agent or team tile) keeps its sub-nodes below its slot labels', () => {
+    useEditor.getState().load(flow, []);
+    useEditor.setState((s) => ({ nodes: s.nodes.map((n) => (n.id === 'yes' ? { ...n, measured: { width: 300, height: 185 } } : n)) }));
+    useEditor.getState().tidyUp();
+    expect(pos('t2').y).toBe(pos('yes').y + 185 + 48);
+    // A short parent keeps the 200px.
+    useEditor.setState((s) => ({ nodes: s.nodes.map((n) => (n.id === 'yes' ? { ...n, measured: { width: 300, height: 150 } } : n)) }));
+    useEditor.getState().tidyUp();
+    expect(pos('t2').y).toBe(pos('yes').y + 200);
+  });
+
   it('lays out a flow that is all one loop from its first node', () => {
     useEditor.getState().load({ ...flow, connections: [main('start', 'branch'), main('branch', 'start')] }, []);
     useEditor.getState().tidyUp();

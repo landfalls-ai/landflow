@@ -659,6 +659,24 @@ request: the run goes on when the last one is decided). The Platform analyst's o
     it. Without one, *Continue by key* keeps one agent session per key (for example
     `{{ $json.sessionId }}`).
 
+  **What the node shows** (AG12, wave ag3): under its name, a dashed **band** says what the agent is connected to,
+  read-only, in three columns straight above the Chat Model, Memory and Tool slots: the model (the provider's logo and
+  the name, *project default* when the agent has none and the project gives one), memory (*Remembers across sessions* or
+  *This conversation*) and the tools and knowledge bases (each with its icon, a lock for a tool that
+  waits for approval (*asks first* is in its hover title), a knowledge base's count as *N docs*, and a credential's name and a
+  withheld tool's reason in the hover title; one line each, the ones that ask first leading, at most
+  two rows, then *+N more*, so the node ends above where wired sub-nodes sit (a tall node, such as a team's, pushes sub-nodes placed by Tidy up or by a slot's + further down); a tool the project's settings keep out is greyed with the reason). A **Chat Model** or
+  **Memory** wired to the node shows the agent's own struck through and *replaced by* that node; wired tools add
+  (*+ 1 wired*). The node runs the **published** version, so the band shows it: *Not published* for an agent never
+  published (the band shows its draft and the node says "Publish X first" when run), *Draft has changes* when the
+  draft differs from what runs. A click on a row opens the agent's page in a new tab at that ability
+  (`/agents/<id>?tab=abilities&open=model`, or `&open=capabilities&tool=<tool id>`: the row is scrolled into view and
+  outlined for two seconds); the band never edits anything. It reads `GET /api/agents/:id/connections` once per agent
+  and again when the agent changes: a save, a publish, an Apply in Spotlight, in this tab or another (the tabs tell each
+  other over a `BroadcastChannel`, which also keeps Spotlight's created card's Left row current after a pick on the
+  agent page opened by **Pick it**). A Run a Team node shows its lead's band, and on a phone a Run an Agent step's card
+  reads "Run an Agent · claude-sonnet-5-5 · 4 tools · 1 knowledge base".
+
   It outputs `{ reply, sessionId, agentId, version, model, endReason, usage, steps }`, where
   `steps` lists each tool call with its kind and status. Answers and tool calls stream to the
   editor's chat panel and to streaming triggers. Tools that require approval are refused,

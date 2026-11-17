@@ -924,6 +924,19 @@ function paths(): Record<string, Record<string, Json>> {
     query: [{ name: 'projectId', description: 'The project to preview (default: the agent’s home project)', schema: { type: 'string' } }],
     responses: { 200: reply('The preview', object({ projectId: { type: 'string' }, mode: { type: 'string', enum: ['full', 'compact', 'off'] }, text: { type: 'string' }, compact: { type: 'string' }, practices: object({ text: { type: 'string' }, list: array(object({ handle: { type: 'string' }, version: { type: 'integer' } }, ['handle', 'version'])) }, ['text', 'list']) }, ['mode', 'text', 'compact', 'practices'])), 404: notFound },
   });
+  // AG12:
+  add('get', '/api/agents/{id}/connections', {
+    tag: 'Agents',
+    id: 'getAgentConnections',
+    summary: 'What an agent is connected to',
+    description: 'The list the Run Trace shows for the agent (model, memory, tools, knowledge bases, skills) from the version a Run an Agent node runs (the published one; the draft of an agent never published, `published: false`). `draftDiffers`: the draft’s settings differ from the published ones as data. Each connection may carry `toolId`, `asksFirst`, `credential` (a credential’s NAME, never its data; "credential missing" for a deleted one), `overriddenBy` (the wired sub-node that replaces it), `withheld` (why the project keeps it out) and `documents` (a vector knowledge base’s count). With `workflowId` and `nodeId`, the workflow’s project settings apply and the node’s wired Chat Model and Memory mark the agent’s own as overridden, its wired tools listed with `from: "flow"`. Read access is the agent’s; an agent or workflow you cannot read is 404.',
+    pathParams: { id: 'The agent id' },
+    query: [
+      { name: 'workflowId', description: 'The workflow the node is in (its project’s settings apply)', schema: { type: 'string' } },
+      { name: 'nodeId', description: 'The Run an Agent node in it (its wired sub-nodes are read)', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The agent and its connections', object({ agent: object({ id: { type: 'string' }, name: { type: 'string' }, published: { type: 'boolean' }, draftDiffers: { type: 'boolean' }, icon: { type: 'string' }, color: { type: 'string' }, avatar: { type: 'object' } }, ['id', 'name', 'published', 'draftDiffers']), connections: array({ type: 'object', description: 'kind, name, detail, nodeType, icon, from, toolId, asksFirst, credential, overriddenBy, withheld, documents' }) }, ['agent', 'connections'])), 404: notFound },
+  });
   add('get', '/api/agent-teams/{id}/export', {
     tag: 'Agent teams',
     id: 'exportAgentTeamPlugin',

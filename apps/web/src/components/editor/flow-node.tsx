@@ -9,7 +9,8 @@ import { MenuItem, Popover } from '../ui/popover';
 import type { ExecutionEvent } from '@/lib/shared/types';
 import { progressDetail, progressLine } from '@/lib/client/node-progress';
 import { decideToolApprovals } from '@/lib/client/run-trace';
-import { useNodeFace, useShownParameters } from '../agents/faces';
+import { useNodeFace, useShownParameters, useTeamLeads } from '../agents/faces';
+import { AgentBand, useAgentConnections } from '../canvas/agent-band'; // AG12
 import { isCompact, NodeTile, ranFor } from '../canvas/node-tile';
 import { useAssistant } from './assistant';
 import { openNeedOf } from './timeline';
@@ -157,6 +158,21 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
     }
   };
   const team = useTeamTile(teamId, live, teamId && !live && !running ? activityOfRuns(runs) : undefined, { ...(executionId && { executionId }), ...(asked && { waiting: asked }), ...(asked?.approval && { onDecide: decideInEditor }), newTab: true, idleRoster: true });
+  // AG12: what the agent (a team's lead) is connected to, under the node's name; the wired Chat Model, Memory and tools come from the canvas, so wiring shows before a save.
+  const wired = useEditor(
+    useShallow((s) => {
+      const subs = s.edges.filter((e) => e.target === id && e.data?.connectionType !== 'main');
+      const nameOf = (type: string) => {
+        const edge = subs.find((e) => e.data?.connectionType === type);
+        return edge ? s.nodes.find((n) => n.id === edge.source)?.data.wf.name : undefined;
+      };
+      return { model: nameOf('ai_languageModel'), memory: nameOf('ai_memory'), tools: subs.filter((e) => e.data?.connectionType === 'ai_tool').length };
+    }),
+  );
+  const workflowId = useEditor((s) => s.workflowId);
+  const leads = useTeamLeads(wf.type === 'core.runTeam' ? [wf] : undefined);
+  const bandAgent = wf.type === 'core.messageAgent' && typeof wf.parameters.agentId === 'string' && wf.parameters.agentId && !wf.parameters.agentId.includes('{{') ? wf.parameters.agentId : wf.type === 'core.runTeam' ? leads[String(wf.parameters.teamId)] : undefined;
+  const bandData = useAgentConnections(bandAgent, workflowId || undefined, id);
   const compact = isCompact(info?.descriptor, wf.parameters, asTool);
   // Only a selected node shows its toolbar; its actions are read when it renders (they follow disabled, breakpoint, running).
   const actions = selected ? nodeActions(id) : undefined;
@@ -181,6 +197,7 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
       face={face}
       live={team.tile}
       slotNames={wf.type === 'core.runTeam' ? LEAD_SLOTS : undefined}
+      band={bandAgent && bandData ? <AgentBand agentId={bandAgent} data={bandData} wired={{ ...(wired.model && { model: wired.model }), ...(wired.memory && { memory: wired.memory }), tools: wired.tools }} lead={wf.type === 'core.runTeam'} /> : undefined}
     >
       {teamId && !team.roster ? (
         // Above the duration a finished node shows over its corner, and above the Waiting or Paused pill over its top.

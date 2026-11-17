@@ -35,8 +35,9 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
   const creating = card.state === 'creating';
   const cases = allCases ? card.cases : card.cases.slice(0, CASES_SHOWN);
   // AG11: a card brought back from history offers Publish only after Test again passed in this page load.
-  const draft = useAgentDraft(card.base?.agentId); // AG09: a change card's Left row is what the agent's draft still lacks
-  const left = [...(card.base ? stillLeft(card.needs, draft) : card.needs) /* AG09: */, ...card.missing.map((m) => `Not available here: ${m}`)];
+  const followed = card.base?.agentId ?? (created ? card.agentId : undefined); // AG12: a created card follows its agent too (the pick on the agent page opened by Pick it)
+  const draft = useAgentDraft(followed); // AG09: a change card's Left row is what the agent's draft still lacks
+  const left = [...(followed ? stillLeft(card.needs, draft) : card.needs) /* AG09: */, ...card.missing.map((m) => `Not available here: ${m}`)];
   // Integration (sb3): after Create the line is SB18's smoke line, live from the agent's row ("tested, 1 of 1 passed · published").
   const row = useAssistant((s) => (card.agentId ? s.agents.find((a) => a.agentId === card.agentId) : undefined));
   const smoke = row?.smoke ?? card.smoke;

@@ -308,6 +308,15 @@ GitHub, Kubernetes, Docker, MCP, kagent, PostgreSQL, SQLite), else its kind's.
 | An A2A Agent node or tool, a team's remote member | When the URL is a Landflow agent deployed to kagent (by the URL its deployment recorded, else the kagent name it ends with): **Claude Code** (when it has plugins, the mod or a Claude harness) and **kagent** (the deployment's name, sandbox and hot start), its Claude Code plugins (the landflow-harness mod among them), each EgressPolicy (GitHub, the package cache, Landflow) and the agent's own model, tools and skills. Any other URL: an A2A agent and its host. |
 | A team | Each member's connections on the chart the node's span records (`attrs.team.members[].connections`); the lead's leaves out the model and memory the flow gives. The model folds them onto the member's actor by title. |
 
+A connection may also say (AG12, wave ag3; the Run an Agent node's canvas band reads the same list from `agentConnections`):
+`asksFirst` (the tool waits for approval), `credential` (the credential's name, never its data; *credential missing* for
+a deleted one), `toolId` (for the link to its row on the agent page), `overriddenBy` and `withheld` (set only where a
+flow and project are given: the canvas route; a run's own list leaves the model and memory a sub-node gives out), a
+project's default model (`from: 'project'`) and its knowledge base (*Project knowledge*), and a vector knowledge base's
+document count. `overriddenBy`, `withheld`, the project's default model, *Project knowledge* and the document count are
+route-only: the Run Trace's path passes no project. `withheld` follows the project's tool kinds on the saved tool, not the
+runtime's per-caller tool access. A knowledge base without an embeddings model reads *SQLite · keyword search (BM25, built in)*.
+
 **GitHub MCP** is its own row for an agent that has GitHub's MCP tools (`preset: 'github'`, [a2a.md](a2a.md#githubs-mcp-tools-for-agents)),
 with the GitHub mark and kind *Tool*: *Tool · pull requests, reviews, line comments* at *Read and review*, *Tool ·
 repositories, pull requests, issues (read)* at *Read*. It sits beside the *May reach · GitHub* row of the agent's kagent
