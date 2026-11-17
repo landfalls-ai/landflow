@@ -31,8 +31,7 @@ import { recordUsage } from '../usage/ledger';
 import { assistantScope, isUsageCapError, runInUsageScope, type UsageScope } from '../ai-usage';
 import { recoverToolCalls, withoutInventedIds, withoutRepeats } from './chat';
 import { agentModelOf, builderModel, chooseModel, type AgentResources } from './agent-resources';
-import { askCatalog, MAIL_TO, readsTokens, toolsOf } from '@/lib/shared/agent-ask';
-import { fallbackName } from '@/lib/shared/agent-ask'; // AG09: // AG02: ag1-int:
+import { askCatalog, fallbackName, MAIL_TO, readsTokens, toolsOf } from '@/lib/shared/agent-ask'; // AG02: ag1-int: AG09: fallbackName
 import { saveCheckpoint } from './checkpoints';
 import { assistantModel, errorText, modelLabel } from './model';
 import { isParseError, parseErrorText } from './parse-retry';
@@ -1224,10 +1223,22 @@ function changeClause(change: string, tool: AgentToolConfig): string {
   const clause = clauses.find((c) => names(c, tool)) ?? clauses[0] ?? '';
   const piece = clause.split(/,|\s+(?:and|but|then)\s+/i).map((c) => c.trim()).find((c) => names(c, tool)) ?? clause;
   const text = piece.replace(/^(?:(?:also|and|please|now|then|just)\s+)+/i, '').replace(/[\s,.:;!?]+$/, '');
+  // AG09: "add Slugify as a tool" configures the agent; it is no task, so the step comes from what the tool does.
+  const left = text
+    .replace(/^(?:(?:add|attach|include|install|enable|connect|use)\b|give\s+(?:it|the agent)\b)\s*/i, '')
+    .replace(/\s+(?:as\s+(?:a|an|another|one more)\s+tools?|tools?)\s*$/i, '')
+    .replace(/^(?:the|a|an|another|one more)\s+/i, '');
+  const wordsLeft = left.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const known = new Set([...toolWords(tool), 'tool', 'tools', 'the', 'a', 'an', 'to', 'it', 'too', 'also']);
+  if (CONFIG_VERB.test(text) && wordsLeft.every((w) => known.has(w) || toolWords(tool).some((k) => w.replace(/s$/, '') === k.replace(/s$/, '')))) {
+    const description = 'description' in tool && tool.description ? tool.description.trim().replace(/[.\s]+$/, '') : '';
+    return description ? `you need to ${description.charAt(0).toLowerCase()}${description.slice(1)}` : `the job needs ${'name' in tool && tool.name ? tool.name.replace(/[_-]+/g, ' ') : 'it'}`;
+  }
   const said = /^(?:let|have|make)\s+(?:it|the agent)\s+/i.test(text) ? text.replace(/^(?:let|have|make)\s+(?:it|the agent)\s+/i, 'it should ') : `asked to ${text}`;
   const words = said.split(/\s+/).slice(0, 16).join(' ');
   return words.length > 100 ? `${words.slice(0, 99).trimEnd()}…` : words;
 }
+const CONFIG_VERB = /^(?:add|attach|include|install|enable|connect|use|give\s+(?:it|the agent))\b/i;
 
 function withToolSteps(text: string, added: Array<{ tool: AgentToolConfig; line?: string }>, change: string): string {
   const lines = text.split('\n');
@@ -1247,7 +1258,16 @@ function withToolSteps(text: string, added: Array<{ tool: AgentToolConfig; line?
   }
   lines.splice(at, 0, ...steps);
   let n = 0;
-  for (let i = start; i < end + steps.length; i++) if (NUMBERED.test(lines[i])) lines[i] = lines[i].replace(NUMBERED, (_m, lead: string, dot: string) => `${lead}${++n}${dot}`);
+  let from = start;
+  let to = end + steps.length;
+  if (stepsAt < 0) {
+    // no Steps header: renumber only the run of numbered lines around the insertion, not other lists
+    from = Math.min(at, lines.length - 1);
+    while (from > 0 && NUMBERED.test(lines[from - 1])) from--;
+    to = at + steps.length;
+    while (to < lines.length && NUMBERED.test(lines[to])) to++;
+  }
+  for (let i = from; i < to; i++) if (NUMBERED.test(lines[i])) lines[i] = lines[i].replace(NUMBERED, (_m, lead: string, dot: string) => `${lead}${++n}${dot}`);
   return lines.join('\n');
 }
 

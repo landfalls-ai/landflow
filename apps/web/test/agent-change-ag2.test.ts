@@ -122,6 +122,21 @@ describe('a revise names the tool it adds in a step', () => {
     }
   });
 
+  it('a configuration ask ("add Send Email as a tool") writes no "asked to add" step', async () => {
+    const base = triageBase();
+    base.tools = base.tools!.filter((t) => 'name' in t && t.name !== 'send_email');
+    base.instructions = TRIAGE_STEPS.replace('normalize_alert, send_email', 'normalize_alert').replace(' send_email', '');
+    const run = await proposing('triage.normalizeAlert, messaging.emailSend', base.instructions);
+    try {
+      const body = (await (await post({ name: 'Alert triage agent', preview: true, base: { config: base }, change: 'add Send Email as a tool' })).json()) as Body;
+      const step = body.config.instructions.split('\n').find((l) => /call send_email/.test(l) && !/Tools:/.test(l));
+      expect(step, body.config.instructions).toBeDefined();
+      expect(step).not.toMatch(/add send email|asked to add/i);
+    } finally {
+      await run.done();
+    }
+  });
+
   it('a tool that writes says it asks the person first', async () => {
     const base = triageBase();
     base.tools = base.tools!.filter((t) => 'name' in t && t.name !== 'send_email');
