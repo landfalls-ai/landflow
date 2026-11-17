@@ -2057,6 +2057,23 @@ and gateway rows without cache numbers. These wait, each with its reason:
 - **`MIN_CACHEABLE_TOKENS` is one figure (1,024) for every model** (`ai-usage/run-spend.ts`): a newer Claude model's
   higher minimum reads as `not-requested`; documented ([limitations](limitations.md#token-spend-what-it-cannot-do-yet)), a per-model
   table waits for a model that needs it.
+- **Left after the sb3 carryover (2026-11-17)**, each with why it waits:
+  - **A one-line change in long code** (sb2 live: 0 of 3): it needs a line-edit operation, since `setParameters` replaces
+    the whole code string and the local model rewrites it; no op of the set does a line yet.
+  - **The phone Execute/Debug pill over a failed step's card** (the same on main): a phone follow-up in
+    [mobile.md](mobile.md) "What's next"; no sb3 package touched the Steps view.
+  - **`useCanvas` in the diff card is memoised on nodes and edges only**: a diff whose `before` should read workflow
+    settings changed after the card appeared is not re-read until a step changes. Cosmetic.
+  - **The model list's embedding filter is by name only** (`models-list.ts`): a chat model with "embed" in its name is
+    hidden, an embedding model without it is listed.
+  - **The combined diff cache, the `LiveSteps` SSR test and `addNode` "before" in the diff** (SB08's review): small, no
+    owner this wave.
+  - **`expressionMisses` on a renamed step, and its broad regex** (SB09's review): SB14 reuses it as it is; a false
+    send-back on a draft step costs one call and is read in the live numbers.
+  - **The ask chip is marked before the send; the auto-session's destination test** (SB11's review): no owner of `AskRow`.
+  - **SB14's per-step call keeps its own model call** (`build-nodes.ts` `askStep`) instead of the flow builder's
+    `askModel`: the same adapters, usage note and JSON mode, a smaller token cap and its own wording; folding them is a
+    tidy-up with no behaviour to gain.
 - **Two concurrent counts of the same prefix both send a count request** (`ai-usage/count/anthropic.ts`): the results
   stay correct and each request is free; sharing an in-flight count would also have to share its per-minute budget slot.
 - **Long unwrapped doc lines** (`llm-gateway.md`, `projects-and-goals.md`, `run-trace.md`, `agents.md`): cosmetic, there
@@ -2065,8 +2082,10 @@ and gateway rows without cache numbers. These wait, each with its reason:
 ## Company backbone: left open from the Spotlight wave sb1 reviews (2026-11-16)
 
 Wave sb2 took sb1's one-step half (scope, changes that mean what they say, context, the diff, asking, credentials, the
-model) and fixed the protocol-relative URL host the guard kept. These wait for wave sb3, each with the package that owns
-the code:
+model) and fixed the protocol-relative URL host the guard kept. These waited for wave sb3, each with the package that owns
+the code. **Wave sb3 built all six** (SB13/SB14 the Linear/Slack draft, SB16/SB17 a new agent's tools, knowledge and least
+privilege and the dialog's fresh start, SB18 the session's reload, review, loop and one yes per scheme), checked together
+in `spotlight-sb3-joins.test.ts`; the model-dependent readings (k of 3) are the sb3 live pass's:
 
 - **A new agent's tools and knowledge** (sb1 live: tools kept 0 of 3, knowledge base 0 of 3, fed on to the reply 1 of 3,
   Linear added as a main step with an invalid operation): SB16 (agents anywhere, D5) and SB17 (the agent brief) decide
@@ -2677,7 +2696,9 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   one-line change in long code (0 of 3), asking for a Slack channel live (0 of 3, not re-run since the `channelId`
   send-back), sb03's new-destination row (0 of 3, also on the base); a 401 fix once proposed
   `Authorization: Bearer {{ $cred('my-api-key') }}`, a credential name nobody has, which the made-up value check does
-  not catch yet; one click on a credential row's radio did nothing before Apply (the label works; unconfirmed). The
+  not catch yet (**both fixed in the sb3 integration**: `retryProblems` sends back a retry without the asked
+  `retryBackoff: "exponential"`, `authHeaderProblems` a token header with a `$` name expressions do not have; the live
+  re-runs are the sb3 live pass's); one click on a credential row's radio did nothing before Apply (the label works; unconfirmed). The
   phone Execute/Debug pill overlap is the same on main (a phone follow-up). Not Spotlight: after runs the host logged
   "the brain's run failed: NOT NULL constraint failed: brain_facts.subject_type" 6 times. **Fixed in wave 14 (SP13):** `staleFactsBefore` writes the whole row, so the study finishes, is stamped, and the detectors run on the brain's own loop.
 
