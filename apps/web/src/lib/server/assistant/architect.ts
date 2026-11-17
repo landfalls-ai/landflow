@@ -541,8 +541,9 @@ export function nameOnlyOwnTools(instructions: string, tools: Array<{ name: stri
       if (own.has(t)) return false;
       // A tool by how it is named, before any field or determiner check: "the get_alerts tool", "call the post_message tool", "use query_logs".
       if (new RegExp(`\\b${t}\`?\\s+(?:tool|node|action|function)\\b`, 'i').test(current)) return true;
-      if (new RegExp(`\\b(?:call|invoke|run)\\s+(?:(?:the|an?)\\s+)?\`?${t}\\b`, 'i').test(current)) return true;
-      if (!FIELD_WORD.test(t) && new RegExp(`\\buse\\s+(?:(?:the|an?)\\s+)?\`?${t}\\b`, 'i').test(current)) return true; // "use `user_id`" is a field
+      // An article between the verb and the name only for a tool-shaped name: "run the post_id check" and "use the source_ip" are fields.
+      if (new RegExp(`\\b(?:call|invoke|run)\\s+${FIELD_WORD.test(t) ? '' : '(?:(?:the|an?)\\s+)?'}\`?${t}\\b`, 'i').test(current)) return true;
+      if (CALL_VERBS.test(t) && !FIELD_WORD.test(t) && new RegExp(`\\buse\\s+(?:(?:the|an?)\\s+)?\`?${t}\\b`, 'i').test(current)) return true; // "use `user_id`" is a field
       if (CALL_VERBS.test(t)) {
         if (new RegExp(`\\buse\\s+\`?${t}\\b`, 'i').test(current)) return true;
         // Three or more words ("get_alert_status") read as a tool whatever the suffix; two ("run_id", "update_time", "email_address") are a field when they end like one or follow a determiner.

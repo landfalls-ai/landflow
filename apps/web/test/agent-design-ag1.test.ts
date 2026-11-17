@@ -275,6 +275,20 @@ describe('instruction tool names that end like a field', () => {
     const line = 'Steps:\n1. Read send_to and move_from, then group_by the type.';
     expect(nameOnlyOwnTools(line, tools)).toEqual({ text: line, dropped: [] });
   });
+  it('leaves a field after "use the" or "run the" alone: source_ip, error_message, log_level, the post_id check', () => {
+    for (const line of [
+      'Use the source_ip and dest_ip from the alert to judge reach.',
+      'Use the error_message to explain what failed.',
+      'Use the time_range and the log_level from the question.',
+      'Use a short_summary and the severity_level in the reply.',
+      'Read the alert, then run the post_id check.',
+    ]) {
+      const text = `Steps:\n1. ${line}`;
+      expect(nameOnlyOwnTools(text, tools), line).toEqual({ text, dropped: [] });
+    }
+    const { dropped } = nameOnlyOwnTools('Steps:\n1. Use the fetch_logs for the host.', tools);
+    expect(dropped.join(' ')).toContain('fetch_logs');
+  });
   it('leaves a bare field word alone', () => {
     const line = 'Steps:\n1. Read the customer_id and `user_id` and ticket_number from the input.';
     expect(nameOnlyOwnTools(line, tools)).toEqual({ text: line, dropped: [] });
