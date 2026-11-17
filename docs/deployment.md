@@ -207,6 +207,7 @@ All credentials are **for local development and tests only**.
 | Valkey 8 | `localhost:56379` | `valkey:6379` | none |
 | Mailpit SMTP | `localhost:51025` | `mailpit:1025` | any user and password (or none), no TLS |
 | Mailpit UI | http://localhost:58025 | `mailpit:8025` | none |
+| Grafana (`grafana` profile, with the alert "High CPU on web-01") | http://localhost:53130 | `grafana:3000` | `admin` / `landflow-dev-only`; provisioning from `deploy/grafana/provisioning/` |
 | MinIO S3 API | http://localhost:59000 | `minio:9000` | `landflow` / `landflow-dev-only`, bucket `landflow` |
 | MinIO console | http://localhost:59001 | `minio:9001` | same |
 | OpenBao (dev mode) | http://localhost:58200 | `openbao:8200` | root token `landflow-dev-root-token`; KV v2 at `landflow/` (sample `landflow/dev/hello`) |

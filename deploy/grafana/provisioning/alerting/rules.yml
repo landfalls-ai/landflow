@@ -1,0 +1,44 @@
+# One rule that fires within a minute of start, so an agent's Get Alerts has something to report.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: landflow-dev
+    folder: Landflow dev
+    interval: 10s
+    rules:
+      - uid: landflow-high-cpu
+        title: High CPU on web-01
+        condition: C
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        labels:
+          host: web-01
+          severity: critical
+        annotations:
+          summary: CPU on web-01 is above 90%
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: landflow-testdata
+            model:
+              refId: A
+              scenarioId: csv_metric_values
+              stringInput: "97,97,97"
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              datasource: { type: __expr__, uid: __expr__ }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [90] }
+              datasource: { type: __expr__, uid: __expr__ }

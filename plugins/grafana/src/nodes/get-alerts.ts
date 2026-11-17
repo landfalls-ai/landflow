@@ -7,7 +7,8 @@ export class GetAlerts implements INodeType {
     description: 'Fetches active firing alerts from Grafana Alertmanager API',
     version: 1,
     kind: 'action',
-    idempotent: false,
+    idempotent: true,
+    credentials: [{ name: 'grafana_alertmanager_api_token', required: true }],
     categories: ['Monitoring'],
     icon: 'file:get-alerts.svg',
     color: '#60a5fa',
@@ -45,7 +46,7 @@ export class GetAlerts implements INodeType {
     }
 
     // Construct the URL for fetching alerts
-    const alertUrl = `${url}/api/v2/alerts?active=true&silenced=false&inhibited=false`;
+    const alertUrl = `${String(url).replace(/\/+$/, '')}/api/v2/alerts?active=true&silenced=false&inhibited=false`;
 
     try {
       const response = await ctx.http(alertUrl, {

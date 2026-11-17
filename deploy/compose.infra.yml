@@ -82,6 +82,28 @@ services:
       test: ["CMD", "/mailpit", "readyz"]
       <<: *healthcheck
 
+  # AG03: a local Grafana (profile `grafana`) with one firing alert, to check the Grafana plugin's tools against.
+  grafana:
+    image: grafana/grafana:11.4.0
+    profiles: [grafana]
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${LANDFLOW_GRAFANA_ADMIN_PASSWORD:-landflow-dev-only}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_UNIFIED_ALERTING_MIN_INTERVAL: 10s
+    ports:
+      - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_GRAFANA_PORT:-53130}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health | grep -q ok"]
+      <<: *healthcheck
+
   minio:
     # The upstream minio/minio images are no longer published; pgsty/minio is a maintained
     # community build of the same server (with the full console). Same env vars and API.
@@ -664,6 +686,7 @@ volumes:
   postgres-data:
   valkey-data:
   mailpit-data:
+  grafana-data:
   minio-data:
   keycloak-data:
   mysql-data:
