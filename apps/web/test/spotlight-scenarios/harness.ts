@@ -8,6 +8,7 @@
  * Nothing here talks to anything but this machine; the live form runs with ./local-only.cjs loaded by the runner.
  */
 import './env';
+import { summaryText, type DraftSummary } from '@/lib/shared/draft-summary'; // SB15:
 import { createRequire } from 'node:module';
 import { nanoid } from 'nanoid';
 import { definePlugin, defineNode, type PropertyDescriptor } from '@landflow/sdk';
@@ -551,6 +552,7 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
         outcome.draft = body.draft;
         outcome.after = draftToWorkflow(body.draft as never);
         outcome.text = `Built ${(body.draft.nodes as unknown[]).length} nodes`;
+        if (body.draft.summary) outcome.text = summaryText(String(body.draft.name), body.draft.summary as DraftSummary); // SB15: a build's text is what the person reads
         outcome.model = typeof body.draft.model === 'string' ? body.draft.model : undefined; // SB19:
       }
       // SB10 (carryover item 4): the calls the draft took (`draft.calls`), live and unit; the fake's count only when the route sent none.

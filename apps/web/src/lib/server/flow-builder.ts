@@ -22,6 +22,7 @@ import type { Workflow } from '@landflow/engine';
 import { collectionWarnings, structuralWarnings } from '@/lib/shared/assistant-ops';
 import { hollowSteps } from '@/lib/shared/run-check';
 import { mergeLeft, type DraftLeft } from '@/lib/shared/draft-left';
+import type { DraftSummary } from '@/lib/shared/draft-summary'; // SB15:
 
 export interface DraftNode {
   key: string;
@@ -44,6 +45,8 @@ export interface FlowDraft {
   left?: DraftLeft[];
   /** SB10: how many model calls the draft took: 1, or 2 when the first draft was sent back once. */
   calls?: number;
+  /** SB15: the build summary the route adds after the guards (steps in words, what was assumed, what is left, what no node can do). */
+  summary?: DraftSummary; // SB15:
 }
 
 const DEFAULT_MODEL = process.env.LANDFLOW_BUILDER_MODEL ?? 'qwen3-coder:30b';
