@@ -38,7 +38,7 @@ describe('modeForRoute', () => {
   it('builds on the editor, asks the brain elsewhere', () => {
     expect(modeForRoute('/workflows/wf-1', { workflowName: 'Ticket router' })).toEqual({ kind: 'build', workflowId: 'wf-1', name: 'Ticket router' });
     expect(modeForRoute('/workflows/wf-1').kind).toBe('build');
-    for (const path of ['/', '/runs', '/workflows', '/workflows/wf-1/runs', '/workflows/new', '/brain', '/agents/a-1']) expect(modeForRoute(path).kind).toBe('brain');
+    for (const path of ['/', '/runs', '/workflows', '/workflows/wf-1/runs', '/workflows/new', '/brain', '/agents', '/agents/new']) expect(modeForRoute(path).kind).toBe('brain'); // AG04: an agent's own page (/agents/<id>) is the agent mode now, so it left this list
   });
   it('names the open brain page on /brain only', () => {
     const file = { ref: 'customer/acme', name: 'Acme', page: true };
