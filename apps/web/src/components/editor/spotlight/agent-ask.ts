@@ -96,17 +96,17 @@ const createsAlone = () => useAutonomous.getState().on && autonomyOf(useEditor.g
 
 /** Designs the agent the message asks for and shows it as a card; the canvas stays as it is until Create. */
 export async function designAgentCard(message: string, ask: AgentAsk, options: { starter: boolean }): Promise<void> {
-  const reply: ChatItem = { id: nanoid(8), role: 'assistant', parts: [{ kind: 'text', text: `Designing ${ask.name ? `“${ask.name}”` : 'your agent'}…` }] };
+  const designName = ask.name ?? fallbackName(ask.description);
+  const reply: ChatItem = { id: nanoid(8), role: 'assistant', parts: [{ kind: 'text', text: `Designing “${designName}”…` }] };
   useAssistant.getState().append([{ id: nanoid(8), role: 'user', text: message }, reply]);
   // The design is an agent's, not a flow's: the panel shows "Designing “…”" (the agent row), never the flow placeholder.
   const rowId = `card:${reply.id}`;
-  const designingName = ask.name ?? 'your agent';
-  useAssistant.getState().setAgent(rowId, { name: designingName, state: 'designing' });
+  useAssistant.getState().setAgent(rowId, { name: designName, state: 'designing' });
   const workflowAtStart = useEditor.getState().workflowId;
   const abort = (draftCall.request = new AbortController());
   try {
     const workflow = useEditor.getState().name;
-    const spec = { name: ask.name ?? fallbackName(ask.description), description: ask.description, instructions: '', ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }) };
+    const spec = { name: designName, description: ask.description, instructions: '', ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }) };
     const preview = await designPreview(spec, workflow && !/^untitled/i.test(workflow) ? { workflow } : {}, abort.signal);
     const card = { ...cardFromPreview(preview, ask, options.starter), workflowId: workflowAtStart };
     const alone = createsAlone();
