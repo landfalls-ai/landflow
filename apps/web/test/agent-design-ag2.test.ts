@@ -71,10 +71,19 @@ describe('Send Email: the ask’s address, a subject and a body the agent writes
     const ask = 'Create an agent that triages an alert and emails a short summary. Use the Send Email tool.';
     const result = draft(mailArgs({ toEmail: 'team@example.com' }), ask);
     const mail = nodeTools(result.config).find((t) => t.nodeType === 'messaging.emailSend');
-    if (mail) {
-      expect(mail.parameters.toEmail).toBe('');
-      expect(result.needs.map((n) => n.text).join(' ')).toMatch(/To Email/);
-    }
+    expect(mail).toBeDefined();
+    expect(mail!.parameters.toEmail).toBe('');
+    expect(result.needs.map((n) => n.text).join(' ')).toMatch(/To Email/);
+  });
+  const toOf = (ask: string, toEmail: string) => nodeTools(draft(mailArgs({ toEmail }), ask).config).find((t) => t.nodeType === 'messaging.emailSend')?.parameters.toEmail;
+  it('leaves out an address the person ruled out', () => {
+    expect(toOf('Create an agent that emails a short summary to oncall@landflow.test, never to boss@corp.test. Use the Send Email tool.', '')).toBe('oncall@landflow.test');
+  });
+  it('does not put the sender in To', () => {
+    expect(toOf('Create an agent that sends a summary to oncall@landflow.test from alerts@landflow.test. Use the Send Email tool.', '')).toBe('oncall@landflow.test');
+  });
+  it('does not put a cc aside in To', () => {
+    expect(toOf('Create an agent that emails a summary to oncall@landflow.test (cc me at me@landflow.test only if critical). Use the Send Email tool.', 'oncall@landflow.test')).toBe('oncall@landflow.test');
   });
 });
 
