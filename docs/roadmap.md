@@ -2821,12 +2821,10 @@ account's own console is the figure.
 - The whole pass above after `sb13-chat-plan` once the key works again: the sb3 owners' scenarios (sb13 to sb18), items 3
   to 7 and the browser flows of items 4 and 6; the phone shots of the plan card, the summary card, the agent card and the
   agent row.
-- The runner (`test/spotlight-scenarios.test.ts`) requires Ollama even for a cloud model name; a guard for `provider/model`
-  names (no Ollama check), the scorecard JSON keeping each run's reply and the stage prompt sizes, and the scenario
-  `sb19-default-local` reading "the default is the one the server names" would make a Claude pass cheaper to read.
+- ~~The runner requires Ollama even for a cloud model name; the scenario `sb19-default-local` reading "the default is the one the server names"~~ done in wave ag1 (AG02): a `provider/model` name needs that provider's key and no Ollama, and `local-default` compares with the server's own default (`hostModel`). Left: the scorecard JSON keeping each run's reply and the stage prompt sizes.
 - The seventh **Unused (Data Table)** step in B1's plan and flow (a plan step with no use) and a `no-junk` reading that
   sees it.
-- The design fallback saying so on the card (and not choosing a different model than the default for it).
+- ~~The design fallback saying so on the card (and not choosing a different model than the default for it)~~ the fallback now takes the host's model (AG02), and the card says it was designed without the architect, and why (wave ag1 integration).
 
 
 ## Platform guide and the landflow-dev plugin
@@ -2838,3 +2836,32 @@ account's own console is the figure.
 
 - **Built (2026-11-17):** the Linear, Attio and Fathom plugin icons are the apps' real marks (they were drawn stand-ins), and `brand-icons.ts` holds the real mark of every app a plugin or core node stands for, with sources and licences ([plugins.md](plugins.md#branding-and-real-marks)); the Messaging, Databases and Productivity bundles show a grid of their apps' icons. A node says what it will do under its name (the descriptor's `subtitle`, else the operation's action label, else "Issue · Get many") on the canvas and in the node panel; the node creator lists an app's actions (a search such as "send message" lists matching actions first) and picking one adds the node set to do it; Marketplace entries and agent tools named after an app wear its mark.
 - **Left open:** Microsoft Teams (the Microsoft bot credential) keeps a Landflow glyph, no clean source for its mark; Slack and Twilio come from Simple Icons 15.0.0, the last version that has them, and are one colour, not the multi-colour Slack logo; a Marketplace entry that is not running and whose name is not the app's gets no app mark.
+
+## Agents that work locally (wave ag1)
+
+- **Built (2026-11-17, AG01):** the editor chat runs on the typed message: items a run was given (a chat message) beat the start node's pin, and Unpin is saved (the draft always sends `pinData`, `{}` when none are left), so a reload does not bring the pin back ([features/engine.md](features/engine.md), [features/editor.md](features/editor.md)).
+- **AG02, built (2026-11-17):** Spotlight's agent design follows the ask: the agent runs on the host's builder model (or Spotlight's picked one) and the card's Model is a select; the whole ask is read (the address kept, tools named by display name added or listed under Not added); names are short nouns; the steps name only the agent's own tools; writes are asked per app so reads never ask first; a token-reading job is not secret-masked on input; the runner takes a cloud model without Ollama. **Left open:** the live pass on Claude with the Go and Python plugins, and the Opus defaults outside Spotlight's design (the Anthropic Chat Model node, `evaluations/online.ts`, the team builder).
+- **Built (AG03, 2026-11-17):** a node used as an agent's tool that reads its whole input item gets a required `item` argument (the data to work on), in the host's agent tools and in a workflow AI Agent's tool sub-nodes, so Normalize Alert and Extract IOCs no longer run on the model's settings alone; the Grafana tools declare their credential (two reads idempotent) and trim a trailing `/` from its URL; a local Grafana with a firing alert is the `grafana` compose profile.
+- **Built (AG04):** Spotlight changes an agent. A follow-up under a pending agent card revises the card in place (no plan card, no flow, the canvas untouched); a change to an agent that exists (under its card, or on its page, where the shell Spotlight's chip reads "Changing <name>") is a card of what would change with **Apply to its draft**, which saves the draft and smoke-tests it, and **Publish** only after a pass, through the eval gate; a question is answered, never applied ([assistant.md](assistant.md#agents-and-teams), [agents.md](agents.md#changes-from-spotlight)). Teams and the Agent architect dialog still only create.
+- **AG05, an honest smoke test, a publish you can follow, approval cards that settle (2026-11-17):** the smoke test is `untested` with *needs a credential: <tool>* before it runs when a node tool's visible required credential is unset, lists each tool call (`tools`), fails on an erroring tool or on every call returning nothing, and reports a denied write instead of failing on it; the publish shows *publishing: the eval gate runs N cases…* on Spotlight's row and card and the agent page, and a held verdict stays until the next publish; a decided tool call loses its Approve and Deny, a 409 refreshes quietly, and two waiting calls get **Approve all (n)**.
+- **Built (2026-11-17, AG06):** credentials that work locally: the SQLite credential has **Create If Missing**, an agent's node-tool dialog lists only the credentials its settings use, and Send Email over SSL/TLS to a plain local server (Mailpit) says to turn SSL/TLS off ([integrations.md](features/integrations.md), [agents.md](agents.md)).
+
+**Left after ag1 (deferred, with the reason)**
+- The other Opus defaults: the Anthropic Chat Model node's default `claude-opus-5-5` (`lib/server/nodes/ai.ts`), the online evaluations' fallback (`lib/server/evaluations/online.ts`), the team builder's model list order (`components/agents/team-builder.tsx`) and the marketplace mapping (`lib/server/marketplace/map.ts`). Changing a node's parameter default changes what saved workflows without an explicit model run on, which is not a Spotlight design question: a person decides whether `LANDFLOW_BUILDER_MODEL` should also be every Anthropic node's and the online evaluations' default.
+- A per-node tool input schema for every triage node: AG03's generic `item` argument closes "node tools get no data"; a schema per node (the alert's fields, the email's parts) would let the model fill them, and is a plugin protocol change of its own.
+- The Spotlight scorecard's JSON keeping each run's reply and the stage prompt sizes (sb3's leftover): a runner-reporting change with no ag1 finding behind it; the next Spotlight wave.
+- B1's **Unused (Data Table)** plan step that `no-junk` does not flag stays in sb3's list above (the build path, not agents).
+- Revising teams, and the Agent architect dialog changing agents: wave ag1 changes a single agent from Spotlight only ([limitations.md](limitations.md)).
+- The live pass's leftovers (found by running the four agents; each is a small fix for the next agents wave, none blocks):
+  - "Pull out the IOCs" does not name Extract IOCs, so the triage card drops it silently and Not added is empty.
+  - Generated eval cases are descriptions, not inputs, so a good agent is held by the gate.
+  - The editor's chat cannot approve a tool call (only the agent page's Test chat shows approval cards).
+  - The Grafana agent's instructions name node types (`grafana.getAlerts`, `core.httpRequest`) instead of tool names, and its HTTP Request tool is preset to `http://127.0.0.1:3000/api/health`.
+  - Send Email's To and From are fixed empty and its Subject and Body unset on the card.
+  - After an agent-page change is applied the card has no Test button, does not update after a credential pick, its Left row repeats credentials that are set, and it does not say Acknowledge Alert asks first.
+  - Spotlight's history loses the smoke row and the card results after a reload.
+  - A revise adds a tool to the Tools line without a step for it, and the reply spells "Extract Iocs".
+  - The created agent's name can differ from the card's ("Crypto Toolkit agent" against "Utility helper").
+  - Grafana 11.4's Acknowledge Alert returns 404 from the plugin.
+  - The before/after scorecard and the phone screenshots were not run in the ag1 live pass.
+- Owed to a person, not the pipeline: whether a denied write may count as a pass in a smoke test (AG05's rule; SB18 said no); whether the agent page keeps its own **Publish anyway** (Spotlight never offers it); whether the Grafana observer should ever get Acknowledge Alert by default (it writes: today only when asked, with approval).

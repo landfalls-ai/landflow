@@ -8,6 +8,7 @@ export class AcknowledgeAlert implements INodeType {
     version: 1,
     kind: 'action',
     idempotent: false,
+    credentials: [{ name: 'grafana_alertmanager_api_token', required: true }],
     categories: ['Monitoring'],
     icon: 'file:acknowledge-alert.svg',
     color: '#60a5fa',
@@ -77,7 +78,7 @@ export class AcknowledgeAlert implements INodeType {
     };
 
     // Construct the URL for creating silence
-    const silenceUrl = `${url}/api/v2/silence`;
+    const silenceUrl = `${String(url).replace(/\/+$/, '')}/api/v2/silence`;
 
     try {
       const response = await ctx.http(silenceUrl, {

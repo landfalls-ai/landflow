@@ -32,6 +32,10 @@ var sqliteCredential = landflow.CredentialType{
 				"start from the plugin's working directory). The plugin can open any file its process can access."},
 		{Name: "readOnly", DisplayName: "Read Only", Type: landflow.PropBoolean, Default: false,
 			Description: "Open the file read-only: writes fail"},
+		// AG06: a new database file on demand.
+		{Name: "createIfMissing", DisplayName: "Create If Missing", Type: landflow.PropBoolean, Default: false,
+			DisplayOptions: &landflow.DisplayOptions{Show: map[string][]any{"readOnly": {false}}},
+			Description:    "Create an empty database file at this path when there is none (its folder must exist)"},
 	},
 	Test: func(ctx context.Context, data landflow.CredentialData) (bool, string) {
 		return testSQL(ctx, sqliteDialect, data)
@@ -41,7 +45,7 @@ var sqliteCredential = landflow.CredentialType{
 var sqliteDialect = &dialect{
 	system: systemSQLite, credential: "sqlite", returning: true, identQuote: `"`,
 	open:     openSQLite,
-	settings: func(c landflow.CredentialData) []string { return settingsOf(c.String, "path", "readOnly") },
+	settings: func(c landflow.CredentialData) []string { return settingsOf(c.String, "path", "readOnly", "createIfMissing") },
 	server: func(c landflow.CredentialData) serverInfo {
 		return serverInfo{namespace: filepath.Base(c.String("path"))}
 	},
@@ -62,19 +66,31 @@ func sqliteDSN(c landflow.CredentialData) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// AG06: Create If Missing opens a missing file with mode=rwc (never together with Read Only).
+	create := c.Bool("createIfMissing", false)
+	readOnly := c.Bool("readOnly", false)
+	if create && readOnly {
+		return "", errors.New("Create If Missing cannot be combined with Read Only: turn one of them off")
+	}
 	info, err := os.Stat(abs)
 	switch {
+	case errors.Is(err, fs.ErrNotExist) && create:
+		if dir, derr := os.Stat(filepath.Dir(abs)); derr != nil || !dir.IsDir() {
+			return "", fmt.Errorf("the folder %s does not exist: create it first, SQLite only makes the file", filepath.Dir(abs))
+		}
 	case errors.Is(err, fs.ErrNotExist):
-		return "", fmt.Errorf("SQLite database file %s does not exist", abs)
+		return "", fmt.Errorf("SQLite database file %s does not exist: create it first, or turn on Create If Missing", abs)
 	case err != nil:
 		return "", err
 	case info.IsDir():
 		return "", fmt.Errorf("%s is a directory, not a SQLite database file", abs)
 	}
 	q := url.Values{"_busy_timeout": {"5000"}, "_foreign_keys": {"1"}}
-	if c.Bool("readOnly", false) {
+	if readOnly {
 		q.Set("mode", "ro")
 		q.Set("_query_only", "1")
+	} else if create {
+		q.Set("mode", "rwc") // AG06
 	} else {
 		q.Set("mode", "rw")
 	}

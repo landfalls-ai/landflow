@@ -38,16 +38,35 @@ async function ollamaTags(): Promise<string[]> {
   }
 }
 
+/** AG02: the host's builder model (`LANDFLOW_BUILDER_MODEL`, read per call): a bare Ollama name or `provider/model`. */
+export const builderModel = () => process.env.LANDFLOW_BUILDER_MODEL?.trim() || DEFAULT_ASSISTANT_MODEL;
+
+/** AG02: a model name as an agent's model: `anthropic/x` and `ollama/x` as named, a bare name is Ollama's; another provider (`litellm/`, `openai/`) has none an agent can use without a credential. */
+export function agentModelOf(name: string | undefined): AgentModel | undefined {
+  const text = name?.trim();
+  if (!text) return undefined;
+  const prefix = /^([a-z]+)\//.exec(text)?.[1];
+  if (!prefix) return { provider: 'ollama', model: text };
+  if (prefix === 'anthropic' || prefix === 'ollama') return { provider: prefix, model: text.slice(prefix.length + 1) };
+  return undefined;
+}
+
 export async function agentResources(actor: Actor): Promise<AgentResources> {
   const local = await modelOptions('ollama', {}).catch(() => []);
-  const own = DEFAULT_ASSISTANT_MODEL.includes('/') ? undefined : DEFAULT_ASSISTANT_MODEL;
+  const builder = agentModelOf(builderModel()); // AG02: the host's own model leads, whichever provider it is
+  const own = builder?.provider === 'ollama' ? builder.model : undefined;
   const rank = (m: { model: string; description?: string }) => (m.model === own ? 0 : m.description?.includes('tools ✓') ? 1 : m.description?.includes('no tool support') ? 3 : 2);
   const models: ModelChoice[] = [...local]
     .sort((a, b) => rank(a) - rank(b))
     .map((m) => ({ provider: 'ollama' as const, model: m.model, note: ['local', m.description].filter(Boolean).join(', ') }));
   if (process.env.ANTHROPIC_API_KEY) {
-    const [best] = await modelOptions('anthropic', {}).catch(() => []);
-    if (best) models.push({ provider: 'anthropic', model: best.model, note: 'Anthropic API, not local' });
+    // AG02: the builder model first when it is Anthropic's, then the provider's other models (never one ahead of it).
+    const all = await modelOptions('anthropic', {}).catch(() => []);
+    const choices = all.map((m): ModelChoice => ({ provider: 'anthropic', model: m.model, note: 'Anthropic API, not local' }));
+    if (builder?.provider === 'anthropic') {
+      const first = choices.find((c) => c.model === builder.model) ?? { provider: 'anthropic' as const, model: builder.model, note: 'Anthropic API, not local' };
+      models.unshift(first, ...choices.filter((c) => c !== first));
+    } else models.push(...choices);
   }
 
   const knowledge = new Map<string, AgentResources['knowledge'][number]>();

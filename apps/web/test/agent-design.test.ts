@@ -103,13 +103,15 @@ describe('designing Spotlight’s new agent', () => {
     ]);
     const design = await designAgent(spec, { types, actor: TEST_OWNER, resources, model });
     expect(design.designed).toBe(true);
-    expect(design.config).toMatchObject({ name: 'Legal Contract Reviewer', model: { provider: 'ollama', model: 'qwen3.8:latest' }, instructions: expect.stringContaining('Search the playbook, then flag clauses.') }); // SB17: inside the four parts
+    expect(design.config).toMatchObject({ name: 'Legal Contract Reviewer', model: { provider: 'ollama', model: 'qwen3-coder:30b' } /* AG02: the host's model, not the architect's pick */, instructions: expect.stringContaining('Search the playbook, then flag clauses.') }); // SB17: inside the four parts
     expect(design.config.tools).toEqual([expect.objectContaining({ type: 'knowledge', collection: 'policies' })]);
   });
 
   it('leaves an agent on the first model when the architect proposes nothing', async () => {
-    const design = await designAgent(spec, { types, actor: TEST_OWNER, resources, model: scripted([{ text: 'Which contracts?' }]) });
+    const design = await designAgent(spec, { types, actor: TEST_OWNER, resources, model: scripted([{ text: 'Which contracts?' }, { text: 'Which contracts?' }]) /* ag1-int: both tries answer without a design */ });
     expect(design).toMatchObject({ designed: false, config: { name: 'Legal Contract Reviewer', instructions: expect.stringContaining('Flag auto-renewal and liability caps.'), model: { provider: 'ollama', model: 'qwen3-coder:30b' }, tools: [] } });
+    // ag1-int: the card says the design was not the architect's, first among what is left.
+    expect(design.needs[0]).toMatchObject({ tool: 'design', text: 'Designed without the architect: the model proposed no design' });
   });
 
   it('passes a reached usage cap on instead of making an agent; a failing model still gets the fallback', async () => {
@@ -119,6 +121,7 @@ describe('designing Spotlight’s new agent', () => {
     await expect(designAgent(spec, { types, actor: TEST_OWNER, resources, model: failing(cap) })).rejects.toBe(cap);
     const design = await designAgent(spec, { types, actor: TEST_OWNER, resources, model: failing(new Error('Ollama error 500')) });
     expect(design.designed).toBe(false);
+    expect(design.needs[0].text).toBe('Designed without the architect: the model call failed: Ollama error 500'); // ag1-int:
   });
 
   it('hands the model what it would look up, and offers one flat call first', async () => {
@@ -140,7 +143,7 @@ describe('designing Spotlight’s new agent', () => {
     );
     const design = await designAgent(spec, { types, actor: TEST_OWNER, resources, model });
     expect(offered[0]).toEqual(['propose_design']);
-    expect(design).toMatchObject({ designed: true, config: { name: 'Legal Contract Reviewer', model: { provider: 'ollama', model: 'qwen3.8:latest' }, persona: { whatIDo: ['Reviews contracts', 'Flags risky clauses'] } } });
+    expect(design).toMatchObject({ designed: true, config: { name: 'Legal Contract Reviewer', model: { provider: 'ollama', model: 'qwen3-coder:30b' } /* AG02 */, persona: { whatIDo: ['Reviews contracts', 'Flags risky clauses'] } } });
     expect(design.config.tools).toEqual([expect.objectContaining({ type: 'knowledge', collection: 'policies' })]);
   });
 

@@ -1397,7 +1397,8 @@ export const useEditor = create<EditorState>((set, get) => {
       settings: s.settings,
       stickyNotes: fromStickies(s.stickies),
       groups: fromFrames(s.groups, s.nodes),
-      pinData: Object.keys(s.pinData).length ? Object.fromEntries(Object.entries(s.pinData).filter(([id]) => s.nodes.some((n) => n.id === id))) : undefined,
+      // AG01: always sent, `{}` when there are none, so the last Unpin reaches the server.
+      pinData: Object.fromEntries(Object.entries(s.pinData).filter(([id]) => s.nodes.some((n) => n.id === id))),
       nodes: s.nodes.map((n) => ({ ...n.data.wf, position: [Math.round(n.position.x), Math.round(n.position.y)] as [number, number] })),
       connections: s.edges.map((e) => {
         const source = parseHandle(e.sourceHandle);

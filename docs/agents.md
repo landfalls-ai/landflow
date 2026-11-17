@@ -54,7 +54,7 @@ that designs it with you. Open it from **New agent** → **Design it with the Ag
 architect** on the roster. The chat is on the left; the draft it proposes stays on the right, whole: avatar, name, role,
 tone words, Always / Never rules, instructions, tools, and what you still have to finish.
 
-The architect runs on the model Spotlight uses (Settings → AI → Spotlight, [assistant.md](assistant.md#the-model-spotlight-uses)): the dialog sends none, so the server's default applies. Spotlight's own "new agent" design (`POST /api/agents/design`) takes the model picked in its header.
+The architect runs on the model Spotlight uses (Settings → AI → Spotlight, [assistant.md](assistant.md#the-model-spotlight-uses)): the dialog sends none, so the server's default applies. Spotlight's own "new agent" design (`POST /api/agents/design`) takes the model picked in its header. **The model an agent Spotlight designs runs on** is that one (the picker's, else the host's builder model, `LANDFLOW_BUILDER_MODEL`, `provider/model` or a bare Ollama name), never one the architect upgraded to: its own pick counts only when the ask names a model ("on Haiku", "use claude-opus-5-5"). The models it may choose from list the builder model first (`agentResources`), then the provider's others; on a host set to `anthropic/claude-sonnet-5-5` the card says Sonnet, not Opus. The dialog (no model sent) keeps the architect's own pick from that list.
 
 The architect knows what this instance has. Its prompt lists every plugin online with the nodes an agent can use as
 tools (actions whose only required inputs are main ones: the Abilities tab's own filter), within the node policy for
@@ -103,12 +103,15 @@ dialog's and Spotlight's design) is made to a brief in code (`architect.ts`, mar
   out" with its reason ("Slack: the request never asks for it (it would change things there)"). A tool the model left
   on the node's defaults, which would write, becomes a read when the request doesn't ask to write (the pull request
   resource and its first read operation for "pull requests"). The prompt says "the fewest tools; read before write".
-  On Spotlight's design path the request is only the new agent's own fields (name, description, instructions, tools, knowledge), never `designRequest`'s fixed sentences.
+  On Spotlight's design path the request is the person's whole ask (`ask`) with the tools and knowledge it named, never `designRequest`'s fixed sentences.
+  **A write is asked per tool** (`asksToWriteTo`): a write verb in the sentence that names the tool's app, or "email … to <address>" for a mail tool. Nouns alone ("customer comments", "an alert", "the email") are not write asks, so "the sentiment of customer comments" reads SQLite's **Select**. A tool whose operation writes where the ask does not ask to write becomes its read whether the model wrote the operation or left it out, and is dropped (and said) only when the node has no read.
+  **Every tool the ask names** (Spotlight sends them by their display names, `spec.tools`) that the draft lacks is added when exactly one node type matches by display or plugin name, else it is listed as **Not added** with why ("Jira: no plugin online has it"); one the ask never named stays out, and is not listed there.
+- **Instructions name only its tools.** The steps name the agent's tools by their call names; a `snake_case` word that is not one of them (the model wrote `send_slack_message` on an agent that only has Send Email) becomes the tool it plainly means when exactly one shares its words, else its clause is dropped and "instructions named send_slack_message, which it does not have" is listed under left out. A `Tools:` line always ends the steps and lists the real tools with what each is for.
 - **Writes behind approval.** Every node tool that writes gets `requireApproval: true`, so a person approves each call;
-  reads get none. A write is what the session's heuristic calls one (`writesOutside`, the HTTP method and the
+  reads never do. A write is what the session's heuristic calls one (`writesOutside`, the HTTP method and the
   operation's name: [assistant.md](assistant.md#autonomous-mode)) or, for a plugin that marks its reads
   (`idempotent: true`), an operation it doesn't mark. The preview shows **asks first** on them.
-- **Guardrail defaults.** Every draft gets an input guardrail that masks secrets in messages (`sanitize`, balanced), and,
+- **Guardrail defaults.** Every draft gets an input guardrail that masks secrets in messages (`sanitize`, balanced), except for a job that reads tokens (the ask names a JWT, token, hash, password, API key or decoding, or a tool is `go-crypto.jwtDecode`, `hash` or `base64`): that agent would see `<JWT>` instead of the token, so its messages are not masked, its answers are (`output`: secrets, balanced; a SHA-256, a UUID and a decoded JWT payload are not secrets to it), and the card says "Doesn’t mask tokens in messages: its job reads them". And,
   when it has any tool, a tool-result guardrail that blocks text that looks like instructions
   (`jailbreak` with `useModel: false`: pattern checks only, no extra model call). A draft's own guardrails are kept. The
   preview lists them in words ("Masks secrets in messages", "Ignores instructions inside tool results"). The architect's preview and Spotlight's agent card use one helper for those words (`guardrailWords`) and one condition for "Follows your approved practices" (`followsPractices`: on unless the config says `off`, as a run reads it).
@@ -128,6 +131,13 @@ Every draft is checked before you see it:
   that don't exist; the draft says what was left out;
 - a node tool keeps only that node's parameters, over its defaults; what the agent decides per call is a
   `$fromAI('key', 'description', 'type')` placeholder;
+- a node tool that reads its whole input item (Normalize Alert, Extract IOCs, most transforms) and names no field to work
+  on gets a required **`item`** argument: the data the tool works on, as JSON. The model puts the alert, email or record
+  there; an object is the node's input item, a string that parses as a JSON object is that object, any other string
+  becomes `{ text }`, and the other arguments are the per-call overrides of the node's settings. A node that declares
+  its own `toolInputSchema` or names a field (Sentiment's `field`) keeps its schema. The Grafana tools (Get Alerts, Get
+  Alert Details, Acknowledge Alert) declare the `grafana_alertmanager_api_token` credential, so the tool dialog offers
+  the picker (Get Alerts and Get Alert Details are reads, Acknowledge Alert is a write and asks first);
 - an id nobody gave (a table, a channel) is dropped, as in the editor assistant;
 - credentials are never set. A required credential becomes a "pick a … credential" item, naming the ones you have, and
   a required parameter left empty becomes "fill in …";
@@ -177,6 +187,15 @@ changes an agent itself. It uses the assistant's model (`LANDFLOW_BUILDER_MODEL`
 [second brain](second-brain.md) as a `spotlight.asked` event with `architect: true`. Code:
 `apps/web/src/lib/server/assistant/architect.ts`, `apps/web/src/lib/server/assistant/agent-resources.ts`,
 `apps/web/src/components/agents/architect.tsx`. Tests: `test/agent-architect.test.ts`, `test/agent-design.test.ts`, `test/agent-brief.test.ts`; the scenarios `sb17-*` in `test/spotlight-scenarios/sb17.ts`.
+
+#### Changes from Spotlight
+
+Spotlight also changes an agent that exists ([assistant.md](assistant.md#agents-and-teams), "Changing an agent"). From the
+agent's page, or under the card of an agent it made, "also let it get one alert's details" is designed as a proposal
+(`POST /api/agents/design` with `base: { agentId }` and `change`) and shown as a card of what would change. **Apply to its
+draft** saves it as the agent's draft only (the page shows it) and runs the smoke test; **Publish** is offered only after a
+pass and goes through the [eval gate](#eval-gate), which can hold it. The published version stays what it was until then.
+The Agent architect dialog still designs new agents only.
 
 ### Avatars
 
@@ -551,6 +570,14 @@ the earlier test sessions of this agent (per agent, not per person yet; see [lim
 on in the chat. Nothing new is stored for it: the sessions are the record. The Platform analyst's chat uses the same line
 and footer, and keeps its answer card.
 
+**Approvals settle** (AG05, wave ag1). A call waiting for approval shows **Approve** and **Deny** only while it is still
+waiting: once decided it reads *Approved* or *Denied* with no buttons (`use-agent-run.ts` keeps what was decided from the
+session's `pending` calls and from each decision), in the Test chat and the Sessions tab. A decision that answers 409
+(*Already approved*, *That tool call is not waiting for approval*: decided a moment ago, or in another tab) refreshes the
+row quietly, with no error. With two or more calls waiting in one turn, one **Approve all (n)** and **Deny all** above them
+decide them in order, once each, through the same route (`POST /api/agents/:id/sessions/:sid/approvals`, one call id per
+request: the run goes on when the last one is decided). The Platform analyst's own card keeps its per-call buttons.
+
 ## From workflows
 
 - **When Called by a Workflow or Agent** (`core.workflowTrigger`, formerly "When Called by an
@@ -795,6 +822,10 @@ often they were served again, with **Clear**; `GET/DELETE /api/agents/:id/cache`
 in `agent_response_cache` (migration 2043) behind the `ResponseCache` interface in
 `lib/server/agents/response-cache.ts`, so the database adapter can be replaced by Valkey or a gateway's cache.
 
+The node-tool dialog (Abilities → Capabilities → a node tool) lists only the credentials the tool's settings use, as the
+node panel does: an HTTP Request tool with Authentication None lists none, with Bearer Auth chosen lists the Bearer slot
+only. A pick stays when the dialog reopens; it is dropped only when the person changes the parameter that hid its slot.
+
 ## Tool access
 
 **Abilities → Tool access** decides which callers may use which tools, so one agent can read for everyone and refund
@@ -843,11 +874,20 @@ model, else the agent's own.
 
 **Publish** runs the same check when the agent has cases. The publish is held (409, with the verdict and the run) when
 the draft averages under 3 / 5, or more than 0.5 under the published version's last average. The builder says why and
-offers **Publish anyway** (`{ "skipEval": true }`). A publish that passes saves its run as the new version's baseline;
+offers **Publish anyway** (`{ "skipEval": true }`, only ever the person's own click on this page). A publish that passes saves its run as the new version's baseline;
 a first publish is held only by the 3 / 5 floor. An agent without cases publishes as before. An agent the Agent architect
 designed has its 3 to 5 cases from the start ([the brief](#agent-architect)), so its first publish runs the gate.
 
-**Smoke test.** Beside the gate, `POST /api/agents/:id/smoke-test { message }` runs the draft once on one message (a throwaway `test` session titled *Smoke test*, approvals denied, deleted after, so it never shows in Sessions) and answers `{ smoke: { state: 'passed' | 'failed', reply?, reason?, ms } }`: *passed* when the run completes with a reply, else *failed* with one sentence (*The run ended with an error: …*, *No reply*, *It wanted a tool that needs approval: <tool>*, *It stopped at its step limit*); 400 without a model. Spotlight uses it before it publishes an agent it made ([assistant.md](assistant.md#agents-and-teams)). It is one item with no judge, not the gate: a pass says the agent answers, the gate says it answers well.
+**The publish is followed** (AG05, wave ag1). The gate runs every case, so a publish takes a while (about 30 s for 3 cases
+on a local model). Before it the editor reads the case count (`GET /api/agents/:id/eval-gate`); the agent page's button then
+reads *Publishing: the eval gate runs 3 cases…* (short on a phone) and a notice says the same, and Spotlight's row and the
+agent's card read *publishing: the eval gate runs 3 cases…* with a spinner (`AgentPublish`, `publishLine` in
+`lib/shared/agent-card.ts`). A held verdict stays: on the agent page a notice (*held by the eval gate: 2.3 / 5 · <the
+verdict>* with **See the cases** and the person's own **Publish anyway**) until the next publish, not a toast; on the row
+and the card the same words in the warning colour with **See the cases** (the Evaluations tab), until the next publish or
+test. Spotlight never sends `skipEval`.
+
+**Smoke test.** Beside the gate, `POST /api/agents/:id/smoke-test { message }` runs the draft once on one message (a throwaway `test` session titled *Smoke test*, approvals denied, deleted after, so it never shows in Sessions) and answers `{ smoke: { state: 'passed' | 'failed' | 'untested', reply?, reason?, ms, tools? } }`. Honest rules (AG05, wave ag1): *untested* with *needs a credential: <tool>* (the first such tool, *and N more*) before anything runs, with no model call, when a node tool's visible required credential slot is unset (the slots the node panel shows for its parameters: an auth method not chosen does not count). After the run, `tools` lists each tool call (`success`, `error` with the error's first sentence, `empty` when the output is nothing or only empty fields, `denied` for a call that needed approval: approvals are always denied here and nothing is sent). *passed* needs a reply and no `error` call and not every call `empty`; else *failed* with the first cause (*Get Alerts failed: …*, *Get Alerts returned nothing to work with*, or *The run ended with an error: …*, *No reply*, *It stopped at its step limit*). A `denied` write no longer fails the test by itself (it did in SB18): it is named in `reason` (*Send Email needs approval: not sent*) and the rest decides; a reason names a tool as a person reads it (the architect's `send_email` is *Send Email*), while `tools` keeps the config's names; a run that ends with no reply because it waited for approval still fails. 400 without a model. Spotlight uses it before it publishes an agent it made ([assistant.md](assistant.md#agents-and-teams)). It is one item with no judge, not the gate: a pass says the agent answers, the gate says it answers well.
 
 Routes: `GET/POST/PUT/DELETE /api/agents/:id/eval-gate` (cases and runs; `PUT { version? }` runs the draft or a
 published version). Cases (at most 50 per agent) and the last 30 runs live in `agent_eval_cases` and

@@ -17,6 +17,7 @@ import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta, ShortReply } from '..
 import { MAX_FIXES, approveDestinations, productionNote, publishToProduction, testUntilItRuns, undoApplied } from '../test-session'; // SB03:
 import { agentStep, runRow } from '../timeline';
 import { AgentCardView } from './agent-card'; // SB16:
+import { reviseAgentCard } from './agent-ask'; // AG04:
 import { CredentialPicker } from './credential-picker';
 import { PlanCard } from './plan-card'; // SB13:
 import { BuildSummaryCard } from './build-summary'; // SB15:
@@ -239,7 +240,7 @@ export function AgentRow({ agent }: { agent: AgentProgress }) {
   const busy = useAssistant((s) => s.pending || Boolean(s.testing));
   const [working, setWorking] = useState(false);
   // SB18: Publish only after a pass; Test again after a failure; Test when no item reached the step yet.
-  const act = !agent.agentId || agent.taken || busy
+  const act = !agent.agentId || agent.taken || busy || agent.state === 'publishing'
     ? undefined
     : agent.state === 'tested'
       ? { label: 'Publish', run: () => publishAgentFor(agent.nodeId) }
@@ -250,8 +251,19 @@ export function AgentRow({ agent }: { agent: AgentProgress }) {
           : undefined;
   return (
     <div className="flex animate-in items-start gap-1.5 text-[12.5px] leading-snug">
-      {agent.state === 'designing' || agent.state === 'testing' ? <Loader2 className="mt-px size-3.5 shrink-0 animate-spin text-viz-7" /> : agent.state === 'failed' ? <CircleX className="mt-px size-3.5 shrink-0 text-rd" /> : <Bot className="mt-px size-3.5 shrink-0 text-viz-7" />}
-      <span className="min-w-0 flex-1 text-t2 [overflow-wrap:anywhere]">{step.text}</span>
+      {agent.state === 'designing' || agent.state === 'testing' || agent.state === 'publishing' ? <Loader2 className="mt-px size-3.5 shrink-0 animate-spin text-viz-7" /> : agent.state === 'failed' ? <CircleX className="mt-px size-3.5 shrink-0 text-rd" /> : <Bot className="mt-px size-3.5 shrink-0 text-viz-7" />}
+      {/* AG05: the held verdict in the warning colour with its cases; a missing credential with where to pick it. */}
+      <span className={cn('min-w-0 flex-1 [overflow-wrap:anywhere]', agent.publish?.state === 'held' || agent.publish?.state === 'failed' ? 'text-warn' : 'text-t2')}>{step.text}</span>
+      {agent.agentId && !agent.taken && agent.publish?.state === 'held' && (
+        <a href={`/agents/${agent.agentId}?tab=activity&view=evaluations`} target="_blank" rel="noopener" className="shrink-0 text-[11.5px] font-semibold text-ac hover:underline max-md:flex max-md:min-h-11 max-md:items-center">
+          See the cases
+        </a>
+      )}
+      {agent.agentId && !agent.taken && agent.smoke?.state === 'untested' && agent.smoke.reason?.startsWith('needs a credential') && (
+        <a href={`/agents/${agent.agentId}?tab=abilities`} target="_blank" rel="noopener" className="shrink-0 text-[11.5px] font-semibold text-ac hover:underline max-md:flex max-md:min-h-11 max-md:items-center">
+          Pick it
+        </a>
+      )}
       {act && (
         <button
           type="button"
@@ -367,11 +379,21 @@ function ActionView({ itemId, action }: { itemId: string; action: ReplyAction })
 }
 
 /** Try again after a failed reply: the same message, sent again in its place; `resume` carries on from the step it stopped at. */
-function retryReply(replyId: string, resume?: { checkpoint: string }) {
+export function retryReply(replyId: string, resume?: { checkpoint: string }) {
   const { items, pending } = useAssistant.getState();
   const at = items.findIndex((i) => i.id === replyId);
   const asked = items[at - 1];
   if (pending || at < 1 || asked?.role !== 'user') return;
+  const failed = items[at] as Reply;
+  if (failed.retry?.kind === 'agentRevise') {
+    // AG04: a failed revise of an agent card runs the revise again (never the workflow chat).
+    const target = items.find((i) => i.id === failed.retry!.itemId);
+    const part = target?.role === 'assistant' ? target.parts.find((p) => p.kind === 'agentCard') : undefined;
+    if (part?.kind !== 'agentCard') return;
+    useAssistant.setState({ items: items.filter((_, i) => i !== at && i !== at - 1) });
+    void reviseAgentCard(failed.retry.itemId, part.card, asked.text);
+    return;
+  }
   useAssistant.setState({ items: items.filter((_, i) => i !== at && i !== at - 1) });
   void useAssistant
     .getState()

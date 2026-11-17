@@ -29,6 +29,9 @@ brain.
   to page. On a phone it is a bottom sheet with three heights (the arrows beside the chip step through them).
 - **Modes.** A chip in its header says what it does here. On a workflow's editor it is the builder, "Building Ticket
   router": the editor's own column, which takes the focus on ⌘K.
+  On an agent's own page (`/agents/<id>`, not `new`, `teams` or a team's page) it is "Changing <agent name>": a box to ask
+  for a change to the agent (a card to read and **Apply to its draft**) or about it (the brain answers, nothing is
+  applied), with "Ask the brain instead" on the chip ([assistant.md](assistant.md#agents-and-teams)).
   Everywhere else it is the brain, "Asking the brain", about the open page on the Brain page and about everything
   elsewhere. A page can send it to one thing: the `landflow:ask-about` window event (detail `{ ref: { type, id, name,
   workflowId? }, starters }`) opens it as "About <name>" with that thing as the chip and the starters as its first

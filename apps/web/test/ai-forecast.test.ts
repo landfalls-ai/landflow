@@ -6,7 +6,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workflow } from '@landflow/engine';
 import { addDays, FORECAST_Z90, forecastMonth, monthEndOf, paceToday, reachesOn } from '@/lib/shared/ai-forecast';
 import { amountOf, capOutlook, dayWord, forecastNote, forecastRange, missesLead, money } from '@/lib/client/ai-forecast';
@@ -308,6 +308,9 @@ describe('the cache card\'s reasons line', () => {
 });
 
 describe('the cache card', () => {
+  // The routes read the real clock; pin it to the fixtures' NOW so the 24h window doesn't empty a day after NOW.
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(NOW); });
+  afterEach(() => { vi.useRealTimers(); });
   const t = (minutes: number) => NOW - minutes * 60_000;
   beforeAll(() => {
     // Support agent: one session writes the prefix, then reads it; a second call writes again after 20 minutes (a miss).

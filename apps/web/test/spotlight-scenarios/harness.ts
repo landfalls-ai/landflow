@@ -11,7 +11,7 @@ import './env';
 import { summaryText, type DraftSummary } from '@/lib/shared/draft-summary'; // SB15:
 import { createRequire } from 'node:module';
 import { nanoid } from 'nanoid';
-import { definePlugin, defineNode, type PropertyDescriptor } from '@landflow/sdk';
+import { definePlugin, defineNode, defineCredentialType, type PropertyDescriptor } from '@landflow/sdk';
 import { Linear } from '../../../../plugins/linear/src/nodes/linear'; // SB10: the unit form's Linear stand-in carries its real operations
 import type { ModelTurn, NodeRun, Workflow } from '@landflow/engine';
 import { applyOps, type AssistantOp, type RunDigest } from '@/lib/shared/assistant-ops';
@@ -23,7 +23,9 @@ import { registryLookup } from '@/lib/server/assistant/ops';
 import { agentStore } from '@/lib/server/agents/store';
 import { listCases } from '@/lib/server/agents/eval-gate'; // SB17:
 import { guardrailWords } from '@/lib/shared/agents'; // SB17:
-import { agentAsk } from '@/lib/shared/agent-ask'; // SB16:
+import { agentAsk, agentChangeAsk, askCatalog, fallbackName } from '@/lib/shared/agent-ask'; // SB16: AG02: fallbackName; AG04: agentChangeAsk
+import { readFileSync } from 'node:fs'; // AG02:
+import { builderModel } from '@/lib/server/assistant/agent-resources'; // AG02:
 import { starterFlow, starterSample } from '@/lib/shared/agent-card'; // SB16:
 import { handler } from '@/lib/server/http';
 import { startFakeModels, readSse, type FakeModels } from '../fake-ai-services';
@@ -102,6 +104,35 @@ function stand(plugin: string, name: string, displayName: string, properties: st
   });
 }
 
+// AG05: the `ag05stand` plugin of sb-ag05.ts: Get Alerts (needs a Grafana-like token), Hollow Lookup (returns {}), Send Note (a write).
+function ag05StandIns() {
+  const base = { version: 1, kind: 'action' as const, inputs: [{ type: 'main' as const }], outputs: [{ type: 'main' as const }] };
+  return definePlugin({
+    info: { id: 'ag05stand', name: 'Smoke test stand-ins', version: '0.0.0', language: 'typescript' },
+    credentialTypes: [defineCredentialType({ name: 'alertsApi', displayName: 'Alerts API', properties: [{ name: 'token', displayName: 'Token', type: 'string', typeOptions: { password: true } }] })],
+    nodes: [
+      defineNode({
+        description: { ...base, name: 'alerts', displayName: 'Get Alerts', description: 'The alerts that are firing', credentials: [{ name: 'alertsApi', required: true }], properties: [] },
+        async execute() {
+          return [[{ json: { alerts: [{ name: 'CPU high' }] } }]];
+        },
+      }),
+      defineNode({
+        description: { ...base, name: 'hollow', displayName: 'Hollow Lookup', description: 'Looks something up', properties: [] },
+        async execute() {
+          return [[{ json: {} }]];
+        },
+      }),
+      defineNode({
+        description: { ...base, name: 'send', displayName: 'Send Note', description: 'Sends a note', properties: [{ name: 'operation', displayName: 'Operation', type: 'string', default: 'send' }] },
+        async execute() {
+          return [[{ json: { sent: true } }]];
+        },
+      }),
+    ],
+  });
+}
+
 let prepared = false;
 /**
  * Register the core plugin and, for the unit form, stand-ins for Slack and Linear; seed one published agent. The live
@@ -116,6 +147,8 @@ export function prepare(options: { live?: boolean } = {}): void {
     // SB10: Linear's own `resource` and `operation` properties (with each operation's `outputSchema`), so a scenario's prompt shows the real fields.
     registry.registerBuiltin(stand('linear', 'linear', 'Linear', ['authentication', 'resource', 'operation', 'since', 'returnAll', 'limit', 'activityOptions'], Linear.description.properties.filter((p) => p.name === 'resource' || p.name === 'operation')));
   }
+  // AG05: tools for the smoke test's scenarios (a read that needs a credential, one that returns nothing, a write).
+  if (!options.live) registry.registerBuiltin(ag05StandIns());
   // The agent the evaluation's chat flow ("my Support triage agent") picks: made-up, published.
   if (!agentStore.list().some((a) => a.published?.config.name === 'Support triage')) {
     const agent = agentStore.create({ name: 'Support triage', description: 'Answers support questions from the docs and hands over what it cannot answer.', instructions: 'Answer support questions.', model: { provider: 'ollama', model: 'qwen3-coder:30b' } });
@@ -128,7 +161,7 @@ export function prepare(options: { live?: boolean } = {}): void {
  * server to start), unless `LANDFLOW_SPOTLIGHT_PLUGINS` names endpoints that serve them (`addPlugins`).
  */
 export async function prepareLive(): Promise<string[]> {
-  if (process.env.LANDFLOW_SPOTLIGHT_PLUGINS) return [];
+  // AG02: the endpoints in LANDFLOW_SPOTLIGHT_PLUGINS (the Go and Python plugins) no longer turn the in-process ones off.
   const added: string[] = [];
   for (const dir of ['linear', 'messaging']) {
     // A computed path: the plugins are packages of their own, outside this app's type roots.
@@ -140,6 +173,25 @@ export async function prepareLive(): Promise<string[]> {
   return added;
 }
 
+/**
+ * AG02: the live form's preflight for the model it is asked to run on. A local model (a bare name or `ollama/…`) needs Ollama
+ * answering with it pulled (never pulled here); a model of another provider (`anthropic/…`, `openai/…`) needs that provider's key
+ * in the environment, and nothing about Ollama. The key is never printed, only its variable's name.
+ */
+export async function checkRunnerModel(model: string, env: NodeJS.ProcessEnv = process.env, fetcher: typeof fetch = fetch): Promise<void> {
+  const provider = /^([a-z]+)\//.exec(model)?.[1];
+  if (provider && provider !== 'ollama') {
+    const key = ({ anthropic: 'ANTHROPIC_API_KEY', openai: 'OPENAI_API_KEY' } as Record<string, string>)[provider];
+    if (key && !env[key]) throw new Error(`Spotlight scorecard: ${model} needs ${key} in the environment; this suite never reads it from anywhere else.`);
+    return;
+  }
+  const base = env.OLLAMA_URL || 'http://localhost:11434';
+  const tags = await fetcher(`${base}/api/tags`).then((r) => r.json() as Promise<{ models?: Array<{ name: string }> }>).catch(() => undefined);
+  if (!tags) throw new Error(`Spotlight scorecard: Ollama is not answering at ${base}. Start it; this suite never starts or pulls anything.`);
+  if (!tags.models?.some((m) => m.name === model.replace(/^ollama\//, ''))) throw new Error(`Spotlight scorecard: Ollama at ${base} does not have ${model}. This suite never pulls a model: pull it yourself, or set LANDFLOW_SPOTLIGHT_MODEL.`);
+  env.OLLAMA_URL = base;
+}
+
 /** Live form: add the plugin endpoints named in LANDFLOW_SPOTLIGHT_PLUGINS (comma-separated, local URLs only). */
 export async function addPlugins(): Promise<string[]> {
   const added: string[] = [];
@@ -148,6 +200,65 @@ export async function addPlugins(): Promise<string[]> {
     added.push(endpoint);
   }
   return added;
+}
+
+// ---------------------------------------------------------------------------
+// AG02: `Start.plugins`: the local plugins a scenario needs
+// ---------------------------------------------------------------------------
+
+/** The recorded manifest (`{ plugin, nodes, credentialTypes }`) of each plugin: the unit form's stand-ins are made from it. */
+const MANIFESTS: Record<string, string> = {
+  messaging: '../fixtures/plugin-manifests/messaging.json',
+  triage: '../fixtures/plugin-manifests/triage.json',
+  databases: '../fixtures/plugin-manifests/databases.json',
+  'go-crypto': '../../../../packages/protocol/test/fixtures/manifests/go-crypto.json',
+  'py-insights': '../../../../packages/protocol/test/fixtures/manifests/py-insights.json',
+  'text-toolkit': '../../../../packages/protocol/test/fixtures/manifests/text-toolkit.json',
+};
+/** The TypeScript plugins: their own code runs in-process in the live form (Grafana has no recorded manifest: it runs in-process in both). */
+const TYPESCRIPT_PLUGINS = ['messaging', 'triage', 'grafana', 'text-toolkit'];
+
+/** What each unit-form stand-in node was handed as its input item (`inputs[0][0].json`), in call order; a run starts it empty. */
+let toolInputs: NonNullable<Outcome['toolInputs']> = [];
+
+/** A stand-in for a plugin from its recorded manifest: each node answers one empty item and records the input it was called with. A plugin already registered keeps its nodes (the Slack stand-in) and gains the rest. */
+function standFromManifest(id: string): void {
+  const manifest = JSON.parse(readFileSync(new URL(MANIFESTS[id], import.meta.url), 'utf8')) as { plugin: Parameters<typeof definePlugin>[0]['info']; nodes: Array<Parameters<typeof defineNode>[0]['description']>; credentialTypes?: never[] };
+  const have = new Set(registry.nodeTypes().filter((t) => t.pluginId === id).map((t) => t.descriptor.name));
+  const nodes = [
+    ...registry.nodeTypes().filter((t) => t.pluginId === id).map((t) => t.descriptor),
+    ...manifest.nodes.filter((d) => !have.has(d.name) && d.kind !== 'trigger'), // a trigger is no agent tool, and an app-webhook one needs methods a stand-in lacks
+  ].map((description) =>
+    defineNode({
+      description,
+      async execute(ctx) {
+        toolInputs.push({ tool: description.displayName, input: (ctx.getInputData()[0]?.json ?? {}) as Record<string, unknown> });
+        return [[{ json: {} }]];
+      },
+    }),
+  );
+  registry.registerBuiltin(definePlugin({ info: manifest.plugin, nodes, ...(manifest.credentialTypes && { credentialTypes: manifest.credentialTypes }) } as Parameters<typeof definePlugin>[0]));
+}
+
+const online = (id: string) => registry.nodeTypes().some((t) => t.pluginId === id);
+
+/** The plugins `scenario.start.plugins` names and this form has no way to serve (the live form's Go and Python ones without an endpoint). */
+export function missingPlugins(scenario: Pick<Scenario, 'start'>, form: Form): string[] {
+  return (scenario.start?.plugins ?? []).filter((id) => form === 'live' && !TYPESCRIPT_PLUGINS.includes(id) && !online(id));
+}
+
+/** Register the plugins a scenario names, once each: stand-ins from the recorded manifests (unit), or the TypeScript plugins' own code (Grafana in both forms; the others live). */
+export async function addScenarioPlugins(scenario: Pick<Scenario, 'start'>, form: Form): Promise<void> {
+  for (const id of scenario.start?.plugins ?? []) {
+    if (form === 'unit' && MANIFESTS[id]) {
+      standFromManifest(id);
+      continue;
+    }
+    if (!TYPESCRIPT_PLUGINS.includes(id) || (online(id) && id !== 'messaging')) continue;
+    const path = ['..', '..', '..', '..', 'plugins', id, 'src', 'main'].join('/');
+    const { plugin } = (await import(/* @vite-ignore */ new URL(path, import.meta.url).href)) as { plugin: Parameters<typeof registry.registerBuiltin>[0] };
+    registry.registerBuiltin(plugin);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +401,8 @@ const agentOf = (config: Partial<AgentConfig>, published = false, draftCases = 0
   cases: id ? listCases(id).length : draftCases,
   practices: config.practices === 'on',
   guardrails: guardrailWords(config.guardrails),
+  description: config.description ?? '', // AG02:
+  instructions: config.instructions ?? '', // AG02:
 });
 
 // ---------------------------------------------------------------------------
@@ -534,6 +647,15 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
   const scripted = script ? scriptedModel(script) : undefined;
   const canvas = canvasOf(scenario, options);
   if (canvas) outcome.before = canvas;
+  // AG02: the plugins the scenario names; a live run whose Go or Python plugin is not online is skipped, with the reason.
+  const absent = missingPlugins(scenario, form);
+  if (absent.length) {
+    outcome.error = `skipped: ${absent.join(', ')} not online (set LANDFLOW_SPOTLIGHT_PLUGINS to its endpoint)`;
+    return outcome;
+  }
+  await addScenarioPlugins(scenario, form);
+  toolInputs = [];
+  outcome.hostModel = builderModel(); // AG02:
   const previousOllama = process.env.OLLAMA_URL;
   let fake: FakeModels | undefined;
   const previousAllow = process.env.LANDFLOW_OUTBOUND_ALLOW;
@@ -625,8 +747,11 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
           const message = String(item?.chatInput ?? item?.text ?? scenario.ask);
           const smokeRoute = await import('@/app/api/agents/[id]/smoke-test/route');
           const smoked = await smokeRoute.POST(post(`/api/agents/${body.agent.id}/smoke-test`, { message }), { params: Promise.resolve({ id: body.agent.id }) });
-          const smoke = ((await smoked.json()) as { smoke?: { state: 'passed' | 'failed' | 'untested' } }).smoke;
+          const smoke = ((await smoked.json()) as { smoke?: { state: 'passed' | 'failed' | 'untested'; reason?: string; tools?: Array<{ name: string; status: 'success' | 'error' | 'empty' | 'denied' }> } }).smoke;
           outcome.smoke = smoke?.state ?? 'failed';
+          // AG05: what the smoke test said besides its state: the reason line and each tool call.
+          if (smoke?.reason) outcome.smokeReason = smoke.reason;
+          if (smoke?.tools) outcome.smokeTools = smoke.tools.map((t) => ({ name: t.name, status: t.status }));
           if (outcome.smoke === 'passed' && scenario.start.autonomy === 'auto') {
             const publishRoute = await import('@/app/api/agents/[id]/publish/route');
             const done = await publishRoute.POST(post(`/api/agents/${body.agent.id}/publish`, {}), { params: Promise.resolve({ id: body.agent.id }) });
@@ -638,21 +763,22 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
     } else if (scenario.via === 'agent-ask') {
       // SB16: what the editor does with a typed "create an agent …": read the ask, design the agent as a card (the route's preview), then the card's Create (the import route, a test case each), and on an empty canvas the starter flow.
       const names = canvas?.nodes.map((n) => n.name) ?? [];
-      const ask = agentAsk(scenario.ask, names);
+      const catalog = askCatalog(registry.nodeTypes()); // AG02: the editor's catalog
+      const ask = agentAsk(scenario.ask, names, catalog);
       // The composer's rule (spotlight/agent-ask.ts `cardAskFor`): a placed ask on a canvas with steps stays the chat's.
       if (!ask || (ask.placed && names.length)) {
         outcome.text = ask ? 'placed: the chat' : 'not an agent ask';
         if (canvas) outcome.after = canvas;
       } else {
         const designed = await import('@/app/api/agents/design/route');
-        const spec = { name: ask.name ?? 'New agent', description: ask.description, instructions: '', ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }), ...((scenario.start?.model ?? model) && { model: scenario.start?.model ?? model }), preview: true };
+        const spec = { name: ask.name ?? fallbackName(ask.description, ask.tools, catalog) /* AG02: */, description: ask.description, instructions: '', ask: scenario.ask /* AG02: */, ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }), ...((scenario.start?.model ?? model) && { model: scenario.start?.model ?? model }), preview: true };
         const response = await designed.POST(post('/api/agents/design', spec));
-        const body = (await response.json()) as { config?: Partial<AgentConfig>; cases?: Array<{ input: string; expected?: string }>; error?: string };
+        const body = (await response.json()) as { config?: Partial<AgentConfig>; cases?: Array<{ input: string; expected?: string }>; notAdded?: Array<{ name: string }>; models?: string[]; error?: string };
         outcome.modelCalls = fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 1;
         if (!response.ok || !body.config) outcome.error = body.error ?? `design ${response.status}`;
         else {
           const starter = !names.length;
-          outcome.card = { starter };
+          outcome.card = { starter, ...(body.config.model && { model: `${body.config.model.provider}/${body.config.model.model}` }), ...(body.models && { models: body.models }), notAdded: (body.notAdded ?? []).map((n) => n.name) /* AG02: */ };
           outcome.text = `Designed ${body.config.name ?? spec.name}`;
           const imported = await (await import('@/app/api/agents/import/route')).POST(post('/api/agents/import', { config: body.config }));
           const made = (await imported.json()) as { agent?: AgentConfig & { id: string }; error?: string };
@@ -665,6 +791,9 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
           }
         }
       }
+    } else if (scenario.via === 'agent-revise') {
+      // AG04: what the editor does with a typed change to an agent. `start.card`: the earlier ask is designed as a pending card, then `ask` is typed under it: a change revises the card in place, a question goes to the chat (answered, the card as it was). `start.agent`: the agent exists (imported, published) and `ask` is typed on its page: the change card, then Apply (the draft only).
+      await reviseVia(scenario, form, outcome, { script, model, options, designed: () => (fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 0) });
     } else {
       const route = await import('@/app/api/assistant/agent/route');
       const response = await route.POST(post('/api/assistant/agent', { messages: [{ role: 'user', content: scenario.ask }], ...(model && { model }) }));
@@ -685,11 +814,114 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
     if (previousBlock === undefined) delete process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE;
     else process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE = previousBlock;
   }
+  if (toolInputs.length) outcome.toolInputs = toolInputs; // AG02:
   outcome.ms = Date.now() - started;
   outcome.refused = form === 'live' ? refusedNow().slice(refusedBefore) : [];
   outcome.sent = options.echo ? options.echo.log.slice(echoBefore) : [];
   return outcome;
 }
+
+// AG04:
+/** The TypeScript plugins a scenario's `start.plugins` names that run in-process in the unit form (the Go and Python ones are the live form's endpoints). */
+const IN_PROCESS: Record<string, string> = { 'text-toolkit': 'text-toolkit', grafana: 'grafana', triage: 'triage', messaging: 'messaging' };
+const loaded = new Set<string>();
+
+async function withPlugins(ids: string[] | undefined): Promise<void> {
+  for (const id of ids ?? []) {
+    const dir = IN_PROCESS[id];
+    if (!dir || loaded.has(id)) continue;
+    loaded.add(id);
+    // A computed path: the plugins are packages of their own, outside this app's type roots.
+    const path = ['..', '..', '..', '..', 'plugins', dir, 'src', 'main'].join('/');
+    const { plugin } = (await import(/* @vite-ignore */ new URL(path, import.meta.url).href)) as { plugin: Parameters<typeof registry.registerBuiltin>[0] };
+    if (!registry.nodeTypes().some((t) => t.pluginId === id)) registry.registerBuiltin(plugin);
+  }
+}
+
+/** The `agent-revise` via (contracts/ag1/spotlight-scenario.ts): the design route's preview with `base` and `change`, then Apply. */
+async function reviseVia(scenario: Scenario, form: Form, outcome: Outcome, ctx: { script: ScriptTurn[] | undefined; model: string | undefined; options: RunOptions; designed: () => number }): Promise<void> {
+  await withPlugins(scenario.start?.plugins);
+  const designed = await import('@/app/api/agents/design/route');
+  const design = async (body: Record<string, unknown>) => {
+    const response = await designed.POST(post('/api/agents/design', { preview: true, ...(ctx.model && { model: ctx.model }), ...body }));
+    return { ok: response.ok, body: (await response.json()) as { config?: Partial<AgentConfig>; changes?: string[]; error?: string } };
+  };
+  const model = scenario.start?.model ?? ctx.model;
+  const startCard = scenario.start?.card;
+  if (startCard) {
+    // The pending card: the earlier ask, designed as the editor's `designAgentCard` does.
+    const ask = agentAsk(startCard, []);
+    if (!ask) {
+      outcome.error = 'start.card is not an agent ask';
+      return;
+    }
+    const first = await design({ name: ask.name ?? 'New agent', description: ask.description, instructions: '', ...(ask.tools.length && { tools: ask.tools }), ...(model && { model }) });
+    if (!first.ok || !first.body.config) {
+      outcome.error = first.body.error ?? 'design failed';
+      return;
+    }
+    outcome.card = { starter: true };
+    const config = first.body.config;
+    if (agentChangeAsk(scenario.ask) === 'question') {
+      // A question under the card goes to the chat: answered, never applied; the card is as it was.
+      const empty = { id: 'ag04-empty', name: 'Untitled workflow', active: false, nodes: [], connections: [], pinData: {}, settings: {} } as unknown as Workflow;
+      outcome.before = empty;
+      const rest = scriptedModel((ctx.script ?? []).slice(ctx.designed()));
+      const result = await chatOnce({ ask: echoedAsk(scenario.ask, ctx.options), workflow: empty, model: scenario.start?.model }, form, ctx.script ? rest : undefined, ctx.options);
+      Object.assign(outcome, { text: result.text, tools: result.tools, proposals: result.proposals, asked: result.asked, offers: result.offers, ...(result.error && { error: result.error }) });
+      outcome.after = applyAsTheEditor(empty, result.proposals, scenario.start?.autonomy);
+      outcome.agents.push(agentOf(config));
+      outcome.modelCalls = ctx.designed() + result.calls;
+      return;
+    }
+    const revised = await design({ name: String(config.name ?? 'New agent'), description: String(config.description ?? ''), instructions: '', base: { config }, change: scenario.ask });
+    if (!revised.ok || !revised.body.config) {
+      outcome.error = revised.body.error ?? 'revise failed';
+      return;
+    }
+    outcome.card = { starter: true, changes: revised.body.changes ?? [] };
+    outcome.text = (revised.body.changes ?? []).join('; ') || 'No change';
+    outcome.agents.push(agentOf(revised.body.config));
+    outcome.modelCalls = ctx.designed();
+    return;
+  }
+  const existing = scenario.start?.agent;
+  if (!existing) {
+    outcome.error = 'agent-revise needs start.card or start.agent';
+    return;
+  }
+  // The agent exists and is published; its page asks for the change.
+  const imported = await (await import('@/app/api/agents/import/route')).POST(post('/api/agents/import', { config: existing }));
+  const made = (await imported.json()) as { agent?: AgentConfig & { id: string }; error?: string };
+  if (!imported.ok || !made.agent) {
+    outcome.error = made.error ?? `import ${imported.status}`;
+    return;
+  }
+  const id = made.agent.id;
+  const publishRoute = await import('@/app/api/agents/[id]/publish/route');
+  await publishRoute.POST(post(`/api/agents/${id}/publish`, {}), { params: Promise.resolve({ id }) });
+  const versionBefore = agentStore.get(id)?.published?.version;
+  const publishedBefore = JSON.stringify(agentStore.get(id)?.published?.config);
+  if (agentChangeAsk(scenario.ask) !== 'change') {
+    outcome.error = 'the ask is not a change';
+    return;
+  }
+  const revised = await design({ name: made.agent.name, description: '', instructions: '', base: { agentId: id }, change: scenario.ask });
+  if (!revised.ok || !revised.body.config) {
+    outcome.error = revised.body.error ?? 'revise failed';
+    return;
+  }
+  outcome.card = { starter: false, changes: revised.body.changes ?? [] };
+  outcome.text = (revised.body.changes ?? []).join('; ') || 'No change';
+  // Apply: the draft only (PUT), never a publish.
+  const put = await (await import('@/app/api/agents/[id]/route')).PUT(new Request(`http://localhost/api/agents/${id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(revised.body.config) }), { params: Promise.resolve({ id }) });
+  const saved = agentStore.get(id);
+  outcome.agents.push(agentOf((saved ?? revised.body.config) as Partial<AgentConfig>, Boolean(saved?.published), 0, id));
+  outcome.revised = { agentId: id, savedDraft: put.ok && JSON.stringify(saved?.tools) === JSON.stringify(revised.body.config.tools), published: saved?.published?.version !== versionBefore || JSON.stringify(saved?.published?.config) !== publishedBefore };
+  outcome.modelCalls = ctx.designed();
+}
+
+const echoedAsk = (text: string, options: RunOptions) => echoed(text, options);
 
 /** A short name for a designed agent, from the ask's own words. */
 function nameOfAsk(ask: string): string {
@@ -742,7 +974,13 @@ function errorKind(error: string): string {
 /** Sizes and check results only: no prompt text, no reply text. */
 export function reportOf(model: string, startedAt: string, runs: Array<{ scenario: Scenario; outcome: Outcome }>, skipped: Report['skipped'] = []): Report {
   const byId = new Map<string, Report['scenarios'][number]>();
+  skipped = [...skipped];
   for (const { scenario, outcome } of runs) {
+    // AG02: a run skipped for a plugin that is not online is listed as skipped with its reason, not counted.
+    if (outcome.error?.startsWith('skipped:')) {
+      if (!skipped.some((k) => k.id === scenario.id)) skipped.push({ id: scenario.id, reason: outcome.error.slice('skipped: '.length) });
+      continue;
+    }
     const entry = byId.get(scenario.id) ?? { id: scenario.id, owner: scenario.owner, job: scenario.job, runs: [] };
     entry.runs.push({ ms: outcome.ms, checks: judge(scenario, outcome), ...(outcome.error && { error: errorKind(outcome.error) }) });
     byId.set(scenario.id, entry);
