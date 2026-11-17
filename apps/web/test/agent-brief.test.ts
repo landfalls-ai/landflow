@@ -207,6 +207,17 @@ describe('least privilege and approval on writes', () => {
     expect(dropped).toEqual([]);
   });
 
+  it('drops a knowledge base a request about practices or pull requests never asked for, and keeps one about docs', () => {
+    const tools = [{ type: 'knowledge', collection: 'practices' }];
+    const embeddings = { provider: 'ollama' as const, model: 'nomic-embed-text:latest' };
+    const resources = { models: [], knowledge: [], embeddings };
+    const asked = draftFrom({ name: 'Reviewer', role: 'Reviewer', instructions: 'Review.', tools }, context(REVIEWER, { resources }));
+    expect(asked.config.tools?.some((t) => t.type === 'knowledge')).toBe(false);
+    expect(asked.dropped).toEqual([expect.stringContaining('“practices”: the request doesn’t say what it answers from')]);
+    const docs = draftFrom({ name: 'Answerer', role: 'Answerer', instructions: 'Answer.', tools }, context('answers customer questions from our docs', { resources }));
+    expect(docs.config.tools?.some((t) => t.type === 'knowledge')).toBe(true);
+  });
+
   it('shares one write heuristic with the session', () => {
     expect(writesOutside({ type: 'core.httpRequest', parameters: { method: 'POST' } })).toBe(true);
     expect(writesOutside({ type: 'core.httpRequest', parameters: { method: 'GET' } })).toBe(false);

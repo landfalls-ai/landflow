@@ -367,6 +367,8 @@ export const HANDOVER_ASK = /\b(?:hand(?:s|ed)?\s+(?:it\s+|them\s+|this\s+|work\
 /** A request that asks the agent to change something outside: post, send, comment, create, update, delete, merge … ("create an agent" is not one). */
 const WRITE_ASK = /\b(?:post|send|reply|replies|comment\w*|create|raise|update|change|edit|write|delete|remove|merge|notify|alert|e-?mail|publish|commit|push|assign|close|refund|approve|archive|open\s+an?|file\s+an?)\b/i;
 const AGENT_ASK = /\b(?:create|make|build|design|add)\s+(?:me\s+)?an?\s+(?:[\w-]+\s+){0,2}agent\b/gi;
+/** A request that says what the agent answers from: documents, docs, a knowledge base, policies … (a knowledge tool needs one). */
+export const KNOWLEDGE_ASK = /\b(?:knowledge|docs?|documents?|documentation|wiki|playbooks?|policies|policy|manuals?|faq|handbook|runbooks?|articles?|past\s+(?:tickets|answers)|contracts?)\b/i;
 /** Words of a node's keywords too general to say the request names its app. */
 const GENERIC_KEYWORDS = new Set(['comment', 'message', 'messages', 'trigger', 'webhook', 'file', 'files', 'send', 'create', 'update', 'search', 'record', 'records', 'database', 'table', 'event', 'events']);
 const REPOSITORY = /(?<![\w./-])(?!(?:and\/or|either\/or|he\/she|s\/he|i\/o|ci\/cd|n\/a|w\/o|yes\/no|input\/output)\b)[a-z0-9][\w.-]*\/[a-z0-9][\w.-]*(?![\w/-])/i;
@@ -659,6 +661,11 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
         continue;
       }
       if (tools.some((t) => t.type === 'knowledge' && !isNodeKnowledge(t) && t.collection === collection)) continue;
+      // SB17: a knowledge base only for a request that says what it answers from (practices are the Check Practices node's, not documents).
+      if (request !== undefined && !KNOWLEDGE_ASK.test(request)) {
+        dropped.push(`the knowledge base “${collection}”: the request doesn’t say what it answers from`);
+        continue;
+      }
       const existing = context.resources?.knowledge.find((k) => k.collection === collection);
       const embeddings = existing?.embeddings ?? context.resources?.embeddings;
       if (!embeddings) {
