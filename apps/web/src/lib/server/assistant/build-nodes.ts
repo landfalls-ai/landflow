@@ -85,7 +85,8 @@ const TRIGGER_FIELDS: Record<string, Record<string, unknown>> = {
 const AGENT_FIELDS: Record<string, Record<string, unknown>> = {
   'core.aiAgent': { output: '', sessionId: '', model: '', iterations: 0, usage: {}, steps: [], fallbackUsed: false },
   'core.messageAgent': { reply: '', sessionId: '', agentId: '', version: 0, model: '', endReason: '', usage: {}, steps: [] },
-  'core.runTeam': { reply: '', team: {}, members: [], usage: {}, activity: {} },
+  // `reason` is only on the "Needs a person" output (output 1); the one sample serves both outputs, so it is listed.
+  'core.runTeam': { reply: '', team: {}, members: [], reason: '', usage: {}, activity: {} },
 };
 
 // ---------------------------------------------------------------------------

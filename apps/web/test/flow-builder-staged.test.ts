@@ -244,6 +244,20 @@ describe('SB14: a plan becomes nodes, one call per step', () => {
     expect(callsFor('Tell Slack')).toHaveLength(1);
   });
 
+  it('a team writes `reason` on its Needs a person output: a step on output 1 reading $json.reason gets no send-back', async () => {
+    const plan: BuildPlan = {
+      name: 'Team answer',
+      steps: [step('s1', 'core.schedule', 'Every day', 'Run daily'), step('s2', 'core.runTeam', 'Ask the team', 'Have the team work', 's1'), step('s3', 'sb14app.slack', 'Tell Slack', 'Say why a person is needed', 's2', { output: 1 })],
+      assumptions: [],
+      cannot: [],
+    };
+    const day = reply({ unit: 'rules', rule: { interval: [{ field: 'days', daysInterval: 1, triggerAtHour: 8, triggerAtMinute: 0 }] } });
+    script = { 'Every day': [day], 'Ask the team': [reply({ message: 'Work on it' })], 'Tell Slack': [reply({ text: '{{ $json.reason }}' })] };
+    const draft = await buildFlow('every day ask the team and say in Slack why a person is needed', undefined, [], [], { plan });
+    expect(callsFor('Tell Slack')).toHaveLength(1);
+    expect(JSON.stringify(draft.nodes.find((n) => n.key === 's3')!.parameters)).toContain('$json.reason');
+  });
+
   it('sends a weekday cron back when the request said "every morning", and keeps a daily rule', async () => {
     const plan: BuildPlan = { name: 'Morning', steps: [step('s1', 'core.schedule', 'Every morning', 'Run every morning at 9')], assumptions: [], cannot: [] };
     const weekdays = reply({ unit: 'rules', rule: { interval: [{ field: 'cronExpression', expression: '0 9 * * 1-5' }] } });
