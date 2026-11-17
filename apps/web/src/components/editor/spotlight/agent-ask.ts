@@ -12,7 +12,7 @@ import { api } from '@/lib/client/api';
 import { agentAsk, agentChangeAsk, askCatalog, fallbackName, readsTokens, type AgentAsk, type AskCatalogEntry } from '@/lib/shared/agent-ask';
 import { starterFlow, starterSample, type AgentCard, type AgentCardTool, type AgentNotAdded } from '@/lib/shared/agent-card';
 import { agentChanges } from '@/lib/shared/agent-changes'; // AG04:
-import { announceChange, designChange, publishChange, saveChange } from '@/lib/client/agent-change'; // AG04:
+import { announceChange, designChange, publishChange, saveChange, testDraft } from '@/lib/client/agent-change'; // AG04: AG09: testDraft
 import { pickedModel } from '../spotlight-model'; // AG04:
 import { followsPractices, guardrailWords, type AgentConfig } from '@/lib/shared/agents';
 import { draft as draftCall, useAssistant, type ChatItem } from '../assistant';
@@ -144,7 +144,7 @@ export async function createFromCard(itemId: string, card: AgentCard): Promise<v
   let step: string | undefined;
   patchCard(itemId, { state: 'creating', error: undefined });
   try {
-    const { agent } = await api<{ agent: { id: string; name: string } }>('/api/agents/import', { method: 'POST', json: { config: card.config } });
+    const { agent } = await api<{ agent: { id: string; name: string } }>('/api/agents/import', { method: 'POST', json: { config: { ...card.config, name: card.name } /* AG09: the agent is named what the card shows */ } });
     const unsaved: string[] = [];
     for (const c of card.cases) {
       try {
@@ -337,6 +337,7 @@ export async function reviseAgentCard(itemId: string, card: AgentCard, message: 
         // Keep what the route said.
       }
     }
+    // AG09: a pending card's name is the revised design's (the server made a design-made name again from the new tools; its `changes` line says why).
     const next: AgentCard = { ...fresh, ...(card.workflowId && { workflowId: card.workflowId }), ...(card.ask && { ask: card.ask }), ...(card.models && { models: card.models }), changes };
     if (!made) {
       // ag1-int: the card's Not added row is the change's, and what the ask before it named that the agent still lacks.
@@ -384,6 +385,14 @@ export async function applyAgentChange(itemId: string, card: AgentCard): Promise
   } finally {
     applying.delete(itemId);
   }
+}
+
+/** AG09: Test again: the smoke test on the draft as it is now (a credential may have been picked since); nothing is saved or published. */
+export async function testAgentChange(itemId: string, card: AgentCard): Promise<void> {
+  const agentId = card.base?.agentId;
+  if (!agentId || card.smoke?.state === 'testing') return;
+  patchCard(itemId, { smoke: { state: 'testing' } });
+  patchCard(itemId, { smoke: await testDraft(agentId, starterSample({ name: card.name, cases: card.cases })) });
 }
 
 /** Publish an applied change: only after a pass, through the eval gate (a hold is shown on the card, never skipped). */

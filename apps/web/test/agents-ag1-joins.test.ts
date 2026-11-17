@@ -436,7 +436,10 @@ describe('3. revise keeps the design’s rules (AG04 × AG02 × AG05)', () => {
     const revised = cardOf();
     expect(revised.id).toBe(first.id);
     expect(() => cardOf(1)).toThrow();
-    expect(revised.card.changes).toEqual(['Adds the tool Slugify']);
+    // AG09: the card's name was the design's ("Crypto Toolkit agent"): it is made again from the new tools, and the Changes row says why.
+    expect(first.card.name).toBe('Crypto Toolkit agent');
+    expect(revised.card.name).toBe('Utility helper');
+    expect(revised.card.changes).toEqual(['Adds the tool Slugify', 'Renames it to Utility helper (its tools changed)']);
     expect(revised.card.tools.some((t) => t.type === 'text-toolkit.slugify')).toBe(true);
     expect(revised.card.model).toBe(first.card.model);
     expect(revised.card.guardrails).toEqual(first.card.guardrails);

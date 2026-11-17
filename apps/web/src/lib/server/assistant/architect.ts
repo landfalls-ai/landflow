@@ -31,7 +31,8 @@ import { recordUsage } from '../usage/ledger';
 import { assistantScope, isUsageCapError, runInUsageScope, type UsageScope } from '../ai-usage';
 import { recoverToolCalls, withoutInventedIds, withoutRepeats } from './chat';
 import { agentModelOf, builderModel, chooseModel, type AgentResources } from './agent-resources';
-import { askCatalog, MAIL_TO, readsTokens, toolsOf } from '@/lib/shared/agent-ask'; // AG02: ag1-int:
+import { askCatalog, MAIL_TO, readsTokens, toolsOf } from '@/lib/shared/agent-ask';
+import { fallbackName } from '@/lib/shared/agent-ask'; // AG09: // AG02: ag1-int:
 import { saveCheckpoint } from './checkpoints';
 import { assistantModel, errorText, modelLabel } from './model';
 import { isParseError, parseErrorText } from './parse-retry';
@@ -1185,8 +1186,20 @@ const TOOLS_STEP = /^\d+\. Tools: [^\n]*$/m;
  * AG04: the proposal's instructions with the tools step as the final tools make it. The design adds a "Tools: …" step to
  * instructions that name none of the tools it was given: for a change that is only the new tool, so one the base never had is
  * dropped again, and one the base had (from its own design) names every tool now.
+ * AG09: a tool the change adds (`add`) that no step but the Tools line names gets a step of its own.
  */
-function reviseInstructions(proposed: string, base: string, tools: AgentToolConfig[]): string {
+function reviseInstructions(proposed: string, base: string, tools: AgentToolConfig[], add?: { tools: AgentToolConfig[]; change: string } /* AG09: */): string {
+  const text = reviseToolsLine(proposed, base, tools);
+  if (!add) return text;
+  // AG09: a step an earlier revise wrote for a tool the base has is kept when the proposal left it out.
+  const carried = tools.filter((t) => 'name' in t && t.name && !add.tools.includes(t)).flatMap((t) => {
+    const line = new RegExp(`^\\s*\\d+[.)]\\s*When .*, call ${escapeRe((t as { name: string }).name)}\\b.*$`, 'm').exec(base)?.[0];
+    return line ? [{ tool: t, line }] : [];
+  });
+  return add.tools.length || carried.length ? withToolSteps(text, [...carried, ...add.tools.map((tool) => ({ tool }))], add.change) : text;
+}
+
+function reviseToolsLine(proposed: string, base: string, tools: AgentToolConfig[]): string {
   const line = TOOLS_STEP.exec(proposed)?.[0];
   if (!line) return proposed;
   if (!TOOLS_STEP.test(base)) return proposed.replace(`${line}\n`, '').replace(line, '').trim();
@@ -1196,6 +1209,46 @@ function reviseInstructions(proposed: string, base: string, tools: AgentToolConf
   const listed = list.map((t) => (notes[t.name] ? `${t.name} (${notes[t.name]})` : t.name)).join(', ');
   const number = /^\d+\. /.exec(line)?.[0] ?? '';
   return proposed.replace(line, `${number}Tools: ${listed}${/; read before you write.*$/.exec(line)?.[0] ?? '.'}`);
+}
+
+// AG09: a tool a change adds gets a step of its own ("N. When <what the change asked>, call <name>."), before the Output part.
+const escapeRe = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const TOOLS_LINE = /^\s*\d+[.)]\s*Tools:/i;
+const STEPS_HEAD = /^\s*(?:#{1,4}\s*)?steps\s*:/i;
+const AFTER_STEPS = /^\s*(?:#{1,4}\s*)?(?:output|hand[ -]?over(?:\s+when)?)\s*:/i;
+const NUMBERED = /^(\s*)\d+([.)]\s)/;
+
+/** What the change asked, cut to one clause that reads after "When": the clause that names the tool, its leading "also"/"please" dropped, "let it X" as "it should X". */
+function changeClause(change: string, tool: AgentToolConfig): string {
+  const clauses = change.split(/[.;\n]+/).map((c) => c.trim()).filter(Boolean);
+  const clause = clauses.find((c) => names(c, tool)) ?? clauses[0] ?? '';
+  const piece = clause.split(/,|\s+(?:and|but|then)\s+/i).map((c) => c.trim()).find((c) => names(c, tool)) ?? clause;
+  const text = piece.replace(/^(?:(?:also|and|please|now|then|just)\s+)+/i, '').replace(/[\s,.:;!?]+$/, '');
+  const said = /^(?:let|have|make)\s+(?:it|the agent)\s+/i.test(text) ? text.replace(/^(?:let|have|make)\s+(?:it|the agent)\s+/i, 'it should ') : `asked to ${text}`;
+  const words = said.split(/\s+/).slice(0, 16).join(' ');
+  return words.length > 100 ? `${words.slice(0, 99).trimEnd()}…` : words;
+}
+
+function withToolSteps(text: string, added: Array<{ tool: AgentToolConfig; line?: string }>, change: string): string {
+  const lines = text.split('\n');
+  const stepsAt = lines.findIndex((l) => STEPS_HEAD.test(l));
+  const outputAt = lines.findIndex((l, i) => i > stepsAt && AFTER_STEPS.test(l));
+  const start = stepsAt + 1;
+  const end = outputAt >= 0 ? outputAt : lines.length;
+  const others = lines.filter((l) => !TOOLS_LINE.test(l)).join('\n');
+  const missing = added.filter(({ tool: t }) => 'name' in t && t.name && !new RegExp(`(?<![A-Za-z0-9_])${escapeRe(t.name)}(?![A-Za-z0-9_])`, 'i').test(others));
+  if (!missing.length) return text;
+  const steps = missing.map(({ tool: t, line }) => line ?? `0. When ${changeClause(change, t)}, call ${'name' in t ? t.name : ''}${'requireApproval' in t && t.requireApproval ? ' (it asks the person first)' : ''}.`);
+  const toolsAt = lines.findIndex((l, i) => i >= start && i < end && TOOLS_LINE.test(l));
+  let at = toolsAt;
+  if (at < 0) {
+    at = end;
+    while (at > start && !lines[at - 1].trim()) at--;
+  }
+  lines.splice(at, 0, ...steps);
+  let n = 0;
+  for (let i = start; i < end + steps.length; i++) if (NUMBERED.test(lines[i])) lines[i] = lines[i].replace(NUMBERED, (_m, lead: string, dot: string) => `${lead}${++n}${dot}`);
+  return lines.join('\n');
 }
 
 const RENAME = /\b(?:call it|rename (?:it )?(?:to|as)?|name it|its name is)\s+["“']?([^"”'.,;\n]{2,60})/i;
@@ -1218,6 +1271,21 @@ function changeTools(change: string, types: NodeTypeInfo[]): string[] {
 }
 
 /**
+ * AG09: a pending card's name that the design made (it is what `fallbackName` says of the card's description and tools) is made
+ * again from the tools the card now has; a name the person gave, and an agent that exists (its config is the saved one, whole
+ * with `memory` and `settings`), keep theirs: only a RENAME renames them.
+ */
+function madeAgain(base: Partial<AgentConfig>, tools: AgentToolConfig[], types: NodeTypeInfo[]): string | undefined {
+  if (!base.name || ('memory' in base && 'settings' in base)) return undefined;
+  const catalog = askCatalog(types);
+  const shownNames = (list: AgentToolConfig[]) => list.flatMap((t) => (t.type === 'node' ? [types.find((x) => x.type === t.nodeType)?.descriptor.displayName ?? ''] : [])).filter(Boolean);
+  const before = fallbackName(base.description ?? '', shownNames(base.tools ?? []), catalog);
+  if (base.name !== before && base.name !== 'New agent' /* the design's placeholder when the ask gave no words for a name */) return undefined;
+  const after = fallbackName(base.description ?? '', shownNames(tools), catalog);
+  return after !== before ? after : undefined;
+}
+
+/**
  * AG04: the proposal of a change as the agent it changes: the base's own tools stay unless the change removes them (least
  * privilege holds for the tools the change does not name), a new tool stays only when the change names it, and the name, model,
  * practices, look and team stay unless the change names them.
@@ -1226,12 +1294,16 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
   const kept = (base.tools ?? []).filter((t) => !removed(change, t));
   const have = new Set(kept.map(toolKey));
   const added: AgentToolConfig[] = [];
+  const addedLabels = new Set<string>(); // AG09:
+  const ownBy = new Map<string, AgentToolConfig | undefined>(); // AG09:
   for (const tool of draft.config.tools ?? []) {
+    if (have.has(toolKey(tool)) && 'name' in tool && tool.name) ownBy.set(tool.name, kept.find((t) => toolKey(t) === toolKey(tool))); // AG09: the base's own tool under the name the design gave it
     if (have.has(toolKey(tool)) || removed(change, tool)) continue; // ag1-int: a tool the change removes is not proposed back
     if (tool.type === 'node' && !names(change, tool)) {
       draft.dropped.push(`${'name' in tool && tool.name ? tool.name : tool.nodeType}: the change doesn’t ask for it`);
       continue;
     }
+    if ('name' in tool && tool.name) addedLabels.add(tool.name); // AG09: the needs of a tool the change adds are the card's
     // A name a base tool already has is not reused.
     if ('name' in tool && tool.name && kept.some((t) => 'name' in t && t.name === tool.name)) tool.name = `${tool.name.slice(0, 60)}_2`;
     added.push(tool);
@@ -1241,9 +1313,9 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
   // The base as it is (schedules, channels, memory, persona, guardrails, access: what the change doesn't name), with what the proposal changed.
   const config: Partial<AgentConfig> = {
     ...base,
-    name: renamed ?? base.name ?? draft.config.name,
+    name: renamed ?? madeAgain(base, [...kept, ...added], types) /* AG09: */ ?? base.name ?? draft.config.name,
     description: draft.config.description || base.description || '',
-    instructions: reviseInstructions(draft.config.instructions ?? base.instructions ?? '', base.instructions ?? '', [...kept, ...added]),
+    instructions: reviseInstructions(draft.config.instructions ?? base.instructions ?? '', base.instructions ?? '', [...kept, ...added], { tools: added, change } /* AG09: */),
     tools: [...kept, ...added],
   };
   // The steps name only the tools the agent ends up with: a tool the change removed leaves no step that calls it.
@@ -1254,6 +1326,16 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
   const keptNames = kept.flatMap((t) => (t.type === 'node' ? [types.find((x) => x.type === t.nodeType)?.descriptor.displayName] : [])).filter((n): n is string => Boolean(n));
   draft.dropped = draft.dropped.filter((line) => !(/the request (?:never asks for it|asks to read or check)/.test(line) && keptNames.some((n) => line.startsWith(`${n}:`) || line.startsWith(`${n} (`))));
   draft.dropped.push(...reconciled.dropped);
+  // AG09: the card's Left row is what this change leaves: the needs of a tool it adds, and of a kept tool only a credential slot still unset on the base's tool.
+  draft.needs = draft.needs.filter((need) => {
+    if (addedLabels.has(need.tool)) return true;
+    const own = ownBy.get(need.tool) ?? (base.tools ?? []).find((t) => 'name' in t && t.name === need.tool);
+    if (!own) return true; // a need of no tool (the model, a design failure) stays
+    if (need.kind !== 'credential') return false;
+    const slot = /pick an? (.+?) credential/.exec(need.text)?.[1];
+    const given = 'credentials' in own ? (own.credentials as Record<string, unknown> | undefined) : undefined;
+    return !(slot && given && given[slot]);
+  });
   if (modelNamed && draft.config.model) config.model = draft.config.model;
   draft.config = config;
 }
@@ -1375,7 +1457,7 @@ function withSpecHints(draft: DraftResult, spec: AgentSpec, input: Pick<Architec
   }
   if (base) {
     // ag1-int: a revise keeps the base's own form: its Tools step (when it has one) lists the tools now, its guardrails stay.
-    draft.config = { ...draft.config, tools, ...(tools.length > before && { instructions: reviseInstructions(draft.config.instructions ?? '', base.instructions ?? '', tools) }) };
+    draft.config = { ...draft.config, tools, ...(tools.length > before && { instructions: reviseInstructions(draft.config.instructions ?? '', base.instructions ?? '', tools, { tools: tools.slice(before), change: spec.ask ?? '' } /* AG09: */) }) };
     return notAdded;
   }
   const tokenJob = readsTokenJob(ask, tools);
