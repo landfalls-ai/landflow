@@ -283,7 +283,14 @@ export function repairPlan(input: BuildPlan, ctx: RepairContext): BuildPlan {
     ...(s.attach && { attach: s.attach.slice(0, 40) }),
     ...(s.reads && { reads: s.reads.map((r) => r.trim().slice(0, 80)).filter(Boolean).slice(0, 12) }),
   }));
-  return { name: input.name.slice(0, 80), steps, assumptions: [...input.assumptions, ...notes].map(line).slice(0, PLAN_LINES_LIMIT), cannot: cannot.map(line).slice(0, PLAN_LINES_LIMIT) };
+  // Past the limit lines are not dropped silently: the last slot says how many were left out.
+  const limited = (lines: string[], what: string): string[] => {
+    const all = lines.map(line);
+    if (all.length <= PLAN_LINES_LIMIT) return all;
+    const kept = all.slice(0, PLAN_LINES_LIMIT - 1);
+    return [...kept, `${all.length - kept.length} more ${what} left out (the plan carries at most ${PLAN_LINES_LIMIT})`];
+  };
+  return { name: input.name.slice(0, 80), steps, assumptions: limited([...input.assumptions, ...notes], 'assumptions'), cannot: limited(cannot, 'lines about what cannot be done') };
 }
 
 export interface PlanInput {

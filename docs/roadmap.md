@@ -2715,3 +2715,7 @@ four-eyes; agents may draft, as tainted drafts; `required` blocks only in flows;
   fixes are not reset), a review's "no" names what is missing (or reads as a pass), a yes is per `scheme://host:port`, a
   "Publish … first" at an agent Spotlight made is not a fix round, and a pending **Run it for real** row survives a
   reload. Left: the smoke test is one item, not the eval gate (SB17's cases are what the gate runs).
+- **Left in `agentUsedBy` (older than sb3, noted at its re-review):** Undo of an agent the starter flow made checks the
+  workflows' published versions and the open ⌘Z steps, but not a scheduled publish or a pending four-eyes publish request
+  whose version contains the step (it would run or be approved against an agent Undo has removed), nor another agent that
+  delegates to this one (its delegation list still names it). Both are older gaps in the same check and are not fixed here.

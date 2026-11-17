@@ -223,6 +223,21 @@ describe('the plan call', () => {
     expect(repairPlan(two, ctx).steps[0].type).toBe('core.manualTrigger');
   });
 
+  it('says how many assumptions and cannot lines it left out past the limit, within the limit', () => {
+    const types = availableTypes();
+    const byType = new Map(types.map((t) => [t.type, t]));
+    const ctx = { offered: byType, isTrigger: (t: string) => byType.get(t)?.descriptor.kind === 'trigger', stand: () => undefined };
+    const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i}`);
+    const plan = repairPlan({ name: 'X', steps: [{ key: 't', type: 'core.manualTrigger', name: 'T', does: 'T' }], assumptions: lines(35), cannot: lines(32) }, ctx);
+    expect(plan.assumptions).toHaveLength(30);
+    expect(plan.assumptions[28]).toBe('line 28');
+    expect(plan.assumptions[29]).toMatch(/^6 more assumptions left out/);
+    expect(plan.cannot).toHaveLength(30);
+    expect(plan.cannot[29]).toMatch(/^3 more lines about what cannot be done left out/);
+    // At the limit nothing is said.
+    expect(repairPlan({ name: 'X', steps: [{ key: 't', type: 'core.manualTrigger', name: 'T', does: 'T' }], assumptions: lines(30), cannot: [] }, ctx).assumptions[29]).toBe('line 29');
+  });
+
   it('answers the person\'s change with a corrected plan, checked the same way', async () => {
     queue = [reply({ ...GOOD, steps: GOOD.steps.slice(0, 4), assumptions: [] })];
     const { plan } = await planFlow(B1, { model: 'qwen3-coder:30b', types: availableTypes(), stages: [], plan: GOOD as BuildPlan, change: 'no data table' });
