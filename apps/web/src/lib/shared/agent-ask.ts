@@ -97,6 +97,18 @@ const baseWord = (w: string) => w.toLowerCase().replace(/ies$/, 'y').replace(/s$
  * AG02: a plugin node of two or more words whose every word is in the message in some form, in any order ("decodes JWTs" names JWT Decode).
  * AG07: or whose one distinctive word is in the message as a whole word (an acronym in its name: IOCs, JWT, UUID, SQL), the plural folded: "pull out the IOCs" names Extract IOCs. A word two catalog nodes share ("Alert", "Email") names neither.
  */
+/** AG07: words that are acronyms but never name a node alone (every ask has an AI, an API or a URL). */
+const GENERIC_ACRONYMS = new Set(['AI', 'API', 'APIS', 'SDK', 'URL', 'URLS', 'ID', 'IDS', 'HTTP', 'HTTPS', 'JSON', 'XML', 'CSV', 'LLM', 'LLMS', 'UI', 'APP', 'CLI', 'WEB']);
+
+/** AG07: a node-name word that names the node alone: an acronym of 3+ letters (IOCs, JWT, UUID, SQL), never a generic tech word, matched as written. */
+function distinctiveAcronym(w: string): boolean {
+  return /^[A-Z0-9]{3,}s?$/.test(w) && /[A-Z]/.test(w) && !GENERIC_ACRONYMS.has(w.toUpperCase());
+}
+
+function asWritten(message: string, w: string): boolean {
+  return new RegExp(`(?<![\\w-])${escape(w.replace(/s$/, ''))}(?:s)?(?![\\w-])`).test(message);
+}
+
 function wordsNamed(message: string, entry: AskCatalogEntry, catalog: AskCatalogEntry[] = []): boolean {
   const words = entry.displayName.trim().split(/\s+/);
   if (entry.core || words.length < 2 || words.some((w) => w.length < 3)) return false;
@@ -106,18 +118,16 @@ function wordsNamed(message: string, entry: AskCatalogEntry, catalog: AskCatalog
   // AG07: the distinctive word alone.
   const others = new Set(catalog.filter((c) => c !== entry && c.displayName !== entry.displayName).flatMap((c) => c.displayName.trim().split(/\s+/).map(baseWord)));
   return words.some((w) => {
-    const acronym = /^[A-Z0-9]{2,}s?$/.test(w) && /[A-Z]/.test(w);
-    if (!acronym) return false; // AG07: ordinary English never names a node alone ("makes a decision" is not Triage Decision)
+    if (!distinctiveAcronym(w)) return false; // AG07: ordinary English never names a node alone ("makes a decision" is not Triage Decision)
     if (others.has(baseWord(w))) return false;
-    const root = escape(w.replace(/s$/i, ''));
-    return new RegExp(`(?<![\\w-])${root}(?:e?s)?(?![\\w-])`, 'i').test(message);
+    return asWritten(message, w);
   });
 }
 
 /** AG07: an acronym in a node's name ("IOCs", "JWT") that the message has as a whole word, even when other nodes share it. */
 function acronymNamed(message: string, entry: AskCatalogEntry): string | undefined {
   if (entry.core) return undefined;
-  return entry.displayName.trim().split(/\s+/).find((w) => /^[A-Z0-9]{2,}s?$/.test(w) && /[A-Z]/.test(w) && new RegExp(`(?<![\\w-])${escape(w.replace(/s$/i, ''))}(?:e?s)?(?![\\w-])`, 'i').test(message));
+  return entry.displayName.trim().split(/\s+/).find((w) => distinctiveAcronym(w) && asWritten(message, w));
 }
 
 /** AG02: "email/mail/send/forward … to <address>": a message that sends to an address it was given. */

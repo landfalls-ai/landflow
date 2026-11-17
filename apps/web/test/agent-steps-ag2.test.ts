@@ -222,3 +222,30 @@ describe('an acronym two nodes share, on the card (AG07 review)', () => {
     expect(result.missing ?? []).toEqual([]);
   });
 });
+
+describe('generic tech words name no node (AG07 integration fix)', () => {
+  const extract = () => types.find((t) => t.descriptor.displayName === 'Extract IOCs')!;
+  const sdk = () => ({ ...extract(), type: `${extract().type}AiSdk`, descriptor: { ...extract().descriptor, displayName: 'Generate with AI SDK', keywords: [] } }) as NodeTypeInfo;
+
+  it('AI, SDK and the like add no hint; IOCs, JWT, UUID and SQL still name a node', () => {
+    const catalog = askCatalog([...types, sdk()]);
+    for (const ask of ['Create an AI agent that reads support tickets and answers them.', 'Build an agent that uses AI to summarise my inbox.', 'Create an agent using the Slack SDK to post replies.']) {
+      expect(toolsOf(ask, catalog).join(' '), ask).not.toMatch(/AI SDK/);
+    }
+    expect(toolsOf('Create an agent that triages an alert: pull out the IOCs, and judge it.', catalog)).toContain('Extract IOCs');
+    // As written: lower case "iocs" or a generic word in capitals alone never names it.
+    expect(toolsOf('Create an agent that reads the sdk docs', catalog).join(' ')).not.toMatch(/AI SDK/);
+  });
+
+  it('a design for such an ask gets no generate_with_ai_sdk tool', async () => {
+    const withSdk = [...types, sdk()];
+    const ask = 'Create an AI agent that reads support tickets and uses the Slack SDK.';
+    const turns: Array<Record<string, unknown>> = [{ toolCalls: [{ id: 'd1', name: 'propose_design', input: { summary: 'Draft', role: 'Helper', name: 'Helper', instructions: 'Steps:\n1. Answer.', nodeTools: 'none' } }] }, { text: 'Designed.' }];
+    const model = { provider: 'test', model: 'scripted', async generate(request: { system?: string }) {
+      if (typeof request.system === 'string' && request.system.startsWith('You write test cases')) return { text: 'Hello => A greeting\nWhat? => Reply\nOdd => Cannot help', toolCalls: [], stopReason: 'stop' as const };
+      return { text: '', toolCalls: [], stopReason: 'stop' as const, ...turns.shift() };
+    } };
+    const result = await designAgent({ name: 'Helper', description: 'x', instructions: '', ask, tools: toolsOf(ask, askCatalog(withSdk)) }, { types: withSdk, actor: TEST_OWNER, model: model as never });
+    expect(JSON.stringify(result.config.tools ?? [])).not.toMatch(/generate_with_ai_sdk|AiSdk/i);
+  });
+});
