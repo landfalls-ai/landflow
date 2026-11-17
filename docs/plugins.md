@@ -27,11 +27,30 @@ interface INodeType {
 | Params | `ctx.getNodeParameter(name, i)` | `ctx.get_node_parameter(name, i)` | `ctx.ParamString(name, i, def)` |
 | Errors | `NodeOperationError` | `NodeOperationError` | `landflow.ItemError(...)` |
 
-Plugins publish their own branding: `icon: 'file:icons/x.svg'` in the plugin or node descriptor is read by the SDK and sent as a `data:` URL (SVG or PNG, up to 64 KB). The bundled plugins' tiles carry the services' real logos: full-colour marks from the [SVG Logos](https://github.com/gilbarbara/logos) set on a white tile, or a [Simple Icons](https://simpleicons.org) mark in white on the brand's colour (Google Docs and Sheets, Stripe, RSS, MySQL, SQLite, HubSpot), both CC0; a trigger adds an amber bolt. Built-in nodes and credential types can name a brand mark instead of a file, `icon: 'brand:<slug>'` (`apps/web/src/lib/shared/brand-icons.ts`: Ollama, Anthropic, Claude, OpenAI, Gemini, Mistral, Hugging Face, GitHub, Kubernetes, Docker, MCP, kagent, PostgreSQL, SQLite), drawn in the brand's colour or, for a black mark, the text colour. A hex `color` tints the plugin's segment in the node creator and its nodes on the canvas.
-
 A plugin can also ship **composite types**, contracts for canvas frames built from its nodes and others' (the triage plugin's `triage.aiTriage`), and tag its nodes with `capabilities` (`ioc.enrich`) for their slots to match: `defineComposite` in TypeScript, `PluginInfo.Composites` in Go, `Plugin(composites=[...])` in Python. See [composites.md](composites.md).
 
 Descriptor fields mirror n8n's `INodeTypeDescription` / `INodeProperties`: 13 property types, `displayOptions`, `typeOptions.loadOptionsMethod`, typed ports with `required`/`maxConnections`. The editor renders every plugin's UI from its descriptor, so plugins need no frontend code. Full spec: **[docs/protocol.md](protocol.md)**.
+
+## Branding and real marks
+
+`icon: 'file:icons/x.svg'` in the plugin or node descriptor is read by the SDK and sent as a `data:` URL (SVG or PNG, up to 64 KB). A plugin reads its icon files when it builds its manifest, so a changed icon shows after the plugin restarts. The host serves them inside `GET /api/node-types`, there is no separate icon route and nothing to expire. A hex `color` tints the plugin's segment in the node creator and its nodes on the canvas.
+
+An app's node wears **the app's real mark**, never a drawn stand-in: the node creator, the canvas, the node panel, the Marketplace, the Run Trace, Spotlight's plan and an agent's tool list all show the descriptor's icon, so one file does it everywhere. Built-in nodes and credential types name a mark instead of a file, `icon: 'brand:<slug>'` (`apps/web/src/lib/shared/brand-icons.ts`), drawn in the brand's colour or, for a black mark, the text colour. A Marketplace entry or an agent tool that publishes no icon of its own gets the mark of the app its name says (`brandOfApp`). Landflow's own products (Landfall, Landledger, Clickland, Landflow) and generic tools (HTTP, Code, If, text and crypto utilities) keep their own icons.
+
+| Marks | Source | Licence |
+|---|---|---|
+| Linear, Discord, Telegram, WhatsApp, Gmail, Google, Google Calendar, Docs, Drive and Sheets, Grafana, Fathom, Notion, Jira, Airtable, HubSpot, Stripe, RSS, MySQL, Redis (and Ollama, Anthropic, Claude, Gemini, Mistral, Hugging Face, GitHub, Kubernetes, Docker, MCP, PostgreSQL, SQLite) | [Simple Icons](https://simpleicons.org) 16.36.0 | CC0 |
+| Slack, Twilio | Simple Icons 15.0.0, the last version that carries them | CC0 |
+| Attio | its own press kit, [attio.com/brand](https://attio.com/brand) (`/brand/v1/attio-logomark.svg`), offered for third-party materials | the brand's terms |
+| OpenAI | [Lobe Icons](https://github.com/lobehub/lobe-icons) 1.101.0 | MIT |
+| kagent | its own repository | Apache-2.0 |
+| the older plugin tiles (Slack, GitHub, Postgres, Gmail, Notion, Jira and others, full colour on a white tile) | [SVG Logos](https://github.com/gilbarbara/logos) through Iconify | CC0 |
+
+Logos identify the integrations they stand for (nominative use); each belongs to its owner, and the notice sits in the header of `brand-icons.ts`. Microsoft Teams (the Microsoft bot credential) has no clean source and keeps a Landflow glyph.
+
+**Adding one.** Unpack the Simple Icons package into an empty directory (`npm pack simple-icons@16.36.0`), print the mark with `node scripts/brand-icon.mjs entry <dir> <slug>` and paste the line into `BRANDS` with a comment naming its source. A brand Simple Icons lacks comes from Lobe Icons or the brand's own press page, only where that page is clearly the brand's. Then write the plugin's file with `node scripts/brand-icon.mjs tile <key> plugins/<name>/icons/<name>.svg` (`--trigger` adds the bolt a trigger wears): the mark in its colour on a white rounded tile, 48 by 48. A plugin that bundles several apps (Messaging, Databases, Productivity) uses `bundle` for a 2 by 2 grid of its apps' icons. `apps/web/test/brand-icons.test.ts` fails on a listed app whose icon is still a glyph or whose file is missing.
+
+**Under the name.** A node says what it will do: the line below its name on the canvas and in the node panel is the descriptor's `subtitle` (`{{operation}}`, n8n's `{{ $parameter.operation }}`, read as the option's display name), else the operation's `action` label ("Create an issue"), else "Issue · Get many". In the node creator an app's resources and operations are listed as actions, and a search such as "send message" lists the matching actions first; picking one adds the node set to do exactly that. See `apps/web/src/lib/shared/node-subtitle.ts`.
 
 ## Registration rules
 

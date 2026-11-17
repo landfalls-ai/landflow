@@ -243,6 +243,6 @@ src/main.ts                 definePlugin + serve (ports 7104 / 7204)
 src/shared.ts               metrics, API error mapping, per-item helper, smtp client span
 src/smtp.ts                 SMTP client and MIME message builder
 src/nodes/*.ts              one file per service, with its credential type(s)
-icons/*.svg                 original icons in each brand colour
+icons/*.svg                 the apps' real marks (docs/plugins.md#branding-and-real-marks)
 test/                       fake HTTP APIs, a fake SMTP server (STARTTLS / implicit TLS with a node:crypto self-signed cert)
 ```
