@@ -16,6 +16,7 @@ import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta, ShortReply } from '..
 import { MAX_FIXES, approveDestinations, productionNote, publishToProduction, testUntilItRuns, undoApplied } from '../test-session'; // SB03:
 import { agentStep, runRow } from '../timeline';
 import { CredentialPicker } from './credential-picker';
+import { PlanCard } from './plan-card'; // SB13:
 
 import { ProposalCard, ProposalRow } from './proposal';
 import { provisionalText } from '@/lib/shared/leaked-markup';
@@ -451,6 +452,9 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
         ) : part.kind === 'ask' ? (
           // SB11:
           <AskRow key={i} itemId={item.id} ask={part.ask} busy={spotlightBusy} />
+        ) : part.kind === 'plan' ? (
+          // SB13:
+          <PlanCard key={i} itemId={item.id} part={part.plan} />
         ) : null,
       )}
       {!streamed && steps && firstProposal < 0 && <LiveSteps live={steps} />}

@@ -15,6 +15,7 @@ import { anthropicModel } from './nodes/models';
 import { ollamaUrl } from './config';
 import { withCallNote } from './ai-usage/call-context'; // SB19:
 import { plainDraft } from './ai-usage/drafts'; // SB19:
+import { planLines, type BuildPlan, type BuildStage } from '@/lib/shared/build-plan'; // SB13:
 // SB01: the draft's reply held to a schema, checked for empty parts and sent back once.
 import { z } from 'zod';
 import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
@@ -44,6 +45,10 @@ export interface FlowDraft {
   left?: DraftLeft[];
   /** SB10: how many model calls the draft took: 1, or 2 when the first draft was sent back once. */
   calls?: number;
+  /** SB13: the plan the draft was built from (lib/shared/build-plan.ts), when it was built from one. */
+  plan?: BuildPlan;
+  /** SB13: every model call of the draft in order, with its size (never its text). */
+  stages?: BuildStage[];
 }
 
 const DEFAULT_MODEL = process.env.LANDFLOW_BUILDER_MODEL ?? 'qwen3-coder:30b';
@@ -218,7 +223,8 @@ export function adapterTimedOut(error: unknown): boolean {
   return /^Cannot reach Ollama/.test(message ?? '') && /timeout|timed out/i.test(description ?? '');
 }
 
-async function askModel(model: string, messages: DraftMessage[], timeoutMs: number): Promise<string> {
+// SB13: exported; `note` records the call as a `BuildStage` (and `system` replaces the draft's instructions: the plan stage's own).
+export async function askModel(model: string, messages: DraftMessage[], timeoutMs: number, note?: { stage: BuildStage['stage']; step?: string; stages: BuildStage[]; system?: string }): Promise<string> {
   const [provider, ...rest] = model.split('/');
   // A whole draft needs more room than the assistant's 4096 tokens; non-streaming, so ~16000 keeps under SDK timeouts.
   // `fallback`: a refused draft is retried server-side on another model (Anthropic's `fallbacks: "default"`).
@@ -226,7 +232,11 @@ async function askModel(model: string, messages: DraftMessage[], timeoutMs: numb
   const signal = AbortSignal.timeout(timeoutMs);
   const wire = messages.map((m) => (m.role === 'user' ? { role: 'user' as const, content: m.content } : { role: 'assistant' as const, text: m.content, toolCalls: [] }));
   try {
-    const turn = await withCallNote({ purpose: 'answer', draft: plainDraft({ system: SYSTEM_WITH_SCHEMA, messages: wire }) }, () => llm.generate({ system: SYSTEM_WITH_SCHEMA, messages: wire, tools: [], responseFormat: 'json', signal }));
+    const system = note?.system ?? SYSTEM_WITH_SCHEMA; // SB13:
+    const sent = Date.now(); // SB13:
+    const turn = await withCallNote({ purpose: 'answer', draft: plainDraft({ system, messages: wire }) }, () => llm.generate({ system, messages: wire, tools: [], responseFormat: 'json', signal }));
+    // SB13: the call's size, never its text.
+    if (note) note.stages.push({ stage: note.stage, ...(note.step && { step: note.step }), inputTokens: turn.usage?.inputTokens ?? 0, outputTokens: turn.usage?.outputTokens ?? 0, promptChars: system.length + messages.reduce((n, m) => n + m.content.length, 0), ms: Date.now() - sent });
     if (turn.stopReason === 'refusal') throw new Error(`${model} declined to draft this workflow: ${turn.text}`);
     return turn.text || '{}';
   } catch (e) {
@@ -282,13 +292,13 @@ function parseReply(text: string): { ok: true; reply: Reply } | { ok: false; pro
 }
 
 /** The first reply that parses: one that doesn't is sent back once with what is wrong, and a second failure is an error. */
-async function parsedReply(model: string, messages: DraftMessage[], timeoutMs: number, started: number): Promise<{ text: string; reply: Reply }> {
-  const text = await askModel(model, messages, timeoutMs);
+async function parsedReply(model: string, messages: DraftMessage[], timeoutMs: number, started: number, stages?: BuildStage[]): Promise<{ text: string; reply: Reply }> { // SB13: stages
+  const text = await askModel(model, messages, timeoutMs, stages && { stage: 'one-shot', stages }); // SB13:
   const first = parseReply(text);
   if (first.ok) return { text, reply: first.reply };
   const left = timeoutMs - (Date.now() - started);
   if (left <= 0) throw new Error(INVALID_REPLY);
-  const again = await askModel(model, [...messages, { role: 'assistant', content: text }, { role: 'user', content: `That reply cannot be used: ${first.problems}. Reply again with the whole workflow as one JSON object matching the schema: "nodes" a list of {key, type, name, parameters} objects, "connections" a list of {from, to} objects.` }], left);
+  const again = await askModel(model, [...messages, { role: 'assistant', content: text }, { role: 'user', content: `That reply cannot be used: ${first.problems}. Reply again with the whole workflow as one JSON object matching the schema: "nodes" a list of {key, type, name, parameters} objects, "connections" a list of {from, to} objects.` }], left, stages && { stage: 'send-back', stages }); // SB13:
   const second = parseReply(again);
   if (!second.ok) throw new Error(INVALID_REPLY);
   return { text: again, reply: second.reply };
@@ -523,17 +533,22 @@ function pinTarget(draft: Assembled, byType: Map<string, NodeTypeInfo>): DraftNo
  * `teams` and `agents`: the published agent teams and agents the caller can see, so a step that needs an agent runs one
  * that fits, and a Run a Team or Run an Agent node gets a real one (by id, never a guess).
  */
-export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: readonly TeamBrief[] = [], agents: readonly AgentBrief[] = [], options: { types?: NodeTypeInfo[] } = {}): Promise<FlowDraft> { // SB02: the workflow's allowed types
+export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: readonly TeamBrief[] = [], agents: readonly AgentBrief[] = [], options: { types?: NodeTypeInfo[]; plan?: BuildPlan } = {}): Promise<FlowDraft> { // SB02: the workflow's allowed types
   const types = options.types ?? registry.nodeTypes().filter((t) => t.available); // SB02: same as availableTypes(), with no new import
   const byType = new Map(types.map((t) => [t.type, t]));
   const teamsNote = byType.has('core.runTeam') && teams.length ? `\n\nPublished agent teams (core.runTeam: put the team's teamId in teamId, never its name):\n${describeTeams([...teams])}` : '';
   const started = Date.now();
   const timeoutMs = builderTimeoutMs();
   const agentsNote = byType.has('core.messageAgent') && agents.length ? `\n\nYour agents (core.messageAgent: put the agent's agentId in agentId, never its name):\n${describeAgents(agents)}` : '';
-  const request = `Node catalog:\n${catalog(types)}${agentsNote}${teamsNote}\n\nBuild this workflow:\n${prompt}`;
+  // SB13: with a plan, only its types' docs go on, and the plan as words ("build exactly these steps"); without one, the whole catalog.
+  const stages: BuildStage[] = [];
+  const planned = options.plan && types.filter((t) => options.plan!.steps.some((s) => s.type === t.type));
+  const request = planned
+    ? `Node catalog (only the nodes of the plan):\n${catalog(planned)}${agentsNote}${teamsNote}\n\nBuild this workflow:\n${prompt}\n\nBuild exactly these steps, with these keys (key: step), each one node of the type named, and no others:\n${planLines(options.plan!, (type) => type).map((line, i) => `${options.plan!.steps[i].key}: ${line}`).join('\n')}`
+    : `Node catalog:\n${catalog(types)}${agentsNote}${teamsNote}\n\nBuild this workflow:\n${prompt}`;
   // SB01: the first reply (sent back once when it does not parse), then the draft checked and sent back once.
   const messages: DraftMessage[] = [{ role: 'user', content: request }];
-  const first = await parsedReply(model, messages, timeoutMs, started);
+  const first = await parsedReply(model, messages, timeoutMs, started, stages); // SB13: stages
   let reply = first.reply;
   let draft = assemble(reply, byType, teams, agents);
   const empty = emptyParts(draft, byType);
@@ -542,7 +557,7 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
   if (empty.length && budget > 0) {
     try {
       calls = 2; // SB10:
-      const again = parseReply(await askModel(model, [...messages, { role: 'assistant', content: first.text }, { role: 'user', content: sendBack(empty) }], budget));
+      const again = parseReply(await askModel(model, [...messages, { role: 'assistant', content: first.text }, { role: 'user', content: sendBack(empty) }], budget, { stage: 'send-back', stages })); // SB13:
       if (again.ok) {
         const next = assemble(again.reply, byType, teams, agents);
         // The second draft stands in only when it keeps the first one's steps and is no worse.
@@ -565,5 +580,5 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
   const target = pinTarget(draft, byType);
   const testItems = (cleanTestItems(asItems(reply.testData), target, nodes) ?? sampleItems(target, nodes))?.slice(0, nodes.some((n) => AGENT_TYPES.has(n.type)) ? 1 : undefined);
   const pinData = target && testItems ? { [target.key]: testItems } : undefined;
-  return { name: (reply.name ?? 'Generated workflow').slice(0, 80), nodes, edges, pinData, model, durationMs: Date.now() - started, dropped, left, calls };
+  return { name: (reply.name ?? 'Generated workflow').slice(0, 80), nodes, edges, pinData, model, durationMs: Date.now() - started, dropped, left, calls, ...(options.plan && { plan: options.plan }), stages }; // SB13: plan, stages
 }
