@@ -423,3 +423,25 @@ describe('a provider’s usage limit is said, not "proposed nothing"', () => {
     }
   });
 });
+
+describe('a provider’s message is scrubbed of credentials', () => {
+  it('cuts keys, Bearer tokens, x-api-key and authorization values, in a limit and in any other failure', async () => {
+    const { designFailure } = await import('@/lib/server/assistant/architect');
+    const limit = designFailure('429 usage limit reached for key sk-ant-abcdef123456 (Authorization: Bearer abc.def.ghijkl, x-api-key: sk-zzzzzzzz99)');
+    const other = designFailure(new Error('400 bad request; authorization: Bearer topsecret1234 and x-api-key=abcd1234efgh'));
+    for (const text of [limit, other]) {
+      expect(text).not.toMatch(/sk-ant|abcdef123456|abc\.def|topsecret|abcd1234efgh|sk-zzzz/);
+    }
+    expect(limit).toMatch(/usage limit was reached/);
+    expect(other).toMatch(/^the model call failed/);
+  });
+});
+
+describe('the agent row after a failed design', () => {
+  it('names a usage limit, and says "proposed nothing" only when nothing else is known', async () => {
+    const { notDesignedNote } = await import('@/components/editor/new-agent');
+    expect(notDesignedNote(false, [{ text: 'Designed without the architect: the model’s usage limit was reached: 429' }])).toBe('only its instructions (the model’s usage limit was reached)');
+    expect(notDesignedNote(false, [{ text: 'Designed without the architect: the model proposed no design' }])).toContain('proposed nothing');
+    expect(notDesignedNote(true, [])).toBe('');
+  });
+});

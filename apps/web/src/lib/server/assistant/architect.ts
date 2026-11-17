@@ -1701,10 +1701,17 @@ function withSpecHints(draft: DraftResult, spec: AgentSpec, input: Pick<Architec
 /** A provider's usage or rate limit in its own words ("You have reached your specified API usage limits", a 429), not a failed design. */
 const PROVIDER_LIMIT = /usage limits?|rate.?limit|\b429\b|quota|credit balance|too many requests|exceeded your (?:current )?(?:limit|quota)/i;
 
-function designFailure(caught: unknown): string {
-  const text = (typeof caught === 'string' ? caught : errorText(caught)).split('\n')[0].replace(/\s+/g, ' ').trim();
-  // The provider's message only: an Authorization header or key never reaches errorText, and one that did is cut out.
-  if (PROVIDER_LIMIT.test(text)) return `the model’s usage limit was reached: ${text.replace(/\b(?:sk|key)-[A-Za-z0-9_-]{8,}/g, '…').slice(0, 200)}`;
+/** A provider's message with anything that looks like a credential cut out: keys, Bearer tokens, and x-api-key or authorization values. */
+export function scrubSecrets(text: string): string {
+  return text
+    .replace(/\b(?:x-api-key|api-key|authorization)\s*[:=]\s*(?:bearer\s+)?[^\s,;'"]+/gi, (m) => `${m.split(/[:=]/)[0]}: …`)
+    .replace(/\bbearer\s+[A-Za-z0-9._~+/=-]{6,}/gi, 'Bearer …')
+    .replace(/\b(?:sk|key)-[A-Za-z0-9_-]{8,}/g, '…');
+}
+
+export function designFailure(caught: unknown): string {
+  const text = scrubSecrets((typeof caught === 'string' ? caught : errorText(caught)).split('\n')[0].replace(/\s+/g, ' ').trim());
+  if (PROVIDER_LIMIT.test(text)) return `the model’s usage limit was reached: ${text.slice(0, 200)}`;
   return text ? `the model call failed: ${text.length > 160 ? `${text.slice(0, 159)}…` : text}` : 'the model call failed';
 }
 
