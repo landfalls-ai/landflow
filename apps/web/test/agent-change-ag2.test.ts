@@ -445,3 +445,23 @@ describe('the agent row after a failed design', () => {
     expect(notDesignedNote(true, [])).toBe('');
   });
 });
+
+describe('scrubSecrets, the shapes that leaked', () => {
+  it.each([
+    ['Authorization: Basic dXNlcjpwYXNz', 'dXNlcjpwYXNz'],
+    ['{"x-api-key":"abcd1234efgh5678"}', 'abcd1234efgh5678'],
+    ['bad request api_key=AIzaSyA1234567890abcdefghijk', 'AIza'],
+    ['rejected key gsk_A1b2C3d4E5f6G7h8I9j0', 'gsk_A1b2'],
+    ['could not reach https://user:pass@models.example.test/v1', 'user:pass'],
+  ])('%s', async (text, secret) => {
+    const { scrubSecrets, designFailure } = await import('@/lib/server/assistant/architect');
+    expect(scrubSecrets(text)).not.toContain(secret);
+    expect(designFailure(new Error(`429 usage limit: ${text}`))).not.toContain(secret);
+  });
+
+  it('leaves ordinary words alone', async () => {
+    const { scrubSecrets } = await import('@/lib/server/assistant/architect');
+    const plain = 'the key-value_pairs and the some_snake_case_name failed; a key-store is down';
+    expect(scrubSecrets(plain)).toBe(plain);
+  });
+});

@@ -1701,12 +1701,18 @@ function withSpecHints(draft: DraftResult, spec: AgentSpec, input: Pick<Architec
 /** A provider's usage or rate limit in its own words ("You have reached your specified API usage limits", a 429), not a failed design. */
 const PROVIDER_LIMIT = /usage limits?|rate.?limit|\b429\b|quota|credit balance|too many requests|exceeded your (?:current )?(?:limit|quota)/i;
 
-/** A provider's message with anything that looks like a credential cut out: keys, Bearer tokens, and x-api-key or authorization values. */
+/** A provider's message with anything that looks like a credential cut out: header and JSON values, Bearer/Basic tokens, prefixed keys, and the password of a URL. */
 export function scrubSecrets(text: string): string {
   return text
-    .replace(/\b(?:x-api-key|api-key|authorization)\s*[:=]\s*(?:bearer\s+)?[^\s,;'"]+/gi, (m) => `${m.split(/[:=]/)[0]}: …`)
-    .replace(/\bbearer\s+[A-Za-z0-9._~+/=-]{6,}/gi, 'Bearer …')
-    .replace(/\b(?:sk|key)-[A-Za-z0-9_-]{8,}/g, '…');
+    // x-api-key, api_key and authorization, as a header, an assignment or a JSON member, with or without a scheme word
+    .replace(/(["']?)\b(x-api-key|api[-_]?key|authorization)\1\s*[:=]\s*["']?(?:(?:bearer|basic|token)\s+)?[^\s,;'"}]+["']?/gi, (_m, _q, name: string) => `${name}: …`)
+    .replace(/\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{6,}/gi, (m) => `${m.split(/\s/)[0]} …`)
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, '…')
+    // 'key-' only with a digit in what follows: an ordinary word such as key-value_pairs is not a key
+    .replace(/\bkey-(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{8,}/g, '…')
+    .replace(/\bAIza[A-Za-z0-9_-]{20,}/g, '…')
+    .replace(/\b[a-z]{2,4}_(?=[A-Za-z0-9]*[A-Z0-9])[A-Za-z0-9]{16,}/g, '…')
+    .replace(/\/\/[^/\s:@]+:[^/\s@]+@/g, '//…@');
 }
 
 export function designFailure(caught: unknown): string {
