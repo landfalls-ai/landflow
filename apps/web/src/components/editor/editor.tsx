@@ -43,6 +43,7 @@ import { Kbd } from '../ui/inputs';
 import { Segmented } from '../ui/segmented';
 import { WorkflowTabs } from '../shell/workflow-tabs';
 import { prefetchFailure, spotlightOwnsRun, useAssistant } from './assistant';
+import { draftPhase } from './timeline';
 import { BrainCanvasCard } from '../brain/canvas-card';
 import { focusSpotlight, SpotlightPanel } from './spotlight';
 import { BuildProgressBar, GhostEdgeView, GhostNodeView, useGhosts } from './building';
@@ -444,6 +445,7 @@ function EmptyCanvas() {
   const empty = useEditor((s) => s.nodes.length === 0 && s.stickies.length === 0 && s.groups.length === 0);
   const nodeTypes = useEditor((s) => s.nodeTypes);
   const drafting = useAssistant((s) => s.drafting);
+  const phase = useAssistant((s) => draftPhase(s.items, s.drafting));
   const { fitView } = useReactFlow();
   if (!empty) return null;
   // Spotlight is drafting the flow: a placeholder of what is coming, not the ways to start.
@@ -460,7 +462,7 @@ function EmptyCanvas() {
             ))}
           </div>
           <span className="flex items-center gap-2 text-[13px] text-t2">
-            <Loader2 className="size-3.5 animate-spin text-viz-7" /> Spotlight is drafting the flow from the node catalog…
+            <Loader2 className="size-3.5 animate-spin text-viz-7" /> Spotlight is {phase === 'building' ? 'building the flow from the plan' : 'planning the flow'}…
           </span>
         </div>
       </div>

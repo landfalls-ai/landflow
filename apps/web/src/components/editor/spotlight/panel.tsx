@@ -16,7 +16,7 @@ import { api } from '@/lib/client/api';
 import type { ConversationItem, ConversationRecord } from '@/lib/shared/conversations';
 import { useEditor } from '../store';
 import { isPhone } from '@/lib/client/use-phone';
-import { lastOutcomeOf, lastRunOf, openNeedOf, sessionIsWaiting, stepsOf, stoppedAtOf, titleOf } from '../timeline';
+import { draftPhase, draftStatus, lastOutcomeOf, lastRunOf, openNeedOf, sessionIsWaiting, stepsOf, stoppedAtOf, titleOf } from '../timeline';
 import { Composer, focusSpotlight } from './composer';
 import { AsksFirstNote, AutonomousExplainer, AutonomousSwitch, useAutonomousExplainer } from './proposal';
 import { Timeline } from './timeline-view';
@@ -492,7 +492,7 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
         )}
         <div className={cn('flex min-h-0 flex-1 flex-col', folded && 'max-md:hidden')}>
           {items.length || agents.length ? (
-            <Timeline live={live} status={drafting ? 'Building the flow from the plan…' : undefined} />
+            <Timeline live={live} status={drafting ? draftStatus(draftPhase(items, drafting) ?? 'planning') : undefined} />
           ) : (
             <div className="flex min-h-0 flex-1 flex-col justify-end px-4 py-4">
               <ChatEmpty title={EMPTY_LINE} />

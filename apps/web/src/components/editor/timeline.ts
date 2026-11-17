@@ -118,6 +118,20 @@ export function agentStep(agent: AgentProgress): Step {
 }
 
 /**
+ * While Spotlight drafts a flow: "planning" until the plan is there and agreed (the plan call), "building" once the
+ * plan's card says so (the build, one call per step). Read from the newest plan card, so an older, finished plan does
+ * not make a new ask look like a build.
+ */
+export function draftPhase(items: ChatItem[], drafting: boolean): 'planning' | 'building' | undefined {
+  if (!drafting) return undefined;
+  const plan = items.flatMap((i) => (i.role === 'assistant' ? i.parts : [])).findLast((p) => p.kind === 'plan');
+  return plan?.kind === 'plan' && plan.plan.state === 'building' ? 'building' : 'planning';
+}
+
+/** What the live line and the canvas placeholder say about the draft: the plan call or the build. */
+export const draftStatus = (phase: 'planning' | 'building'): string => (phase === 'planning' ? 'Planning the flow…' : 'Building the flow from the plan…');
+
+/**
  * Every step since the user last asked for something, in order: the runs, the fixes, the agents designed (after the turn
  * that created them) and a note per reply that changed nothing. `live`: the last reply is still going.
  */
@@ -153,7 +167,7 @@ export function stepsOf(items: ChatItem[], options: { live?: boolean; drafting?:
       if (need?.kind === 'needs' && !need.need.state) steps.push({ id: key('needs'), kind: 'needs', icon: 'needs', text: `Needs you · ${need.need.text}`, ...(need.need.node && { nodeName: need.need.node }) });
       if (options.live && i === rest.length - 1) {
         const tool = item.parts.findLast((p) => p.kind === 'tool');
-        steps.push({ id: key('live'), kind: 'note', icon: 'busy', text: tool?.kind === 'tool' ? `${tool.tool.label}…` : options.drafting ? 'Building the flow from the plan…' : 'Thinking…' });
+        steps.push({ id: key('live'), kind: 'note', icon: 'busy', text: tool?.kind === 'tool' ? `${tool.tool.label}…` : options.drafting ? draftStatus(draftPhase(items, true) ?? 'planning') : 'Thinking…' });
       } else {
         const text = item.parts.find((p) => p.kind === 'text');
         const outcome = item.parts.some((p) => p.kind === 'action' && p.action === 'publish');
