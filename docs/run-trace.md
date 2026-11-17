@@ -339,7 +339,8 @@ gives is read per call, from the call's input, as a host only. A target never de
 
 It reads the same in three places: the **via line** under the tool's name in the editor's chat (`via Mailpit SMTP · SMTP
 127.0.0.1:51183`, the credential in bold), the **Reached** row of a tool span's sheet (from `attrs.target`, written by
-the agent session and, for an AI Agent node's sub-node tools, by the translator), and the agent page's timeline. The Run an
+the agent session and, for an AI Agent node's sub-node tools, by the translator), and the agent page's timeline, where the
+**Test chat** folds settled calls into one activity line whose steps each say `via …` too (since wave ag3's live pass). The Run an
 Agent and AI Agent nodes' `tool` stream chunks carry `tool.target`. A run from before this has no `target` and shows no row.
 
 A **knowledge search** names its collection, its store and how it searched (the embeddings `provider/model`, or `keyword

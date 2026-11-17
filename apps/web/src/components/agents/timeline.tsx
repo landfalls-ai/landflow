@@ -18,6 +18,7 @@ import { JsonView } from '../ui/json-view';
 import { shortArg, snippetOf } from '@/lib/client/node-progress';
 import { useNodeTypes } from './use-agent-data';
 import { Passages, passagesFor, ViaLine } from '../run-trace/passages'; // AG14:
+import { targetLine } from '@/lib/shared/tool-target'; // ag3 carryover:
 
 export type ToolEntry = Extract<TimelineEntry, { type: 'tool' }>;
 
@@ -63,7 +64,7 @@ const STEP_KIND: Record<ToolKind, ActivityKind> = { node: 'tool', workflow: 'run
 export function toolStep(entry: ToolEntry): ActivityStep {
   const status: ActivityStep['status'] = entry.status === 'success' ? 'ok' : entry.status === 'error' || entry.status === 'denied' ? 'failed' : 'running';
   const detail = entry.error ?? (entry.status === 'denied' ? 'Denied' : snippetOf(entry.output, 300));
-  return { id: entry.id, label: entry.label, kind: STEP_KIND[entry.kind] ?? 'tool', status, ...(entry.durationMs !== undefined && { durationMs: entry.durationMs }), ...(detail && { detail }) };
+  return { id: entry.id, label: entry.label, kind: STEP_KIND[entry.kind] ?? 'tool', status, ...(entry.durationMs !== undefined && { durationMs: entry.durationMs }), ...(detail && { detail }), ...(entry.target && { via: targetLine(entry.target) }) /* ag3 carryover: the Test chat's steps say where each call went */ };
 }
 
 /**

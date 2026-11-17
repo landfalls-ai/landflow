@@ -34,6 +34,7 @@ function StepRow({ step }: { step: ActivityStep }) {
       ) : (
         <div className={rowClass}>{body}</div>
       )}
+      {step.via && <p data-testid="step-via" className="ml-5 truncate pb-0.5 text-[11px] text-t3" title={`via ${step.via}`}>via {step.via}</p>}{/* ag3 carryover: */}
       {step.detail && open && <p className={cn('ml-5 whitespace-pre-wrap pb-1 text-[11.5px] leading-snug [overflow-wrap:anywhere]', failed ? 'text-rd' : 'text-t3')}>{step.detail.slice(0, 300)}</p>}
     </li>
   );
