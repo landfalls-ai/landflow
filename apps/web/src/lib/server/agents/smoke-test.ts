@@ -6,6 +6,7 @@
  */
 import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import type { AgentSmoke, AgentSmokeTool } from '../../shared/agent-card';
+import { shown } from '../../shared/agent-changes'; // ag1-int: the reason names a tool as a person reads it
 import type { NodeToolConfig } from '../../shared/agents';
 import { HttpError } from '../errors';
 import { registry } from '../plugins/registry';
@@ -47,7 +48,7 @@ function tooLittleCredential(agent: { tools?: unknown[] }): { label: string; mor
     const lacking = (descriptor.credentials ?? []).some((c) => c.required && isPropertyVisible(c, parameters) && !tool.credentials?.[c.name]);
     if (lacking) missing.push(tool.name);
   }
-  return missing.length ? { label: missing[0]!, more: missing.length - 1 } : undefined;
+  return missing.length ? { label: shown(missing[0]!), more: missing.length - 1 } : undefined;
 }
 
 /** Runs the draft once on `message`. Throws 404 for an unknown agent and 400 for one with no model; every other outcome is an `AgentSmoke`. */
@@ -72,7 +73,7 @@ export async function smokeTest(agentId: string, message: string, options: { sig
     }
     if (!reply) {
       const denied = timeline.find((e) => e.type === 'tool' && (e.status === 'denied' || e.status === 'awaiting_approval'));
-      if (denied && denied.type === 'tool') return { state: 'failed', reason: `It wanted a tool that needs approval: ${denied.label || denied.tool}`, ms };
+      if (denied && denied.type === 'tool') return { state: 'failed', reason: `It wanted a tool that needs approval: ${shown(denied.label || denied.tool)}`, ms };
       if (result.reason === 'max_iterations') return { state: 'failed', reason: 'It stopped at its step limit', ms };
       if (result.reason === 'budget') return { state: 'failed', reason: 'It stopped at its budget', ms };
       if (result.reason === 'canceled') return { state: 'failed', reason: 'The test was stopped', ms };
@@ -93,12 +94,12 @@ export async function smokeTest(agentId: string, message: string, options: { sig
     }
     const toolsField = tools.length ? { tools } : {};
     const errored = tools.find((t) => t.status === 'error');
-    if (errored) return { state: 'failed', reason: `${errored.name} failed: ${errored.note}`, reply: clip(reply), ms, ...toolsField };
+    if (errored) return { state: 'failed', reason: `${shown(errored.name)} failed: ${errored.note}`, reply: clip(reply), ms, ...toolsField };
     const ran = tools.filter((t) => t.status !== 'denied');
     const empty = tools.find((t) => t.status === 'empty');
-    if (empty && ran.length > 0 && ran.every((t) => t.status === 'empty')) return { state: 'failed', reason: `${empty.name} returned nothing to work with`, reply: clip(reply), ms, ...toolsField };
+    if (empty && ran.length > 0 && ran.every((t) => t.status === 'empty')) return { state: 'failed', reason: `${shown(empty.name)} returned nothing to work with`, reply: clip(reply), ms, ...toolsField };
     const denied = tools.find((t) => t.status === 'denied');
-    return { state: 'passed', reply: clip(reply), ms, ...(denied && { reason: `${denied.name} needs approval: not sent` }), ...toolsField };
+    return { state: 'passed', reply: clip(reply), ms, ...(denied && { reason: `${shown(denied.name)} needs approval: not sent` }), ...toolsField };
   } finally {
     agentStore.deleteSession(agentId, session.id);
   }

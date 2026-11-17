@@ -1175,8 +1175,12 @@ function reviseInstructions(proposed: string, base: string, tools: AgentToolConf
   const line = TOOLS_STEP.exec(proposed)?.[0];
   if (!line) return proposed;
   if (!TOOLS_STEP.test(base)) return proposed.replace(`${line}\n`, '').replace(line, '').trim();
-  const names = tools.flatMap((t) => ('name' in t && t.name ? [t.name] : []));
-  return proposed.replace(line, `${line.replace(/Tools: [^;.]*/, `Tools: ${names.join(', ')}`)}`);
+  // ag1-int: the line in the design's own form (AG02's `name (what it is for)`), so a revise neither drops the notes nor reads as rewritten.
+  const list = tools.flatMap((t) => ('name' in t && t.name ? [{ name: t.name, ...('description' in t && t.description && { description: t.description }) }] : []));
+  const notes = toolNotes(list);
+  const listed = list.map((t) => (notes[t.name] ? `${t.name} (${notes[t.name]})` : t.name)).join(', ');
+  const number = /^\d+\. /.exec(line)?.[0] ?? '';
+  return proposed.replace(line, `${number}Tools: ${listed}${/; read before you write.*$/.exec(line)?.[0] ?? '.'}`);
 }
 
 /**

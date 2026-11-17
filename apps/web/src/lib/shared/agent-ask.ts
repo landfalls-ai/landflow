@@ -283,5 +283,8 @@ export function agentChangeAsk(message: string): 'question' | 'change' | undefin
   const text = message.trim();
   if (!text || agentAsk(text)) return undefined;
   if (askKind(text) === 'question') return 'question';
-  return text.split(/[.!?\n;]+/).some((clause) => AG04_CHANGE.test(clause.trim())) ? 'change' : undefined;
+  return text.split(/[.!?\n;]+/).some((clause) => AG04_CHANGE.test(clause.trim()) || ALSO_DOES.test(clause.trim())) ? 'change' : undefined;
 }
+
+/** ag1-int: "also slugify titles in upper case": "also" and a verb the list above lacks (a tool's own verb) is a change too. */
+const ALSO_DOES = /^also,?\s+(?!(?:thanks|thank|ok|okay|why|what|how|who|when|where|which|is|are|was|does|do|did|can|could|would|should|i|it'?s|this|that|the)\b)[a-z][a-z-]+\s+\S/i;

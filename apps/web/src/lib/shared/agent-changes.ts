@@ -14,8 +14,8 @@ function toolName(tool: Tool): string {
   return str(tool.name) || str(tool.nodeType) || str(tool.type) || 'tool';
 }
 
-/** A tool's name as a person reads it: the architect's `get_alert_details` is “Get Alert Details”; a name with spaces or capitals is the person's own. */
-const shown = (name: string): string => (/^[a-z0-9_]+$/.test(name) ? name.split('_').filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join(' ') : name);
+/** A tool's name as a person reads it: the architect's `get_alert_details` is “Get Alert Details”; a name with spaces or capitals is the person's own. Also the smoke test's words (ag1-int). */
+export const shown = (name: string): string => (/^[a-z0-9_]+$/.test(name) ? name.split('_').filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join(' ') : name);
 
 const operationOf = (tool: Tool): string => str(record(tool.parameters).operation);
 
@@ -76,8 +76,10 @@ export function agentChanges(before: Config, after: Config): string[] {
   const next = guardrailSet(after);
   for (const [key, words] of next) if (!old.has(key)) out.push(`Guardrail on: ${words}`);
   for (const [key, words] of old) if (!next.has(key)) out.push(`Guardrail off: ${words}`);
-  if (str(before.instructions) !== str(after.instructions)) {
-    const n = linesChanged(str(before.instructions), str(after.instructions));
+  // ag1-int: the steps' "N. Tools: …" line restates the tools (the design writes it), so a tool added or removed is said above, not again here.
+  const steps = (config: Config) => str(config.instructions).replace(/^\s*\d+[.)]\s*Tools:.*$/gm, '').replace(/\n{2,}/g, '\n').trim();
+  if (steps(before) !== steps(after)) {
+    const n = linesChanged(steps(before), steps(after));
     out.push(`Instructions rewritten (${n} line${n === 1 ? '' : 's'} changed)`);
   }
   return out;
