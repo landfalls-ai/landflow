@@ -23,6 +23,8 @@ import { registryLookup } from '@/lib/server/assistant/ops';
 import { agentStore } from '@/lib/server/agents/store';
 import { listCases } from '@/lib/server/agents/eval-gate'; // SB17:
 import { guardrailWords } from '@/lib/shared/agents'; // SB17:
+import { agentAsk } from '@/lib/shared/agent-ask'; // SB16:
+import { starterFlow, starterSample } from '@/lib/shared/agent-card'; // SB16:
 import { handler } from '@/lib/server/http';
 import { startFakeModels, readSse, type FakeModels } from '../fake-ai-services';
 import { estimatedTokens } from '@/lib/shared/build-plan'; // SB13:
@@ -613,6 +615,36 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
         outcome.draft = { instructions: (body.agent as Partial<AgentConfig>).instructions ?? '' }; // SB17: the brief's four parts are read from it
       }
       outcome.modelCalls = fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 1;
+    } else if (scenario.via === 'agent-ask') {
+      // SB16: what the editor does with a typed "create an agent …": read the ask, design the agent as a card (the route's preview), then the card's Create (the import route, a test case each), and on an empty canvas the starter flow.
+      const names = canvas?.nodes.map((n) => n.name) ?? [];
+      const ask = agentAsk(scenario.ask, names);
+      // The composer's rule (spotlight/agent-ask.ts `cardAskFor`): a placed ask on a canvas with steps stays the chat's.
+      if (!ask || (ask.placed && names.length)) {
+        outcome.text = ask ? 'placed: the chat' : 'not an agent ask';
+        if (canvas) outcome.after = canvas;
+      } else {
+        const designed = await import('@/app/api/agents/design/route');
+        const spec = { name: ask.name ?? 'New agent', description: ask.description, instructions: '', ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }), ...((scenario.start?.model ?? model) && { model: scenario.start?.model ?? model }), preview: true };
+        const response = await designed.POST(post('/api/agents/design', spec));
+        const body = (await response.json()) as { config?: Partial<AgentConfig>; cases?: Array<{ input: string; expected?: string }>; error?: string };
+        outcome.modelCalls = fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 1;
+        if (!response.ok || !body.config) outcome.error = body.error ?? `design ${response.status}`;
+        else {
+          const starter = !names.length;
+          outcome.card = { starter };
+          outcome.text = `Designed ${body.config.name ?? spec.name}`;
+          const imported = await (await import('@/app/api/agents/import/route')).POST(post('/api/agents/import', { config: body.config }));
+          const made = (await imported.json()) as { agent?: AgentConfig & { id: string }; error?: string };
+          if (!imported.ok || !made.agent) outcome.error = made.error ?? `import ${imported.status}`;
+          else {
+            const gate = await import('@/app/api/agents/[id]/eval-gate/route');
+            for (const c of body.cases ?? []) await gate.POST(post(`/api/agents/${made.agent.id}/eval-gate`, c), { params: Promise.resolve({ id: made.agent.id }) });
+            outcome.agents.push({ ...agentOf(made.agent), cases: (body.cases ?? []).length });
+            outcome.after = starter ? draftToWorkflow(starterFlow({ id: made.agent.id, name: made.agent.name }, starterSample({ name: made.agent.name, cases: body.cases ?? [] }))) : canvas;
+          }
+        }
+      }
     } else {
       const route = await import('@/app/api/assistant/agent/route');
       const response = await route.POST(post('/api/assistant/agent', { messages: [{ role: 'user', content: scenario.ask }], ...(model && { model }) }));

@@ -4,6 +4,8 @@
  * tools it needs from the plugins online and a knowledge base when it works from documents. Saved as a draft; the
  * editor publishes it in autonomous mode. Its brief's test cases are saved on it (the eval gate). Answers `{ agent, needs, missing, dropped, designed, cases }`, or 429 with the cap's
  * message when the caller's AI usage cap is reached (no agent is created).
+ * SB16: with `preview: true` the design is answered, not saved: 200 `{ config, needs, missing, dropped, designed, cases }`
+ * (Spotlight's agent card shows it; Create then imports the config).
  */
 import { z } from 'zod';
 import { randomFace } from '@/lib/shared/faces';
@@ -31,6 +33,8 @@ const Body = z.object({
   knowledge: z.string().max(200).optional(),
   // SB19: the model Spotlight picked (a model this server offers); absent, the Settings default.
   model: z.string().max(100).optional(),
+  // SB16: answer the design without saving an agent (Spotlight's agent card).
+  preview: z.boolean().optional(),
 });
 
 export const POST = handler(async (request: Request) => {
@@ -49,6 +53,10 @@ export const POST = handler(async (request: Request) => {
     throw caught;
   }
   const config = { avatar: { kind: 'face' as const, face: randomFace(parsed.data.name) }, ...design.config };
+  if (parsed.data.preview) {
+    // SB16: the card's preview: a face to show, nothing saved. SB17 adds `cases` to the design; the integrator drops the cast.
+    return json({ config, needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: (design as { cases?: unknown[] }).cases ?? [] });
+  }
   const agent = createInProject(request, 'agent', () => agentStore.create(config), (a) => a.id);
   // SB17: the brief's test cases are saved on the new agent (the eval gate runs them on its first publish); one that fails is a line for the person, not a 500.
   const cases: NonNullable<typeof design.cases> = [];

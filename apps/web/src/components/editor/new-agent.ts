@@ -5,9 +5,11 @@
  * model, the tools it needs, a knowledge base when it works from documents, POST /api/agents/design) and points the node
  * at it. In autonomous mode (./autonomous.ts) the agent is published, so the flow can run it while it is tested; otherwise
  * it stays a draft for a person to check and publish. A test run waits for the agents being designed (`agentsSettled`).
+ * SB16: Spotlight's agent card (./spotlight/agent-ask.ts) designs the agent without saving it (`designPreview`) and creates it on Create.
  */
 import { api } from '@/lib/client/api';
 import type { NewAgentSpec } from '@/lib/shared/assistant-ops';
+import type { AgentCaseDraft } from '@/lib/shared/agent-card'; // SB16:
 import { useAssistant, type AgentProgress } from './assistant';
 import { useEditor } from './store';
 import { pickedModel } from './spotlight-model'; // SB19:
@@ -19,11 +21,14 @@ export interface AgentPlace {
   before?: string;
 }
 
-interface Designed {
+export interface Designed {
   agent: { id: string; name: string; model?: { provider: string; model: string }; tools: Array<{ type: string }> };
   needs: Array<{ text: string }>;
   missing: Array<{ capability: string }>;
   designed: boolean;
+  /** SB16: the preview form (`preview: true`) answers the configuration instead of a saved agent, and the cases the brief made. */
+  config?: Record<string, unknown>;
+  cases?: AgentCaseDraft[];
 }
 
 const inFlight = new Set<Promise<void>>();
@@ -31,6 +36,11 @@ const inFlight = new Set<Promise<void>>();
 /** Resolves once every agent being designed is saved (or failed): a test run before that would find no agent. */
 export async function agentsSettled(): Promise<void> {
   while (inFlight.size) await Promise.allSettled([...inFlight]);
+}
+
+/** SB16: the design the card shows: `POST /api/agents/design` with `preview: true`, which saves nothing. */
+export function designPreview(spec: NewAgentSpec, place: AgentPlace = {}, signal?: AbortSignal): Promise<Designed> {
+  return api<Designed>('/api/agents/design', { method: 'POST', json: { ...spec, ...place, ...pickedModel(), preview: true }, signal });
 }
 
 const toolCount = (designed: Designed['agent']) => {

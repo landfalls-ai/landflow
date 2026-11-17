@@ -15,6 +15,7 @@ import { teamFromLead } from '@/lib/shared/turn-into-team';
 import type { ActivityKind, ActivityStep } from '@/lib/shared/activity';
 import type { NodeRun } from '@/lib/shared/types';
 import type { MentionRef } from '@/lib/shared/mentions';
+import type { AgentCard } from '@/lib/shared/agent-card'; // SB16:
 import { askedLine, type AskEvent, type AskPart } from '@/lib/shared/spotlight-wire'; // SB11: (askedLine: SB09 × SB11)
 import type { ReplyInfo } from '../ui/chat';
 import type { CredentialNeedFields, CredentialOfferEvent } from '@/lib/shared/spotlight-wire'; // SB12:
@@ -323,7 +324,8 @@ export type ReplyPart =
   | ({ kind: 'action' } & ReplyAction)
   | AskPart // SB11: a question back with its choices
   | { kind: 'plan'; plan: PlanPart } // SB13: the first draft's plan card
-  | { kind: 'summary'; summary: DraftSummary; workflowName: string }; // SB15: the build summary
+  | { kind: 'summary'; summary: DraftSummary; workflowName: string } // SB15: the build summary
+  | { kind: 'agentCard'; card: AgentCard }; // SB16: an agent Spotlight designed, to review and create (./spotlight/agent-ask.ts)
 
 /**
  * `testId`: the test-and-fix session the turn belongs to; Spotlight folds a finished session into one line.

@@ -75,6 +75,8 @@ export interface AgentCard {
   smoke?: AgentSmoke;
   /** On an empty canvas: the starter flow was laid out with it (D5). */
   starter?: boolean;
+  /** The workflow that was open when the card was designed: Create lays the starter flow out only if it still is. */
+  workflowId?: string;
 }
 
 /** The agent's row text for its smoke test: "tested, 1 of 1 passed", "test failed: <reason>", "not tested yet: <reason>". */
