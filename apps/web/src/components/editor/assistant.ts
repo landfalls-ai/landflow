@@ -26,6 +26,7 @@ import { saveAgentFor, type AgentPlace } from './new-agent';
 import { saveTeamFor } from './turn-into-team';
 import { defaultCollapsed } from './spotlight/states';
 import type { SpotlightScope } from '@/lib/shared/spotlight-scope'; // SB07:
+import type { PlanPart } from './spotlight/plan-part'; // SB13:
 
 const freshKept = (): { id?: string; stored: Stored } => ({ stored: emptyStored() });
 
@@ -319,7 +320,8 @@ export type ReplyPart =
   | { kind: 'needs'; need: Need }
   | { kind: 'outcome'; outcome: Outcome }
   | ({ kind: 'action' } & ReplyAction)
-  | AskPart; // SB11: a question back with its choices
+  | AskPart // SB11: a question back with its choices
+  | { kind: 'plan'; plan: PlanPart }; // SB13: the first draft's plan card
 
 /**
  * `testId`: the test-and-fix session the turn belongs to; Spotlight folds a finished session into one line.

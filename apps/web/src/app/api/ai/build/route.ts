@@ -11,10 +11,13 @@ import { resolveSpotlightModel } from '@/lib/server/assistant/models-list'; // S
 import { currentPrincipal } from '@/lib/server/auth/guard'; // SB19:
 import { meteredWorkflowId } from '@/lib/server/assistant/scope'; // SB19:
 import { error, handler, json, parseBody } from '@/lib/server/http';
+import { planProblems } from '@/lib/shared/build-plan'; // SB13:
+import { subnodeProblems } from '@/lib/server/assistant/build-plan'; // SB13:
+import { PlanSchema } from './plan-schema'; // SB13:
 
 export const dynamic = 'force-dynamic';
 
-const Body = z.object({ prompt: z.string().trim().min(3).max(2000), model: z.string().max(100).optional(), workflowId: z.string().max(64).optional() });
+const Body = z.object({ prompt: z.string().trim().min(3).max(2000), model: z.string().max(100).optional(), workflowId: z.string().max(64).optional(), plan: PlanSchema.optional() /* SB13: */ });
 
 /** POST { prompt, workflowId? } → a validated flow draft from the local model, guarded as the chat guards a proposal. */
 export const POST = handler(async (request: Request) => {
@@ -32,7 +35,14 @@ export const POST = handler(async (request: Request) => {
     const userId = currentPrincipal()?.user?.id;
     const workflowId = meteredWorkflowId(parsed.data.workflowId);
     const scope = assistantScope({ surface: 'spotlight', ...(userId && { userId }), ...(workflowId && { workflowId }) });
-    const draft = await runInUsageScope(scope, () => buildFlow(parsed.data.prompt, picked.model, teams, agents, { types }));
+    // SB13: a plan the person agreed to is checked against the types this workflow may use before anything is built.
+    const { plan } = parsed.data;
+    if (plan) {
+      const offered = new Map(types.map((t) => [t.type, t]));
+      const problems = [...planProblems(plan, new Set(offered.keys()), (type) => offered.get(type)?.descriptor.kind === 'trigger'), ...subnodeProblems(plan, (type) => offered.get(type))];
+      if (problems.length) return error(`The plan cannot be built: ${problems.map((p) => `${p.step ? `${p.step}: ` : ''}${p.problem}`).join('; ')}`, 400);
+    }
+    const draft = await runInUsageScope(scope, () => buildFlow(parsed.data.prompt, picked.model, teams, agents, { types, ...(plan && { plan }) /* SB13: */ }));
     const byType = new Map(types.map((t) => [t.type, t]));
     const credentialNames = new Map(registry.credentialTypes().flatMap((c) => [[c.descriptor.name, c.descriptor.displayName], [c.type, c.descriptor.displayName]] as const));
     const known = [parsed.data.prompt, agents.length ? describeAgents(agents) : '', teams.length ? describeTeams([...teams]) : ''].join('\n');

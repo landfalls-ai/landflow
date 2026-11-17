@@ -22,6 +22,7 @@ import { registryLookup } from '@/lib/server/assistant/ops';
 import { agentStore } from '@/lib/server/agents/store';
 import { handler } from '@/lib/server/http';
 import { startFakeModels, readSse, type FakeModels } from '../fake-ai-services';
+import { estimatedTokens } from '@/lib/shared/build-plan'; // SB13:
 import { scriptedModel, touchedNodes, type Check, type Job, type Outcome, type Scenario, type Start, type ScriptTurn } from './scenario';
 
 export type Form = 'unit' | 'live';
@@ -544,17 +545,34 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
 
     if (scenario.via === 'build') {
       const route = await import('@/app/api/ai/build/route');
-      const response = await route.POST(post('/api/ai/build', { prompt: scenario.ask, ...((scenario.start?.model ?? model) && { model: scenario.start?.model ?? model }), /* SB19: */ ...(canvas?.id && { workflowId: canvas.id }) }));
-      const body = (await response.json()) as { draft?: Record<string, unknown>; error?: string };
-      if (!response.ok || !body.draft) outcome.error = body.error ?? `build ${response.status}`;
-      else {
+      const buildModel = (scenario.start?.model ?? model) && { model: scenario.start?.model ?? model };
+      // SB13: staged, as the editor builds from sb3 on: the plan route first, then the build with that plan. `staged` absent: planned in the live form, one-shot in the unit form (sb1's and sb2's scripts); `start.plan` is stage 2's own input (SB14 posts it); `LANDFLOW_SPOTLIGHT_STAGED=false` never plans (the one-shot draft, the "before" of a live comparison).
+      const planned: { plan?: Record<string, unknown>; stages: Array<{ stage: string; inputTokens: number; promptChars: number }> } = { stages: [] };
+      if (!scenario.start?.plan && process.env.LANDFLOW_SPOTLIGHT_STAGED !== 'false' && (scenario.start?.staged ?? form === 'live')) {
+        const planRoute = await import('@/app/api/ai/build/plan/route');
+        const planResponse = await planRoute.POST(post('/api/ai/build/plan', { prompt: scenario.ask, ...buildModel, ...(canvas?.id && { workflowId: canvas.id }) }));
+        const planBody = (await planResponse.json()) as { plan?: Record<string, unknown>; stages?: typeof planned.stages; error?: string };
+        planned.stages = planBody.stages ?? [];
+        if (!planResponse.ok || !planBody.plan) outcome.error = planBody.error ?? `plan ${planResponse.status}`;
+        else planned.plan = planBody.plan;
+      }
+      const response = outcome.error ? undefined : await route.POST(post('/api/ai/build', { prompt: scenario.ask, ...buildModel, /* SB19: */ ...(canvas?.id && { workflowId: canvas.id }), ...(planned.plan && { plan: planned.plan }) /* SB13: */ }));
+      const body = response ? ((await response.json()) as { draft?: Record<string, unknown>; error?: string }) : {};
+      if (response && (!response.ok || !body.draft)) outcome.error = body.error ?? `build ${response.status}`;
+      else if (body.draft) {
         outcome.draft = body.draft;
         outcome.after = draftToWorkflow(body.draft as never);
         outcome.text = `Built ${(body.draft.nodes as unknown[]).length} nodes`;
         outcome.model = typeof body.draft.model === 'string' ? body.draft.model : undefined; // SB19:
       }
-      // SB10 (carryover item 4): the calls the draft took (`draft.calls`), live and unit; the fake's count only when the route sent none.
-      outcome.modelCalls = typeof body.draft?.calls === 'number' ? body.draft.calls : fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 1;
+      // SB13: the plan as the draft reports it, and every call's prompt size (the plan route's calls first).
+      const drafted = body.draft as { plan?: { steps: Array<{ name: string; type: string }>; cannot: string[] }; stages?: Array<{ stage: string; inputTokens: number; promptChars: number }> } | undefined;
+      const shown = drafted?.plan ?? (planned.plan as { steps: Array<{ name: string; type: string }>; cannot: string[] } | undefined);
+      if (shown) outcome.plan = { steps: shown.steps.map(({ name, type }) => ({ name, type })), cannot: shown.cannot ?? [] };
+      const sizes = [...planned.stages, ...(drafted?.stages ?? [])];
+      if (sizes.length) outcome.prompts = sizes.map((st) => ({ stage: st.stage, tokens: Math.max(st.inputTokens, estimatedTokens(st.promptChars)) }));
+      // SB10 (carryover item 4): the calls the draft took (`draft.calls`), live and unit; the fake's count only when the route sent none. SB13: the plan route's calls count too.
+      outcome.modelCalls = (typeof body.draft?.calls === 'number' ? body.draft.calls : fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 1) + planned.stages.length;
       if (typeof body.draft?.model === 'string') outcome.model = body.draft.model;
     } else if (scenario.via === 'chat' || scenario.via === 'session') {
       if (!canvas) throw new Error(`${scenario.id}: a chat scenario needs start.workflow`);

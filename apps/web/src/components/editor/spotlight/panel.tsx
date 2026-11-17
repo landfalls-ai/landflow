@@ -492,7 +492,7 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
         )}
         <div className={cn('flex min-h-0 flex-1 flex-col', folded && 'max-md:hidden')}>
           {items.length || agents.length ? (
-            <Timeline live={live} status={drafting ? 'Drafting the flow from the node catalog…' : undefined} />
+            <Timeline live={live} status={drafting ? 'Building the flow from the plan…' : undefined} />
           ) : (
             <div className="flex min-h-0 flex-1 flex-col justify-end px-4 py-4">
               <ChatEmpty title={EMPTY_LINE} />

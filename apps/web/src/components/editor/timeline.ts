@@ -146,7 +146,7 @@ export function stepsOf(items: ChatItem[], options: { live?: boolean; drafting?:
       if (need?.kind === 'needs' && !need.need.state) steps.push({ id: key('needs'), kind: 'needs', icon: 'needs', text: `Needs you · ${need.need.text}`, ...(need.need.node && { nodeName: need.need.node }) });
       if (options.live && i === rest.length - 1) {
         const tool = item.parts.findLast((p) => p.kind === 'tool');
-        steps.push({ id: key('live'), kind: 'note', icon: 'busy', text: tool?.kind === 'tool' ? `${tool.tool.label}…` : options.drafting ? 'Drafting the flow from the node catalog…' : 'Thinking…' });
+        steps.push({ id: key('live'), kind: 'note', icon: 'busy', text: tool?.kind === 'tool' ? `${tool.tool.label}…` : options.drafting ? 'Building the flow from the plan…' : 'Thinking…' });
       } else {
         const text = item.parts.find((p) => p.kind === 'text');
         const outcome = item.parts.some((p) => p.kind === 'action' && p.action === 'publish');

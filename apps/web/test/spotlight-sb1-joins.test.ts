@@ -22,7 +22,8 @@ import { startFakeModels, type FakeReply } from './fake-ai-services';
 
 vi.mock('@/components/canvas/sticky-note', () => ({ STICKY_DEFAULT_CONTENT: '## Note', STICKY_DEFAULT_SIZE: { width: 260, height: 180 } }));
 // The browser's HTTP client: a workflow opened empty reads its versions once (none published here); feedback is dropped.
-vi.mock('@/lib/client/api', () => ({ api: vi.fn(async () => ({ versions: [] })), streamEvents: vi.fn() }));
+// SB13: the first draft plans first, so the plan route answers a one-step plan too.
+vi.mock('@/lib/client/api', () => ({ api: vi.fn(async (path: string) => (path === '/api/ai/build/plan' ? { plan: { name: 'Orders', steps: [{ key: 's1', type: 'core.manualTrigger', name: 'Start', does: 'Start by hand' }], assumptions: [], cannot: [] }, alternatives: {} } : { versions: [] })), streamEvents: vi.fn() }));
 const published = vi.hoisted(() => vi.fn(async () => ({ published: { versionNumber: 1 } })));
 vi.mock('@/components/editor/publish-control', () => ({ publishVersion: published, toastApprovalRequested: vi.fn() }));
 
@@ -80,6 +81,7 @@ const { approveDestinations, publishToProduction, sendsAllowed, testUntilItRuns 
 const { afterReply, holdsForClick, typedSession, useAutonomous } = await import('@/components/editor/autonomous');
 const { autonomyOf, useAutonomyFacts } = await import('@/components/editor/spotlight-autonomy');
 const { draftWholeFlow } = await import('@/components/editor/spotlight/draft-flow');
+const { buildIt } = await import('@/components/editor/spotlight/plan-part'); // SB13:
 
 afterAll(async () => {
   await fake.close();
@@ -523,7 +525,12 @@ describe('the draft reply says it tests only where Spotlight does (review fixes)
     useAutonomous.setState({ on: true });
     useAutonomyFacts.setState({ switchOn: true, workflows: { wf_draft_saved: { bornEmpty: false, published: false } } });
     useEditor.setState({ workflowId: 'wf_draft_saved' });
-    await draftWholeFlow('Post big orders', async () => built as never);
+    // SB13: asks-first, the plan card waits for Build it before anything is built.
+    const done = draftWholeFlow('Post big orders', async () => built as never);
+    await vi.waitFor(() => expect(useAssistant.getState().items.some((i) => i.role === 'assistant' && i.parts.some((p) => p.kind === 'plan'))).toBe(true));
+    expect(said()).not.toContain('Built');
+    buildIt(useAssistant.getState().items.find((i) => i.role === 'assistant' && i.parts.some((p) => p.kind === 'plan'))!.id);
+    await done;
     expect(said()).toContain('Built “Orders”');
     expect(said()).not.toContain('Testing it now');
   });
