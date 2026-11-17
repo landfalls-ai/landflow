@@ -3,7 +3,7 @@
  * Spotlight's `newAgent` (docs/assistant.md#agents-and-teams): when no published agent fits a step, it proposes a
  * dedicated one. Applying the change adds the Run an Agent node; this has the Agent architect design the agent (a local
  * model, the tools it needs, a knowledge base when it works from documents, POST /api/agents/design) and points the node
- * at it. In autonomous mode (./autonomous.ts) the agent is published, so the flow can run it while it is tested; otherwise
+ * at it. In autonomous mode (./autonomous.ts) the agent is smoke-tested first and published only after a pass; otherwise
  * it stays a draft for a person to check and publish. A test run waits for the agents being designed (`agentsSettled`).
  */
 import { api, ApiError } from '@/lib/client/api';
@@ -141,8 +141,11 @@ export async function smokeTestAgent(nodeId: string, options: { publish?: boolea
       method: 'POST',
       json: { value: template, items: [{ json: sample.item }], itemIndex: 0, nodeOutputs: sample.nodeOutputs, parameters: node.data.wf.parameters, workflowId: useEditor.getState().workflowId || undefined },
     });
-    const message = typeof resolved.value === 'string' ? resolved.value.trim() : resolved.value == null ? '' : JSON.stringify(resolved.value);
-    if (!resolved.ok || !message) return done({ state: 'untested', reason: resolved.ok ? 'the step’s message is empty for that item' : (resolved.error ?? 'the step’s message could not be read') });
+    const resolvedText = !resolved.ok ? '' : typeof resolved.value === 'string' ? resolved.value.trim() : resolved.value == null ? '' : JSON.stringify(resolved.value);
+    // Like the Run an Agent node at run time: an empty message falls back to the item's chatInput.
+    const chat = typeof sample.item.chatInput === 'string' ? sample.item.chatInput.trim() : '';
+    const message = resolvedText || chat;
+    if (!message) return done({ state: 'untested', reason: resolved.ok ? 'the step’s message is empty for that item' : (resolved.error ?? 'the step’s message could not be read') });
     const { smoke } = await api<{ smoke: AgentSmoke }>(`/api/agents/${progress.agentId}/smoke-test`, { method: 'POST', json: { message: message.slice(0, 4000) } });
     done(smoke);
     if (smoke.state === 'passed' && options.publish) await publishAgentFor(nodeId);

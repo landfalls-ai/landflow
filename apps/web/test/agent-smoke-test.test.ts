@@ -195,6 +195,16 @@ describe('a new agent is tested before it is published', () => {
     expect(model.asked).toEqual(['hi']);
   });
 
+  it('falls back to the item’s chatInput when the step’s message resolves empty, like the node at run time', async () => {
+    useEditor.getState().load(flow({ chatInput: 'hi' }), types);
+    await addTheAgent(false);
+    model.asked.length = 0;
+    const id = agentNode()!.id;
+    useEditor.getState().updateNode(id, { parameters: { ...useEditor.getState().nodes.find((n) => n.id === id)!.data.wf.parameters, message: '{{ "" }}' } });
+    await smokeTestAgent(id);
+    expect(model.asked).toEqual(['hi']);
+  });
+
   it('takes the item from the last run of the step before it, ahead of nothing', async () => {
     useEditor.getState().load(flow(null), types);
     expect(applyChanges([{ ops: addAgent, kind: 'proposal' }], 'x', { quiet: true })).toBe(true);
@@ -448,6 +458,8 @@ describe('the review after a right fix names what is missing', () => {
     expect(missingPart('No.')).toBeUndefined();
     expect(missingPart('Not yet, sorry')).toBeUndefined();
     expect(missingPart('Yes, it does.')).toBeUndefined();
+    expect(missingPart('It posts to Slack but never emails the desk.')).toBe('It posts to Slack but never emails the desk');
+    expect(missingPart('Partially: the email step is missing.')).toBe('Partially: the email step is missing');
   });
 
   it('asks the review with the goal and each step’s output fields', async () => {
@@ -564,7 +576,7 @@ describe('a pending "Run it for real" row after a reload', () => {
 });
 
 describe('the idle test bubble', () => {
-  it('shows on a saved flow with a trigger and no outcome, and takes the first slot when three others would hide it', () => {
+  it('shows on a saved flow with a trigger and no outcome, and waits behind a failure or a missing model', () => {
     const ctx = {
       types: [],
       selectedId: 'b',
@@ -573,7 +585,7 @@ describe('the idle test bubble', () => {
         { id: 'b', name: 'Agent', type: 'core.aiAgent', outgoing: false, x: 1, agent: true, hasModel: false },
       ],
     } as never;
-    expect(idleBubbles(ctx)[0].id).toBe(TEST_BUBBLE);
+    expect(idleBubbles(ctx).map((b) => b.id)).not.toContain(TEST_BUBBLE); // what needs attention comes first and the test bubble waits
     expect(idleBubbles(ctx)).toHaveLength(3);
     expect(idleBubbles({ types: [], nodes: [{ id: 'a', name: 'Start', type: 'core.manualTrigger', trigger: true, outgoing: false, x: 0 }] } as never).map((b) => b.id)).toContain(TEST_BUBBLE);
   });

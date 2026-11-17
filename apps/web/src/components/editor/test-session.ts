@@ -396,8 +396,9 @@ export function outputFields(): string {
  * the reply names none, which reads as a pass.
  */
 export function missingPart(text: string): string | undefined {
+  if (/^\s*(?:yes|yep|yeah)\b/i.test(text)) return undefined;
+  // Every reply that is not a yes counts as a no; a leading no / not yet / not quite is dropped before the named part.
   const rest = text.replace(/^\s*(?:no|not yet|not quite)\b[\s,.:;!-]*/i, '');
-  if (rest === text) return undefined; // it did not say no
   const first = rest.split(/(?<=[.!?])\s/)[0]?.trim().replace(/[.!?]+$/, '') ?? '';
   return first.split(/\s+/).filter(Boolean).length >= 3 ? first : undefined;
 }
