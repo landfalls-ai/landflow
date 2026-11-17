@@ -696,8 +696,10 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
           upsert(toolEntry(call, tool, { status: 'denied', error: message }));
           immediate.push({ id: call.id, name: call.name, content: message, isError: true });
         } else if (tool.requireApproval) {
-          waiting.push({ callId: call.id, tool: call.name, input: tool.shownInput ? tool.shownInput(call.input) : call.input });
-          upsert(toolEntry(call, tool, { status: 'awaiting_approval' }));
+          // The waiting step shows what the card shows (what would run); the model's own call stays in the transcript.
+          const shown = tool.shownInput ? tool.shownInput(call.input) : call.input;
+          waiting.push({ callId: call.id, tool: call.name, input: shown });
+          upsert(toolEntry(call, tool, { status: 'awaiting_approval', input: shown }));
         } else runnable.push(call);
       }
       const ran = await pool(runnable, config.settings.toolConcurrency, (call) => execute(call, byName.get(call.name)!, ctx));
@@ -786,7 +788,13 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       if (!tool.resume) return { id: call.callId, name: call.tool, content: `The tool "${call.tool}" can no longer answer the agent that paused.`, isError: true };
       return execute(asCall, tool, ctx, { state: call.remote.state, approved: call.decision === 'approved', ...(call.answer !== undefined && { answer: call.answer }) });
     }
-    if (call.decision === 'approved') return execute(asCall, tool, ctx);
+    if (call.decision === 'approved') {
+      const result = await execute(asCall, tool, ctx);
+      // A person's edit that added a field the tool does not take: said, not silently dropped.
+      const ignored = tool.shownInput ? Object.keys(call.input).filter((k) => !(k in tool.shownInput!(call.input))) : [];
+      if (ignored.length && isResult(result)) return { ...result, content: `${result.content}\nNote: ${ignored.join(', ')} ${ignored.length === 1 ? 'is' : 'are'} not something this tool takes; ignored.` };
+      return result;
+    }
     upsert(toolEntry(asCall, tool, { status: 'denied', error: 'Denied by a person' }));
     return {
       id: call.callId,

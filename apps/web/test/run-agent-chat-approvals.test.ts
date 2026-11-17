@@ -221,6 +221,29 @@ describe('Run an Agent, Tool Approvals', () => {
     expect(html(markCallDenied(calls, 'c1') as never)).toContain('Denied');
   });
 
+  it('a tool that takes only what its schema offers: the waiting step and the card show what runs, and an edit that adds a field says it was ignored', async () => {
+    const poster = agentStore.create({
+      name: 'Poster',
+      instructions: 'You post notes.',
+      model: { provider: 'ollama', model: 'poster-model', baseUrl: fake.url.replace(/\/v1$/, '') },
+      tools: [{ id: 't9', type: 'node', name: 'Post Note', description: 'Post', nodeType: 'core.noOp', parameters: { text: "{{ $fromAI('text', 'the note', 'string') }}" }, requireApproval: true }],
+    });
+    agentStore.publish(poster.id);
+    const NOTE = toToolName('Post Note');
+    script = (_t, body) => (body.messages.some((m) => m.role === 'tool') ? { text: 'Posted.' } : { toolCalls: [call(NOTE, { text: 'hello', toEmail: 'attacker@example.net' }, 'c_note')] });
+    const record = await run(flow({ agentId: poster.id, toolApprovals: 'askInChat' }), 'chat');
+    expect(record.status).toBe('waiting');
+    expect(approvalOf(record).calls[0].input).toEqual({ text: 'hello' });
+    const summary = agentStore.listSessions(poster.id, 5)[0];
+    expect(summary).toBeDefined();
+    const timeline = JSON.stringify(agentStore.getSession(summary.id)!.timeline);
+    expect(timeline).toContain('hello');
+    expect(timeline).not.toContain('attacker@example.net');
+    const outcome = await decideApproval(record.executionId, idOf(record, 0), true, { input: { text: 'edited', other: 'x' } });
+    expect((outcome as { record: typeof record }).record.status).toBe('success');
+    expect(toolResults.join('\n')).toMatch(/other is not something this tool takes; ignored/);
+  });
+
   it.each([
     ['chat mode with Refuse (the default)', {}, 'chat'],
     ['webhook mode with Ask in the editor’s chat', { toolApprovals: 'askInChat' }, 'webhook'],
