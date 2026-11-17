@@ -589,7 +589,7 @@ interface AssistantState {
    * Show a kept conversation: its turns go first, under "Earlier". `replace` puts it in place of the chat (the history
    * button); otherwise what was said since stays below it (resuming on arrival).
    */
-  showEarlier(turns: ChatItem[], options?: { replace?: boolean }): void;
+  showEarlier(turns: ChatItem[], options?: { replace?: boolean; agents?: AgentProgress[] /* AG11: the rows of the agents the conversation made */ }): void;
   setProposalState(itemId: string, proposalId: string, state: 'applied' | 'dismissed' | 'undone', skipped?: number): void;
   /** Change the parts of one reply (a test-and-fix session adds and updates its runs; buttons record what was chosen). */
   updateParts(itemId: string, fn: (parts: ReplyPart[]) => ReplyPart[]): void;
@@ -756,8 +756,8 @@ export const useAssistant = create<AssistantState>((set, get) => ({
       get().abort?.abort();
       get().testing?.abort();
       draft.request?.abort();
-      set({ items: turns, kept: freshKept(), lastCheckpoint: undefined, agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
-    } else set((s) => ({ items: withEarlier(turns, s.items) }));
+      set({ items: turns, kept: freshKept(), lastCheckpoint: undefined, agents: options.agents ?? [] /* AG11: */, fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
+    } else set((s) => ({ items: withEarlier(turns, s.items), agents: [...s.agents, ...(options.agents ?? []).filter((r) => !s.agents.some((a) => a.nodeId === r.nodeId))] /* AG11: */ }));
   },
 
   setProposalState(itemId, proposalId, state, skipped) {
