@@ -54,6 +54,14 @@ describe('given trigger items and the start node pin', () => {
     expect(result.runData.trigger[0].logs?.map((l) => l.message)).toEqual(['Using pinned data']);
   });
 
+  it('a bare seed item ({}) is not given items: the pin is used in manual and mcp mode', async () => {
+    for (const mode of ['manual', 'mcp'] as const) {
+      const result = await executeWorkflow({ workflow: flow({ trigger: sample }), resolver, executionId: `ex_${mode}`, mode, startNodeId: 'trigger', triggerItems: [{ json: {} }] });
+      expect(out(result)).toEqual(['sample']);
+      expect(result.runData.trigger[0].logs?.map((l) => l.message)).toEqual(['Using pinned data']);
+    }
+  });
+
   it('a pin on another node is still used in chat mode', async () => {
     const result = await go(flow({ copy: [{ json: { out: 'pinned-copy' } }] }), 'chat', typed);
     expect(out(result)).toEqual(['pinned-copy']);

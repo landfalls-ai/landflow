@@ -26,6 +26,7 @@ const { store } = await import('@/lib/server/store');
 const { agentStore } = await import('@/lib/server/agents/store');
 const runRoute = await import('@/app/api/workflows/[id]/run/route');
 const workflowRoute = await import('@/app/api/workflows/[id]/route');
+const executeRoute = await import('@/app/api/workflows/[id]/execute/route');
 const { useEditor } = await import('@/components/editor/store');
 
 registry.registerBuiltin(corePlugin);
@@ -113,5 +114,27 @@ describe('Unpin is saved', () => {
     const saved = await workflowRoute.PUT(post(`/api/workflows/${wf.id}`, 'PUT', draft), params({ id: wf.id }));
     expect(saved.status).toBe(200);
     expect(Object.keys(store.getWorkflow(wf.id)!.pinData ?? {})).toHaveLength(0);
+  });
+});
+
+describe('Execute with no input on a pinned trigger', () => {
+  it('hands the pin to the next step (the route invents a bare {} seed)', async () => {
+    const wf: Workflow = {
+      id: 'wf_exec_pin',
+      name: 'Exec pin',
+      nodes: [node('Chat', 'core.chatTrigger'), node('Copy', 'core.set', { values: [{ name: 'seen', value: '{{ $json.chatInput }}' }] })],
+      connections: [{ id: 'e', type: 'main', source: 'Chat', sourceIndex: 0, target: 'Copy', targetIndex: 0 }],
+      pinData: { Chat: [{ json: { chatInput: 'pinned sample text', sessionId: 'sample' } }] },
+    };
+    store.saveWorkflow(wf);
+    const res = await executeRoute.POST(post(`/api/workflows/${wf.id}/execute`, 'POST', {}), params({ id: wf.id }));
+    const { executionId } = await res.json();
+    let execution = await store.loadExecution(executionId);
+    for (let i = 0; i < 100 && (!execution || execution.status === 'running'); i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      execution = await store.loadExecution(executionId);
+    }
+    expect(execution!.status).toBe('success');
+    expect(JSON.stringify(execution!.runData.Copy.at(-1)!.outputs)).toContain('pinned sample text');
   });
 });

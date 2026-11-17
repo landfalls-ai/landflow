@@ -960,7 +960,10 @@ class WorkflowRun {
 
     // Pin data is test data for runs a person starts: a trigger, poll, webhook or an agent's tool call runs the node.
     // AG01: items the run was given (a chat message, the run route's items) beat the start node's own pin.
-    const givenItems = !!this.options.triggerItems?.length && this.options.startNodeId === node.id;
+    // A bare seed (one empty item, no binary) is what callers invent when nobody gave input: it is not given items.
+    const seed = this.options.triggerItems;
+    const bareSeed = !!seed && seed.length === 1 && Object.keys(seed[0].json ?? {}).length === 0 && !seed[0].binary;
+    const givenItems = !!seed?.length && !bareSeed && this.options.startNodeId === node.id;
     const pinWas = pinsApply(this.options.mode) ? this.options.workflow.pinData?.[node.id] : undefined;
     const pinned = givenItems ? undefined : pinWas;
     const givenNote: LogEntry | undefined = pinWas && givenItems
