@@ -30,7 +30,7 @@ const { corePlugin } = await import('@/lib/server/nodes');
 const { registry } = await import('@/lib/server/plugins/registry');
 const { agentResources, agentModelOf } = await import('@/lib/server/assistant/agent-resources');
 const { designAgent, draftFrom, nameOnlyOwnTools, asksToWriteTo } = await import('@/lib/server/assistant/architect');
-const { agentAsk, askCatalog, fallbackName } = await import('@/lib/shared/agent-ask');
+const { agentAsk, askCatalog, fallbackName, toolsOf, MAIL_TO } = await import('@/lib/shared/agent-ask');
 const { TEST_OWNER } = await import('@/lib/server/auth/test-bypass');
 const { prepare, addScenarioPlugins, checkRunnerModel } = await import('./spotlight-scenarios/harness');
 const { agentStore } = await import('@/lib/server/agents/store');
@@ -264,6 +264,17 @@ describe('instruction tool names that end like a field', () => {
       expect(dropped.length, line).toBeGreaterThan(0);
     }
   });
+  it('reads a token named as a tool as a tool, even after a determiner or with a field ending', () => {
+    for (const line of ['Call the get_alerts tool for the last hour.', '2. Call the post_message tool with the summary.', 'Use the query_logs tool to search.', 'Send it via the slack_post tool.']) {
+      const { dropped, text } = nameOnlyOwnTools(`Steps:\n1. ${line}`, [{ name: 'send_email' }]);
+      expect(dropped.length, line).toBeGreaterThan(0);
+      expect(text, line).not.toMatch(/get_alerts|post_message|query_logs|slack_post/);
+    }
+  });
+  it('a two-word token whose second word is a preposition is a field ("send_to")', () => {
+    const line = 'Steps:\n1. Read send_to and move_from, then group_by the type.';
+    expect(nameOnlyOwnTools(line, tools)).toEqual({ text: line, dropped: [] });
+  });
   it('leaves a bare field word alone', () => {
     const line = 'Steps:\n1. Read the customer_id and `user_id` and ticket_number from the input.';
     expect(nameOnlyOwnTools(line, tools)).toEqual({ text: line, dropped: [] });
@@ -351,6 +362,60 @@ describe('a revise keeps the steps that call the agent’s own tools (the live p
     expect(text).toContain('Call extract_iocs');
     expect(result.dropped.join(' ')).not.toMatch(/instructions named/);
     expect(nodeTools(result.config).map((t) => t.nodeType)).toEqual(expect.arrayContaining(['triage.normalizeAlert', 'messaging.emailSend', 'triage.extractIocs']));
+  });
+});
+
+describe('a change that removes a tool leaves no step that calls it, and a kept tool is not "never asked for"', () => {
+  const STEPS = 'Input: one alert.\nSteps:\n1. Call normalize_alert with the alert.\n2. Judge severity.\n3. Call send_email to oncall@landflow.test with a summary.\nOutput: short.\nHand over when: unclear.';
+  const node = (name: string, nodeType: string, extra: Record<string, unknown> = {}) => ({ id: `tl_${name}`, type: 'node', name, nodeType, description: name, parameters: {}, ...extra });
+  const base = { name: 'Alert triager', description: 'Triages an alert.', instructions: STEPS, tools: [node('normalize_alert', 'triage.normalizeAlert'), node('send_email', 'messaging.emailSend', { requireApproval: true })] };
+  it('"remove the email tool": the step is gone and dropped says so', async () => {
+    const { model } = scripted([design({ name: 'Alert triager', instructions: STEPS, nodeTools: 'triage.normalizeAlert, messaging.emailSend' }), { text: 'Changed.' }]);
+    const result = await designAgent({ name: 'Alert triager', description: '', instructions: '', ask: 'remove the email tool', change: 'remove the email tool', base: base as never }, { types, actor: TEST_OWNER, model });
+    expect(result.config.instructions ?? '').not.toContain('send_email');
+    expect(result.config.instructions ?? '').toContain('Call normalize_alert');
+    expect(result.dropped.join(' ')).toContain('instructions named send_email, which it does not have');
+  });
+  it('a base tool the design proposes again is not listed as "never asked for"', async () => {
+    const { model } = scripted([design({ name: 'Alert triager', instructions: STEPS, nodeTools: 'triage.normalizeAlert, messaging.emailSend, triage.extractIocs' }), { text: 'Changed.' }]);
+    const result = await designAgent({ name: 'Alert triager', description: '', instructions: '', ask: 'add Extract IOCs as a tool', change: 'add Extract IOCs as a tool', base: base as never }, { types, actor: TEST_OWNER, model });
+    expect(result.dropped.join(' ')).not.toMatch(/Send Email[^;]*never asks/);
+    expect(nodeTools(result.config).map((t) => t.nodeType)).toContain('messaging.emailSend');
+  });
+  it('in the architect chat, a tool the person drops takes its step with it (the old draft’s tools are not its own)', () => {
+    const keep = { ...base };
+    const args = { name: 'Alert triager', role: 'Triager', instructions: STEPS, tools: [{ type: 'node', nodeType: 'triage.normalizeAlert', name: 'normalize_alert' }] };
+    const chat = draftFrom(args, { types, actor: TEST_OWNER, known: '', keep: keep as never });
+    expect(chat.config.instructions ?? '').not.toContain('send_email');
+    expect(chat.dropped.join(' ')).toContain('instructions named send_email');
+    const revise = draftFrom(args, { types, actor: TEST_OWNER, known: '', keep: keep as never, revise: true });
+    expect(revise.config.instructions ?? '').toContain('send_email');
+  });
+});
+
+describe('one mail regex, several mail nodes, analyse/analyze', () => {
+  it('forwards … to <address> is mail-to, from one shared regex', () => {
+    expect(MAIL_TO.test('forwards the summary to oncall@landflow.test')).toBe(true);
+    expect(MAIL_TO.test('forward the report to ops@landflow.test')).toBe(true);
+    expect(MAIL_TO.test('forward the report to the team')).toBe(false);
+  });
+  it('takes a mail node only when exactly one matches; several are said', () => {
+    const one = [{ displayName: 'Send Email', pluginName: 'Messaging' }];
+    const two = [...one, { displayName: 'Send Mail (SMTP)', pluginName: 'Smtp' }];
+    expect(toolsOf('email a summary to oncall@landflow.test', one)).toContain('Send Email');
+    const tools = toolsOf('email a summary to oncall@landflow.test', two);
+    expect(tools).toContain('Send email: several nodes match (Send Email, Send Mail (SMTP)), pick one');
+    expect(tools).not.toContain('Send Email');
+  });
+  it('the several-nodes line reaches Not added', async () => {
+    const { model } = scripted([design({ name: 'Alert triager', nodeTools: 'triage.normalizeAlert' }), { text: 'Designed.' }]);
+    const result = await designAgent({ name: 'Alert triager', description: '', instructions: '', ask: 'x', tools: ['Send email: several nodes match (Send Email, Send Mail), pick one'] }, { types, actor: TEST_OWNER, model });
+    expect(result.notAdded).toContainEqual({ name: 'Send email', reason: 'several nodes match (Send Email, Send Mail), pick one' });
+  });
+  it('analyse and analyze are one word', () => {
+    const catalogOf = [{ displayName: 'Analyze Logs', pluginName: 'Logs' }];
+    expect(toolsOf('an agent that can analyse logs', catalogOf)).toContain('Analyze Logs');
+    expect(toolsOf('an agent that can analyze logs', catalogOf)).toContain('Analyze Logs');
   });
 });
 

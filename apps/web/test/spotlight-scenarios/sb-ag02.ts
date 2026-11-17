@@ -26,7 +26,7 @@ export default defineScenarios([
     title: 'An alert triager that emails oncall@landflow.test: the address whole, Send Email asks first, the other two tools read',
     ask: 'Create an agent that triages an alert I paste: normalise it, pull out the IOCs, judge how serious it is, and email a short summary to oncall@landflow.test.',
     start: { plugins: ['triage', 'messaging'] },
-    script: [design('Alert triager', 'Steps:\n1. Call normalize_alert on the alert.\n2. Call extract_iocs.\n3. Call send_slack_message with the summary.', 'triage.normalizeAlert, triage.extractIocs, messaging.emailSend'), { text: 'Designed an alert triager.' }, NO_CASES],
+    script: [design('Alert triager', 'Steps:\n1. Call normalize_alert on the alert.\n2. Call extract_iocs.\n3. Call send_slack_message with the summary.', 'triage.normalizeAlert, triage.extractIocs'), { text: 'Designed an alert triager.' }, NO_CASES],
     checks: [
       checks.keepsText('oncall@landflow.test'),
       checks.askedToolsAccounted(['Normalize Alert', 'Extract IOCs', 'Send Email']),

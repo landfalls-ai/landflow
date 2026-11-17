@@ -2852,4 +2852,16 @@ account's own console is the figure.
 - The Spotlight scorecard's JSON keeping each run's reply and the stage prompt sizes (sb3's leftover): a runner-reporting change with no ag1 finding behind it; the next Spotlight wave.
 - B1's **Unused (Data Table)** plan step that `no-junk` does not flag stays in sb3's list above (the build path, not agents).
 - Revising teams, and the Agent architect dialog changing agents: wave ag1 changes a single agent from Spotlight only ([limitations.md](limitations.md)).
+- The live pass's leftovers (found by running the four agents; each is a small fix for the next agents wave, none blocks):
+  - "Pull out the IOCs" does not name Extract IOCs, so the triage card drops it silently and Not added is empty.
+  - Generated eval cases are descriptions, not inputs, so a good agent is held by the gate.
+  - The editor's chat cannot approve a tool call (only the agent page's Test chat shows approval cards).
+  - The Grafana agent's instructions name node types (`grafana.getAlerts`, `core.httpRequest`) instead of tool names, and its HTTP Request tool is preset to `http://127.0.0.1:3000/api/health`.
+  - Send Email's To and From are fixed empty and its Subject and Body unset on the card.
+  - After an agent-page change is applied the card has no Test button, does not update after a credential pick, its Left row repeats credentials that are set, and it does not say Acknowledge Alert asks first.
+  - Spotlight's history loses the smoke row and the card results after a reload.
+  - A revise adds a tool to the Tools line without a step for it, and the reply spells "Extract Iocs".
+  - The created agent's name can differ from the card's ("Crypto Toolkit agent" against "Utility helper").
+  - Grafana 11.4's Acknowledge Alert returns 404 from the plugin.
+  - The before/after scorecard and the phone screenshots were not run in the ag1 live pass.
 - Owed to a person, not the pipeline: whether a denied write may count as a pass in a smoke test (AG05's rule; SB18 said no); whether the agent page keeps its own **Publish anyway** (Spotlight never offers it); whether the Grafana observer should ever get Acknowledge Alert by default (it writes: today only when asked, with approval).

@@ -31,7 +31,7 @@ import { recordUsage } from '../usage/ledger';
 import { assistantScope, isUsageCapError, runInUsageScope, type UsageScope } from '../ai-usage';
 import { recoverToolCalls, withoutInventedIds, withoutRepeats } from './chat';
 import { agentModelOf, builderModel, chooseModel, type AgentResources } from './agent-resources';
-import { askCatalog, readsTokens, toolsOf } from '@/lib/shared/agent-ask'; // AG02: ag1-int:
+import { askCatalog, MAIL_TO, readsTokens, toolsOf } from '@/lib/shared/agent-ask'; // AG02: ag1-int:
 import { saveCheckpoint } from './checkpoints';
 import { assistantModel, errorText, modelLabel } from './model';
 import { isParseError, parseErrorText } from './parse-retry';
@@ -91,6 +91,8 @@ export interface ArchitectInput {
   agentModel?: string;
   /** AG04: a change to an agent that exists writes no test cases (the agent keeps its own): no follow-up call for them. */
   noCases?: boolean;
+  /** ag1: the draft is an agent that exists, and the call changes it (Spotlight's revise): its own tools stay callable in the steps. */
+  revise?: boolean;
 }
 
 const TOOL_SCHEMA = {
@@ -394,7 +396,6 @@ export const asksToWrite = (request: string) => WRITE_ASK.test(request.replace(A
 // AG02: a write verb aimed at one tool's app, not a noun anywhere in the request ("customer comments", "an alert", "the email" are not write asks).
 const WRITE_VERB = /\b(?:(?:post|send|create|raise|update|edit|write|append|delete|remove|merge|notify|publish|commit|assign|refund|approve|archive|insert|save|store|acknowledge|resolve|silence|upload)(?:e?s|d|ed|ing)?|reply|replies|comment(?:s|ed|ing)?\s+on|leav(?:e|es|ing)|change|push|close|ack|open\s+an?|file\s+an?)\b/i;
 const WRITE_NAME = new RegExp(`^\\s*${WRITE_VERB.source}`, 'i');
-const MAIL_TO = /\b(?:e-?mail|mail|send)\b[^.!?\n]*?\bto\s+[^\s@,;]+@[^\s@,;]+/i;
 
 /**
  * AG02: whether the request asks to write to this tool's app: a write verb in the sentence that names the app, or "email … to
@@ -525,7 +526,7 @@ export function briefParts(
 // AG02: the steps name the agent's tools by their call names. A snake_case word that names a tool (it starts like a tool call or follows
 // "call/use/run") and is not one of the agent's tools becomes the tool it plainly means (exactly one shares its words), else its clause goes.
 const CALL_VERBS = /^(?:send|get|query|create|list|read|write|post|fetch|find|search|run|call|use|check|comment|update|delete|lookup|extract|normalize|decode|hash|analy[sz]e|summari[sz]e|notify|email|insert|select|count|parse|generate|convert|publish|slack|jira|github)_/;
-const FIELD_WORD = /_(?:id|ids|at|number|name|key|url|date|time|type|status|count|value|index|ref|address|email|body|subject|text)$/;
+const FIELD_WORD = /_(?:id|ids|at|number|name|key|url|date|time|type|status|count|value|index|ref|address|email|body|subject|text|to|by|for|from|of)$/; // a second word that is a preposition ("send_to") reads as a field too
 const DETERMINERS = '(?:the|each|its|their|a|an|every)';
 const GENERIC_WORDS = new Set(['id', 'get', 'send', 'query', 'create', 'list', 'read', 'write', 'post', 'call', 'run', 'fetch', 'find', 'search', 'message', 'messages', 'data', 'tool', 'item', 'items', 'all', 'one', 'new', 'set', 'update', 'check', 'lookup', 'use']);
 const wordsOf = (value: string) => value.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1);
@@ -538,7 +539,10 @@ export function nameOnlyOwnTools(instructions: string, tools: Array<{ name: stri
     let current = line;
     const foreign = [...new Set(current.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [])].filter((t) => {
       if (own.has(t)) return false;
-      if (new RegExp(`\\b(?:call|invoke|run)\\s+\`?${t}\\b`, 'i').test(current)) return true;
+      // A tool by how it is named, before any field or determiner check: "the get_alerts tool", "call the post_message tool", "use query_logs".
+      if (new RegExp(`\\b${t}\`?\\s+(?:tool|node|action|function)\\b`, 'i').test(current)) return true;
+      if (new RegExp(`\\b(?:call|invoke|run)\\s+(?:(?:the|an?)\\s+)?\`?${t}\\b`, 'i').test(current)) return true;
+      if (!FIELD_WORD.test(t) && new RegExp(`\\buse\\s+(?:(?:the|an?)\\s+)?\`?${t}\\b`, 'i').test(current)) return true; // "use `user_id`" is a field
       if (CALL_VERBS.test(t)) {
         if (new RegExp(`\\buse\\s+\`?${t}\\b`, 'i').test(current)) return true;
         // Three or more words ("get_alert_status") read as a tool whatever the suffix; two ("run_id", "update_time", "email_address") are a field when they end like one or follow a determiner.
@@ -611,7 +615,7 @@ export interface DraftResult {
  * against what exists, parameters kept to the node's own (over its defaults), invented ids left out. `keep` is the
  * draft so far: its avatar, colour and team (the user may have changed them) carry over.
  */
-export function draftFrom(args: Record<string, unknown>, context: { types: NodeTypeInfo[]; actor: Actor; known: string; keep?: Partial<AgentConfig>; templates?: AgentTemplate[]; resources?: AgentResources; request?: string /* SB17: */; model?: string /* AG02: the model the agent runs on: Spotlight's picker, else the builder model */ }): DraftResult {
+export function draftFrom(args: Record<string, unknown>, context: { types: NodeTypeInfo[]; actor: Actor; known: string; keep?: Partial<AgentConfig>; templates?: AgentTemplate[]; resources?: AgentResources; request?: string /* SB17: */; model?: string /* AG02: the model the agent runs on: Spotlight's picker, else the builder model */; revise?: boolean /* ag1: a change to an agent that exists: `keep`'s tools are still its own */ }): DraftResult {
   const { types, actor, known, keep, request } = context; // SB17: request
   const dropped: string[] = [];
   const needs: ArchitectNeed[] = [];
@@ -812,7 +816,7 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
   // AG02: the steps name only the agent's own tools, by their call names.
   const toolList = tools.flatMap((t) => ('name' in t && t.name ? [{ name: t.name, ...('description' in t && t.description && { description: t.description }) }] : []));
   // A revise proposes the whole agent again, but least privilege leaves out the tools the change does not name: the steps that call the agent's own tools (`keep`'s) are still its own.
-  const keptTools = (keep?.tools ?? []).flatMap((t) => ('name' in t && t.name && !toolList.some((o) => o.name === t.name) ? [{ name: t.name, ...('description' in t && t.description && { description: t.description }) }] : []));
+  const keptTools = (context.revise ? (keep?.tools ?? []) : []).flatMap((t) => ('name' in t && t.name && !toolList.some((o) => o.name === t.name) ? [{ name: t.name, ...('description' in t && t.description && { description: t.description }) }] : []));
   const reconciled = nameOnlyOwnTools(text(args.instructions, 8000) ?? base.instructions ?? '', [...toolList, ...keptTools]);
   dropped.push(...reconciled.dropped);
   const config: Partial<AgentConfig> = {
@@ -981,7 +985,7 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
         const asSent = JSON.stringify(rest);
         if (asSent === lastProposal) return result('Nothing changes: you proposed exactly this agent already. Do not propose it again; answer the user.', 'Skipped a repeated proposal');
         lastProposal = asSent;
-        const { config, needs, dropped, missing, cases: proposed } = draftFrom(args, { types, actor, known: known(), keep: draft, request: requestText, ...(input.agentModel && { model: input.agentModel }) /* AG02: */, ...(input.resources && { resources: input.resources }) });
+        const { config, needs, dropped, missing, cases: proposed } = draftFrom(args, { types, actor, known: known(), keep: draft, request: requestText, ...(input.revise && { revise: true }), ...(input.agentModel && { model: input.agentModel }) /* AG02: */, ...(input.resources && { resources: input.resources }) });
         const summary = shorten(text(args.summary, 200) ?? `Draft: ${config.name}`, 140);
         draft = config;
         proposals++;
@@ -1217,7 +1221,7 @@ function changeTools(change: string, types: NodeTypeInfo[]): string[] {
  * privilege holds for the tools the change does not name), a new tool stays only when the change names it, and the name, model,
  * practices, look and team stay unless the change names them.
  */
-function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: string): void {
+function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: string, types: NodeTypeInfo[] = []): void {
   const kept = (base.tools ?? []).filter((t) => !removed(change, t));
   const have = new Set(kept.map(toolKey));
   const added: AgentToolConfig[] = [];
@@ -1241,6 +1245,14 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
     instructions: reviseInstructions(draft.config.instructions ?? base.instructions ?? '', base.instructions ?? '', [...kept, ...added]),
     tools: [...kept, ...added],
   };
+  // The steps name only the tools the agent ends up with: a tool the change removed leaves no step that calls it.
+  const finalTools = (config.tools ?? []).flatMap((t) => ('name' in t && t.name ? [{ name: t.name, ...('description' in t && t.description && { description: t.description }) }] : []));
+  const reconciled = nameOnlyOwnTools(config.instructions ?? '', finalTools);
+  config.instructions = reconciled.text;
+  // The base's own tools kept here are not "never asked for": the design's rule for a tool the change does not name does not apply to them.
+  const keptNames = kept.flatMap((t) => (t.type === 'node' ? [types.find((x) => x.type === t.nodeType)?.descriptor.displayName] : [])).filter((n): n is string => Boolean(n));
+  draft.dropped = draft.dropped.filter((line) => !(/the request (?:never asks for it|asks to read or check)/.test(line) && keptNames.some((n) => line.startsWith(`${n}:`) || line.startsWith(`${n} (`))));
+  draft.dropped.push(...reconciled.dropped);
   if (modelNamed && draft.config.model) config.model = draft.config.model;
   draft.config = config;
 }
@@ -1308,6 +1320,12 @@ function withSpecHints(draft: DraftResult, spec: AgentSpec, input: Pick<Architec
     return true;
   };
   for (const wanted of spec.tools ?? []) {
+    // toolsOf found several mail nodes for "email … to <address>": said, not guessed.
+    const several = /^(Send email): (several nodes match \(.*\), pick one)$/.exec(wanted);
+    if (several) {
+      notAdded.push({ name: several[1], reason: several[2] });
+      continue;
+    }
     const [, app, rest] = /^\s*([^:]{2,40}):\s*(.+)$/.exec(wanted) ?? [undefined, undefined, wanted];
     // AG02: a catalog name ("Send Email", "Grafana"): exactly one node type by display name, else by plugin name.
     if (!app) {
@@ -1407,7 +1425,7 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
     if (last || input.signal?.aborted) break;
     // A model that fails gets the fallback below; a reached usage cap is the caller's answer (the route says 429).
     // SB17: `request` is the least-privilege rules' text: the request alone, not the brief's hints.
-    await runArchitect({ ...input, ...attempt, agentModel, ...(spec.base && spec.change && { draft: spec.base, noCases: true }) /* AG04: */, request: spec.change ? `${designWords(spec)}\n${spec.change}` /* AG04: */ : designWords(spec), onEvent }).catch((caught: unknown) => {
+    await runArchitect({ ...input, ...attempt, agentModel, ...(spec.base && spec.change && { draft: spec.base, noCases: true, revise: true }) /* AG04: */, request: spec.change ? `${designWords(spec)}\n${spec.change}` /* AG04: */ : designWords(spec), onEvent }).catch((caught: unknown) => {
       if (isUsageCapError(caught)) throw caught;
       failure = designFailure(caught); // ag1-int:
     });
@@ -1416,7 +1434,7 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
     const kept: DraftResult = last;
     let notAdded: AgentNotAdded[] = [];
     if (spec.base && spec.change) {
-      reviseDraft(kept, spec.base, spec.change); // AG04: the base's tools stay, a new one only when named
+      reviseDraft(kept, spec.base, spec.change, input.types); // AG04: the base's tools stay, a new one only when named
       // ag1-int: AG02's promise holds for a change too: a tool it names is added (the same least-privilege rules), or said why not.
       notAdded = withSpecHints(kept, { name: spec.name, description: '', instructions: '', ask: spec.change, tools: changeTools(spec.change, input.types.filter(usableAsTool)) }, input, spec.base);
     } else notAdded = withSpecHints(kept, spec, input); // SB17: AG02: what the ask named and the agent did not get
