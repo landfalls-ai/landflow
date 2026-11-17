@@ -556,7 +556,7 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
         if (!planResponse.ok || !planBody.plan) outcome.error = planBody.error ?? `plan ${planResponse.status}`;
         else planned.plan = planBody.plan;
       }
-      const response = outcome.error ? undefined : await route.POST(post('/api/ai/build', { prompt: scenario.ask, ...buildModel, /* SB19: */ ...(canvas?.id && { workflowId: canvas.id }), ...(planned.plan && { plan: planned.plan }) /* SB13: */ }));
+      const response = outcome.error ? undefined : await route.POST(post('/api/ai/build', { prompt: scenario.ask, ...buildModel, /* SB19: */ ...(canvas?.id && { workflowId: canvas.id }), ...(planned.plan && { plan: planned.plan }) /* SB13: */, /* SB14: */ ...(scenario.start?.plan && { plan: scenario.start.plan }) }));
       const body = response ? ((await response.json()) as { draft?: Record<string, unknown>; error?: string }) : {};
       if (response && (!response.ok || !body.draft)) outcome.error = body.error ?? `build ${response.status}`;
       else if (body.draft) {

@@ -1,7 +1,7 @@
 /**
  * SB13's scenarios (wave sb3): the first draft is planned before it is built (docs/assistant.md "Building a flow in
  * stages"). Each is staged: the plan route answers a plan (the script's first replies), then the build route builds that
- * plan. The asks are B1, B4 and B8 of sb00.ts. Unit form: scripted; live form: 3 runs on the local model.
+ * plan, one call per step (SB14). The asks are B1, B4 and B8 of sb00.ts. Unit form: scripted; live form: 3 runs on the local model.
  */
 import { checks, defineScenarios, type Check, type Outcome } from './scenario';
 
@@ -9,8 +9,8 @@ const planTypes = (o: Outcome) => o.plan?.steps.map((s) => s.type) ?? [];
 const right = (id: string, label: string, judge: (o: Outcome) => boolean | 'n/a'): Check => ({ id, label, judge });
 
 const reply = (value: unknown) => ({ text: JSON.stringify(value) });
-/** The build's reply, twice: a node left empty is sent back once, and the model answers the same. */
-const twice = (value: unknown) => [reply(value), reply(value)];
+/** A step's reply in the build (SB14: stage 2 is one call per plan step, each answering that node's parameters). */
+const step = (parameters: unknown, extra: Record<string, unknown> = {}) => reply({ parameters, ...extra });
 const schedule = { unit: 'rules', rule: { interval: [{ field: 'days', daysInterval: 1, triggerAtHour: 8, triggerAtMinute: 0 }] } };
 const condition = (left: string, operator: string, right: string) => ({ conditions: { condition: [{ left, operator, right }] }, combinator: 'and' });
 
@@ -48,20 +48,13 @@ export default defineScenarios([
         assumptions: ['“every weekday at 8” read as 8:00 on weekdays'],
         cannot: [],
       }),
-      // The build of that plan.
-      ...twice({
-        name: 'Bug triage',
-        nodes: [
-          { key: 's1', type: 'core.schedule', name: 'Every weekday at 8', parameters: { unit: 'rules', rule: { interval: [{ field: 'cronExpression', expression: '0 8 * * 1-5' }] } } },
-          { key: 's2', type: 'linear.linear', name: 'Get bug issues', parameters: { resource: 'issue', operation: 'getAll' } },
-          { key: 's3', type: 'core.aiAgent', name: 'Triage each issue', parameters: { prompt: 'Triage this issue into P0, P1, P2 or P3 with a reason: {{ $json.title }}' } },
-          { key: 's4', type: 'core.if', name: 'Is it P0', parameters: condition('{{ $json.output }}', 'contains', 'P0') },
-          { key: 's5', type: 'messaging.slack', name: 'Post P0 to Slack', parameters: { text: '{{ $json.title }}' } },
-          { key: 's6', type: 'core.dataTable', name: 'Save the rest', parameters: {} },
-        ],
-        connections: [{ from: 's1', to: 's2' }, { from: 's2', to: 's3' }, { from: 's3', to: 's4' }, { from: 's4', to: 's5', output: 0 }, { from: 's4', to: 's6', output: 1 }],
-        testData: [{ title: 'Login fails', description: 'Cannot sign in' }],
-      }),
+      // The build of that plan (SB14: one call per step, in the plan's order).
+      step({ unit: 'rules', rule: { interval: [{ field: 'cronExpression', expression: '0 8 * * 1-5' }] } }),
+      step({ resource: 'issue', operation: 'getManySince' }, { testData: [{ title: 'Login fails', summary: 'Cannot sign in' }] }),
+      step({ prompt: 'Triage this issue into P0, P1, P2 or P3 with a reason: {{ $json.title }}' }),
+      step(condition('{{ $json.output }}', 'contains', 'P0')),
+      step({ resource: 'message', operation: 'post', text: '{{ $json.output }}' }),
+      step({ operation: 'insert', columns: { column: [{ column: 'title', value: "{{ $('Get bug issues').item.json.title }}" }] } }),
     ],
     checks: [
       checks.oneTrigger,
@@ -94,18 +87,11 @@ export default defineScenarios([
         assumptions: ['the answer is sent after the VIP post; the regular branch has none of its own'],
         cannot: [],
       }),
-      ...twice({
-        name: 'Order routing',
-        nodes: [
-          { key: 's1', type: 'core.webhook', name: 'Order received', parameters: { path: 'orders', httpMethod: 'POST', responseMode: 'responseNode' } },
-          { key: 's2', type: 'core.if', name: 'Total over 1000', parameters: condition('{{ $json.body.total }}', 'gt', '1000') },
-          { key: 's3', type: 'core.httpRequest', name: 'Post VIP order', parameters: { method: 'POST', url: 'http://127.0.0.1:3399/vip', sendBody: true, contentType: 'json', body: '{{ { ...$json.body, vip: true } }}' } },
-          { key: 's4', type: 'core.httpRequest', name: 'Post regular order', parameters: { method: 'POST', url: 'http://127.0.0.1:3399/regular', sendBody: true, contentType: 'json', body: '{{ $json.body }}' } },
-          { key: 's5', type: 'core.respondToWebhook', name: 'Respond ok', parameters: { respondWith: 'json', responseBody: '{"ok": true}' } },
-        ],
-        connections: [{ from: 's1', to: 's2' }, { from: 's2', to: 's3', output: 0 }, { from: 's2', to: 's4', output: 1 }, { from: 's3', to: 's5' }],
-        testData: [{ body: { id: 'o1', total: 1500 } }],
-      }),
+      step({ path: 'orders', httpMethod: 'POST', responseMode: 'responseNode' }, { testData: [{ body: { id: 'o1', total: 1500 } }] }),
+      step(condition('{{ $json.body.total }}', 'gt', '1000')),
+      step({ method: 'POST', url: 'http://127.0.0.1:3399/vip', sendBody: true, contentType: 'json', body: '{{ { ...$json.body, vip: true } }}' }),
+      step({ method: 'POST', url: 'http://127.0.0.1:3399/regular', sendBody: true, contentType: 'json', body: '{{ $json.body }}' }),
+      step({ respondWith: 'json', responseBody: '{"ok": true}' }),
     ],
     checks: [
       right('one-webhook', 'One trigger, the Webhook, then an If, two HTTP steps and a Respond', (o) => {
@@ -136,16 +122,9 @@ export default defineScenarios([
         assumptions: ['a person approves by hand: no approval node was named'],
         cannot: [],
       }),
-      ...twice({
-        name: 'Support chat',
-        nodes: [
-          { key: 's1', type: 'core.chatTrigger', name: 'Chat message', parameters: {} },
-          { key: 's2', type: 'core.messageAgent', name: 'Support triage', parameters: { message: '{{ $json.chatInput }}' } },
-          { key: 's3', type: 'core.if', name: 'Could it answer', parameters: condition('{{ $json.output }}', 'isNotEmpty', '') },
-        ],
-        connections: [{ from: 's1', to: 's2' }, { from: 's2', to: 's3' }],
-        testData: [{ chatInput: 'How do I reset my password?' }],
-      }),
+      step({}),
+      step({ agentId: 'Support triage', message: '{{ $json.chatInput }}' }),
+      step(condition('{{ $json.output }}', 'isNotEmpty', '')),
     ],
     checks: [
       checks.oneTrigger,
@@ -186,15 +165,8 @@ export default defineScenarios([
         assumptions: ['“every morning” read as 8:00 every day'],
         cannot: ['Post to Microsoft Teams: no Teams node is offered'],
       }),
-      ...twice({
-        name: 'Status page',
-        nodes: [
-          { key: 's1', type: 'core.schedule', name: 'Every morning', parameters: schedule },
-          { key: 's2', type: 'core.httpRequest', name: 'Fetch status page', parameters: { method: 'GET', url: 'http://127.0.0.1:3399/status' } },
-        ],
-        connections: [{ from: 's1', to: 's2' }],
-        testData: [],
-      }),
+      step(schedule),
+      step({ method: 'GET', url: 'http://127.0.0.1:3399/status' }),
     ],
     checks: [
       checks.oneTrigger,

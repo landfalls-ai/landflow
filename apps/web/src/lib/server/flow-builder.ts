@@ -15,7 +15,7 @@ import { anthropicModel } from './nodes/models';
 import { ollamaUrl } from './config';
 import { withCallNote } from './ai-usage/call-context'; // SB19:
 import { plainDraft } from './ai-usage/drafts'; // SB19:
-import { planLines, type BuildPlan, type BuildStage } from '@/lib/shared/build-plan'; // SB13:
+import type { BuildPlan, BuildStage } from '@/lib/shared/build-plan'; // SB13:
 // SB01: the draft's reply held to a schema, checked for empty parts and sent back once.
 import { z } from 'zod';
 import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
@@ -23,6 +23,7 @@ import type { Workflow } from '@landflow/engine';
 import { collectionWarnings, structuralWarnings } from '@/lib/shared/assistant-ops';
 import { hollowSteps } from '@/lib/shared/run-check';
 import { mergeLeft, type DraftLeft } from '@/lib/shared/draft-left';
+import { buildFromPlan } from './assistant/build-nodes'; // SB14:
 
 export interface DraftNode {
   key: string;
@@ -45,7 +46,7 @@ export interface FlowDraft {
   left?: DraftLeft[];
   /** SB10: how many model calls the draft took: 1, or 2 when the first draft was sent back once. */
   calls?: number;
-  /** SB13: the plan the draft was built from (lib/shared/build-plan.ts), when it was built from one. */
+  /** SB13: the plan the draft was built from (lib/shared/build-plan.ts), when it was built from one; SB14: stage 2 builds one node per step. */
   plan?: BuildPlan;
   /** SB13: every model call of the draft in order, with its size (never its text). */
   stages?: BuildStage[];
@@ -141,7 +142,7 @@ function catalog(types: NodeTypeInfo[]): string {
 }
 
 /** A Run an Agent node keeps only an agent the caller has: an id the model made up is cleared, so the node asks for one. */
-function knownAgent(parameters: Record<string, unknown>, agents: readonly AgentBrief[]): Record<string, unknown> {
+export function knownAgent(parameters: Record<string, unknown>, agents: readonly AgentBrief[]): Record<string, unknown> {
   const id = typeof parameters.agentId === 'string' ? parameters.agentId : '';
   return !id || id.includes('{{') || agents.some((a) => a.id === id) ? parameters : { ...parameters, agentId: '' };
 }
@@ -153,7 +154,7 @@ function knownAgent(parameters: Record<string, unknown>, agents: readonly AgentB
 const PINNED_TRIGGERS = new Set(['core.manualTrigger', 'core.webhook', 'core.formTrigger']);
 
 /** Nodes that run a whole agent (or team) session per item: a test run of a flow with one gets one sample item. */
-const AGENT_TYPES = new Set(['core.aiAgent', 'core.messageAgent', 'core.runTeam', 'core.a2aAgent']);
+export const AGENT_TYPES = new Set(['core.aiAgent', 'core.messageAgent', 'core.runTeam', 'core.a2aAgent']);
 
 function asItems(rows: unknown): NodeItem[] | undefined {
   if (!Array.isArray(rows)) return undefined;
@@ -318,7 +319,7 @@ function nearType(type: string, byType: Map<string, NodeTypeInfo>): NodeTypeInfo
   return found.length === 1 ? found[0] : undefined;
 }
 
-interface Assembled {
+export interface Assembled {
   nodes: DraftNode[];
   edges: FlowDraft['edges'];
   dropped: string[];
@@ -515,7 +516,7 @@ export function pinsOnTrigger(type: string, info: NodeTypeInfo | undefined): boo
  * trigger node): on itself, since its output is the app's event. A schedule: on the app step after it that reads data,
  * so a test runs on sample records instead of needing the app; a schedule's own item is only a time, so otherwise none.
  */
-function pinTarget(draft: Assembled, byType: Map<string, NodeTypeInfo>): DraftNode | undefined {
+export function pinTarget(draft: Assembled, byType: Map<string, NodeTypeInfo>): DraftNode | undefined {
   const { trigger, nodes, edges } = draft;
   if (!trigger) return undefined;
   if (pinsOnTrigger(trigger.type, byType.get(trigger.type))) return trigger;
@@ -536,16 +537,28 @@ function pinTarget(draft: Assembled, byType: Map<string, NodeTypeInfo>): DraftNo
 export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: readonly TeamBrief[] = [], agents: readonly AgentBrief[] = [], options: { types?: NodeTypeInfo[]; plan?: BuildPlan } = {}): Promise<FlowDraft> { // SB02: the workflow's allowed types
   const types = options.types ?? registry.nodeTypes().filter((t) => t.available); // SB02: same as availableTypes(), with no new import
   const byType = new Map(types.map((t) => [t.type, t]));
+  // SB14: with a plan, one small call per step fills its parameters and the wiring is the plan's (assistant/build-nodes.ts).
+  if (options.plan) {
+    const plan = options.plan;
+    const built = await buildFromPlan(plan, prompt, { kit: { emptyParts, jsonOf, knownAgent, pinsOnTrigger, adapterTimedOut, AGENT_TYPES, PARAMETER_FORMATS }, model, types, agents, teams, timeoutMs: builderTimeoutMs(), started: Date.now() });
+    const staged = { nodes: built.nodes, edges: built.edges, dropped: built.dropped, left: built.left, trigger: built.trigger };
+    const stagedLeft = mergeLeft(
+      built.left,
+      emptyParts(staged, byType)
+        .filter((p) => p.kind === 'empty')
+        .map((p): DraftLeft => ({ node: p.node, field: p.field, kind: 'empty', text: p.left })),
+    );
+    const at = pinTarget(staged, byType);
+    const items = (cleanTestItems(at ? built.testItems[at.key] : undefined, at, built.nodes) ?? sampleItems(at, built.nodes))?.slice(0, built.nodes.some((n) => AGENT_TYPES.has(n.type)) ? 1 : undefined);
+    return { name: plan.name.slice(0, 80), nodes: built.nodes, edges: built.edges, pinData: at && items ? { [at.key]: items } : undefined, model, durationMs: Date.now() - built.started, dropped: built.dropped, left: stagedLeft, calls: built.calls, plan, stages: built.stages };
+  }
   const teamsNote = byType.has('core.runTeam') && teams.length ? `\n\nPublished agent teams (core.runTeam: put the team's teamId in teamId, never its name):\n${describeTeams([...teams])}` : '';
   const started = Date.now();
   const timeoutMs = builderTimeoutMs();
   const agentsNote = byType.has('core.messageAgent') && agents.length ? `\n\nYour agents (core.messageAgent: put the agent's agentId in agentId, never its name):\n${describeAgents(agents)}` : '';
-  // SB13: with a plan, only its types' docs go on, and the plan as words ("build exactly these steps"); without one, the whole catalog.
+  // SB13: every model call's size; SB14: a plan is built above, one call per step, so this one-shot draft has none.
   const stages: BuildStage[] = [];
-  const planned = options.plan && types.filter((t) => options.plan!.steps.some((s) => s.type === t.type));
-  const request = planned
-    ? `Node catalog (only the nodes of the plan):\n${catalog(planned)}${agentsNote}${teamsNote}\n\nBuild this workflow:\n${prompt}\n\nBuild exactly these steps, with these keys (key: step), each one node of the type named, and no others. Fill every node's parameters from the request above (urls, fields, conditions) and let a step that sends or checks the incoming item read it with a {{ $json... }} expression:\n${planLines(options.plan!, (type) => type).map((line, i) => `${options.plan!.steps[i].key}: ${line}`).join('\n')}`
-    : `Node catalog:\n${catalog(types)}${agentsNote}${teamsNote}\n\nBuild this workflow:\n${prompt}`;
+  const request = `Node catalog:\n${catalog(types)}${agentsNote}${teamsNote}\n\nBuild this workflow:\n${prompt}`;
   // SB01: the first reply (sent back once when it does not parse), then the draft checked and sent back once.
   const messages: DraftMessage[] = [{ role: 'user', content: request }];
   const first = await parsedReply(model, messages, timeoutMs, started, stages); // SB13: stages
@@ -580,5 +593,5 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
   const target = pinTarget(draft, byType);
   const testItems = (cleanTestItems(asItems(reply.testData), target, nodes) ?? sampleItems(target, nodes))?.slice(0, nodes.some((n) => AGENT_TYPES.has(n.type)) ? 1 : undefined);
   const pinData = target && testItems ? { [target.key]: testItems } : undefined;
-  return { name: (reply.name ?? 'Generated workflow').slice(0, 80), nodes, edges, pinData, model, durationMs: Date.now() - started, dropped, left, calls, ...(options.plan && { plan: options.plan }), stages }; // SB13: plan, stages
+  return { name: (reply.name ?? 'Generated workflow').slice(0, 80), nodes, edges, pinData, model, durationMs: Date.now() - started, dropped, left, calls, stages }; // SB13: stages
 }

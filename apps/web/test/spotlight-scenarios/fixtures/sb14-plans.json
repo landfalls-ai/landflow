@@ -1,0 +1,166 @@
+{
+  "b1": {
+    "name": "Triage new Linear bugs",
+    "steps": [
+      {
+        "key": "s1",
+        "type": "core.schedule",
+        "name": "Every weekday at 8",
+        "does": "Run every weekday at 8"
+      },
+      {
+        "key": "s2",
+        "type": "linear.linear",
+        "name": "Get new bug issues",
+        "does": "Read the Linear issues labelled bug that are new since the last run",
+        "from": "s1"
+      },
+      {
+        "key": "s3",
+        "type": "core.aiAgent",
+        "name": "Triage each bug",
+        "does": "Triage each issue into P0 to P3 with a reason",
+        "from": "s2",
+        "reads": [
+          "title",
+          "summary"
+        ]
+      },
+      {
+        "key": "s4",
+        "type": "core.if",
+        "name": "Is it P0",
+        "does": "Check whether the triage says P0",
+        "from": "s3"
+      },
+      {
+        "key": "s5",
+        "type": "messaging.slack",
+        "name": "Post P0 to Slack",
+        "does": "Post each P0 issue to Slack #oncall",
+        "from": "s4",
+        "output": 0
+      },
+      {
+        "key": "s6",
+        "type": "core.dataTable",
+        "name": "Save the rest",
+        "does": "Put the other issues in a data table",
+        "from": "s4",
+        "output": 1
+      }
+    ],
+    "assumptions": [
+      "The issues read are the ones changed since the last run",
+      "The data table is the person's to pick"
+    ],
+    "cannot": []
+  },
+  "b4": {
+    "name": "Orders by size",
+    "steps": [
+      {
+        "key": "s1",
+        "type": "core.webhook",
+        "name": "Order in",
+        "does": "Receive an order by webhook"
+      },
+      {
+        "key": "s2",
+        "type": "core.if",
+        "name": "Total over 1000",
+        "does": "Branch on whether the order total is over 1000",
+        "from": "s1",
+        "reads": [
+          "body.total"
+        ]
+      },
+      {
+        "key": "s3",
+        "type": "core.httpRequest",
+        "name": "Send to VIP",
+        "does": "POST the whole order with vip true to http://127.0.0.1:3399/vip",
+        "from": "s2",
+        "output": 0
+      },
+      {
+        "key": "s4",
+        "type": "core.httpRequest",
+        "name": "Send to regular",
+        "does": "POST the order to http://127.0.0.1:3399/regular",
+        "from": "s2",
+        "output": 1
+      },
+      {
+        "key": "s5",
+        "type": "core.respondToWebhook",
+        "name": "Reply ok",
+        "does": "Respond to the webhook with {\"ok\": true}",
+        "from": "s3"
+      }
+    ],
+    "assumptions": [
+      "The webhook answers after the VIP POST: a step follows one step"
+    ],
+    "cannot": []
+  },
+  "b8": {
+    "name": "Support chat",
+    "steps": [
+      {
+        "key": "s1",
+        "type": "core.chatTrigger",
+        "name": "Chat message",
+        "does": "Start when a chat message arrives"
+      },
+      {
+        "key": "s2",
+        "type": "core.messageAgent",
+        "name": "Support triage agent",
+        "does": "Have the Support triage agent answer the message",
+        "from": "s1"
+      },
+      {
+        "key": "s3",
+        "type": "core.if",
+        "name": "Could not answer",
+        "does": "Check whether the agent could not answer",
+        "from": "s2"
+      },
+      {
+        "key": "s4",
+        "type": "core.confirmDraft",
+        "name": "Person approves",
+        "does": "Hand what the agent could not answer to a person for approval",
+        "from": "s3",
+        "output": 0
+      }
+    ],
+    "assumptions": [
+      "The agent's answer is the chat's reply"
+    ],
+    "cannot": []
+  },
+  "morning": {
+    "name": "Morning greeting",
+    "steps": [
+      {
+        "key": "s1",
+        "type": "core.schedule",
+        "name": "Every morning at 8",
+        "does": "Run every morning at 8"
+      },
+      {
+        "key": "s2",
+        "type": "core.set",
+        "name": "Set greeting",
+        "does": "Set a field greeting to Good morning",
+        "from": "s1"
+      }
+    ],
+    "assumptions": [
+      "“every morning” is every day"
+    ],
+    "cannot": []
+  }
+}

@@ -261,25 +261,34 @@ describe('the plan route', () => {
 describe('a build with a plan', () => {
   const buildReply = (types: string[]) => reply({ name: 'Bug triage', nodes: types.map((type, i) => ({ key: `s${i + 1}`, type, name: `Step ${i + 1}`, parameters: type === 'core.schedule' ? { unit: 'rules', rule: { interval: [{ field: 'cronExpression', expression: '0 8 * * 1-5' }] } } : {} })), connections: types.slice(1).map((_, i) => ({ from: 's1', to: `s${i + 2}` })), testData: [{ title: 'Login fails' }] });
 
-  it('sends the docs of the plan\'s types only (under a third of the catalog) and the plan as words, and returns plan and stages', async () => {
+  // Wave sb3 integration: SB14 builds a plan one call per step (lib/server/assistant/build-nodes.ts), so each call
+  // carries one plan step's node docs and sentence; the whole catalog goes only to a build without a plan.
+  it('sends each step\'s call only its own node\'s docs (under a third of the catalog) and its step in words, and returns plan and stages', async () => {
     const types = availableTypes();
-    queue = [{ text: buildReply(GOOD.steps.map((s) => s.type)), usage: { input: 1234, output: 56 } }];
+    const stepReply = (parameters: unknown) => JSON.stringify({ parameters });
+    queue = [
+      { text: stepReply({ rule: { interval: [{ field: 'cronExpression', expression: '0 8 * * 1-5' }] } }), usage: { input: 1234, output: 56 } },
+    ];
     const draft = await buildFlow(B1, 'qwen3-coder:30b', [], [], { types, plan: GOOD as BuildPlan });
     expect(draft.plan).toEqual(GOOD);
-    expect(draft.stages?.filter((s) => s.stage === 'one-shot')).toHaveLength(1);
-    expect(draft.stages?.[0]).toMatchObject({ stage: 'one-shot', inputTokens: 1234, outputTokens: 56 });
-    expect(draft.stages?.[0].promptChars).toBeGreaterThan(1000);
-    const withPlan = sent(0);
-    expect(withPlan).toContain('Build exactly these steps');
-    expect(withPlan).toContain('s2: 2. Read new Linear issues labelled bug (linear.linear)');
+    expect(draft.nodes.map((n) => n.key)).toEqual(GOOD.steps.map((s) => s.key));
+    expect(draft.stages?.filter((s) => s.stage === 'one-shot')).toHaveLength(0);
+    expect(draft.stages?.[0]).toMatchObject({ stage: 'node', step: 's1', inputTokens: 1234, outputTokens: 56 });
+    expect(draft.stages?.every((s) => s.stage === 'node' || s.stage === 'send-back')).toBe(true);
+    expect(draft.stages?.length).toBe(chats().length);
+    const staged = chats().length;
+    const linear = chats().findIndex((_, i) => sent(i).includes('Read new Linear issues labelled bug'));
+    expect(linear).toBeGreaterThanOrEqual(0);
+    expect(sent(linear)).toContain('linear.linear');
+    expect(sent(linear)).not.toContain('messaging.slack');
     // The same ask without a plan sends the whole catalog.
     queue = [{ text: buildReply(['core.manualTrigger']) }];
     const whole = await buildFlow(B1, 'qwen3-coder:30b', [], [], { types });
     expect(whole.plan).toBeUndefined();
     expect(whole.stages?.[0].stage).toBe('one-shot');
-    const sizes = chats().map((_, i) => sent(i).length);
     const wholeSize = Math.max(...chats().map((_, i) => (sent(i).includes('Node catalog:\\n') ? sent(i).length : 0)));
-    expect(sizes[0]).toBeLessThan(wholeSize / 3);
+    expect(wholeSize).toBeGreaterThan(0);
+    for (let i = 0; i < staged; i++) expect(sent(i).length).toBeLessThan(wholeSize / 3);
   });
 
   it('is refused by the build route when the plan has a type the workflow cannot use', async () => {
@@ -302,7 +311,7 @@ describe('a build with a plan', () => {
     expect(ok.status).toBe(200);
     const { draft } = (await ok.json()) as { draft: { plan: BuildPlan; stages: Array<{ stage: string }> } };
     expect(draft.plan.steps).toHaveLength(5);
-    expect(draft.stages[0].stage).toBe('one-shot');
+    expect(draft.stages[0].stage).toBe('node'); // SB14: a plan builds one call per step
     // One row per call, however many it took (a node left empty is sent back once).
     expect(rows()).toEqual(draft.stages.map(() => ({ surface: 'spotlight', purpose: 'answer' })));
   });

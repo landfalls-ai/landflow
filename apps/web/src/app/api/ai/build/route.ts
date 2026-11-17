@@ -6,6 +6,7 @@ import { allowedTypes } from '@/lib/server/assistant/scope';
 import { describeAgents } from '@/lib/shared/agent-brief';
 import { describeTeams } from '@/lib/shared/agent-teams';
 import { buildFlow } from '@/lib/server/flow-builder';
+import { CONNECTION_TYPES } from '@landflow/protocol'; // SB14:
 import { assistantScope, isUsageCapError, runInUsageScope } from '@/lib/server/ai-usage'; // SB19:
 import { resolveSpotlightModel } from '@/lib/server/assistant/models-list'; // SB19:
 import { currentPrincipal } from '@/lib/server/auth/guard'; // SB19:
@@ -17,6 +18,7 @@ import { PlanSchema } from './plan-schema'; // SB13:
 
 export const dynamic = 'force-dynamic';
 
+// SB13: a plan the person agreed to (SB13's `BuildPlan`); SB14: it builds stage 2, one call per step.
 const Body = z.object({ prompt: z.string().trim().min(3).max(2000), model: z.string().max(100).optional(), workflowId: z.string().max(64).optional(), plan: PlanSchema.optional() /* SB13: */ });
 
 /** POST { prompt, workflowId? } → a validated flow draft from the local model, guarded as the chat guards a proposal. */
@@ -39,7 +41,9 @@ export const POST = handler(async (request: Request) => {
     const { plan } = parsed.data;
     if (plan) {
       const offered = new Map(types.map((t) => [t.type, t]));
-      const problems = [...planProblems(plan, new Set(offered.keys()), (type) => offered.get(type)?.descriptor.kind === 'trigger'), ...subnodeProblems(plan, (type) => offered.get(type))];
+      // SB14: an attached step names a sub-node connection (never `main`).
+      const attachProblems = plan.steps.flatMap((s) => (s.attach && (s.attach === 'main' || !(CONNECTION_TYPES as readonly string[]).includes(s.attach)) ? [{ step: s.key, problem: `“${s.attach}” is not a sub-node connection` }] : []));
+      const problems = [...planProblems(plan, new Set(offered.keys()), (type) => offered.get(type)?.descriptor.kind === 'trigger'), ...subnodeProblems(plan, (type) => offered.get(type)), ...attachProblems];
       if (problems.length) return error(`The plan cannot be built: ${problems.map((p) => `${p.step ? `${p.step}: ` : ''}${p.problem}`).join('; ')}`, 400);
     }
     const draft = await runInUsageScope(scope, () => buildFlow(parsed.data.prompt, picked.model, teams, agents, { types, ...(plan && { plan }) /* SB13: */ }));
