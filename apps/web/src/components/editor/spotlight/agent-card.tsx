@@ -6,7 +6,7 @@
  * it) or Dismiss. Created, it is a draft with a link to its page.
  */
 import { useState } from 'react';
-import { Check, ExternalLink, Loader2 } from 'lucide-react';
+import { Check, ChevronDown, ExternalLink, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { knowledgeLine, publishLine, smokeLine, type AgentCard as AgentCardData } from '@/lib/shared/agent-card'; // AG04: publishLine
 import type { AgentConfig } from '@/lib/shared/agents';
@@ -109,9 +109,10 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
           <Row label="Knowledge">
             <span data-testid="agent-knowledge" className={cn(card.knowledgeSetup.problem || card.knowledgeSetup.state === 'failed' ? 'text-rd' : card.knowledgeSetup.state === 'indexed' && 'text-gn')}>{knowledgeLine(card.knowledgeSetup)}</span>
             {card.knowledgeSetup.files && card.knowledgeSetup.files.length > 0 && (
-              <details data-testid="agent-knowledge-files" className="mt-0.5">
-                <summary className="inline-flex min-h-5 cursor-pointer text-[11.5px] font-semibold text-ac hover:underline max-md:min-h-9 max-md:items-center">
+              <details data-testid="agent-knowledge-files" className="group mt-0.5">
+                <summary className="inline-flex min-h-5 cursor-pointer items-center gap-0.5 text-[11.5px] font-semibold text-ac hover:underline max-md:min-h-9">
                   {card.knowledgeSetup.fileCount ?? card.knowledgeSetup.files.length} file{(card.knowledgeSetup.fileCount ?? card.knowledgeSetup.files.length) === 1 ? '' : 's'}
+                  <ChevronDown className="size-3 transition-transform group-open:rotate-180 motion-reduce:transition-none" />
                 </summary>
                 <ul className="mt-0.5 space-y-0.5 text-t2">
                   {card.knowledgeSetup.files.map((f) => (
