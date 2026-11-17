@@ -1712,7 +1712,8 @@ export function scrubSecrets(text: string): string {
     // 'key-' only with a digit in what follows: an ordinary word such as key-value_pairs is not a key
     .replace(/\bkey-(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{8,}/g, '…')
     .replace(/\bAIza[A-Za-z0-9_-]{20,}/g, '…')
-    .replace(/\b[a-z]{2,4}_(?=[A-Za-z0-9]*[A-Z0-9])[A-Za-z0-9]{16,}/g, '…')
+    // a provider's request and message ids (req_…, msg_…) stay: they are what you quote to its support
+    .replace(/\b(?!(?:req|msg)_)[a-z]{2,4}_(?=[A-Za-z0-9]*[A-Z0-9])[A-Za-z0-9]{16,}/g, '…')
     .replace(/\/\/[^/\s:@]+:[^/\s@]+@/g, '//…@');
 }
 

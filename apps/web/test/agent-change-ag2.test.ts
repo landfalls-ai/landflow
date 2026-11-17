@@ -459,6 +459,12 @@ describe('scrubSecrets, the shapes that leaked', () => {
     expect(designFailure(new Error(`429 usage limit: ${text}`))).not.toContain(secret);
   });
 
+  it('keeps a provider request id', async () => {
+    const { scrubSecrets } = await import('@/lib/server/assistant/architect');
+    const text = 'rate limited (request req_011CabcDEF1234567890xyz, message msg_01ABCdef234567890ghijk)';
+    expect(scrubSecrets(text)).toBe(text);
+  });
+
   it('leaves ordinary words alone', async () => {
     const { scrubSecrets } = await import('@/lib/server/assistant/architect');
     const plain = 'the key-value_pairs and the some_snake_case_name failed; a key-store is down';
