@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils';
 import { useConnectionIcon } from '../run-trace/connections';
 import { NodeIcon } from '../ui/icon';
 
-// The band must stay short: sub-nodes are placed 200 canvas px below a node, so the tile, the slot labels and the '+' buttons have to end above that.
+// The band must stay short: sub-nodes are placed 200 canvas px below a node, so the tile (at most ~140 px with this band), the slot labels and the '+' buttons (~50 px) have to end above that.
 const MAX_TOOL_ROWS = 2;
 
 export interface AgentConnectionsAnswer {
@@ -151,7 +151,7 @@ export function AgentBand({ agentId, data, wired, lead }: { agentId: string; dat
   return (
     <div
       data-agent-band={agentId}
-      className="nodrag nopan mx-3 mb-3 rounded-lg border border-dashed border-hair bg-wl px-1.5 pb-1.5 pt-1 text-[10.5px] text-t2"
+      className="nodrag nopan mx-3 mb-2 rounded-lg border border-dashed border-hair bg-wl px-1.5 pb-1.5 pt-1 text-[10.5px] text-t2"
       aria-label={`What ${who} is connected to`}
     >
       <div className="mb-0.5 flex items-center justify-between gap-2 px-0.5 text-[9.5px] uppercase tracking-wide text-t3">
@@ -181,7 +181,7 @@ export function AgentBand({ agentId, data, wired, lead }: { agentId: string; dat
             <span className="min-w-0">
               {view.model.project ? <span className="block truncate">project default</span> : null}
               <span className={cn('block break-words', view.model.replacedBy ? 'truncate line-through opacity-70' : 'line-clamp-2', view.model.project && 'text-t3', !view.model.name && !view.model.replacedBy && 'text-t3')}>{view.model.name ?? (view.model.replacedBy ? '' : 'no model')}</span>
-              {view.model.replacedBy && <span className="block line-clamp-2 break-words text-t3">replaced by {view.model.replacedBy}</span>}
+              {view.model.replacedBy && <span className="block truncate text-t3" title={`replaced by ${view.model.replacedBy} in this flow`}><span aria-hidden>→ {view.model.replacedBy}</span><span className="sr-only">replaced by {view.model.replacedBy}</span></span>}
             </span>
           </Row>
         </div>
@@ -189,7 +189,7 @@ export function AgentBand({ agentId, data, wired, lead }: { agentId: string; dat
           <Row label={`${who}: ${slot('memory')} ${view.memory.replacedBy ? `replaced by ${view.memory.replacedBy}` : view.memory.text}`} title={view.memory.replacedBy ? `${view.memory.text} (replaced by ${view.memory.replacedBy} in this flow)` : view.memory.text} href={agentLink(agentId, 'memory')}>
             <span className="min-w-0">
               <span className={cn('break-words', view.memory.replacedBy ? 'block truncate line-through opacity-70' : 'line-clamp-2')}>{view.memory.text}</span>
-              {view.memory.replacedBy && <span className="block line-clamp-2 break-words text-t3">replaced by {view.memory.replacedBy}</span>}
+              {view.memory.replacedBy && <span className="block truncate text-t3" title={`replaced by ${view.memory.replacedBy} in this flow`}><span aria-hidden>→ {view.memory.replacedBy}</span><span className="sr-only">replaced by {view.memory.replacedBy}</span></span>}
             </span>
           </Row>
         </div>

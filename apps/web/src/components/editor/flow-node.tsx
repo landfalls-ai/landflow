@@ -157,7 +157,6 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
       if (resumed) useEditor.getState().finishRun();
     }
   };
-  const team = useTeamTile(teamId, live, teamId && !live && !running ? activityOfRuns(runs) : undefined, { ...(executionId && { executionId }), ...(asked && { waiting: asked }), ...(asked?.approval && { onDecide: decideInEditor }), newTab: true, idleRoster: true });
   // AG12: what the agent (a team's lead) is connected to, under the node's name; the wired Chat Model, Memory and tools come from the canvas, so wiring shows before a save.
   const wired = useEditor(
     useShallow((s) => {
@@ -173,6 +172,7 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
   const leads = useTeamLeads(wf.type === 'core.runTeam' ? [wf] : undefined);
   const bandAgent = wf.type === 'core.messageAgent' && typeof wf.parameters.agentId === 'string' && wf.parameters.agentId && !wf.parameters.agentId.includes('{{') ? wf.parameters.agentId : wf.type === 'core.runTeam' ? leads[String(wf.parameters.teamId)] : undefined;
   const bandData = useAgentConnections(bandAgent, workflowId || undefined, id);
+  const team = useTeamTile(teamId, live, teamId && !live && !running ? activityOfRuns(runs) : undefined, { ...(executionId && { executionId }), ...(asked && { waiting: asked }), ...(asked?.approval && { onDecide: decideInEditor }), newTab: true, idleRoster: bandAgent && bandData ? 'compact' : true });
   const compact = isCompact(info?.descriptor, wf.parameters, asTool);
   // Only a selected node shows its toolbar; its actions are read when it renders (they follow disabled, breakpoint, running).
   const actions = selected ? nodeActions(id) : undefined;

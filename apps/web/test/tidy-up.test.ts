@@ -48,9 +48,9 @@ describe('tidy up', () => {
     useEditor.getState().load(flow, []);
     useEditor.setState((s) => ({ nodes: s.nodes.map((n) => (n.id === 'yes' ? { ...n, measured: { width: 300, height: 185 } } : n)) }));
     useEditor.getState().tidyUp();
-    expect(pos('t2').y).toBe(pos('yes').y + 185 + 48);
-    // A short parent keeps the 200px.
-    useEditor.setState((s) => ({ nodes: s.nodes.map((n) => (n.id === 'yes' ? { ...n, measured: { width: 300, height: 150 } } : n)) }));
+    expect(pos('t2').y).toBe(pos('yes').y + 185 + 64); // ag3 fix: the ~50 px label block, then the sub-node's handle
+    // A parent that fits the 200px (the banded tile is ~131) keeps it.
+    useEditor.setState((s) => ({ nodes: s.nodes.map((n) => (n.id === 'yes' ? { ...n, measured: { width: 300, height: 131 } } : n)) }));
     useEditor.getState().tidyUp();
     expect(pos('t2').y).toBe(pos('yes').y + 200);
   });

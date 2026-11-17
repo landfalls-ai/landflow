@@ -372,8 +372,8 @@ export function NodeTile(props: NodeTileProps) {
   const width = wide ? Math.max(WIDE_TILE, slotsWidth(aiIn), banded ? BAND_TILE : 0) : TILE;
   const height = Math.max(TILE, Math.max(mainIn.length, mainOut.length) * 30 + 22);
   const grows = wide && (Boolean(live?.body) || banded);
-  // A banded tile's head is shorter so the band fits above the 200 px where wired sub-nodes sit.
-  const headHeight = banded ? Math.min(height, 56) : height;
+  // A banded tile stays at or under ~140 canvas px (a team's idle line included): its slot labels and + buttons add ~50 more, and wired sub-nodes sit 200 px below the tile's top.
+  const headHeight = banded ? Math.min(height, 48) : height;
   const head = wide && live?.head ? (
     live.head
   ) : (
