@@ -98,7 +98,8 @@ dialog's and Spotlight's design) is made to a brief in code (`architect.ts`, mar
 - **Least privilege.** A node tool is kept only for an app the request names (its name, plugin id or a specific keyword:
   "pull requests" names GitHub) and a write only when the request asks for one (post, send, comment, create, update,
   delete, merge, notify …; "create an agent" is not one); an agent delegation (a Run an Agent or Run a Team node, or
-  an `agent` tool) only when it asks to hand work over (or names that agent). What is left out is listed under "Left
+  an `agent` tool) only when it asks to hand work over (or names that agent); a knowledge base only when it says what the agent answers
+  from (docs, documents, a wiki, policies …: `KNOWLEDGE_ASK`). What is left out is listed under "Left
   out" with its reason ("Slack: the request never asks for it (it would change things there)"). A tool the model left
   on the node's defaults, which would write, becomes a read when the request doesn't ask to write (the pull request
   resource and its first read operation for "pull requests"). The prompt says "the fewest tools; read before write".
