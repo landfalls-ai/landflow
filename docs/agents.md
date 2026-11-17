@@ -179,8 +179,16 @@ first: Ollama's, the assistant's own model first, then those that call tools; th
 `list_knowledge_bases` gives the knowledge bases other agents you can read already search (one per store and
 collection, with who uses them). A `knowledge` tool reuses one of those, or starts an empty one under a new collection
 name (SQLite store, embedded with a local embeddings model: `nomic-embed-text`, else `mxbai-embed-large`, else any
-`*embed*` model) and adds "add documents to the new … knowledge base" to what you still have to do. With no embeddings
-model pulled, the draft gets no knowledge base and says why.
+`*embed*` model) and adds "add documents to the new … knowledge base" to what you still have to do. A new knowledge
+base can always be started: with no embeddings model pulled (Ollama off) it is searched by keywords (Landflow's own
+BM25, embeddings provider `none`; see [Knowledge bases](#building-an-agent)), so it is never dropped for want of a
+model. Spotlight's design (`POST /api/agents/design`) goes further ([assistant.md](assistant.md#agents-and-teams)): a
+folder the ask names ("in the folder runbooks") becomes the new knowledge base's source (collection = the folder's name,
+`indexedFrom` = the folder), the "add documents" need is replaced by nothing because Create indexes the folder, and the
+instructions get one rule ("Answer from what the search returns, and name the file (its `source`) each answer comes
+from; if it finds nothing, say so."); an ask that says what it answers from and names no folder, with no knowledge base
+that fits, gets no knowledge base and one need asking which folder (nothing is invented, nothing is indexed). The Agent
+architect dialog keeps its own behaviour (an empty new knowledge base and the need to add documents).
 
 **For Spotlight.** When Spotlight proposes a new agent ([newAgent](assistant.md#agents-and-teams)), the editor calls
 `POST /api/agents/design` and the architect designs it without a conversation (`designAgent`), from what is written (what
@@ -394,7 +402,16 @@ absent from an agent without any). Publishing needs a model, and a persona part 
     read, split, embedded and added to the collection (metadata `documentId`, `fileName`, `page`,
     `chunk`), and a document can be deleted again (`GET/POST/DELETE
     /api/agents/:id/knowledge/:toolId/documents`). The store must be one that supports deletion
-    by metadata (all three do). The timeline shows searches with
+    by metadata (all three do). **Keyword search** (wave ag3): embeddings provider **Keyword search (built in, no
+    model)** (`embeddings: { provider: 'none', model: 'bm25' }`, search mode `keyword`) stores each passage with a
+    one-number vector and ranks by Landflow's BM25 over the stored passages: no model, no key, no call, but it finds
+    the words in the question, not their meaning. SQLite and in-memory stores only: a `none` knowledge base on
+    Postgres PGVector is refused ("Postgres needs real vectors"). **Indexing a folder**: `POST
+    /api/agents/:id/knowledge/:toolId/folder { folder }` reads every Markdown, text, PDF, DOCX, HTML, CSV or JSON file
+    under a folder of the files directory (`LANDFLOW_FILES_DIR`; recursive, dotfiles and symlinks that lead out are
+    skipped, at most 200 files of 25 MB), each chunk's metadata gaining `source` (its path relative to the files
+    directory, `runbooks/disk-full.md`); indexing again replaces a file's chunks, never doubles them, and the tool's
+    `indexedFrom` records the folder (the dialog shows "Indexed from runbooks"). The timeline shows searches with
     the vector store's icon. In the workflow editor the same collection is reachable from an AI
     Agent with the vector store in **Retrieve Documents (As Tool)** mode. A knowledge base can
     also come [from a plugin](#knowledge-bases-from-a-plugin) (Clickland), with nothing to upload.

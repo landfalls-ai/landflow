@@ -189,12 +189,13 @@ export async function search(searcher: Searcher, query: string, topK: number): P
   const { store, collection, embeddings, reranker, options, signal } = searcher;
   const k = Math.max(1, Math.floor(topK));
   const candidates = Math.max(k, Number(options.candidates) || 20);
-  const vector = await embeddings.embedQuery(text, signal);
+  const keyword = options.searchMode === 'keyword' || embeddings.provider === 'none'; // AG13: keyword search never embeds the query
+  const vector = keyword ? [] : await embeddings.embedQuery(text, signal);
   const found = await searchStore(store, collection, {
     query: text,
     vector,
     topK: reranker ? candidates : k,
-    mode: options.searchMode === 'hybrid' ? 'hybrid' : 'vector',
+    mode: keyword ? 'keyword' : options.searchMode === 'hybrid' ? 'hybrid' : 'vector',
     candidates,
     ...(metadataFilter(options.metadataFilter) && { filter: metadataFilter(options.metadataFilter) }),
   });

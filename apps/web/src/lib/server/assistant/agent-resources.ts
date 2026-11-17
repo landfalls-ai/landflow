@@ -9,6 +9,7 @@ import { agentStore } from '../agents/store';
 import { modelOptions } from '../agents/models';
 import { ollamaUrl } from '../config';
 import { canResource, type Actor } from '../projects';
+import { KEYWORD_EMBEDDINGS } from './knowledge-setup';
 import { DEFAULT_ASSISTANT_MODEL } from './model';
 
 export interface ModelChoice extends AgentModel {
@@ -21,7 +22,7 @@ export interface AgentResources {
   models: ModelChoice[];
   /** Knowledge bases other agents search, one per store and collection. */
   knowledge: Array<Omit<KnowledgeBaseToolConfig, 'id'> & { usedBy: string[] }>;
-  /** The embeddings a new knowledge base gets, from a local embeddings model; undefined when none is pulled. */
+  /** The embeddings a new knowledge base gets: a local embeddings model, else keyword search (AG13: provider `none`). */
   embeddings?: KnowledgeBaseToolConfig['embeddings'];
 }
 
@@ -85,8 +86,9 @@ export async function agentResources(actor: Actor): Promise<AgentResources> {
 
   const tags = await ollamaTags();
   const pick = EMBEDDINGS.map((e) => ({ e, name: tags.find((t) => e.match.test(t)) })).find((x) => x.name);
-  const embeddings = pick ? { provider: 'ollama' as const, model: pick.name!, ...(pick.e.queryPrefix && { queryPrefix: pick.e.queryPrefix }) } : undefined;
-  return { models, knowledge: [...knowledge.values()], ...(embeddings && { embeddings }) };
+  // AG13: with no embeddings model a new knowledge base is searched by keywords (built in), never dropped for want of a model
+  const embeddings: KnowledgeBaseToolConfig['embeddings'] = pick ? { provider: 'ollama' as const, model: pick.name!, ...(pick.e.queryPrefix && { queryPrefix: pick.e.queryPrefix }) } : KEYWORD_EMBEDDINGS;
+  return { models, knowledge: [...knowledge.values()], embeddings };
 }
 
 /** A model the architect wrote ("ollama/qwen3-coder:30b", or just its name) as one of `models`; else the first. */

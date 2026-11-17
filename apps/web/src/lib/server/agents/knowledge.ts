@@ -3,17 +3,21 @@
  * offered to the model as a `search_…` tool. The same store code as the vector store nodes, so a
  * workflow that inserts documents into a collection fills the knowledge base of that name.
  */
+import { readdir, readFile, stat } from 'node:fs/promises';
+import { join, relative, sep } from 'node:path';
 import { nanoid } from 'nanoid';
 import { toToolName, type Embeddings } from '@landflow/engine';
 import type { VectorKnowledgeBaseConfig as KnowledgeBaseToolConfig } from '../../shared/agents';
 import { credentials } from '../credentials/vault';
 import { openAiConnection } from '../nodes/models';
+import { resolveInFilesDir } from '../nodes/files';
 import { pgConfig, search } from '../nodes/vector-stores';
 import { registry } from '../plugins/registry';
 import { ollamaEmbeddings, openAiCompatibleEmbeddings } from '../rag/embeddings';
-import { fileDocuments, type FileInput } from '../rag/files';
+import { fileDocuments, fileKind, type FileInput } from '../rag/files';
 import { recursiveCharacterSplit } from '../rag/splitters';
 import { insertDocuments, MemoryVectorStore, PgVectorStore, SqliteVectorStore, type VectorStore } from '../rag/stores';
+import type { JsonObject } from '@landflow/protocol';
 import type { BuiltTool } from './tools';
 import { targetOfKnowledge } from './tool-target'; // AG14:
 import { ollamaUrl } from '../config';
@@ -34,6 +38,8 @@ function credentialFor(nodeType: string, name: string, ref: KnowledgeBaseToolCon
 }
 
 function openStore(config: KnowledgeBaseToolConfig): VectorStore {
+  // AG13: keyword search has no real vectors, and Postgres needs them
+  if (config.store === 'pgvector' && config.embeddings?.provider === 'none') throw new Error('Keyword search (no embeddings model) works with the SQLite and in-memory stores only: Postgres needs real vectors. Pick an embeddings model');
   if (config.store === 'memory') return new MemoryVectorStore();
   if (config.store === 'sqlite') return new SqliteVectorStore();
   return new PgVectorStore(pgConfig(credentialFor(KNOWLEDGE_STORE_NODE.pgvector, 'postgres', config.credential)), config.tableName?.trim() || 'landflow_vectors');
@@ -41,6 +47,8 @@ function openStore(config: KnowledgeBaseToolConfig): VectorStore {
 
 function embeddingsFor(config: KnowledgeBaseToolConfig['embeddings']): Embeddings {
   const dimensions = Number(config.dimensions) > 0 ? Number(config.dimensions) : undefined;
+  // AG13: keyword search stores one dimension per passage and makes no call: the stores' dimension checks hold, and nothing is embedded
+  if (config.provider === 'none') return { provider: 'none', model: 'bm25', embedDocuments: async (texts) => texts.map(() => [0]), embedQuery: async () => [0] };
   if (config.provider === 'openai') {
     return openAiCompatibleEmbeddings(openAiConnection(credentialFor(OPENAI_EMBEDDINGS_NODE, 'openAiApi', config.credential), config.credential?.id), {
       model: config.model || 'text-embedding-3-small',
@@ -121,13 +129,13 @@ export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
  * chunks by the recursive splitter, embedded with the base's embeddings model and stored in its collection with
  * `documentId`, `fileName`, `page` (where known) and `uploadedAt` metadata.
  */
-export async function addKnowledgeDocument(config: KnowledgeBaseToolConfig, file: FileInput): Promise<KnowledgeDocument> {
+export async function addKnowledgeDocument(config: KnowledgeBaseToolConfig, file: FileInput, extra: JsonObject = {}): Promise<KnowledgeDocument> { // AG13: `extra` (`{ source }`) joins every chunk's metadata
   if (!config.collection?.trim()) throw new Error('The knowledge base has no collection');
   const store = openStore(config);
   const embeddings = embeddingsFor(config.embeddings);
   const documentId = `doc_${nanoid(10)}`;
   const uploadedAt = new Date().toISOString();
-  const documents = await fileDocuments(file, async (text) => recursiveCharacterSplit(text, { chunkSize: 1000, chunkOverlap: 200 }), { documentId, uploadedAt });
+  const documents = await fileDocuments(file, async (text) => recursiveCharacterSplit(text, { chunkSize: 1000, chunkOverlap: 200 }), { documentId, uploadedAt, ...extra });
   if (!documents.length) throw new Error(`${file.fileName ?? 'The file'} has no text to load (scanned PDFs need OCR first)`);
   const vectors = await embeddings.embedDocuments(documents.map((doc) => doc.pageContent));
   await insertDocuments(
@@ -176,4 +184,78 @@ export async function listKnowledgeDocuments(config: KnowledgeBaseToolConfig): P
 /** Remove one uploaded document (all its chunks); returns how many chunks went. */
 export function deleteKnowledgeDocument(config: KnowledgeBaseToolConfig, documentId: string): Promise<number> {
   return openStore(config).deleteWhere(config.collection.trim(), { documentId });
+}
+
+// ---------------------------------------------------------------------------
+// AG13: indexing a folder of the files directory
+// ---------------------------------------------------------------------------
+
+/** At most this many files of a folder are indexed (the rest are not listed). */
+export const MAX_FOLDER_FILES = 200;
+
+/**
+ * The files of `folder` (relative to the files directory) the loaders read, as paths relative to the files directory
+ * (`runbooks/disk-full.md`), sorted, recursive, skipping dotfiles and anything a symlink leads out of the files directory.
+ * Lists only; never reads a file. Throws when the folder is outside the files directory or is not a folder.
+ */
+export async function folderFiles(folder: string): Promise<{ root: string; files: string[]; truncated: boolean }> {
+  const { root, path } = await resolveInFilesDir(folder);
+  const top = await stat(path).catch(() => undefined);
+  if (!top?.isDirectory()) throw new Error(`No folder named ${folder} in the files directory`);
+  const files: string[] = [];
+  let truncated = false;
+  const walk = async (dir: string): Promise<void> => {
+    const entries = (await readdir(dir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const full = join(dir, entry.name);
+      const rel = relative(root, full).split(sep).join('/');
+      try {
+        await resolveInFilesDir(rel); // a symlink that leads out of the files directory throws here
+        const info = await stat(full);
+        if (info.isDirectory()) await walk(full);
+        else if (info.isFile() && fileKind({ bytes: new Uint8Array(0), fileName: entry.name })) {
+          if (files.length >= MAX_FOLDER_FILES) truncated = true;
+          else files.push(rel);
+        }
+      } catch {
+        // skipped: outside the files directory, or gone since it was listed
+      }
+    }
+  };
+  await walk(path);
+  return { root, files, truncated };
+}
+
+export interface FolderIndex {
+  documents: number;
+  chunks: number;
+  failed: Array<{ file: string; error: string }>;
+}
+
+/**
+ * Index every file of `folder` into the knowledge base, each chunk carrying `source` (the file's path relative to the
+ * files directory). Chunks of a file indexed before (same `source`) are removed first, so indexing twice replaces and
+ * never duplicates.
+ */
+export async function indexFolder(config: KnowledgeBaseToolConfig, folder: string): Promise<FolderIndex> {
+  const { files } = await folderFiles(folder);
+  const store = openStore(config);
+  const collection = config.collection.trim();
+  const result: FolderIndex = { documents: 0, chunks: 0, failed: [] };
+  for (const file of files) {
+    try {
+      const { path } = await resolveInFilesDir(file);
+      const info = await stat(path);
+      if (info.size > MAX_UPLOAD_BYTES) throw new Error(`Too large (${Math.round(info.size / 1024 / 1024)} MB; the limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB)`);
+      const bytes = new Uint8Array(await readFile(path));
+      await store.deleteWhere(collection, { source: file });
+      const added = await addKnowledgeDocument(config, { bytes, fileName: file }, { source: file });
+      result.documents++;
+      result.chunks += added.chunks;
+    } catch (caught) {
+      result.failed.push({ file, error: (caught as Error).message.slice(0, 300) });
+    }
+  }
+  return result;
 }

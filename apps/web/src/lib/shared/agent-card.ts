@@ -4,9 +4,10 @@
  * guardrails in words, test cases), the smoke test's result (SB18, decision D3) and, on an empty canvas, the starter
  * flow that runs it (SB16, decision D5).
  *
- * Contract file: backbone/contracts/ag2/agent-card.ts (wave ag2, owner AG10, nobody copies it this wave; ag1's was
- * backbone/contracts/ag1/agent-card.ts, owner AG02; sb3's backbone/contracts/sb3/agent-card.ts, owner SB16), copied byte
- * for byte to apps/web/src/lib/shared/agent-card.ts. Each wave only adds optional fields and helpers or changes what a
+ * Contract file: backbone/contracts/ag3/agent-card.ts (wave ag3, owner AG13, nobody copies it this wave; ag2's was
+ * backbone/contracts/ag2/agent-card.ts, owner AG10; ag1's backbone/contracts/ag1/agent-card.ts, owner AG02; sb3's
+ * backbone/contracts/sb3/agent-card.ts, owner SB16), copied byte for byte to apps/web/src/lib/shared/agent-card.ts.
+ * Each wave only adds optional fields and helpers or changes what a
  * helper returns, so every earlier caller still type-checks. Change it in the contracts folder first (the owner only),
  * then copy. Types and pure helpers only: no import, no zod (the browser loads it), no I/O.
  *
@@ -38,6 +39,24 @@
  * Wave ag2 adds (AG10): the starter flow's Run an Agent step asks in the editor's chat (`toolApprovals: 'askInChat'`): a tool
  * that needs approval waits for the person's Approve in the chat, in the editor's chat runs only (every other run refuses
  * it, as before); a starter flow laid out before wave ag2 keeps refusing.
+ *
+ * Wave ag3 adds (AG13): the knowledge an agent answers from, set up by the design and by Create.
+ * - The design body's `knowledgeFolder` (0–200 characters: a folder the ask named, relative to the host's files directory,
+ *   `LANDFLOW_FILES_DIR`, default `<data dir>/files`; never an absolute path or one with `..`). The preview answer adds
+ *   `knowledge` (`AgentKnowledgeSetup`, without `state`): the knowledge base the agent gets (new or existing), the folder and
+ *   the files in it that can be indexed (listed, not read), and how it is searched: by an embeddings model this host has
+ *   (`search: 'vector'`), or, with none (Ollama off, no OpenAI-compatible credential picked), by keywords: Landflow's own
+ *   BM25 over the stored passages (`search: 'keyword'`, embeddings provider `none`; no model call, no key, SQLite or
+ *   in-memory store only). A folder outside the files directory, or
+ *   one that does not exist, is never listed: `knowledge.problem` says why and the needs say what is left. No folder in the
+ *   ask: `knowledge` has no `folder` and the needs ask for one (nothing is invented, nothing indexed).
+ * - Create, after `POST /api/agents/import`: `POST /api/agents/:id/knowledge/:toolId/folder` `{ folder }` (AG13's route; the
+ *   caller must be able to update the agent) indexes every file of the folder that the loaders read (Markdown, text, PDF,
+ *   DOCX, HTML, CSV, JSON; at most 200 files and 25 MB each), each chunk's metadata `{ documentId, fileName, source,
+ *   uploadedAt }` with `source` the file's path relative to the files directory (`runbooks/disk-full.md`), and answers
+ *   200 `{ documents, chunks, failed: [{ file, error }] }`; 400 for a folder outside the files directory, 404 for an agent or
+ *   knowledge base the caller cannot see. The card keeps the preview's `knowledge` as `AgentCard.knowledgeSetup` and follows
+ *   the indexing in its `state` and `indexed`; the smoke test runs after the indexing.
  */
 
 /** A test case the brief proposes for the eval gate: what a person would send, and what a right answer says. */
@@ -79,6 +98,55 @@ export interface AgentSmoke {
   ms?: number;
   /** Wave ag1 (AG05): every tool call the run made, in order; absent before ag1 and when it made none. */
   tools?: AgentSmokeTool[];
+}
+
+/**
+ * Wave ag3 (AG13): the knowledge base a card sets up, as the Knowledge row shows it: what will be indexed, from where, with
+ * which embeddings model; after Create, how the indexing went.
+ */
+export interface AgentKnowledgeSetup {
+  /** The knowledge base's collection. */
+  collection: string;
+  /** It is one other agents already search (attached, nothing indexed into it unless a folder is given). */
+  existing: boolean;
+  /** The folder the ask named, relative to the host's files directory (`runbooks`); absent when the ask gave none. */
+  folder?: string;
+  /** The files of `folder` that can be indexed, relative to the files directory (`runbooks/disk-full.md`): at most 50 listed. */
+  files?: string[];
+  /** How many such files the folder holds in all (`files` may list fewer). */
+  fileCount?: number;
+  /** How it is searched: `vector` by an embeddings model, `keyword` by Landflow's built-in BM25 (no embeddings model, no key). */
+  search?: 'vector' | 'keyword';
+  /** In words: the embeddings model, `provider/model` (`ollama/nomic-embed-text:latest`), or `keyword search (BM25, built in)`. */
+  embeddings?: string;
+  /** Why the folder cannot be used, in one sentence ("runbooks is not in the files directory", "no folder named runbooks"). */
+  problem?: string;
+  /** After Create: indexing, done, or failed (`error`). */
+  state?: 'indexing' | 'indexed' | 'failed';
+  /** After the indexing: documents and chunks stored, and the files that failed with why. */
+  indexed?: { documents: number; chunks: number; failed: Array<{ file: string; error: string }> };
+  error?: string;
+}
+
+/**
+ * Wave ag3 (AG13): the Knowledge row in words: "runbooks/ · 4 files · keyword search (BM25, built in)", then "indexed 4
+ * files, 9 passages" (or "indexing…", "indexing failed: …"); "no source given: say which folder it answers from" when the ask
+ * named none; the problem when the folder cannot be used.
+ */
+export function knowledgeLine(setup: AgentKnowledgeSetup | undefined): string {
+  if (!setup) return '';
+  const where = setup.folder ? `${setup.folder.replace(/\/+$/, '')}/` : setup.existing ? `the “${setup.collection}” knowledge base` : '';
+  if (setup.problem) return `${where ? `${where} · ` : ''}${setup.problem}`;
+  if (!setup.folder && !setup.existing) return 'no source given: say which folder it answers from';
+  const count = setup.fileCount ?? setup.files?.length;
+  const head = [where, count !== undefined && setup.folder ? `${count} file${count === 1 ? '' : 's'}` : '', setup.embeddings ?? ''].filter(Boolean).join(' · ');
+  if (setup.state === 'indexing') return `${head} · indexing…`;
+  if (setup.state === 'failed') return `${head} · indexing failed${setup.error ? `: ${setup.error}` : ''}`;
+  if (setup.state === 'indexed' && setup.indexed) {
+    const bad = setup.indexed.failed.length;
+    return `${head} · indexed ${setup.indexed.documents} file${setup.indexed.documents === 1 ? '' : 's'}, ${setup.indexed.chunks} passage${setup.indexed.chunks === 1 ? '' : 's'}${bad ? ` (${bad} failed)` : ''}`;
+  }
+  return head;
 }
 
 /** Wave ag1 (AG02): a tool the ask named that the agent did not get, and why, in one sentence ("no plugin online has Jira"). */
@@ -140,6 +208,8 @@ export interface AgentCard {
   changes?: string[];
   /** Wave ag1 (AG05): the publish after Create (or after Apply of a change), as it goes. */
   publish?: AgentPublish;
+  /** Wave ag3 (AG13): the knowledge base it answers from: what, from where, which embeddings, and the indexing after Create. `knowledge` (the collection) stays as before. */
+  knowledgeSetup?: AgentKnowledgeSetup;
 }
 
 /** The agent's row text for its smoke test: "tested, 1 of 1 passed", "test failed: <reason>", "not tested yet: <reason>". */
