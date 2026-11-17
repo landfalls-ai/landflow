@@ -1424,10 +1424,10 @@ function withSpecHints(draft: DraftResult, spec: AgentSpec, input: Pick<Architec
   };
   for (const wanted of spec.tools ?? []) {
     // toolsOf found several mail nodes for "email … to <address>": said, not guessed.
-    const several = /^(Send email): (several nodes match \(.*\), pick one)$/.exec(wanted);
+    const several = /^([^:]{2,40}): (several nodes match \(.*\), pick one)$/.exec(wanted);
     if (several) {
       // AG07: a draft that already has a node tool that sends mail needs no pick: the mail is sent.
-      const mails = tools.some((t) => { const d = t.type === 'node' ? types.find((x) => x.type === t.nodeType)?.descriptor : undefined; return Boolean(d) && /e-?mail|smtp|\bmail\b/i.test([d!.displayName, ...(d!.keywords ?? [])].join(' ')); });
+      const mails = several[1] === 'Send email' && tools.some((t) => { const d = t.type === 'node' ? types.find((x) => x.type === t.nodeType)?.descriptor : undefined; return Boolean(d) && /e-?mail|smtp|\bmail\b/i.test([d!.displayName, ...(d!.keywords ?? [])].join(' ')); });
       if (!mails) notAdded.push({ name: several[1], reason: several[2] });
       continue;
     }

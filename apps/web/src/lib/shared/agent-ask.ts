@@ -91,14 +91,11 @@ function names(message: string, name: string): boolean {
   return new RegExp(`(?<![\\w-])${body}(?![\\w-])`, 'i').test(message);
 }
 
-/** AG07: words a node's name shares with ordinary talk, so they never name it alone ("extract the text" is not Extract IOCs). */
-const COMMON_WORDS = new Set(['get', 'send', 'create', 'list', 'read', 'write', 'update', 'delete', 'extract', 'check', 'run', 'search', 'find', 'fetch', 'post', 'query', 'call', 'add', 'set', 'make', 'new', 'all', 'data', 'text', 'message', 'messages', 'file', 'item', 'items', 'tool', 'email', 'mail', 'alert', 'alerts', 'issue', 'issues', 'request', 'result', 'results', 'value', 'values', 'decode', 'encode', 'parse', 'convert', 'analyze', 'analyse']);
 const baseWord = (w: string) => w.toLowerCase().replace(/ies$/, 'y').replace(/s$/, '');
 
 /**
  * AG02: a plugin node of two or more words whose every word is in the message in some form, in any order ("decodes JWTs" names JWT Decode).
- * AG07: or whose one distinctive word is in the message as a whole word (an acronym in its name: IOCs, JWT, UUID, SQL; or a word no other catalog
- * node's name has), the plural folded: "pull out the IOCs" names Extract IOCs. A word two catalog nodes share ("Alert", "Email") names neither.
+ * AG07: or whose one distinctive word is in the message as a whole word (an acronym in its name: IOCs, JWT, UUID, SQL), the plural folded: "pull out the IOCs" names Extract IOCs. A word two catalog nodes share ("Alert", "Email") names neither.
  */
 function wordsNamed(message: string, entry: AskCatalogEntry, catalog: AskCatalogEntry[] = []): boolean {
   const words = entry.displayName.trim().split(/\s+/);
@@ -110,7 +107,7 @@ function wordsNamed(message: string, entry: AskCatalogEntry, catalog: AskCatalog
   const others = new Set(catalog.filter((c) => c !== entry && c.displayName !== entry.displayName).flatMap((c) => c.displayName.trim().split(/\s+/).map(baseWord)));
   return words.some((w) => {
     const acronym = /^[A-Z0-9]{2,}s?$/.test(w) && /[A-Z]/.test(w);
-    if (!acronym && (w.length < 5 || COMMON_WORDS.has(baseWord(w)))) return false;
+    if (!acronym) return false; // AG07: ordinary English never names a node alone ("makes a decision" is not Triage Decision)
     if (others.has(baseWord(w))) return false;
     const root = escape(w.replace(/s$/i, ''));
     return new RegExp(`(?<![\\w-])${root}(?:e?s)?(?![\\w-])`, 'i').test(message);

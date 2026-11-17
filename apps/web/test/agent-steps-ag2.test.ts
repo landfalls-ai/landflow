@@ -179,3 +179,46 @@ describe('a design with the ag1 run’s steps', () => {
     void agentStore;
   });
 });
+
+describe('ordinary English names no tool (AG07 review)', () => {
+  const scripted = (nodeTools: string) => {
+    const turns: Array<Record<string, unknown>> = [{ toolCalls: [{ id: 'd1', name: 'propose_design', input: { summary: 'Draft', role: 'Helper', name: 'Helper', instructions: 'Steps:\n1. Answer.', nodeTools } }] }, { text: 'Designed.' }];
+    return { provider: 'test', model: 'scripted', async generate(request: { system?: string }) {
+      if (typeof request.system === 'string' && request.system.startsWith('You write test cases')) return { text: 'Hello => A greeting\nWhat? => Reply\nOdd => Cannot help', toolCalls: [], stopReason: 'stop' as const };
+      return { text: '', toolCalls: [], stopReason: 'stop' as const, ...turns.shift() };
+    } };
+  };
+
+  it('"makes a decision", "house rules", "acknowledges every question", "details of a ticket" add no hint', () => {
+    const catalog = askCatalog(types);
+    for (const ask of ['Create an agent that makes a decision on who answers.', 'Create an agent that follows the house rules.', 'Create an agent that acknowledges every question politely.', 'Create an agent that gives the details of a ticket.']) {
+      expect(toolsOf(ask, catalog), ask).toEqual([]);
+    }
+  });
+
+  it('adds no tool to an agent whose ask only uses those words', async () => {
+    const ask = 'Create an agent that reads a support ticket, acknowledges every question politely and makes a decision on who should answer it.';
+    const result = await designAgent({ name: 'Helper', description: 'x', instructions: '', ask, tools: toolsOf(ask, askCatalog(types)) }, { types, actor: TEST_OWNER, model: scripted('none') as never });
+    expect(JSON.stringify(result.config.tools ?? [])).not.toMatch(/triageDecision|acknowledgeAlert/);
+    expect(result.notAdded).toEqual([]);
+  });
+});
+
+describe('an acronym two nodes share, on the card (AG07 review)', () => {
+  it('says "several nodes match" in Not added, and puts nothing in missing', async () => {
+    const extract = types.find((t) => t.descriptor.displayName === 'Extract IOCs')!;
+    const enrich: NodeTypeInfo = { ...extract, type: `${extract.type}Enrich`, descriptor: { ...extract.descriptor, displayName: 'IOC Enrich', keywords: ['threat'] } } as NodeTypeInfo;
+    const withEnrich = [...types, enrich];
+    const ask = 'Create an agent that triages an alert: pull out the IOCs and judge it.';
+    const tools = toolsOf(ask, askCatalog(withEnrich));
+    expect(tools.join(' ')).toMatch(/IOCs: several nodes match/);
+    const turns: Array<Record<string, unknown>> = [{ toolCalls: [{ id: 'd1', name: 'propose_design', input: { summary: 'Draft', role: 'Helper', name: 'Triager', instructions: 'Steps:\n1. Answer.', nodeTools: 'none' } }] }, { text: 'Designed.' }];
+    const model = { provider: 'test', model: 'scripted', async generate(request: { system?: string }) {
+      if (typeof request.system === 'string' && request.system.startsWith('You write test cases')) return { text: 'Hello => A greeting\nWhat? => Reply\nOdd => Cannot help', toolCalls: [], stopReason: 'stop' as const };
+      return { text: '', toolCalls: [], stopReason: 'stop' as const, ...turns.shift() };
+    } };
+    const result = await designAgent({ name: 'Triager', description: 'x', instructions: '', ask, tools }, { types: withEnrich, actor: TEST_OWNER, model: model as never });
+    expect(result.notAdded).toContainEqual({ name: 'IOCs', reason: expect.stringMatching(/^several nodes match \(.*Extract IOCs.*IOC Enrich.*\), pick one$/) });
+    expect(result.missing ?? []).toEqual([]);
+  });
+});
