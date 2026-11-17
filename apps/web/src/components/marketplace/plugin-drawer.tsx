@@ -13,9 +13,11 @@ import { cn } from '@/lib/utils';
 import { usePhone } from '@/lib/client/use-phone';
 import { api, ApiError } from '@/lib/client/api';
 import type { InstallConfirmation, InstalledPlugin, InstallResult, PluginDetail } from '@/lib/shared/marketplace';
+import { brandIcon, brandOfApp } from '@/lib/shared/brand-icons';
 import { Badge, Chip } from '../ui/badge';
 import { Button } from '../ui/button';
 import { CopyButton } from '../ui/copy-button';
+import { AppIcon } from '../ui/icon';
 import { SectionLabel } from '../ui/inputs';
 import { useDialogFocus } from '../ui/use-dialog-focus';
 import { UNSUPPORTED_LABEL } from './use-marketplace';
@@ -106,6 +108,8 @@ export function PluginDrawer({ marketplaceId, name, onClose, onChanged }: { mark
   };
 
   const plugin = detail?.plugin;
+  // An app's plugin shows the app's real mark (its running node plugin's own icon is in the Explore tile).
+  const appBrand = brandOfApp(plugin?.name ?? name) ?? brandOfApp(plugin?.displayName);
   const runnable = detail && (detail.agents.length > 0 || detail.skills.length > 0 || detail.nodePlugin || detail.flows.length > 0);
 
   return createPortal(
@@ -119,9 +123,13 @@ export function PluginDrawer({ marketplaceId, name, onClose, onChanged }: { mark
         className="flex h-full w-[560px] max-w-full flex-col border-l border-hair bg-sf shadow-pop animate-slide-left max-md:h-dvh max-md:w-full max-md:border-l-0 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)]"
       >
         <header className="flex items-start gap-3 border-b border-hair px-5 py-4">
-          <span className="grid size-9 shrink-0 place-items-center rounded-[28%] border border-hair bg-acdim text-ac">
-            <Package className="size-[18px]" />
-          </span>
+          {appBrand ? (
+            <AppIcon icon={brandIcon(appBrand)} size={36} />
+          ) : (
+            <span className="grid size-9 shrink-0 place-items-center rounded-[28%] border border-hair bg-acdim text-ac">
+              <Package className="size-[18px]" />
+            </span>
+          )}
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-[15px] font-semibold text-t1">{plugin?.displayName ?? name}</h2>
             <p className="truncate text-[12px] text-t3">

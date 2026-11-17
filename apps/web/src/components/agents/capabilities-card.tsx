@@ -40,7 +40,7 @@ import { PluginsCard } from './plugins-card';
 import { SkillsCard } from './skills-card';
 import { CAPABILITY_MENU } from './tabs';
 import { EmptyState } from '../ui/empty-state';
-import { NodeIcon } from '../ui/icon';
+import { NodeIcon, isImageIcon } from '../ui/icon';
 import { AgentAvatar } from './avatar';
 import { Input, Textarea } from '../ui/inputs';
 import { Dialog, Field, ItemRow, Section, ToggleRow } from './dialog';
@@ -64,6 +64,8 @@ const usable = (t: NodeTypeInfo) => t.descriptor.kind === 'action' && t.descript
 
 function NodeTile({ info, size = 32 }: { info?: NodeTypeInfo; size?: number }) {
   const color = nodeColor(info);
+  // An app's own icon (its real mark) brings its tile: shown whole, not inside a tinted one.
+  if (isImageIcon(info?.descriptor.icon)) return <NodeIcon icon={info?.descriptor.icon} size={size} className="shrink-0" />;
   return (
     <span className="grid shrink-0 place-items-center rounded-[10px] border border-hair" style={{ width: size, height: size, background: tint(color, 12) }}>
       <NodeIcon icon={info?.descriptor.icon ?? 'wrench'} size={Math.round(size * 0.45)} style={{ color }} />

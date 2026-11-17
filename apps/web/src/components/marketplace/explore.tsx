@@ -24,6 +24,7 @@ import { Badge, Chip, LanguageBadge, StatusDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { AppIcon } from '@/components/ui/icon';
+import { brandIcon, brandOfApp } from '@/lib/shared/brand-icons';
 import { SearchInput } from '@/components/ui/inputs';
 import { MenuItem, Popover } from '@/components/ui/popover';
 import { useExplore } from './use-marketplace';
@@ -55,6 +56,12 @@ export type Item =
   | { kind: 'nodes'; key: string; source: typeof LOCAL; categories: string[]; text: string; local: PluginSummary }
   | { kind: 'composites'; key: string; source: typeof LOCAL; categories: string[]; text: string; composite: CompositeTypeInfo }
   | { kind: 'claude'; key: string; source: string; categories: string[]; text: string; plugin: ExplorePlugin };
+
+/** An entry that is not (yet) a running plugin has no icon of its own: the real mark of the app it is named after, when it is one. */
+const appIcon = (plugin: ExplorePlugin, fallback: string) => {
+  const brand = brandOfApp(plugin.name) ?? brandOfApp(plugin.displayName);
+  return brand ? brandIcon(brand) : fallback;
+};
 
 const lower = (...parts: Array<string | undefined>) => parts.filter(Boolean).join(' ').toLowerCase();
 
@@ -106,7 +113,7 @@ function NodePluginTile({ plugin, onOpen }: { plugin: ExplorePlugin; onOpen: () 
   return (
     <button onClick={onOpen} className={tileClass}>
       <TileHead
-        icon={<AppIcon icon={live?.icon ?? 'blocks'} color={live?.color} size={28} />}
+        icon={<AppIcon icon={live?.icon ?? appIcon(plugin, 'blocks')} color={live?.color} size={28} />}
         title={plugin.displayName ?? plugin.name}
         sub={[plugin.marketplace.name, plugin.version && `v${plugin.version}`].filter(Boolean).join(' · ')}
         badge={plugin.installed && installedBadge}
@@ -197,7 +204,7 @@ function ClaudePluginTile({ plugin, onOpen }: { plugin: ExplorePlugin; onOpen: (
   const read = plugin.read;
   return (
     <button onClick={onOpen} className={tileClass}>
-      <TileHead icon={<AppIcon icon="bot" size={28} />} title={plugin.displayName ?? plugin.name} sub={[plugin.marketplace.name, plugin.author].filter(Boolean).join(' · ')} badge={plugin.installed && installedBadge} />
+      <TileHead icon={<AppIcon icon={appIcon(plugin, 'bot')} size={28} />} title={plugin.displayName ?? plugin.name} sub={[plugin.marketplace.name, plugin.author].filter(Boolean).join(' · ')} badge={plugin.installed && installedBadge} />
       <p className="line-clamp-2 text-[12px] leading-snug text-t2">{plugin.description || 'No description.'}</p>
       <div className="mt-auto flex flex-wrap items-center gap-1.5 text-[11px] text-t3">
         {read && read.agents > 0 && <Badge tone="accent">Agents {read.agents}</Badge>}

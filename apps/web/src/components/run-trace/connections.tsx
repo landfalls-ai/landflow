@@ -4,6 +4,7 @@
  * shows the thing's own icon: its node type's (a plugin's logo), else its brand (Ollama, GitHub, kagent), else its kind's.
  */
 import { cn } from '@/lib/utils';
+import { brandIcon, brandOfApp } from '@/lib/shared/brand-icons';
 import type { ActorConnection } from '@/lib/shared/run-trace';
 import { useNodeTypes } from '../agents/use-agent-data';
 import { NodeIcon } from '../ui/icon';
@@ -34,10 +35,13 @@ export const KIND_LABEL: Record<ActorConnection['kind'], string> = {
 
 const FROM: Record<NonNullable<ActorConnection['from']>, string> = { flow: 'in the flow', agent: 'in its settings', kagent: 'on kagent' };
 
-/** The icon of a connection: its node type's, else its own, else its kind's. */
+/** The icon of a connection: its node type's, else its own, else the real mark of the app a tool or plugin is named after, else its kind's. */
 export function useConnectionIcon() {
   const nodeTypes = useNodeTypes();
-  return (c: ActorConnection) => (c.nodeType && nodeTypes?.[c.nodeType]?.descriptor.icon) || c.icon || KIND_ICON[c.kind];
+  return (c: ActorConnection) => {
+    const app = c.kind === 'tool' || c.kind === 'plugin' ? brandOfApp(c.name) : undefined;
+    return (c.nodeType && nodeTypes?.[c.nodeType]?.descriptor.icon) || c.icon || (app && brandIcon(app)) || KIND_ICON[c.kind];
+  };
 }
 
 /** A row of chips, `max` at most (then "+N"). */

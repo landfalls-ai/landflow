@@ -16,6 +16,8 @@ import { cn } from '@/lib/utils';
 import { languageMeta, TRANSPORT_META } from '@/lib/client/format';
 import { CATEGORY_COLOR, nodeColor, tint } from '@/lib/client/node-style';
 import type { NodeTypeInfo } from '@/lib/shared/types';
+import { nodeActions, type NodeAction } from '@/lib/shared/node-subtitle';
+import { withPropertyDefaults } from '@landflow/protocol';
 import { DevOnly } from '@/lib/client/developer-details';
 import { describeMatcher, nodeMatches, type CompositeTypeInfo } from '@/lib/shared/composites';
 import { NodeIcon } from '../ui/icon';
@@ -26,7 +28,7 @@ import { usePhone } from '@/lib/client/use-phone';
 import { useDialogFocus } from '../ui/use-dialog-focus';
 
 type Mode = 'trigger' | 'next' | 'ai_languageModel' | 'ai_memory' | 'ai_tool' | 'ai_embedding' | 'ai_document' | 'ai_textSplitter' | 'ai_retriever' | 'ai_reranker';
-type View = { kind: 'root' } | { kind: 'triggers' } | { kind: 'category'; key: string } | { kind: 'plugin'; pluginId: string };
+type View = { kind: 'root' } | { kind: 'triggers' } | { kind: 'category'; key: string } | { kind: 'plugin'; pluginId: string } | { kind: 'node'; type: string };
 
 interface Segment {
   pluginId: string;
@@ -244,7 +246,7 @@ export function NodeCreator() {
     setActive(0);
   };
 
-  const choose = (type: NodeTypeInfo) => {
+  const choose = (type: NodeTypeInfo, initial?: Record<string, unknown>) => {
     if (!request || !mode) return;
     const state = useEditor.getState();
     let effective: PaletteRequest = request;
@@ -275,6 +277,8 @@ export function NodeCreator() {
     const center = screenToFlowPosition({ x: window.innerWidth / 2 - 200, y: window.innerHeight / 2.3 });
     const id = state.placeNode(type.type, effective, { x: center.x - 44, y: center.y - 44 });
     if (!id) return;
+    // An action picked from the list: its resource and operation are set, and what depends on them gets its defaults.
+    if (initial) state.updateNode(id, { parameters: withPropertyDefaults(type.descriptor.properties, initial) });
     if (feeds) state.onConnect({ source: id, sourceHandle: 'main:0', target: feeds, targetHandle: 'main:0' });
     close();
     // Keep the new node in view.
@@ -351,6 +355,34 @@ export function NodeCreator() {
     };
   };
 
+  /** What an app's node can do, one row per resource and operation: picking one adds the node set to do exactly that. */
+  const actionRow = (t: NodeTypeInfo, a: NodeAction): RowItem => ({
+    key: `${t.type}:${a.parameters.resource ?? ''}:${a.parameters.operation}`,
+    icon: (
+      <IconBox color={nodeColor(t)} image={isImage(t.descriptor.icon)}>
+        <NodeIcon icon={t.descriptor.icon} size={isImage(t.descriptor.icon) ? 34 : 18} style={{ color: nodeColor(t) }} strokeWidth={1.8} />
+      </IconBox>
+    ),
+    title: a.label,
+    description: a.description ?? t.descriptor.displayName,
+    disabled: !t.available,
+    onSelect: () => choose(t, a.parameters),
+  });
+
+  /** An app's node with actions opens its action list; any other node is added as it is. */
+  const appRow = (t: NodeTypeInfo): RowItem => {
+    const row = nodeRow(t);
+    const count = mode === 'next' ? nodeActions(t.descriptor).length : 0;
+    return count ? { ...row, description: `${count} actions: ${t.descriptor.description}`, nav: true, onSelect: () => push({ kind: 'node', type: t.type }) } : row;
+  };
+
+  /** A node's actions as sections, one per resource ("Issue (6)"): a node without resources has one section. */
+  const actionSections = (t: NodeTypeInfo, actions: NodeAction[]) => {
+    const byResource = new Map<string, NodeAction[]>();
+    for (const a of actions) byResource.set(a.group ?? 'Actions', [...(byResource.get(a.group ?? 'Actions') ?? []), a]);
+    return [...byResource].map(([label, list]) => ({ label: `${label} (${list.length})`, rows: list.map((a) => actionRow(t, a)) }));
+  };
+
   const segmentRow = (seg: Segment, count: number): RowItem => {
     const lang = languageMeta(seg.language);
     return {
@@ -402,6 +434,29 @@ export function NodeCreator() {
     }
     const pool = all.filter((t) => fits(t, mode));
 
+    if (view.kind === 'node') {
+      const t = all.find((x) => x.type === view.type);
+      if (!t) return out;
+      out.title = t.descriptor.displayName;
+      out.header = (
+        <div className="flex items-center gap-3">
+          <IconBox color={nodeColor(t)} image={isImage(t.descriptor.icon)}>
+            <NodeIcon icon={t.descriptor.icon} size={isImage(t.descriptor.icon) ? 38 : 24} style={{ color: nodeColor(t) }} />
+          </IconBox>
+          <div className="min-w-0">
+            <div className="truncate text-[17px] font-semibold text-t1">{t.descriptor.displayName}</div>
+            <div className="truncate text-[12px] text-t3">{t.pluginName}</div>
+          </div>
+        </div>
+      );
+      out.subtitle = 'What should it do?';
+      const actions = nodeActions(t.descriptor);
+      const found = query.trim() ? actions.filter((a) => score(`${a.label} ${a.group ?? ''} ${a.description ?? ''}`, query) > 0) : actions;
+      out.sections.push(...actionSections(t, found));
+      if (!found.length) out.sections.push({ rows: [] });
+      return out;
+    }
+
     if (query.trim()) {
       const within = view.kind === 'plugin' ? pool.filter((t) => t.pluginId === view.pluginId) : pool;
       const hits = within
@@ -411,10 +466,21 @@ export function NodeCreator() {
       const groups = new Map<string, RowItem[]>();
       for (const { t } of hits) {
         const group = t.pluginId === 'core' ? (t.descriptor.kind === 'trigger' ? 'Triggers' : (t.descriptor.categories?.[0] ?? 'Core')) : t.pluginName;
-        groups.set(group, [...(groups.get(group) ?? []), nodeRow(t, mode === 'trigger' ? TRIGGER_TITLES[t.type] : undefined)]);
+        groups.set(group, [...(groups.get(group) ?? []), appRow(t)]);
+      }
+      // The actions of an app that match a search ("send message"): picking one adds the node set to do it. They lead the results.
+      const matching: RowItem[] = [];
+      if (mode === 'next') {
+        for (const t of within.filter((x) => x.pluginId !== 'core' && x.descriptor.kind === 'action' && x.available)) {
+          for (const a of nodeActions(t.descriptor)) {
+            if (score(`${a.label} ${a.group ?? ''} ${t.descriptor.displayName}`, query) < 2) continue;
+            matching.push({ ...actionRow(t, a), description: t.descriptor.displayName });
+          }
+        }
       }
       out.title = mode === 'trigger' ? 'What triggers this workflow?' : 'Search results';
       out.sections = [...groups.entries()].map(([label, rows]) => ({ label, rows }));
+      if (matching.length) out.sections.unshift({ label: 'Actions', rows: matching.slice(0, 8) });
       if (mode === 'next' && view.kind !== 'plugin') {
         const found = composites.filter((c) => score(`${c.descriptor.displayName} ${c.descriptor.description} ${c.type} composite`, query) > 0);
         if (found.length) out.sections.unshift({ label: 'Composites', rows: found.map(compositeRow) });
@@ -453,7 +519,13 @@ export function NodeCreator() {
       }
       const triggers = types.filter((t) => t.descriptor.kind === 'trigger');
       if (triggers.length) out.sections.push({ label: `Triggers (${triggers.length})`, rows: triggers.map((t) => nodeRow(t)) });
-      for (const [group, list] of byGroup) out.sections.push({ label: `${group} (${list.length})`, rows: list.map((t) => nodeRow(t)) });
+      // An app with one node (Linear, Attio): its actions are listed here. An app with several (Slack, Discord) lists its nodes, each opening its actions.
+      const only = [...byGroup.values()].flat();
+      if (only.length === 1 && mode === 'next' && nodeActions(only[0].descriptor).length) {
+        out.sections.push(...actionSections(only[0], nodeActions(only[0].descriptor)));
+        return out;
+      }
+      for (const [group, list] of byGroup) out.sections.push({ label: `${group} (${list.length})`, rows: list.map((t) => appRow(t)) });
       if (!types.length) out.sections.push({ rows: [] });
       return out;
     }
@@ -605,7 +677,7 @@ export function NodeCreator() {
   };
 
   const placeholder =
-    view.kind === 'plugin' ? `Search ${segments.find((s) => s.pluginId === view.pluginId)?.name ?? ''} nodes…` : 'Search nodes, plugins, languages…';
+    view.kind === 'plugin' ? `Search ${segments.find((s) => s.pluginId === view.pluginId)?.name ?? ''} nodes…` : view.kind === 'node' ? 'Search its actions…' : 'Search nodes, plugins, languages…';
   let index = -1;
 
   return (

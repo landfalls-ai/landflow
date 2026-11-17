@@ -82,9 +82,9 @@ describe('node subtitle', () => {
 describe('node actions', () => {
   it('lists each resource and operation once, labelled as the node creator shows them', () => {
     expect(nodeActions(plain())).toEqual([
-      { label: 'Issue · Get Many', parameters: { resource: 'issue', operation: 'getAll' } },
-      { label: 'Create an issue', parameters: { resource: 'issue', operation: 'create' } },
-      { label: 'Comment · Add', parameters: { resource: 'comment', operation: 'add' } },
+      { label: 'Issue · Get Many', group: 'Issue', parameters: { resource: 'issue', operation: 'getAll' } },
+      { label: 'Create an issue', group: 'Issue', parameters: { resource: 'issue', operation: 'create' } },
+      { label: 'Comment · Add', group: 'Comment', parameters: { resource: 'comment', operation: 'add' } },
     ]);
   });
 

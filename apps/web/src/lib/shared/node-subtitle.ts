@@ -66,21 +66,25 @@ function onlyResourceAndOperation(template: string): boolean {
 
 export function nodeSubtitle(descriptor: Described | undefined, parameters: Parameters = {}): string | undefined {
   if (!descriptor) return undefined;
-  const values = withPropertyDefaults(descriptor.properties, parameters);
+  const properties = descriptor.properties ?? [];
+  const values = withPropertyDefaults(properties, parameters);
   if (descriptor.subtitle && !onlyResourceAndOperation(descriptor.subtitle)) {
-    const text = fill(descriptor.subtitle, descriptor.properties, values);
+    const text = fill(descriptor.subtitle, properties, values);
     if (text) return text;
   }
-  const operation = optionFor(descriptor.properties, values, 'operation');
+  const operation = optionFor(properties, values, 'operation');
   if (!operation) return undefined;
   if (operation.action) return operation.action;
-  const resource = optionFor(descriptor.properties, values, 'resource');
+  const resource = optionFor(properties, values, 'resource');
   return resource ? `${resource.name} · ${operation.name}` : operation.name;
 }
 
 /** One thing a node can do: a value of its `operation` (and the `resource` it belongs to), as the node creator lists it. */
 export interface NodeAction {
   label: string;
+  /** The resource's display name ("Issue"), for grouping; none for a node without resources. */
+  group?: string;
+  description?: string;
   /** What to set on the node: `{ resource, operation }` or `{ operation }`. */
   parameters: Parameters;
 }
@@ -90,20 +94,31 @@ export interface NodeAction {
  * `operation` option; a node with a single operation and no resource has nothing to choose, so it lists none either.
  */
 export function nodeActions(descriptor: Pick<NodeDescriptor, 'properties'>): NodeAction[] {
-  const operations = descriptor.properties.filter((p) => p.name === 'operation' && p.options?.length);
-  const resource = descriptor.properties.find((p) => p.name === 'resource' && p.options?.length);
+  const properties = descriptor.properties ?? [];
+  const operations = properties.filter((p) => p.name === 'operation' && p.options?.length);
+  const resource = properties.find((p) => p.name === 'resource' && p.options?.length);
   const out: NodeAction[] = [];
-  for (const property of operations) {
-    const resources = property.displayOptions?.show?.resource;
-    const owners = resource && resources ? resource.options!.filter((o) => resources.includes(o.value)) : [undefined];
-    for (const owner of owners) {
-      for (const option of property.options!) {
-        const parameters: Parameters = { ...(owner && { resource: owner.value }), operation: option.value };
-        const label = option.action ?? (owner ? `${owner.name} · ${option.name}` : option.name);
-        // Several variants may share an operation value for different resources: the pair is what is unique.
-        if (!out.some((a) => a.parameters.resource === parameters.resource && a.parameters.operation === parameters.operation)) out.push({ label, parameters });
+  const add = (owner: { name: string; value: unknown } | undefined, property: PropertyDescriptor) => {
+    for (const option of property.options!) {
+      const parameters: Parameters = { ...(owner && { resource: owner.value }), operation: option.value };
+      // Several variants may share an operation value for different resources: the pair is what is unique.
+      if (out.some((a) => a.parameters.resource === parameters.resource && a.parameters.operation === parameters.operation)) continue;
+      out.push({
+        label: option.action ?? (owner ? `${owner.name} · ${option.name}` : option.name),
+        parameters,
+        ...(owner && { group: owner.name }),
+        ...(option.description && { description: option.description }),
+      });
+    }
+  };
+  if (resource) {
+    // In the order of the resource's options, each with the `operation` variant it shows.
+    for (const owner of resource.options!) {
+      for (const property of operations) {
+        const shows = property.displayOptions?.show?.resource;
+        if (!shows || shows.includes(owner.value)) add(owner, property);
       }
     }
-  }
+  } else for (const property of operations) add(undefined, property);
   return out.length > 1 || (out.length === 1 && resource) ? out : [];
 }
