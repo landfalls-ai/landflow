@@ -7,6 +7,7 @@
 import { isPhone } from '@/lib/client/use-phone';
 import { nanoid } from 'nanoid';
 import { toast } from 'sonner';
+import { useEditLock } from './edit-lock'; // wave ag4 carryover: a read-only canvas applies nothing
 import { create } from 'zustand';
 import { api, streamEvents } from '@/lib/client/api';
 import { applyOps, digestRun, type AssistantOp, type DescriptorLookup, type NewAgentSpec, type RunDigest } from '@/lib/shared/assistant-ops';
@@ -99,6 +100,12 @@ export function applyChanges(
   label: string,
   options: { publishAgents?: boolean; quiet?: boolean; onApplied?: (applied: { undo: () => void; skipped: string[]; agentChanges?: AgentChange[] }) => void } = {},
 ): boolean {
+  // Wave ag4 carryover (the live pass's F3): another tab holds the edit lock, so this canvas is read-only and its editing
+  // actions do nothing: refuse, and never mark a proposal "Applied" that changed nothing.
+  if (useEditLock.getState().readOnly) {
+    toast.error('Couldn’t apply the change', { description: 'This workflow is open for editing in another tab: read-only here. Use Edit here, then apply it again.' });
+    return false;
+  }
   const state = useEditor.getState();
   const lookup = editorLookup();
   let workflow = state.toWorkflow();
