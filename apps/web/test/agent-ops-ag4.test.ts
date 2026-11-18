@@ -271,5 +271,54 @@ describe('the open path', () => {
       expect(wrap).not.toMatch(/max-md:top-16|max-md:right-3\b/);
       expect(container.querySelector('[data-testid="agent-moves-pill"] .max-md\\:sr-only')).toBeTruthy();
     });
+
+    it('on a phone it starts as the pill, opens on tap, and X goes back to the pill', async () => {
+      const real = window.matchMedia;
+      window.matchMedia = ((q: string) => ({ matches: /max-width: 767px/.test(q), media: q, addEventListener() {}, removeEventListener() {} })) as never;
+      try {
+        rows = [movedRow, keptRow];
+        await mount();
+        expect(container.querySelector('[data-testid="agent-moves-notice"]'), 'no sheet over the canvas').toBeNull();
+        await act(async () => (container.querySelector('[data-testid="agent-moves-pill"]') as HTMLButtonElement).click());
+        expect(container.querySelector('[data-testid="agent-moves-notice"]')).toBeTruthy();
+        await act(async () => (container.querySelector('[aria-label="Close"]') as HTMLButtonElement).click());
+        expect(container.querySelector('[data-testid="agent-moves-notice"]')).toBeNull();
+        expect(container.querySelector('[data-testid="agent-moves-pill"]')).toBeTruthy();
+      } finally {
+        window.matchMedia = real;
+      }
+    });
+
+    it('on the desktop it opens expanded once per flow, is at most 300px wide, and a pointerdown on the canvas folds it to the pill', async () => {
+      rows = [movedRow, keptRow];
+      await mount();
+      const card = container.querySelector('[data-testid="agent-moves-notice"]') as HTMLElement;
+      expect(card).toBeTruthy();
+      expect(card.className).toMatch(/w-\[300px\]/);
+      // A pointerdown inside the card does nothing; one on the canvas folds it.
+      const canvas = document.createElement('div');
+      canvas.className = 'react-flow';
+      const pane = document.createElement('div');
+      canvas.append(pane);
+      document.body.append(canvas);
+      await act(async () => card.dispatchEvent(new Event('pointerdown', { bubbles: true })));
+      expect(container.querySelector('[data-testid="agent-moves-notice"]')).toBeTruthy();
+      await act(async () => pane.dispatchEvent(new Event('pointerdown', { bubbles: true })));
+      expect(container.querySelector('[data-testid="agent-moves-notice"]')).toBeNull();
+      expect(container.querySelector('[data-testid="agent-moves-pill"]')).toBeTruthy();
+      canvas.remove();
+      // Remembered for the flow: a new mount shows the pill only.
+      act(() => root.unmount());
+      root = createRoot(container);
+      await mount();
+      expect(container.querySelector('[data-testid="agent-moves-notice"]')).toBeNull();
+    });
+  });
+
+  it('the lines follow the agent’s live state: published once the agent holds the item, not “not published yet”', () => {
+    const base = { workflowId: 'w', nodeId: 'n', subNodeId: 's', name: 'Slugify', slot: 'tool', agentId: 'a', agentName: 'Crypto Toolkit', outcome: 'moved', as: 'tool', by: 'migration', at: 'x' } as never;
+    expect(moveNoticeLines([{ ...(base as object), state: 'pending' } as never])).toEqual(['Moved into Crypto Toolkit, not published yet: Slugify (tool).']);
+    expect(moveNoticeLines([{ ...(base as object), state: 'live' } as never])).toEqual(['Moved into Crypto Toolkit, published: Slugify (tool).']);
+    expect(moveNoticeLines([{ ...(base as object), state: 'withdrawn' } as never])).toEqual(['Moved into Crypto Toolkit, then taken out of its draft: Slugify (tool).']);
   });
 });

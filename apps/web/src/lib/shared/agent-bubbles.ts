@@ -207,7 +207,12 @@ export function markMoved(bubbles: readonly Bubble[], moves: readonly AgentMove[
 export function moveNoticeLines(moves: readonly AgentMove[], agents: ReadonlyArray<{ name: string; draftDiffers: boolean }> = []): string[] {
   const what = (m: AgentMove) => `${m.name} (${m.as === 'knowledge' ? 'knowledge base' : m.as ?? m.slot})`;
   const lines: string[] = [];
-  for (const m of moves.filter((x) => x.outcome === 'moved')) lines.push(`Moved into ${m.agentName}, not published yet: ${what(m)}${m.why ? `; ${m.why}` : ''}.`);
+  // The wording follows the agent's live state (`state`, read against the agent now), not the fact of the move: once the published
+  // version holds the item it is no longer "not published yet"; a person who took it out of the draft is told that.
+  for (const m of moves.filter((x) => x.outcome === 'moved')) {
+    const where = m.state === 'live' ? `Moved into ${m.agentName}, published` : m.state === 'withdrawn' ? `Moved into ${m.agentName}, then taken out of its draft` : `Moved into ${m.agentName}, not published yet`;
+    lines.push(`${where}: ${what(m)}${m.why ? `; ${m.why}` : ''}.`);
+  }
   for (const m of moves.filter((x) => x.outcome === 'same')) lines.push(`Already in ${m.agentName}: ${m.name} (removed from this flow).`);
   for (const m of moves.filter((x) => x.outcome === 'kept')) lines.push(`Kept in this flow: ${m.name}. ${m.why ?? ''}`.trim());
   for (const a of agents.filter((x) => x.draftDiffers)) lines.push(`${a.name} has changes not published: the editor’s tests use them; publish ${a.name}, then this workflow, to put them live.`);

@@ -5,10 +5,11 @@
  * kept item and why, and each agent's changes not published, with Publish (the smoke test on the draft, then the eval gate: never
  * skipped) and Open <agent>. Closed, it stays as a one-line pill ("Moved into agents · 2") that reopens the whole record.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRightLeft, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
+import { isPhone } from '@/lib/client/use-phone';
 import { moveNow, readMoves } from '@/lib/client/agent-moves';
 import { publishChange, testDraft } from '@/lib/client/agent-change';
 import { MOVES_CHANGED, moveNoticeLines, type AgentMove } from '@/lib/shared/agent-bubbles';
@@ -136,7 +137,8 @@ export function AgentMovesNotice({ workflowId }: { workflowId: string }) {
     setOpen(false);
     setRecord(false);
     void load().then((list) => {
-      if (live && list.length && list[0]!.at > readSeen(workflowId)) setOpen(true);
+      // A phone starts as the small pill (the sheet hid the canvas); the first open per flow is for the desktop.
+      if (live && list.length && list[0]!.at > readSeen(workflowId) && !isPhone()) setOpen(true);
     });
     return () => {
       live = false;
@@ -147,12 +149,27 @@ export function AgentMovesNotice({ workflowId }: { workflowId: string }) {
     const onChanged = (e: Event) => {
       if ((e as CustomEvent<{ workflowId?: string }>).detail?.workflowId !== workflowId) return;
       void load().then((list) => {
-        if (list.length && list[0]!.at > readSeen(workflowId)) setOpen(true);
+        if (list.length && list[0]!.at > readSeen(workflowId) && !isPhone()) setOpen(true);
       });
     };
     window.addEventListener(MOVES_CHANGED, onChanged);
     return () => window.removeEventListener(MOVES_CHANGED, onChanged);
   }, [workflowId, load]);
+
+  // Open, it collapses to the pill (and remembers that it was seen) on any pointerdown on the canvas, so it never sits over the bubbles.
+  const asideRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      const target = e.target as Element | null;
+      if (!target?.closest?.('.react-flow') || asideRef.current?.contains(target)) return;
+      if (moves[0]?.at) writeSeen(workflowId, moves[0].at);
+      setOpen(false);
+      setRecord(false);
+    };
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, [open, moves, workflowId]);
 
   const newest = moves[0]?.at ?? '';
   const unseen = useMemo(() => moves.filter((m) => m.at > readSeen(workflowId)), [moves, workflowId, open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -227,10 +244,11 @@ export function AgentMovesNotice({ workflowId }: { workflowId: string }) {
 
   return (
     <aside
+      ref={asideRef}
       role="region"
       aria-label="Moved into agents"
       data-testid="agent-moves-notice"
-      className="pointer-events-auto absolute right-14 top-3 z-20 flex max-h-[60vh] w-[340px] max-w-[calc(100%-4.5rem)] animate-fade-up flex-col rounded-2xl border border-hair bg-sf/95 shadow-pop backdrop-blur max-md:inset-x-2 max-md:bottom-16 max-md:top-auto max-md:w-auto max-md:max-w-none max-md:max-h-[40vh]"
+      className="pointer-events-auto absolute right-14 top-3 z-20 flex max-h-[60vh] w-[300px] max-w-[calc(100%-4.5rem)] animate-fade-up flex-col rounded-2xl border border-hair bg-sf/95 shadow-pop backdrop-blur max-md:inset-x-2 max-md:bottom-16 max-md:top-auto max-md:w-auto max-md:max-w-none max-md:max-h-[40vh]"
     >
       <header className="flex items-center gap-2 border-b border-hair px-3 py-2">
         <ArrowRightLeft className="size-3.5 text-ac" />
