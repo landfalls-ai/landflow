@@ -573,7 +573,8 @@ function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
     // AG23:
     async destinationsOf(given: Record<string, unknown>, ctx: ToolContext) {
       const { parameters } = await effectiveOf(given, ctx);
-      return callDestinations(config.nodeType, { ...parameters, ...(typeof given.operation === 'string' && { operation: given.operation }), ...(typeof given.method === 'string' && { method: given.method }) });
+      // Wave ag5 fix pass 2: the parameters the call really runs with (the configured or pinned operation, and only the arguments the schema offered), never the model's own `operation` or `method` when the schema did not offer them: a stand-in the person gave for a create must not approve a commit.
+      return callDestinations(config.nodeType, parameters);
     },
     async invoke(given, ctx) {
       const { parameters, items } = await effectiveOf(given, ctx);

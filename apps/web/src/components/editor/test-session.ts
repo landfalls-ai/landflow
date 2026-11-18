@@ -22,6 +22,7 @@ import type { AgentFixEvent } from '@/lib/shared/agent-fix'; // AG20:
 import { designChange, heldOf, readDraft, type ChangeDesign } from '@/lib/client/agent-change'; // AG20: AG22: heldOf, readDraft
 import { api } from '@/lib/client/api'; // AG22:
 import { keptToolOf } from '@/lib/shared/kept-tool';
+import { agentDestinations } from '@/lib/shared/spotlight-approvals';
 import { normalDestination, publishedLine, SPOTLIGHT_APPROVALS, unattendedLine, type SpotlightRunApprovals } from '@/lib/shared/fix-autonomy'; // AG22:
 import { agentReplyText, agentUndoneBy, destinationsInText, droppedLine, fixAutonomyNow, fixesOf, heldLine, heldRequest, KEEP_REASON, keptTools, leftForNextRound, duplicatedSteps, sameFixTwice, toolsAdded, undoneBy, withoutSecrets, fixRemovals, type OwnFix, type RemovalsAllowed } from './fix-session'; // AG22:
 import { followsPractices, guardrailWords, type AgentConfig } from '@/lib/shared/agents'; // AG20:
@@ -171,6 +172,13 @@ function givenDestinations(workflowId: string, goal: string | undefined): string
   const words = [goal, useEditor.getState().description, ...useAssistant.getState().items.flatMap((i) => (i.role === 'user' && !i.auto ? [i.text] : []))].filter(Boolean).join('\n');
   const own = autonomyOf(workflowId) === 'auto' ? [] : sendingNow().map((d) => d.destination).filter((d) => !isUnreadHost(d) && d !== NO_ADDRESS);
   return [...new Set([...own, ...destinationsInText(words)])];
+}
+
+/** The destinations the Run an Agent steps' own agents fix in their saved config (each asks-first node tool's fixed To, URL or channel): a snapshot, read once when a session starts. */
+async function agentConfigDestinations(): Promise<string[]> {
+  const ids = [...new Set(useEditor.getState().nodes.flatMap((n) => (n.data.wf.type === 'core.messageAgent' && !n.data.wf.disabled && typeof n.data.wf.parameters?.agentId === 'string' && n.data.wf.parameters.agentId ? [n.data.wf.parameters.agentId] : [])))];
+  const found = await Promise.all(ids.map((id) => api<{ agent?: { tools?: AgentConfig['tools'] } }>(`/api/agents/${id}`, { background: true }).then((r) => agentDestinations({ tools: r.agent?.tools ?? [] }), () => [] as string[])));
+  return found.flat();
 }
 
 /** The enabled steps that would send for real, grouped by what the person has not said yes to yet. */
@@ -800,7 +808,9 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     const changedAgents: ChangedAgent[] = resumed?.changedAgents ?? [];
     /** Wave ag5 fix pass: the steps this session added (an autonomous session removes or replaces them without a click). */
     const ownNodes = new Set<string>(resumed?.ownNodes ?? []);
-    const given: string[] = resumed?.given ?? (autonomy === 'auto' ? givenDestinations(wfId, goal) : []);
+    // Wave ag5 fix pass 2: the destinations the bound agents' own configs fix, as they stand NOW (when the session starts): the server no
+    // longer reads the draft, which this session may edit, so an address the session sets later is never given by being configured.
+    const given: string[] = resumed?.given ?? (autonomy === 'auto' ? [...givenDestinations(wfId, goal), ...(await agentConfigDestinations())] : []);
     if (!resumed && given.length) approveDestinations(wfId, given); // AG22: a destination the flow already sent to, or the ask names, needs no "Run it now?"
 
     const publishAgents = options.publishAgents ?? resumed?.publishAgents;

@@ -114,7 +114,7 @@ describe('the run body', () => {
   it('a manual editor run with approvals: spotlight sends the call to a destination the agent gave, and says who approved', async () => {
     script = (t) => (t === 1 ? sendCall() : { text: 'Emailed on-call.' });
     const wf = flow(fixed.id);
-    const { status, text } = await post(runRoute.POST, wf.id, SPOTLIGHT);
+    const { status, text } = await post(runRoute.POST, wf.id, { ...SPOTLIGHT, destinations: ['oncall@landflow.test'] }); // the client's snapshot of the agent's own destinations
     expect(status).toBe(200);
     const result = resultOf(text)!;
     expect(result.error?.message ?? result.status).toBe('success');
@@ -127,6 +127,27 @@ describe('the run body', () => {
     expect(json.steps[0].approvedBy).toBe(approvedByLine({ kind: 'spotlight', userId: TEST_OWNER.id, sessionId: 'test_ag23' }, true));
     const entry = agentStore.getSession(json.sessionId)!.timeline.find((e) => e.type === 'tool');
     expect(entry).toMatchObject({ type: 'tool', status: 'success', by: { kind: 'spotlight', userId: TEST_OWNER.id, sessionId: 'test_ag23' } });
+  });
+
+  it('the agent’s saved config no longer gives a destination on the server: without the client’s snapshot the call waits', async () => {
+    script = (t) => (t === 1 ? sendCall() : { text: 'Left for you.' });
+    const wf = flow(fixed.id);
+    const result = resultOf((await post(runRoute.POST, wf.id, SPOTLIGHT)).text)!;
+    expect(result.status).toBe('waiting');
+    expect(smtp.mails).toHaveLength(0);
+  });
+
+  it('a tool’s stand-in follows the call’s real operation: a create the person gave does not approve a commit the tool is set to', async () => {
+    const { buildTools } = await import('@/lib/server/agents/tools');
+    const { spotlightVerdict } = await import('@/lib/shared/spotlight-approvals');
+    const description = { name: 'gh', displayName: 'Git Host', description: 'x', version: 1, kind: 'action', inputs: [{ type: 'main' }], outputs: [{ type: 'main' }], usableAsTool: true, toolInputSchema: { type: 'object', properties: { repo: { type: 'string' } } }, properties: [{ name: 'operation', displayName: 'Operation', type: 'options', default: 'create', options: [{ name: 'Commit', value: 'commit' }, { name: 'Create', value: 'create' }] }, { name: 'repo', displayName: 'Repo', type: 'string', default: '' }] };
+    registry.registerBuiltin({ info: { id: 'githost', name: 'Git Host', version: '1', description: 'x' }, nodes: [{ description, execute: async () => [[]] }] } as never);
+    const agent = agentStore.create({ name: 'Committer', instructions: 'x', model: { provider: 'ollama', model: 'm', baseUrl }, tools: [{ id: 'g1', type: 'node', name: 'host', description: 'd', nodeType: 'githost.gh', parameters: { operation: 'commit', repo: 'r' }, requireApproval: true }] });
+    const tool = buildTools(agent, agentStore.configOf?.(agent) ?? (agent as never)).tools.find((t) => t.name === 'host')!;
+    const ctx = { agent, session: { id: 's' }, runId: 'r' } as never;
+    const found = await tool.destinationsOf!({ operation: 'create' }, ctx);
+    expect(found).toEqual(['githost.gh commit']); // what runs, not what the model said
+    expect(spotlightVerdict(found, ['githost.gh create'])).toBe('leave');
   });
 
   it('a call to a destination nobody gave is not run: it waits for the person', async () => {

@@ -218,7 +218,6 @@ export const messageAgentNode = defineNode({
     const { newSession, runAgent } = await import('../agents/runtime');
     const { agentVersionConfig, agentVersionExists, fallbackPin, recordRunAgent } = await import('../agents/versions'); // AG21:
     const { configOf } = await import('../agents/store');
-    const { agentDestinations } = await import('../agents/spotlight-approvals'); // AG23:
     const connection = ctx.getInputConnectionData;
     const [model] = connection ? await connection<LanguageModel>('ai_languageModel') : [];
     const [memory] = connection ? await connection<AgentMemory>('ai_memory') : [];
@@ -274,7 +273,7 @@ export const messageAgentNode = defineNode({
         const spotlightRun = editor && (ctx.getMode() === 'manual' || ctx.getMode() === 'chat') ? await spotlightRunOf(ctx.getExecutionId()) : undefined;
         const spotlight = spotlightRun && {
           by: { kind: 'spotlight' as const, userId: spotlightRun.userId, sessionId: spotlightRun.sessionId },
-          given: [...spotlightRun.destinations, ...agentDestinations(runConfig)],
+          given: [...spotlightRun.destinations], // wave ag5 fix pass 2: the agents' own destinations are the client's snapshot from when the session started (in `destinations`), never the draft this session may have edited
           canWait: waitable,
         };
         const askInChat = (ctx.getNodeParameter<string>('toolApprovals', i, 'refuse') === 'askInChat' && ctx.getMode() === 'chat' && waitable) || Boolean(spotlight?.canWait);
