@@ -1,8 +1,8 @@
 /**
  * Re-check 3: two typed asks are the Test and fix session's, not the chat's (the chat has no run tool): a bare run ("Run it now",
  * with a trigger to start from) and output that looks wrong or made up ("The numbers in the summary look made up. Test it and
- * fix it."), which is judged against that sentence. The session takes its autonomy from the workflow (`autonomyOf`): a saved or
- * published one asks first, the switch notwithstanding. Returns whether the ask was taken.
+ * fix it."), which is judged against that sentence. AG22: the session takes its autonomy from the switch alone (`fixAutonomyFor`, the decision of 2026-11-18):
+ * Autonomous acts alone on a saved or published workflow too; Asks first waits for every click. Returns whether the ask was taken.
  */
 import { nanoid } from 'nanoid';
 import { runAsk, wrongOutputAsk } from '@/lib/shared/spotlight';

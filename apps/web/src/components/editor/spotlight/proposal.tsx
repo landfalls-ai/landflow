@@ -8,6 +8,7 @@ import { Button } from '../../ui/button';
 import { Collapsible } from '../../ui/chat-motion';
 import { Segmented } from '../../ui/segmented';
 import { useAutonomous } from '../autonomous';
+import { AUTO_FIX_DOES, AUTO_FIX_NEVER } from '@/lib/shared/fix-autonomy'; // AG22:
 import { autonomyOf, useAutonomyFacts } from '../spotlight-autonomy'; // SB04:
 import { useEditor } from '../store'; // SB04:
 import { applyChanges, sendFeedback, undos, useAssistant, type Proposal } from '../assistant';
@@ -187,6 +188,21 @@ export function AutonomousExplainer({ onClose, className }: { onClose: () => voi
       <p>
         <span className="font-semibold text-t1">Asks first</span>{!autonomous && ' (now)'}: it waits for your Apply before changing anything.
       </p>
+      {/* AG22: what an autonomous test-and-fix session does by itself, and what always stays yours (the decision of 2026-11-18). */}
+      <details className="text-[11.5px] text-t3">
+        <summary className="cursor-pointer font-semibold text-t2">When it tests and fixes, Autonomous also…</summary>
+        <ul className="ml-4 mt-1 list-disc space-y-0.5">
+          {AUTO_FIX_DOES.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+        <p className="mt-1 font-semibold text-t2">Always yours:</p>
+        <ul className="ml-4 list-disc space-y-0.5">
+          {AUTO_FIX_NEVER.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      </details>
       <Button size="sm" variant="primary" onClick={onClose}>
         Got it
       </Button>
@@ -230,7 +246,7 @@ export function AutonomousSwitch({ compact, explainer }: { compact?: boolean; ex
                 <Zap className={cn('size-3', !compact && 'md:hidden')} fill={on ? 'currentColor' : 'none'} />
               </>
             ),
-            title: 'Spotlight applies its changes and tests and fixes the flow by itself.', ariaLabel: 'Autonomous' },
+            title: 'Spotlight applies its changes and tests and fixes the flow by itself; a test-and-fix session also approves its test runs and publishes what it fixed.', ariaLabel: 'Autonomous' },
         ]}
       />
       {note && !explainer && <AutonomousExplainer onClose={close} className="fixed inset-x-3 bottom-3 z-50" />}
@@ -238,7 +254,7 @@ export function AutonomousSwitch({ compact, explainer }: { compact?: boolean; ex
   );
 }
 
-export const ASKS_FIRST_NOTE = 'Spotlight acts alone only while it builds a new draft. This workflow is saved or published, so it asks first.';
+export const ASKS_FIRST_NOTE = 'Spotlight builds on its own only while it drafts a new flow. This workflow is saved or published, so it asks first. When it tests and fixes, Autonomous acts alone.'; // AG22: the fix sessions' rule is the decision of 2026-11-18
 
 /**
  * SB04: on a saved or published workflow Spotlight asks first even with the switch on (decision D1). One quiet line in the

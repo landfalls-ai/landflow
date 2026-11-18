@@ -208,6 +208,8 @@ export interface PanelState {
   waitingForApply?: boolean;
   /** The wait is on an agent's change card (Apply, Pick it or Publish). */
   waitingForAgent?: boolean;
+  /** AG22 (C1): the agent card waiting is the fix's own, still to be applied: the header asks *Needs you: apply the fix?*. */
+  agentAwaitsApply?: boolean;
   /** The node a fix is being asked for. */
   fixingName?: string;
   /** Agents being designed right now. */
@@ -242,6 +244,11 @@ export function agentFixWaits(items: ChatItem[], testingId: string | undefined):
   }));
 }
 
+/** AG22 (C1): the agent fix card of the session is still a proposal (designed, not applied): the wait is for Apply. */
+export function agentFixAwaitsApply(items: ChatItem[], testingId: string | undefined): boolean {
+  return Boolean(testingId) && items.some((item) => item.role === 'assistant' && item.testId === testingId && item.parts.some((p) => p.kind === 'agentCard' && Boolean(p.card.fix) && p.card.state === 'designed'));
+}
+
 /**
  * The session is waiting for the person (the title says "apply the fix?"): a session is running, its reply is not still
  * streaming (under auto its proposals arrive before the session applies them itself), and a card of its own is open.
@@ -262,7 +269,7 @@ export function composerBusy(state: { testing: boolean; pending: boolean }, item
 export function titleOf(state: PanelState): string {
   if (state.drafting) return 'Drafting the flow';
   if (state.designing) return `Designing “${state.designing}”`;
-  if (state.testing && state.waitingForAgent) return 'Waiting for you';
+  if (state.testing && state.waitingForAgent) return state.agentAwaitsApply ? 'Needs you: apply the fix?' : 'Waiting for you'; // AG22: C1
   if (state.testing && state.waitingForApply) return 'Needs you: apply the fix?';
   if (state.testing) return state.fixingName ? `Fixing “${state.fixingName}”` : 'Testing the flow';
   if (state.pending) return 'Working on it';

@@ -158,6 +158,7 @@ describe('a destination', () => {
   });
 
   it('asks before the first run, per destination, not per workflow', async () => {
+    useAutonomyFacts.setState({ switchOn: false }); // AG22: Asks first keeps the row; with the switch on the saved flow's own destinations are given (session-auto-ag5.test.ts)
     approveDestinations(WF, ['somewhere.else:1']);
     await testUntilItRuns(goal);
     expect(needs().map((n) => n.what)).toEqual(['sends']);
@@ -188,9 +189,20 @@ describe('the session sends its autonomy with each request (review fixes)', () =
     return send.mock.calls.map((c) => (c[1] as { autonomy?: string }).autonomy);
   };
 
-  it('asks-first on a saved workflow, auto on a brand-new draft', async () => {
+  // AG22: the session's autonomy is the switch's (decision of 2026-11-18): a saved workflow with the switch on is `auto` now.
+  it('saved workflow: asks-first with the switch off, auto with it on; a brand-new draft: auto', async () => {
+    useAutonomyFacts.setState({ switchOn: false });
     noteOpened(WF, 3);
     expect(await failedThenFix()).toEqual(['asks-first']);
+    send.mockClear();
+    sendsAllowed.clear();
+    useAssistant.getState().reset();
+    useAutonomyFacts.setState({ switchOn: true });
+    runs = [{ 'Notify VIP': { error: 'HTTP 500 Internal Server Error' } }];
+    replies = [{ text: 'Nothing to change.' }];
+    sendsAllowed.clear();
+    await testUntilItRuns(goal);
+    expect(send.mock.calls.map((c) => (c[1] as { autonomy?: string }).autonomy)).toEqual(['auto']);
     send.mockClear();
     sendsAllowed.clear();
     useAssistant.getState().reset();
@@ -341,6 +353,7 @@ describe('turning a step off', () => {
 
   it('reset() while a fix waits leaves the conversation empty', async () => {
     noteOpened(WF, 3);
+    useAutonomyFacts.setState({ switchOn: false }); // AG22: Asks first keeps the wait (the switch-on rule: session-auto-ag5.test.ts)
     yes();
     runs = [{ 'Notify VIP': { error: 'HTTP 500 Internal Server Error' } }];
     replies = [{ proposals: [{ summary: 'Use PUT', ops: [{ op: 'setParameters', node: 'Notify VIP', parameters: { method: 'PUT' } }] }] }];
@@ -357,6 +370,7 @@ describe('autonomy (D1)', () => {
 
   it('asks-first: the fix waits for Apply, then runs again', async () => {
     noteOpened(WF, 3);
+    useAutonomyFacts.setState({ switchOn: false }); // AG22: Asks first keeps the wait (the switch-on rule: session-auto-ag5.test.ts)
     yes();
     runs = [{ 'Notify VIP': { error: 'HTTP 500 Internal Server Error' } }, { 'Notify VIP': { items: 1 }, 'Notify Standard': { items: 1 } }];
     replies = [{ proposals: [{ summary: 'Use PUT', ops: fixOps }] }];
@@ -377,6 +391,7 @@ describe('autonomy (D1)', () => {
 
   it('asks-first: Dismiss ends the session with an outcome card', async () => {
     noteOpened(WF, 3);
+    useAutonomyFacts.setState({ switchOn: false }); // AG22: Asks first keeps the wait (the switch-on rule: session-auto-ag5.test.ts)
     yes();
     runs = [{ 'Notify VIP': { error: 'HTTP 500 Internal Server Error' } }];
     replies = [{ proposals: [{ summary: 'Use PUT', ops: fixOps }] }];
@@ -391,6 +406,7 @@ describe('autonomy (D1)', () => {
 
   it('asks-first: Stop while waiting ends it', async () => {
     noteOpened(WF, 3);
+    useAutonomyFacts.setState({ switchOn: false }); // AG22: Asks first keeps the wait (the switch-on rule: session-auto-ag5.test.ts)
     yes();
     runs = [{ 'Notify VIP': { error: 'HTTP 500 Internal Server Error' } }];
     replies = [{ proposals: [{ summary: 'Use PUT', ops: fixOps }] }];
@@ -429,14 +445,35 @@ describe('autonomy (D1)', () => {
 });
 
 describe('before "Ready for production"', () => {
-  it('a pass after a fix is reviewed first, and the card shows only on a yes', async () => {
-    noteOpened(WF, 0);
-    yes();
+  const fixAndYes = () => {
     runs = [{ 'Notify VIP': { error: 'HTTP 500 Internal Server Error' } }, { 'Notify VIP': { items: 1 }, 'Notify Standard': { items: 1 } }];
     replies = [{ proposals: [{ summary: 'Use PUT', ops: [{ op: 'setParameters', node: 'Notify VIP', parameters: { method: 'PUT' } }] }] }, { text: 'Yes, it does what you asked.' }];
-    await testUntilItRuns('Tell the desk about big orders');
+  };
+
+  // AG22: the card is the Asks first end; an autonomous fix session publishes by itself after the review's yes (the decision of 2026-11-18).
+  it('a pass after a fix is reviewed first, and the publish card shows only on a yes (Asks first)', async () => {
+    useAutonomyFacts.setState({ switchOn: false });
+    noteOpened(WF, 0);
+    yes();
+    fixAndYes();
+    const session = testUntilItRuns('Tell the desk about big orders');
+    await vi.waitFor(() => expect(sentSessions).toEqual(['fix']));
+    decide('r1p0', 'applied');
+    await session;
     expect(sentSessions).toEqual(['fix', 'review']);
     expect(actions()).toEqual(['publish']);
+    expect(published).not.toHaveBeenCalled();
+  });
+
+  it('a pass after a fix is reviewed first, and Autonomous publishes only after a yes', async () => {
+    useEditor.setState({ save: async () => true } as never);
+    noteOpened(WF, 0);
+    yes();
+    fixAndYes();
+    await testUntilItRuns('Tell the desk about big orders');
+    expect(sentSessions).toEqual(['fix', 'review']);
+    expect(actions()).toEqual([]);
+    expect(published).toHaveBeenCalledTimes(1);
   });
 
   it('a review that says no ends with the outcome card, not the publish card', async () => {

@@ -196,7 +196,23 @@ describe('sb1-autonomy-join: a saved workflow with the switch on asks first', ()
     expect(holdsForClick([{ ops: fixOps }])).toBe(true);
   });
 
-  it('Test and fix: the fix waits until its card is applied, then the next run happens', async () => {
+  // AG22: sb1's rule D1 no longer holds for a fix session. This test asserted "the fix waits until its card is applied" on a saved
+  // flow with the switch on; the decision of 2026-11-18 applies it by itself. It is now the new rule with the switch on, and the old
+  // wait kept as its twin with the switch off (Asks first unchanged).
+  it('Test and fix, switch on: the session applies its own fix on a saved flow with no click, then the next run happens', async () => {
+    await open(orders('wf_join_saved'));
+    approveDestinations('wf_join_saved', ['127.0.0.1:3399']);
+    runs = [{ 'Notify VIP': { error: 'HTTP 405 Method Not Allowed' } }, {}];
+    replies = [{ proposals: [{ summary: 'Use PUT', ops: fixOps }] }, { text: 'Yes, it does what you asked.' }];
+    await testUntilItRuns(goal);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(method()).toBe('PUT');
+    expect(proposals()[0].proposal.state).toBe('applied');
+    expect(sent.map((s) => s.session)).toEqual(['fix', 'review']);
+  });
+
+  it('Test and fix, switch off (Asks first): the fix waits until its card is applied, then the next run happens', async () => {
+    useAutonomous.getState().set(false);
     await open(orders('wf_join_saved'));
     approveDestinations('wf_join_saved', ['127.0.0.1:3399']);
     runs = [{ 'Notify VIP': { error: 'HTTP 405 Method Not Allowed' } }, {}];
@@ -215,6 +231,7 @@ describe('sb1-autonomy-join: a saved workflow with the switch on asks first', ()
   });
 
   it('Test and fix: a dismissed fix ends with the outcome card', async () => {
+    useAutonomous.getState().set(false); // AG22: the card waits only with the switch off
     await open(orders('wf_join_saved'));
     approveDestinations('wf_join_saved', ['127.0.0.1:3399']);
     runs = [{ 'Notify VIP': { error: 'HTTP 405 Method Not Allowed' } }];
@@ -265,7 +282,9 @@ describe('sb1-autonomy-join: a brand-new draft with the switch on', () => {
     expect(useEditor.getState().nodes).toHaveLength(3);
   });
 
-  it('after publishToProduction the draft asks first, and the next fix waits', async () => {
+  // AG22: this asserted "after publishToProduction ... the next fix waits" (D1). With the switch on a fix session applies its fix on a
+  // published draft too; builds and typed changes still ask first (`autonomyOf`), and with the switch off the next fix still waits.
+  it('after publishToProduction a build asks first, a fix session still applies its fix (switch on)', async () => {
     await draftNew('wf_join_published');
     expect(autonomyOf('wf_join_published')).toBe('auto');
     expect(await publishToProduction()).toBe(true);
@@ -273,6 +292,19 @@ describe('sb1-autonomy-join: a brand-new draft with the switch on', () => {
     expect(autonomyOf('wf_join_published')).toBe('asks-first');
     expect(typedSession('make Notify VIP use PUT')).toEqual({});
 
+    approveDestinations('wf_join_published', ['127.0.0.1:3399']);
+    runs = [{ 'Notify VIP': { error: 'HTTP 405 Method Not Allowed' } }, {}];
+    replies = [{ proposals: [{ summary: 'Use PUT', ops: fixOps }] }, { text: 'Yes, it does what you asked.' }];
+    await testUntilItRuns(goal);
+    expect(method()).toBe('PUT');
+    expect(proposals()[0].proposal.state).toBe('applied');
+  });
+
+  it('after publishToProduction the draft asks first, and the next fix waits (switch off)', async () => {
+    await draftNew('wf_join_published');
+    expect(await publishToProduction()).toBe(true);
+    useAutonomous.getState().set(false);
+    expect(autonomyOf('wf_join_published')).toBe('asks-first');
     approveDestinations('wf_join_published', ['127.0.0.1:3399']);
     runs = [{ 'Notify VIP': { error: 'HTTP 405 Method Not Allowed' } }];
     replies = [{ proposals: [{ summary: 'Use PUT', ops: fixOps }] }];
