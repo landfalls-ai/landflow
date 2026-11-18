@@ -164,7 +164,9 @@ describe('the open path', () => {
   const posts: Array<{ updatedAt?: string }> = [];
   let conflicts = 0;
   let rows: AgentMove[];
+  let updates: Array<{ agentId: string; pinned: number; latest: number }> = [];
   beforeEach(() => {
+    updates = [];
     posts.length = 0;
     conflicts = 0;
     rows = [];
@@ -183,6 +185,7 @@ describe('the open path', () => {
           const result: AgentMoveResult = { workflowId: 'wf_ag17', moved: [movedRow], kept: [keptRow], agents: [{ id: 'ag_triage', name: 'Alert triager', draftDiffers: true }], updatedAt: '2026-11-18T09:00:01.000Z' };
           return ok(result);
         }
+        if (String(url).endsWith('/agent-updates')) return ok({ updates });
         if (String(url).endsWith('/agent-moves')) return ok({ moves: rows });
         if (/\/api\/workflows\/wf_ag17$/.test(String(url))) return ok({ workflow: { ...legacy(), updatedAt: '2026-11-18T08:00:05.000Z' } });
         return ok({});
@@ -231,6 +234,22 @@ describe('the open path', () => {
         await new Promise((r) => setTimeout(r, 20));
       });
     };
+
+    it('a live move whose production pin is older than the published version still says to publish this workflow', async () => {
+      rows = [{ ...movedRow, state: 'live' } as AgentMove];
+      updates = [{ agentId: 'ag_triage', pinned: 2, latest: 3 }];
+      await mount();
+      const text = container.querySelector('[data-testid="agent-moves-notice"]')!.textContent!;
+      expect(text).toContain('Moved into Alert triager, published');
+      expect(text).toContain('Publish this workflow to put it in production');
+      // Production already runs the published version: nothing more to publish.
+      act(() => root.unmount());
+      root = createRoot(container);
+      window.localStorage.clear();
+      updates = [];
+      await mount();
+      expect(container.querySelector('[data-testid="agent-moves-notice"]')!.textContent).not.toContain('put it in production');
+    });
 
     it('shows the lines the first time, folds to a pill when closed (the pill reopens the record), and a second open shows the pill only', async () => {
       rows = [movedRow, keptRow];
@@ -319,6 +338,8 @@ describe('the open path', () => {
     const base = { workflowId: 'w', nodeId: 'n', subNodeId: 's', name: 'Slugify', slot: 'tool', agentId: 'a', agentName: 'Crypto Toolkit', outcome: 'moved', as: 'tool', by: 'migration', at: 'x' } as never;
     expect(moveNoticeLines([{ ...(base as object), state: 'pending' } as never])).toEqual(['Moved into Crypto Toolkit, not published yet: Slugify (tool).']);
     expect(moveNoticeLines([{ ...(base as object), state: 'live' } as never])).toEqual(['Moved into Crypto Toolkit, published: Slugify (tool).']);
+    expect(moveNoticeLines([{ ...(base as object), state: 'live' } as never], [], new Set(['a']))).toEqual(['Moved into Crypto Toolkit, published: Slugify (tool). Publish this workflow to put it in production.']);
+    expect(moveNoticeLines([{ ...(base as object), state: 'pending' } as never], [], new Set(['a']))).toEqual(['Moved into Crypto Toolkit, not published yet: Slugify (tool).']);
     expect(moveNoticeLines([{ ...(base as object), state: 'withdrawn' } as never])).toEqual(['Moved into Crypto Toolkit, then taken out of its draft: Slugify (tool).']);
   });
 });

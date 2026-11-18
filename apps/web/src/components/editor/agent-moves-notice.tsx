@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { isPhone } from '@/lib/client/use-phone';
 import { moveNow, readMoves } from '@/lib/client/agent-moves';
-import { publishChange, testDraft } from '@/lib/client/agent-change';
+import { AGENT_CHANGED, AGENT_SAVED, publishChange, testDraft } from '@/lib/client/agent-change';
 import { MOVES_CHANGED, moveNoticeLines, type AgentMove } from '@/lib/shared/agent-bubbles';
 import type { AgentPublish } from '@/lib/shared/agent-card';
 import type { NodeTypeInfo, Workflow } from '@/lib/shared/types';
@@ -117,6 +117,8 @@ export function AgentMovesNotice({ workflowId }: { workflowId: string }) {
   const [moves, setMoves] = useState<AgentMove[]>([]);
   const [open, setOpen] = useState(false);
   const [record, setRecord] = useState(false);
+  // Agents whose published version is newer than this workflow's production pin ("Keep v2 until republish"): published is not in production.
+  const [pinnedOlder, setPinnedOlder] = useState<ReadonlySet<string>>(new Set());
   const [publishing, setPublishing] = useState<Record<string, string>>({});
   const readOnly = useEditLock((s) => s.readOnly);
 
@@ -128,6 +130,21 @@ export function AgentMovesNotice({ workflowId }: { workflowId: string }) {
     } catch {
       return [];
     }
+  }, [workflowId]);
+
+  useEffect(() => {
+    let live = true;
+    const look = () =>
+      void api<{ updates: Array<{ agentId: string }> }>(`/api/workflows/${workflowId}/agent-updates`, { background: true }).then(
+        (r) => live && setPinnedOlder(new Set((r.updates ?? []).map((u) => u.agentId))),
+        () => undefined,
+      );
+    look();
+    for (const event of [AGENT_CHANGED, AGENT_SAVED, MOVES_CHANGED]) window.addEventListener(event, look);
+    return () => {
+      live = false;
+      for (const event of [AGENT_CHANGED, AGENT_SAVED, MOVES_CHANGED]) window.removeEventListener(event, look);
+    };
   }, [workflowId]);
 
   // The first time a person opens the flow after a move the card opens by itself; a later open shows the pill only.
@@ -179,7 +196,7 @@ export function AgentMovesNotice({ workflowId }: { workflowId: string }) {
     for (const m of shown) if (m.outcome === 'moved' && m.state === 'pending') byId.set(m.agentId, { id: m.agentId, name: m.agentName, draftDiffers: true });
     return [...byId.values()];
   }, [shown]);
-  const lines = moveNoticeLines(shown, agents);
+  const lines = moveNoticeLines(shown, agents, pinnedOlder);
 
   const close = () => {
     if (newest) writeSeen(workflowId, newest);

@@ -204,14 +204,21 @@ export function markMoved(bubbles: readonly Bubble[], moves: readonly AgentMove[
 }
 
 /** The notice's lines after a move (one per item, then the agents' state), in the order a person reads them. */
-export function moveNoticeLines(moves: readonly AgentMove[], agents: ReadonlyArray<{ name: string; draftDiffers: boolean }> = []): string[] {
+export function moveNoticeLines(
+  moves: readonly AgentMove[],
+  agents: ReadonlyArray<{ name: string; draftDiffers: boolean }> = [],
+  /** Ids of agents whose published version is newer than this workflow's production pin ("Keep v2 until republish"): their live moves are not in production yet. */
+  pinnedOlder: ReadonlySet<string> = new Set(),
+): string[] {
   const what = (m: AgentMove) => `${m.name} (${m.as === 'knowledge' ? 'knowledge base' : m.as ?? m.slot})`;
   const lines: string[] = [];
   // The wording follows the agent's live state (`state`, read against the agent now), not the fact of the move: once the published
   // version holds the item it is no longer "not published yet"; a person who took it out of the draft is told that.
   for (const m of moves.filter((x) => x.outcome === 'moved')) {
     const where = m.state === 'live' ? `Moved into ${m.agentName}, published` : m.state === 'withdrawn' ? `Moved into ${m.agentName}, then taken out of its draft` : `Moved into ${m.agentName}, not published yet`;
-    lines.push(`${where}: ${what(m)}${m.why ? `; ${m.why}` : ''}.`);
+    // Published is not in production: a production pin older than the published version keeps the old config until this workflow is published.
+    const toProduction = m.state === 'live' && pinnedOlder.has(m.agentId) ? ' Publish this workflow to put it in production.' : '';
+    lines.push(`${where}: ${what(m)}${m.why ? `; ${m.why}` : ''}.${toProduction}`);
   }
   for (const m of moves.filter((x) => x.outcome === 'same')) lines.push(`Already in ${m.agentName}: ${m.name} (removed from this flow).`);
   for (const m of moves.filter((x) => x.outcome === 'kept')) lines.push(`Kept in this flow: ${m.name}. ${m.why ?? ''}`.trim());
