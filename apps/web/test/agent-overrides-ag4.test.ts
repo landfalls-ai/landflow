@@ -421,6 +421,19 @@ describe('it keeps running until the agent is republished (R11)', () => {
     expect(offeredSlug()).toBe(0);
   });
 
+  it('withdrawing the moved tool from the draft takes its “Also your job” line with it; other lines and other tools’ lines stay', async () => {
+    const agent = makeAgent('Utility helper', { instructions: 'Decode, hash.\nAlways be brief.' });
+    const flow = saveFlow(agent.id);
+    await post(flow.id, { updatedAt: flow.updatedAt });
+    const instructionsOf = () => String((agentStore.get(agent.id) as unknown as { instructions?: string }).instructions);
+    expect(instructionsOf()).toContain('Also your job: slugify (');
+    // A save that keeps the tool keeps the line.
+    agentStore.saveDraft(agent.id, { instructions: instructionsOf() });
+    expect(instructionsOf()).toContain('Also your job: slugify (');
+    agentStore.saveDraft(agent.id, { tools: [] });
+    expect(instructionsOf()).toBe('Decode, hash.\nAlways be brief.');
+  });
+
   it('a moved model is the run’s model while pending', async () => {
     const agent = makeAgent();
     const flow = saveFlow(agent.id, (f) => wire(withoutSlug(f), { id: 'm1', name: 'Model', type: 'core.anthropicChatModel', parameters: { model: 'claude-haiku-5-5' } }, 'ai_languageModel'));
