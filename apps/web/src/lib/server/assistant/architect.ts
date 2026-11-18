@@ -1781,7 +1781,11 @@ const NUMBERED = /^(\s*)\d+([.)]\s)/;
 /** A clause that reads after "When", built from what the tool says it is for (its description's first sentence, without a lead-in such as "Use this to" or "When you need to"). */
 function descriptionClause(tool: AgentToolConfig): string {
   const first = ('description' in tool && tool.description ? tool.description : '').replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s/)[0].replace(/[\s.!?]+$/, '').replace(/`/g, '');
-  const task = first.replace(/^(?:use|call)\s+(?:this|it)\s+(?:when|to|for|if)\s+/i, '').replace(/^(?:use\s+when|when|if)\s+(?:you\s+|the\s+agent\s+)?(?:need\s+to\s+|needs?\s+to\s+)?/i, '').trim();
+  // A description's own slips never reach the step: a doubled article ("in a a SQLite …") and a noun said twice ("database file database").
+  const clean = first.replace(/\b(a|an|the)\s+\1\b/gi, '$1').replace(/\b(database|server|table|file)\s+file\s+\1\b/gi, '$1').replace(/\b(\w+)\s+\1\b/gi, '$1');
+  // A tool that only reads says "read", whatever the plugin's text offers ("Read or change data in …").
+  const reads = tool.type === 'node' && !tool.requireApproval && !writesOutside({ type: tool.nodeType, parameters: tool.parameters ?? {} }) && (tool.parameters?.operation !== undefined);
+  const task = (reads ? clean.replace(/^read (?:or change|and write|or write)\b/i, 'Read') : clean).replace(/^(?:use|call)\s+(?:this|it)\s+(?:when|to|for|if)\s+/i, '').replace(/^(?:use\s+when|when|if)\s+(?:you\s+|the\s+agent\s+)?(?:need\s+to\s+|needs?\s+to\s+)?/i, '').trim();
   if (task) {
     let cut = task.length > 90 ? `${task.slice(0, 90).replace(/\s+\S*$/, '')}…` : task;
     // A cut never leaves a bracket open: the clause stops before the unmatched opener.
@@ -1826,7 +1830,7 @@ function changeClause(change: string, tool: AgentToolConfig): string {
 }
 const CONFIG_VERB = /^(?:add|attach|include|install|enable|connect|use|give\s+(?:it|the agent))\b/i;
 
-function withToolSteps(text: string, added: Array<{ tool: AgentToolConfig; line?: string }>, change: string): string {
+export function withToolSteps(text: string, added: Array<{ tool: AgentToolConfig; line?: string }>, change: string): string {
   const lines = text.split('\n');
   const stepsAt = lines.findIndex((l) => STEPS_HEAD.test(l));
   const outputAt = lines.findIndex((l, i) => i > stepsAt && AFTER_STEPS.test(l));
@@ -1844,7 +1848,7 @@ function withToolSteps(text: string, added: Array<{ tool: AgentToolConfig; line?
     const clause = /^0\. When (.*), call /.exec(built)?.[1] ?? '';
     const afterAsked = /^asked to (.*)$/i.exec(clause)?.[1];
     const notATask = afterAsked !== undefined && (/^(?:the|a|an|this|that|these|those|[“"'‘]|[A-Z])/.test(afterAsked) || /^(?:add|attach|include|install|enable|connect|use|give)\b/i.test(afterAsked));
-    return readsAsSentence(built) && !notATask && !clause.includes(':') ? built : `0. When ${descriptionClause(t)}, call ${call(t)}.`;
+    return readsAsSentence(built) && !notATask && !clause.includes(':') ? built : `0. When ${descriptionClause(t)}, call ${call(t)}${t.type === 'node' && !t.requireApproval && t.parameters?.operation !== undefined && !writesOutside({ type: t.nodeType, parameters: t.parameters }) ? ' (read only)' : ''}.`;
   });
   const toolsAt = lines.findIndex((l, i) => i >= start && i < end && TOOLS_LINE.test(l));
   let at = toolsAt;

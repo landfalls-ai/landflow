@@ -336,3 +336,22 @@ describe('the design never removes what the session added (keep, item 2)', () =>
     expect(res.status).toBe(400);
   });
 });
+
+describe('the step built from a tool description (re-review finding 1)', () => {
+  const live = 'Read or change data in a a SQLite database file database. Set `operation`: `select` reads rows of `table` (optionally `where`).';
+  const tool = (parameters: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ id: 't', type: 'node', name: 'sqlite', description: live, nodeType: 'databases.sqlite', parameters, ...extra }) as never;
+  const stepFor = (t: never) => architectApi.withToolSteps('Steps:\n1. Write the summary.', [{ tool: t }], 'Give it the SQLite tool (select / executeQuery, read-only)').split('\n').find((l) => /call sqlite/.test(l)) ?? '';
+
+  it('a pinned select reads: no doubled article, no repeated noun, “read” and “read only”', () => {
+    const line = stepFor(tool({ operation: 'select', table: 'sales' }));
+    expect(line).not.toMatch(/\ba a\b/);
+    expect(line).not.toMatch(/database file database/);
+    expect(line).not.toMatch(/read or change/i);
+    expect(line).toMatch(/When you need to read data in a SQLite database, call sqlite \(read only\)\./);
+  });
+
+  it('a tool whose configured operation writes keeps “read or change”, with the clean noun phrase', () => {
+    const line = stepFor(tool({ operation: 'insert', table: 'sales' }, { requireApproval: true }));
+    expect(line).toMatch(/read or change data in a SQLite database, call sqlite \(it asks the person first\)/i);
+  });
+});

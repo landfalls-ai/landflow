@@ -77,7 +77,7 @@ export function sessionFold(items: ChatItem[], testId: string, running: boolean)
   const mine = items.filter((item) => item.testId === testId && item.role === 'assistant');
   const runs = mine.flatMap((item) => (item.role === 'assistant' ? item.parts.flatMap((p) => (p.kind === 'run' ? [p.run] : [])) : []));
   if (!runs.length || runs.some((r) => r.state === 'running')) return undefined;
-  const fixes = mine.reduce((n, item) => n + (item.role === 'assistant' ? item.parts.filter((p) => p.kind === 'proposal' && p.proposal.state === 'applied').length : 0), 0);
+  const fixes = mine.reduce((n, item) => n + (item.role === 'assistant' ? item.parts.filter((p) => (p.kind === 'proposal' && p.proposal.state === 'applied') || (p.kind === 'agentCard' && p.card.state === 'created')).length : 0), 0);
   // A pass the review said no to ends in an outcome card ("It runs, but doesn't do all you asked"): stopped, not passed.
   const last = items.findLastIndex((item) => item.testId === testId);
   const after = items.slice(last + 1);

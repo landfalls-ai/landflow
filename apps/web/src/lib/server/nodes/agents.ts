@@ -255,6 +255,8 @@ export const messageAgentNode = defineNode({
         if (!agent) throw new NodeOperationError('Choose an agent — the selected one was deleted', { itemIndex: i });
         if (source === 'published' && !agent.published) throw new NodeOperationError(`Publish “${agent.name}” first`, { description: 'Workflows run the published version of an agent.', itemIndex: i });
         const runVersion: 'draft' | number = source === 'pinned' ? pin! : source === 'draft' ? 'draft' : agent.published!.version;
+        // Re-review: recorded before the input is checked, so a run that fails ("The message is empty") still carries its “workflow vN · agent vM” label.
+        recordRunAgent(ctx.getExecutionId(), { nodeId: node.id, agentId: agent.id, version: runVersion, source }); // AG21: both versions of a run
         const runConfig = source === 'draft' ? configOf(agent) : source === 'pinned' ? agentVersionConfig(agentId, pin!)! : agent.published!.config;
         // A message that comes out empty ($fromAI with no argument, as when a roster pick starts the run here) falls back to the chat input.
         const chatInput = items[i]?.json?.chatInput;
@@ -321,7 +323,6 @@ export const messageAgentNode = defineNode({
             session = (existing && { ...existing, version: runVersion }) ?? newSession(agent, { source: 'workflow', userId, version: runVersion, ...(conversationKey && { conversationKey }) });
           }
           session.execution = execution;
-          recordRunAgent(execution.executionId, { nodeId: node.id, agentId: agent.id, version: runVersion, source }); // AG21: both versions of a run
           send?.({ type: 'begin', itemIndex: i });
           result = await runAgent({
             agent,
