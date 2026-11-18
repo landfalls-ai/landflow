@@ -265,6 +265,29 @@ describe('destinations nobody gave (lesson 21)', () => {
     expect(spotlightVerdict(standIn, [...given, ...standIn])).toBe('approve');
   });
 
+  it('no destination found never means approve: a GitHub commit, a Landfall declare, a Landledger cancel are left with nothing given', async () => {
+    const { callDestinations, spotlightVerdict, spotlightDestinations } = await import('@/lib/server/agents/spotlight-approvals');
+    const calls: Array<[string, Record<string, unknown>]> = [
+      ['github.github', { resource: 'files', operation: 'commit', owner: 'o', repo: 'r', branch: 'main' }],
+      ['landfall.landfall', { operation: 'declare' }],
+      ['landledger.landledger', { operation: 'cancel' }],
+    ];
+    for (const [type, call] of calls) {
+      const found = callDestinations(type, call);
+      expect(found, type).toEqual([`${type} ${call.operation}`]);
+      expect(spotlightVerdict(found, []), type).toBe('leave');
+      // The person's own words naming the stand-in still give it.
+      expect(spotlightVerdict(found, found), type).toBe('approve');
+    }
+    // A tool that reports no destination at all (or fails to) is left too.
+    expect(await spotlightDestinations({ destinationsOf: async () => [] }, {}, undefined)).toEqual(['{{ … }}']);
+    expect(spotlightVerdict(await spotlightDestinations({ destinationsOf: async () => [] }, {}, undefined), [])).toBe('leave');
+    expect(spotlightVerdict(await spotlightDestinations({}, {}, undefined), ['x'])).toBe('leave');
+    // An HTTP call to a given URL is still approved.
+    const url = 'https://api.landflow.test/x';
+    expect(spotlightVerdict(callDestinations('core.httpRequest', { method: 'POST', url }), [callDestinations('core.httpRequest', { url })[0]])).toBe('approve');
+  });
+
   it('an asks-first workflow tool is left for the person, not run', async () => {
     const sub: Workflow = { id: 'wf_ag23_sub', name: 'Notify sub', nodes: [node('In', 'core.workflowTrigger', {})], connections: [] };
     store.saveWorkflow(sub);

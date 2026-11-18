@@ -45,7 +45,7 @@ import { agentStore, configOf } from './store';
 import type { MemberPause } from '../agent-teams/pause';
 import type { ToolTarget } from '../../shared/tool-target';
 import { approvedByLine } from '../../shared/fix-autonomy'; // AG23:
-import { spotlightVerdict, type SpotlightApprovals } from './spotlight-approvals'; // AG23:
+import { spotlightDestinations, spotlightVerdict, type SpotlightApprovals } from './spotlight-approvals'; // AG23:
 import { buildToolset, binaryScopeFor, targetOfCall, dedupe, nodeKnowledgeTool, type BuiltTool, type ToolCaller, type ToolContext } from './tools';
 import { knowledgeTool } from './knowledge';
 import { agentNotAllowedMessage, projectAgentRules } from '../project-context/project-settings';
@@ -705,7 +705,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         const heldFor = tool && !tool.requireApproval && tool.holdReason ? await tool.holdReason(call.input, ctx).catch(() => 'The call’s parameters could not be checked.') : undefined;
         // AG23: in a fix session's test run Spotlight decides a call that asks first: it runs when every destination was given, else it is left for the person.
         const verdict = tool && (tool.requireApproval || heldFor) && request.approvals === 'spotlight' && request.spotlight
-          ? spotlightVerdict(tool.destinationsOf ? await tool.destinationsOf(call.input, ctx).catch(() => ['{{ … }}']) : ['{{ … }}'], request.spotlight.given)
+          ? spotlightVerdict(await spotlightDestinations(tool, call.input, ctx), request.spotlight.given)
           : undefined;
         if (!tool) immediate.push({ id: call.id, name: call.name, content: `Unknown tool "${call.name}". Available: ${[...byName.keys()].join(', ')}`, isError: true });
         else if (denied.has(call.name)) {

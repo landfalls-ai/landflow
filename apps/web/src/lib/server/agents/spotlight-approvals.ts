@@ -79,10 +79,10 @@ export function callDestinations(nodeType: string | undefined, parameters: Recor
   }
   if (out.length) return out;
   if (!fallback) return [];
-  const step = { type, parameters };
-  if (!writesOutside(step)) return [];
-  const [sent] = destinationsOf([{ name: '', ...step }]);
-  return sent ? [sent.destination] : [];
+  // AG23 (ag5 fix pass): a call Spotlight decides never reads "no destination found" as "approve": the stand-in is the
+  // `destinationsOf` form whether or not `writesOutside` calls the operation a write (a GitHub commit, a Landfall declare).
+  const operation = typeof parameters.operation === 'string' ? parameters.operation : '';
+  return [`${type}${operation ? ` ${operation}` : ''}`];
 }
 
 /**
@@ -116,4 +116,17 @@ export function flowDestinations(workflow: Pick<Workflow, 'nodes'>): string[] {
 export function spotlightVerdict(callDestinationList: readonly string[], given: readonly string[]): 'approve' | 'leave' {
   if (callDestinationList.includes(NOT_GIVEN) || callDestinationList.some(isUnreadHost)) return 'leave';
   return spotlightMayApprove({ destinations: callDestinationList }, given.filter((d) => d !== NOT_GIVEN)) ? 'approve' : 'leave';
+}
+
+/**
+ * The destinations Spotlight judges for one call of a tool: what the tool reports, and never an empty list (a tool that reports
+ * none, errors, or finds nothing is read as a destination nobody gave, so the call waits: no destination never means approve).
+ */
+export async function spotlightDestinations<C>(
+  tool: { destinationsOf?(input: Record<string, unknown>, ctx: C): Promise<string[]> },
+  input: Record<string, unknown>,
+  ctx: C,
+): Promise<string[]> {
+  const found = tool.destinationsOf ? await tool.destinationsOf(input, ctx).catch(() => [NOT_GIVEN]) : [NOT_GIVEN];
+  return found.length ? found : [NOT_GIVEN];
 }
