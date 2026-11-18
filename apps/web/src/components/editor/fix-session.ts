@@ -8,7 +8,7 @@ import type { AssistantOp } from '@/lib/shared/assistant-ops';
 import { fixAutonomyFor, keptOwnFixLine, normalDestination, type FixAutonomy, type SessionFix } from '@/lib/shared/fix-autonomy';
 import { dropRepeatedAgentWork, type AgentBrief } from '@/lib/shared/agent-brief';
 import { heldLine as gateHeldLine } from '@/lib/shared/agent-eval';
-import { useAutonomyFacts } from './spotlight-autonomy';
+import { needsAClick, useAutonomyFacts, type ChangeGraph, type ChangeOp } from './spotlight-autonomy';
 
 /** What a test-and-fix session takes when nothing names it: the switch alone (decision of 2026-11-18); never `autonomyOf`. */
 export const fixAutonomyNow = (): FixAutonomy => fixAutonomyFor({ switchOn: useAutonomyFacts.getState().switchOn });
@@ -143,4 +143,50 @@ export function withoutSecrets(item: Record<string, unknown>): Record<string, un
   const headers = pick(item.headers, (k) => SECRET_HEADERS.test(k));
   const query = pick(item.query, (k) => SECRET_PARAMS.test(k));
   return { ...item, ...(headers && { headers }), ...(query && { query }) };
+}
+
+/**
+ * The removals an autonomous fix session may make without a click (the person's decision of 2026-11-18): a step the session
+ * itself added (`own`, node ids) and a step that plainly duplicates what the bound agent does (`duplicates`: node id to the
+ * agent's name, from `duplicatedSteps`). Anything else, a step the person built included, still waits. sb1's `needsAClick` is not
+ * edited: this wraps it and takes the allowed removals out of what it reads.
+ */
+export interface RemovalsAllowed {
+  own?: ReadonlySet<string>;
+  duplicates?: ReadonlyMap<string, string>;
+}
+
+/** The steps these ops remove that `allowed` lets go without a click, by node id, with the timeline's line (*Removed “X”: why*). */
+function allowedGone(ops: readonly ChangeOp[], before: ChangeGraph, allowed: RemovalsAllowed | undefined): Map<string, string> {
+  const gone = new Map<string, string>();
+  if (!allowed) return gone;
+  for (const op of ops) {
+    if (op.op !== 'removeNode') continue;
+    const node = op.node ? before.nodes.find((n) => n.name === op.node || n.id === op.node) : undefined;
+    if (!node) continue;
+    if (allowed.own?.has(node.id)) gone.set(node.id, `Removed “${node.name}”: this session added it`);
+    else if (allowed.duplicates?.has(node.id)) gone.set(node.id, `Removed “${node.name}”: “${allowed.duplicates.get(node.id)}” does it itself`);
+  }
+  return gone;
+}
+
+/** The timeline's line for each removal that went through without a click, with its reason. */
+export function removedWithoutClick(ops: readonly ChangeOp[], before: ChangeGraph, allowed: RemovalsAllowed | undefined): string[] {
+  return [...allowedGone(ops, before, allowed).values()];
+}
+
+/** `needsAClick` for an autonomous fix session: the same rule, minus the allowed removals (and the disconnects that only leave a step going or the session's own without input). */
+export function fixNeedsAClick(ops: readonly ChangeOp[], before: ChangeGraph, allowed: RemovalsAllowed | undefined): string[] {
+  const gone = allowedGone(ops, before, allowed);
+  if (!gone.size && !allowed?.own?.size) return needsAClick(ops, before);
+  const find = (ref: string | undefined) => (ref ? before.nodes.find((n) => n.name === ref || n.id === ref) : undefined);
+  const rest = ops.filter((op) => {
+    if (op.op === 'removeNode') return !(find(op.node) && gone.has(find(op.node)!.id));
+    if (op.op === 'disconnect') {
+      const target = find(op.to);
+      return !(target && (gone.has(target.id) || allowed?.own?.has(target.id)));
+    }
+    return true;
+  });
+  return needsAClick(rest, before);
 }

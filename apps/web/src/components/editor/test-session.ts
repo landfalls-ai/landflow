@@ -23,12 +23,12 @@ import { designChange, heldOf, readDraft, type ChangeDesign } from '@/lib/client
 import { api } from '@/lib/client/api'; // AG22:
 import { keptToolOf } from '@/lib/shared/kept-tool';
 import { normalDestination, publishedLine, SPOTLIGHT_APPROVALS, unattendedLine, type SpotlightRunApprovals } from '@/lib/shared/fix-autonomy'; // AG22:
-import { agentReplyText, agentUndoneBy, destinationsInText, droppedLine, fixAutonomyNow, fixesOf, heldLine, heldRequest, KEEP_REASON, keptTools, leftForNextRound, duplicatedSteps, sameFixTwice, toolsAdded, undoneBy, withoutSecrets, type OwnFix } from './fix-session'; // AG22:
+import { agentReplyText, agentUndoneBy, destinationsInText, droppedLine, fixAutonomyNow, fixesOf, heldLine, heldRequest, KEEP_REASON, keptTools, leftForNextRound, duplicatedSteps, sameFixTwice, toolsAdded, undoneBy, withoutSecrets, fixNeedsAClick, removedWithoutClick, type OwnFix, type RemovalsAllowed } from './fix-session'; // AG22:
 import { followsPractices, guardrailWords, type AgentConfig } from '@/lib/shared/agents'; // AG20:
 import { useBubbleData } from '@/lib/client/agent-bubble-data'; // ag4 review: the agent's name in what is left
 import { pickedModel } from './spotlight-model'; // AG20:
 import { publishVersion, toastApprovalRequested } from './publish-control';
-import { autonomyOf, needsAClick, notePublished, removedWithoutClick, type Autonomy, type RemovalsAllowed } from './spotlight-autonomy'; // SB03:
+import { autonomyOf, notePublished, type Autonomy } from './spotlight-autonomy'; // SB03:
 import { agentBrief, type AgentBrief } from '@/lib/shared/agent-brief'; // wave ag5 fix pass: removals
 import { useEditor } from './store';
 import { testTriggerFor, useTestListener } from './test-listener';
@@ -1107,7 +1107,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       const graph = { nodes: useEditor.getState().nodes.map((n) => ({ id: n.id, name: n.data.wf.name })), connections: useEditor.getState().edges.map((e) => ({ source: e.source, target: e.target, type: e.data?.connectionType })) };
       // The person's decision of 2026-11-18: an autonomous session removes a step it added, or one the bound agent plainly does itself, without a click.
       const allowed: RemovalsAllowed | undefined = autonomy === 'auto' ? { own: ownNodes, duplicates: await repeatedByAgents() } : undefined;
-      const reasons = autonomy === 'auto' ? needsAClick(proposals.flatMap((p) => p.ops), graph, allowed) : [];
+      const reasons = autonomy === 'auto' ? fixNeedsAClick(proposals.flatMap((p) => p.ops), graph, allowed) : [];
       if (autonomy === 'asks-first' || reasons.length) {
         if (reasons.length) {
           const note = `Waits for you: ${reasons.join(', ')}`;
