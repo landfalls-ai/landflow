@@ -793,6 +793,15 @@ export interface DesignExtras {
   modelNote?: string;
 }
 
+/** A gap in plain words: a tool id the model wrote ("no extract_iocs tool") is the node's title ("no Extract IOCs tool"). */
+export function plainGap(gap: string, types: readonly NodeTypeInfo[]): string {
+  return gap.replace(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g, (id) => {
+    const key = squash(id);
+    const hit = types.find((t) => squash(t.descriptor.displayName) === key || squash(t.type.split('.').pop() ?? '') === key);
+    return hit?.descriptor.displayName ?? id.replace(/_/g, ' ');
+  });
+}
+
 /**
  * The model's propose_agent arguments as an agent config: a template's persona under the fields given, tools checked
  * against what exists, parameters kept to the node's own (over its defaults), invented ids left out. `keep` is the
@@ -1084,7 +1093,7 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
     const agent = otherAgents(actor).find((a) => a.id === wanted) ?? otherAgents(actor).filter((a) => a.name.toLowerCase() === wanted?.toLowerCase()).at(0); // a model writes the name where the id goes, as it does for Run an Agent
     if (!agent) dropped.push(`the agent ${text(r.agentId, 80) ?? ''} to reuse: not on this instance`);
     else {
-      const gaps = (Array.isArray(r.gaps) ? r.gaps : typeof r.gaps === 'string' ? r.gaps.split('\n') : []).flatMap((g) => text(g, 120) ?? []).filter((g) => !/^(?:none|no|nothing|n\/a|-)\b/i.test(g.trim())).slice(0, 6); // a model writes "None known" for no gap
+      const gaps = (Array.isArray(r.gaps) ? r.gaps : typeof r.gaps === 'string' ? r.gaps.split('\n') : []).flatMap((g) => text(g, 120) ?? []).filter((g) => !/^(?:none|no|nothing|n\/a|-)\b/i.test(g.trim())).map((g) => plainGap(g, types)).slice(0, 6); // a model writes "None known" for no gap
       reuse = { agentId: agent.id, name: agent.name, why: text(r.why, 200) ?? shorten(agent.description ?? '', 160), published: agent.publishedVersion !== undefined, gaps };
     }
   }

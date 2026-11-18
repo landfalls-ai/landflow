@@ -308,12 +308,16 @@ export function starterFlow(agent: { id: string; name: string }, sample: string)
   };
 }
 
-/** Wave ag4 (AG19): the card's reuse row: "“Alert triager” already does this: normalises alerts … (published)". */
+/**
+ * Wave ag4 (AG19): the card's reuse row: "“Alert triager” already does this: normalises alerts … (published)". An agent
+ * with gaps is only the closest, and the row says so: "Closest: “Runbooks answerer”: answers from runbooks; it lacks Extract IOCs"
+ * (gap phrases are plain words, never tool ids: the design route writes a node's title).
+ */
 export function reuseLine(reuse: AgentReuse): string {
   const why = reuse.why.trim().replace(/[.\s]+$/, '');
+  if (reuse.gaps.length) return `Closest: “${reuse.name}”${why ? `: ${why}` : ''}; it lacks ${reuse.gaps.join(', ')}${reuse.published ? '' : ' (not published yet)'}`;
   const state = reuse.published ? 'published' : 'not published yet';
-  const gaps = reuse.gaps.length ? `; it lacks ${reuse.gaps.join(', ')}` : '';
-  return `“${reuse.name}” already does this${why ? `: ${why}` : ''} (${state}${gaps})`;
+  return `“${reuse.name}” already does this${why ? `: ${why}` : ''} (${state})`;
 }
 
 /** Wave ag4 (AG19): the card's Knowledge row for an existing knowledge base: "runbooks · 4 documents · keyword search (BM25, built in) · already indexed". */

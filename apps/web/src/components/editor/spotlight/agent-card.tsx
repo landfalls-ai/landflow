@@ -106,13 +106,28 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
       {reusing && card.reuse && (
         <div data-testid="agent-reuse" className="mt-2 rounded-lg border border-acbd bg-acdim p-2">
           <p className="text-[12px] leading-snug text-t1 [overflow-wrap:anywhere]">{reuseLine(card.reuse)}</p>
+          {/* A reuse with gaps is only the closest: Create is the primary button and Use is the second choice (asks first and autonomous alike). */}
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            <Button size="sm" variant="primary" disabled={busy} onClick={() => void useExistingAgent(itemId, card)} className="max-md:h-11 max-md:px-4">
-              Use {card.reuse.name}
-            </Button>
-            <Button size="sm" variant="outline" disabled={busy || creating} onClick={() => void createFromCard(itemId, card)} className="max-md:h-11 max-md:px-4">
-              Create anyway
-            </Button>
+            {card.reuse.gaps.length > 0 ? (
+              <>
+                <Button size="sm" variant="primary" disabled={busy || creating} onClick={() => void createFromCard(itemId, card)} className="max-md:h-11 max-md:px-4">
+                  {creating && <Loader2 className="size-3.5 animate-spin" />}
+                  {creating ? 'Creating…' : card.starter ? 'Create agent and flow' : 'Create agent'}
+                </Button>
+                <Button size="sm" variant="outline" disabled={busy} onClick={() => void useExistingAgent(itemId, card)} className="max-md:h-11 max-md:px-4">
+                  Use {card.reuse.name} anyway
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button size="sm" variant="primary" disabled={busy} onClick={() => void useExistingAgent(itemId, card)} className="max-md:h-11 max-md:px-4">
+                  Use {card.reuse.name}
+                </Button>
+                <Button size="sm" variant="outline" disabled={busy || creating} onClick={() => void createFromCard(itemId, card)} className="max-md:h-11 max-md:px-4">
+                  Create anyway
+                </Button>
+              </>
+            )}
           </div>
         </div>
       )}

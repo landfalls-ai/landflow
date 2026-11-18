@@ -8,7 +8,7 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentCard } from '@/lib/shared/agent-card';
-import { attachedLine } from '@/lib/shared/agent-card';
+import { attachedLine, reuseLine } from '@/lib/shared/agent-card';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -168,6 +168,21 @@ const click = async (selector: string) => { await act(async () => { (container.q
     const label = container.querySelector('[data-testid="bubble-diagram"]')!.getAttribute('aria-label')!;
     expect(label).not.toContain('Runbooks answerer');
     expect(bubbles().some((b) => b.startsWith('tool:'))).toBe(true);
+  });
+
+  it('a reuse with gaps reads Closest: “X”: why; it lacks <gaps>, Create is primary and Use X anyway second; a full fit is unchanged', async () => {
+    const closest = { agentId: 'ag_s2', name: 'Runbooks answerer', why: 'answers from the runbooks', published: true, gaps: ['Extract IOCs', 'the Haiku model'] };
+    await show(cardFromPreview(preview({ reuse: closest }), ASK, true));
+    const row = container.querySelector('[data-testid="agent-reuse"]')!;
+    expect(row.querySelector('p')!.textContent).toBe('Closest: “Runbooks answerer”: answers from the runbooks; it lacks Extract IOCs, the Haiku model');
+    expect(row.textContent).not.toContain('already does this');
+    const buttons = [...row.querySelectorAll('button')];
+    expect(buttons.map((b) => b.textContent)).toEqual(['Create agent and flow', 'Use Runbooks answerer anyway']);
+    expect(buttons[0]!.className).toMatch(/bg-ac|primary/);
+    expect(buttons[1]!.className).not.toBe(buttons[0]!.className);
+    expect(row.textContent).not.toMatch(/\b[a-z]+_[a-z]+\b/);
+    // The row for a full fit is unchanged.
+    expect(reuseLine({ ...closest, gaps: [] })).toBe('“Runbooks answerer” already does this: answers from the runbooks (published)');
   });
 
   it('after Create on asks.md B’s card: no folder route call, and the imported knowledge tool is the existing base', async () => {

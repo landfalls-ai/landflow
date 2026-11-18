@@ -17,7 +17,7 @@ const { default: scenarios } = await import('./spotlight-scenarios/sb-ag19');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { registry } = await import('@/lib/server/plugins/registry');
 const { TEST_OWNER } = await import('@/lib/server/auth/test-bypass');
-const { draftFrom, fromDesign, modelWhyOf, catalogAgents, designBrief, ARCHITECT_SYSTEM } = await import('@/lib/server/assistant/architect');
+const { draftFrom, fromDesign, modelWhyOf, catalogAgents, designBrief, ARCHITECT_SYSTEM, plainGap } = await import('@/lib/server/assistant/architect');
 const { TOOLS } = await import('@/lib/server/assistant/chat');
 const { buildFlow, agentReading, dropRepeatedAgentWork } = await import('@/lib/server/flow-builder');
 
@@ -84,6 +84,16 @@ describe('the Agent architect prompt', () => {
     expect(ARCHITECT_SYSTEM).not.toMatch(/then search_nodes for each/);
     expect(ARCHITECT_SYSTEM).not.toContain('Read the company before');
     expect(ARCHITECT_SYSTEM.match(/list_agents first/g) ?? []).toHaveLength(0);
+  });
+});
+
+describe('gap phrases', () => {
+  it('say the node’s title, never a tool id (extract_iocs → Extract IOCs)', () => {
+    const types = registry.nodeTypes();
+    expect(plainGap('no extract_iocs tool', types)).toBe('no Extract IOCs tool');
+    expect(plainGap('needs send_email', types)).toBe('needs Send Email');
+    expect(plainGap('a Haiku model', types)).toBe('a Haiku model');
+    expect(plainGap('no made_up_thing', types)).toBe('no made up thing');
   });
 });
 
