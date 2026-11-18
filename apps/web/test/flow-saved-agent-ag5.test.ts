@@ -81,6 +81,18 @@ describe('the first flow ask uses a saved agent', () => {
     expect(draft.reuses?.join(' ')).toMatch(/tools it had: Calculator/);
   });
 
+  it('carries the removed AI Agent\'s system message, Chat Model and tools on the draft for the new agent\'s design', async () => {
+    answer = JSON.stringify(JSON.parse(inlineAgent(
+      [{ key: 'm', type: 'core.anthropicChatModel', name: 'Model', parameters: { model: 'claude-haiku-5' } }, { key: 't', type: 'core.calculatorTool', name: 'Calculator' }],
+      [{ from: 'm', to: 'b', type: 'ai_languageModel' }, { from: 't', to: 'b', type: 'ai_tool' }],
+    )));
+    const parsed = JSON.parse(answer);
+    parsed.nodes.find((n: { key: string }) => n.key === 'b').parameters.systemMessage = 'You write sales summaries.';
+    answer = JSON.stringify(parsed);
+    const draft = await buildFlow(G1);
+    expect(draft.newAgents?.['Write summary']).toEqual({ instructions: 'You write sales summaries.', tools: ['Calculator'], toolNodes: [{ nodeType: 'core.calculatorTool' }], model: 'anthropic/claude-haiku-5' });
+  });
+
   it('rewrites what the steps after the converted one read of the AI Agent\'s output to the Run an Agent step\'s reply', () => {
     const byType = new Map(availableTypes().map((t) => [t.type, t]));
     const nodes = [
@@ -119,6 +131,12 @@ describe('the first flow ask uses a saved agent', () => {
     const nodes = [{ key: 'b', type: 'core.aiAgent', name: 'AI Agent', parameters: {} }];
     expect(savedAgentSteps(nodes, [], 'Add an AI Agent that answers questions', byType).nodes[0].type).toBe('core.aiAgent');
     expect(savedAgentSteps(nodes, [], 'Add an agent that answers questions', byType).nodes[0].type).toBe('core.messageAgent');
+  });
+
+  it('does not read a person\'s role or a header as a call for an agent', () => {
+    const byType = new Map(availableTypes().map((t) => [t.type, t]));
+    const nodes = [{ key: 'b', type: 'core.aiAgent', name: 'Summarise', parameters: {} }];
+    for (const ask of ['When a support agent closes a ticket, summarise it with AI', 'Set the User-Agent header and summarise the reply']) expect(savedAgentSteps(nodes, [], ask, byType).nodes[0].type).toBe('core.aiAgent');
   });
 
   it('no longer tells the model to use core.aiAgent to draft a reply when the ask names an agent', async () => {

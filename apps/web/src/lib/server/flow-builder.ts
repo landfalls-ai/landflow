@@ -5,7 +5,7 @@
  * manual trigger is added when the model forgot one.
  */
 import type { ConnectionType, NodeItem, NodeTypeInfo, PropertyDescriptor } from '@/lib/shared/types';
-import { callsAnAgent, describeAgents, withAgentId, type AgentBrief } from '@/lib/shared/agent-brief';
+import { callsAnAgent, describeAgents, withAgentId, type AgentBrief, type NewAgentHint } from '@/lib/shared/agent-brief';
 import { reuseSentence } from '@/lib/shared/tenant-catalog'; // AG19:
 import { describeTeams, withTeamId, type TeamBrief } from '@/lib/shared/agent-teams';
 import { registry } from './plugins/registry';
@@ -54,6 +54,8 @@ export interface FlowDraft {
   stages?: BuildStage[];
   /** AG19: one sentence per Run an Agent step that reuses an agent the caller has ("Reuses “Alert triager”: …"): the summary's assumptions. */
   reuses?: string[];
+  /** AG25: what the builder had wired to an AI Agent step it turned into a Run an Agent step, by the step's name: the new agent's instructions, tools and model, for the Agent architect. */
+  newAgents?: Record<string, NewAgentHint>;
   /** SB15: the build summary the route adds after the guards (steps in words, what was assumed, what is left, what no node can do). */
   summary?: DraftSummary; // SB15:
 }
@@ -213,6 +215,9 @@ export function dropRepeatedAgentWork<N extends { key: string; type: string; nam
   return { nodes: keptNodes, edges: keptEdges, notes, dropped };
 }
 
+/** AG25: the provider a Chat Model node type stands for. */
+const CHAT_PROVIDERS: Record<string, string> = { 'core.anthropicChatModel': 'anthropic', 'core.openAiChatModel': 'openai', 'core.ollamaChatModel': 'ollama' };
+
 /** AG25: the Chat Model node the host's builder model (`LANDFLOW_BUILDER_MODEL`) is: `anthropic/x` the Anthropic node, `openai/x` the OpenAI one, a bare name or `ollama/x` Ollama's; undefined when that node is not available. */
 export function builderChatModel(byType: ReadonlyMap<string, unknown>): { type: string; name: string; parameters: Record<string, unknown> } | undefined {
   const name = (process.env.LANDFLOW_BUILDER_MODEL?.trim() || DEFAULT_MODEL).trim();
@@ -259,8 +264,9 @@ export function savedAgentSteps<N extends { key: string; type: string; name: str
   edges: Array<[string, string, number, ConnectionType]>,
   ask: string,
   byType: ReadonlyMap<string, NodeTypeInfo>,
-): { nodes: N[]; edges: Array<[string, string, number, ConnectionType]>; notes: string[] } {
+): { nodes: N[]; edges: Array<[string, string, number, ConnectionType]>; notes: string[]; agents: Record<string, NewAgentHint> } {
   const notes: string[] = [];
+  const agents: Record<string, NewAgentHint> = {};
   const called = callsAnAgent(ask);
   let keptNodes = [...nodes];
   let keptEdges = [...edges];
@@ -270,7 +276,20 @@ export function savedAgentSteps<N extends { key: string; type: string; name: str
     const wired = keptEdges.filter((e) => e[1] === n.key && e[3] !== 'main');
     if (called && byType.has('core.messageAgent')) {
       const subs = new Set(wired.map((e) => e[0]));
-      const tools = wired.filter((e) => e[3] === 'ai_tool').map((e) => keptNodes.find((m) => m.key === e[0])?.name).filter((v): v is string => Boolean(v));
+      const toolNodes = wired.filter((e) => e[3] === 'ai_tool').map((e) => keptNodes.find((m) => m.key === e[0])).filter((m): m is N => Boolean(m));
+      const tools = toolNodes.map((m) => m.name);
+      const chat = wired.filter((e) => e[3] === 'ai_languageModel').map((e) => keptNodes.find((m) => m.key === e[0])).find((m) => m && CHAT_PROVIDERS[m.type]);
+      const modelName = text(chat?.parameters?.model);
+      const instructions = text(n.parameters?.systemMessage);
+      agents[n.name] = {
+        ...(instructions && { instructions }),
+        tools,
+        toolNodes: toolNodes.map((m) => {
+          const operation = text(m.parameters?.operation);
+          return { nodeType: m.type, ...(operation && { operation }) };
+        }),
+        ...(chat && modelName && { model: `${CHAT_PROVIDERS[chat.type]}/${modelName}` }),
+      };
       const prompt = text(n.parameters?.prompt);
       const message = prompt && !/^\{\{\s*\$json\.chatInput\s*\}\}$/.test(prompt) ? prompt : '';
       // A sub-node another step shares stays; one only this step used goes with it.
@@ -290,7 +309,7 @@ export function savedAgentSteps<N extends { key: string; type: string; name: str
     keptEdges.push([key, n.key, 0, 'ai_languageModel']);
     notes.push(`“${n.name}” runs on the ${model.name} (the builder model)`);
   }
-  return { nodes: keptNodes, edges: keptEdges, notes };
+  return { nodes: keptNodes, edges: keptEdges, notes, agents };
 }
 
 /**
@@ -694,6 +713,7 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
     built.nodes = own.nodes;
     built.edges = own.edges;
     own.notes.unshift(...saved.notes); // AG25:
+    const newAgents = Object.fromEntries(Object.entries(saved.agents).filter(([name]) => built.nodes.some((n) => n.name === name && n.type === 'core.messageAgent'))); // AG25: only for steps that are still Run an Agent steps
     built.dropped = [...built.dropped, ...own.dropped];
     const staged = { nodes: built.nodes, edges: built.edges, dropped: built.dropped, left: built.left, trigger: built.trigger };
     const stagedLeft = mergeLeft(
@@ -705,7 +725,7 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
     const at = pinTarget(staged, byType);
     const items = (cleanTestItems(at ? built.testItems[at.key] : undefined, at, built.nodes) ?? sampleItems(at, built.nodes))?.slice(0, built.nodes.some((n) => AGENT_TYPES.has(n.type)) ? 1 : undefined);
     const reading = agentReading(built.nodes, agents); // AG19:
-    return { name: plan.name.slice(0, 80), nodes: built.nodes, edges: built.edges, pinData: at && items ? { [at.key]: items } : undefined, model, durationMs: Date.now() - built.started, dropped: built.dropped, left: mergeLeft(stagedLeft, reading.left), ...(reading.reuses.length + own.notes.length && { reuses: [...reading.reuses, ...own.notes] }) /* AG19: */, calls: built.calls, plan, stages: built.stages };
+    return { name: plan.name.slice(0, 80), nodes: built.nodes, edges: built.edges, pinData: at && items ? { [at.key]: items } : undefined, model, durationMs: Date.now() - built.started, dropped: built.dropped, left: mergeLeft(stagedLeft, reading.left), ...(reading.reuses.length + own.notes.length && { reuses: [...reading.reuses, ...own.notes] }) /* AG19: */, ...(Object.keys(newAgents).length && { newAgents }) /* AG25: */, calls: built.calls, plan, stages: built.stages };
   }
   const teamsNote = byType.has('core.runTeam') && teams.length ? `\n\nPublished agent teams (core.runTeam: put the team's teamId in teamId, never its name):\n${describeTeams([...teams])}` : '';
   const started = Date.now();
@@ -742,6 +762,7 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
   const own = dropRepeatedAgentWork(saved.nodes, saved.edges, agents); // AG19: an agent that does a step itself
   own.notes.unshift(...saved.notes); // AG25:
   const { nodes, edges } = own;
+  const newAgents = Object.fromEntries(Object.entries(saved.agents).filter(([name]) => nodes.some((n) => n.name === name && n.type === 'core.messageAgent'))); // AG25:
   const dropped = [...draft.dropped, ...own.dropped];
   const left = mergeLeft(
     draft.left,
@@ -753,5 +774,5 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
   const testItems = (cleanTestItems(asItems(reply.testData), target, nodes) ?? sampleItems(target, nodes))?.slice(0, nodes.some((n) => AGENT_TYPES.has(n.type)) ? 1 : undefined);
   const pinData = target && testItems ? { [target.key]: testItems } : undefined;
   const reading = agentReading(nodes, agents); // AG19:
-  return { name: (reply.name ?? 'Generated workflow').slice(0, 80), nodes, edges, pinData, model, durationMs: Date.now() - started, dropped, left: mergeLeft(left, reading.left), ...(reading.reuses.length + own.notes.length && { reuses: [...reading.reuses, ...own.notes] }), calls, stages }; // SB13: stages AG19: reuses
+  return { name: (reply.name ?? 'Generated workflow').slice(0, 80), nodes, edges, pinData, model, durationMs: Date.now() - started, dropped, left: mergeLeft(left, reading.left), ...(reading.reuses.length + own.notes.length && { reuses: [...reading.reuses, ...own.notes] }), ...(Object.keys(newAgents).length && { newAgents }) /* AG25: */, calls, stages }; // SB13: stages AG19: reuses
 }

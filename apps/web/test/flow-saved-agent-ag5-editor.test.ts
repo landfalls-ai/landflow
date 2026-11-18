@@ -93,6 +93,13 @@ describe('an unbound Run an Agent step is designed after Apply', () => {
     expect(row.summary).toContain('for “Write summary”');
   });
 
+  it('sends what the replaced AI Agent had (instructions, tools, model) to the architect', async () => {
+    noteOpened(WF, 0);
+    const hints = { 'Write summary': { instructions: 'You write sales summaries.', tools: ['SQLite'], toolNodes: [{ nodeType: 'core.sqliteTool', operation: 'query' }], model: 'anthropic/claude-haiku-5' } };
+    await designUnboundAgents(['s'], ASK, hints);
+    expect(wire.calls[0]!.json).toMatchObject({ name: 'Write summary', preview: true, instructions: 'You write sales summaries.', tools: ['SQLite'], agentModel: 'anthropic/claude-haiku-5', toolNodes: [{ nodeType: 'core.sqliteTool', operation: 'query' }] });
+  });
+
   it('on a saved flow the card waits: nothing is created, the step stays unbound', async () => {
     noteOpened(WF, 3);
     await designUnboundAgents(['s'], ASK);

@@ -12,6 +12,7 @@
  * Undo of the build takes an agent made this way back (`takeBackAgents`, through the step watch in `createFromCard`).
  */
 import { nanoid } from 'nanoid';
+import type { NewAgentHint } from '@/lib/shared/agent-brief';
 import { reuseSentence } from '@/lib/shared/tenant-catalog';
 import { useAssistant, type ChatItem } from '../assistant';
 import { useAutonomous } from '../autonomous';
@@ -32,17 +33,17 @@ export function unboundAgentSteps(nodeIds: readonly string[]): string[] {
 const oneLine = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
 /** Designs each unbound step's agent; one task, which a test run waits for (`agentsSettled`). */
-export function designUnboundAgents(nodeIds: readonly string[], ask: string): Promise<void> {
+export function designUnboundAgents(nodeIds: readonly string[], ask: string, hints: Record<string, NewAgentHint> = {}): Promise<void> {
   const steps = unboundAgentSteps(nodeIds);
   if (!steps.length) return Promise.resolve();
   const task = (async () => {
-    for (const nodeId of steps) await designFor(nodeId, ask);
+    for (const nodeId of steps) await designFor(nodeId, ask, hints);
   })();
   holdForAgents(task);
   return task;
 }
 
-async function designFor(nodeId: string, ask: string): Promise<void> {
+async function designFor(nodeId: string, ask: string, hints: Record<string, NewAgentHint>): Promise<void> {
   const editor = useEditor.getState();
   const node = editor.nodes.find((n) => n.id === nodeId);
   if (!node) return;
@@ -57,7 +58,18 @@ async function designFor(nodeId: string, ask: string): Promise<void> {
     const message = typeof node.data.wf.parameters.message === 'string' && !node.data.wf.parameters.message.includes('{{') ? node.data.wf.parameters.message.trim() : '';
     const description = message || `Does the “${name}” step of this flow: ${oneLine(ask, 160)}`;
     const place = { workflow: editor.name, ...(after && { after }), ...(before && { before }) };
-    const spec = { name, description, instructions: '', ask: ask.slice(0, 4000) }; // the route reads `ask`: the whole ask, as the agent card's design sends it
+    // What the builder had wired to the AI Agent this step replaced (its system message, tools and Chat Model) is the architect's starting point.
+    const hint = hints[name];
+    const tools = (hint?.tools ?? []).map((t) => t.slice(0, 80)).slice(0, 8);
+    const spec = {
+      name,
+      description,
+      instructions: hint?.instructions ?? '',
+      ...(tools.length && { tools }),
+      ...(hint?.model && { agentModel: hint.model }),
+      ...(hint?.toolNodes?.length && { toolNodes: hint.toolNodes.slice(0, 8) }),
+      ask: ask.slice(0, 4000),
+    }; // the route reads `ask`: the whole ask, as the agent card's design sends it
     const preview = (await designPreview(spec, place)) as Parameters<typeof cardFromPreview>[0];
     const current = useEditor.getState().nodes.find((n) => n.id === nodeId);
     if (!current || (typeof current.data.wf.parameters.agentId === 'string' && current.data.wf.parameters.agentId)) {
@@ -71,7 +83,7 @@ async function designFor(nodeId: string, ask: string): Promise<void> {
       return;
     }
     // No reuse row on the card: Use <name> would add another step, and this step is the one the agent is for.
-    const { reuse: _closest, ...bare } = cardFromPreview(preview, { name, description, placed: true, tools: [] }, false, ask);
+    const { reuse: _closest, ...bare } = cardFromPreview(preview, { name, description, placed: true, tools }, false, ask);
     const card = { ...bare, workflowId: useEditor.getState().workflowId };
     const waits = card.needs.length > 0 || card.missing.length > 0 || !card.model;
     const alone = useAutonomous.getState().on && autonomyOf(useEditor.getState().workflowId) === 'auto';
