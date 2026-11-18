@@ -779,7 +779,8 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         }
         // Proposing the same thing twice (it happens with local models) changes nothing the second time.
         const graph = (wf: Workflow) => JSON.stringify([wf.nodes, wf.connections, wf.settings]); // SB10: the workflow's settings count, or a settings-only change reads as "already there"
-        if (graph(validated.workflow) === graph(working)) {
+        // Wave ag4 joins: a changeAgent changes the agent, never the graph (AG17): it is not a repeat.
+        if (graph(validated.workflow) === graph(working) && !validated.ops.some((op) => op.op === 'changeAgent')) {
           return result('Nothing changes: this is already in the workflow or was proposed above. Do not propose it again.', 'Skipped a repeated proposal');
         }
         // A node that already branches needs no If / Filter / Switch after it: back once, naming its outputs.
