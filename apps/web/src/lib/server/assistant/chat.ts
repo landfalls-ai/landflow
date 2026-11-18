@@ -55,6 +55,7 @@ import {
   withoutNarration,
   withoutRepeats,
 } from './guards';
+import { isTenantTool, TENANT_TOOLS, tenantTool } from './tenant-tools'; // AG18:
 import { availableTypes, catalogSummary, FOCUS_PARAMETER_CHARS, nodeContext, nodeDocs, searchNodes, workflowOutline } from './research';
 import { MENTION_LIMITS, mentionKey, type MentionRef } from '../../shared/mentions';
 import { BLOCK_CLOSE, BLOCK_OPEN, resolveMentions, type MentionRead, type SentMention } from '../mentions/resolve';
@@ -185,6 +186,7 @@ export const TOOLS: ToolSpec[] = [
     description: 'Read a node type\'s docs: parameters with options, defaults and when they show, ports and credentials. Takes a type id, or the name of a node in the workflow.',
     inputSchema: { type: 'object', properties: { type: { type: 'string' } }, required: ['type'] },
   },
+  ...TENANT_TOOLS, // AG18: the tenant's agents, tool nodes, knowledge bases, models, credentials and the agent practices
   {
     name: 'get_workflow',
     description: 'Read the current workflow: nodes with their parameters, the outputs of nodes that branch and what is connected to each, connections, and which nodes have run data. Includes changes proposed earlier (marked pending: not applied yet).',
@@ -538,6 +540,20 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         const teamsNote = info.type === 'core.runTeam' ? `\nPublished agent teams:\n${input.teams?.length ? describeTeams(input.teams) : '(none yet: build one on the Agents page, or turn a lead and its agents into a team)'}` : '';
         const agentsNote = info.type === 'core.messageAgent' ? `\nYour agents:\n${input.agents?.length ? describeAgents(input.agents) : '(none published yet: propose a newAgent for one)'}` : '';
         return result(`${nodeDocs(info, existing?.parameters)}${teamsNote}${agentsNote}`, `Read ${info.descriptor.displayName} docs`);
+      }
+      // AG18: the tenant tools: a step of the trace, never a model call
+      case 'list_agents':
+      case 'get_agent':
+      case 'list_tool_nodes':
+      case 'list_knowledge_bases':
+      case 'list_models':
+      case 'list_credentials':
+      case 'read_agent_practices': {
+        if (!isTenantTool(call.name)) return result('Unknown tool.', 'Unknown tool', false);
+        if (!input.actor) return result('Sign in to read the tenant.', 'Could not read the tenant: sign in', false);
+        const answer = await tenantTool(call.name, args, { actor: input.actor });
+        detail = answer.label;
+        return result(answer.text, answer.label, answer.ok);
       }
       case 'get_workflow':
         detail = `${working.nodes.length} node${working.nodes.length === 1 ? '' : 's'}`;

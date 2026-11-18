@@ -38,6 +38,7 @@ import { saveCheckpoint } from './checkpoints';
 import { assistantModel, errorText, modelLabel } from './model';
 import { isParseError, parseErrorText } from './parse-retry';
 import { catalogSummary, nodeDocs, searchNodes } from './research';
+import { TENANT_TOOLS, tenantTool } from './tenant-tools'; // AG18:
 import { builderContextEntry } from '../project-context/by-repo';
 
 export const MAX_ARCHITECT_STEPS = 10;
@@ -135,26 +136,8 @@ const TOOLS: ToolSpec[] = [
     description: 'The workflows an agent can call as tools (they start with "When Called by a Workflow or Agent"), with ids and descriptions.',
     inputSchema: { type: 'object', properties: {} },
   },
-  {
-    name: 'list_agents',
-    description: 'The other agents on this instance an agent can delegate to, with ids, roles and descriptions.',
-    inputSchema: { type: 'object', properties: {} },
-  },
-  {
-    name: 'list_credentials',
-    description: 'The credentials the user has, by name and type (never their values): which tools can work right away.',
-    inputSchema: { type: 'object', properties: {} },
-  },
-  {
-    name: 'list_models',
-    description: 'The chat models the agent can run on, best first: local Ollama models (which call tools) before hosted ones.',
-    inputSchema: { type: 'object', properties: {} },
-  },
-  {
-    name: 'list_knowledge_bases',
-    description: 'The knowledge bases other agents search (vector store collections of documents), with what each holds, and whether a new empty one can be started.',
-    inputSchema: { type: 'object', properties: {} },
-  },
+  // AG18: the tenant tools (list_agents, list_credentials, list_models, list_knowledge_bases, list_tool_nodes, get_agent, read_agent_practices), one implementation with Spotlight's chat and the MCP server
+  ...TENANT_TOOLS,
   {
     name: 'list_templates',
     description: 'Persona templates to start from (support lead, researcher, incident responder…), with ids, roles and tones.',
@@ -311,6 +294,7 @@ An agent is:
 
 How to work:
 - If the request is too vague to pick tools (no task, or no system to work in), ask one short question. Otherwise don't ask: design.
+- Read the company before your first propose_agent, every time (the person sees each read as a step, and a draft made without them is not trusted): list_agents (does an agent already do this?), list_tool_nodes with a short query for what the agent must do (it names the plugin, the credential and whether the node writes), list_knowledge_bases when it answers from documents, list_models, list_credentials and read_agent_practices. Do them together in one turn.
 - Research before proposing: search_nodes for each thing the agent must do (read tickets, post to Slack, query a database…), get_node_docs for each node you use, list_workflows and list_agents when an existing workflow or agent could do part of the job, list_credentials to see what works right away, list_templates when one fits as a start.
 - Use only node types search_nodes returned, and ids list_workflows and list_agents returned. If nothing online can do a part of the job, leave it out of the tools, list it in propose_agent's "missing" as the app's name, a colon and what the agent would do ("Grafana: read firing alerts"), and say so in one sentence; never invent a node type.
 - A node tool's parameters: set what is fixed for this agent (the operation, a resource); what the agent writes or decides per call (a subject, a body, a message, an id) is "{{ $fromAI('key', 'what it is', 'string') }}". A destination (To, URL, channel, path, repository) is set only to a value the request gives, word for word, else left empty. Never make up ids, channels, URLs or emails the user didn't give: leave those for the user.
@@ -1216,23 +1200,17 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
         const list = callableWorkflows(actor).map((w) => ({ id: w.id, name: w.name, ...(w.description && { description: w.description }) }));
         return result(list.length ? JSON.stringify(list) : 'No workflow starts with “When Called by a Workflow or Agent” yet.', `Listed ${list.length} callable workflow${list.length === 1 ? '' : 's'}`);
       }
-      case 'list_agents': {
-        const list = otherAgents(actor).map((a) => ({ id: a.id, name: a.name, ...(a.role && { role: a.role }), ...(a.description && { description: shorten(a.description, 160) }) }));
-        return result(list.length ? JSON.stringify(list) : 'There are no other agents yet.', `Listed ${list.length} agent${list.length === 1 ? '' : 's'}`);
-      }
-      case 'list_credentials': {
-        const list = withOwnership(actor, 'credential', credentials.list()).map((c) => ({ name: c.name, type: c.type }));
-        return result(list.length ? JSON.stringify(list) : 'The user has no credentials yet.', `Listed ${list.length} credential${list.length === 1 ? '' : 's'}`);
-      }
-      case 'list_models': {
-        const list = input.resources?.models ?? [];
-        return result(list.length ? JSON.stringify(list.map((m) => ({ model: `${m.provider}/${m.model}`, note: m.note }))) : 'No models are known here: leave the model out; the user picks one.', `Listed ${list.length} model${list.length === 1 ? '' : 's'}`);
-      }
-      case 'list_knowledge_bases': {
-        const list = input.resources?.knowledge ?? [];
-        // AG13: a new knowledge base can always be started: with the host's embeddings model, or searched by keywords (built in) when it has none
-        const fresh = `A new empty one can be started (type "knowledge" with a new collection name), ${input.resources?.embeddings?.provider === 'none' || !input.resources?.embeddings ? 'searched by keywords (built in, no embeddings model needed)' : `embedded with ${input.resources.embeddings.model}`}.`;
-        return result(`${list.length ? JSON.stringify(list.map((k) => ({ collection: k.collection, description: k.description, store: k.store, usedBy: k.usedBy }))) : 'No agent searches a knowledge base yet.'} ${fresh}`, `Listed ${list.length} knowledge base${list.length === 1 ? '' : 's'}`);
+      // AG18: the tenant tools answer from tenant-tools.ts (drafts, models, plugin and credential needs, document counts)
+      case 'list_agents':
+      case 'get_agent':
+      case 'list_tool_nodes':
+      case 'list_credentials':
+      case 'list_models':
+      case 'list_knowledge_bases':
+      case 'read_agent_practices': {
+        const answer = await tenantTool(call.name, args, { actor });
+        detail = answer.label;
+        return result(answer.text, answer.label, answer.ok);
       }
       case 'list_templates': {
         const list = agentTemplates
