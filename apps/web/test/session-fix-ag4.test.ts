@@ -173,6 +173,24 @@ describe('the fix reads the run it fixes', () => {
   });
 });
 
+describe('wave ag4 carryover: an Apply that lands before the reply ends', () => {
+  it('takes the fix the person already applied and runs again, never “I found no fix”', async () => {
+    noteOpened(WF, 3);
+    yes();
+    runs = [{ 'Notify VIP': { error: 'HTTP 400' } }, { 'Notify VIP': { items: 1 }, 'Notify Standard': { items: 1 } }];
+    // The card is on screen while the model still works: the person clicks Apply, then the reply ends.
+    send.mockImplementationOnce(async (_request: string, options: { session?: string; testId?: string }) => {
+      sentSessions.push(options.session);
+      useAssistant.getState().append([{ id: 'r1', role: 'assistant', testId: options.testId, done: { model: 'test', durationMs: 1, steps: 1 }, parts: [{ kind: 'text' as const, text: '“Notify VIP” sent no report_text.' }, { kind: 'proposal' as const, proposal: { id: 'r1p0', summary: 'Send the body as report_text', ops: [fixBody], dropped: [], warnings: [] } }] }]);
+      decide('r1p0', 'applied');
+    });
+    await testUntilItRuns();
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(outcomes()).toEqual([]);
+    expect(actions()).toEqual(['publish']);
+  });
+});
+
 describe('runs that write outside ask first', () => {
   it('asks before the run, and not again after the yes', async () => {
     noteOpened(WF, 3);

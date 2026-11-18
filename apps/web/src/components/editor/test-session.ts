@@ -712,6 +712,17 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         continue;
       }
       const proposals = reply.parts.flatMap((p) => (p.kind === 'proposal' && !p.proposal.state ? [p.proposal] : []));
+      // Wave ag4 carryover (the live pass's asks.md C): the card shows while the reply still works, so the person's Apply can
+      // land before it ends: a fix they already applied is taken, and the run goes again (never "I found no fix").
+      const appliedEarly = proposals.length ? [] : reply.parts.flatMap((p) => (p.kind === 'proposal' && p.proposal.state === 'applied' && !lastApplied.some((a) => a.item === reply.id && a.proposals.includes(p.proposal.id)) ? [p.proposal] : []));
+      if (failed && appliedEarly.length) {
+        lastApplied.push({ item: reply.id, proposals: appliedEarly.map((p) => p.id) });
+        for (const proposal of appliedEarly) useAssistant.getState().noteFix(fixedNodes(proposal.ops, nodeId), opsTitle(proposal.ops));
+        tried.push(...appliedEarly.map((p) => p.summary));
+        lastFix = 'flow';
+        fixes++;
+        continue;
+      }
       if (!proposals.length) {
         // Nothing to change: a run the review said yes to is ready; a "no" without a fix, or a failed run, needs the person.
         const said = reply.parts.find((p) => p.kind === 'text');
