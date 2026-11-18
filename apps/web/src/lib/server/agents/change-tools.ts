@@ -32,6 +32,20 @@ export function tidyChangedTools<C extends { tools?: unknown }>(base: C, designe
   for (const tool of designedTools) {
     if (keptBase(tool) || !isNode(tool)) continue;
     const brings = Object.values(tool.credentials ?? {}).filter((c) => c?.id).length;
+    // A new tool of the same type with another operation takes the place of a kept one that still has no credential (an earlier fix's
+    // "insert" SQLite made a read-only query tool): the person's change is the new operation, with its own asks-first state.
+    const turned = brings > 1 ? undefined : kept.find((t) => isNode(t) && t.nodeType === tool.nodeType && !merged.has(t) && noCredential(current.get(t) ?? t) && !empty(tool.parameters?.operation) && !empty((current.get(t) ?? t).parameters?.operation) && !same(tool.parameters!.operation, (current.get(t) ?? t).parameters!.operation));
+    if (turned) {
+      const target = current.get(turned) ?? turned;
+      const { requireApproval: _old, ...rest } = target;
+      const filled: Tool = { ...rest, parameters: { ...(target.parameters ?? {}), ...Object.fromEntries(Object.entries(tool.parameters ?? {}).filter(([, v]) => !empty(v))) }, ...(tool.requireApproval !== undefined && { requireApproval: tool.requireApproval }) };
+      const credentials = { ...(target.credentials ?? {}), ...(tool.credentials ?? {}) };
+      if (!empty(credentials)) filled.credentials = credentials;
+      current.set(turned, filled);
+      merged.add(turned);
+      gone.add(tool);
+      continue;
+    }
     const twin = brings > 1 ? undefined : kept.find((t) => isNode(t) && t.nodeType === tool.nodeType && !merged.has(t) && noCredential(current.get(t) ?? t) && !differs(current.get(t) ?? t, tool));
     if (!twin) continue;
     const target = current.get(twin) ?? twin;

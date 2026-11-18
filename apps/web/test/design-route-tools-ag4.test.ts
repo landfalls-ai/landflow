@@ -34,3 +34,30 @@ describe('POST /api/agents/design with a change', () => {
     expect(body.config.tools[0]).toMatchObject({ id: 't1', credentials: { sqlite: { id: 'c1' } } });
   });
 });
+
+describe('a change that turns a write tool into a read tool', () => {
+  it('replaces the credential-less tool’s operation and asks-first state: the card shows what Apply stores', async () => {
+    const writer = sqlite('t1', 'sqlite', { parameters: { operation: 'insert', table: '' }, requireApproval: true });
+    designedTools = [writer, sqlite('n2', 'sqlite_2', { parameters: { operation: 'executeQuery' }, credentials: { sqlite: { id: 'c1', name: 'Sales DB' } } })];
+    const body = await (await post({ name: 'Sales digest', preview: true, base: baseOf([writer]), change: 'Make sqlite a read-only query tool' })).json();
+    expect(body.config.tools).toHaveLength(1);
+    expect(body.config.tools[0]).toMatchObject({ id: 't1', name: 'sqlite', parameters: { operation: 'executeQuery' }, credentials: { sqlite: { id: 'c1' } } });
+    expect(body.config.tools[0].requireApproval).toBeFalsy();
+  });
+});
+
+describe('design route output, applied, then read back', () => {
+  it('the stored tool equals the card’s: operation, query and asks-first', async () => {
+    const { agentStore } = await import('@/lib/server/agents/store');
+    const agentRoute = await import('@/app/api/agents/[id]/route');
+    const agent = agentStore.create({ name: 'Sales digest', description: '' });
+    designedTools = [sqlite('n1', 'sqlite', { parameters: { operation: 'executeQuery', query: 'SELECT total FROM sales' }, credentials: { sqlite: { id: 'c1', name: 'Sales DB' } } })];
+    const card = (await (await post({ name: 'Sales digest', preview: true, base: baseOf([]), change: 'Give the digest access to the sales database' })).json()).config;
+    const ctx = { params: Promise.resolve({ id: agent.id }) };
+    await agentRoute.PUT(new Request('http://localhost/x', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(card) }), ctx);
+    const stored = (await (await agentRoute.GET(new Request('http://localhost/x'), ctx)).json()).agent.tools[0];
+    expect(stored.parameters).toEqual(card.tools[0].parameters);
+    expect(Boolean(stored.requireApproval)).toBe(Boolean(card.tools[0].requireApproval));
+    expect(stored.parameters.operation).toBe('executeQuery');
+  });
+});

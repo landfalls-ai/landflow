@@ -17,7 +17,7 @@ import { DEFAULT_BRIEF_GUARDRAILS, isNodeKnowledge } from '@/lib/shared/agents';
 import type { AgentCaseDraft, AgentNotAdded, AgentReuse, AgentCard } from '@/lib/shared/agent-card'; // SB17: AG02: AG19: AgentReuse, AgentCard
 import { agentLine, type CatalogAgent } from '@/lib/shared/tenant-catalog'; // AG19:
 import { catalogCredentials, catalogToolNodes } from './tenant-catalog'; // wave ag4 carryover: the brief reads the person's credentials
-import { writesOutside } from '@/lib/shared/run-check'; // SB17:
+import { readsByQuery, writesOutside } from '@/lib/shared/run-check'; // SB17:
 import { missingSystem, type ArchitectEvent, type ArchitectMissing, type ArchitectNeed, type ArchitectTurn } from '@/lib/shared/agent-architect';
 import { randomFace } from '@/lib/shared/faces';
 import type { NodeTypeInfo } from '@/lib/shared/types';
@@ -451,7 +451,12 @@ function operationsOf(info: NodeTypeInfo, parameters: Record<string, unknown>) {
  * name; a plugin that marks its reads (`idempotent: true` on an operation) also tells which operations are not reads
  * ("commit", "merge"), so an operation of such a node that is not marked is a write.
  */
+function isQueryRead(info: NodeTypeInfo, parameters: Record<string, unknown>): boolean {
+  return info.descriptor.properties.some((p) => p.name === 'query') && readsByQuery(parameters);
+}
 function toolWrites(info: NodeTypeInfo, parameters: Record<string, unknown>): boolean {
+  // A query operation (SQLite's Execute Query) is a read while its SQL is empty (the agent writes it per call) or only reads: its name starts with a write verb.
+  if (isQueryRead(info, parameters)) return false;
   if (writesOutside({ type: info.type, parameters })) return true;
   // A plugin node with no operation to read (Acknowledge Alert) is a write when its own name starts with a write verb.
   if (info.pluginId !== 'core' && !info.descriptor.properties.some((p) => p.name === 'operation') && WRITE_NAME.test(info.descriptor.displayName)) return true;
@@ -472,6 +477,8 @@ function readDefaults(info: NodeTypeInfo, parameters: Record<string, unknown>, r
     return words.some((w) => w.length > 3 && asked.includes(w));
   });
   const next = { ...parameters, ...(resource && { resource: resource.value }) };
+  // A node that runs a query (SQLite's Execute Query) reads any table with it; its Select needs a table the request may not name.
+  if (info.descriptor.properties.some((p) => p.name === 'query') && operationsOf(info, next).some((o) => o.value === 'executeQuery')) return { ...next, operation: 'executeQuery' };
   const read = operationsOf(info, next).find((o) => o.idempotent === true);
   return read ? { ...next, operation: read.value } : parameters;
 }

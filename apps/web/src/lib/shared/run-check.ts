@@ -124,10 +124,19 @@ export const sameFailure = (summary: string) =>
     .replace(/\s+/g, ' ')
     .trim();
 
+const READ_SQL = /^\s*(?:select|with|pragma|explain|show|describe)\b/i;
+/** An Execute Query operation whose SQL is empty (an agent writes it per call), written per call, or one read statement: a read, though the operation's name starts with "execute". */
+export function readsByQuery(p: Record<string, unknown>): boolean {
+  if (p.operation !== 'executeQuery') return false;
+  const q = p.query;
+  return typeof q !== 'string' || q.trim() === '' || /\$fromAI\(/.test(q) || (READ_SQL.test(q) && !/;\s*\S/.test(q));
+}
+
 /** Whether a test run of this step sends or changes things outside the flow (the heuristic of `sendingSteps`). */
 function sends(step: CheckedStep): boolean {
   const writes = /^(send|post|create|update|delete|remove|upload|write|publish|comment|add|merge|archive|reply|invite|insert|upsert|append|move|close|assign|execute|trigger)/i;
   const p = step.parameters;
+  if (readsByQuery(p)) return false;
   if (step.type === 'core.httpRequest') return String(p.method ?? 'GET').toUpperCase() !== 'GET';
   if (/email|smtp/i.test(step.type) && !/trigger|read/i.test(step.type)) return true;
   return typeof p.operation === 'string' && writes.test(p.operation);
