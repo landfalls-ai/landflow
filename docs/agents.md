@@ -654,9 +654,9 @@ request: the run goes on when the last one is decided). The Platform analyst's o
   into Spotlight is designed by the Agent architect without being saved, shown as a card, and **Create agent**
   imports it as a draft with its test cases in the eval gate. On an empty canvas, **Create agent and flow** also adds
   the starter flow: **Chat message** into **Run an Agent** pointed at the agent, with a sample chat item pinned on
-  the trigger. The agent stays a draft, and a Run an Agent step runs the published version: publish it from its page.
+  the trigger. The agent stays a draft: the editor runs its draft, and a published workflow runs the version it was published with, so publish the agent from its page (or with the workflow) before it goes live.
 - **Run an Agent** (`core.messageAgent`, formerly "Message an Agent"; the type is unchanged) runs
-  a published agent as a step of the flow. The agent brings its persona, skills, capabilities,
+  an agent as a step of the flow (the editor runs its draft, production the version the workflow was published with). The agent brings its persona, skills, capabilities,
   guardrails and usage limits. Used as a tool, the node (like Run a Team) takes `message` and a required `reason`. Tool images: the node's **Tool Images to Keep** option, else the agent's **Tool images to keep** (Abilities → Guardrails), else `LANDFLOW_TOOL_IMAGES_KEPT`, else 2; Run Trace shows each image as a thumbnail ([features/ai.md](features/ai.md)). Like the AI Agent, the node has three optional sub-node ports:
   - **Chat Model**: a chat model node (Ollama, Anthropic, OpenAI…) that replaces the agent's own
     model for this run.
@@ -753,8 +753,7 @@ can read it, test it and publish it as a new version. `POST /api/agents/:id/rest
 Every agent version is also kept in the `agent_versions` table (migration 2906), so a version older than the 20 in the
 history still exists while a workflow version pins it. A workflow version pins the agent versions it was published
 with (`workflow_version_pins`); production runs them until a republish, and each run records the versions it used
-(`execution_agent_versions`). The builder's **Live v3** and each History row say "Used by workflow Alerts v4 (live),
-v3" (`GET /api/agents/:id/versions`, `.../versions/:version/connections`), and publishing an agent that live
+(`execution_agent_versions`). The builder's **Live v3** and each History row say "v2 · used by Alerts v4 (production), Alerts v3" (`GET /api/agents/:id/versions`, `.../versions/:version/connections`), and publishing an agent that live
 workflows pin says they keep the older version until they are republished. An agent a workflow pins cannot be
 deleted without stopping those workflow versions (*… no longer exists*). A backfill at boot (meta key
 `agents.versions.backfilled`) pins what production runs today and changes nothing on a second call. Test-then-publish

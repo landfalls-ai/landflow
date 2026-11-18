@@ -25,7 +25,7 @@ import { getUser, listUsers, userNames, type UserRecord } from '../auth/users';
 import { database } from '../db';
 import { parse } from '../db/rows';
 import { onPublicationChanged, publishedVersionId } from '../publications';
-import { publicationStatus, publishDraft, PublishError, publishUpdate, publishVersion, unpublishWorkflow } from '../publish';
+import { publicationStatus, publishDraft, PublishError, publishUpdate, publishVersion, resolveAgents, unpublishWorkflow } from '../publish';
 import { releaseScheduleAfterApproval } from '../publish-schedule-store';
 import { singleton } from '../singleton';
 import { store } from '../store';
@@ -421,6 +421,13 @@ export async function publishOrRequest(ask: PublishAsk): Promise<PublishOutcome>
   const live = publishedVersionId(ask.workflowId);
   const target = ask.action === 'publish' ? (ask.versionId ?? (workflow && versionFor(workflow)?.id)) : undefined;
   if (workflow && (ask.action === 'publish' ? target !== undefined && target === live : !live && !workflow.active)) return { ...(await publicationStatus(ask.workflowId)), triggerErrors: [] };
+  // AG21: the approval publishes without options, so an agent draft that differs is settled now (published first) or refused now, not at the approval.
+  if (ask.action === 'publish' && workflow) {
+    const graph = ask.versionId ? getVersion(ask.workflowId, ask.versionId)?.workflow : workflow;
+    // 'as-published' cannot be carried to the approval, so it refuses with the block like a plain publish.
+    // A version that has pins (a rollback) keeps its own, so nothing is asked of the agents.
+    if (graph && !(ask.versionId && (await import('../agents/versions')).pinsFor(ask.versionId).length)) await resolveAgents(graph, { ...(ask.agents === 'publish-first' && { agents: 'publish-first' as const }), ...(ask.signal && { signal: ask.signal }) }, ask.by);
+  }
   const request = requestPublish(ask);
   return { ...(await publicationStatus(ask.workflowId)), approvalRequired: true, request: view(rowOf(request.id)!, ask.by ? getUser(ask.by) : undefined), triggerErrors: [] };
 }

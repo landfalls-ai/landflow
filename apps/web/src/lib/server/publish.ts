@@ -14,11 +14,12 @@ import type { ExecutionMode } from '@landflow/protocol';
 import type { Workflow } from '@landflow/engine';
 import type { PublicationStatus, PublishResult } from '../shared/publish';
 import type { WorkflowVersion } from '../shared/types';
-import type { AgentPin } from '../shared/agent-versions'; // AG21: (types only: the logic loads lazily, so the routes' import closure stays small)
-import { userNames } from './auth/users';
+import type { AgentPin, PinBlock } from '../shared/agent-versions'; // AG21: (types only: the logic loads lazily, so the routes' import closure stays small)
+import { getUser, userNames } from './auth/users';
 import { workflowCompositeIssues } from './composites';
 import { database } from './db';
 import { publishBlockedReason } from './governance/policy';
+import { canResource } from './projects/access';
 import { clearPublication, deletePublications, getPublication, listPublications, publishLog, publishedVersionId, setPublication } from './publications';
 import { singleton } from './singleton';
 import { store } from './store';
@@ -164,11 +165,16 @@ export interface PublishOptions {
  * Refuses (409 `agent_changes_unpublished`) unless the options say what to do; returns the log note when it pinned
  * what is published knowingly.
  */
-async function resolveAgents(graph: Pick<Workflow, 'nodes'>, options: PublishOptions, by?: string): Promise<string | undefined> {
+export async function resolveAgents(graph: Pick<Workflow, 'nodes'>, options: PublishOptions, by?: string): Promise<string | undefined> {
   const { blocks } = await import('./agents/versions');
-  const stopping = blocks(graph);
+  const stopping = withAccess(blocks(graph), by);
   if (!stopping.length) return undefined;
   if (options.agents === 'publish-first') {
+    // Publishing an agent needs the same right as `POST /api/agents/:id/publish`: a workflow editor may not push a shared agent's draft live.
+    const refused = stopping.filter((b) => b.canPublish === false);
+    if (refused.length) {
+      throw new PublishError(`Ask the owners of ${refused.map((b) => `“${b.name}”`).join(', ')} to publish ${refused.length === 1 ? 'it' : 'them'}: you can use ${refused.length === 1 ? 'it' : 'them'} but not change ${refused.length === 1 ? 'it' : 'them'}`, 403, { code: 'agent_publish_forbidden', details: { agents: stopping } });
+    }
     for (const block of stopping) {
       if (!agentPublishing.run) throw new PublishError('Publishing agents first is not available here', 501);
       const outcome = await agentPublishing.run(block.agentId, { signal: options.signal });
@@ -188,6 +194,15 @@ async function resolveAgents(graph: Pick<Workflow, 'nodes'>, options: PublishOpt
     code: 'agent_changes_unpublished',
     details: { agents: stopping },
   });
+}
+
+/** A block with whether the person publishing may publish that agent (no person: the system, which may). */
+export type AccessBlock = PinBlock & { canPublish?: boolean };
+
+/** `blocks` with `canPublish` set from `by`'s right to update each agent (`by` a user id; absent or not a user, like 'migration': the system). */
+export function withAccess(blocks: PinBlock[], by?: string): AccessBlock[] {
+  const actor = by ? getUser(by) : undefined;
+  return blocks.map((b) => ({ ...b, canPublish: !actor || canResource(actor, 'agent', b.agentId, 'update') }));
 }
 
 /**
@@ -254,16 +269,16 @@ export async function publishDraft(workflowId: string, by?: string, note?: strin
   let version = versionFor(workflow) ?? recordVersion(workflow);
   if (!version) throw new PublishError('This workflow has no saved version to publish: save it first', 409);
   const { pinsDiffer, pinsFor, pinsSummary, pinsToSet } = await import('./agents/versions');
+  // An agent draft that differs refuses (or is published first, or pinned knowingly) whether or not this version has pins already.
+  const decided = await resolveAgents(workflow, options, by);
   const existing = pinsFor(version.id);
-  if (existing.length && pinsDiffer(existing, pinsToSet(workflow))) {
-    const decided = await resolveAgents(workflow, options, by);
-    const wanted = pinsToSet(workflow);
-    if (pinsDiffer(existing, wanted)) {
-      version = recordVersion(workflow, { force: true, summary: pinsSummary(pinChanges(existing, wanted)), ...(by && { author: by }) }) ?? version;
-    }
-    if (decided) note = note ? `${note} · ${decided}` : decided;
+  const wanted = pinsToSet(workflow);
+  if (existing.length && pinsDiffer(existing, wanted)) {
+    version = recordVersion(workflow, { force: true, summary: pinsSummary(pinChanges(existing, wanted)), ...(by && { author: by }) }) ?? version;
   }
-  return publishVersion(workflowId, version.id, by, note, options);
+  if (decided) note = note ? `${note} · ${decided}` : decided;
+  // Decided above: publishVersion sets these pins (when the version has none) without asking again.
+  return publishVersion(workflowId, version.id, by, note, { ...options, pins: wanted });
 }
 
 /**

@@ -750,3 +750,5 @@ Once a team node has run, its summary, budgets and ribbon make the tile taller t
 - Delegated sub-agents (an agent calling another) run the published version, not a pin.
 - Deleting an agent stops the workflow versions that pin it (the node says it no longer exists).
 - The executions list shows the workflow version only; the per-agent versions are on the run's header.
+- A scheduled publish (`at`) and a Git sync publish carry no `agents` choice, so an agent draft that differs refuses them (publish the agent first); with four-eyes on, `agents: 'as-published'` is refused too (`publish-first` settles the agents before the request is made).
+- A test-update run is recorded like a production run of that version, so its line reads "workflow v4 · Alert triager v3" without saying it was a test.

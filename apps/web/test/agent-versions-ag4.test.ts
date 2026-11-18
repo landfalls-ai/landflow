@@ -9,10 +9,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import type { Workflow, WorkflowNode } from '@landflow/engine';
-import { runVersionsLine } from '@/lib/shared/agent-versions';
+import { PIN_PARAM, PINS_PARAM, runVersionsLine } from '@/lib/shared/agent-versions';
 import { startFakeModels } from './fake-ai-services';
 
 vi.setConfig({ testTimeout: 30_000 });
+
+// A scripted judge: while `hold` is on the eval gate's verdict is a hold (the smoke test and the publish are real).
+const gate = vi.hoisted(() => ({ hold: false }));
+vi.mock('@/lib/server/agents/eval-gate', async (original) => {
+  const real = await original<typeof import('@/lib/server/agents/eval-gate')>();
+  return { ...real, checkPublish: async (agentId: string, options?: { signal?: AbortSignal }) => (gate.hold ? { verdict: { ok: false, average: 1.5, reason: 'The draft averages 1.5 / 5, below the 3 the gate asks for.' } } : real.checkPublish(agentId, options)) };
+});
 
 const dataDir = mkdtempSync(join(tmpdir(), 'landflow-agent-versions-'));
 const ENV = { LANDFLOW_DATA_DIR: dataDir, LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '', LANDFLOW_PUBLIC_URL: 'http://versions.test' };
@@ -29,7 +36,8 @@ const { getPublication } = await import('@/lib/server/publications');
 const { database } = await import('@/lib/server/db');
 const versions = await import('@/lib/server/agents/versions');
 await import('@/lib/server/agents/publish-first'); // registers publishing an agent first (the publish route imports it)
-const { listVersions } = await import('@/lib/server/versions');
+const { listVersions, PIN_KEYS } = await import('@/lib/server/versions');
+const { agentTeamStore } = await import('@/lib/server/agent-teams/store');
 const publishRoute = await import('@/app/api/workflows/[id]/publish/route');
 const executionRoute = await import('@/app/api/executions/[id]/route');
 
@@ -234,6 +242,124 @@ describe('a workflow version pins its agents', () => {
     expect(record.error?.message).toContain('v1, which this version of the workflow runs, no longer exists: publish the workflow again');
   });
 
+  it('the pin keys the versions module strips are the contract\'s two parameters', () => {
+    expect([...PIN_KEYS]).toEqual([PIN_PARAM, PINS_PARAM]);
+  });
+
+  it('an agent draft changed while the workflow did not: a plain publish is a 409, publish-first publishes the agent and re-pins in a new version', async () => {
+    const s1 = makeAgent('Persona', 'rule v1');
+    flow('wf_draft_only', s1.id);
+    await publish.publishDraft('wf_draft_only', 'owner');
+    const first = getPublication('wf_draft_only')!.versionId;
+    const countBefore = listVersions('wf_draft_only').length;
+    edit(s1.id, 'rule v2 from the bubbles');
+
+    // The offer Spotlight shows and the server agree.
+    const { draftOffer } = await import('@/lib/server/assistant/publish-tools');
+    expect(draftOffer('wf_draft_only')!.blocks).toMatchObject([{ name: 'Persona', published: 1 }]);
+    const plain = await publishRoute.POST(new Request('http://versions.test/p', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } }), params({ id: 'wf_draft_only' }));
+    expect(plain.status).toBe(409);
+    expect(((await plain.json()) as { code: string }).code).toBe('agent_changes_unpublished');
+    expect(getPublication('wf_draft_only')!.versionId).toBe(first);
+    expect(agentStore.get(s1.id)!.published!.version).toBe(1);
+
+    const answer = await publishRoute.POST(new Request('http://versions.test/p', { method: 'POST', body: JSON.stringify({ agents: 'publish-first' }), headers: { 'content-type': 'application/json' } }), params({ id: 'wf_draft_only' }));
+    expect(answer.status).toBe(200);
+    expect(agentStore.get(s1.id)!.published!.version).toBe(2);
+    const second = getPublication('wf_draft_only')!.versionId;
+    expect(second).not.toBe(first);
+    expect(listVersions('wf_draft_only')).toHaveLength(countBefore + 1);
+    expect(listVersions('wf_draft_only')[0]!.summary).toBe('Persona v1 → v2');
+    expect(versions.pinsFor(second)).toMatchObject([{ agentId: s1.id, version: 2 }]);
+    expect(versions.pinsFor(first)).toMatchObject([{ agentId: s1.id, version: 1 }]);
+    expect(draftOffer('wf_draft_only')!.blocks).toBeUndefined();
+  });
+
+  it('a held eval gate publishes nothing: 409 with the verdict, the agent and the workflow stay as they were', async () => {
+    const s1 = makeAgent('Gated', 'rule v1');
+    flow('wf_gate', s1.id);
+    await publish.publishDraft('wf_gate', 'owner');
+    const first = getPublication('wf_gate')!.versionId;
+    edit(s1.id, 'rule v2');
+    gate.hold = true;
+    try {
+      const held = await publishRoute.POST(new Request('http://versions.test/p', { method: 'POST', body: JSON.stringify({ agents: 'publish-first' }), headers: { 'content-type': 'application/json' } }), params({ id: 'wf_gate' }));
+      expect(held.status).toBe(409);
+      const body = (await held.json()) as { code: string; agent: string; gate: { verdict: { ok: boolean; reason: string } } };
+      expect(body).toMatchObject({ code: 'agent_publish_held', agent: s1.id, gate: { verdict: { ok: false } } });
+      expect(body.gate.verdict.reason).toContain('1.5 / 5');
+    } finally {
+      gate.hold = false;
+    }
+    expect(agentStore.get(s1.id)!.published!.version).toBe(1);
+    expect(getPublication('wf_gate')!.versionId).toBe(first);
+  });
+
+  it('a workflow saved active (no editor publish: MCP, an import, a legacy client) is pinned when it is published, so an agent publish does not move it', async () => {
+    const s1 = makeAgent('Activated', 'rule v1');
+    flow('wf_active', s1.id);
+    store.saveWorkflow({ ...store.getWorkflow('wf_active')!, active: true });
+    const published = getPublication('wf_active')!.versionId;
+    expect(versions.pinsFor(published)).toMatchObject([{ agentId: s1.id, version: 1 }]);
+    edit(s1.id, 'rule v2');
+    agentStore.publish(s1.id);
+    const record = await runProduction('wf_active');
+    expect(record.status).toBe('success');
+    expect(lastSystem()).toContain('rule v1');
+    expect(await linesOf(record)).toBe('workflow v1 · Activated v1');
+  });
+
+  it('Run a Team: every member agent is pinned; production runs the pinned versions and the editor the drafts', async () => {
+    const lead = makeAgent('Team lead', 'lead rule v1');
+    const dev = makeAgent('Team dev', 'dev rule v1');
+    const created = agentTeamStore.create({
+      name: 'Pinned team',
+      goal: 'Answer the alert',
+      members: [
+        { id: 'm_lead', title: 'Tech Lead', kind: 'agent', agentId: lead.id },
+        { id: 'm_dev', title: 'Developer', kind: 'agent', agentId: dev.id, reportsTo: 'm_lead', role: 'Writes the fix' },
+      ],
+    } as never);
+    agentTeamStore.publish(created.id);
+    store.saveWorkflow({
+      id: 'wf_team_pin',
+      name: 'Team flow',
+      nodes: [node('Start', 'core.manualTrigger'), node('Team', 'core.runTeam', { teamId: created.id, message: 'Check this alert' })],
+      connections: [edge('Start', 'Team')],
+    });
+    await publish.publishDraft('wf_team_pin', 'owner');
+    const published = getPublication('wf_team_pin')!.versionId;
+    expect(versions.pinsFor(published).map((p) => [p.agentId, p.version]).sort()).toEqual([[dev.id, 1], [lead.id, 1]].sort());
+    // Production's copy carries both, keyed by agent id, and the editor's copy none.
+    expect(prod('wf_team_pin').nodes.find((n) => n.id === 'Team')!.parameters[PINS_PARAM]).toEqual({ [lead.id]: 1, [dev.id]: 1 });
+    expect(store.getWorkflow('wf_team_pin')!.nodes.find((n) => n.id === 'Team')!.parameters[PINS_PARAM]).toBeUndefined();
+
+    // The lead and the developer move on: v2 published, then a draft in progress.
+    for (const [agent, name] of [[lead, 'lead'], [dev, 'dev']] as const) {
+      edit(agent.id, `${name} rule v2`);
+      agentStore.publish(agent.id);
+      edit(agent.id, `${name} rule draft`);
+    }
+    const production = await runProduction('wf_team_pin');
+    expect(production.status).toBe('success');
+    expect(lastSystem()).toContain('lead rule v1');
+    expect(versions.runVersions(production.executionId)!.agents).toEqual(expect.arrayContaining([expect.objectContaining({ agentId: lead.id, version: 1, source: 'pinned' })]));
+    // A resumed or retried run reads a snapshot without pins: its version's pin.
+    expect(versions.fallbackPin(production.executionId, 'Team', dev.id)).toBe(1);
+
+    const manual = await runEditor('wf_team_pin');
+    expect(manual.status).toBe('success');
+    expect(lastSystem()).toContain('lead rule draft');
+    expect(versions.runVersions(manual.executionId)!.agents).toEqual(expect.arrayContaining([expect.objectContaining({ agentId: lead.id, version: 'draft', source: 'draft' })]));
+
+    // A member that is gone: the step says so and how to fix it.
+    database().delete('agent_versions', { agent_id: dev.id, version: 1 });
+    agentStore.write?.({ ...agentStore.get(dev.id)!, published: { ...agentStore.get(dev.id)!.published!, version: 5 }, history: [] } as never);
+    const gone = await runProduction('wf_team_pin');
+    expect(gone.status).toBe('error');
+    expect(gone.error?.message).toContain('v1, which this version of the workflow runs, no longer exists: publish the workflow again');
+  });
+
   it('the backfill pins what production runs today and fills the versions table; a second call changes nothing', async () => {
     const s1 = makeAgent('Backfilled', 'rule v1');
     edit(s1.id, 'rule v2');
@@ -245,6 +371,7 @@ describe('a workflow version pins its agents', () => {
     setPublication('wf_backfill', version.id, 'migration');
     database().delete('agent_versions', { agent_id: s1.id, version: 1 });
     database().delete('agent_versions', { agent_id: s1.id, version: 2 });
+    database().delete('workflow_version_pins', { version_id: version.id }); // a publication is pinned when it is made; before the upgrade it was not
     database().delete('meta', { key: 'agents.versions.backfilled' });
     expect(versions.pinsFor(version.id)).toEqual([]);
     expect(await versions.backfillVersions()).toBeGreaterThanOrEqual(1);

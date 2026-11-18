@@ -60,7 +60,7 @@ import {
 import { availableTypes, catalogSummary, FOCUS_PARAMETER_CHARS, nodeContext, nodeDocs, searchNodes, workflowOutline } from './research';
 import { MENTION_LIMITS, mentionKey, type MentionRef } from '../../shared/mentions';
 import { BLOCK_CLOSE, BLOCK_OPEN, resolveMentions, type MentionRead, type SentMention } from '../mentions/resolve';
-import type { Actor } from '../projects/access';
+import { canResource, type Actor } from '../projects/access';
 import { builderContextEntry } from '../project-context/by-repo';
 
 /** The most model calls for one message. A reply stops sooner when two steps in a row add nothing new. */
@@ -543,12 +543,13 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
       // AG21: the publish tools. They read and offer; the card's buttons publish.
       case 'list_agent_updates': {
         const agentId = typeof args.agentId === 'string' && args.agentId ? args.agentId : undefined;
-        const answer = listAgentUpdates(agentId ? { agentId } : { workflowId: input.workflow.id });
+        // Another project's workflows stay out of an agent's list unless this person can read them (as the MCP tool does).
+        const answer = listAgentUpdates(agentId ? { agentId } : { workflowId: input.workflow.id }, (workflowId) => workflowId === input.workflow.id || (input.actor !== undefined && canResource(input.actor, 'workflow', workflowId, 'read')));
         detail = `${answer.updates.length} ${answer.updates.length === 1 ? 'update' : 'updates'}`;
         return result(answer.updates.length ? JSON.stringify(answer.updates) : 'No newer agent versions: production runs the latest published ones.', 'Checked for newer agent versions');
       }
       case 'propose_publish': {
-        const offer = draftOffer(input.workflow.id);
+        const offer = draftOffer(input.workflow.id, input.actor?.id);
         if (!offer) return result('This workflow is not saved yet, so there is nothing to publish.', 'Could not offer to publish', false);
         onEvent({ type: 'publishOffer', offer });
         detail = publishOfferLine(offer);

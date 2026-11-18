@@ -7,6 +7,7 @@
 import { availableLine, pinsDiffer, type AgentUpdate, type PublishOffer } from '../../shared/agent-versions';
 import { agentUpdates, blocks, pinsFor, pinsToSet, repinned } from '../agents/versions';
 import { getPublication } from '../publications';
+import { withAccess } from '../publish';
 import { store } from '../store';
 import { listVersions, versionFor } from '../versions';
 
@@ -14,19 +15,19 @@ export interface AgentUpdatesAnswer {
   updates: Array<AgentUpdate & { line: string }>;
 }
 
-/** The updates for a workflow, or (with `agentId`) the production workflows that pin an older version of that agent. */
-export function listAgentUpdates(scope: { workflowId: string } | { agentId: string }): AgentUpdatesAnswer {
-  return { updates: agentUpdates(scope).map((u) => ({ ...u, line: availableLine(u) })) };
+/** The updates for a workflow, or (with `agentId`) the production workflows that pin an older version of that agent; `visible` keeps out workflows the caller may not read. */
+export function listAgentUpdates(scope: { workflowId: string } | { agentId: string }, visible: (workflowId: string) => boolean = () => true): AgentUpdatesAnswer {
+  return { updates: agentUpdates(scope).filter((u) => visible(u.workflowId)).map((u) => ({ ...u, line: availableLine(u) })) };
 }
 
 const newestNumber = (workflowId: string) => listVersions(workflowId)[0]?.number ?? 0;
 
 /** Publish the editor's draft: what it would pin and what stops it. */
-export function draftOffer(workflowId: string): PublishOffer | undefined {
+export function draftOffer(workflowId: string, by?: string): PublishOffer | undefined {
   const workflow = store.getWorkflow(workflowId);
   if (!workflow) return undefined;
   const pins = pinsToSet(workflow);
-  const stopping = blocks(workflow);
+  const stopping = withAccess(blocks(workflow), by);
   const version = versionFor(workflow);
   const existing = version ? pinsFor(version.id) : [];
   // The draft's version is published as it is when it has no pins or the same ones; otherwise a new version is recorded.

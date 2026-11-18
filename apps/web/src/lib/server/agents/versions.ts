@@ -13,7 +13,7 @@ import { diffConfigs, type Agent, type AgentConfig } from '../../shared/agents';
 import { rootOf, type AgentTeamConfig } from '../../shared/agent-teams';
 import { database } from '../db';
 import { parse } from '../db/rows';
-import { getPublication, listPublications } from '../publications';
+import { getPublication, listPublications, onPublicationChanged } from '../publications';
 import { store } from '../store';
 import { logger } from '../telemetry/logger';
 import { getVersion, productionPins } from '../versions';
@@ -355,5 +355,25 @@ export function testPassed(workflowId: string, executionId: string | undefined, 
   return missing.length ? `The test run did not reach ${missing.map((p) => `${p.agentName ?? p.agentId} v${p.version}`).join(', ')}: run it again` : true;
 }
 
+/** Pin a published version that has no pins yet, at what its agents are published at now (idempotent: a version's pins never change). */
+function pinUnpinned(versionId: string, workflow: Pick<Workflow, 'nodes'>): void {
+  try {
+    const wanted = pinsToSet(workflow);
+    if (wanted.length) setPins(versionId, wanted);
+  } catch (error) {
+    logger.warn('could not pin the agents of a published version', { error, 'landflow.version.id': versionId });
+  }
+}
+
+// A publication that no editor publish made (a legacy `active: true` save, an import, MCP) is pinned when it is made.
+onPublicationChanged((workflowId) => {
+  const publication = getPublication(workflowId);
+  const version = publication && getVersion(workflowId, publication.versionId);
+  if (publication && version && !pinsFor(publication.versionId).length) pinUnpinned(publication.versionId, version.workflow);
+});
+
 // The production copy of a published version carries its agents' pins (lib/server/publish.ts `productionWorkflow`).
-productionPins.apply = (workflow, versionId) => withPins(workflow, pinsFor(versionId));
+productionPins.apply = (workflow, versionId) => {
+  if (!pinsFor(versionId).length) pinUnpinned(versionId, workflow);
+  return withPins(workflow, pinsFor(versionId));
+};

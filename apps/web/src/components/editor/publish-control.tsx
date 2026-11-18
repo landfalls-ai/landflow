@@ -128,10 +128,14 @@ export function useAgentVersions(workflowId: string, publication?: PublicationSt
 }
 
 /** AG21: a publish the server refused because an agent's draft differs: the agents with their changes, and the two ways on. */
+/** A block as the server sends it: `canPublish: false` when the person may use the agent but not change (so not publish) it. */
+type AccessBlock = PinBlock & { canPublish?: boolean };
+
 export function BlockNotice({ blocks, busy, onChoose, className }: { blocks: PinBlock[]; busy?: boolean; onChoose: (how: 'publish-first' | 'as-published') => void; className?: string }) {
   const first = blocks.length === 1 ? blocks[0]! : undefined;
   const label = first ? first.name : `${blocks.length} agents`;
   const never = blocks.some((b) => b.published === undefined);
+  const foreign = (blocks as AccessBlock[]).filter((b) => b.canPublish === false);
   return (
     <div data-testid="publish-block" className={cn('flex flex-col gap-1.5 rounded-lg border border-warnbd bg-warndim px-2.5 py-2 text-[12px] leading-snug', className)}>
       <div className="font-medium text-t1">Production would not run what you tested</div>
@@ -142,9 +146,15 @@ export function BlockNotice({ blocks, busy, onChoose, className }: { blocks: Pin
           {b.changes.join(', ')}
         </div>
       ))}
-      <Button variant="primary" size="sm" loading={busy} onClick={() => onChoose('publish-first')}>
-        <Rocket className="size-3.5" /> Publish {label} first
-      </Button>
+      {foreign.length ? (
+        <div data-testid="publish-block-owners" className="text-t1">
+          Ask the owners of {foreign.map((b) => b.name).join(', ')} to publish {foreign.length === 1 ? 'it' : 'them'}: you can use {foreign.length === 1 ? 'it' : 'them'} but not change {foreign.length === 1 ? 'it' : 'them'}.
+        </div>
+      ) : (
+        <Button variant="primary" size="sm" loading={busy} onClick={() => onChoose('publish-first')}>
+          <Rocket className="size-3.5" /> Publish {label} first
+        </Button>
+      )}
       {!never && (
         <Button variant="ghost" size="sm" disabled={busy} onClick={() => onChoose('as-published')} title="Not what the editor tested">
           Publish with {first ? `${first.name} v${first.published}` : 'the published versions'} as published
