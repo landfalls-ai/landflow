@@ -111,7 +111,7 @@ export function wrongOutputAsk(text: string): boolean {
   // So does a requirement (“it should run at 9”, “it needs to be in EUR”, “it must include Q3”) and a command to change something: a change
   // word counts only as a command, at the start of a clause or after “please”, “can you”, “to”… (“posted”, “sends”, “email” as a noun do not).
   if (/\b(?:should|must|needs? to|has to|have to)\b/.test(t)) return false;
-  if (/(?:^|[.;:,!]\s*|\b(?:please|can you|could you|then|and|to)\s+)(?:add|change|set|remove|delete|replace|create|wire|publish|send|post|email|rename|turn|make|use|update|switch|enable|disable|move|edit|show|include)\b/.test(t)) return false;
+  if (/(?:^|[.;:,!—–]\s*|\b(?:please|can you|could you|then|and|to)\s+)(?:add|change|set|remove|delete|replace|create|wire|publish|send|post|email|rename|turn|make|use|update|switch|enable|disable|move|edit|show|include)\b/.test(t)) return false;
   return /\b(?:made[\s-]?up|invented|fake|fabricated|hallucinat\w*|not real|aren.t real|isn.t real)\b/.test(t) || /\b(?:look|looks|seem|seems|are|is|was|were)\s+(?:wrong|incorrect|bogus)\b/.test(t) || /\b(?:look|looks|seem|seems)\s+off\b/.test(t);
 }
 

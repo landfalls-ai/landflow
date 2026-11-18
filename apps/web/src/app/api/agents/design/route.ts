@@ -103,11 +103,7 @@ export const POST = handler(async (request: Request) => {
   const models = resources.models.map((m) => `${m.provider}/${m.model}`); // AG02: the card's Model select, the builder model first
   if (baseConfig && design.config) {
     // Re-check 3/4/5: a new tool joins an incomplete one of its type or stands as its own; the needs (the Left rows) are worked out after, so none names a merged tool.
-    const types = allowedTypes(undefined, actor);
-    const tidy = tidyChangedTools(baseConfig as { tools?: unknown }, design.config as { tools?: unknown }, (nodeType) => {
-      const d = types.find((t) => t.type === nodeType)?.descriptor;
-      return d && { credentials: (d.credentials ?? []).filter((c) => c.required).map((c) => c.name), parameters: d.properties.filter((p) => p.required).map((p) => p.name) };
-    });
+    const tidy = tidyChangedTools(baseConfig as { tools?: unknown }, design.config as { tools?: unknown });
     design.config = tidy.config as typeof design.config;
     if (tidy.removed.length) design.needs = design.needs.filter((n) => !tidy.removed.includes(String(n.tool)) && !tidy.removed.some((r) => n.text.startsWith(`${r}:`)));
   }

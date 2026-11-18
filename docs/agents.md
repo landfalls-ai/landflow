@@ -244,17 +244,16 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   none (wave ag3's live pass found the change said "No change" instead).
   The card's **Left** row then drops "fill in From Email" (any "fill in" or "set" line whose field the agent's draft now
   holds), as it drops a credential line once the slot is set.
-- **A change never undoes itself, and a second tool of a type is a tool of its own (ag4 re-check 3/4/5).** Before the card, the design
-  route (`lib/server/agents/change-tools.ts`) merges a new tool into a same-type tool the design kept only when that tool is
-  incomplete (a required credential slot or parameter is empty: *SQLite 2* for a SQLite tool still lacking its credential) and none
-  of the new tool's non-empty values differs from the kept tool's; the kept tool is filled in only where it is empty. Every other
-  new tool stands as its own tool with its own **Pick it** row (*add a SQLite tool for the archive DB* beside a complete one;
-  *also let it call the weather API*), and a complete tool never receives anything from a new one. A tool the design dropped never
-  comes back (*switch the SQLite tool to the Sales DB credential*). What an agent fix may add is the prompt's to say (its change
-  names only the one tool or knowledge base the cause needs): the card lists every tool it adds and the person applies it. The Left
-  rows are worked out after the merge. **Pick it** shows on a change card after Apply too, and wherever a Left row says *pick a …
-  credential*; its smoke result also reaches the applied build and change cards' status line (a change card still waiting for Apply
-  is left alone).
+- **A change never undoes itself, and a second tool of a type is a tool of its own (ag4 re-check 3-6).** Before the card, the design
+  route (`lib/server/agents/change-tools.ts`) merges a new tool into a same-type tool the design kept only when all three hold:
+  the kept tool has no credential in any slot (*SQLite 2* after an earlier fix), the new tool brings no non-empty parameter that
+  differs from the kept tool's, and it brings no credential or exactly one; a kept tool takes one merge and is filled only where it
+  is empty. Every other new tool stands as its own tool with its own **Pick it** row (*add a SQLite tool for the archive DB* beside a
+  complete one; *also let it call the weather API*). A tool the design dropped never comes back (*switch the SQLite tool to the
+  Sales DB credential*). What an agent fix may add is the prompt's to say (its change names only the one tool or knowledge base the
+  cause needs): the card lists every tool it adds and the person applies it. The Left rows are worked out after the merge.
+  **Pick it** shows on a change card after Apply too, and wherever a Left row says *pick a … credential*; its smoke result also
+  reaches the applied build and change cards' status line (a change card still waiting for Apply is left alone).
 - **Credentials follow the agent's project.** Every credential picker that edits an agent (the agent page's model and tool
   dialogs, and Spotlight's **Pick it**) lists only what the agent's home project may use (`GET /api/credentials?agentId=`)
   and **Create** makes the credential in that project; nothing is picked on its own until that list has loaded, and when
