@@ -44,6 +44,28 @@ export interface AgentNodeTool {
   free?: string[];
 }
 
+/** AG25: the settings of a removed AI Agent step, for the saved agent made in its place. */
+export interface NewAgentHint {
+  /** The AI Agent's system message. */
+  instructions?: string;
+  /** The names of the tool nodes it had. */
+  tools: string[];
+  /** The tool nodes by type (and operation), as the design route's `toolNodes`. */
+  toolNodes: Array<{ nodeType: string; operation?: string }>;
+  /** The Chat Model it had, as `provider/model`. */
+  model?: string;
+}
+
+/**
+ * AG25: the ask calls for an agent ("have an agent write …", "my agent", "the sales agent"): the word "agent" outside "AI Agent"
+ * (the person who names that node asked for it). A step the ask calls an agent is a Run an Agent step, never an inline AI Agent.
+ */
+export function callsAnAgent(ask: string): boolean {
+  // "AI agent" names the node; "user agent" is a header; "support agent" or "sales agent" with a verb for a person ("when a support agent closes…") is a person.
+  const stripped = ask.replace(/\bAI[\s-]+agents?\b/gi, ' ').replace(/\buser[\s-]?agents?\b/gi, ' ').replace(/\b(?:when|whenever|if|after|once)\s+(?:a|an|each|every|the)\s+(?:\w+\s+)?agent\b/gi, ' ');
+  return /\bagents?\b/i.test(stripped);
+}
+
 /** The destination parameter of the one send node a flow step may repeat (`dropRepeatedAgentWork`): Send Email's To. Nothing else is ever dropped. */
 export const SENDER_DESTINATIONS: Record<string, string[]> = { 'messaging.emailSend': ['toEmail'] };
 

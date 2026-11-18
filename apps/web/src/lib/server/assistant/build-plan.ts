@@ -8,7 +8,7 @@
  */
 import { z } from 'zod';
 import type { NodeTypeInfo } from '@/lib/shared/types';
-import { describeAgents, type AgentBrief } from '@/lib/shared/agent-brief';
+import { callsAnAgent, describeAgents, type AgentBrief } from '@/lib/shared/agent-brief';
 import { describeTeams, type TeamBrief } from '@/lib/shared/agent-teams';
 import { PLAN_LINES_LIMIT, PLAN_STEP_LIMIT, planProblems, type BuildPlan, type BuildStage, type PlanProblem, type PlanStep } from '@/lib/shared/build-plan';
 import { askModel, buildFlow, builderTimeoutMs, jsonOf, type FlowDraft } from '../flow-builder';
@@ -90,7 +90,7 @@ export function candidatesFor(prompt: string, types: NodeTypeInfo[], options: { 
       if (hit && !chosen.has(hit.type) && chosen.size < CANDIDATE_LIMIT) chosen.set(hit.type, byType.get(hit.type)!);
     }
   }
-  for (const type of [options.agents && 'core.messageAgent', options.teams && 'core.runTeam']) {
+  for (const type of [(options.agents || callsAnAgent(prompt)) && 'core.messageAgent' /* AG25: an ask that says "agent" gets the Run an Agent step offered even when the person has no agent yet */, options.teams && 'core.runTeam']) {
     const info = type ? byType.get(type) : undefined;
     if (info && !chosen.has(info.type)) chosen.set(info.type, info);
   }
@@ -116,7 +116,7 @@ A plan is: one trigger first, then the steps in order. Items (JSON objects) flow
 - A chat model, memory or tool for an agent step is its own step with "attach" ("ai_languageModel", "ai_memory" or "ai_tool") and "from" the agent's key.
 - "assumptions": what the request leaves open that you took for granted, one short line each ("every weekday at 8 read as 8:00 on weekdays"). Leave it empty when nothing was open.
 - "cannot": what the request asks that none of the node types offered can do, one line each ("post to Microsoft Teams: no Teams node is offered"). Never make up a step or a type for it.
-- Agents: when a step needs an agent and one of "Your agents" or "Published agent teams" fits, use core.messageAgent (or core.runTeam) for it; otherwise core.aiAgent for a small step (classify, summarise, draft). Say which in "does".
+- Agents: when a step needs an agent and one of "Your agents" or "Published agent teams" fits, use core.messageAgent (or core.runTeam) for it. When the request says "agent" (an agent, my agent, the sales agent, have an agent …), or the step is a specialist's (it needs data, tools, knowledge or judgement over the person's systems), the step is core.messageAgent too, named after the new agent when none fits (Spotlight designs and saves it). core.aiAgent only for a small step (classify, summarise, extract) that needs no specialist and that the request did not call an agent. Say which in "does".
 - What a reused agent does with its own tools (it emails, posts, files the ticket) is no step of its own: no Send Email after an agent that sends the email. A tool marked "asks first" still does it: the person approves the agent's send, so never add a step to get around that approval.
 
 Reply with one JSON object and nothing else: {"name": string, "steps": [{"key": string, "type": string, "name": string, "does": string, "from"?: string, "output"?: number, "attach"?: string, "reads"?: string[]}], "assumptions": string[], "cannot": string[]}`;

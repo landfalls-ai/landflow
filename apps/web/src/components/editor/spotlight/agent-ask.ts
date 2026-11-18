@@ -145,6 +145,9 @@ export async function designAgentCard(message: string, ask: AgentAsk, options: {
 
 const creating = new Set<string>();
 
+/** AG25: the card made for an unbound Run an Agent step (step-agents.ts): card item -> the step Create binds the new agent to. */
+export const stepForCard = new Map<string, string>();
+
 /**
  * AG19: Use <name>: the card's reuse row (docs/assistant.md "Agents and teams"). A Run an Agent step bound to the agent that
  * already does the job: on an empty canvas the starter flow with that agent, else after the selected step (or the last one);
@@ -216,6 +219,18 @@ export async function createFromCard(itemId: string, card: AgentCard): Promise<v
           takeBackOnUndo(step, useEditor.getState().workflowId);
         }
       }
+    }
+    // AG25: a card made for a step the build placed with no agent: Create binds that step to the new agent (and Undo of the build takes it back).
+    const boundStep = stepForCard.get(itemId);
+    if (!step && boundStep) {
+      const node = useEditor.getState().nodes.find((n) => n.id === boundStep);
+      if (node && !node.data.wf.parameters.agentId) {
+        useEditor.getState().updateNode(boundStep, { parameters: { ...node.data.wf.parameters, agentId: agent.id } });
+        step = boundStep;
+        useAssistant.getState().setAgent(step, { name: card.name, state: 'draft', agentId: agent.id, summary: [card.model, `for “${node.data.wf.name}”`].filter(Boolean).join(' · ') });
+        takeBackOnUndo(step, useEditor.getState().workflowId);
+      } else notes.push('The agent was created, but its step is gone or already has an agent, so nothing was bound to it.');
+      stepForCard.delete(itemId);
     }
     const extra = [...unsaved.length ? [`${unsaved.length} test case${unsaved.length === 1 ? '' : 's'} not saved: ${unsaved[0]}`] : [], ...notes];
     patchCard(itemId, { state: 'created', agentId: agent.id, ...(extra.length && { needs: [...card.needs, ...extra] }) });
