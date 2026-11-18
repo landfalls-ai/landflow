@@ -24,6 +24,7 @@ import { clearPublication, deletePublications, getPublication, listPublications,
 import { singleton } from './singleton';
 import { store } from './store';
 import { logger } from './telemetry/logger';
+import './agents/versions'; // sets `productionPins.apply`: every replica's production copy carries its agents' pins, not only the leader that runs the backfill
 import { applyVersion, getVersion, listVersions, productionPins, recordVersion, versionFor } from './versions';
 import { HttpError } from './errors';
 
