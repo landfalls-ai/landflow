@@ -275,6 +275,34 @@ describe('a workflow version pins its agents', () => {
     expect(draftOffer('wf_draft_only')!.blocks).toBeUndefined();
   });
 
+  it('four-eyes on, workflow unchanged, agent draft edited: a plain publish is a 409; publish-first publishes the agent and asks for approval, then a new version pins v2', async () => {
+    const { updateGovernancePolicy } = await import('@/lib/server/governance/policy');
+    const approvals = await import('@/lib/server/governance/approvals');
+    const s1 = makeAgent('Persona4', 'rule v1');
+    flow('wf_four_eyes', s1.id);
+    await publish.publishDraft('wf_four_eyes', 'owner');
+    const first = getPublication('wf_four_eyes')!.versionId;
+    edit(s1.id, 'rule v2 under four-eyes');
+    updateGovernancePolicy({ fourEyes: { enabled: true, approverRole: 'member', unpublish: false, notifyEmail: false, channelIds: [] } });
+    try {
+      await expect(approvals.publishOrRequest({ workflowId: 'wf_four_eyes', action: 'publish', by: 'owner' })).rejects.toMatchObject({ status: 409, code: 'agent_changes_unpublished' });
+      expect(agentStore.get(s1.id)!.published!.version).toBe(1);
+      const asked = await approvals.publishOrRequest({ workflowId: 'wf_four_eyes', action: 'publish', agents: 'publish-first', by: 'owner' });
+      expect(asked).toMatchObject({ approvalRequired: true });
+      expect(agentStore.get(s1.id)!.published!.version).toBe(2);
+      expect(getPublication('wf_four_eyes')!.versionId).toBe(first);
+      const request = (asked as { request: { id: string } }).request;
+      const approver = { id: 'approver_1', email: 'a@x.test', name: 'Approver', role: 'owner' } as Parameters<typeof approvals.approveRequest>[1];
+      await approvals.approveRequest(request.id, approver);
+      const second = getPublication('wf_four_eyes')!.versionId;
+      expect(second).not.toBe(first);
+      expect(versions.pinsFor(second)).toMatchObject([{ agentId: s1.id, version: 2 }]);
+      expect(versions.pinsFor(first)).toMatchObject([{ agentId: s1.id, version: 1 }]);
+    } finally {
+      updateGovernancePolicy({ fourEyes: { enabled: false } });
+    }
+  });
+
   it('a held eval gate publishes nothing: 409 with the verdict, the agent and the workflow stay as they were', async () => {
     const s1 = makeAgent('Gated', 'rule v1');
     flow('wf_gate', s1.id);

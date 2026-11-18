@@ -25,12 +25,12 @@ import { getUser, listUsers, userNames, type UserRecord } from '../auth/users';
 import { database } from '../db';
 import { parse } from '../db/rows';
 import { onPublicationChanged, publishedVersionId } from '../publications';
-import { publicationStatus, publishDraft, PublishError, publishUpdate, publishVersion, resolveAgents, unpublishWorkflow } from '../publish';
+import { publicationStatus, publishDraft, PublishError, publishUpdate, publishVersion, pinChanges, resolveAgents, unpublishWorkflow } from '../publish';
 import { releaseScheduleAfterApproval } from '../publish-schedule-store';
 import { singleton } from '../singleton';
 import { store } from '../store';
 import { logger } from '../telemetry/logger';
-import { diffWorkflows, getVersion, listVersions, recordVersion, summarizeDiff, versionFor } from '../versions';
+import { diffWorkflows, getVersion, listVersions, recordVersion, summarizeDiff, versionFor, versionHash } from '../versions';
 import { notifyApprovers, notifyRequester } from './notify';
 import { getGovernancePolicy, publishBlockedReason } from './policy';
 import { ensureProjectApprovers, projectApproverLabel } from './project-approvers';
@@ -416,18 +416,36 @@ export async function publishOrRequest(ask: PublishAsk): Promise<PublishOutcome>
     return ask.versionId ? publishVersion(ask.workflowId, ask.versionId, ask.by, ask.note, options) : publishDraft(ask.workflowId, ask.by, ask.note, options);
   }
   if (ask.update) throw new ApprovalError('Four-eyes publishing is on: an agent update is published as a request for the draft instead', 409); // AG21:
-  // Nothing to ask for: the version is live already, or there is nothing to unpublish.
   const workflow = store.getWorkflow(ask.workflowId);
   const live = publishedVersionId(ask.workflowId);
-  const target = ask.action === 'publish' ? (ask.versionId ?? (workflow && versionFor(workflow)?.id)) : undefined;
-  if (workflow && (ask.action === 'publish' ? target !== undefined && target === live : !live && !workflow.active)) return { ...(await publicationStatus(ask.workflowId)), triggerErrors: [] };
   // AG21: the approval publishes without options, so an agent draft that differs is settled now (published first) or refused now, not at the approval.
+  // This runs before the "nothing to ask for" check: a workflow that did not change can still have an agent whose draft did.
   if (ask.action === 'publish' && workflow) {
     const graph = ask.versionId ? getVersion(ask.workflowId, ask.versionId)?.workflow : workflow;
     // 'as-published' cannot be carried to the approval, so it refuses with the block like a plain publish.
     // A version that has pins (a rollback) keeps its own, so nothing is asked of the agents.
     if (graph && !(ask.versionId && (await import('../agents/versions')).pinsFor(ask.versionId).length)) await resolveAgents(graph, { ...(ask.agents === 'publish-first' && { agents: 'publish-first' as const }), ...(ask.signal && { signal: ask.signal }) }, ask.by);
   }
+  // Nothing to ask for: the version is live already (and its pins are what the agents are now), or there is nothing to unpublish.
+  const target = ask.action === 'publish' ? (ask.versionId ?? (workflow && versionFor(workflow)?.id)) : undefined;
+  if (workflow && ask.action === 'publish' && target !== undefined && target === live) {
+    const { pinsDiffer, pinsFor, pinsSummary, pinsToSet } = await import('../agents/versions');
+    const existing = pinsFor(live!);
+    const wanted = pinsToSet(workflow);
+    if (!ask.versionId && existing.length && pinsDiffer(existing, wanted)) {
+      // Agents were published since: the live version keeps its pins, so the request is for a new version of the same graph that pins the new ones.
+      const newest = listVersions(ask.workflowId)[0];
+      const reuse = newest && newest.id !== live && !pinsFor(newest.id).length && (() => { const g = getVersion(ask.workflowId, newest.id)?.workflow; return !!g && versionHash(g) === versionHash(workflow); })();
+      const forced = reuse ? newest : recordVersion(workflow, { force: true, summary: pinsSummary(pinChanges(existing, wanted)), ...(ask.by && { author: ask.by }) });
+      if (forced) return finishRequest({ ...ask, versionId: forced.id });
+    }
+    return { ...(await publicationStatus(ask.workflowId)), triggerErrors: [] };
+  }
+  if (workflow && ask.action !== 'publish' && !live && !workflow.active) return { ...(await publicationStatus(ask.workflowId)), triggerErrors: [] };
+  return finishRequest(ask);
+}
+
+async function finishRequest(ask: PublishAsk): Promise<PublishOutcome> {
   const request = requestPublish(ask);
   return { ...(await publicationStatus(ask.workflowId)), approvalRequired: true, request: view(rowOf(request.id)!, ask.by ? getUser(ask.by) : undefined), triggerErrors: [] };
 }

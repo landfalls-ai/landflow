@@ -251,7 +251,7 @@ export async function publishVersion(workflowId: string, versionId: string, by?:
 const agentNames = (pins: readonly AgentPin[]) => new Map(pins.map((p) => [p.agentId, p.agentName ?? p.agentId]));
 
 /** What changes between two pin sets, one entry per agent (for a new version's summary). */
-function pinChanges(from: readonly AgentPin[], to: readonly AgentPin[]): Array<{ agentName: string; from?: number; to: number }> {
+export function pinChanges(from: readonly AgentPin[], to: readonly AgentPin[]): Array<{ agentName: string; from?: number; to: number }> {
   const names = agentNames([...from, ...to]);
   const before = new Map(from.map((p) => [p.agentId, p.version]));
   const out = new Map<string, { agentName: string; from?: number; to: number }>();
