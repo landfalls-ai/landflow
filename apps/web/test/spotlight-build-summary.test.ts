@@ -49,7 +49,7 @@ vi.mock('@/components/credentials/credential-dialog', () => ({ CredentialDialog:
 vi.mock('@/components/canvas/sticky-note', () => ({ STICKY_DEFAULT_CONTENT: '## Note', STICKY_DEFAULT_SIZE: { width: 260, height: 180 } }));
 // SB13 (merged in wave sb3): the first draft is planned first, so the plan route answers a plan.
 vi.mock('@/lib/client/api', () => ({ api: vi.fn(async (path: string) => (path === '/api/ai/build/plan' ? { plan: { name: 'Bug triage', steps: [{ key: 's1', type: 'core.manualTrigger', name: 'Start', does: 'Start by hand' }], assumptions: [], cannot: [] }, alternatives: {} } : { versions: [] })), streamEvents: vi.fn() }));
-vi.mock('@/components/editor/test-session', () => ({ testUntilItRuns: vi.fn(async () => {}) }));
+vi.mock('@/components/editor/test-session', () => ({ testUntilItRuns: vi.fn(async () => {}), agentFixHooks: {} }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), message: vi.fn() } }));
 
 const { registry } = await import('@/lib/server/plugins/registry');
