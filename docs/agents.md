@@ -271,6 +271,10 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   fails too, the card says *The tests changed since this was designed; ask again.* (any other failed swap says why) and offers **Ask
   again**, which designs the same words again against the agent as it is. After Apply, a dismissed card ends the session with *The
   change is saved to the draft, not published.*, and **Not now** is hidden while a publish runs. First-person denials in a persona
+  **A replace never only removes:** when the design names cases but writes none to replace them, none is replaced and the card says
+  *Test may now be wrong: “…”* (an agent with no cases skips the publish gate); the server refuses a `PATCH` eval-gate with `remove` and
+  an empty `add` (400), and Apply swaps only when there are both ids and new cases. A failed swap adds *The old tests are still there;
+  Publish checks against them.* Ask again on a fix card sends the typed ask the session had (`typedAsk`), never the model's text.
   example (*I can not look anything up.*) count as denials, and an examples list left empty is dropped. A write needs a data object
   (*write the totals to the sales database*, *insert rows*), never *add read access to the database* or *add SQLite to the db agent*.
 - **An empty Table on a Select tool (final run 2).** A tool a design leaves on Select keeps it (the safer, simpler choice: Select cannot

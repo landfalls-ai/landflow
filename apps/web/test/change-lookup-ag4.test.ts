@@ -103,11 +103,38 @@ describe('cases are replaced only when the design names them, or their expected 
     expect(body.cases).toEqual([]);
     expect(body.changes.some((c) => /^Test (removed|added)/.test(c))).toBe(false);
   });
-  it('an id the agent does not have is ignored', async () => {
+  it('ids the agent does not have, or another agent’s, are filtered out: nothing is replaced (200)', async () => {
     const { agentStore } = await import('@/lib/server/agents/store');
+    const { addCase } = await import('@/lib/server/agents/eval-gate');
     const agent = agentStore.create({ name: 'Ghost', description: 'x', instructions: STEPS, model: { provider: 'ollama', model: 'qwen3-coder:30b' } });
-    const body = (await (await withModel(() => post({ name: 'Ghost', preview: true, base: { agentId: agent.id }, change: 'Give the agent access to the sales database to read sales' }), 'Input: a text.\nSteps:\n1. Summarise the text.', { contradictedCases: 'ec_nothere' })).json()) as { replaceCases?: unknown[] };
+    addCase(agent.id, { input: 'Reply in French', expected: 'French' });
+    const other = agentStore.create({ name: 'Other' });
+    const foreign = addCase(other.id, { input: 'Foreign case', expected: 'x' });
+    const res = await withModel(() => post({ name: 'Ghost', preview: true, base: { agentId: agent.id }, change: 'Give the agent access to the sales database to read sales' }), 'Input: a text.\nSteps:\n1. Summarise the text.', { contradictedCases: `ec_nothere, ${foreign.id}`, cases: 'Read rows => Uses sqlite' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { replaceCases?: unknown[]; cases: unknown[] };
     expect(body.replaceCases ?? []).toEqual([]);
+    expect(body.cases).toEqual([]);
+  });
+  it('only the agent’s own ids survive when the list is mixed', async () => {
+    const { agentStore } = await import('@/lib/server/agents/store');
+    const { addCase } = await import('@/lib/server/agents/eval-gate');
+    const agent = agentStore.create({ name: 'Mixed', description: 'x', instructions: STEPS, model: { provider: 'ollama', model: 'qwen3-coder:30b' } });
+    const mine = addCase(agent.id, { input: 'Summarise: hi', expected: 'Uses only the text' });
+    const foreign = addCase(agentStore.create({ name: 'Other2' }).id, { input: 'Foreign', expected: 'x' });
+    const body = (await (await withModel(() => post({ name: 'Mixed', preview: true, base: { agentId: agent.id }, change: 'Give the agent access to the sales database to read sales' }), 'Input: a text.\nSteps:\n1. Summarise the text.', { contradictedCases: `${foreign.id}, ec_nothere, ${mine.id}`, cases: 'Read three rows => Uses sqlite and reports them' })).json()) as { replaceCases: Array<{ id: string }> };
+    expect(body.replaceCases.map((c) => c.id)).toEqual([mine.id]);
+  });
+  it('the design names a case but writes no new one (“Reply in French”): nothing is replaced, the card says it may be wrong', async () => {
+    const { agentStore } = await import('@/lib/server/agents/store');
+    const { addCase } = await import('@/lib/server/agents/eval-gate');
+    const agent = agentStore.create({ name: 'French', description: 'x', instructions: 'Input: a text.\nSteps:\n1. Summarise the text.', model: { provider: 'ollama', model: 'qwen3-coder:30b' } });
+    const french = addCase(agent.id, { input: 'Reply in French', expected: 'A reply in French.' });
+    const body = (await (await withModel(() => post({ name: 'French', preview: true, base: { agentId: agent.id }, change: 'Answer in English from now on' }), 'Input: a text.\nSteps:\n1. Summarise the text in English.', { contradictedCases: french.id })).json()) as { replaceCases?: unknown[]; cases: unknown[]; changes: string[] };
+    expect(body.replaceCases ?? []).toEqual([]);
+    expect(body.cases).toEqual([]);
+    expect(body.changes).toContain('Test may now be wrong: “Reply in French”');
+    expect(body.changes.some((c) => /^Test removed/.test(c))).toBe(false);
   });
   it('the base held a denial the design rewrote away on its own: a case whose expected answer is only that denial is replaced', async () => {
     const { agentStore } = await import('@/lib/server/agents/store');

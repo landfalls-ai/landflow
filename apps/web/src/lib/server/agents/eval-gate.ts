@@ -65,6 +65,8 @@ export function addCase(agentId: string, input: { input: string; expected?: stri
  * fit the cap; on any failure nothing changes. Returns the agent's cases after.
  */
 export function replaceCases(agentId: string, removeIds: string[], add: Array<{ input: string; expected?: string }>): AgentEvalCase[] {
+  // A replace that adds nothing would leave the agent with fewer cases, perhaps none (the publish gate skips an agent with no cases).
+  if (removeIds.length && !add.length) throw new EvalGateError('A replace must add at least one case; delete a case on its own to remove it', 400);
   return db().transaction(() => {
     const have = new Set(listCases(agentId).map((c) => c.id));
     const missing = removeIds.filter((id) => !have.has(id));

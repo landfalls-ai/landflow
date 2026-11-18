@@ -47,7 +47,7 @@ describe('Apply: the draft first, then the cases', () => {
     let result;
     try { result = await run(); } finally { vi.unstubAllGlobals(); }
     expect(result).toEqual({ smoke: { state: 'passed' }, casesNote: CASES_CHANGED });
-    expect(CASES_CHANGED).toBe('The tests changed since this was designed; ask again.');
+    expect(CASES_CHANGED).toBe('The tests changed since this was designed; ask again. The old tests are still there; Publish checks against them.');
     expect(calls.filter((c) => c.startsWith('PATCH'))).toHaveLength(2);
     expect(calls.some((c) => c.startsWith('PUT'))).toBe(true);
   });
@@ -56,13 +56,19 @@ describe('Apply: the draft first, then the cases', () => {
     stub(calls, [500]);
     let result;
     try { result = await run(); } finally { vi.unstubAllGlobals(); }
-    expect(result?.casesNote).toMatch(/^The tests could not be replaced: /);
+    expect(result?.casesNote).toMatch(/^The tests could not be replaced: .*The old tests are still there; Publish checks against them\.$/);
     expect(calls.filter((c) => c.startsWith('PATCH'))).toHaveLength(1);
   });
   it('a draft that fails to save throws and touches no case', async () => {
     const calls: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => { calls.push(`${init?.method ?? 'GET'} ${url}`); return json(400, { error: 'bad draft' }); }));
     try { await expect(run()).rejects.toThrow(); } finally { vi.unstubAllGlobals(); }
+    expect(calls.some((c) => /eval-gate/.test(c))).toBe(false);
+  });
+  it('replaces nothing when no new case comes with the ids: no PATCH at all', async () => {
+    const calls: string[] = [];
+    stub(calls, []);
+    try { await saveChangeWithCases('ag_1', { name: 'A' }, 'hi', [], [{ id: 'ec_1', input: 'old' }]); } finally { vi.unstubAllGlobals(); }
     expect(calls.some((c) => /eval-gate/.test(c))).toBe(false);
   });
   it('touches no cases when the change replaces none', async () => {

@@ -46,7 +46,8 @@ export async function readDraft(agentId: string): Promise<Record<string, unknown
 }
 
 /** The cases a swap could not replace, and why (shown on the card; never swallowed). */
-export const CASES_CHANGED = 'The tests changed since this was designed; ask again.';
+const STILL_THERE = 'The old tests are still there; Publish checks against them.';
+export const CASES_CHANGED = `The tests changed since this was designed; ask again. ${STILL_THERE}`;
 
 type CaseRow = { id: string; input: string; expected?: string };
 
@@ -60,7 +61,7 @@ export async function saveChangeWithCases(agentId: string, config: Record<string
   await api(`/api/agents/${agentId}`, { method: 'PUT', json: config });
   announceChange(agentId); // the agent's page shows the saved draft while the test runs
   let casesNote: string | undefined;
-  if (replaceCases.length) {
+  if (cases.length && replaceCases.length) {
     const swap = (remove: string[]) => api(`/api/agents/${agentId}/eval-gate`, { method: 'PATCH', json: { remove, add: cases } });
     try {
       await swap(replaceCases.map((c) => c.id));
@@ -71,9 +72,9 @@ export async function saveChangeWithCases(agentId: string, config: Record<string
           const inputs = new Set(replaceCases.map((c) => c.input.trim()));
           await swap(now.filter((c) => inputs.has(c.input.trim())).map((c) => c.id));
         } catch (second) {
-          casesNote = second instanceof ApiError && second.status === 409 ? CASES_CHANGED : `The tests could not be replaced: ${(second as Error).message}`;
+          casesNote = second instanceof ApiError && second.status === 409 ? CASES_CHANGED : `The tests could not be replaced: ${(second as Error).message}. ${STILL_THERE}`;
         }
-      } else casesNote = `The tests could not be replaced: ${(first as Error).message}`;
+      } else casesNote = `The tests could not be replaced: ${(first as Error).message}. ${STILL_THERE}`;
     }
   }
   const smoke = await smokeOf(agentId, sample);

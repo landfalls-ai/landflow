@@ -203,6 +203,8 @@ export interface AgentCard {
   casesNote?: string;
   /** A change card: the words the change was designed from, for Ask again. */
   askedChange?: string;
+  /** A fix card: what the person typed in the session ("" when nothing), the only words that may make a read tool a write; Ask again sends it again. */
+  typedAsk?: string;
   /** What is left for the person (the architect's `needs` texts) and what no plugin online covers (`missing`). */
   needs: string[];
   missing: string[];

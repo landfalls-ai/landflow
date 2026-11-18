@@ -41,6 +41,24 @@ describe('replacing cases', () => {
   });
 });
 
+describe('a replace must add a case', () => {
+  it('refuses remove with an empty add (400) and changes nothing', async () => {
+    const agent = agentStore.create({ name: 'E' });
+    const one = addCase(agent.id, { input: 'Reply in French', expected: 'French' });
+    const res = await patch(agent.id, { remove: [one.id], add: [] });
+    expect(res.status).toBe(400);
+    expect(listCases(agent.id).map((c) => c.id)).toEqual([one.id]);
+    expect(() => replaceCases(agent.id, [one.id], [])).toThrow(/at least one/);
+  });
+  it('an add alone, and a remove with an add, still work', async () => {
+    const agent = agentStore.create({ name: 'F' });
+    const one = addCase(agent.id, { input: 'one' });
+    expect((await patch(agent.id, { remove: [], add: [{ input: 'two' }] })).status).toBe(200);
+    expect((await patch(agent.id, { remove: [one.id], add: [{ input: 'three' }] })).status).toBe(200);
+    expect(listCases(agent.id).map((c) => c.input)).toEqual(['two', 'three']);
+  });
+});
+
 describe('EXPLICIT_WRITE', () => {
   it.each([
     ['insert rows into the sales table', true],

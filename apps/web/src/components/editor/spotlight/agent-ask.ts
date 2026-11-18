@@ -499,9 +499,9 @@ export async function askAgentChangeAgain(itemId: string, card: AgentCard): Prom
   revising.add(itemId);
   patchCard(itemId, { state: 'creating', error: undefined, casesNote: undefined });
   try {
-    const design = await designChange({ name: card.name, description: card.description, base: { agentId }, change, ...pickedModel() });
+    const design = await designChange({ name: card.name, description: card.description, base: { agentId }, change, ...(card.fix && { typedAsk: card.typedAsk ?? '' }), ...pickedModel() });
     const fresh = cardFromPreview({ config: design.config, needs: design.needs ?? [], missing: design.missing ?? [], designed: design.designed ?? true, cases: design.cases ?? [], notAdded: design.notAdded ?? [] } as unknown as Parameters<typeof cardFromPreview>[0], { description: card.description, placed: false, tools: [] }, false);
-    patchCard(itemId, { ...fresh, state: 'designed', base: card.base ?? { agentId, name: card.name }, changes: design.changes, cases: design.cases ?? [], replaceCases: design.replaceCases, askedChange: change, ...(card.fix && { fix: card.fix }), agentId: undefined, smoke: undefined, casesNote: undefined, error: undefined });
+    patchCard(itemId, { ...fresh, state: 'designed', base: card.base ?? { agentId, name: card.name }, changes: design.changes, cases: design.cases ?? [], replaceCases: design.replaceCases, askedChange: change, ...(card.fix && { fix: card.fix, typedAsk: card.typedAsk ?? '' }), agentId: undefined, smoke: undefined, casesNote: undefined, error: undefined });
   } catch (e) {
     patchCard(itemId, { state: 'created', agentId, casesNote: `Asking again failed: ${(e as Error).message}` });
   } finally {

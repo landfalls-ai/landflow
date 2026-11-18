@@ -2,7 +2,7 @@
 /** Review: a session that waits on its own card always has a way out: the header Stop, and on the card Dismiss (designed) or Not now (applied), with a phone-size target. */
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { prepare } = await import('./spotlight-scenarios/harness');
@@ -75,5 +75,24 @@ describe('the card after Apply', () => {
     const done = agentFixOutcome('item1', new AbortController().signal);
     useAssistant.setState({ items: [] });
     expect(await done).toBe('You kept the agent as it was.');
+  });
+});
+
+describe('Ask again on a fix card', () => {
+  it('sends the typed ask the session had, never the model text; a card with none sends ""', async () => {
+    const { askAgentChangeAgain } = await import('@/components/editor/spotlight/agent-ask');
+    for (const typedAsk of ['let it write rows to the sales table', undefined]) {
+      useAssistant.getState().reset();
+      const card = base({ state: 'created', smoke: { state: 'passed' }, casesNote: 'x', askedChange: 'Give it SQLite', ...(typedAsk !== undefined && { typedAsk }) });
+      useAssistant.getState().append([{ id: 'item1', role: 'assistant', testId: 't1', parts: [{ kind: 'agentCard', card }] } as never]);
+      const bodies: Array<Record<string, unknown>> = [];
+      vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body ?? '{}')));
+        return new Response(JSON.stringify({ config: { name: 'Summary', description: 'x', memory: { crossSession: false }, tools: [] }, changes: ['Tools: added SQLite'], needs: [], missing: [], designed: true, cases: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }));
+      try { await askAgentChangeAgain('item1', card); } finally { vi.unstubAllGlobals(); }
+      expect(bodies[0].typedAsk).toBe(typedAsk ?? '');
+      expect(bodies[0].change).toBe('Give it SQLite');
+    }
   });
 });

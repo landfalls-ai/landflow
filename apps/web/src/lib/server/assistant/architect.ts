@@ -1784,7 +1784,7 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
   for (const tool of draft.config.tools ?? []) {
     // "Make sqlite read-only": the design's tool of the same type and name as a kept one, with another operation, changes that tool in place (its id, its credential), never a second tool beside it.
     const place = tool.type === 'node' && tool.parameters?.operation !== undefined ? kept.findIndex((t) => t.type === 'node' && t.nodeType === tool.nodeType && String(t.name ?? '').toLowerCase() === String(tool.name ?? '').toLowerCase() && t.parameters?.operation !== undefined && t.parameters.operation !== tool.parameters?.operation) : -1;
-    // A read tool turns into a write, or a write tool is added beside it, only when the ask itself says so (insert, add rows, write to, update, delete, save to): "give it access" never does.
+    // A read tool turns into a write, or a write tool is added beside it, only when the ask itself says so: a write verb with rows, records or entries (insert rows, update the records, delete old records), or write, add or save of data (results, totals, summary, figures, counts) to or into a table or database. "Give it access", "add read access" and "add SQLite to the agent" never do.
     if (tool.type === 'node' && !EXPLICIT_WRITE.test(said) && writesOutside({ type: tool.nodeType, parameters: tool.parameters ?? {} }) && kept.some((t) => t.type === 'node' && t.nodeType === tool.nodeType && !writesOutside({ type: t.nodeType, parameters: t.parameters ?? {} }))) {
       draft.dropped.push(`${tool.name || tool.nodeType}: the agent already has read access; the change doesn’t ask to write, so nothing changes`);
       continue;

@@ -118,6 +118,7 @@ export const POST = handler(async (request: Request) => {
   let lookup: ReturnType<typeof reconcileLookup> | undefined;
   let replaceCases: Array<{ id: string; input: string }> = [];
   let newCases: Array<{ input: string; expected: string }> = [];
+  let maybeWrong: Array<{ id: string; input: string }> = [];
   if (baseConfig && design.config) {
     lookup = reconcileLookup(baseConfig as never, design.config as never);
     design.config = lookup.config as typeof design.config;
@@ -125,9 +126,15 @@ export const POST = handler(async (request: Request) => {
       const named = (design.contradicted ?? []).filter((id) => existingCases.some((c) => c.id === id));
       const denied = lookup.removed ? existingCases.filter((c) => expectsOnlyDenial(c.expected)).map((c) => c.id) : [];
       replaceCases = [...new Set([...named, ...denied])].map((id) => ({ id, input: existingCases.find((c) => c.id === id)!.input }));
+      const named_ = replaceCases;
       if (replaceCases.length) {
         const written = named.length ? (design.cases ?? []).filter((c) => c.expected).slice(0, 3).map((c) => ({ input: c.input, expected: c.expected as string })) : [];
         newCases = written.length ? written : lookup.removed ? lookupCases(lookup.tools, (design.config.tools ?? []).some((t) => t.type === 'node')) : [];
+        // Nothing to put in their place: Apply would only remove cases (and an agent with none skips the publish gate), so none is replaced; the card says which may now be wrong.
+        if (!newCases.length) {
+          maybeWrong = named_;
+          replaceCases = [];
+        }
       }
     }
   }
@@ -135,7 +142,7 @@ export const POST = handler(async (request: Request) => {
   if (parsed.data.preview) {
     // SB16: the card's preview: a face to show, nothing saved; SB17's brief's cases come with it.
     // AG04: a change also says what it changes from the base; nothing is saved.
-    if (baseConfig) return json({ config, changes: [...agentChanges(baseConfig, config as Record<string, unknown>), ...(lookup?.lines ?? []), ...replaceCases.map((c) => `Test removed: ${shortInput(c.input)}`), ...newCases.map((c) => `Test added: ${shortInput(c.input)}`)], needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: newCases, ...(replaceCases.length && { replaceCases }), notAdded: design.notAdded, models /* AG02: */, ...(setup.knowledge && { knowledge: setup.knowledge }) /* AG13: */, ...(design.failure && { failure: design.failure }) });
+    if (baseConfig) return json({ config, changes: [...agentChanges(baseConfig, config as Record<string, unknown>), ...(lookup?.lines ?? []), ...replaceCases.map((c) => `Test removed: ${shortInput(c.input)}`), ...newCases.map((c) => `Test added: ${shortInput(c.input)}`), ...maybeWrong.map((c) => `Test may now be wrong: ${shortInput(c.input)}`)], needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: newCases, ...(replaceCases.length && { replaceCases }), notAdded: design.notAdded, models /* AG02: */, ...(setup.knowledge && { knowledge: setup.knowledge }) /* AG13: */, ...(design.failure && { failure: design.failure }) });
     return json({ config, needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: design.cases ?? [], notAdded: design.notAdded, models /* AG02: */, ...(setup.knowledge && { knowledge: setup.knowledge }) /* AG13: */, ...reasoned /* AG19: */ });
   }
   const agent = createInProject(request, 'agent', () => agentStore.create(config), (a) => a.id);
