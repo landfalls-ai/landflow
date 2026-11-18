@@ -876,6 +876,25 @@ describe('7. Spotlight never wires into a bound node, and the scenario files run
     expect(reply.proposals.flatMap((p) => p.ops).map((o) => (o as { change?: string }).change)).toEqual(['Add a sentiment tool.', 'Also hash the slug.']);
   });
 
+  it('the same change by the step’s name and then by the agent’s id is one change', async () => {
+    const s4 = utility('Utility helper by id');
+    const wf = saveFlow({ id: 'wf_byid', name: 'By id', nodes: [node('Start', 'core.manualTrigger'), node('Agent', 'core.messageAgent', { agentId: s4.id, message: 'hi' }, 'Utility helper')], connections: [edge('Start', 'Agent')] });
+    const call = (target: Record<string, string>) => ({ calls: [{ name: 'propose_changes', input: { summary: 'Change the agent', ops: [{ op: 'changeAgent', ...target, change: 'Add a sentiment tool.' }] } }] });
+    const reply = await chat(wf, 'Add a sentiment tool to the agent.', [call({ node: 'Utility helper' }), call({ agentId: s4.id }), { text: 'Done.' }]);
+    const results = reply.toolResults.filter((r) => r.name === 'propose_changes').map((r) => r.content);
+    expect(results[1]).toMatch(/^Nothing changes/);
+    expect(reply.proposals).toHaveLength(1);
+  });
+
+  it('two Run a Team steps of one team: the same change to the lead is one change (the key is the team, not the step’s name)', async () => {
+    const wf = saveFlow({ id: 'wf_team_key', name: 'Team key', nodes: [node('Start', 'core.manualTrigger'), node('T1', 'core.runTeam', { teamId: 'tm_support', message: 'hi' }, 'Support team'), node('T2', 'core.runTeam', { teamId: 'tm_support', message: 'again' }, 'Support team again')], connections: [edge('Start', 'T1'), edge('T1', 'T2')] });
+    const call = (node: string) => ({ calls: [{ name: 'propose_changes', input: { summary: 'Change the lead', ops: [{ op: 'changeAgent', node, change: 'Use Haiku for the lead.' }] } }] });
+    const reply = await chat(wf, 'Use Haiku for the lead.', [call('Support team'), call('Support team again'), { text: 'Done.' }]);
+    const results = reply.toolResults.filter((r) => r.name === 'propose_changes').map((r) => r.content);
+    expect(results[0]).not.toMatch(/^Nothing/);
+    expect(results[1]).toMatch(/^Nothing changes/);
+  });
+
   it('OP_SCHEMA’s changeAgent fields are what parseOps reads (node, agentId, change; no moveWired in either)', () => {
     const schema = (TOOLS.find((t) => t.name === 'propose_changes')!.inputSchema as { properties: { ops: { items: { properties: Record<string, unknown> } } } }).properties.ops.items.properties;
     for (const field of ['node', 'agentId', 'change']) expect(Object.keys(schema)).toContain(field);

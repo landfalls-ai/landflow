@@ -784,7 +784,12 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         const graph = (wf: Workflow) => JSON.stringify([wf.nodes, wf.connections, wf.settings]); // SB10: the workflow's settings count, or a settings-only change reads as "already there"
         // Wave ag4 joins: a changeAgent changes the agent, never the graph (AG17), so the graph alone cannot say it is a repeat: the same
         // change to the same agent proposed before is (a different change, or another agent, is not).
-        const agentChange = (op: Record<string, unknown>) => `${op.agentId ?? op.node ?? ''}\u0000${String(op.change ?? '').trim().toLowerCase()}`;
+        // A step name resolves to the agent it runs (the same agent by node or by id is one key); a team's lead by its teamId.
+        const agentChange = (op: Record<string, unknown>) => {
+          const bound = typeof op.node === 'string' ? nodeByName(op.node)?.parameters : undefined;
+          const target = op.agentId ?? bound?.agentId ?? op.teamId ?? bound?.teamId ?? op.node ?? '';
+          return `${String(target)}\u0000${String(op.change ?? '').trim().toLowerCase()}`;
+        };
         const earlierChanges = new Set(proposalLog.flatMap((p) => p.ops.filter((op) => op.op === 'changeAgent').map((op) => agentChange(op as never))));
         const newChange = validated.ops.some((op) => op.op === 'changeAgent' && !earlierChanges.has(agentChange(op as never)));
         if (graph(validated.workflow) === graph(working) && !newChange) {
