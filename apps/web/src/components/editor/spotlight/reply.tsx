@@ -426,6 +426,9 @@ function ReplyError({ item, canRetry }: { item: Reply; canRetry: boolean }) {
 export function ReplyView({ item, live, status }: { item: Reply; live: boolean; status?: string }) {
   const autonomous = useAutonomous((s) => s.on);
   const spotlightBusy = useAssistant((s) => s.pending || Boolean(s.testing));
+  // A Test and fix session that reached an agent fix is waiting for the person on that card (`agentFixOutcome`): its own turn must not
+  // keep the card's Apply and Dismiss disabled. Any other card, and any other busy turn, still waits.
+  const waitingOnCard = useAssistant((s) => !s.pending && Boolean(s.testing) && Boolean(item.testId) && item.testId === s.testingId);
   const building = useLive();
   const pending = item.parts.flatMap((p) => (p.kind === 'proposal' && !p.proposal.state ? [p.proposal] : []));
   const lastTool = item.parts.findLast((p) => p.kind === 'tool');
@@ -529,7 +532,7 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
           <PublishCardView key={i} itemId={item.id} offer={part.offer} card={part.card} />
         ) : part.kind === 'agentCard' ? (
           // SB16:
-          <AgentCardView key={i} itemId={item.id} card={part.card} busy={spotlightBusy} earlier={Boolean(item.earlier)} />
+          <AgentCardView key={i} itemId={item.id} card={part.card} busy={spotlightBusy && !(waitingOnCard && part.card.fix)} earlier={Boolean(item.earlier)} />
         ) : null,
       )}
       {!streamed && steps && firstProposal < 0 && <LiveSteps live={steps} />}
