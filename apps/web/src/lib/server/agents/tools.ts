@@ -29,6 +29,7 @@ import type {
   WorkflowToolConfig,
 } from '../../shared/agents';
 import { isNodeKnowledge } from '../../shared/agents';
+import { readsByQuery, writesOutside } from '../../shared/run-check';
 import type { ExecutionRecord } from '../../shared/types';
 import {
   answerMessage,
@@ -140,6 +141,11 @@ export interface BuiltTool extends ToolSpec {
   invoke(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome>;
   /** A node tool that takes only what its schema offered ($fromAI, toolInputSchema): the call's input without the rest, so an approval card shows what runs. */
   shownInput?(input: Record<string, unknown>): Record<string, unknown>;
+  /**
+   * A tool configured as a read whose call would not be one (the model passed another operation, or SQL that changes data): the
+   * reason to hold it for a person, decided per call on the effective parameters. Undefined when the call may run.
+   */
+  holdReason?(input: Record<string, unknown>, ctx: ToolContext): Promise<string | undefined>;
   /** After a pause (ToolOutcome.pause): send the person's decision and carry on. */
   resume?(state: Record<string, unknown>, approved: boolean, ctx: ToolContext, answer?: string): Promise<ToolOutcome>;
   /** A remote agent: stop the task it works on (A2A CancelTask), so a person can redirect it (agent-teams/pause.ts). */
@@ -479,30 +485,34 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
 // Plugin nodes
 // ---------------------------------------------------------------------------
 
+/** Whether a call's parameters only read: the operation the plugin marks idempotent, an Execute Query that is one SELECT (SQLite), else the shared heuristic. */
+function callReads(descriptor: { properties: Array<{ name: string; default?: unknown; options?: Array<{ value: unknown; idempotent?: boolean }> }> }, nodeType: string, parameters: Record<string, unknown>): boolean {
+  const property = descriptor.properties.find((p) => p.name === 'operation');
+  const operation = parameters.operation ?? property?.default;
+  if (operation === 'executeQuery' && nodeType === 'databases.sqlite') return readsByQuery({ ...parameters, operation }, nodeType);
+  if (property?.options?.some((o) => o.idempotent === true) && typeof operation === 'string') return property.options.find((o) => o.value === operation)?.idempotent === true;
+  return !writesOutside({ type: nodeType, parameters: { ...parameters, ...(operation !== undefined && { operation }) } });
+}
+
+/** The SQLite credential as a read-only connection (the plugin's Read Only: mode=ro, _query_only=1); a file it would create is never made. */
+export function readOnlyCreds<T extends Record<string, JsonObject>>(creds: T): Partial<T> {
+  return creds.sqlite ? ({ sqlite: { ...creds.sqlite, readOnly: true, createIfMissing: false } } as unknown as Partial<T>) : {};
+}
+
 function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
   const resolved = registry.resolve(config.nodeType);
   if ('error' in resolved) return { error: `${config.name}: ${resolved.error}` };
   const { descriptor } = resolved;
   const skip = new Set(descriptor.properties.filter((p) => p.noDataExpression || p.type === 'code').map((p) => p.name));
-  const inputSchema = descriptor.delegates ? withReason(deriveToolSchema(descriptor, config.parameters)) : deriveToolSchema(descriptor, config.parameters);
-  return {
-    kind: 'node',
-    name: toToolName(config.name),
-    label: config.name,
-    nodeType: config.nodeType,
-    // AG14: where the call goes, from the credential and the node's own parameters; a URL the model gives (HTTP Request) is read per call.
-    target: targetOfNode(config.nodeType, config.credentials, config.parameters),
-    ...(descriptor.properties.some((p) => p.name === 'url') && !safeEndpoint(config.parameters.url) && {
-      targetOf: (given: Record<string, unknown>) => targetOfNode(config.nodeType, config.credentials, { ...config.parameters, url: given.url }),
-    }),
-    description: config.description || descriptor.toolDescription || descriptor.description,
-    inputSchema,
-    requireApproval: Boolean(config.requireApproval),
-    // AG08: the arguments the tool's schema did not offer are never used, so they are not shown for approval either.
-    ...((descriptor.toolInputSchema || JSON.stringify(config.parameters).includes('$fromAI')) && {
-      shownInput: (given: Record<string, unknown>) => Object.fromEntries(Object.entries(given).filter(([key]) => key in ((inputSchema.properties ?? {}) as Record<string, unknown>))),
-    }),
-    async invoke(given, ctx) {
+  const derived = descriptor.delegates ? withReason(deriveToolSchema(descriptor, config.parameters)) : deriveToolSchema(descriptor, config.parameters);
+  // A tool configured as a read (no approval, and its stored parameters only read) keeps its operation: the model may not offer another.
+  const isRead = !config.requireApproval && callReads(descriptor, config.nodeType, config.parameters);
+  const pinned = isRead && (derived.properties as Record<string, unknown> | undefined)?.operation !== undefined;
+  const inputSchema: JsonObject = pinned
+    ? { ...derived, properties: Object.fromEntries(Object.entries(derived.properties as Record<string, unknown>).filter(([k]) => k !== 'operation')) as JsonObject, ...(Array.isArray(derived.required) && { required: (derived.required as string[]).filter((k) => k !== 'operation') }) }
+    : derived;
+  /** The parameters a call runs with: the stored ones resolved, then the arguments the schema offered over them. */
+  async function effectiveOf(given: Record<string, unknown>, ctx: ToolContext) {
       // A delegating node's `reason` is for the record (the timeline shows the call's input), not for the node.
       const { reason: _reason, ...rest } = given;
       const input = descriptor.delegates ? rest : given;
@@ -528,7 +538,40 @@ function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
       const resolvedParameters = resolver.resolveParameters(config.parameters, 0, skip);
       if (secrets) rememberResolvedParameters(config.parameters, resolvedParameters, skip);
       const parameters = { ...resolvedParameters, ...overrides } as JsonObject;
-      const creds = credentials.resolveFor({ type: config.nodeType, credentials: config.credentials, parameters: config.parameters }, descriptor);
+    return { parameters, items };
+  }
+  return {
+    kind: 'node',
+    name: toToolName(config.name),
+    label: config.name,
+    nodeType: config.nodeType,
+    // AG14: where the call goes, from the credential and the node's own parameters; a URL the model gives (HTTP Request) is read per call.
+    target: targetOfNode(config.nodeType, config.credentials, config.parameters),
+    ...(descriptor.properties.some((p) => p.name === 'url') && !safeEndpoint(config.parameters.url) && {
+      targetOf: (given: Record<string, unknown>) => targetOfNode(config.nodeType, config.credentials, { ...config.parameters, url: given.url }),
+    }),
+    description: config.description || descriptor.toolDescription || descriptor.description,
+    inputSchema,
+    requireApproval: Boolean(config.requireApproval),
+    // AG08: the arguments the tool's schema did not offer are never used, so they are not shown for approval either.
+    ...((descriptor.toolInputSchema || JSON.stringify(config.parameters).includes('$fromAI')) && {
+      shownInput: (given: Record<string, unknown>) => Object.fromEntries(Object.entries(given).filter(([key]) => key in ((inputSchema.properties ?? {}) as Record<string, unknown>))),
+    }),
+    ...(isRead && {
+      async holdReason(given: Record<string, unknown>, ctx: ToolContext) {
+        const { parameters } = await effectiveOf(given, ctx);
+        // An operation the call names is judged as named, though a pinned schema would not apply it.
+        const judged = { ...parameters, ...(typeof given.operation === 'string' && { operation: given.operation }) };
+        if (callReads(descriptor, config.nodeType, judged)) return undefined;
+        const what = judged.operation === 'executeQuery' ? 'SQL that is not one read-only SELECT' : `the operation “${String(judged.operation)}”`;
+        return `“${config.name}” is a read-only tool, and this call asked for ${what}.`;
+      },
+    }),
+    async invoke(given, ctx) {
+      const { parameters, items } = await effectiveOf(given, ctx);
+      const creds = { ...credentials.resolveFor({ type: config.nodeType, credentials: config.credentials, parameters: config.parameters }, descriptor) };
+      // A read tool on SQLite reaches the file through a read-only connection, whatever the call asks (defence in depth).
+      if (isRead && config.nodeType === 'databases.sqlite') Object.assign(creds, readOnlyCreds(creds));
       const request: ExecuteRequest = {
         protocol: PROTOCOL_VERSION,
         // Also where the host writes the files an in-process node stores (a screenshot): the execution's or the session's scope.

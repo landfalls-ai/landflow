@@ -244,18 +244,23 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   none (wave ag3's live pass found the change said "No change" instead).
   The card's **Left** row then drops "fill in From Email" (any "fill in" or "set" line whose field the agent's draft now
   holds), as it drops a credential line once the slot is set.
-- **A change never undoes itself, and a second tool of a type is a tool of its own (ag4 re-check 3-6).** Before the card, the design
-  route (`lib/server/agents/change-tools.ts`) merges a new tool into a same-type tool the design kept only when all three hold:
-  the kept tool has no credential in any slot (*SQLite 2* after an earlier fix), the new tool brings no non-empty parameter that
-  differs from the kept tool's, and it brings no credential or exactly one; a kept tool takes one merge and is filled only where it
-  is empty. Every other new tool stands as its own tool with its own **Pick it** row (*add a SQLite tool for the archive DB* beside a
-  complete one; *also let it call the weather API*). A tool the design dropped never comes back (*switch the SQLite tool to the
-  Sales DB credential*). What an agent fix may add is the prompt's to say (its change names only the one tool or knowledge base the
-  cause needs): the card lists every tool it adds and the person applies it. The Left rows are worked out after the merge.
-  A new tool of the same type with another **operation** turns a kept tool that still has no credential (an earlier *insert*
-  SQLite made a read-only query tool): the new operation, query and asks-first state replace the old ones, so the card shows what
-  Apply stores. A tool the model leaves on the node default becomes the node's read (SQLite Select), and an Execute Query the model chose, whose SQL is empty, written
-  per call or one `SELECT` is a read that asks nothing first (`readsByQuery` in `run-check.ts`); SQL that changes data asks first.
+- **A change never undoes itself, and a second tool of a type is a tool of its own (ag4 re-check 3-7).** Before the card, the design
+  route (`lib/server/agents/change-tools.ts`) only dedupes: a new tool is dropped as a duplicate when it has the same node type as a
+  kept tool, brings no credential (a slot with no id is a placeholder) and has no non-empty parameter that differs from the kept
+  tool's. Nothing is ever moved onto a kept tool. Every other new tool stands as its own tool with its own **Pick it** row (*add a SQLite
+  tool for the archive DB*; *also let it call the weather API*, which brings its bearer credential). A tool the design dropped never
+  comes back. A change to a kept tool (*make sqlite read-only*) is made in place by the architect's revise: the design's tool of the same
+  type and name with another operation changes the kept tool (same id, same credential, its operation, no approval), never a second tool
+  beside it. What an agent fix may add is the prompt's to say; the card lists every tool it adds. The Left rows are worked out after
+  the dedupe.
+- **What a read is, and the run-time hold.** On SQLite (`readsByQuery` in `run-check.ts`; Postgres and MySQL Execute Query are always
+  writes) a read is the plugin's Select, or an Execute Query that is one statement after the comments are gone, starts with `SELECT`
+  and has no `INTO`, `FOR UPDATE`, `load_extension`, `nextval` or `dblink`. `WITH`, `PRAGMA`, `EXPLAIN`, an empty, per-call (`$fromAI`)
+  or non-string query are no read, so a tool built on them asks first. A tool a design leaves on the node default becomes the node's
+  Select. At run time a tool set up as a read (no approval, stored parameters only read) judges **each call** on the parameters it
+  would run with (`holdReason` in `agents/tools.ts`, checked by `agents/runtime.ts`): a call that names another operation or brings SQL
+  that is not one read-only SELECT is held for a person, and an unattended run refuses it with the reason in the run log. The tool's
+  input schema does not offer `operation`, and its SQLite connection is read-only (the plugin's Read Only: `mode=ro`, `_query_only=1`).
   **Pick it** shows on a change card after Apply too, and wherever a Left row says *pick a … credential*; its smoke result also
   reaches the applied build and change cards' status line (a change card still waiting for Apply is left alone).
 - **Credentials follow the agent's project.** Every credential picker that edits an agent (the agent page's model and tool

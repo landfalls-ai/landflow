@@ -18,31 +18,17 @@ const baseOf = (tools: unknown[]) => ({ config: { name: 'Sales digest', descript
 const toolNames = async (res: Response) => ((await res.json()).config.tools as Array<{ name: string }>).map((t) => t.name);
 
 describe('POST /api/agents/design with a change', () => {
-  it('the Left rows are worked out after the merge: none names the merged-away tool', async () => {
-    designedTools = [sqlite('t1'), sqlite('n2', 'SQLite_2', { credentials: { sqlite: { id: 'c1', name: 'Sales DB' } } })];
+  it('drops a bare duplicate and its Left rows; a twin that brings a credential stays its own tool', async () => {
+    designedTools = [sqlite('t1'), sqlite('n2', 'SQLite_2')];
     designedNeeds = [{ tool: 'SQLite_2', kind: 'parameter', text: 'SQLite_2: fill in query' }, { tool: 'sqlite', kind: 'credential', text: 'sqlite: pick a sqlite credential' }];
-    const res = await post({ name: 'Sales digest', preview: true, base: baseOf([sqlite('t1')]), change: 'Connect Sales DB' });
-    const body = await res.json();
+    const body = await (await post({ name: 'Sales digest', preview: true, base: baseOf([sqlite('t1')]), change: 'Connect Sales DB' })).json();
     designedNeeds = [];
     expect(body.needs.map((n: { tool: string }) => n.tool)).toEqual(['sqlite']);
-  });
-  it('a change that adds SQLite to an agent that has it fills the existing tool, never “sqlite_2”', async () => {
+    expect(body.config.tools).toHaveLength(1);
     designedTools = [sqlite('t1'), sqlite('n2', 'sqlite_2', { credentials: { sqlite: { id: 'c1', name: 'Sales DB' } } })];
-    const res = await post({ name: 'Sales digest', preview: true, base: baseOf([sqlite('t1')]), change: 'Connect Sales DB' });
-    const body = await res.json();
-    expect(body.config.tools).toHaveLength(1);
-    expect(body.config.tools[0]).toMatchObject({ id: 't1', credentials: { sqlite: { id: 'c1' } } });
-  });
-});
-
-describe('a change that turns a write tool into a read tool', () => {
-  it('replaces the credential-less tool’s operation and asks-first state: the card shows what Apply stores', async () => {
-    const writer = sqlite('t1', 'sqlite', { parameters: { operation: 'insert', table: '' }, requireApproval: true });
-    designedTools = [writer, sqlite('n2', 'sqlite_2', { parameters: { operation: 'executeQuery' }, credentials: { sqlite: { id: 'c1', name: 'Sales DB' } } })];
-    const body = await (await post({ name: 'Sales digest', preview: true, base: baseOf([writer]), change: 'Make sqlite a read-only query tool' })).json();
-    expect(body.config.tools).toHaveLength(1);
-    expect(body.config.tools[0]).toMatchObject({ id: 't1', name: 'sqlite', parameters: { operation: 'executeQuery' }, credentials: { sqlite: { id: 'c1' } } });
-    expect(body.config.tools[0].requireApproval).toBeFalsy();
+    const second = await (await post({ name: 'Sales digest', preview: true, base: baseOf([sqlite('t1')]), change: 'Connect Sales DB' })).json();
+    expect(second.config.tools).toHaveLength(2);
+    expect(second.config.tools[0]).not.toHaveProperty('credentials');
   });
 });
 

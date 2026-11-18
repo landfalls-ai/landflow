@@ -26,7 +26,7 @@ const design = (parameters: Record<string, unknown> | undefined, request: string
 const tool = (config: { tools?: unknown[] }) => config.tools![0] as NodeToolConfig;
 
 describe('a SQLite tool added to read data', () => {
-  it.each([[{ operation: 'executeQuery' }], [{ operation: 'executeQuery', query: 'SELECT total FROM sales' }]])('a read the model chose as executeQuery stays executeQuery and asks nothing first (%j)', (given) => {
+  it.each([[{ operation: 'executeQuery', query: 'SELECT total FROM sales' }]])('a read the model chose as executeQuery stays executeQuery and asks nothing first (%j)', (given) => {
     const { config } = design(given, 'Give the digest access to the sales database so it reads the numbers.');
     expect(tool(config).parameters.operation).toBe('executeQuery');
     expect(tool(config).requireApproval).toBeFalsy();
@@ -47,6 +47,12 @@ describe('a tool left on the node default', () => {
 });
 
 describe('executeQuery', () => {
+  it('an empty or per-call query is judged at run time, so it asks first at design time', () => {
+    for (const query of [undefined, '', "{{ $fromAI('sql') }}"]) {
+      const { config } = design({ operation: 'executeQuery', ...(query !== undefined && { query }) }, 'Let the digest delete old rows in SQLite with its own SQL.');
+      expect(tool(config).requireApproval, String(query)).toBe(true);
+    }
+  });
   it('SQL that changes data is a write that asks first', () => {
     const { config } = design({ operation: 'executeQuery', query: 'DELETE FROM sales' }, 'Let the digest run SQL in SQLite that deletes old sales rows.');
     expect(tool(config).requireApproval).toBe(true);

@@ -12,7 +12,7 @@ import { plainDraft } from '../ai-usage/drafts'; // SP03:
 import { defaultParameters, isPropertyVisible } from '@landflow/protocol';
 import { toToolName, type AgentMessage, type LanguageModel, type ToolCall, type ToolResult, type ToolSpec } from '@landflow/engine';
 import { deriveToolSchema } from '@landflow/engine'; // AG08:
-import type { AgentConfig, AgentGuardrails, AgentModel, AgentPersona, AgentTemplate, AgentToolConfig, AnswerLength } from '@/lib/shared/agents';
+import type { AgentConfig, AgentGuardrails, AgentModel, AgentPersona, AgentTemplate, AgentToolConfig, AnswerLength, NodeToolConfig } from '@/lib/shared/agents';
 import { DEFAULT_BRIEF_GUARDRAILS, isNodeKnowledge } from '@/lib/shared/agents';
 import type { AgentCaseDraft, AgentNotAdded, AgentReuse, AgentCard } from '@/lib/shared/agent-card'; // SB17: AG02: AG19: AgentReuse, AgentCard
 import { agentLine, type CatalogAgent } from '@/lib/shared/tenant-catalog'; // AG19:
@@ -452,7 +452,7 @@ function operationsOf(info: NodeTypeInfo, parameters: Record<string, unknown>) {
  * ("commit", "merge"), so an operation of such a node that is not marked is a write.
  */
 function isQueryRead(info: NodeTypeInfo, parameters: Record<string, unknown>): boolean {
-  return info.descriptor.properties.some((p) => p.name === 'query') && readsByQuery(parameters);
+  return readsByQuery(parameters, info.type);
 }
 function toolWrites(info: NodeTypeInfo, parameters: Record<string, unknown>): boolean {
   // A query operation (SQLite's Execute Query) is a read while its SQL is empty (the agent writes it per call) or only reads: its name starts with a write verb.
@@ -1759,6 +1759,16 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
   const addedLabels = new Set<string>(); // AG09:
   const ownBy = new Map<string, AgentToolConfig | undefined>(); // AG09:
   for (const tool of draft.config.tools ?? []) {
+    // "Make sqlite read-only": the design's tool of the same type and name as a kept one, with another operation, changes that tool in place (its id, its credential), never a second tool beside it.
+    const place = tool.type === 'node' && tool.parameters?.operation !== undefined ? kept.findIndex((t) => t.type === 'node' && t.nodeType === tool.nodeType && t.name === tool.name && t.parameters?.operation !== undefined && t.parameters.operation !== tool.parameters?.operation) : -1;
+    if (place >= 0 && tool.type === 'node' && kept[place].type === 'node') {
+      const own = kept[place] as NodeToolConfig;
+      const { requireApproval: _drop, ...rest } = own;
+      const turned: NodeToolConfig = { ...rest, parameters: { ...own.parameters, ...Object.fromEntries(Object.entries(tool.parameters ?? {}).filter(([, v]) => v !== undefined && v !== '' && !(Array.isArray(v) && !v.length))) }, ...(tool.requireApproval && { requireApproval: true }) };
+      kept[place] = turned;
+      ownBy.set(own.name, turned);
+      continue;
+    }
     if (have.has(toolKey(tool)) && 'name' in tool && tool.name) ownBy.set(tool.name, kept.find((t) => toolKey(t) === toolKey(tool))); // AG09: the base's own tool under the name the design gave it
     if (have.has(toolKey(tool)) || removed(change, tool)) continue; // ag1-int: a tool the change removes is not proposed back
     if (tool.type === 'node' && !names(change, tool)) {

@@ -696,18 +696,20 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       const immediate: ToolResult[] = [];
       for (const call of turn.toolCalls) {
         const tool = byName.get(call.name);
+        // A tool set up as a read whose call is not one (another operation, SQL that changes data) is held like a write: decided per call on the parameters it would run with.
+        const heldFor = tool && !tool.requireApproval && tool.holdReason ? await tool.holdReason(call.input, ctx).catch(() => 'its parameters could not be checked, so a person decides.') : undefined;
         if (!tool) immediate.push({ id: call.id, name: call.name, content: `Unknown tool "${call.name}". Available: ${[...byName.keys()].join(', ')}`, isError: true });
         else if (denied.has(call.name)) {
           const message = `The user just rejected ${call.name}. Do not call it again now: reply to the user and wait for their instructions.`;
           upsert(toolEntry(call, tool, { status: 'denied', error: 'Denied by a person (retry refused)' }));
           immediate.push({ id: call.id, name: call.name, content: message, isError: true });
-        } else if (tool.requireApproval && (request.approvals ?? 'ask') === 'deny') {
-          const message = `"${tool.label}" needs a person's approval, which isn't available in this kind of run. Don't retry it; explain what you would have done.`;
+        } else if ((tool.requireApproval || heldFor) && (request.approvals ?? 'ask') === 'deny') {
+          const message = `${heldFor ?? `"${tool.label}"`}${heldFor ? ' It' : ''} needs a person's approval, which isn't available in this kind of run. Don't retry it; explain what you would have done.`;
           upsert(toolEntry(call, tool, { status: 'denied', error: message }));
           immediate.push({ id: call.id, name: call.name, content: message, isError: true });
-        } else if (tool.requireApproval) {
-          // The waiting step shows what the card shows (what would run); the model's own call stays in the transcript.
-          const shown = tool.shownInput ? tool.shownInput(call.input) : call.input;
+        } else if (tool.requireApproval || heldFor) {
+          // The waiting step shows what the card shows (what would run); the model's own call stays in the transcript. A held call shows everything it asked for.
+          const shown = tool.shownInput && !heldFor ? tool.shownInput(call.input) : call.input;
           waiting.push({ callId: call.id, tool: call.name, input: shown });
           upsert(toolEntry(call, tool, { status: 'awaiting_approval', input: shown }));
         } else runnable.push(call);

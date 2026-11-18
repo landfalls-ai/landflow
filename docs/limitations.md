@@ -781,3 +781,9 @@ Seen in AG18's live pass (production profile, Claude): a create-an-agent ask in 
 - When a reply carries both an agent fix and flow proposals, the session takes the agent path and the flow proposal cards stay in the chat, unapplied; a click on one still applies it.
 - The session's fix turns do not show their own tool rows ("Read the run log") in the timeline: the timeline shows `Run n · <node> · HTTP 400`, `Fixed · <change>` and the stop line. Only a typed chat turn shows its tool rows. After a reload the session's stop line is gone and the chat's last line may be an older answer.
 - The panel header does not yet say "Needs you: apply the fix?" while the agent change card waits.
+
+## Read tools and changes to an agent's tools (wave ag4, final run)
+
+- A SQLite tool counts as a read only for the plugin's Select or one read-only `SELECT`. `WITH`, `PRAGMA` and `EXPLAIN` queries, and every Postgres or MySQL Execute Query, ask first, even when they only read; there is no read-only credential check for them yet.
+- A tool set up as a read holds a call that is not one for a person (an unattended run refuses it); its tool schema does not offer `operation` and its SQLite file is opened read-only, so an approved write from it fails at the plugin and has to be made through a tool that writes.
+- A change never moves a parameter or credential onto a kept tool: a bare duplicate is dropped, and anything else is its own tool with its own **Pick it** row, so a credential for an existing credential-less tool is picked on that tool.

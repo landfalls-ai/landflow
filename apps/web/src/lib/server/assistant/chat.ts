@@ -1114,7 +1114,12 @@ const executionIdIn = (messages: ChatInput['messages']): string | undefined => {
   return undefined;
 };
 
-const AGENT_TOPIC = /\b(?:agent|database|db|sqlite|postgres(?:ql)?|mysql|tool|knowledge|access to)\b/i;
+/** The ask names the agent: the word "agent", or a word of its step's name ("Give the digest access…" for a step called "Digest"). "Step" and "node" alone name no agent. */
+const namesTheAgent = (request: string, step: { name: string }) => {
+  if (/\bagents?\b/i.test(request)) return true;
+  const words = step.name.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !['agent', 'run', 'step', 'node', 'this', 'that', 'with'].includes(w));
+  return words.some((w) => new RegExp(`\\b${w}`, 'i').test(request));
+};
 
 /**
  * Wave ag4 carryover (the live pass's E3): "Wire a Sentiment tool into this step." with a Run an Agent step selected is a
@@ -1123,10 +1128,10 @@ const AGENT_TOPIC = /\b(?:agent|database|db|sqlite|postgres(?:ql)?|mysql|tool|kn
  */
 export function agentChangeInScope(op: { op: string; node?: unknown } | undefined, scope: { kind: string; nodes: readonly string[] }, nodes: ReadonlyArray<{ id: string; name: string; type?: string }>, request = ''): boolean {
   if (!op || op.op !== 'changeAgent' || scope.kind === 'insert') return false;
-  // Final live run: an ask that names an agent, a database or a tool ("Give the digest access to the sales database") is about the
-  // flow's agent when the flow has exactly one Run an Agent step, whichever step is selected.
+  // Final live run: an ask that names the agent ("Give the digest access to the sales database") is about the flow's agent when the
+  // flow has exactly one Run an Agent step, whichever step is selected. An ask that says only "step" or "node" stays under the old rule.
   const agentSteps = nodes.filter((n) => n.type === 'core.messageAgent');
-  if (agentSteps.length === 1 && AGENT_TOPIC.test(request)) {
+  if (agentSteps.length === 1 && namesTheAgent(request, agentSteps[0])) {
     const only = agentSteps[0];
     if (op.node === undefined || op.node === '' || String(op.node) === only.name || String(op.node) === only.id || String(op.node).toLowerCase() === only.name.toLowerCase()) return true;
   }

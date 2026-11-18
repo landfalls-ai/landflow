@@ -124,19 +124,59 @@ export const sameFailure = (summary: string) =>
     .replace(/\s+/g, ' ')
     .trim();
 
-const READ_SQL = /^\s*(?:select|with|pragma|explain|show|describe)\b/i;
-/** An Execute Query operation whose SQL is empty (an agent writes it per call), written per call, or one read statement: a read, though the operation's name starts with "execute". */
-export function readsByQuery(p: Record<string, unknown>): boolean {
-  if (p.operation !== 'executeQuery') return false;
-  const q = p.query;
-  return typeof q !== 'string' || q.trim() === '' || /\$fromAI\(/.test(q) || (READ_SQL.test(q) && !/;\s*\S/.test(q));
+/** The SQL as code only: comments gone, every quoted string or identifier emptied. Undefined when a quote or comment never closes. */
+function sqlCode(sql: string): string | undefined {
+  let out = '';
+  for (let i = 0; i < sql.length; ) {
+    const c = sql[i];
+    const pair = sql.startsWith('/*', i);
+    if (pair) {
+      const end = sql.indexOf('*/', i + 2);
+      if (end < 0) return undefined;
+      out += ' ';
+      i = end + 2;
+    } else if (sql.startsWith('--', i)) {
+      const end = sql.indexOf('\n', i);
+      out += ' ';
+      i = end < 0 ? sql.length : end + 1;
+    } else if (c === "'" || c === '"' || c === '`' || c === '[') {
+      const close = c === '[' ? ']' : c;
+      let j = i + 1;
+      for (; j < sql.length; j++) {
+        if (sql[j] === close) {
+          if (close !== ']' && sql[j + 1] === close) j++;
+          else break;
+        }
+      }
+      if (j >= sql.length) return undefined;
+      out += "''";
+      i = j + 1;
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}
+
+/**
+ * Whether an Execute Query is a read: only for SQLite (Postgres and MySQL run any SQL the credential allows, so theirs is a write),
+ * one statement after the comments are gone, starting with SELECT, with no INTO, FOR UPDATE or the like. An empty, per-call or
+ * non-string query is no read here: the run judges each call (agents/tools.ts).
+ */
+export function readsByQuery(p: Record<string, unknown>, nodeType?: string): boolean {
+  if (p.operation !== 'executeQuery' || nodeType !== 'databases.sqlite' || typeof p.query !== 'string') return false;
+  if (/\$fromAI\(|\{\{|^\s*=/.test(p.query) || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(p.query)) return false;
+  const code = sqlCode(p.query)?.trim().replace(/;\s*$/, '');
+  if (!code || code.includes(';') || !/^select\b/i.test(code)) return false;
+  return !/\b(?:into|load_extension|nextval|setval|dblink\w*|pg_\w+|lo_\w+|for\s+(?:update|share|no\s+key))\b/i.test(code);
 }
 
 /** Whether a test run of this step sends or changes things outside the flow (the heuristic of `sendingSteps`). */
 function sends(step: CheckedStep): boolean {
   const writes = /^(send|post|create|update|delete|remove|upload|write|publish|comment|add|merge|archive|reply|invite|insert|upsert|append|move|close|assign|execute|trigger)/i;
   const p = step.parameters;
-  if (readsByQuery(p)) return false;
+  if (readsByQuery(p, step.type)) return false;
   if (step.type === 'core.httpRequest') return String(p.method ?? 'GET').toUpperCase() !== 'GET';
   if (/email|smtp/i.test(step.type) && !/trigger|read/i.test(step.type)) return true;
   return typeof p.operation === 'string' && writes.test(p.operation);
