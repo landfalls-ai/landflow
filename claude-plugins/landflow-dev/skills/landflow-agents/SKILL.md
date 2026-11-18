@@ -150,6 +150,28 @@ Publish first, then `PUT /api/agents/$ID/kagent { "credentialId": "<a core.kagen
 over a kagent agent it did not write (409). Needs the kagent cluster to be up: ask the person to run it, or use the
 `landflow-kubernetes` skill; do not touch other clusters.
 
+## Build an agent through MCP
+
+The instance MCP server (`/api/mcp`, switched on in Settings, MCP) gives an agent builder what Spotlight has in its own
+tool loops. Call the tools in this order:
+
+1. `read_agent_practices`: the written rules (one job, the fewest tools, asks first on writes, four-part instructions,
+   test cases). The same text is in `docs/platform/agent-best-practices.md`.
+2. `list_agents` (then `get_agent { id }`): reuse an agent that already covers the job instead of copying it.
+3. `list_tool_nodes { query }`: find the plugins' nodes by what they do ("IP addresses and domains in an alert"); each
+   answers whether it writes (then the tool asks first) and which credential types it needs, with the credentials the
+   person already has of each, by name.
+4. `list_knowledge_bases`: attach an existing base that fits; the folders it lists are what a new one could be indexed
+   from. `list_models`: the host's default first. `list_credentials`: names and types only, never data; offer, the
+   person picks.
+5. `create_agent { config }` saves a draft (the config `POST /api/agents/import` takes) and answers its id and the smoke
+   test's state; `update_agent { id, config }` changes the draft only; `test_agent { id, message }` runs the smoke test.
+6. `publish_agent { id }` runs the eval gate: a hold answers the verdict and publishes nothing, and there is no way to
+   skip it. Never publish an agent whose smoke test failed.
+
+Scopes: the reads `workflows:read`, `create_agent` and `update_agent` `workflows:write`, `test_agent` and
+`publish_agent` `run`. A tool you may not call is left out of `tools/list`. An agent you may not update is "not found".
+
 ## 9. Traps
 
 - `POST /api/agents/:id/chat` runs the **draft**; flows, schedules and channels run the **published** version.

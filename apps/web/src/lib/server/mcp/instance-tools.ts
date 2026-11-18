@@ -26,6 +26,7 @@ import { canResource, creationProject, filterVisible, resourceDenial, type Actor
 import { getProject } from '../projects/store';
 import { inScope, type McpScope } from './project-servers';
 import { createIn } from '../projects/http';
+import { registerAgentTools } from './agent-tools'; // AG18:
 import type { ResourceAction } from '../../shared/projects';
 import { MCP_SERVER_VERSION, textResult } from './server';
 import type { ApiKeyScope } from '../../shared/auth';
@@ -519,6 +520,7 @@ export function instanceServer(actor?: Actor, scope?: McpScope, keyScopes?: read
   // PR04: practices (tools and resources)
   registerPracticeTools(server, { actor, scope, denied: (id, action) => denied(id, action), json, failure, keyScopes });
   registerProjectTools(server, { actor, scope, json, failure, keyScopes }); // PC10
+  registerAgentTools(server, { actor, scope, json, failure }); // AG18: the tenant reads and the agent writes
   // The caller's briefing as a prompt and resources: for a person who may read the brain (not the instance access token).
   if (actor && toolAllowed(keyScopes, 'my_briefing')) registerBrainPrompts(server, actor);
 

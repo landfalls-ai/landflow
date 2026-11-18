@@ -233,6 +233,18 @@ export const TOOL_SCOPES = {
   practice_cite: 'brain:write',
   practice_draft: 'brain:write',
   project_context: 'brain:read', // PC10
+  // AG18: the tenant reads and the agent writes (decision 4 of wave ag4: the existing scopes, no agents:* scope)
+  list_agents: 'workflows:read',
+  get_agent: 'workflows:read',
+  list_tool_nodes: 'workflows:read',
+  list_knowledge_bases: 'workflows:read',
+  list_models: 'workflows:read',
+  list_credentials: 'workflows:read',
+  read_agent_practices: 'workflows:read',
+  create_agent: 'workflows:write',
+  update_agent: 'workflows:write',
+  test_agent: 'run',
+  publish_agent: 'run',
 } as const satisfies Record<string, ApiKeyScope>;
 
 /** Whether a caller with `keyScopes` (an API key's; undefined for every other caller) may see and call `tool`. A tool not in the map needs `admin`. */
