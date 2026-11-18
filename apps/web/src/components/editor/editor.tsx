@@ -57,9 +57,9 @@ import { GroupNodeView, GroupProxyEdgeView } from './group-node';
 import { boxPorts, loadComposites, useCompositeReports } from './composites';
 import { canvasGraph, type GroupProxyEdge } from './groups';
 import { ImportReportDialog, showImportReport } from './import-report';
-import { BubbleEdgeView, BubbleNode, isBubbleId, useBubbleLayer } from '../canvas/agent-bubbles'; // AG16
+import { BubbleEdgeView, BubbleNode, isBubbleId, useBubbleLayer, withoutBubbleChanges } from '../canvas/agent-bubbles'; // AG16
 import { AGENT_DRAG, NodeCreator } from './node-creator';
-import { placeAgentNode } from './place-agent'; // AG16
+import { dropAgent } from './place-agent'; // AG16
 import { NodePanel } from './node-panel';
 import { StepList } from './step-list';
 import { EditorLogs } from './editor-logs';
@@ -223,8 +223,8 @@ function Canvas({ onSave }: { onSave: () => void }) {
   );
   // The store never hears of a bubble or the line to one: no select, move, remove or undo entry.
   const { onNodesChange: storeNodesChange, onEdgesChange: storeEdgesChange } = useEditor.getState();
-  const onNodesChange = useCallback((changes: Parameters<typeof storeNodesChange>[0]) => storeNodesChange(changes.filter((c) => !('id' in c && isBubbleId(c.id)))), [storeNodesChange]);
-  const onEdgesChange = useCallback((changes: Parameters<typeof storeEdgesChange>[0]) => storeEdgesChange(changes.filter((c) => !('id' in c && isBubbleId(c.id)))), [storeEdgesChange]);
+  const onNodesChange = useCallback((changes: Parameters<typeof storeNodesChange>[0]) => storeNodesChange(withoutBubbleChanges(changes)), [storeNodesChange]);
+  const onEdgesChange = useCallback((changes: Parameters<typeof storeEdgesChange>[0]) => storeEdgesChange(withoutBubbleChanges(changes)), [storeEdgesChange]);
   const ghostKey = ghosts.nodes.map((n) => n.id).join(',');
   const ghostIds = useMemo(() => (ghostKey ? ghostKey.split(',') : []), [ghostKey]);
   // Read-only (someone else holds the edit lock) swaps the store's editing actions, so re-read them.
@@ -417,15 +417,9 @@ function Canvas({ onSave }: { onSave: () => void }) {
         }
       }}
       onDrop={(e) => {
-        const raw = e.dataTransfer.getData(AGENT_DRAG);
-        if (!raw || readOnly) return;
+        if (readOnly || !e.dataTransfer.getData(AGENT_DRAG)) return;
         e.preventDefault();
-        try {
-          const agent = JSON.parse(raw) as { id?: string; name?: string };
-          if (agent.id && agent.name) placeAgentNode({ id: agent.id, name: agent.name }, screenToFlowPosition({ x: e.clientX, y: e.clientY }));
-        } catch {
-          /* not ours */
-        }
+        dropAgent(e.dataTransfer, screenToFlowPosition({ x: e.clientX, y: e.clientY }));
       }}
       onConnect={onConnect}
       onConnectEnd={onConnectEnd}

@@ -392,5 +392,5 @@ export function pendingLine(bubbles: readonly Bubble[]): string | undefined {
  */
 export function cardLeaks(cardText: string, bubbles: readonly Bubble[]): string[] {
   const text = cardText.toLowerCase();
-  return bubbles.map((b) => b.label).filter((label) => label.length > 2 && text.includes(label.toLowerCase()));
+  return bubbles.flatMap((b) => [b.label, ...(b.callName ? [b.callName] : [])]).filter((label) => label.length > 2 && text.includes(label.toLowerCase()));
 }

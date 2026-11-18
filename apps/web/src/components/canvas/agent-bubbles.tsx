@@ -111,6 +111,14 @@ export function bubbleGraph(parents: readonly BoundParent[], bubblesByNode: Read
 /** True for an id the editor must never hand to the store: a bubble or the edge to one. */
 export const isBubbleId = (id: string): boolean => id.startsWith('bubble:') || id.startsWith('bubble-edge:');
 
+/** The changes of a node or edge change list that are not a bubble's (React Flow's `id`, or the `item.id` of an add / replace): what the store may hear. */
+export function withoutBubbleChanges<C extends object>(changes: readonly C[]): C[] {
+  return changes.filter((c) => {
+    const id = 'id' in c ? (c as { id: unknown }).id : 'item' in c ? (c as { item?: { id?: unknown } }).item?.id : undefined;
+    return !(typeof id === 'string' && isBubbleId(id));
+  });
+}
+
 const NO_NODES: BubbleFlowNode[] = [];
 const NO_EDGES: BubbleFlowEdge[] = [];
 

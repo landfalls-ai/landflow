@@ -24,3 +24,24 @@ export function placeAgentNode(agent: { id: string; name: string }, position: { 
   if (id) useEditor.getState().updateNode(id, { name: nodeNameFor(agent.name) });
   return id;
 }
+
+/** The drag type of a row of Your agents (the node creator sets it, the canvas's drop reads it). */
+export const AGENT_DRAG = 'application/x-landflow-agent';
+
+/** What a row of Your agents carries when it is dragged. */
+export const agentDragPayload = (agent: { id: string; name: string }): string => JSON.stringify({ id: agent.id, name: agent.name });
+
+/**
+ * A drop on the canvas: when it carries an agent of Your agents, the bound Run an Agent node placed at `position`; undefined
+ * for any other drop (a file, a text, a payload that is not ours).
+ */
+export function dropAgent(data: { getData(type: string): string }, position: { x: number; y: number }): string | undefined {
+  const raw = data.getData(AGENT_DRAG);
+  if (!raw) return undefined;
+  try {
+    const agent = JSON.parse(raw) as { id?: string; name?: string };
+    return agent.id && agent.name ? placeAgentNode({ id: agent.id, name: agent.name }, position) : undefined;
+  } catch {
+    return undefined; // not ours
+  }
+}

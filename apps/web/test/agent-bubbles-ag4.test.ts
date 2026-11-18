@@ -29,7 +29,7 @@ vi.mock('@/lib/client/api', async (original) => ({
 
 const { ApiError } = await import('@/lib/client/api');
 const data = await import('@/lib/client/agent-bubble-data');
-const { bubbleGraph, AgentChip, isBubbleId } = await import('@/components/canvas/agent-bubbles');
+const { bubbleGraph, AgentChip, isBubbleId, withoutBubbleChanges } = await import('@/components/canvas/agent-bubbles');
 const edit = await import('@/lib/client/agent-edit');
 const { announceSaved } = await import('@/lib/client/agent-change');
 const { useEditor } = await import('@/components/editor/store');
@@ -383,5 +383,174 @@ describe('a tool bubble reads as the node it is, never the agent’s tool id', (
     const [b] = data.bubblesFromAnswer(answer({ connections: [conn('tool', 'Fetch Alerts', { toolId: 'tx', nodeType: 'core.httpRequest' })] })).filter((x) => x.slot === 'tool');
     expect(b.label).toBe('Fetch Alerts');
     expect(b.callName).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests that can fail (the review's list): a leak into the store, a card that holds what the bubbles hold, another tab, a drop,
+// the legacy flow's tag
+// ---------------------------------------------------------------------------
+
+const agentInfo = (type: string, displayName: string) =>
+  ({
+    type,
+    pluginId: 'core',
+    pluginName: 'Landflow Core',
+    language: 'typescript',
+    transport: 'in-process',
+    available: true,
+    descriptor: { name: type.split('.')[1], displayName, description: 'Runs an agent', version: 1, kind: 'action', inputs: [{ type: 'main' }, { type: 'ai_languageModel' }, { type: 'ai_memory' }, { type: 'ai_tool' }], outputs: [{ type: 'main' }], properties: [] },
+  }) as never;
+const wfNode = (id: string, name: string, type: string, parameters: Record<string, unknown> = {}, x = 0, y = 0) => ({ id, name, type, typeVersion: 1, position: [x, y] as [number, number], parameters });
+const rich = [
+  conn('model', 'claude-sonnet-5-5', { detail: 'Anthropic' }),
+  conn('tool', 'extract_iocs', { toolId: 't1', nodeType: 'triage.extractIocs', nodeTitle: 'Extract IOCs' }),
+  conn('tool', 'Send Email', { toolId: 't2', asksFirst: true }),
+  conn('knowledge', 'runbooks', { toolId: 't3', documents: 4 }),
+];
+
+describe('the store never hears of a bubble (the canvas’s change handlers)', () => {
+  const flow = () => ({ id: 'wf_leak', name: 'Leak', nodes: [wfNode('n1', 'Alert triager', 'core.messageAgent', { agentId: 'ag_1' })], connections: [] }) as never;
+
+  it('select, move, remove and add changes that name a bubble or its line are dropped; the flow’s own pass through', () => {
+    useEditor.getState().load(flow(), []);
+    const bubbleNodes = bubbleGraph([{ id: 'n1', position: { x: 0, y: 0 }, width: 240, agentName: 'Alert triager', request: REQ }], { n1: data.bubblesFromAnswer(answer({ connections: rich })) });
+    const [b1, b2] = bubbleNodes.nodes;
+    const [e1] = bubbleNodes.edges;
+    const nodeChanges = [
+      { type: 'select', id: b1.id, selected: true },
+      { type: 'position', id: b2.id, position: { x: 5, y: 5 } },
+      { type: 'remove', id: b1.id },
+      { type: 'add', item: { ...b2, id: 'bubble:n1:added' } },
+      { type: 'select', id: 'n1', selected: true },
+    ];
+    const kept = withoutBubbleChanges(nodeChanges as never);
+    expect(kept).toEqual([{ type: 'select', id: 'n1', selected: true }]);
+    expect(withoutBubbleChanges([{ type: 'remove', id: e1.id }, { type: 'select', id: 'e-real', selected: true }] as never)).toEqual([{ type: 'select', id: 'e-real', selected: true }]);
+    // Through the filter the store holds no bubble; straight into the store an add would (so the filter is what keeps it out).
+    useEditor.getState().onNodesChange(kept as never);
+    useEditor.getState().onEdgesChange(withoutBubbleChanges([{ type: 'remove', id: e1.id }] as never) as never);
+    expect(useEditor.getState().nodes.map((n) => n.id)).toEqual(['n1']);
+    expect(useEditor.getState().edges).toEqual([]);
+    useEditor.getState().onNodesChange(nodeChanges.filter((c) => c.type === 'add') as never);
+    expect(useEditor.getState().nodes.some((n) => isBubbleId(n.id))).toBe(true);
+  });
+});
+
+describe('a node card holds nothing its bubbles hold (rendered)', () => {
+  const bubbles = () => data.bubblesFromAnswer(answer({ connections: rich }));
+  const wire400 = () => {
+    wire.answers['GET /api/agents/ag_1/connections?workflowId=wf_card&nodeId=n1'] = () => answer({ connections: rich });
+    wire.answers['GET /api/workflows/wf_card/agent-moves'] = () => ({ moves: [] });
+  };
+  beforeEach(() => {
+    useEditor.setState({ nodeTypes: { 'core.messageAgent': agentInfo('core.messageAgent', 'Run an Agent'), 'core.runTeam': agentInfo('core.runTeam', 'Run a Team') } as never });
+  });
+
+  it('the Run an Agent tile on the canvas', async () => {
+    wire400();
+    useEditor.getState().load({ id: 'wf_card', name: 'Card', nodes: [wfNode('n1', 'Alert triager', 'core.messageAgent', { agentId: 'ag_1' })], connections: [] } as never, []);
+    const { FlowNodeView } = await import('@/components/editor/flow-node');
+    const wf = useEditor.getState().nodes[0].data;
+    await act(async () => root.render(createElement(ReactFlowProvider, null, createElement(FlowNodeView as never, { id: 'n1', data: wf, selected: false }))));
+    await settle();
+    const text = container.textContent ?? '';
+    expect(text).toContain('Alert triager');
+    expect(cardLeaks(text, bubbles())).toEqual([]);
+    // The check is not vacuous: the same text with a model name added leaks it.
+    expect(cardLeaks(`${text} claude-sonnet-5-5`, bubbles())).toEqual(['claude-sonnet-5-5']);
+  });
+
+  it('the Run a Team tile on the canvas', async () => {
+    wire.answers['GET /api/workflows/wf_card/agent-moves'] = () => ({ moves: [] });
+    useEditor.getState().load({ id: 'wf_card', name: 'Card', nodes: [wfNode('n1', 'Tech team', 'core.runTeam', { teamId: 'team_1' })], connections: [] } as never, []);
+    const { FlowNodeView } = await import('@/components/editor/flow-node');
+    const wf = useEditor.getState().nodes[0].data;
+    await act(async () => root.render(createElement(ReactFlowProvider, null, createElement(FlowNodeView as never, { id: 'n1', data: wf, selected: false }))));
+    await settle();
+    const text = container.textContent ?? '';
+    expect(text).toContain('Tech team');
+    expect(cardLeaks(text, bubbles())).toEqual([]);
+  });
+
+  it('the Steps card: mini bubbles carry the names in title and aria only', async () => {
+    wire400();
+    useEditor.getState().load({ id: 'wf_card', name: 'Card', nodes: [wfNode('t', 'Start', 'core.manualTrigger'), wfNode('n1', 'Alert triager', 'core.messageAgent', { agentId: 'ag_1' }, 280, 0)], connections: [{ id: 'c', type: 'main', source: 't', sourceIndex: 0, target: 'n1', targetIndex: 0 }] } as never, []);
+    const { StepList } = await import('@/components/editor/step-list');
+    await act(async () => root.render(createElement(ReactFlowProvider, null, createElement(StepList))));
+    await settle();
+    await settle();
+    const mini = container.querySelector('[data-testid="mini-bubbles"]');
+    expect(mini, 'mini bubbles drawn under the step').toBeTruthy();
+    expect(mini!.getAttribute('aria-label')).toContain('Extract IOCs (extract_iocs)');
+    expect(cardLeaks(container.textContent ?? '', bubbles())).toEqual([]);
+  });
+});
+
+describe('another tab’s change (BroadcastChannel “landflow-agents”)', () => {
+  it('a message from another tab re-reads the bubbles, and two canvases end with the same list', async () => {
+    let n = 0;
+    wire.answers['GET /api/agents/ag_1/connections?workflowId=wf_1&nodeId=n1'] = () => answer({ agent: { id: 'ag_1', name: 'Alert triager', published: true, draftDiffers: n > 0 }, ...(n++ > 0 && { draft: [...published, conn('tool', 'Lookup', { toolId: 'new' })] }) });
+    const labels = (id: string) => [...container.querySelectorAll(`[data-probe="${id}"] li`)].map((li) => li.textContent);
+    const probe = (id: string) => {
+      const a = data.useBubbleAnswer(REQ);
+      return createElement('ul', { 'data-probe': id }, data.bubblesFromAnswer(a).map((b) => createElement('li', { key: b.id }, b.label)));
+    };
+    await act(async () => root.render(createElement('div', null, createElement(() => probe('left')), createElement(() => probe('right')))));
+    await settle();
+    expect(labels('left')).not.toContain('Lookup');
+    const { AGENT_SAVED } = await import('@/lib/client/agent-change');
+    const other = new BroadcastChannel('landflow-agents'); // the other tab
+    other.postMessage({ type: AGENT_SAVED, agentId: 'ag_1' });
+    await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+    other.close();
+    expect(labels('left')).toContain('Lookup');
+    expect(labels('right')).toEqual(labels('left'));
+    // A message that is not ours (another type, no agent id) changes nothing.
+    const before = n;
+    const noise = new BroadcastChannel('landflow-agents');
+    noise.postMessage({ type: 'something-else', agentId: 'ag_1' });
+    noise.postMessage({ type: AGENT_SAVED });
+    await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+    noise.close();
+    expect(n).toBe(before);
+  });
+});
+
+describe('Your agents: a drop on the canvas', () => {
+  it('places a Run an Agent node bound to the dragged agent, where it is dropped; a payload that is not ours places nothing', async () => {
+    const { AGENT_DRAG, agentDragPayload, dropAgent } = await import('@/components/editor/place-agent');
+    expect(AGENT_DRAG).toBe('application/x-landflow-agent');
+    useEditor.getState().load({ id: 'wf_drop', name: 'Drop', nodes: [], connections: [] } as never, []);
+    useEditor.setState({ nodeTypes: { 'core.messageAgent': agentInfo('core.messageAgent', 'Run an Agent') } as never });
+    const dt = (payload: string) => ({ getData: (type: string) => (type === AGENT_DRAG ? payload : '') });
+    const id = dropAgent(dt(agentDragPayload({ id: 'ag_1', name: 'Alert triager' })), { x: 321, y: 123 });
+    const placed = useEditor.getState().nodes.find((n) => n.id === id)!;
+    expect(placed.data.wf).toMatchObject({ type: 'core.messageAgent', name: 'Alert triager', parameters: { agentId: 'ag_1', toolApprovals: 'askInChat' } });
+    expect(placed.position.x).toBe(321);
+    expect(dropAgent(dt('not json'), { x: 0, y: 0 })).toBeUndefined();
+    expect(dropAgent(dt(JSON.stringify({ id: 'ag_2' })), { x: 0, y: 0 })).toBeUndefined();
+    expect(dropAgent({ getData: () => '' }, { x: 0, y: 0 })).toBeUndefined();
+    expect(useEditor.getState().nodes).toHaveLength(1);
+  });
+});
+
+describe('the flow saved before ag4 (the legacy fixture)', () => {
+  it('a kept Window Memory says “this flow only” on its node, with why and the buttons its record allows', async () => {
+    const legacy = JSON.parse((await import('node:fs')).readFileSync((await import('node:path')).join(import.meta.dirname, 'fixtures', 'legacy-agent-flow.json'), 'utf8')) as { id: string; nodes: Array<{ id: string; parameters: Record<string, unknown> }> };
+    legacy.nodes.find((n) => n.id === 'n-agent')!.parameters.agentId = 'ag_1';
+    const why = 'An agent remembers this conversation or across sessions: a memory node can’t move into it';
+    wire.answers[`GET /api/workflows/${legacy.id}/agent-moves`] = () => ({ moves: [{ workflowId: legacy.id, nodeId: 'n-agent', subNodeId: 'n-memory', name: 'Window Memory', slot: 'memory', agentId: 'ag_1', agentName: 'Utility helper', outcome: 'kept', why, retry: true, by: 'migration', at: '2026-11-18T10:00:00.000Z' }] });
+    useEditor.getState().load(legacy as never, []);
+    useEditor.setState({ nodeTypes: { 'core.simpleMemory': { ...agentInfo('core.simpleMemory', 'Window Memory'), descriptor: { name: 'simpleMemory', displayName: 'Window Memory', description: 'Memory', version: 1, kind: 'action', inputs: [], outputs: [{ type: 'ai_memory' }], properties: [] } } } as never });
+    const { FlowNodeView } = await import('@/components/editor/flow-node');
+    const wf = useEditor.getState().nodes.find((n) => n.id === 'n-memory')!.data;
+    await act(async () => root.render(createElement(ReactFlowProvider, null, createElement(FlowNodeView as never, { id: 'n-memory', data: wf, selected: false }))));
+    await settle();
+    const tag = container.querySelector('[data-testid="local-tag"]');
+    expect(tag, 'the tag').toBeTruthy();
+    expect(tag!.textContent).toContain('this flow only');
+    expect(tag!.textContent).toContain(why);
+    expect(tag!.textContent).toContain('Try again');
   });
 });

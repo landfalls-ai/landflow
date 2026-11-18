@@ -35,11 +35,11 @@ import { AgentAvatar } from '../agents/avatar'; // AG16
 import { useTeamLeads } from '../agents/faces'; // AG16
 import { ConfirmChange, toastEdit, usedByWords } from '../canvas/bubble-confirm'; // AG16
 import { BRANDS, brandIcon, brandOfProvider } from '@/lib/shared/brand-icons'; // AG16
-import { boundParameters, nodeNameFor } from './place-agent'; // AG16
+import { AGENT_DRAG, agentDragPayload, boundParameters, nodeNameFor } from './place-agent'; // AG16
 import { FolderDialog } from '../canvas/bubble-folder-dialog'; // AG16
 
 /** AG16: the dataTransfer type of an agent dragged from Your agents onto the canvas. */
-export const AGENT_DRAG = 'application/x-landflow-agent';
+export { AGENT_DRAG };
 
 type Mode = 'trigger' | 'next' | 'ai_languageModel' | 'ai_memory' | 'ai_tool' | 'ai_embedding' | 'ai_document' | 'ai_textSplitter' | 'ai_retriever' | 'ai_reranker';
 type View = { kind: 'root' } | { kind: 'triggers' } | { kind: 'category'; key: string } | { kind: 'plugin'; pluginId: string } | { kind: 'node'; type: string };
@@ -494,7 +494,7 @@ export function NodeCreator({ initialQuery = '' }: { initialQuery?: string } = {
           </span>
         ),
         description: a.role || a.description || undefined,
-        drag: { type: AGENT_DRAG, payload: JSON.stringify({ id: a.id, name: a.name }) },
+        drag: { type: AGENT_DRAG, payload: agentDragPayload(a) },
         onSelect: () => void choose(runAgent, boundParameters(a.id), { name: a.name, open: false }),
       }));
   };
