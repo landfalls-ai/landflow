@@ -77,14 +77,14 @@ export function compareRuns(draft: Pick<AgentEvalRun, 'average' | 'results'>, ad
   const shared = draft.results.filter((r) => r.caseId && byId.has(r.caseId));
   if (!adopted) return { ...gateVerdict(average), basis: 'threshold' };
   if (shared.length < 2) {
-    const base = { average, baseline: adopted.average, basis: 'threshold' as const };
+    const base = { average, basis: 'threshold' as const };
     if (average < GATE_MIN_AVERAGE) return { ...base, ok: false, reason: `The draft averages ${average.toFixed(1)} / 5 on its new cases, below the ${GATE_MIN_AVERAGE.toFixed(1)} it asks for.` };
     return { ...base, ok: true };
   }
   const draftMean = meanScore(shared);
   const publishedMean = meanScore(shared.map((r) => ({ score: byId.get(r.caseId) ?? 0 })));
   const base = { average, baseline: publishedMean, basis: 'same-cases' as const, shared: shared.length };
-  if (average < GATE_MIN_AVERAGE) return { ...base, ok: false, reason: `The draft averages ${average.toFixed(1)} / 5, below the ${GATE_MIN_AVERAGE} the gate asks for.` };
+  if (average < GATE_MIN_AVERAGE) return { ...base, ok: false, reason: `The draft averages ${average.toFixed(1)} / 5, below the ${GATE_MIN_AVERAGE.toFixed(1)} the gate asks for.` };
   if (draftMean < publishedMean - GATE_MAX_DROP)
     return { ...base, ok: false, reason: `On the ${shared.length} cases both versions ran, the draft averages ${draftMean.toFixed(1)} / 5, ${(publishedMean - draftMean).toFixed(1)} below the published version's ${publishedMean.toFixed(1)}.` };
   return { ...base, ok: true };

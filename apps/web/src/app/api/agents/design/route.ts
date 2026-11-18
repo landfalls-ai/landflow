@@ -73,15 +73,16 @@ const Body = z.object({
  * removed case is not written again, a knowledge agent's case names only documents its knowledge base holds. When fewer than two
  * are left, the case writer is asked once more with what was dropped and why; what that gives goes through the same rules.
  */
-async function ruledCases(cases: Array<{ input: string; expected?: string }>, context: { config: AgentConfig | Partial<AgentConfig>; name: string; description: string; removedInputs?: string[]; existingInputs?: string[]; model: string | undefined; actor: ReturnType<typeof routeActor>; signal: AbortSignal }): Promise<Array<{ input: string; expected?: string }>> {
+async function ruledCases(cases: Array<{ input: string; expected?: string }>, context: { config: AgentConfig | Partial<AgentConfig>; name: string; description: string; removedInputs?: string[]; existingInputs?: string[]; folderFiles?: string[]; model: string | undefined; actor: ReturnType<typeof routeActor>; signal: AbortSignal }): Promise<Array<{ input: string; expected?: string }>> {
   const config = context.config as Partial<AgentConfig>;
-  const titles = await sourceTitles(config, async (tool) => (tool.type === 'knowledge' && !('source' in tool && tool.source === 'node') && tool.store === 'sqlite' ? (await listKnowledgeDocuments(tool)).documents.map((d) => d.fileName) : Promise.reject(new Error('not readable'))));
-  const rules = { config, ...(context.removedInputs && { removedInputs: [...context.removedInputs, ...(context.existingInputs ?? [])] }), ...(titles && { titles }) };
+  const indexed = await sourceTitles(config, async (tool) => (tool.type === 'knowledge' && !('source' in tool && tool.source === 'node') && tool.store === 'sqlite' ? (await listKnowledgeDocuments(tool)).documents.map((d) => d.fileName) : Promise.reject(new Error('not readable'))));
+  const titles = indexed ?? (context.folderFiles?.length ? context.folderFiles : undefined); // a folder not indexed yet: its file names
+  const rules = { config, ...(context.removedInputs && { removedInputs: context.removedInputs }), ...(context.existingInputs && { keptInputs: context.existingInputs }), ...(titles && { titles }) };
   const first = checkCases(cases, rules);
   if (!first.dropped.length || first.kept.length >= 2) return first.kept;
   const more = await casesAgain({ model: context.model, actor: context.actor, signal: context.signal }, { name: context.name, description: context.description, config, reasons: first.dropped.map((d) => d.reason), avoid: [...(context.removedInputs ?? []), ...first.dropped.map((d) => d.input)], ...(titles && { titles }) });
   const again = checkCases(more, { ...rules, removedInputs: [...(rules.removedInputs ?? []), ...first.dropped.map((d) => d.input)] });
-  return [...first.kept, ...again.kept].filter((c, i, all) => all.findIndex((o) => o.input.toLowerCase() === c.input.toLowerCase()) === i).slice(0, 5);
+  return [...first.kept, ...again.kept].filter((c, i, all) => all.findIndex((o) => o.input.toLowerCase() === c.input.toLowerCase()) === i).slice(0, Math.max(first.kept.length, 3));
 }
 
 const shortInput = (input: string) => `“${input.length > 70 ? `${input.slice(0, 69)}…` : input}”`;
@@ -125,7 +126,7 @@ export const POST = handler(async (request: Request) => {
     attached = { collection: setup.knowledge.collection, ...(documents !== undefined && { documents }), search: setup.knowledge.search === 'keyword' ? 'keyword' : (setup.knowledge.embeddings ?? 'vector') };
   }
   // AG24: a new design's cases follow the same rules (a data agent's cases never state what its tool holds; a knowledge agent's name only what its folder holds).
-  if (!baseConfig && design.cases?.length && design.config) design.cases = await ruledCases(design.cases, { config: design.config, name: parsed.data.name, description: String(design.config.description ?? parsed.data.description), model: picked.model, actor, signal: request.signal });
+  if (!baseConfig && design.cases?.length && design.config) design.cases = await ruledCases(design.cases, { config: design.config, name: parsed.data.name, description: String(design.config.description ?? parsed.data.description), model: picked.model, actor, signal: request.signal, ...(setup.knowledge?.files?.length && { folderFiles: setup.knowledge.files }) });
   const reasoned = design.extras && !baseConfig ? { ...(design.extras.reuse && { reuse: design.extras.reuse }), ...(attached && { attached }), ...(design.extras.modelWhy && { modelWhy: design.extras.modelWhy }), ...(design.extras.modelNote && { modelNote: design.extras.modelNote }), ...(design.extras.catalog.length && { catalog: design.extras.catalog }) } : {}; // AG19:
   const models = resources.models.map((m) => `${m.provider}/${m.model}`); // AG02: the card's Model select, the builder model first
   if (baseConfig && design.config) {
@@ -162,7 +163,7 @@ export const POST = handler(async (request: Request) => {
         const written = named.length ? (design.cases ?? []).filter((c) => c.expected).slice(0, 3).map((c) => ({ input: c.input, expected: c.expected as string })) : [];
         newCases = written.length ? written : lookup.removed ? lookupCases(lookup.tools, (design.config.tools ?? []).some((t) => t.type === 'node')) : [];
         // AG24: the rules for a data agent's cases, and never a removed case again; fewer than two left: the case writer once more.
-        if (newCases.length) newCases = (await ruledCases(newCases, { config: design.config, name: String(design.config.name ?? ''), description: String(design.config.description ?? ''), removedInputs: replaceCases.map((c) => c.input), existingInputs: existingCases.filter((c) => !replaceCases.some((r) => r.id === c.id)).map((c) => c.input), model: picked.model, actor, signal: request.signal })) as typeof newCases;
+        if (newCases.length) newCases = (await ruledCases(newCases, { config: design.config, name: String(design.config.name ?? ''), description: String(design.config.description ?? ''), removedInputs: replaceCases.map((c) => c.input), existingInputs: existingCases.filter((c) => !replaceCases.some((r) => r.id === c.id)).map((c) => c.input), ...(setup.knowledge?.files?.length && { folderFiles: setup.knowledge.files }), model: picked.model, actor, signal: request.signal })) as typeof newCases;
         // Nothing to put in their place: Apply would only remove cases (and an agent with none skips the publish gate), so none is replaced; the card says which may now be wrong.
         if (!newCases.length) {
           maybeWrong = named_;

@@ -51,9 +51,10 @@ const FILLER = new Set('the and for with our your its that this what does say ab
 const words = (v: string) => v.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !FILLER.has(w));
 
 /** The documents a text names ("the payments runbook"): the words before the noun that say which one. Empty for "the runbook" alone. */
-function namedDocuments(text: string): string[][] {
+function namedDocuments(text: string, only?: RegExp): string[][] {
   const out: string[][] = [];
   for (const m of text.matchAll(DOCUMENT_NOUN)) {
+    if (only && !only.test(m[2] ?? '')) continue;
     const before = words(m[1] ?? '').filter((w) => !/^(?:read|find|check|search|summari[sz]e|explain|show|give|list|open|use)$/.test(w));
     if (before.length) out.push(before);
   }
@@ -69,8 +70,9 @@ export interface CaseCheck {
  * The cases that stay. `removedInputs` are the inputs of the cases this change removes (never written again); `titles` are the file
  * names of the agent's knowledge base (absent when not read: nothing is judged by them).
  */
-export function checkCases(cases: AgentCaseDraft[], context: { config: Partial<AgentConfig>; removedInputs?: string[]; titles?: string[] }): CaseCheck {
+export function checkCases(cases: AgentCaseDraft[], context: { config: Partial<AgentConfig>; removedInputs?: string[]; keptInputs?: string[]; titles?: string[] }): CaseCheck {
   const removed = new Set((context.removedInputs ?? []).map(foldInput));
+  const keptBefore = new Set((context.keptInputs ?? []).map(foldInput));
   const data = isDataAgent(context.config);
   const titleWords = context.titles ? new Set(context.titles.flatMap((t) => words(t.replace(/\.[a-z0-9]{1,5}$/i, '')))) : undefined;
   const kept: AgentCaseDraft[] = [];
@@ -79,6 +81,10 @@ export function checkCases(cases: AgentCaseDraft[], context: { config: Partial<A
     const drop = (reason: string) => dropped.push({ input: c.input, reason });
     if (removed.has(foldInput(c.input))) {
       drop('it is a case this change removes, written again');
+      continue;
+    }
+    if (keptBefore.has(foldInput(c.input))) {
+      drop('it repeats a case the agent already has');
       continue;
     }
     if (data) {
@@ -96,7 +102,7 @@ export function checkCases(cases: AgentCaseDraft[], context: { config: Partial<A
       }
     }
     if (titleWords) {
-      const lacking = [...namedDocuments(c.input), ...namedDocuments(c.expected ?? '')].find((doc) => doc.every((w) => !titleWords.has(w) && ![...titleWords].some((t) => t.startsWith(w) || w.startsWith(t))));
+      const lacking = [...namedDocuments(c.input), ...namedDocuments(c.expected ?? '', /^(?:runbooks?|playbooks?|polic(?:y|ies)|handbook)$/i)].find((doc) => doc.every((w) => !titleWords.has(w) && ![...titleWords].some((t) => t.startsWith(w) || w.startsWith(t))));
       if (lacking) {
         drop(`it names a document (${lacking.join(' ')}) that the knowledge base does not hold`);
         continue;

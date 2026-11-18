@@ -747,7 +747,8 @@ export function wholeSentences(text: string, proposed: string, base: string, avo
         .filter((c) => c.score >= 0.3)
         .sort((a, b) => b.score - a.score)[0]?.l;
     const own = pick(proposed) ?? pick(base);
-    if (own) {
+    if (own && out.includes(own)) dropped.push('a step of the instructions did not read as a sentence and was left out');
+    else if (own) {
       out.push(LEAD.test(line) && !LEAD.test(own) ? `${LEAD.exec(line)![0]}${own}` : own);
       dropped.push(`a step of the instructions did not read as a sentence: kept ${own === pick(proposed) ? 'the model’s' : 'the earlier'} line`);
     } else dropped.push('a step of the instructions did not read as a sentence and was left out');
@@ -1909,7 +1910,7 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
   // AG24: a tool the session added is never removed by the change's words, nor dropped by the design: it stays, and a line says why.
   const keeps = (t: AgentToolConfig) => isKeptTool(keep, t as unknown as Record<string, unknown>);
   for (const t of base.tools ?? []) {
-    if (keeps(t) && (removed(change, t) || !(draft.config.tools ?? []).some((d) => toolKey(d) === toolKey(t)))) draft.dropped.push(`Kept “${'name' in t && t.name ? t.name : t.type === 'node' ? t.nodeType : 'the tool'}”: this session added it`);
+    if (keeps(t) && (removed(change, t) || !(draft.config.tools ?? []).some((d) => (t.type === 'node' && d.type === 'node' ? d.nodeType === t.nodeType : toolKey(d) === toolKey(t))))) draft.dropped.push(`Kept “${'name' in t && t.name ? t.name : t.type === 'node' ? t.nodeType : 'the tool'}”: this session added it`);
   }
   const kept = (base.tools ?? []).filter((t) => keeps(t) || !removed(change, t)).map((t) => withSenderGiven(t, change, types)); // ag3 carryover:
   const have = new Set(kept.map(toolKey));

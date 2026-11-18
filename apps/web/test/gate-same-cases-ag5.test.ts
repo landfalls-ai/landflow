@@ -97,7 +97,7 @@ describe('the gate on the cases both versions ran', () => {
         { average: 2.8, results: [1, 2].map((n) => ({ caseId: `c${n}`, input: 'q', reply: '', score: 2.8, reasoning: '' })) },
         { average: 3, results: [1, 2].map((n) => ({ caseId: `c${n}`, input: 'q', reply: '', score: 3, reasoning: '' })) },
       ),
-    ).toMatchObject({ ok: false, basis: 'same-cases', reason: 'The draft averages 2.8 / 5, below the 3 the gate asks for.' });
+    ).toMatchObject({ ok: false, basis: 'same-cases', reason: 'The draft averages 2.8 / 5, below the 3.0 the gate asks for.' });
   });
 
   it('a run adopted before ag5 has no case ids: the threshold, said', () => {
