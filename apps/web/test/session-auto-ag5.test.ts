@@ -108,7 +108,7 @@ beforeEach(() => {
   apiAnswers = {};
   sendsAllowed.clear();
   // AG22: the tests below assert Asks first (every step waits for a click). The decision of 2026-11-18 made the switch alone decide a
-  // fix session's autonomy, so they run with the switch off; the switch-on behaviour is session-auto-ag5.test.ts.
+  // fix session's autonomy, so they run with the switch on, so the sessions are autonomous (the switch-off twin is in session-stable-ag5.test.ts).
   useAutonomyFacts.setState({ switchOn: true, workflows: {} });
   useAssistant.getState().reset();
   useEditor.getState().load(flow(), []);
@@ -248,7 +248,7 @@ describe('an autonomous fix session on a saved, published flow (switch on)', () 
     await waitForCard();
     expect(sentAutonomy).toEqual(['asks-first']);
     expect(cards()[0].card.state).toBe('designed');
-    expect(calls()).toEqual(['POST /api/agents/design']);
+    expect(calls()).toEqual(['GET /api/agents/ag_q', 'POST /api/agents/design']);
     expect(run.mock.calls[0][0]).toEqual({ kind: 'run', by: 'spotlight' });
     const items = useAssistant.getState().items;
     const testingId = useAssistant.getState().testingId;
@@ -282,7 +282,7 @@ describe('an autonomous fix session on a saved, published flow (switch on)', () 
     agentRoutes({
       'POST /api/agents/ag_q/smoke-test': () => ({ smoke: { state: 'passed', reply: 'ok' } }),
       'POST /api/agents/ag_q/publish': () => {
-        if (publishes++ === 0) throw new ApiError('held', 409, { gate: { verdict: { average: 2.7, basis: 'threshold', shared: 0, reason: '2.7 / 5, below the 3.0 it asks for' }, lowest: [{ input: 'Sales by region?', reason: 'it did not name the regions' }] } });
+        if (publishes++ === 0) throw new ApiError('held', 409, { gate: { verdict: { average: 2.7, basis: 'threshold', shared: 0, reason: '2.7 / 5, below the 3.0 it asks for' }, lowCases: [{ input: 'Sales by region?', score: 2, reasoning: 'it did not name the regions' }] } });
         return {};
       },
     });

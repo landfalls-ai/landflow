@@ -113,13 +113,13 @@ export const heldOf = (agentId: string): HeldVerdict | undefined => heldVerdicts
 
 /** AG22: the verdict of a 409 `gate` (older hosts send the average and the reason only; every other field is optional). */
 export function verdictOf(gate: unknown): HeldVerdict | undefined {
-  const g = gate as { verdict?: Record<string, unknown>; cases?: unknown; lowest?: unknown; results?: unknown } | undefined;
+  const g = gate as { verdict?: Record<string, unknown>; lowCases?: unknown; cases?: unknown; lowest?: unknown; results?: unknown } | undefined;
   const v = g?.verdict;
   if (!v) return undefined;
-  const rows = [g?.lowest, g?.cases, g?.results, v.lowest, v.cases].find(Array.isArray) as Array<Record<string, unknown>> | undefined;
+  const rows = [g?.lowCases, g?.lowest, g?.cases, g?.results, v.lowest, v.cases].find(Array.isArray) as Array<Record<string, unknown>> | undefined;
   const lowCases = (rows ?? [])
     .filter((c) => c && typeof c.input === 'string')
-    .map((c) => ({ input: String(c.input).slice(0, 400), ...(typeof (c.reason ?? c.why) === 'string' && { reason: String(c.reason ?? c.why).slice(0, 400) }) }))
+    .map((c) => ({ input: String(c.input).slice(0, 400), ...(typeof (c.reasoning ?? c.reason ?? c.why) === 'string' && { reason: String(c.reasoning ?? c.reason ?? c.why).slice(0, 400) }) }))
     .slice(0, 3);
   return {
     ...(typeof v.average === 'number' && { average: v.average }),

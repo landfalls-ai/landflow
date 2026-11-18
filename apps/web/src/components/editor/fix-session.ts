@@ -92,9 +92,9 @@ export function agentReplyText(steps: ReadonlyArray<{ name: string; sample: unkn
     const first = Array.isArray(sample) ? sample[0] : sample;
     const calls =
       first && typeof first === 'object'
-        ? ['toolCalls', 'tool_calls', 'tools', 'toolsUsed'].flatMap((k) => {
+        ? ['toolCalls', 'tool_calls', 'tools', 'toolsUsed', 'steps'].flatMap((k) => {
             const v = (first as Record<string, unknown>)[k];
-            return Array.isArray(v) ? v.map((c) => (typeof c === 'string' ? c : String((c as { name?: unknown } | null)?.name ?? ''))).filter(Boolean) : [];
+            return Array.isArray(v) ? v.map((c) => (typeof c === 'string' ? c : String((c as { name?: unknown; tool?: unknown } | null)?.name ?? (c as { tool?: unknown } | null)?.tool ?? ''))).filter(Boolean) : [];
           })
         : [];
     return [` The agent step “${name}” replied: ${json.length > 1200 ? `${json.slice(0, 1200)}…` : json}.${calls.length ? ` Tool calls it made: ${[...new Set(calls)].join(', ')}.` : ' Its tool calls are in the run log (get_run_log).'}`];

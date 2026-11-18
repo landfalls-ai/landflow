@@ -212,6 +212,25 @@ describe('the session’s own fixes stay', () => {
     expect(published).not.toHaveBeenCalled(); // not "Ready for production": it did not pass the review
   });
 
+  it('with the switch off, Asks first tracks an applied agent fix too: the second design posts keep and the removing design is dropped', async () => {
+    useAutonomyFacts.setState({ switchOn: false });
+    const draft = routes([adds, removes]);
+    runs = [{ ...ok }, { ...ok }];
+    replies = [{ text: 'No, the agent has no database tool.', agentFix: lack }, { text: 'No, the numbers are not from the database.', agentFix: remove }];
+    const session = testUntilItRuns('Post the sales by region to the receiver');
+    await waitForCard();
+    await applyAgentChange(cards()[0].itemId, cards()[0].card);
+    await publishAgentChange(cards()[0].itemId, cards()[0].card);
+    await session;
+    const designs = apiCalls.filter((c) => c.path === '/api/agents/design');
+    expect(designs).toHaveLength(2);
+    expect((designs[0].json as { keep?: unknown }).keep).toBeUndefined();
+    expect((designs[1].json as { keep?: { tools: string[] } }).keep?.tools).toEqual(['query_sales']);
+    expect(lines()).toContain(keptOwnFixLine({ summary: 'added “query_sales” to “Question answerer”' }));
+    expect(cards()).toHaveLength(1); // the removing design showed no second card
+    expect(draft()).toEqual([tool]);
+  });
+
   it('every design in the session posts keep with the tools it added, and none before it added any', async () => {
     routes([adds, removes]);
     runs = [{ ...ok }, { ...ok }];

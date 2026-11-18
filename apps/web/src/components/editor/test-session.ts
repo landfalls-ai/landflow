@@ -724,8 +724,9 @@ async function publishAtEnd(ctx: { signal: AbortSignal; testId: string; changedA
     const agents = pins.map((p) => ({ name: p.agentName ?? p.nodeName ?? 'agent', version: p.version }));
     say([{ kind: 'text', text: publishedLine(result.published?.versionNumber ?? 0, agents) }], testId);
     // AG22: AG23's route (GET /api/workflows/:id/unattended-approvals) lists the asks-first tools a trigger run refuses; a host without it lists none (the integrator wires the route's shape).
-    const unattended = await api<{ tools?: Array<{ tool: string; trigger: string }> }>(`/api/workflows/${workflowId}/unattended-approvals`, { background: true }).catch(() => ({ tools: [] as Array<{ tool: string; trigger: string }> }));
-    for (const t of unattended.tools ?? []) say([{ kind: 'text', text: unattendedLine(t.tool, t.trigger) }], testId);
+    type Unattended = { tool: string; trigger?: string; line?: string };
+    const unattended = await api<Unattended[] | { tools?: Unattended[] }>(`/api/workflows/${workflowId}/unattended-approvals`, { background: true }).then((r) => (Array.isArray(r) ? r : r.tools ?? []), () => [] as Unattended[]);
+    for (const t of unattended) say([{ kind: 'text', text: t.line ?? unattendedLine(t.tool, t.trigger ?? 'trigger') }], testId);
     return true;
   } catch (e) {
     const body = (e as { body?: { code?: string; agents?: Array<{ name: string }> } }).body;
@@ -974,9 +975,14 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
           lastFix = 'agent';
           continue;
         }
-        const cardItem = await showAgentFix(reply.agentFix, fixes + 1, signal, testId, goal ?? '');
+        const cardItem = await showAgentFix(reply.agentFix, fixes + 1, signal, testId, goal ?? '', { fixes: ownFixes, auto: false });
         if (signal.aborted) return;
-        if (!cardItem || typeof cardItem === 'object') {
+        if (cardItem && typeof cardItem === 'object') {
+          say([{ kind: 'text', text: droppedLine(cardItem.undone) }], testId);
+          stop(`It runs, but doesn’t do all you asked yet, and the only change left would undo my own earlier fix. Left: ${leftForAgent(result.node, missingPartOf(reply))}`, result.node);
+          return;
+        }
+        if (!cardItem) {
           stop(`I couldn’t work out a change to “${reply.agentFix.agent}”.`, result.node);
           return;
         }
@@ -986,6 +992,8 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
           stop(why, result.node);
           return;
         }
+        const askedAdded = lastDesign?.added ?? [];
+        ownFixes.push({ kind: 'agent', agentId: reply.agentFix.agentId, toolsAdded: askedAdded, summary: askedAdded.length ? `added ${askedAdded.map((t) => `“${t}”`).join(', ')} to “${reply.agentFix.agent}”` : `changed “${reply.agentFix.agent}”` });
         tried.push(change);
         useAssistant.getState().noteFix(nodeId ? [nodeId] : [], `Changed “${reply.agentFix.agent}”`);
         lastFix = 'agent';

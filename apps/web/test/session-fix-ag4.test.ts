@@ -281,12 +281,12 @@ describe('a failure inside an agent', () => {
     expect(card.base).toEqual({ agentId: 'ag_mail', name: 'Mailer' });
     expect(card.fix).toEqual({ ...agentFix.fix, attempt: 1 });
     expect(text).toEqual({ kind: 'text', text: fixLine('Mailer', card.fix!) });
-    expect(apiCalls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /api/agents/design']);
-    expect(apiCalls[0].json).toMatchObject({ base: { agentId: 'ag_mail' }, change: 'Always send to oncall@landflow.test', preview: true });
+    expect(apiCalls.map((c) => `${c.method} ${c.path}`)).toEqual(['GET /api/agents/ag_mail', 'POST /api/agents/design']);
+    expect(apiCalls[1].json).toMatchObject({ base: { agentId: 'ag_mail' }, change: 'Always send to oncall@landflow.test', preview: true });
     expect(applied).toEqual([]); // no flow change with an agent fix
     expect(run).toHaveBeenCalledTimes(1);
     await applyAgentChange(itemId, card);
-    expect(apiCalls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /api/agents/design', 'PUT /api/agents/ag_mail', 'POST /api/agents/ag_mail/smoke-test']);
+    expect(apiCalls.map((c) => `${c.method} ${c.path}`)).toEqual(['GET /api/agents/ag_mail', 'POST /api/agents/design', 'PUT /api/agents/ag_mail', 'POST /api/agents/ag_mail/smoke-test']);
     expect(run).toHaveBeenCalledTimes(1); // not published yet: no run
     await publishAgentChange(itemId, cards()[0].card);
     await session;
