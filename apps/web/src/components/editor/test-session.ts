@@ -625,7 +625,7 @@ export const agentFixHooks: {
  * AG22: an autonomous fix session's agent fix: the card is applied by the session (the draft saved with its cases swapped, the
  * smoke test), the credential is picked when exactly one fits (several: the session waits on Pick it), the change is published
  * through the eval gate. A held gate is a finding: the line says the score, then one more fix from the lowest cases, then publish
- * again; out of fixes it stops with the verdict. Never `skipEval`, never "Publish anyway".
+ * again; out of fixes it stops with the verdict. It never skips the eval gate and never publishes anyway.
  */
 async function autoAgentFix(ctx: { event: AgentFixEvent; signal: AbortSignal; testId: string; goal: string; fixes: number; ownFixes: OwnFix[]; changedAgents: ChangedAgent[]; tried: string[] }): Promise<{ kind: 'done'; used: number } | { kind: 'dropped'; used: number } | { kind: 'stop'; used: number; text: string }> {
   const { event, signal, testId, goal, ownFixes, changedAgents } = ctx;
