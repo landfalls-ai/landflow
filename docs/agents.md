@@ -252,7 +252,7 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   (`sqlite_archive`, `Archive DB`, or a table of its own), *also let it call the weather API* (a URL the kept HTTP tool lacks, or its
   bearer credential). A tool the design dropped never
   comes back. A change to a kept tool (*make sqlite read-only*) is made in place by the architect's revise: the design's tool of the same
-  type and name with another operation changes the kept tool (same id, same credential, its operation, no approval), never a second tool
+  type and name with another operation changes the kept tool (same id, same credential, its operation; an explicit approval on a tool that was a read stays), never a second tool
   beside it. What an agent fix may add is the prompt's to say; the card lists every tool it adds. The Left rows are worked out after
   the dedupe.
 - **What a read is, and the run-time hold.** On SQLite (`readsByQuery` in `run-check.ts`; Postgres and MySQL Execute Query are always
