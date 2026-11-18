@@ -117,6 +117,11 @@ describe('outsideScope', () => {
     expect(out.map((o) => o.index)).toEqual([0]);
     expect(out[0].reason).toContain('outside what was asked');
   });
+  it('wave ag4 carryover (E3): a change to the selected step’s agent is in scope; another step’s agent is not', () => {
+    expect(outsideScope([{ op: 'changeAgent', node: 'Open status incident' }], selected, graph, 'Wire a Sentiment tool into this step.')).toEqual([]);
+    expect(outsideScope([{ op: 'changeAgent' }], selected, graph, 'Wire a Sentiment tool into this step.')).toEqual([]);
+    expect(outsideScope([{ op: 'changeAgent', node: 'Save to backlog' }], selected, graph, 'Wire a Sentiment tool into this step.')).toHaveLength(1);
+  });
   it('puts a rewire to a step added outside the scope outside too', () => {
     const ops = [{ op: 'addNode', ref: 'n', name: 'Extra', after: 'Save to backlog' }, { op: 'connect', from: 'n', to: 'Open status incident' }];
     expect(outsideScope(ops, { kind: 'selected', nodes: ['http'] }, graph, 'add a step').map((o) => o.index)).toEqual([0, 1]);
