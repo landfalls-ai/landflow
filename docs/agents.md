@@ -696,6 +696,7 @@ request: the run goes on when the last one is decided). The Platform analyst's o
     working in that flow exactly as before.
   - **One step per flow**: every affected agent draft is written, then the workflow is saved without the moved sub-nodes (a new version
     as any save, under the `workflow_conflict` rule); if the save fails every draft is put back and the items stay (*saved meanwhile*).
+  - **The instructions**: a tool moved in adds one line to the draft's instructions (*Also your job: slugify (…), moved in from a workflow that ran it: use it when a message asks for that.*), so an agent whose instructions list its jobs and hand over the rest uses the tool as the flow did (the ag4 carryover, live pass E1, where the utility helper answered *Slugifying text is outside what I handle*).
   - **The record**: one row per workflow and sub-node in `agent_flow_moves` (outcome, the agent and its tool, why, who (`migration` or the
     person), when, the workflow version before, and a snapshot of the sub-node and its edges: credentials by reference, never a secret),
     read by `GET /api/workflows/:id/agent-moves` and `GET /api/agents/:id/moves`, each moved item with its `state` against the agent now:
