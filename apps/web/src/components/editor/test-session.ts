@@ -498,7 +498,7 @@ function cardOf(config: Partial<AgentConfig>, name: string, needs: Array<{ text:
 /** The agent change card of an `agent-fix`, as the AG04 change card with the failed run's `fix` on it (never applied by itself: a saved agent is not a brand-new draft). */
 async function showAgentFix(event: AgentFixEvent, attempt: number, signal: AbortSignal, testId: string): Promise<string | undefined> {
   try {
-    const design = await designChange({ name: event.agent, description: '', base: { agentId: event.agentId }, change: event.change, cause: event.fix.cause, ...pickedModel() }, signal);
+    const design = await designChange({ name: event.agent, description: '', base: { agentId: event.agentId }, change: event.change, ...pickedModel() }, signal);
     const fix = { ...event.fix, attempt };
     const card: AgentCard = { ...cardOf(design.config as Partial<AgentConfig>, event.agent, design.needs, design.missing), base: { agentId: event.agentId, name: event.agent }, changes: design.changes, fix };
     const id = nanoid(8);

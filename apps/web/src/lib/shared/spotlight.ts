@@ -106,10 +106,13 @@ export function runAsk(text: string): boolean {
 export function wrongOutputAsk(text: string): boolean {
   const t = text.trim().toLowerCase();
   if (!t || t.length > 240) return false;
-  // A question (a mark, or a question word anywhere) and an ask that changes something stay the chat's.
-  if (/\?/.test(t) || /\b(?:why|how|what|which|where|when|explain|should)\b/.test(t)) return false;
-  if (/\b(?:add|chang\w*|set|remov\w*|delet\w*|replac\w*|creat\w*|wir\w*|publish\w*|send\w*|post\w*|email\w*|renam\w*|turn\w*|make|making|use|using|updat\w*|switch\w*|enabl\w*|disabl\w*|mov\w*|edit\w*)\b/.test(t)) return false;
-  return /\b(?:made[\s-]?up|invented|fake|fabricated|hallucinat\w*|not real|aren.t real|isn.t real)\b/.test(t) || /\b(?:look|looks|seem|seems|are|is|was|were)\s+(?:wrong|incorrect|bogus)\b/.test(t);
+  // A question (a mark, or a question word anywhere) stays the chat's.
+  if (/\?/.test(t) || /\b(?:why|how|what|which|where|when|explain)\b/.test(t)) return false;
+  // So does a requirement (“it should run at 9”, “it needs to be in EUR”, “it must include Q3”) and a command to change something: a change
+  // word counts only as a command, at the start of a clause or after “please”, “can you”, “to”… (“posted”, “sends”, “email” as a noun do not).
+  if (/\b(?:should|must|needs? to|has to|have to)\b/.test(t)) return false;
+  if (/(?:^|[.;:,!]\s*|\b(?:please|can you|could you|then|and|to)\s+)(?:add|change|set|remove|delete|replace|create|wire|publish|send|post|email|rename|turn|make|use|update|switch|enable|disable|move|edit|show|include)\b/.test(t)) return false;
+  return /\b(?:made[\s-]?up|invented|fake|fabricated|hallucinat\w*|not real|aren.t real|isn.t real)\b/.test(t) || /\b(?:look|looks|seem|seems|are|is|was|were)\s+(?:wrong|incorrect|bogus)\b/.test(t) || /\b(?:look|looks|seem|seems)\s+off\b/.test(t);
 }
 
 const ask = (id: string, label: string, send = true): Bubble => ({ id, label, kind: 'ask', text: label, caret: label.length, send });

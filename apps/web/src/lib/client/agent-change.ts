@@ -23,7 +23,7 @@ export interface ChangeDesign {
 }
 
 /** The change as a proposal: the config with the change made, and the lines that differ from the base. */
-export function designChange(input: { name: string; description?: string; base: { agentId: string } | { config: Record<string, unknown> }; change: string; cause?: string; model?: string }, signal?: AbortSignal): Promise<ChangeDesign> {
+export function designChange(input: { name: string; description?: string; base: { agentId: string } | { config: Record<string, unknown> }; change: string; model?: string }, signal?: AbortSignal): Promise<ChangeDesign> {
   const { model, ...rest } = input;
   return api<ChangeDesign>('/api/agents/design', { method: 'POST', json: { description: '', instructions: '', ...rest, ...(model && { model }), preview: true }, signal }).then((design) => {
     // A design that ran and matched the base has `designed: true` and no changes ("No change"); one the model never proposed is a failure, not "already has it".

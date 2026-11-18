@@ -57,8 +57,6 @@ const Body = z.object({
   // AG04: a change to an agent that exists (`agentId`) or to a pending card (`config`): both or neither, and only as a preview.
   base: z.union([z.object({ agentId: z.string().min(1).max(200) }), z.object({ config: z.record(z.string(), z.unknown()) })]).optional(),
   change: z.string().trim().min(1).max(4000).optional(),
-  // Re-check 3: the cause of a fix (the session's agent fix): only what the cause needs is added.
-  cause: z.string().trim().max(300).optional(),
   // AG19: Spotlight's hints (`newAgent`): a model from list_models (`provider/model`), an existing knowledge base's collection, the node types it found.
   agentModel: z.string().trim().max(100).optional(),
   knowledgeBase: z.string().trim().max(200).optional(),
@@ -104,12 +102,14 @@ export const POST = handler(async (request: Request) => {
   const reasoned = design.extras && !baseConfig ? { ...(design.extras.reuse && { reuse: design.extras.reuse }), ...(attached && { attached }), ...(design.extras.modelWhy && { modelWhy: design.extras.modelWhy }), ...(design.extras.modelNote && { modelNote: design.extras.modelNote }), ...(design.extras.catalog.length && { catalog: design.extras.catalog }) } : {}; // AG19:
   const models = resources.models.map((m) => `${m.provider}/${m.model}`); // AG02: the card's Model select, the builder model first
   if (baseConfig && design.config) {
-    // Re-check 3/4: the tools of a change are tidied first, and the needs (the Left rows) are worked out after, so none names a tool that is gone.
+    // Re-check 3/4/5: a new tool joins an incomplete one of its type or stands as its own; the needs (the Left rows) are worked out after, so none names a merged tool.
     const types = allowedTypes(undefined, actor);
-    const tidy = tidyChangedTools(baseConfig as { tools?: unknown }, design.config as { tools?: unknown }, { text: `${parsed.data.change ?? ''} ${parsed.data.ask ?? ''} ${parsed.data.cause ?? ''}`, fix: Boolean(parsed.data.cause), titleOf: (nodeType) => types.find((t) => t.type === nodeType)?.descriptor.displayName });
+    const tidy = tidyChangedTools(baseConfig as { tools?: unknown }, design.config as { tools?: unknown }, (nodeType) => {
+      const d = types.find((t) => t.type === nodeType)?.descriptor;
+      return d && { credentials: (d.credentials ?? []).filter((c) => c.required).map((c) => c.name), parameters: d.properties.filter((p) => p.required).map((p) => p.name) };
+    });
     design.config = tidy.config as typeof design.config;
     if (tidy.removed.length) design.needs = design.needs.filter((n) => !tidy.removed.includes(String(n.tool)) && !tidy.removed.some((r) => n.text.startsWith(`${r}:`)));
-    if (tidy.dropped.length) design.dropped = [...design.dropped, ...tidy.dropped.map((n) => `the tool “${n}”: this fix doesn’t need it`)];
   }
   const config = baseConfig ? design.config : { avatar: { kind: 'face' as const, face: randomFace(parsed.data.name) }, ...design.config }; // AG04: a change keeps the base's own look
   if (parsed.data.preview) {
