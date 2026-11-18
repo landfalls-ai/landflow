@@ -1620,6 +1620,8 @@ export interface AgentSpec {
   change?: string;
   /** AG24: the tools a session added: a change never removes one (`DesignKeep`, lib/shared/fix-autonomy.ts). */
   keep?: { tools: string[]; reason: string };
+  /** Wave ag5 fix pass: an agent-fix design only: the words a tool may be named by (the session's cause, the fix's own words and the person's ask). A tool the change adds that they do not name is not added. */
+  namedBy?: string;
   /** A change to an agent that exists: its test cases, so the design can name the ones the change makes wrong. */
   cases?: Array<{ id: string; input: string; expected?: string }>;
 }
@@ -2216,6 +2218,26 @@ export function designFailure(caught: unknown): string {
 }
 
 /**
+ * Wave ag5 fix pass: whether the session's cause or the person's ask (`text`) names this tool: its own words (`names`), or its app
+ * (plugin, display name or one of its keywords of 5+ letters, in any form: "database" names SQLite). The fix design's rule for a tool
+ * it was not asked for: the live G2 fix added a Change Case tool that asks first, which nobody named.
+ */
+function namedByCause(text: string, tool: AgentToolConfig, types: NodeTypeInfo[]): boolean {
+  const lower = text.toLowerCase();
+  const squashed = lower.replace(/[^a-z0-9]+/g, '');
+  const info = tool.type === 'node' ? types.find((x) => x.type === tool.nodeType) : undefined;
+  // The whole name, not one of its words ("Change Case" is not named by "change it so …").
+  const wholeNames = [('name' in tool && tool.name) || '', info?.descriptor.displayName ?? ''].map((n) => n.toLowerCase().replace(/[^a-z0-9]+/g, '')).filter((n) => n.length >= 3);
+  if (wholeNames.some((n) => squashed.includes(n))) return true;
+  if (!info) return false;
+  // Every word of its display name, in any form ("Sales Read" by "reads the sales"): one word of a longer name is not enough.
+  const nameWords = info.descriptor.displayName.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+  if (nameWords.length && nameWords.every((w) => lower.includes(w.replace(/s$/, '')))) return true;
+  const terms = [info.pluginId, info.descriptor.displayName, ...(info.descriptor.keywords ?? []).filter((k) => k.length >= 5)].map((t) => t?.toLowerCase().trim()).filter((t): t is string => Boolean(t) && t.length >= 4);
+  return terms.some((t) => new RegExp(`(?<![a-z0-9])${escapeRegExp(t.replace(/(?:e?s)$/, ''))}`).test(lower));
+}
+
+/**
  * Spotlight's newAgent, designed by the architect without a conversation (POST /api/agents/design): its last draft,
  * named as Spotlight named it. The first try hands the model what it would look up (designBrief) and offers only the
  * flat propose_design (plain strings: Ollama's parser fails on propose_agent's nested arrays); the second lets it look
@@ -2273,6 +2295,27 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
       reviseDraft(kept, spec.base, spec.change, input.types, spec.typedAsk, spec.keep); // AG04: the base's tools stay, a new one only when named
       // ag1-int: AG02's promise holds for a change too: a tool it names is added (the same least-privilege rules), or said why not.
       notAdded = withSpecHints(kept, { name: spec.name, description: '', instructions: '', ask: spec.change, tools: changeTools(spec.change, input.types.filter(usableAsTool)) }, input, spec.base);
+      // Wave ag5 fix pass: in an agent-fix design a tool the session's cause and the person's ask do not name is not added: it is listed in `notAdded`.
+      if (spec.namedBy !== undefined) {
+        const had = new Set((spec.base.tools ?? []).map(toolKey));
+        const unrequested = (kept.config.tools ?? []).filter((t) => !had.has(toolKey(t)) && !namedByCause(spec.namedBy!, t, input.types));
+        if (unrequested.length) {
+          const tools = (kept.config.tools ?? []).filter((t) => !unrequested.includes(t));
+          const finalSteps = stepsToolsOf(tools, input.types);
+          const gone = stepsToolsOf(unrequested, input.types).list.map((t) => t.name);
+          // A step that calls a tool that is not added goes whole (never left as a clause that names no tool), then the rest is reconciled.
+          const named = (line: string) => gone.some((n) => new RegExp(`(?<![A-Za-z0-9_])${escapeRe(n)}(?![A-Za-z0-9_])`, 'i').test(line));
+          const stepped = (kept.config.instructions ?? '').split('\n').filter((l) => !(/^\s*\d+[.)]\s/.test(l) && !TOOLS_LINE.test(l) && named(l))).join('\n');
+          const reconciled = nameOnlyOwnTools(stepped, finalSteps.list, { ...finalSteps.options, foreign: gone });
+          const whole = wholeSentences(reconciled.text, stepped, spec.base.instructions ?? '', gone);
+          kept.config = { ...kept.config, tools, instructions: reviseToolsLine(whole.text, spec.base.instructions ?? '', tools) };
+          for (const t of unrequested) {
+            const label = ('name' in t && t.name) || (t.type === 'node' ? input.types.find((x) => x.type === t.nodeType)?.descriptor.displayName : undefined) || 'a tool';
+            notAdded.push({ name: label, reason: 'neither the failure nor your ask names it' });
+            kept.needs = kept.needs.filter((n) => n.tool !== label);
+          }
+        }
+      }
     } else notAdded = withSpecHints(kept, spec, input); // SB17: AG02: what the ask named and the agent did not get
     // AG19: the model Spotlight's chat named (`newAgent.model`): kept when this host lists it, else the default stays and the card says so.
     if (!spec.base && spec.agentModel && input.resources) {

@@ -146,6 +146,34 @@ describe('the live change text, with a comma inside brackets (fix pass, item 2)'
   });
 });
 
+describe('an agent fix adds only a tool the cause or the person’s ask names (fix pass, item 6)', () => {
+  const CHANGE = 'Give it the SQLite tool so it reads the figures';
+  type NotAdded = { notAdded: Array<{ name: string; reason: string }> };
+  const design = async (namedBy: string | undefined) => {
+    const { agent } = await writer([]);
+    return (await (await withModel({ design: { instructions: STEPS, nodeTools: 'databases.sqlite' } }, () => post({ name: 'Short writer', preview: true, base: { agentId: agent.id }, change: CHANGE, ...(namedBy !== undefined && { namedBy }) }))).json()) as Body & NotAdded;
+  };
+  const hasSqlite = (body: Body) => body.config.tools.some((t) => 'nodeType' in t && t.nodeType === 'databases.sqlite');
+
+  it('a tool neither the cause nor the ask names is dropped and listed in notAdded, with no step that calls it', async () => {
+    const body = await design('The summary has made-up figures.\nThe numbers look made up. Test it and fix it.');
+    expect(hasSqlite(body)).toBe(false);
+    expect(body.notAdded).toEqual([expect.objectContaining({ name: expect.stringMatching(/sqlite/i), reason: expect.stringMatching(/names it/) })]);
+    expect(body.config.instructions ?? '').not.toMatch(/sqlite/i);
+  });
+
+  it('a tool the cause names (by its app or a word for it) is added as before', async () => {
+    expect(hasSqlite(await design('the agent has no database tool'))).toBe(true);
+    expect(hasSqlite(await design('It needs the SQLite tool to read the sales.'))).toBe(true);
+  });
+
+  it('a design with no namedBy (every other change) is unchanged', async () => {
+    const body = await design(undefined);
+    expect(hasSqlite(body)).toBe(true);
+    expect(body.notAdded.some((n) => /names it/.test(n.reason))).toBe(false);
+  });
+});
+
 describe('cases that make a data agent use its tool (item 4)', () => {
   const FIGURES = 'The North region sold £120k, the South £80k and the West £95k last month. What is the total? => The total is £295k: North £120k, South £80k, West £95k.';
 

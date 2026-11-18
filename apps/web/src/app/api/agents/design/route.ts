@@ -55,6 +55,8 @@ const Body = z.object({
   // AG02: the person's whole message: the architect reads it, not only the short description.
   ask: z.string().trim().min(1).max(4000).optional(),
   typedAsk: z.string().trim().max(4000).optional(),
+  // Wave ag5 fix pass: an agent-fix design: the session's cause and the person's ask, the only words that may name a tool the change adds.
+  namedBy: z.string().trim().max(4000).optional(),
   // SB16: answer the design without saving an agent (Spotlight's agent card).
   preview: z.boolean().optional(),
   // AG04: a change to an agent that exists (`agentId`) or to a pending card (`config`): both or neither, and only as a preview.

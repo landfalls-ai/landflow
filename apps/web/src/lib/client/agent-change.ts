@@ -28,7 +28,7 @@ export interface ChangeDesign {
 }
 
 /** The change as a proposal: the config with the change made, and the lines that differ from the base. */
-export function designChange(input: { name: string; description?: string; base: { agentId: string } | { config: Record<string, unknown> }; change: string; model?: string; typedAsk?: string; keep?: DesignKeep['keep'] /* AG22: */ }, signal?: AbortSignal): Promise<ChangeDesign> {
+export function designChange(input: { name: string; description?: string; base: { agentId: string } | { config: Record<string, unknown> }; change: string; model?: string; typedAsk?: string; namedBy?: string; keep?: DesignKeep['keep'] /* AG22: */ }, signal?: AbortSignal): Promise<ChangeDesign> {
   const { model, keep, ...rest } = input;
   // AG22: a session's own earlier fixes ride along (`keep`): the design route never proposes removing a kept tool.
   return api<ChangeDesign>('/api/agents/design', { method: 'POST', json: { description: '', instructions: '', ...rest, ...(model && { model }), ...(keep?.tools.length && { keep }), preview: true }, signal }).then((design) => {
