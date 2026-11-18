@@ -166,6 +166,27 @@ describe('runLog', () => {
   });
 });
 
+describe('the run log reads the agent version a production run used', () => {
+  it('a production run pinned to v1 lists v1’s tools, though v2 (published since) has others', async () => {
+    const { PIN_PARAM } = await import('@/lib/shared/agent-versions');
+    const model = { provider: 'ollama', model: 'agent-own-model', baseUrl: fake.url.replace(/\/v1$/, '') };
+    const tool = (name: string) => ({ id: `t_${name}`, type: 'node', name, description: 'x', nodeType: 'databases.sqlite', parameters: {} });
+    const agent = agentStore.create({ name: 'Pinned reader', instructions: 'Read.', model, tools: [tool('old_tool')] } as never);
+    agentStore.publish(agent.id);
+    agentStore.saveDraft(agent.id, { tools: [tool('new_tool')] } as never);
+    agentStore.publish(agent.id);
+    const wf = mine({
+      id: 'wf_pinned_tools_ag4',
+      name: 'Pinned tools',
+      nodes: [node('Start', 'core.manualTrigger'), node('Ask', 'core.messageAgent', { agentId: agent.id, message: 'hi', conversation: 'new', [PIN_PARAM]: 1 })],
+      connections: [edge('Start', 'Ask')],
+    });
+    const record = await runWorkflow({ workflow: wf, mode: 'production', startNodeId: 'Start', triggerItems: [{ json: {} }] });
+    const log = await runLog(actorOf(alice), { workflowId: wf.id, executionId: record.executionId });
+    expect(log!.nodes.find((n) => n.name === 'Ask')!.agent?.tools).toEqual(['old_tool']);
+  });
+});
+
 describe('get_run_log over MCP', () => {
   const connect = async (user: typeof alice, keyScopes?: Array<'executions:read' | 'workflows:read'>) => {
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();

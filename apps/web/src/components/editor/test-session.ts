@@ -21,6 +21,7 @@ import { smokeLine, fixLine, type AgentCard } from '@/lib/shared/agent-card'; //
 import type { AgentFixEvent } from '@/lib/shared/agent-fix'; // AG20:
 import { designChange } from '@/lib/client/agent-change'; // AG20:
 import { followsPractices, guardrailWords, type AgentConfig } from '@/lib/shared/agents'; // AG20:
+import { useBubbleData } from '@/lib/client/agent-bubble-data'; // ag4 review: the agent's name in what is left
 import { pickedModel } from './spotlight-model'; // AG20:
 import { publishVersion, toastApprovalRequested } from './publish-control';
 import { autonomyOf, needsAClick, notePublished, type Autonomy } from './spotlight-autonomy'; // SB03:
@@ -446,8 +447,16 @@ const causeOf = (summary: string, body: string): string => {
  */
 function leftForAgent(node: string | undefined, part?: string): string {
   const agentStep = useEditor.getState().nodes.find((n) => n.data.wf.type === 'core.messageAgent' && (n.data.wf.name === node || !node)) ?? useEditor.getState().nodes.find((n) => n.data.wf.type === 'core.messageAgent');
-  const name = agentStep?.data.wf.name;
-  if (name && /\b(?:tool|isn.t available|not available|no access|can.?t (?:query|reach|read|send)|lacks?|doesn.t have|has no)\b/i.test(part ?? 'tool')) return `connect the tool it needs to “${name}” (the + under Tool on the step), then tell me to test again, or tell me what to change.`;
+  const stepName = agentStep?.data.wf.name;
+  // The agent's own name (the bubbles' read of it), else the step's.
+  const agentId = typeof agentStep?.data.wf.parameters?.agentId === 'string' ? agentStep.data.wf.parameters.agentId : '';
+  const known = agentId ? Object.entries(useBubbleData.getState().answers).find(([k, a]) => a && k.startsWith(`${agentId}|`))?.[1] : undefined;
+  const name = known?.agent.name || stepName;
+  if (name && /\b(?:tool|isn.t available|not available|no access|can.?t (?:query|reach|read|send)|lacks?|doesn.t have|has no)\b/i.test(part ?? 'tool')) {
+    // What it lacks, as the person's words say it: a quoted name (a credential or tool), else "the <thing> tool".
+    const lacking = /[“"]([^”"]{2,40})[”"]/.exec(part ?? '')?.[1] ?? /\b(?:the |a |an )?((?:[\w-]+ ){0,2}(?:tool|credential|connection))\b/i.exec(part ?? '')?.[1];
+    return `connect ${lacking ? `“${lacking}”` : 'the tool it needs'} to “${name}” (the + under Tool on the step), then tell me to test again, or tell me what to change.`;
+  }
   return `open ${node ? `“${node}”` : 'the step'} and change it by hand, or tell me what to change.`;
 }
 

@@ -12,6 +12,8 @@ import { clip } from '@/lib/shared/assistant-ops';
 import type { RunLog, RunLogNode } from '@/lib/shared/tenant-catalog';
 import type { ExecutionRecord } from '@/lib/shared/types';
 import { agentStore } from '../agents/store';
+import { agentVersionConfig } from '../agents/versions';
+import { PIN_PARAM } from '@/lib/shared/agent-versions';
 import { redactorFor } from '../mcp/debug-tools';
 import { liveExecution, liveExecutions } from '../runner';
 import { store } from '../store';
@@ -55,9 +57,10 @@ const isEmpty = (value: unknown): boolean => value === undefined || value === nu
  * The names of the tools the agent had for this run: its own (the draft in the editor's runs, the published version in
  * production's), and the tool sub-nodes the flow still wires into the step. An empty list is said, not left out.
  */
-function toolsOf(record: ExecutionRecord, nodeId: string, agent: ReturnType<typeof agentStore.get>): string[] | undefined {
+function toolsOf(record: ExecutionRecord, nodeId: string, agent: ReturnType<typeof agentStore.get>, pin?: number): string[] | undefined {
   if (!agent) return undefined;
-  const config = record.mode === 'manual' ? agent : (agent.published?.config ?? agent);
+  // The draft for a manual run, the pinned version for a production run that carries a pin (AG21), else the published one.
+  const config = record.mode === 'manual' ? agent : ((pin !== undefined ? agentVersionConfig(agent.id, pin) : undefined) ?? agent.published?.config ?? agent);
   const workflow = record.workflow ?? store.getWorkflow(record.workflowId);
   const wired = (workflow?.connections ?? []).filter((c) => c.type === 'ai_tool' && c.target === nodeId).flatMap((c) => workflow?.nodes.find((n) => n.id === c.source)?.name ?? []);
   return [...new Set([...config.tools.map((t) => (t.type === 'agent' ? `asks ${agentStore.get(t.agentId)?.name ?? 'another agent'}` : t.name)), ...wired])];
@@ -84,7 +87,7 @@ function agentPart(record: ExecutionRecord, nodeId: string, parameters: Record<s
   );
   return {
     ...(calls.length && { agentCalls: calls }),
-    ...((agentId || agent) && { agent: { id: agentId ?? agent!.id, name: agent?.name ?? '', ...(typeof reply === 'string' && reply && { reply: cut(reply) }), ...(agent && { tools: toolsOf(record, nodeId, agent) }) } }),
+    ...((agentId || agent) && { agent: { id: agentId ?? agent!.id, name: agent?.name ?? '', ...(typeof reply === 'string' && reply && { reply: cut(reply) }), ...(agent && { tools: toolsOf(record, nodeId, agent, typeof parameters[PIN_PARAM] === 'number' ? (parameters[PIN_PARAM] as number) : undefined) }) } }),
   };
 }
 

@@ -345,13 +345,24 @@ describe('a run that passed, with an agent that lacks a tool (AG20, live pass S3
     expect(actions()).toEqual(['publish']);
   });
 
+  it('what is left names the tool or credential and the agent: connect “Sales DB” to “Question answerer”', async () => {
+    openAgentFlow();
+    const { useBubbleData } = await import('@/lib/client/agent-bubble-data');
+    useBubbleData.setState({ answers: { 'ag_q|wf_x|n_ask|': { agent: { id: 'ag_q', name: 'Question answerer', published: true, draftDiffers: false }, connections: [] } as never } });
+    runs = [{ 'Ask sales analyst': { items: 1 } }];
+    replies = [{ text: 'No, the agent can’t query “Sales DB”: it has no access.' }];
+    await testUntilItRuns('sales by region');
+    expect(outcomes()[0].text).toContain('Left: connect “Sales DB” to “Question answerer”');
+    useBubbleData.setState({ answers: {} });
+  });
+
   it('a pass with nothing to propose stops and names what is left, not “tell me what to change” alone', async () => {
     openAgentFlow();
     runs = [{ 'Ask sales analyst': { items: 1 } }];
     replies = [{ text: 'No, the agent says the database query tool isn’t available.' }];
     await testUntilItRuns('sales by region');
     expect(outcomes()[0].text).toContain('I have no change for it.');
-    expect(outcomes()[0].text).toContain('Left: connect the tool it needs to “Ask sales analyst”');
+    expect(outcomes()[0].text).toContain('Left: connect “database query tool” to “Ask sales analyst”');
   });
 });
 
