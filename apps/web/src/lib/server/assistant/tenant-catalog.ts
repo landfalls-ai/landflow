@@ -204,7 +204,9 @@ export function catalogToolNodes(actor: Actor | undefined, options: { query?: st
     const covers = (t: NodeTypeInfo) => {
       const d = t.descriptor;
       const text = `${d.displayName} ${t.type} ${(d.keywords ?? []).join(' ')} ${d.description}`.toLowerCase();
-      return words.filter((w) => text.includes(w)).length;
+      // Whole words or word prefixes, never substrings: "ip" is in "ips", not in "JavaScript" or "description".
+      const tokens = text.split(/[^a-z0-9]+/).filter(Boolean);
+      return words.filter((w) => tokens.some((t) => t === w || t.startsWith(w))).length;
     };
     // Wave ag4 carryover: of two nodes that cover the query as well (Postgres, SQLite for "the sales database"), the one
     // whose credential the person already has ranks first: it works right away, and the person named no server.

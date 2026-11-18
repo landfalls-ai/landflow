@@ -171,6 +171,15 @@ describe('list_tool_nodes', () => {
     expect(found.find((n) => n.nodeType === 'triage.extractIocs')!.writes).toBe(false);
   });
 
+  it('matches whole words or word prefixes: "ip" is not in "JavaScript"', async () => {
+    for (const query of ['IP addresses', 'pulls out the IPs and domains']) {
+      const found = (await asJson('list_tool_nodes', { query })) as CatalogToolNode[];
+      const at = (type: string) => found.findIndex((n) => n.nodeType === type);
+      expect(at('triage.extractIocs'), query).toBe(0);
+      expect(at('core.code') === -1 || at('core.code') > at('triage.extractIocs'), query).toBe(true);
+    }
+  });
+
   it('lists nothing of a plugin that is offline', async () => {
     expect(((await asJson('list_tool_nodes', { query: 'IP addresses' })) as CatalogToolNode[]).some((n) => n.pluginId === 'sleeper')).toBe(false);
     expect(((await asJson('list_tool_nodes')) as CatalogToolNode[]).some((n) => n.pluginId === 'sleeper')).toBe(false);
