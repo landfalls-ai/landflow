@@ -32,6 +32,19 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 }
 
 /** AG19: the card's own detail line for an open bubble (what a hover title cannot hold on a phone): a tool's node and operation, the knowledge base's line, the model's why. */
+/**
+ * A Left line as the person reads it: `sqlite: pick a sqlite credential (you have “Sales DB”)` says the node's title and no slot
+ * id: `SQLite: pick a credential (you have “Sales DB”)`. The stored line (the design route's) is what `stillLeft` matches, so only
+ * the display changes.
+ */
+export function plainLeft(line: string, tools: ReadonlyArray<{ name: string; type?: string }>, titleOf: (type: string) => string | undefined): string {
+  const m = /^(.+?): pick an? (.+?) credential(.*)$/.exec(line);
+  if (!m) return line;
+  const tool = tools.find((t) => t.name === m[1]);
+  const title = (tool?.type && titleOf(tool.type)) || m[1]!.replace(/_/g, ' ');
+  return `${title}: pick a credential${m[3]}`;
+}
+
 function bubbleDetail(card: AgentCardData, b: Bubble, left: string[], ofReused = false): string {
   if (b.slot === 'model') {
     if (ofReused) return card.model ? `${card.model} · the reused agent’s model` : 'No model set on the reused agent.';
@@ -41,7 +54,7 @@ function bubbleDetail(card: AgentCardData, b: Bubble, left: string[], ofReused =
   if (b.slot === 'memory') return `${b.label}: it remembers ${b.label.toLowerCase().startsWith('across') ? 'across conversations' : 'this conversation only'}.`;
   if (b.kind === 'knowledge') return card.attached ? attachedLine(card.attached) : card.knowledgeSetup ? knowledgeLine(card.knowledgeSetup) : `the “${b.label}” knowledge base`;
   const tool = card.tools.find((t) => t.name === b.label);
-  const credential = left.filter((l) => l.toLowerCase().startsWith(`${b.label.toLowerCase()}:`)).map((l) => l.slice(l.indexOf(':') + 1).trim());
+  const credential = left.filter((l) => l.toLowerCase().startsWith(`${(b.callName ?? b.label).toLowerCase()}:`)).map((l) => l.slice(l.indexOf(':') + 1).trim().replace(/^pick an? .+? credential/, 'pick a credential'));
   return [`${tool?.type ?? 'tool'}${tool?.operation ? ` · ${tool.operation}` : ''}`, tool?.requireApproval ? 'asks first' : tool?.writes ? 'writes' : 'reads', ...credential].join(' · ');
 }
 
@@ -223,7 +236,7 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
             )}
           </Row>
         )}
-        {left.length > 0 && <Row label="Left">{left.slice(0, 4).join('; ')}</Row>}
+        {left.length > 0 && <Row label="Left">{left.slice(0, 4).map((l) => plainLeft(l, card.tools, (type) => nodeTypes[type]?.descriptor.displayName)).join('; ')}</Row>}
         {/* AG04: what a revised card (or a change to an agent that exists) differs by; none is "no change", with nothing to apply. */}
         {card.changes && (
           <Row label="Changes">

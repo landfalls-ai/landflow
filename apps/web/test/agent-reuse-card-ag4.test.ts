@@ -132,6 +132,20 @@ const click = async (selector: string) => { await act(async () => { (container.q
     }
   });
 
+  it('the Left line says the node’s title and no slot id: “SQLite: pick a credential (you have “Sales DB”)”', async () => {
+    useEditor.setState({ nodeTypes: Object.fromEntries(registry.nodeTypes().map((t) => [t.type, t])) as never });
+    try {
+      const need = { tool: 'extract_iocs', kind: 'credential', text: 'extract_iocs: pick a triage_api credential (you have “Sales DB”)' };
+      await show(cardFromPreview(preview({ needs: [need] }), ASK, true));
+      const left = [...container.querySelectorAll('*')].find((e) => e.children.length === 0 && /pick a credential/.test(e.textContent ?? ''))!;
+      expect(left.textContent).toContain('Extract IOCs: pick a credential (you have “Sales DB”)');
+      expect(container.textContent).not.toContain('pick a triage_api credential');
+      expect(container.textContent).not.toContain('extract_iocs: pick');
+    } finally {
+      useEditor.setState({ nodeTypes: {} as never });
+    }
+  });
+
   it('a card with no reuse offers Create agent, not Use', async () => {
     await show(cardFromPreview(preview(), ASK, true));
     expect(container.textContent).toContain('Create agent and flow');
