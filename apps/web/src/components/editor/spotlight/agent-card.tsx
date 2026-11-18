@@ -31,8 +31,9 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 }
 
 /** AG19: the card's own detail line for an open bubble (what a hover title cannot hold on a phone): a tool's node and operation, the knowledge base's line, the model's why. */
-function bubbleDetail(card: AgentCardData, b: Bubble, left: string[]): string {
+function bubbleDetail(card: AgentCardData, b: Bubble, left: string[], ofReused = false): string {
   if (b.slot === 'model') {
+    if (ofReused) return card.model ? `${card.model} · the reused agent’s model` : 'No model set on the reused agent.';
     if (!card.model) return card.state === 'designed' ? 'No model on this host: pick one in the select below.' : 'No model yet: pick one on its page.';
     return `${card.model} · ${card.modelWhy === 'asked' ? 'you asked for it' : card.modelWhy === 'unavailable' ? (card.modelNote ?? 'the model you asked for is not available here') : 'this host’s model'}`;
   }
@@ -77,6 +78,15 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
   }, [reusing, reused, card]);
   const diagramName = reusing ? card.reuse!.name : card.name;
   const open = bubbles.find((b) => b.id === openId);
+  // A reused agent's bubble detail reads the reused agent, never the proposed design.
+  const detailCard = useMemo<AgentCardData>(() => {
+    if (!reusing || !reused) return card;
+    const m = reused.model as { provider?: string; model?: string } | undefined;
+    const rt = (reused.tools as Array<Parameters<typeof cardTool>[0] & { collection?: string }> | undefined) ?? [];
+    const kb = rt.find((t) => t.type === 'knowledge');
+    const { modelWhy: _w, modelNote: _n, attached: _a, knowledgeSetup: _k, knowledge: _kn, model: _m, ...rest } = card;
+    return { ...rest, tools: rt.filter((t) => t.type !== 'knowledge').map(cardTool), ...(m?.model && { model: m.provider ? `${m.provider}/${m.model}` : m.model }), ...(kb && { knowledge: kb.collection || ('name' in kb ? kb.name : undefined) }) } as AgentCardData;
+  }, [reusing, reused, card]);
   return (
     <div data-testid="agent-card" className={cn('animate-fade-up rounded-xl border bg-sf p-2.5 transition-colors duration-200 motion-reduce:transition-none', created ? 'border-gnbd' : 'border-acbd')}>
       <div className="flex items-start gap-2">
@@ -108,7 +118,7 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
         <div className="mt-2">
           <BubbleDiagram agentName={diagramName} bubbles={bubbles} {...(openId && { openId })} onOpen={(b) => setOpenId((id) => (id === b.id ? undefined : b.id))} />
           <p data-testid="bubble-detail" aria-live="polite" className="mt-1 min-h-4 text-[11.5px] leading-snug text-t2 [overflow-wrap:anywhere]">
-            {open ? bubbleDetail(card, open, left) : ''}
+            {open ? bubbleDetail(detailCard, open, reusing ? [] : left, reusing) : ''}
           </p>
         </div>
       )}

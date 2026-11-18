@@ -165,6 +165,21 @@ describe('the design route', () => {
     expect(body.modelNote).toContain('anthropic/claude-haiku-4-5 isn’t available on this host');
   });
 
+  it('a model the person named and the host lists (Haiku) is `asked` through the design route, and the agent runs on it', async () => {
+    const prevKey = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'dev-only-not-a-key';
+    try {
+      script = [propose({ nodeTools: 'triage.extractIocs' }), { text: 'Designed.' }, { text: 'No cases.' }];
+      const { body } = await design({ name: 'Alert advisor', description: 'Reads an alert.', ask: B_ASK });
+      expect(body.modelWhy).toBe('asked');
+      expect(body.config.model).toMatchObject({ provider: 'anthropic' });
+      expect(String(body.config.model.model)).toMatch(/haiku/i);
+    } finally {
+      if (prevKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prevKey;
+    }
+  });
+
   it('a model the host lists and the person named is `asked`, and never an upgrade', () => {
     const models = [{ provider: 'anthropic' as const, model: 'claude-sonnet-5-5' }, { provider: 'anthropic' as const, model: 'claude-haiku-4-5' }];
     expect(modelWhyOf('Keep it cheap: Haiku is fine.', models, models[1])).toEqual({ modelWhy: 'asked' });
@@ -205,8 +220,32 @@ describe('the design route', () => {
     const brief = { id: s1.id, name: s1.name, description: 'Triages an alert and emails on-call. It also judges severity.', version: 1, skills: [], tools: [] };
     const reading = agentReading([{ type: 'core.messageAgent', name: 'Alert triager', parameters: { agentId: s1.id } }, { type: 'core.messageAgent', name: 'Release translator', parameters: { agentId: '' } }], [brief]);
     expect(reading.reuses).toEqual([reuseSentence('Alert triager', 'Triages an alert and emails on-call.')]);
-    expect(reading.left).toEqual([{ node: 'Release translator', field: 'agentId', kind: 'empty', text: '“Release translator”: needs a new agent: Release translator' }]);
-    expect(typeof buildFlow).toBe('function');
+    expect(reading.left).toEqual([{ node: 'Release translator', field: 'agentId', kind: 'empty', text: '“Release translator”: needs a new agent: Release translator (pick one, or ask Spotlight to create it)' }]);
+  });
+
+  it('POST /api/ai/build with a reply bound to Alert triager: the summary’s first assumption is Reuses “Alert triager”: …', async () => {
+    const s1 = agentStore.list().find((a) => a.name === 'Alert triager')!;
+    const fake = await startFakeModels({
+      reply: () => ({ text: JSON.stringify({ name: 'Triage', nodes: [{ key: 'start', type: 'core.manualTrigger', name: 'Start' }, { key: 'a', type: 'core.messageAgent', name: 'Alert triager', parameters: { agentId: s1.id, message: 'Triage {{ $json.alert }}' } }], connections: [{ from: 'start', to: 'a' }], testData: [{ alert: 'x' }] }), toolCalls: [] }),
+    });
+    const prev = process.env.OLLAMA_URL;
+    process.env.OLLAMA_URL = fake.origin;
+    try {
+      const route = await import('@/app/api/ai/build/route');
+      const response = await route.POST(new Request('http://localhost/api/ai/build', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'triage each alert with my triage agent', staged: false }) }));
+      const body = (await response.json()) as { draft?: { summary?: { assumptions: string[] } }; error?: string };
+      expect(response.status, body.error).toBe(200);
+      expect(body.draft!.summary!.assumptions[0]).toMatch(/^Reuses “Alert triager”: /);
+    } finally {
+      await fake.close();
+      if (prev === undefined) delete process.env.OLLAMA_URL;
+      else process.env.OLLAMA_URL = prev;
+    }
+  });
+
+  it('the builder prompt no longer promises that Spotlight designs a new agent after Apply', () => {
+    const reading = agentReading([{ type: 'core.messageAgent', name: 'Translator', parameters: { agentId: '' } }], []);
+    expect(reading.left[0]!.text).toContain('pick one, or ask Spotlight to create it');
   });
 });
 

@@ -15,7 +15,7 @@ import { attachedLine } from '@/lib/shared/agent-card';
 const { prepare, addScenarioPlugins } = await import('./spotlight-scenarios/harness');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { registry } = await import('@/lib/server/plugins/registry');
-const { cardFromPreview, useExistingAgent } = await import('@/components/editor/spotlight/agent-ask');
+const { cardFromPreview, useExistingAgent, createFromCard } = await import('@/components/editor/spotlight/agent-ask');
 const { AgentCardView } = await import('@/components/editor/spotlight/agent-card');
 const { useAssistant } = await import('@/components/editor/assistant');
 const { useEditor } = await import('@/components/editor/store');
@@ -140,8 +140,42 @@ const click = async (selector: string) => { await act(async () => { (container.q
     expect(buttons).toEqual(['Use Alert triager', 'Create anyway']);
     expect(container.querySelector('[data-testid="agent-reuse"]')!.textContent).toContain('“Alert triager” already does this');
     expect([...container.querySelectorAll('button')].some((b) => /^Create agent/.test(b.textContent ?? ''))).toBe(false);
+    await settle();
     // The reused agent's own bubbles (read from the agents page's draft): the diagram is its.
     expect(container.querySelector('[data-testid="bubble-diagram"]')!.getAttribute('aria-label')).toContain('Alert triager');
+  });
+
+  it('a reused card draws S1’s own bubbles: Send Email carries the lock and asks first, the detail is the reused agent’s', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(/\/api\/agents\/ag_s1$/.test(String(url)) ? { agent: { id: 'ag_s1', name: 'Alert triager', model: { provider: 'ollama', model: 'qwen3-coder:30b' }, tools: [{ id: 't1', type: 'node', name: 'send_email', description: 'x', nodeType: 'messaging.emailSend', requireApproval: true, parameters: {} }] } } : { nodeTypes: [] }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    const reuse = { agentId: 'ag_s1', name: 'Alert triager', why: 'it triages and emails oncall', published: true, gaps: [] as string[] };
+    // The proposal says something else (Haiku, another tool): the detail must not read it.
+    await show(cardFromPreview(preview({ reuse }), ASK, true));
+    expect(bubbles()).toContain('tool:send_email');
+    expect(container.querySelector('[data-bubble="tool:send_email"]')!.innerHTML).toMatch(/bg-warn/);
+    await click('[data-bubble="tool:send_email"]');
+    expect(container.querySelector('[data-testid="bubble-detail"]')!.textContent).toContain('asks first');
+    await click('[data-bubble="model"]');
+    const detail = container.querySelector('[data-testid="bubble-detail"]')!.textContent!;
+    expect(detail).toContain('qwen3-coder:30b');
+    expect(detail).not.toContain('haiku');
+  });
+
+  it('after Create on asks.md B’s card: no folder route call, and the imported knowledge tool is the existing base', async () => {
+    const calls: Array<{ url: string; body?: string }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: { body?: string }) => {
+      calls.push({ url: String(url), ...(init?.body && { body: init.body }) });
+      const ok = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (/\/api\/agents\/import$/.test(String(url))) return ok({ agent: { id: 'ag_new', name: 'Alert advisor', tools: [{ id: 'k1', type: 'knowledge', collection: 'runbooks' }] } });
+      return ok({ nodeTypes: [] });
+    }));
+    const card = cardFromPreview(preview(), ASK, false, 'I need an agent …');
+    const id = await show(card);
+    await createFromCard(id, card);
+    await settle();
+    expect(calls.some((c) => /\/folder$/.test(c.url))).toBe(false);
+    const imported = JSON.parse(calls.find((c) => /\/api\/agents\/import$/.test(c.url))!.body!) as { config: { tools: Array<{ type: string; store?: string; collection?: string; embeddings?: unknown }> } };
+    const kb = imported.config.tools.find((t) => t.type === 'knowledge')!;
+    expect({ store: kb.store, collection: kb.collection, embeddings: kb.embeddings }).toEqual({ store: 'sqlite', collection: 'runbooks', embeddings: { provider: 'none', model: 'bm25' } });
   });
 
   it('Use on an empty canvas lays out the starter flow bound to the agent, makes no agent and says Reuses “name”: why', async () => {
