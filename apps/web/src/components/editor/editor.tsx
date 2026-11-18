@@ -974,7 +974,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
       // A Webhook or Form trigger without test data: listen for a test event instead, as n8n does.
       const listenOn = testTriggerFor(command);
       if (listenOn) return listenForTestEvent(listenOn);
-      if (command.kind === 'run') return report(await execute(), started, 'Workflow', command.by === 'spotlight');
+      if (command.kind === 'run') return report(await execute({ ...command.approvals } /* AG22: approvals, sessionId, destinations */), started, 'Workflow', command.by === 'spotlight');
       if (command.kind === 'debug') return report(await execute({}, true), started, 'Debug run');
 
       const state = useEditor.getState();

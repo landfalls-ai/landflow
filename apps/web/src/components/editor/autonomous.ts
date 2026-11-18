@@ -2,8 +2,12 @@
 /**
  * Spotlight's autonomous mode (docs/assistant.md#autonomous-mode), on unless turned off: Spotlight doesn't wait for a
  * click. A flow it drafts on an empty canvas goes straight into Test and fix; the changes a chat reply proposes are
- * applied as the reply ends (each with Undo, as Apply would) and the flow is tested and fixed again. Publishing to
- * production still takes a person's click. An agent it creates is designed by the Agent architect, smoke-tested on the item that
+ * applied as the reply ends (each with Undo, as Apply would) and the flow is tested and fixed again. A build's publish to
+ * production still takes a person's click. AG22 (decision of 2026-11-18): a test-and-fix session (Test and fix, a typed "this
+ * looks made up", the Fix it bubble) acts alone on any workflow, saved or published too: it applies its own fixes to the flow
+ * and its agents, runs to destinations it was given, lets Spotlight approve its test runs' tool calls, picks the one fitting
+ * credential, and publishes each agent it changed and then the workflow (the lists are `AUTO_FIX_DOES` and `AUTO_FIX_NEVER` in
+ * lib/shared/fix-autonomy.ts; Asks first changes none of it). An agent it creates is designed by the Agent architect, smoke-tested on the item that
  * reaches its step and published only after a pass (./new-agent.ts); unpublishing it is one click on its page.
  * The choice is kept in the browser (localStorage), like the after-run suggestions' switch.
  */
@@ -111,7 +115,7 @@ export function testDraft(replyId: string, goal: string): boolean {
   // The conversation was started over (or the draft stopped) before the test began.
   if (autonomyOf(useEditor.getState().workflowId) !== 'auto' || !useAssistant.getState().items.some((i) => i.id === replyId)) return false;
   useAssistant.getState().updateParts(replyId, (parts) => parts.map((p) => (p.kind === 'action' && p.action === 'test' ? { ...p, state: 'done' } : p)));
-  void testUntilItRuns(goal, { publishAgents: true });
+  void testUntilItRuns(goal, { publishAgents: true }); // AG22: `publishAgents` marks a build's session (it keeps D1: its publish is the person's click)
   return true;
 }
 

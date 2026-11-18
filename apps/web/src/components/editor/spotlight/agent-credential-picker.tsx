@@ -15,6 +15,8 @@ import { qualifiedCredentialType, useCredentialStore } from '../../credentials/u
 import { useAssistant } from '../assistant';
 import { useEditor } from '../store';
 import type { AgentSmoke } from '@/lib/shared/agent-card';
+import { pickAlone, pickedAloneLine } from '@/lib/shared/fix-autonomy'; // AG22:
+import { agentFixHooks } from '../test-session'; // AG22:
 import { CredentialPickerView, type PickerOption } from './credential-picker';
 
 type Tool = Record<string, unknown> & { id: string; name?: string; nodeType?: string; parameters?: Record<string, unknown>; credentials?: Record<string, { id: string; name: string }> };
@@ -46,6 +48,40 @@ export function showSmoke(agentId: string, smoke: AgentSmoke) {
     useAssistant.getState().updateParts(item.id, (parts) => parts.map((p) => (p.kind === 'agentCard' && p.card.state === 'created' && (p.card.agentId === agentId || p.card.base?.agentId === agentId) ? { ...p, card: { ...p.card, smoke } } : p)));
   }
 }
+
+/** AG22: the tool of a draft that needs a credential and the credentials of the agent's project that fit it (names and types only). */
+export function fittingCredentials(draft: Record<string, unknown> | undefined, all: ReadonlyArray<{ id: string; name: string; type: string }>) {
+  const nodeTypes = useEditor.getState().nodeTypes;
+  const need = toolNeedingCredential(draft, (tool) => {
+    const descriptor = nodeTypes[tool.nodeType ?? '']?.descriptor;
+    const parameters = withPropertyDefaults(descriptor?.properties ?? [], (tool.parameters ?? {}) as never);
+    return (descriptor?.credentials ?? []).filter((c) => isPropertyVisible(c as never, parameters)) as CredentialSlot[];
+  });
+  if (!need) return undefined;
+  const slots = new Map(need.slots.map((slot) => [qualifiedCredentialType(need.tool.nodeType!, slot), slot]));
+  const fitting = all.filter((c) => slots.has(c.type)).map((c) => ({ id: c.id, name: c.name, type: c.type, slot: slots.get(c.type)! }));
+  return { tool: need.tool, fitting };
+}
+
+/**
+ * AG22: an autonomous fix session picks the credential when exactly one fits (`pickAlone`): it writes it into the agent's draft as
+ * "Pick it" does and returns the smoke result and the line to say. Several fit: `ask` (the session waits on Pick it); none: `none`
+ * (the card says what is left). Never a secret: names and types.
+ */
+export async function pickCredentialAlone(agentId: string): Promise<{ state: 'picked'; smoke: AgentSmoke; line: string } | { state: 'ask' | 'none' | 'nothing' }> {
+  const draft = await readDraft(agentId);
+  const scope = await api<{ credentials: Array<{ id: string; name: string; type: string }> }>(`/api/credentials?agentId=${encodeURIComponent(agentId)}`).catch(() => undefined);
+  const found = fittingCredentials(draft, scope?.credentials ?? []);
+  if (!found) return { state: 'nothing' };
+  const one = pickAlone(found.fitting);
+  if (!one) return { state: found.fitting.length ? 'ask' : 'none' };
+  const { smoke } = await changeAgentTool(agentId, { ...found.tool, credentials: { ...found.tool.credentials, [one.slot]: { id: one.id, name: one.name } } });
+  showSmoke(agentId, smoke);
+  return { state: 'picked', smoke, line: pickedAloneLine(one.name, String(found.tool.name ?? found.tool.nodeType ?? 'the tool')) };
+}
+
+// AG22: the session reaches the pick through the hook (no import cycle with the session).
+agentFixHooks.pick = (agentId) => pickCredentialAlone(agentId);
 
 export function AgentCredentialPicker({ agentId, onDone, startCreating = false }: { agentId: string; onDone?: () => void; startCreating?: boolean }) {
   const nodeTypes = useEditor((s) => s.nodeTypes);

@@ -101,7 +101,9 @@ beforeEach(() => {
   apiCalls.length = 0;
   apiAnswers = {};
   sendsAllowed.clear();
-  useAutonomyFacts.setState({ switchOn: true, workflows: {} });
+  // AG22: the tests below assert Asks first (every step waits for a click). The decision of 2026-11-18 made the switch alone decide a
+  // fix session's autonomy, so they run with the switch off; the switch-on behaviour is session-auto-ag5.test.ts.
+  useAutonomyFacts.setState({ switchOn: false, workflows: {} });
   useAssistant.getState().reset();
   useEditor.getState().load(flow(), []);
   useEditor.setState({ nodeTypes });
@@ -195,17 +197,37 @@ describe('wave ag4 carryover: an Apply that lands before the reply ends', () => 
   });
 });
 
-describe('re-check 3 (item 10): a saved workflow is never auto-applied, with the switch on', () => {
-  it('a wrong-output session on a workflow opened with nodes asks first: the fix is a card that waits, nothing is applied by itself', async () => {
+// AG22: this block asserted sb1's D1 for a fix session ("a saved workflow is never auto-applied, with the switch on"). The person's
+// decision of 2026-11-18 replaced it: with the switch on a fix session applies its own fixes on a saved workflow too. It is now two
+// tests: the new rule with the switch on, and the old wait kept as its twin with the switch off (Asks first unchanged).
+describe('re-check 3 (item 10), as the decision of 2026-11-18 changed it', () => {
+  const wrongOutput = 'The numbers in the report look made up. Test it and fix it.';
+  const script = () => {
+    runs = [{ 'Notify VIP': { items: 1 }, 'Notify Standard': { items: 1 } }, { 'Notify VIP': { items: 1 }, 'Notify Standard': { items: 1 } }];
+    replies = [{ text: 'No, the numbers look invented.', proposals: [{ summary: 'Fix body', ops: [fixBody] }] }, { text: 'Yes, it does what you asked.' }];
+  };
+
+  it('switch on: a wrong-output session on a workflow opened with nodes applies its own fix, with no click, and runs again', async () => {
+    noteOpened(WF, 3); // opened with nodes: saved
+    useAutonomyFacts.setState({ switchOn: true });
+    yes();
+    script();
+    await testUntilItRuns(wrongOutput);
+    expect(sentAutonomy).toEqual(['auto', 'auto']);
+    expect(autonomyOf(WF)).toBe('asks-first'); // builds and typed changes keep sb1's D1
+    expect(applied).toEqual([[fixBody]]);
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it('switch off (Asks first): the fix is a card that waits, nothing is applied by itself', async () => {
     noteOpened(WF, 3); // opened with nodes: saved
     yes();
     runs = [{ 'Notify VIP': { items: 1 }, 'Notify Standard': { items: 1 } }];
     replies = [{ text: 'No, the numbers look invented.', proposals: [{ summary: 'Fix body', ops: [fixBody] }] }];
-    const session = testUntilItRuns('The numbers in the report look made up. Test it and fix it.');
+    const session = testUntilItRuns(wrongOutput);
     await vi.waitFor(() => expect(sentSessions).toEqual(['review']));
-    expect(useAutonomyFacts.getState().switchOn).toBe(true);
+    expect(useAutonomyFacts.getState().switchOn).toBe(false);
     expect(sentAutonomy).toEqual(['asks-first']);
-    expect(autonomyOf(WF)).toBe('asks-first');
     await new Promise((r) => setTimeout(r, 30));
     expect(applied).toEqual([]);
     decide('r1p0', 'dismissed');

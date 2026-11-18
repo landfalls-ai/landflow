@@ -23,6 +23,7 @@ import { designPreview, smokeTestAgent, takeBackAgents } from '../new-agent';
 import { writesOutside } from '@/lib/shared/run-check';
 import { autonomyOf } from '../spotlight-autonomy';
 import { useEditor } from '../store';
+import { agentFixHooks } from '../test-session'; // AG22:
 import type { Reply } from './reply';
 
 type ToolConfig = AgentConfig['tools'][number];
@@ -571,3 +572,7 @@ export async function publishAgentChange(itemId: string, card: AgentCard): Promi
   patchCard(itemId, { publish: await publishChange(agentId) });
   announceChange(agentId);
 }
+
+// AG22: an autonomous fix session applies and publishes its agent change card through these two (the person's Apply and Publish are the same calls).
+agentFixHooks.apply = applyAgentChange;
+agentFixHooks.publish = publishAgentChange;

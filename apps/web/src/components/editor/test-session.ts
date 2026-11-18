@@ -17,9 +17,12 @@ import { checkRun, destinationsOf, writesOutside, givenKept, hollowSteps, hostOf
 import { applyChanges, fixedNodes, ownRun, runDigests, undos, useAssistant, type ChatItem, type Need, type Outcome, type ReplyPart } from './assistant';
 import { nextRound } from './timeline';
 import { agentsSettled, itemReaching, smokeTestAgent } from './new-agent'; // SB18:
-import { smokeLine, fixLine, type AgentCard } from '@/lib/shared/agent-card'; // SB18: (AG20: fixLine)
+import { smokeLine, fixLine, type AgentCard, type AgentSmoke } from '@/lib/shared/agent-card'; // SB18: (AG20: fixLine)
 import type { AgentFixEvent } from '@/lib/shared/agent-fix'; // AG20:
-import { designChange } from '@/lib/client/agent-change'; // AG20:
+import { designChange, heldOf, readDraft, type ChangeDesign } from '@/lib/client/agent-change'; // AG20: AG22: heldOf, readDraft
+import { api } from '@/lib/client/api'; // AG22:
+import { normalDestination, publishedLine, SPOTLIGHT_APPROVALS, unattendedLine, type SpotlightRunApprovals } from '@/lib/shared/fix-autonomy'; // AG22:
+import { agentReplyText, agentUndoneBy, destinationsInText, droppedLine, fixAutonomyNow, fixesOf, heldLine, heldRequest, KEEP_REASON, keptTools, leftForNextRound, sameFixTwice, toolsAdded, undoneBy, type OwnFix } from './fix-session'; // AG22:
 import { followsPractices, guardrailWords, type AgentConfig } from '@/lib/shared/agents'; // AG20:
 import { useBubbleData } from '@/lib/client/agent-bubble-data'; // ag4 review: the agent's name in what is left
 import { pickedModel } from './spotlight-model'; // AG20:
@@ -156,6 +159,17 @@ function watchPending() {
   sync();
 }
 watchPending();
+
+/**
+ * AG22: the destinations an autonomous fix session counts as given: the ones a saved or published flow already sent to when the
+ * session started, and the ones the person's words name. A brand-new draft's own URLs are the builder's, not the person's: they
+ * still ask (lesson 21). The run request carries them as the approvals' `destinations`.
+ */
+function givenDestinations(workflowId: string, goal: string | undefined): string[] {
+  const words = [goal, useEditor.getState().description, ...useAssistant.getState().items.flatMap((i) => (i.role === 'user' && !i.auto ? [i.text] : []))].filter(Boolean).join('\n');
+  const own = autonomyOf(workflowId) === 'auto' ? [] : sendingNow().map((d) => d.destination).filter((d) => !isUnreadHost(d) && d !== NO_ADDRESS);
+  return [...new Set([...own, ...destinationsInText(words)])];
+}
 
 /** The enabled steps that would send for real, grouped by what the person has not said yes to yet. */
 function unapproved(): Sending[] {
@@ -318,13 +332,13 @@ function weakSteps(): Array<{ node: string; problem: string }> {
 }
 
 /** Run the workflow once and judge it; `stopped` when the session can't go on. */
-async function runOnce(signal: AbortSignal): Promise<RunVerdict | { stopped: string }> {
+async function runOnce(signal: AbortSignal, approvals?: SpotlightRunApprovals /* AG22: */): Promise<RunVerdict | { stopped: string }> {
   await until(() => !useEditor.getState().running, signal);
   if (signal.aborted) return { stopped: 'Stopped.' };
   const { run } = useEditor.getState();
   if (!run) return { stopped: 'The editor can’t run the workflow right now.' };
   // This run is Spotlight's: its end is a row of the timeline, even once the session is over (no toast).
-  run({ kind: 'run', by: 'spotlight' });
+  run({ kind: 'run', by: 'spotlight', ...(approvals && { approvals }) }); // AG22: an autonomous fix session lets Spotlight approve its test run's tool calls
   const started = await until(() => useEditor.getState().running, signal, 3000);
   // A run followed from the server (the stream dropped) is matched by its execution, once the server names it.
   if (started) void until(() => Boolean(useEditor.getState().executionId), signal, 10000).then((named) => named && ownRun(useEditor.getState().executionId));
@@ -337,8 +351,31 @@ async function runOnce(signal: AbortSignal): Promise<RunVerdict | { stopped: str
   if (signal.aborted) return { stopped: 'Stopped.' };
   const { runStatus } = useEditor.getState();
   if (runStatus === 'canceled') return { stopped: 'The run stopped before it finished.' };
-  if (runStatus === 'waiting') return { stopped: 'The run is waiting (a Wait node, a form or an approval) and goes on in the background, so testing stops here.' };
+  if (runStatus === 'waiting') return { stopped: waitingLine() }; // AG22: an agent approval says so
   return checkRun(canvasRun());
+}
+
+/**
+ * AG22: why a waiting test run stops the session: a tool approval Spotlight may not give (a destination nobody gave) says so, as
+ * *Needs you*; any other wait keeps the line it had.
+ */
+export function waitingLine(): string {
+  const { wait } = useEditor.getState();
+  const approval = wait?.data?.approval as { calls?: Array<{ tool?: string; name?: string; destinations?: string[] }> } | undefined;
+  if (approval) {
+    const call = approval?.calls?.find((c) => !('state' in c)) ?? approval?.calls?.[0];
+    const tool = call?.tool ?? call?.name;
+    const to = call?.destinations?.[0];
+    return `A test run waits for your approval${tool ? ` of “${tool}”` : ''}${to ? ` to ${to}` : ''}: Needs you, then test again.`;
+  }
+  return 'The run is waiting (a Wait node, a form or an approval) and goes on in the background, so testing stops here.';
+}
+
+/** AG22: the reply of each enabled Run an Agent step (and the tool calls its output lists), for the review beside the last node's output. */
+function agentReply(): string {
+  const digests = runDigests();
+  const steps = useEditor.getState().nodes.filter((n) => n.data.wf.type === 'core.messageAgent' && !n.data.wf.disabled).map((n) => ({ name: n.data.wf.name, sample: digests[n.id]?.outputs[0]?.sample }));
+  return agentReplyText(steps);
 }
 
 /** What the step a passing run ended at put out, for the review: the model compares it with the goal without a tool call. */
@@ -386,6 +423,15 @@ interface Paused {
   ran: boolean;
   autonomy: Autonomy;
   publishAgents: boolean | undefined;
+  ownFixes: OwnFix[]; // AG22: what this session fixed, which no later round undoes
+  given: string[]; // AG22: the destinations given to this session
+  changedAgents: ChangedAgent[]; // AG22:
+}
+/** AG22: an agent the session changed, and whether its change is published. */
+interface ChangedAgent {
+  agentId: string;
+  name: string;
+  published: boolean;
 }
 const paused = new Map<string, Paused>();
 
@@ -495,12 +541,23 @@ function cardOf(config: Partial<AgentConfig>, name: string, needs: Array<{ text:
   };
 }
 
-/** The agent change card of an `agent-fix`, as the AG04 change card with the failed run's `fix` on it (never applied by itself: a saved agent is not a brand-new draft). */
-async function showAgentFix(event: AgentFixEvent, attempt: number, signal: AbortSignal, testId: string, typedAsk = ''): Promise<string | undefined> {
+/**
+ * The agent change card of an `agent-fix`, as the AG04 change card with the failed run's `fix` on it. Asks first: it waits for the
+ * person's Apply (a saved agent is not a brand-new draft). AG22: in an autonomous fix session (`own.auto`) the card is shown as
+ * applied (the session applies it right after), the design carries `keep` (the tools this session added) and a design that
+ * removes one of them is dropped: `{ undone }`, nothing shown.
+ */
+async function showAgentFix(event: AgentFixEvent, attempt: number, signal: AbortSignal, testId: string, typedAsk = '', own?: { fixes: readonly OwnFix[]; auto: boolean }): Promise<string | { undone: OwnFix } | undefined> {
   try {
-    const design = await designChange({ name: event.agent, description: '', base: { agentId: event.agentId }, change: event.change, typedAsk, ...pickedModel() }, signal);
+    const kept = own ? keptTools(event.agentId, own.fixes) : [];
+    const base = own ? await readDraft(event.agentId) : undefined; // AG22: the tools it had, to tell what the change adds
+    const design = await designChange({ name: event.agent, description: '', base: { agentId: event.agentId }, change: event.change, typedAsk, ...(kept.length && { keep: { tools: kept, reason: KEEP_REASON } }), ...pickedModel() }, signal);
+    const undone = own && agentUndoneBy(event.agentId, design.config, own.fixes); // AG22: never undo the session's own tool
+    if (undone) return { undone };
     const fix = { ...event.fix, attempt };
     const card: AgentCard = { ...cardOf(design.config as Partial<AgentConfig>, event.agent, design.needs, design.missing), base: { agentId: event.agentId, name: event.agent }, changes: design.changes, cases: design.cases ?? [], ...(design.replaceCases?.length && { replaceCases: design.replaceCases }), askedChange: event.change, typedAsk, fix };
+    if (own?.auto) card.state = 'creating'; // AG22: applied by the session, not waiting for a click
+    if (own) lastDesign = { design, added: toolsAdded(base, design.config) };
     const id = nanoid(8);
     useAssistant.getState().append([{ id, role: 'assistant', testId, parts: [{ kind: 'text', text: fixLine(event.agent, fix) }, { kind: 'agentCard', card }] }]);
     return id;
@@ -509,6 +566,8 @@ async function showAgentFix(event: AgentFixEvent, attempt: number, signal: Abort
     return undefined;
   }
 }
+/** AG22: the design the last `showAgentFix` made and the tools it adds (read by the session right after). */
+let lastDesign: { design: ChangeDesign; added: string[] } | undefined;
 
 /** The applied change's test stopped for a credential: the person picks it on the card (Pick it), in place. */
 const needsPick = (card: AgentCard) => card.smoke?.state === 'untested' && Boolean(card.smoke.reason?.startsWith('needs a credential'));
@@ -553,6 +612,129 @@ export async function agentFixOutcome(itemId: string, signal: AbortSignal): Prom
 }
 
 /**
+ * AG22: what the session calls to apply and publish an agent change card and to pick a credential: the card's own code
+ * (spotlight/agent-ask.ts, spotlight/agent-credential-picker.tsx) registers itself here when it loads.
+ */
+export const agentFixHooks: {
+  apply?: (itemId: string, card: AgentCard) => Promise<void>;
+  publish?: (itemId: string, card: AgentCard) => Promise<void>;
+  pick?: (agentId: string) => Promise<{ state: 'picked'; smoke: AgentSmoke; line: string } | { state: 'ask' | 'none' | 'nothing' }>;
+} = {};
+
+/**
+ * AG22: an autonomous fix session's agent fix: the card is applied by the session (the draft saved with its cases swapped, the
+ * smoke test), the credential is picked when exactly one fits (several: the session waits on Pick it), the change is published
+ * through the eval gate. A held gate is a finding: the line says the score, then one more fix from the lowest cases, then publish
+ * again; out of fixes it stops with the verdict. Never `skipEval`, never "Publish anyway".
+ */
+async function autoAgentFix(ctx: { event: AgentFixEvent; signal: AbortSignal; testId: string; goal: string; fixes: number; ownFixes: OwnFix[]; changedAgents: ChangedAgent[]; tried: string[] }): Promise<{ kind: 'done'; used: number } | { kind: 'dropped'; used: number } | { kind: 'stop'; used: number; text: string }> {
+  const { event, signal, testId, goal, ownFixes, changedAgents } = ctx;
+  const hooks = agentFixHooks; // registered by agent-ask.ts and agent-credential-picker.tsx (they reach this module through ./autonomous: no import cycle)
+  if (!hooks.apply || !hooks.publish) return { kind: 'stop', used: 0, text: `I couldn’t apply the change to “${event.agent}” here: the agent card isn’t loaded. Left: open the agent and apply it.` };
+  let change = event.change;
+  let used = 0;
+  for (;;) {
+    const attempt = ctx.fixes + used + 1;
+    const shown = await showAgentFix({ ...event, change }, attempt, signal, testId, goal, { fixes: ownFixes, auto: true });
+    if (signal.aborted) return { kind: 'stop', used, text: '' };
+    if (!shown) return { kind: 'stop', used, text: `I couldn’t work out a change to “${event.agent}”.` };
+    if (typeof shown === 'object') {
+      say([{ kind: 'text', text: droppedLine(shown.undone) }], testId);
+      return { kind: 'dropped', used };
+    }
+    const designed = lastDesign;
+    let card = cardIn(shown);
+    if (!card) return { kind: 'stop', used, text: 'You kept the agent as it was.' };
+    await hooks.apply(shown, card);
+    used++;
+    ownFixes.push({ kind: 'agent', agentId: event.agentId, toolsAdded: designed?.added ?? [], summary: designed?.added.length ? `added ${designed.added.map((t) => `“${t}”`).join(', ')} to “${event.agent}”` : `changed “${event.agent}”` });
+    if (!changedAgents.some((a) => a.agentId === event.agentId)) changedAgents.push({ agentId: event.agentId, name: event.agent, published: false });
+    for (const a of changedAgents) if (a.agentId === event.agentId) a.published = false;
+    const settled = () => {
+      const c = cardIn(shown);
+      return !c || c.state === 'failed' || (c.state === 'created' && c.smoke !== undefined && c.smoke.state !== 'testing');
+    };
+    if (!(await untilAssistant(settled, signal))) return { kind: 'stop', used, text: '' };
+    card = cardIn(shown);
+    if (!card) return { kind: 'stop', used, text: 'You kept the agent as it was.' };
+    if (card.state === 'failed') return { kind: 'stop', used, text: `Saving the change to “${card.name}” failed: ${card.error ?? 'unknown error'}. Left: open the agent and try again.` };
+    if (needsPick(card)) {
+      const picked = await (hooks.pick?.(event.agentId) ?? Promise.resolve({ state: 'ask' as const })).catch(() => ({ state: 'ask' as const }));
+      if (picked.state === 'picked') say([{ kind: 'text', text: picked.line }], testId);
+      else if (picked.state === 'none') return { kind: 'stop', used, text: `The change to “${card.name}” needs a credential and none you have fits it. Left: create one (Pick it, then Create one), then tell me to test again.` };
+      else if (picked.state === 'ask' && !(await untilAssistant(() => !cardIn(shown) || !needsPick(cardIn(shown)!), signal))) return { kind: 'stop', used, text: '' };
+      card = cardIn(shown);
+      if (!card) return { kind: 'stop', used, text: 'You kept the agent as it was.' };
+    }
+    if (card.smoke?.state !== 'passed') return { kind: 'stop', used, text: `The change to “${card.name}” did not pass its test (${smokeLine(card.smoke)}). Left: open the agent and look at what it did.` };
+    await hooks.publish(shown, card);
+    if (signal.aborted) return { kind: 'stop', used, text: '' };
+    card = cardIn(shown);
+    if (card?.publish?.state === 'published') {
+      for (const a of changedAgents) if (a.agentId === event.agentId) a.published = true;
+      return { kind: 'done', used };
+    }
+    if (card?.publish?.state === 'held') {
+      const held = heldOf(event.agentId);
+      const line = heldLine(card.name, held, card.publish.reason);
+      say([{ kind: 'text', text: line }], testId);
+      if (ctx.fixes + used >= MAX_FIXES) return { kind: 'stop', used, text: `${line} I am out of fixes. Left: open the agent, look at its cases, then publish it.` };
+      change = heldRequest(card.name, line, held?.lowCases ?? []);
+      continue;
+    }
+    return { kind: 'stop', used, text: `Publishing “${card?.name ?? event.agent}” failed${card?.publish?.reason ? `: ${card.publish.reason}` : ''}. Left: open the agent and publish it.` };
+  }
+}
+
+/**
+ * AG22: the end of an autonomous fix session that passed: every agent the session changed is published (the gate runs; most are
+ * published by their own fix already), then the workflow, with no `agents` choice: the agents' new versions are what its draft
+ * pins (`publish-first` and `as-published` are never sent). Reads the versions back and says `publishedLine`, then
+ * `unattendedLine` for each asks-first tool the unattended route lists. Four-eyes publishing: the publish is a request, said.
+ * Returns whether it published.
+ */
+async function publishAtEnd(ctx: { signal: AbortSignal; testId: string; changedAgents: ChangedAgent[] }): Promise<boolean> {
+  const { signal, testId, changedAgents } = ctx;
+  const { publishChange } = await import('@/lib/client/agent-change');
+  for (const a of changedAgents.filter((c) => !c.published)) {
+    const result = await publishChange(a.agentId);
+    if (result.state === 'published') a.published = true;
+    else {
+      const line = result.state === 'held' ? heldLine(a.name, heldOf(a.agentId), result.reason) : `Publishing “${a.name}” failed${result.reason ? `: ${result.reason}` : ''}.`;
+      say([{ kind: 'outcome', outcome: { text: `${line} Left: open the agent, look at its cases, then publish it.`, fixes: [], edits: useEditor.getState().edits } }]);
+      return false;
+    }
+  }
+  if (signal.aborted) return false;
+  const { workflowId, dirty, save } = useEditor.getState();
+  if (dirty && !(await save?.())) {
+    say([{ kind: 'outcome', outcome: { text: 'It passed, but I couldn’t save the flow, so nothing is published. Left: save it, then publish.', fixes: [], edits: useEditor.getState().edits } }]);
+    return false;
+  }
+  try {
+    const result = await publishVersion(workflowId); // no `agents`: the agents are published, so the draft's pins are their new versions
+    notePublished(workflowId);
+    if (result.approvalRequired) {
+      toastApprovalRequested(result);
+      say([{ kind: 'text', text: 'Publishing needs a second person: I sent the request for an approver. Nothing is live until it is approved.' }], testId);
+      return true;
+    }
+    const versionId = result.published?.versionId;
+    const pins = versionId ? await api<{ pins: Array<{ agentName?: string; nodeName?: string; version: number }> }>(`/api/workflows/${workflowId}/versions/${versionId}/pins`, { background: true }).then((r) => r.pins, () => []) : [];
+    const agents = pins.map((p) => ({ name: p.agentName ?? p.nodeName ?? 'agent', version: p.version }));
+    say([{ kind: 'text', text: publishedLine(result.published?.versionNumber ?? 0, agents) }], testId);
+    // AG22: AG23's route (GET /api/workflows/:id/unattended-approvals) lists the asks-first tools a trigger run refuses; a host without it lists none (the integrator wires the route's shape).
+    const unattended = await api<{ tools?: Array<{ tool: string; trigger: string }> }>(`/api/workflows/${workflowId}/unattended-approvals`, { background: true }).catch(() => ({ tools: [] as Array<{ tool: string; trigger: string }> }));
+    for (const t of unattended.tools ?? []) say([{ kind: 'text', text: unattendedLine(t.tool, t.trigger) }], testId);
+    return true;
+  } catch (e) {
+    const body = (e as { body?: { code?: string; agents?: Array<{ name: string }> } }).body;
+    say([{ kind: 'outcome', outcome: { text: body?.code === 'agent_changes_unpublished' ? `Publishing the workflow stopped: ${(body.agents ?? []).map((a) => `“${a.name}”`).join(', ')} has changes that are not published. Left: publish the agent, then the workflow.` : `Publishing the workflow failed: ${(e as Error).message}.`, fixes: [], edits: useEditor.getState().edits } }]);
+    return false;
+  }
+}
+
+/**
  * Run, fix, run again until a run passes, MAX_FIXES fixes are spent, or the user stops it. With a `goal` (the description
  * the workflow was drafted from), a run without errors is checked against it as well: the assistant compares the output
  * with the goal and fixes what doesn't match.
@@ -573,8 +755,16 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     // SB03: the fixes applied when the last review was asked; a pass is reviewed again after any fix since.
     let reviewedAt: number | undefined = resumed?.reviewedAt;
     /** SB03: what Spotlight may do alone, and the steps the flow had when the session started. */
-    const autonomy = options.autonomy ?? resumed?.autonomy ?? autonomyOf(wfId);
+    // AG22: a test-and-fix session takes the switch alone (decision of 2026-11-18), on a saved or published flow too; builds keep autonomyOf.
+    const autonomy: Autonomy = options.autonomy ?? resumed?.autonomy ?? fixAutonomyNow();
+    /** AG22: what this session fixed (no later round undoes it), the agents it changed and the destinations given to it. */
+    const ownFixes: OwnFix[] = resumed?.ownFixes ?? [];
+    const changedAgents: ChangedAgent[] = resumed?.changedAgents ?? [];
+    const given: string[] = resumed?.given ?? (autonomy === 'auto' ? givenDestinations(wfId, goal) : []);
+    if (!resumed && given.length) approveDestinations(wfId, given); // AG22: a destination the flow already sent to, or the ask names, needs no "Run it now?"
+
     const publishAgents = options.publishAgents ?? resumed?.publishAgents;
+    const build = publishAgents === true; // AG22: autonomous.ts's build sessions (a drafted flow, an applied chat change) pass publishAgents: they keep D1, the publish is the person's click
     const startNodes = resumed?.startNodes ?? useEditor.getState().nodes.map((n) => ({ id: n.id, name: n.data.wf.name, enabled: n.data.wf.disabled !== true }));
     let ran = resumed?.ran ?? false;
     /** The last failure, to tell a fix that changed nothing. */
@@ -587,7 +777,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     const lastApplied: Array<{ item: string; proposals: string[] }> = resumed?.lastApplied ?? [];
     /** SB18: a row waits for the person: the session's state is kept for the click that goes on. */
     const waitFor = (need: Need) => {
-      paused.set(wfId, { fixes, startNodes, tried, lastApplied, lastFailure, lastFix, reviewedAt, ran, autonomy, publishAgents });
+      paused.set(wfId, { fixes, startNodes, tried, lastApplied, lastFailure, lastFix, reviewedAt, ran, autonomy, publishAgents, ownFixes, given, changedAgents });
       ask(need);
     };
     /** SB18: agents whose "Publish … first" was already handled once this session. */
@@ -601,6 +791,11 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     /** The session ends without a pass: a card with why and what to do next. */
     const stop = (text: string, node?: string) =>
       say([{ kind: 'outcome', outcome: { text, ...(node && { node }), ...(goal && { goal }), fixes: lastApplied.flatMap((a) => a.proposals.map((proposal) => ({ item: a.item, proposal }))), edits: useEditor.getState().edits } satisfies Outcome }]);
+    /** AG22: a pass the review accepted: asks first offers the publish; an autonomous session publishes the agents it changed, then the workflow. */
+    const passed = async () => {
+      if (autonomy !== 'auto' || build) return void say([{ kind: 'action', action: 'publish' }]);
+      await publishAtEnd({ signal, testId, changedAgents });
+    };
     // Runs count on through the conversation.
     for (let round = nextRound(useAssistant.getState().items); !signal.aborted; round++) {
       // An agent Spotlight is still designing (./new-agent.ts): the run needs it saved and pointed at first.
@@ -630,7 +825,9 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       }
       ran = true;
       const runItem = say([{ kind: 'run', run: { round, state: 'running' } }], testId);
-      const result = await runOnce(signal);
+      // AG22: an autonomous fix session's run carries Spotlight's approvals, with the destinations given (the person's yes too).
+      const approvals: SpotlightRunApprovals | undefined = autonomy === 'auto' ? { approvals: SPOTLIGHT_APPROVALS, sessionId: testId, destinations: [...new Set([...given, ...(sendsAllowed.get(wfId) ?? [])].map(normalDestination))] } : undefined;
+      const result = await runOnce(signal, approvals);
       approvedOnce.clear(); // a yes for an expression destination covered that run only
       if ('stopped' in result) {
         // The run that didn't happen gives way to why.
@@ -701,7 +898,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       }
       // SB03: a pass is reviewed against the goal; a pass after any fix since the last review is reviewed once more.
       if (!failed && (!goal || reviewedAt === fixes)) {
-        say([{ kind: 'action', action: 'publish' }]);
+        await passed(); // AG22: asks first offers the publish; autonomous publishes
         return;
       }
       if (fixes >= MAX_FIXES && failed) {
@@ -716,7 +913,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         ? `Test run ${round} ${executionId ? `(execution ${executionId}) ` : ''}${result.summary}.${asked} Fix it.${before}`
         : hollow.length
           ? `Test run ${round} ${executionId ? `(execution ${executionId}) ` : ''}had no errors, but ${hollow.map((h) => h.problem).join('; ')}.${asked} Read the run log (get_run_log) for what the agent said and which tools it has, then fix it.${before}`
-          : `Test run ${round} ${executionId ? `(execution ${executionId}) ` : ''}had no errors: ${result.summary}.${outputOf(result.node)} Does that do what I asked for: “${goal}”?${outputFields() /* SB18: */} Check each part of what I asked against it. If the output falls short, read the run log (get_run_log): for a Run an Agent step it shows the agent's tools, tool calls and reply, so a tool the agent lacks is read there (propose_agent_fix), not guessed. ${AGENT_FACTS_RULE} If it does, start your reply with "Yes," and say so in one sentence. If not, start your reply with "No," and name the part of what I asked that did not happen, then fix it.${before}`;
+          : `Test run ${round} ${executionId ? `(execution ${executionId}) ` : ''}had no errors: ${result.summary}.${outputOf(result.node)}${agentReply() /* AG22: the agent step's reply, not only the last node's */} Does that do what I asked for: “${goal}”?${outputFields() /* SB18: */} Check each part of what I asked against it. If the output falls short, read the run log (get_run_log): for a Run an Agent step it shows the agent's tools, tool calls and reply, so a tool the agent lacks is read there (propose_agent_fix), not guessed. ${AGENT_FACTS_RULE} If it does, start your reply with "Yes," and say so in one sentence. If not, start your reply with "No," and name the part of what I asked that did not happen, then fix it.${before}`;
       if (!failed) reviewedAt = fixes; // SB03:
       useAssistant.setState({ fixing: failed ? nodeId : undefined });
       await useAssistant.getState().send(request, { auto: true, fresh: true, session: failed ? 'fix' : 'review', autonomy, withoutSelection: true, testId, ...(nodeId && { nodeId }) });
@@ -746,9 +943,40 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
           stop(failed ? `Still failing${result.node ? ` at “${result.node}”` : ''} after ${MAX_FIXES} fixes. Left: ${leftFor(result.node)}` : `It runs, but doesn’t do all you asked yet, and I am out of fixes. Left: ${leftForAgent(result.node)}`, result.node);
           return;
         }
+        // AG22: C3 one focused fix per round: flow proposals beside an agent fix are left for the next round, never a card to click mid-session.
+        const beside = reply.parts.flatMap((p) => (p.kind === 'proposal' && !p.proposal.state ? [p.proposal] : []));
+        if (beside.length) {
+          for (const proposal of beside) useAssistant.getState().setProposalState(reply.id, proposal.id, 'dismissed');
+          say([{ kind: 'text', text: leftForNextRound(beside.map((b) => b.summary)) }], testId);
+        }
+        const change = `changed the agent “${reply.agentFix.agent}”: ${reply.agentFix.change}`.slice(0, 200);
+        // AG22: the same agent change twice is a stop, not a round.
+        if (tried.includes(change)) {
+          stop(`I already tried that change to “${reply.agentFix.agent}” and it didn’t help. Left: open the agent and change it, or tell me what it should do instead.`, result.node);
+          return;
+        }
+        if (autonomy === 'auto') {
+          // AG22: the session applies the agent fix itself: saved, smoke-tested, credential picked when one fits, published through the gate.
+          const done = await autoAgentFix({ event: reply.agentFix, signal, testId, goal: goal ?? '', fixes, ownFixes, changedAgents, tried });
+          if (signal.aborted) return;
+          fixes += done.used;
+          if (done.kind === 'stop') {
+            stop(done.text, result.node);
+            return;
+          }
+          if (done.kind === 'dropped') {
+            // Dropped before it was shown (it would undo the session's own fix): it costs no round; what the reply said is left.
+            stop(`It runs, but doesn’t do all you asked yet, and the only change left would undo my own earlier fix. Left: ${leftForAgent(result.node, missingPartOf(reply))}`, result.node);
+            return;
+          }
+          tried.push(change);
+          useAssistant.getState().noteFix(nodeId ? [nodeId] : [], `Changed “${reply.agentFix.agent}”`);
+          lastFix = 'agent';
+          continue;
+        }
         const cardItem = await showAgentFix(reply.agentFix, fixes + 1, signal, testId, goal ?? '');
         if (signal.aborted) return;
-        if (!cardItem) {
+        if (!cardItem || typeof cardItem === 'object') {
           stop(`I couldn’t work out a change to “${reply.agentFix.agent}”.`, result.node);
           return;
         }
@@ -758,18 +986,27 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
           stop(why, result.node);
           return;
         }
-        tried.push(`changed the agent “${reply.agentFix.agent}”: ${reply.agentFix.change}`.slice(0, 200));
+        tried.push(change);
         useAssistant.getState().noteFix(nodeId ? [nodeId] : [], `Changed “${reply.agentFix.agent}”`);
         lastFix = 'agent';
         fixes++;
         continue;
       }
-      const proposals = reply.parts.flatMap((p) => (p.kind === 'proposal' && !p.proposal.state ? [p.proposal] : []));
+      // AG22: a proposal that would undo this session's own fix (a parameter set back, a step it added removed) is dropped before it is shown; it costs no round.
+      const nodesBefore = useEditor.getState().nodes.map((n) => ({ id: n.id, name: n.data.wf.name, parameters: n.data.wf.parameters }));
+      const proposals = reply.parts.flatMap((p) => (p.kind === 'proposal' && !p.proposal.state ? [p.proposal] : [])).filter((proposal) => {
+        const undone = undoneBy(proposal.ops, ownFixes);
+        if (!undone) return true;
+        useAssistant.getState().setProposalState(reply.id, proposal.id, 'dismissed');
+        say([{ kind: 'text', text: droppedLine(undone) }], testId);
+        return false;
+      });
       // Wave ag4 carryover (the live pass's asks.md C): the card shows while the reply still works, so the person's Apply can
       // land before it ends: a fix they already applied is taken, and the run goes again (never "I found no fix").
       const appliedEarly = proposals.length ? [] : reply.parts.flatMap((p) => (p.kind === 'proposal' && p.proposal.state === 'applied' && !lastApplied.some((a) => a.item === reply.id && a.proposals.includes(p.proposal.id)) ? [p.proposal] : []));
       if (failed && appliedEarly.length) {
         lastApplied.push({ item: reply.id, proposals: appliedEarly.map((p) => p.id) });
+        for (const p of appliedEarly) ownFixes.push(...fixesOf(p.ops, useEditor.getState().nodes.map((n) => ({ id: n.id, name: n.data.wf.name, parameters: n.data.wf.parameters })))); // AG22:
         for (const proposal of appliedEarly) useAssistant.getState().noteFix(fixedNodes(proposal.ops, nodeId), opsTitle(proposal.ops));
         tried.push(...appliedEarly.map((p) => p.summary));
         lastFix = 'flow';
@@ -782,10 +1019,10 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         const yes = said?.kind === 'text' && /^\s*yes\b/i.test(said.text);
         // SB18: a "no" must name the part of the goal that did not happen; one that names none reads as a pass.
         const part = said?.kind === 'text' && !yes ? missingPart(said.text) : undefined;
-        if (!failed && yes) say([{ kind: 'action', action: 'publish' }]);
+        if (!failed && yes) await passed();
         else if (!failed && !part) {
           say([{ kind: 'text', text: 'Reviewed: nothing missing.' }]);
-          say([{ kind: 'action', action: 'publish' }]);
+          await passed();
         } else if (!failed) stop(`It runs, but doesn’t do all you asked yet: ${part}. I have no change for it. Left: ${leftForAgent(result.node, part)}`, result.node);
         // The reply above already says why.
         else stop(`I found no fix for “${result.node ?? 'this step'}”. Tell me what it should do, or open it.`, at);
@@ -800,6 +1037,12 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       if (kept) {
         for (const proposal of proposals) useAssistant.getState().setProposalState(reply.id, proposal.id, 'dismissed');
         stop(`${kept[0].toUpperCase()}${kept.slice(1)} I kept it.`, at);
+        return;
+      }
+      // AG22: the same fix twice (the same step, parameter and value) is a stop with what is left, never a loop.
+      if (sameFixTwice(proposals.flatMap((p) => p.ops), ownFixes)) {
+        for (const proposal of proposals) useAssistant.getState().setProposalState(reply.id, proposal.id, 'dismissed');
+        stop(`I already made that fix (${proposals[0].summary}) and it didn’t help. Left: ${leftFor(at)}`, at);
         return;
       }
       if (fixes >= MAX_FIXES) {
@@ -832,6 +1075,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
           return;
         }
         lastApplied.push({ item: reply.id, proposals: taken.map((p) => p.id) });
+        for (const p of taken) ownFixes.push(...fixesOf(p.ops, nodesBefore)); // AG22:
         for (const proposal of taken) useAssistant.getState().noteFix(fixedNodes(proposal.ops, nodeId), opsTitle(proposal.ops));
         tried.push(...taken.map((p) => p.summary));
         lastFix = 'flow'; // AG20:
@@ -854,6 +1098,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         return;
       }
       lastApplied.push({ item: reply.id, proposals: proposals.map((p) => p.id) });
+      for (const p of proposals) ownFixes.push(...fixesOf(p.ops, nodesBefore)); // AG22:
       for (const proposal of proposals) {
         useAssistant.getState().setProposalState(reply.id, proposal.id, 'applied', skipped);
         // A bubble on what it fixed, until dismissed.
