@@ -46,6 +46,12 @@ export type AssistantOp =
    * team when the change is applied; the node's team is filled in then.
    */
   | { op: 'turnIntoTeam'; node: string }
+  /**
+   * AG17: change the agent a Run an Agent node runs (its model, tools, knowledge, instructions), never the node: nothing in the graph
+   * changes. Spotlight's agent change card shows it and a person applies it (components/editor/spotlight/agent-ask.ts `changeAgentCard`).
+   * `agentId` is resolved from the node when the op applies.
+   */
+  | { op: 'changeAgent'; node?: string; agentId?: string; change: string }
   /** A node's run settings (retries, on error, timeout), not its parameters. */
   | { op: 'setNodeSettings'; node: string; settings: NodeSettingsPatch }
   /** The workflow's settings: its error workflow, timeout, automatic retries. */
@@ -232,6 +238,13 @@ function parseOp(o: Record<string, unknown> | undefined): AssistantOp | undefine
     }
     case 'turnIntoTeam':
       return node ? { op: 'turnIntoTeam', node } : undefined;
+    case 'changeAgent': {
+      // AG17: the change in the person's words (1–2000 characters) and the node or the agent it is for.
+      const change = text(o.change)?.trim();
+      const agentId = text(o.agentId);
+      if (!change || change.length > 2000 || (!node && !agentId)) return undefined;
+      return { op: 'changeAgent', ...(node && { node }), ...(agentId && { agentId }), change };
+    }
     case 'newAgent': {
       // A new agent and the Run an Agent node that runs it: an addNode the editor finishes by saving the agent.
       const spec = newAgentSpec(record(o.agent) ?? o);
@@ -387,10 +400,25 @@ function planConnection(
 
   const fits = (from: NodeDescriptor, to: NodeDescriptor) =>
     to.inputs.some((p) => p.type === type) && (from.supplies === type || from.outputs.some((p) => p.type === type) || (type === 'ai_tool' && Boolean(from.usableAsTool)));
-  if (fits(sd, td)) return { type, source, target, sourceIndex: 0, targetIndex: 0 };
-  // Models often wire the agent to its sub-node; the edge runs sub-node → agent.
-  if (fits(td, sd)) return { type, source: target, target: source, sourceIndex: 0, targetIndex: 0 };
-  return `“${source.name}” can’t be attached to “${target.name}” as ${type}`;
+  const planned: PlannedConnection | undefined = fits(sd, td)
+    ? { type, source, target, sourceIndex: 0, targetIndex: 0 }
+    : // Models often wire the agent to its sub-node; the edge runs sub-node → agent.
+      fits(td, sd)
+      ? { type, source: target, target: source, sourceIndex: 0, targetIndex: 0 }
+      : undefined;
+  if (!planned) return `“${source.name}” can’t be attached to “${target.name}” as ${type}`;
+  // AG17: a Run an Agent / Run a Team node runs a saved agent: its model, memory and tools are the agent's, so wiring them here is refused.
+  const bound = boundAgentRef(planned.target);
+  if (bound) return `“${planned.target.name}” runs the agent “${bound}”: its model, memory and tools are the agent’s. Change the agent instead (changeAgent).`;
+  return planned;
+}
+
+/** AG17: the plain agent (or team) id a Run an Agent / Run a Team node is bound to; undefined for an expression, an empty id or any other node. */
+export function boundAgentRef(node: Pick<WorkflowNode, 'type' | 'parameters'>): string | undefined {
+  const plain = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '' && !v.trim().startsWith('=') && !v.includes('{{');
+  if (node.type === 'core.messageAgent' && plain(node.parameters?.agentId)) return node.parameters.agentId.trim();
+  if (node.type === 'core.runTeam' && plain(node.parameters?.teamId)) return node.parameters.teamId.trim();
+  return undefined;
 }
 
 /** Add a planned connection; a port with maxConnections drops its oldest edge, as in the editor. */
@@ -752,6 +780,23 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
         // The team gets its id when the editor saves it; until then the node stands for it.
         wf = replaceWithTeam(wf, node.id, delegatesOf(wf, node.id).map((n) => n.id), { id: '', name: `${node.name} team` });
         applied.push({ op: 'turnIntoTeam', node: handle(node) });
+        break;
+      }
+
+      case 'changeAgent': {
+        // AG17: nothing in the graph changes; the op names the agent for Spotlight's change card.
+        const node = op.node ? find(op.node) : undefined;
+        if (op.node && !node) {
+          dropped.push(`change the agent of “${op.node}”: no such node`);
+          break;
+        }
+        const plain = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '' && !v.trim().startsWith('=') && !v.includes('{{');
+        const agentId = op.agentId ?? (node?.type === RUN_AGENT_TYPE && plain(node.parameters?.agentId) ? node.parameters.agentId.trim() : undefined);
+        if (!agentId) {
+          dropped.push(node ? `change the agent of “${node.name}”: it has no agent chosen yet` : 'change the agent: no agent given');
+          break;
+        }
+        applied.push({ op: 'changeAgent', ...(node && { node: handle(node) }), agentId, change: op.change });
         break;
       }
 
@@ -1153,6 +1198,8 @@ export function describeOps(ops: AssistantOp[], lookup?: DescriptorLookup): Diff
         return { sign: '✎', text: `“${name(op.node)}” → “${op.name}”` };
       case 'turnIntoTeam':
         return { sign: '~', text: `“${name(op.node)}” and the agents under it become a team (one Run a Team node)` };
+      case 'changeAgent':
+        return { sign: '~', text: `Change ${op.node ? name(op.node) : (op.agentId ?? 'the agent')}: ${op.change}` }; // AG17:
       case 'setNodeSettings':
         return { sign: '~', text: `“${name(op.node)}” settings: ${Object.entries(op.settings).map(([key, value]) => `${key} = ${preview(value)}`).join(', ')}` };
       case 'setWorkflowSettings':
@@ -1335,6 +1382,8 @@ export function opsTitle(ops: AssistantOp[]): string {
         return `Renamed “${op.node}” to “${op.name}”`;
       case 'turnIntoTeam':
         return `Turned “${op.node}” into a team`;
+      case 'changeAgent':
+        return `Change ${op.node ?? op.agentId ?? 'the agent'}: ${op.change}`; // AG17:
       case 'setWorkflowSettings':
         return 'Changed the workflow settings';
     }

@@ -69,6 +69,8 @@ import { WorkflowMenu } from './workflow-menu';
 import { PublishControl } from './publish-control';
 import { ListeningBar, listenForTestEvent, stopListening, testTriggerFor, useTestListener } from './test-listener';
 import { EditLockBanner, editorTabHeaders, useEditLock, useEditLockSync } from './edit-lock';
+import { moveOnOpen } from '@/lib/client/agent-moves'; // AG17:
+import { AgentMovesNotice, reloadWorkflow, whenLockHeld } from './agent-moves-notice'; // AG17:
 import { followable, useFollowRun } from './follow-run';
 import { pinFromRun } from './pin-from-run';
 import { useFollowWaiting } from './waiting';
@@ -732,6 +734,10 @@ export function Editor({ workflowId }: { workflowId: string }) {
       .then(([{ workflow }, { nodeTypes }]) => {
         if (cancelled) return;
         useEditor.getState().load(workflow, nodeTypes);
+        // AG17: a flow that wires its own model or tools into a Run an Agent node hands them to the agent's draft, then loads again.
+        void moveOnOpen(workflow, whenLockHeld)
+          .then((moved) => (moved && !cancelled ? reloadWorkflow(workflowId) : undefined))
+          .catch(() => {});
         loadComposites();
         setLoaded(true);
         useChatColumn.setState({ column: workflow.nodes.some((n) => n.type === 'core.chatTrigger') && !requested ? 'chat' : null });
@@ -1155,6 +1161,8 @@ export function Editor({ workflowId }: { workflowId: string }) {
               {phone && hasSteps && <ViewSwitch view={view} onChange={setView} />}
               <BuildProgressBar />
               {!showSteps && <BrainCanvasCard />}
+              {/* AG17: what moved from this flow's wiring into its agents; a pill once closed. */}
+              <AgentMovesNotice workflowId={workflowId} />
               {/* The run controls at the bottom, clear of zoom and the minimap. */}
               <div className={cn('pointer-events-none absolute inset-x-0 bottom-4 z-20 flex flex-wrap-reverse items-start justify-center gap-2 px-3 max-md:bottom-3', showMinimap(nodeCount) && 'md:pr-[232px]', spotlightWorks && 'max-md:hidden')}>
                 <ExecuteBar

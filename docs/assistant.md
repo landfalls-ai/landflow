@@ -178,6 +178,8 @@ An agent's smoke test and its eval-gate cases are the agent's own tests: their m
 
 A card, its smoke test and its publish are kept with the conversation and come back after a reload ([Conversation history](#conversation-history)).
 
+**Changing the agent a step runs** (AG17, wave ag4). A Run an Agent or Run a Team node's model, memory, tools and knowledge are its agent's, so Spotlight never wires sub-nodes into it: a `connect` of an `ai_languageModel`, `ai_memory` or `ai_tool` edge into such a node (or an `addNode` of a sub-node `after` it) is dropped with “<node>” runs the agent “<id>”: its model, memory and tools are the agent’s. Change the agent instead (changeAgent). To change them Spotlight proposes `{"op":"changeAgent","node":"<the node>","change":"<what to change, in your words>"}` (or `agentId`); the op changes nothing in the graph and, when applied, shows the agent's change card (the card of [Changing an agent](#changing-an-agent): **Apply** puts the draft and runs its smoke test, then **Publish** goes through the eval gate; Apply is always your click, also in autonomous mode, because a saved agent is never a brand-new draft). Sub-nodes a flow wired before are moved into the agent by the product ([agents.md](agents.md#from-workflows)): Spotlight never proposes moving them.
+
 The prompt's rule, in both places:
 - **One fits**: if an agent's description, skills and tools cover the step, the flow runs it with Run an Agent (`core.messageAgent`, `agentId` and `message`), or a team with Run a Team. Spotlight says in its closing sentence which agent it picked and why.
 - **A small step**: classify, summarize, extract or draft a reply is a plain AI Agent (`core.aiAgent`); it needs no specialist.
