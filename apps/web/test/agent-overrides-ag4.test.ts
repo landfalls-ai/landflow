@@ -137,6 +137,10 @@ describe('on open (R1–R5, R8, R9, R12)', () => {
     const tool = draftTools(agent.id).find((t) => t.type === 'node');
     expect(tool).toMatchObject({ type: 'node', nodeType: 'text-toolkit.slugify', name: 'slugify', requireApproval: false });
     expect(result.moved[0]!.why).toBeUndefined();
+    // Wave ag4 carryover (live pass E1): the draft's instructions say the moved tool is its job too (a job list made it refuse).
+    const draft = agentStore.get(agent.id)!;
+    const instructions = String((draft as unknown as { instructions?: unknown }).instructions ?? (draft as unknown as { draft?: { instructions?: unknown } }).draft?.instructions ?? '');
+    expect(instructions).toContain('Also your job: slugify (');
     expect(JSON.stringify(agentStore.get(agent.id)!.published)).toBe(publishedBefore);
     expect(agentStore.get(agent.id)!.published!.config.tools).toHaveLength(0);
 

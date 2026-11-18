@@ -367,6 +367,9 @@ export function planMoves(workflow: Workflow, lookup: MoveLookup, options: PlanO
         requireApproval: false,
       };
       config.tools.push(tool);
+      // Wave ag4 carryover (the live pass's E1): instructions that list the agent's jobs ("hand over when the request is
+      // outside decoding, hashing or UUIDs") made it refuse the moved Slugify; one line says the tool is its job now too.
+      if (typeof config.instructions === 'string' && !config.instructions.includes(named.name)) config.instructions = `${config.instructions.trimEnd()}\n${movedToolLine(named.name, tool.description)}`;
       changed.add(agentId);
       const notes = [named.renamed && MOVE_NOTE.renamed(named.name), writes && MOVE_NOTE.noAsk].filter(Boolean).join('; ');
       take({ outcome: 'moved', as: 'tool', agentToolId: tool.id, ...(notes && { why: notes }) });
@@ -374,6 +377,11 @@ export function planMoves(workflow: Workflow, lookup: MoveLookup, options: PlanO
     }
   }
   return { items, configs: new Map([...working].filter(([id]) => changed.has(id))), before: new Map([...before].filter(([id]) => changed.has(id))) };
+}
+
+/** The instructions' line for a tool moved in from a workflow: the agent uses it for what it does, not only its first jobs. */
+export function movedToolLine(name: string, description: string): string {
+  return `Also your job: ${name} (${description.replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, '')}), moved in from a workflow that ran it: use it when a message asks for that.`;
 }
 
 // ---- the rows (R9, R10) ------------------------------------------------------------------------------------------
