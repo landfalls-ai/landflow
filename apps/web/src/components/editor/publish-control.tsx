@@ -348,7 +348,7 @@ export function PublishControl({ workflowId, onSave }: { workflowId: string; onS
                       <Sparkles className="size-3.5" /> Ask Spotlight to test and update
                     </Button>
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
                       disabled={!offer}
                       onClick={() => {
