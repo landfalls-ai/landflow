@@ -6,7 +6,8 @@
  */
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem, type StreamChunk } from '@landflow/sdk';
 import type { AgentMemory, AgentTool, LanguageModel } from '@landflow/engine';
-import { approvalSubject, type AgentSession, type AgentStreamEvent } from '../../shared/agents';
+import { PIN_PARAM } from '../../shared/agent-versions'; // AG17:
+import { approvalSubject, type Agent, type AgentSession, type AgentStreamEvent } from '../../shared/agents';
 import { agentAllowedBy } from '../../shared/project-policy';
 // AG10: the chat approval (the AI Agent node's own wait, reused).
 import { approvalSettings, askForApproval, decisionsOf, toolTargets } from './ai';
@@ -205,7 +206,8 @@ export const messageAgentNode = defineNode({
       {
         name: 'notice',
         displayName:
-          'Connect a chat model to use it instead of the agent’s own, tools (a vector store in Retrieve Documents (As Tool) mode is a knowledge base) to add to its capabilities for this run, and a memory to keep the conversation in. Tools that require approval are refused in workflow runs (nobody is there to approve them), unless Tool Approvals asks in the editor’s chat and you run the flow from its Chat (then the run waits for your Approve; with a model or tools connected here it still refuses).',
+          // AG17:
+          'Runs the agent: its model, memory, tools and knowledge are the bubbles under this node. A model, memory or tool wired here is moved into the agent’s draft when the flow is opened (or at the host’s start); what can’t move stays and runs in this flow only. Tools that require approval are refused in workflow runs (nobody is there to approve them), unless Tool Approvals asks in the editor’s chat and you run the flow from its Chat (then the run waits for your Approve; with a model or tools wired here or moved here and not published yet it still refuses).',
         type: 'notice',
       },
     ],
@@ -220,6 +222,15 @@ export const messageAgentNode = defineNode({
     const tools = connection ? await connection<AgentTool>('ai_tool') : [];
     // AG14: what each wired tool reaches (its sub-node's credential and host), for the via line.
     const flowTargets = await toolTargets(ctx, tools);
+    // AG17: what the flow's own wiring moved into the agent's draft and the config this run uses does not have yet (production copies are pinned and never overlaid).
+    const moved = async (agent: Agent) => {
+      const { pendingFor } = await import('../agents/flow-moves');
+      const { configOf } = await import('../agents/store');
+      const node = ctx.getNode();
+      const wired = new Set<string>(tools.flatMap((t) => (t.nodeId ? [t.nodeId] : [])));
+      if (model) wired.add('$model');
+      return pendingFor(ctx.getWorkflowId() ?? '', node.id, agent, { pinned: ctx.getNodeParameter<string | undefined>(PIN_PARAM, 0, undefined), wired, config: configOf(agent.published?.config ?? agent) });
+    };
     const send = ctx.sendChunk;
     const items = ctx.getInputData();
     // AG10: back from a wait for the person's Approve in the editor's chat (WaitRequest.rerun): the items done, and the session to go on with.
@@ -244,7 +255,8 @@ export const messageAgentNode = defineNode({
         const execution = { workflowId: ctx.getWorkflowId() ?? 'unknown', executionId: ctx.getExecutionId(), nodeId: node.id, ...(node.name && { nodeName: node.name }) };
         // AG10: only the editor's chat can ask; the hosted chat page, webhooks, schedules and manual runs refuse as before.
         // A model or tools connected here do not go through a decision, so with them the node refuses too.
-        const askInChat = ctx.getNodeParameter<string>('toolApprovals', i, 'refuse') === 'askInChat' && ctx.getMode() === 'chat' && Boolean(ctx.putExecutionToWait) && !model && !tools.length;
+        const pending = await moved(agent);
+        const askInChat = ctx.getNodeParameter<string>('toolApprovals', i, 'refuse') === 'askInChat' && ctx.getMode() === 'chat' && Boolean(ctx.putExecutionToWait) && !model && !tools.length && !pending;
         const onEvent = send && streamer(send, i, { id: agent.id, name: agent.name, ...(agent.avatar && { face: agent.avatar as unknown as JsonObject }) });
         let result: Awaited<ReturnType<typeof runAgent>>;
         if (waited && i === waited.itemIndex) {
@@ -297,6 +309,7 @@ export const messageAgentNode = defineNode({
             // AG10: 'ask' only in the editor's chat with Tool Approvals set to ask there.
             approvals: askInChat ? 'ask' : 'deny',
             toolImages: { keep: Number(ctx.getNodeParameter('toolImagesKept', i, 2)) },
+            ...(pending && { moved: pending }), // AG17:
             ...((model || tools.length) && { flow: { ...(model && { model }), ...(tools.length && { tools, targets: flowTargets }) } }),
             // The chat panel and streaming triggers get the agent's answers and tool calls as they happen.
             ...(onEvent && { onEvent }),

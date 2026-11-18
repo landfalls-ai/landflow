@@ -937,6 +937,33 @@ function paths(): Record<string, Record<string, Json>> {
     ],
     responses: { 200: reply('The agent and its connections', object({ agent: object({ id: { type: 'string' }, name: { type: 'string' }, published: { type: 'boolean' }, draftDiffers: { type: 'boolean' }, icon: { type: 'string' }, color: { type: 'string' }, avatar: { type: 'object' } }, ['id', 'name', 'published', 'draftDiffers']), connections: array({ type: 'object', description: 'kind, name, detail, nodeType, icon, from, toolId, asksFirst, credential, overriddenBy, withheld, documents' }) }, ['agent', 'connections'])), 404: notFound },
   });
+  // AG17:
+  add('get', '/api/workflows/{id}/agent-moves', {
+    tag: 'Workflows',
+    id: 'getWorkflowAgentMoves',
+    summary: 'What moved from a workflow into its agents',
+    description: 'The record of the wired sub-nodes the flow handed to its agents’ drafts (or kept, with why), newest first; each moved item carries its `state` against the agent now (`pending`, `live`, `withdrawn`). Credentials by name only.',
+    pathParams: { id: 'The workflow id' },
+    responses: { 200: reply('The moves', object({ moves: array({ type: 'object' }) }, ['moves'])), 404: notFound },
+  });
+  add('post', '/api/workflows/{id}/agent-moves', {
+    tag: 'Workflows',
+    id: 'moveWorkflowAgentWiring',
+    summary: 'Move a flow’s wired sub-nodes into its agents’ drafts',
+    description: 'Moves every movable chat model, tool and knowledge base wired into a Run an Agent (or Run a Team) node into the agent’s draft and saves the flow without them, in one step; nothing is published. A memory node, and anything that cannot move, stays and is returned in `kept` with why. `?dryRun=1` answers the same and changes nothing. 412 when `updatedAt` is not the stored one.',
+    pathParams: { id: 'The workflow id' },
+    query: [{ name: 'dryRun', description: '`1`: answer without changing anything', schema: { type: 'string' } }],
+    body: jsonBody(object({ updatedAt: { type: 'string' }, subNodeIds: array({ type: 'string' }), resolve: { type: 'object', description: 'sub-node id → `useEverywhere`: a person’s choice for a kept item' } })),
+    responses: { 200: reply('The moves', object({ workflowId: { type: 'string' }, moved: array({ type: 'object' }), kept: array({ type: 'object' }), agents: array({ type: 'object' }), updatedAt: { type: 'string' }, dryRun: { type: 'boolean' } }, ['workflowId', 'moved', 'kept', 'agents'])), 403: errorRef('No update access to the workflow, or a protected environment'), 404: notFound, 412: errorRef('The workflow changed since it was opened (`workflow_conflict`); nothing was moved') },
+  });
+  add('get', '/api/agents/{id}/moves', {
+    tag: 'Agents',
+    id: 'getAgentMoves',
+    summary: 'What moved into an agent from workflows',
+    description: 'The wired sub-nodes of flows the caller can read that moved into this agent’s draft, newest first, with their `state`.',
+    pathParams: { id: 'The agent id' },
+    responses: { 200: reply('The moves', object({ moves: array({ type: 'object' }) }, ['moves'])), 404: notFound },
+  });
   add('get', '/api/agent-teams/{id}/export', {
     tag: 'Agent teams',
     id: 'exportAgentTeamPlugin',

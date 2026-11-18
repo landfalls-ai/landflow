@@ -1,0 +1,23 @@
+{
+  "id": "legacy-ag4",
+  "name": "Legacy: utility helper with its own wiring",
+  "description": "A flow saved before wave ag4: its Run an Agent node has a memory and a tool wired in as sub-nodes (per-flow overrides). Setup only for AG17's live check and the joins: the agentId placeholder is filled from GET /api/agents by the agent's name. Made-up content.",
+  "nodes": [
+    { "id": "n-trigger", "name": "Start", "type": "core.manualTrigger", "typeVersion": 1, "position": [0, 0], "parameters": {} },
+    {
+      "id": "n-agent",
+      "name": "Utility helper",
+      "type": "core.messageAgent",
+      "typeVersion": 1,
+      "position": [280, 0],
+      "parameters": { "agentId": "<AGENT_ID>", "message": "slugify \"Wave AG4: Agents as Bubbles!\"" }
+    },
+    { "id": "n-memory", "name": "Window Memory", "type": "core.simpleMemory", "typeVersion": 1, "position": [200, 200], "parameters": {} },
+    { "id": "n-slug", "name": "Slugify", "type": "text-toolkit.slugify", "typeVersion": 1, "position": [370, 200], "parameters": {} }
+  ],
+  "connections": [
+    { "id": "c-main", "type": "main", "source": "n-trigger", "sourceIndex": 0, "target": "n-agent", "targetIndex": 0 },
+    { "id": "c-mem", "type": "ai_memory", "source": "n-memory", "sourceIndex": 0, "target": "n-agent", "targetIndex": 0 },
+    { "id": "c-slug", "type": "ai_tool", "source": "n-slug", "sourceIndex": 0, "target": "n-agent", "targetIndex": 0 }
+  ]
+}

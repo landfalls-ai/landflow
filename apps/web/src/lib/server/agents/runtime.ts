@@ -47,7 +47,7 @@ import type { ToolTarget } from '../../shared/tool-target';
 import { buildToolset, binaryScopeFor, targetOfCall, dedupe, nodeKnowledgeTool, type BuiltTool, type ToolCaller, type ToolContext } from './tools';
 import { knowledgeTool } from './knowledge';
 import { agentNotAllowedMessage, projectAgentRules } from '../project-context/project-settings';
-import { isNodeKnowledge } from '../../shared/agents';
+import { isNodeKnowledge, type AgentModel, type AgentToolConfig } from '../../shared/agents'; // AG17: moved types
 import { PROJECT_KNOWLEDGE_TOOL } from '../../shared/project-policy';
 import { hostBinaryClient, storeBinary } from '../binary/access';
 import { DEFAULT_KEPT_TOOL_IMAGES, hydrateToolImages, imageSizeLabel, storeToolImages, type ToolImageMode } from '../nodes/tool-images';
@@ -79,6 +79,11 @@ export interface RunRequest {
   rootTrace?: boolean;
   /** What a workflow connected to the agent's node (Run an Agent): a chat model that replaces the agent's, and more tools. */
   flow?: { model?: LanguageModel; tools?: AgentTool[]; /** AG14: what each wired tool reaches, by tool name. */ targets?: Map<string, ToolTarget> };
+  /**
+   * AG17: what a flow's wired sub-nodes moved into the agent's draft and the config this run uses does not have yet (Run an Agent,
+   * agents/flow-moves.ts `pendingFor`): a model that counts as the flow's own, and tools that join the config's for this run only.
+   */
+  moved?: { model?: AgentModel; tools?: AgentToolConfig[] };
   /** What a team run adds to a member (agent-teams/runtime.ts): the tools for its reports, how it shows in the journal, a check before its answer. */
   team?: TeamRole;
   /**
@@ -370,7 +375,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
   // PC13: the project's settings for agents, read once for the run (undefined: none on, the run is as it was).
   const rules = projectAgentRules(runCtx.projectId);
   const notAllowed = rules && !rules.agentAllowed(agent.id) ? agentNotAllowedMessage(config.name, rules.projectName) : undefined;
-  const effectiveModel = request.flow?.model ?? config.model ?? rules?.settings.defaultModel;
+  const effectiveModel = request.flow?.model ?? request.moved?.model ?? config.model ?? rules?.settings.defaultModel; // AG17: moved
   // The response caches key on the model the run really uses, so two projects' defaults never share an answer.
   const cacheConfig = rules?.settings.defaultModel && !config.model ? { ...config, model: rules.settings.defaultModel } : config;
   // PC08: what the agent saw, once per run (a resume reuses the first run's block and records nothing).
@@ -469,7 +474,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       return { reason: 'error' };
     }
     try {
-      toolset = await buildToolset(agent, config, request.flow?.tools, request.flow?.targets);
+      toolset = await buildToolset(agent, request.moved?.tools?.length ? { ...config, tools: [...config.tools, ...request.moved.tools.filter((t) => !config.tools.some((own) => own.id === t.id))] } : config, request.flow?.tools, request.flow?.targets); // AG17: moved
       // A team's own tools (reports, consults, hand-offs, notebook), by the names they have after the merge: an agent tool
       // named like one keeps the name, so the team's copy is the renamed one and only it is exempt from the kinds below.
       let teamNames = new Set<string>();
@@ -498,9 +503,10 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         } else toolset = { ...toolset, tools: kept };
       }
       // The model router: a short, simple request goes to the cheap model. A workflow's own model (Run an Agent) always wins.
-      const route = request.flow?.model ? undefined : chooseTier(config.router, { ...(request.message !== undefined && { message: request.message }), toolCount: toolset.tools.length });
+      const route = request.flow?.model || request.moved?.model ? undefined : chooseTier( // AG17: moved
+        config.router, { ...(request.message !== undefined && { message: request.message }), toolCount: toolset.tools.length });
       const cheap = route?.tier === 'cheap' ? config.router?.cheapModel : undefined;
-      model = request.flow?.model ?? (await agentModel(cheap ?? config.model ?? rules?.settings.defaultModel));
+      model = request.flow?.model ?? (await agentModel(request.moved?.model ?? cheap ?? config.model ?? rules?.settings.defaultModel)); // AG17: moved
       if (cheap) routedToCheap = true;
       if (cheap) upsert({ id: entryId(), type: 'notice', message: `Routed to ${cheap.model}: ${route?.reason}`, at: now() });
     } catch (error) {
@@ -576,7 +582,8 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     // agent without tools or memory is eligible (shared/agent-cache.ts), so the answer depends on nothing but the question and the config.
     const first = session.messages[0];
     const question = request.message !== undefined && first?.role === 'user' && typeof first.content === 'string' ? first.content : undefined;
-    const skip = session.userId === 'evaluation' ? 'it is an evaluation run (the eval gate must ask the model, and must not fill the cache)' : question === undefined ? 'it is a resumed run' : uncacheable({ cache: config.cache, messageCount: session.messages.length, toolCount: toolsOffered, memory: config.memory.crossSession, borrowed: Boolean(request.flow || request.team) });
+    const skip = session.userId === 'evaluation' ? 'it is an evaluation run (the eval gate must ask the model, and must not fill the cache)' : question === undefined ? 'it is a resumed run' : uncacheable({ cache: config.cache, messageCount: session.messages.length, toolCount: toolsOffered, memory: config.memory.crossSession, borrowed: Boolean(request.flow || request.team || request.moved) // AG17: moved
+ });
     const cacheId = question !== undefined && !skip ? cacheKey(agent.id, cacheConfig, question, runCtx.hash) : undefined;
     let questionVector: number[] | undefined;
     if (cacheId) {
