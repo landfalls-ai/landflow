@@ -778,9 +778,9 @@ Seen in AG18's live pass (production profile, Claude): a create-an-agent ask in 
 - The run log holds clipped items only: at most three input and output items per node, strings and nested values cut (`clip`), the response body's first 400 characters, 20 plugin lines and the agent's reply's first 400 characters. A cause past those (the 401st character of a body, the fourth item) is not seen; the logs panel and the Run Trace hold the whole.
 - "The same failure" is compared by the step, the error text with numbers and ids taken out, and the response body; a failure whose text changes every run (a timestamp in words, a random request id in a word) is not recognised as the same, so the bound of four fixes ends it.
 - A Run an Agent step's tool calls in the run log are redacted by the workflow's redactor, which catches secret-named keys and the workflow's own credential values; the values of the agent's own tool credentials are not in that set, so a tool that echoes one back in its output is not masked by name.
-- When a reply carries both an agent fix and flow proposals, the session takes the agent path and the flow proposal cards stay in the chat, unapplied; a click on one still applies it.
+- ~~When a reply carries both an agent fix and flow proposals, the session takes the agent path and the flow proposal cards stay in the chat, unapplied; a click on one still applies it.~~ built in ag5, AG22: the session takes the agent fix and drops the flow proposals with *Left for the next round: …*
 - The session's fix turns do not show their own tool rows ("Read the run log") in the timeline: the timeline shows `Run n · <node> · HTTP 400`, `Fixed · <change>` and the stop line. Only a typed chat turn shows its tool rows. After a reload the session's stop line is gone and the chat's last line may be an older answer.
-- The panel header does not yet say "Needs you: apply the fix?" while the agent change card waits.
+- ~~The panel header does not yet say "Needs you: apply the fix?" while the agent change card waits.~~ built in ag5, AG22 (C1).
 
 ## Read tools and changes to an agent's tools (wave ag4, final run)
 
