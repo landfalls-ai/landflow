@@ -142,6 +142,7 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
     ...(startedBy && { startedBy }),
     ...(options.buffered && { buffered: { kind: options.buffered.kind, count: options.buffered.count } }),
     ...(options.mcp && { mcp: options.mcp }),
+    ...(options.spotlightApprovals && { spotlightApprovals: options.spotlightApprovals }), // AG23:
   };
   if (idempotencyKey) rememberIdempotent(options.workflow.id, idempotencyKey, executionId);
   if (!admitted.run) return enqueue(record, options);

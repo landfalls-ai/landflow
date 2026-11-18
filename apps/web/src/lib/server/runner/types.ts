@@ -82,6 +82,8 @@ export interface RunOptions {
   buffered?: { kind: 'debounce' | 'batch'; key: string; count: number };
   /** An MCP tool call on a plugin's endpoint (lib/server/mcp/plugin-servers.ts): the caller and the tool, kept on the record. */
   mcp?: ExecutionMcpInfo;
+  /** AG23: an editor run an autonomous fix session started: Spotlight approves its tool calls to given destinations (the record carries it to the node, also after a wait). */
+  spotlightApprovals?: { userId: string; sessionId: string; destinations: string[] };
 }
 
 /** A fresh execution id. */

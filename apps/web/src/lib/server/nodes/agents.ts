@@ -207,7 +207,7 @@ export const messageAgentNode = defineNode({
         name: 'notice',
         displayName:
           // AG17:
-          'Runs the agent: its model, memory, tools and knowledge are the bubbles under this node. A model, memory or tool wired here is moved into the agent’s draft when the flow is opened (or at the host’s start); what can’t move stays and runs in this flow only. Tools that require approval are refused in workflow runs (nobody is there to approve them), unless Tool Approvals asks in the editor’s chat and you run the flow from its Chat (then the run waits for your Approve; with a model or tools still wired here it refuses). Runs in the editor use the agent’s draft, which already holds what moved; a published workflow runs the agent’s published version, so what moved keeps running here until you publish the agent.',
+          'Runs the agent: its model, memory, tools and knowledge are the bubbles under this node. A model, memory or tool wired here is moved into the agent’s draft when the flow is opened (or at the host’s start); what can’t move stays and runs in this flow only. Tools that require approval are refused in workflow runs (nobody is there to approve them), unless Tool Approvals asks in the editor’s chat and you run the flow from its Chat (then the run waits for your Approve; with a model or tools still wired here it refuses). A run nobody watches (a webhook, a schedule) refuses a tool that asks first; Spotlight’s fix sessions approve their own test runs. Runs in the editor use the agent’s draft, which already holds what moved; a published workflow runs the agent’s published version, so what moved keeps running here until you publish the agent.',
         type: 'notice',
       },
     ],
@@ -218,6 +218,7 @@ export const messageAgentNode = defineNode({
     const { newSession, runAgent } = await import('../agents/runtime');
     const { agentVersionConfig, agentVersionExists, fallbackPin, recordRunAgent } = await import('../agents/versions'); // AG21:
     const { configOf } = await import('../agents/store');
+    const { agentDestinations } = await import('../agents/spotlight-approvals'); // AG23:
     const connection = ctx.getInputConnectionData;
     const [model] = connection ? await connection<LanguageModel>('ai_languageModel') : [];
     const [memory] = connection ? await connection<AgentMemory>('ai_memory') : [];
@@ -268,7 +269,15 @@ export const messageAgentNode = defineNode({
         // A model or tools connected here do not go through a decision, so with them the node refuses too.
         // Only a run on the published config takes the overlay: an editor run on the draft (which already holds what moved) or a pinned version runs what it says, so askInChat, the router and the cache behave as they will after publish.
         const pending = source === 'published' ? await moved(agent) : undefined;
-        const askInChat = ctx.getNodeParameter<string>('toolApprovals', i, 'refuse') === 'askInChat' && ctx.getMode() === 'chat' && Boolean(ctx.putExecutionToWait) && !model && !tools.length && !pending;
+        const waitable = Boolean(ctx.putExecutionToWait) && !model && !tools.length && !pending;
+        // AG23: an autonomous fix session's editor run (the run body's `approvals: 'spotlight'`, kept on the execution record): Spotlight decides the calls that ask first.
+        const spotlightRun = editor && (ctx.getMode() === 'manual' || ctx.getMode() === 'chat') ? await spotlightRunOf(ctx.getExecutionId()) : undefined;
+        const spotlight = spotlightRun && {
+          by: { kind: 'spotlight' as const, userId: spotlightRun.userId, sessionId: spotlightRun.sessionId },
+          given: [...spotlightRun.destinations, ...agentDestinations(runConfig)],
+          canWait: waitable,
+        };
+        const askInChat = (ctx.getNodeParameter<string>('toolApprovals', i, 'refuse') === 'askInChat' && ctx.getMode() === 'chat' && waitable) || Boolean(spotlight?.canWait);
         const onEvent = send && streamer(send, i, { id: agent.id, name: agent.name, ...(agent.avatar && { face: agent.avatar as unknown as JsonObject }) });
         let result: Awaited<ReturnType<typeof runAgent>>;
         if (waited && i === waited.itemIndex) {
@@ -320,7 +329,8 @@ export const messageAgentNode = defineNode({
             session,
             message,
             // AG10: 'ask' only in the editor's chat with Tool Approvals set to ask there.
-            approvals: askInChat ? 'ask' : 'deny',
+            approvals: spotlight ? 'spotlight' : askInChat ? 'ask' : 'deny',
+            ...(spotlight && { spotlight }), // AG23:
             toolImages: { keep: Number(ctx.getNodeParameter('toolImagesKept', i, 2)) },
             ...(pending && { moved: pending }), // AG17:
             ...((model || tools.length) && { flow: { ...(model && { model }), ...(tools.length && { tools, targets: flowTargets }) } }),
@@ -346,7 +356,7 @@ export const messageAgentNode = defineNode({
           throw new NodeOperationError(`${agent.name} failed: ${last?.type === 'error' ? last.message : 'unknown error'}`, { itemIndex: i });
         }
         if (memory) await memory.save(key || 'default', result.session.messages);
-        const steps = result.session.timeline.flatMap((e) => (e.type === 'tool' ? [{ tool: e.tool, kind: e.kind, status: e.status, ...(e.error && { error: e.error }) }] : []));
+        const steps = result.session.timeline.flatMap((e) => (e.type === 'tool' ? [{ tool: e.tool, kind: e.kind, status: e.status, ...(e.error && { error: e.error }), ...(e.decidedLine && { approvedBy: e.decidedLine }) /* AG23: */ }] : []));
         out.push({
           json: {
             reply: result.reply ?? null,
@@ -393,6 +403,12 @@ export const messageAgentNode = defineNode({
     },
   },
 });
+
+/** AG23: the Spotlight test run this execution belongs to, if any (kept on its record by the run route; it survives a wait). */
+async function spotlightRunOf(executionId: string) {
+  const { liveExecution } = await import('../runner');
+  return (liveExecution(executionId) ?? (await (await import('../store')).store.loadExecution(executionId)))?.spotlightApprovals;
+}
 
 /**
  * Whether nobody can decide this session's pending call any more: its execution record is gone, or was cancelled or failed.
