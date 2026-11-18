@@ -1,5 +1,6 @@
 /** AG21: where a publish card stands (kept on the reply's `publishOffer` part; ./publish-card.tsx draws it, `lib/shared/agent-versions.ts` words it). */
 import type { PinBlock } from '@/lib/shared/agent-versions';
+import type { GateVerdict } from '@/lib/shared/agent-eval';
 
 export type PublishCardState =
   | { phase: 'idle' }
@@ -10,4 +11,4 @@ export type PublishCardState =
   /** Refused because an agent's draft differs: the agents and their changes. */
   | { phase: 'blocked'; blocks: PinBlock[] }
   | { phase: 'published'; versionNumber?: number; line?: string }
-  | { phase: 'failed'; error: string; executionId?: string };
+  | { phase: 'failed'; error: string; executionId?: string; held?: GateVerdict }; // AG24: a held eval gate: its verdict, with the score
