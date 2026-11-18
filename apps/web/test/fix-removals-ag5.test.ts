@@ -16,7 +16,8 @@ const wf = (): Workflow => ({
     { id: 'e2', type: 'main', source: 'p', sourceIndex: 0, target: 'q', targetIndex: 0 },
   ],
 });
-const lookup = () => undefined;
+const port = { type: 'main', name: 'main', displayName: 'main' };
+const lookup = ((type: string) => ({ kind: type.includes('Trigger') ? 'trigger' : 'regular', inputs: type.includes('Trigger') ? [] : [port], outputs: [port], properties: [] })) as never;
 const own = { own: new Set(['h']) };
 
 describe('fixRemovals', () => {
@@ -40,7 +41,7 @@ describe('fixRemovals', () => {
 
   it('the session’s own step and a duplicate go without a click, each named with its reason; a turn-off and a lost input wait', () => {
     const allowed = { own: new Set(['h']), duplicates: new Map([['p', 'Short writer']]) };
-    const out = fixRemovals([{ op: 'removeNode', node: 'helper' }, { op: 'removeNode', node: 'Send Email' }], wf(), lookup, allowed);
+    const out = fixRemovals([{ op: 'removeNode', node: 'helper' }, { op: 'removeNode', node: 'Send Email' }, { op: 'connect', from: 'Start', to: 'Notify' }], wf(), lookup, allowed);
     expect(out.reasons).toEqual([]);
     expect(out.lines).toEqual(['Removed “Send Email”: “Short writer” does it itself', 'Removed “Helper”: this session added it']);
     expect(fixRemovals([{ op: 'setNodeSettings', node: 'notify', settings: { disabled: true } }], wf(), lookup, allowed).reasons).toEqual(['turns off “Notify”']);
@@ -71,5 +72,21 @@ describe('fixRemovals', () => {
     const p2: AssistantOp[] = [{ op: 'removeNode', node: 'Send Email' }];
     const out = fixRemovals([p1, p2], wf(), lookup, own);
     expect(out.reasons.join()).toContain('removes “Send Email”');
+  });
+
+  it('a removed duplicate that was another step’s only input waits; with a connect that feeds it again it does not', () => {
+    const w: Workflow = { ...wf(), nodes: [node('a', 'Start', 'core.manualTrigger'), node('d', 'Dup'), node('o', 'Other')], connections: [
+      { id: 'e1', type: 'main', source: 'a', sourceIndex: 0, target: 'd', targetIndex: 0 },
+      { id: 'e2', type: 'main', source: 'd', sourceIndex: 0, target: 'o', targetIndex: 0 },
+    ] };
+    const allowed = { duplicates: new Map([['d', 'Agent']]) };
+    expect(fixRemovals([{ op: 'removeNode', node: 'Dup' }], w, lookup, allowed).reasons).toEqual(['leaves “Other” without its input']);
+    expect(fixRemovals([{ op: 'removeNode', node: 'Dup' }, { op: 'connect', from: 'Start', to: 'Other' }], w, lookup, allowed).reasons).toEqual([]);
+  });
+
+  it('removing the person’s Send Email and a duplicate together shows both reasons', () => {
+    const w: Workflow = { ...wf(), nodes: [...wf().nodes, node('d', 'Dup'), node('o', 'Other')], connections: [...wf().connections, { id: 'e5', type: 'main', source: 'a', sourceIndex: 0, target: 'd', targetIndex: 0 }, { id: 'e6', type: 'main', source: 'd', sourceIndex: 0, target: 'o', targetIndex: 0 }] };
+    const out = fixRemovals([{ op: 'removeNode', node: 'Send Email' }, { op: 'removeNode', node: 'Dup' }], w, lookup, { duplicates: new Map([['d', 'Agent']]) });
+    expect(out.reasons).toEqual(['removes “Send Email”', 'leaves “Other” without its input']);
   });
 });

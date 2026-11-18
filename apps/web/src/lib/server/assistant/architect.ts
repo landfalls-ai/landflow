@@ -463,7 +463,10 @@ function operationsOf(info: NodeTypeInfo, parameters: Record<string, unknown>) {
 function isQueryRead(info: NodeTypeInfo, parameters: Record<string, unknown>): boolean {
   return readsByQuery(parameters, info.type);
 }
-function toolWrites(info: NodeTypeInfo, parameters: Record<string, unknown>): boolean {
+function toolWrites(info: NodeTypeInfo, given: Record<string, unknown>): boolean {
+  // A call with no operation runs the node's default one (SQLite's is insert).
+  const defaultOp = info.descriptor.properties.find((p) => p.name === 'operation')?.default;
+  const parameters = given.operation === undefined && typeof defaultOp === 'string' ? { ...given, operation: defaultOp } : given;
   // A query operation (SQLite's Execute Query) is a read while its SQL is empty (the agent writes it per call) or only reads: its name starts with a write verb.
   if (isQueryRead(info, parameters)) return false;
   if (writesOutside({ type: info.type, parameters })) return true;

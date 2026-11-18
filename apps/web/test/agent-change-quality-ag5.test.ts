@@ -227,6 +227,13 @@ describe('an agent fix adds only a tool the cause or the person’s ask names (f
       expect(requested(insert, { namedBy: 'use the SQLite tool to save the figures', change: 'x' }, types)).toBe(true);
     });
 
+    it('a SQLite tool with no operation runs the default insert: it counts as a write', () => {
+      const sq = { type: 'databases.sqlite', pluginId: 'databases', pluginName: 'databases', descriptor: { displayName: 'SQLite', keywords: ['sqlite', 'database'], properties: [{ name: 'operation', type: 'options', default: 'insert', options: [{ name: 'Insert', value: 'insert' }, { name: 'Select', value: 'select', idempotent: true }] }] } } as never;
+      const bare = node('databases.sqlite', 'sqlite');
+      expect(requested(bare, { namedBy: 'x', change: 'use the database to save' }, [sq])).toBe(false);
+      expect(requested(node('databases.sqlite', 'sqlite', { parameters: { operation: 'select' } }), { namedBy: 'x', change: 'use the database' }, [sq])).toBe(true);
+    });
+
     it('an asks-first Attio tool is not named by common words of its app', () => {
       const attio = info('attio.records', 'Create Record', ['attio', 'crm', 'sales', 'message', 'request', 'email'], 'attio');
       const t = node('attio.records', 'attio_create_record', { requireApproval: true });

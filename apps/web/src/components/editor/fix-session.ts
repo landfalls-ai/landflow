@@ -164,8 +164,9 @@ export interface RemovalsAllowed {
  * What a fix would do to the person's steps, read from the result and not from the words of its ops (names match without case,
  * and a rename can come before a removal): the ops are applied to a copy of the workflow (`applyOps`, the same code Apply runs)
  * and the node ids before and after are compared. `reasons` are what still needs a click: a step that is gone and is neither the
- * session's own nor a duplicate, a step newly turned off, and a step an explicit `disconnect` leaves without any main input (the
- * session's own steps excepted). `lines` are the removals that go through without one, each with its reason.
+ * session's own nor a duplicate, a step newly turned off, and a step that had a main input and has none in the result (the session's own steps
+ * excepted), unless every source it lost is a person's step whose removal is already a reason. A removed duplicate or own step does not
+ * excuse the loss. `lines` are the removals that go through without one, each with its reason.
  */
 export function fixRemovals(proposals: readonly AssistantOp[] | readonly (readonly AssistantOp[])[], workflow: Workflow, lookup: DescriptorLookup, allowed: RemovalsAllowed | undefined): { reasons: string[]; lines: string[] } {
   // Each proposal applies in turn, the way applyChanges does, so a name one proposal adds and the next removes is judged on the result.
@@ -175,11 +176,12 @@ export function fixRemovals(proposals: readonly AssistantOp[] | readonly (readon
   const reasons: string[] = [];
   const lines: string[] = [];
   const nowIds = new Set(after.nodes.map((n) => n.id));
+  const reasoned = new Set<string>();
   for (const node of workflow.nodes) {
     if (nowIds.has(node.id)) continue;
     if (allowed?.own?.has(node.id)) lines.push(`Removed “${node.name}”: this session added it`);
     else if (allowed?.duplicates?.has(node.id)) lines.push(`Removed “${node.name}”: “${allowed.duplicates.get(node.id)}” does it itself`);
-    else reasons.push(`removes “${node.name}”`);
+    else { reasons.push(`removes “${node.name}”`); reasoned.add(node.id); }
   }
   for (const node of after.nodes) {
     const was = workflow.nodes.find((n) => n.id === node.id);
@@ -190,9 +192,9 @@ export function fixRemovals(proposals: readonly AssistantOp[] | readonly (readon
     if (allowed?.own?.has(node.id)) continue;
     if (!workflow.nodes.some((n) => n.id === node.id)) continue;
     if (mainIn(workflow, node.id) === 0 || mainIn(after, node.id) > 0) continue;
-    // An input lost only to a step that is gone and already said (waiting, or a duplicate) is not said twice; one lost to the session's own step is.
+    // An input lost only to person's steps whose removal is already a reason is not said twice; one lost to a duplicate or the session's own step is.
     const lostTo = workflow.connections.filter((c) => c.target === node.id && (c.type ?? 'main') === 'main').map((c) => c.source);
-    if (lostTo.every((src) => !nowIds.has(src) && !allowed?.own?.has(src))) continue;
+    if (lostTo.every((src) => reasoned.has(src))) continue;
     reasons.push(`leaves “${node.name}” without its input`);
   }
   return { reasons: [...new Set(reasons)], lines };
