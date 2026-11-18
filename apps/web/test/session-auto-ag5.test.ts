@@ -339,7 +339,8 @@ describe('an autonomous fix session on a saved, published flow (switch on)', () 
     runs = [{ 'Ask analyst': { items: 1 }, Post: { items: 1 } }, { 'Ask analyst': { items: 1 }, Post: { items: 1 } }];
     replies = [{ text: 'No, the agent has no database tool.', agentFix: lack }, { text: 'Yes, it does what you asked.' }];
     await testUntilItRuns('Post the sales by region to the receiver');
-    expect(lines()).toContain('“Question answerer”: Held by the eval gate: 2.7 / 5 (judged on its own cases against 3.0). 2.7 / 5, below the 3.0 it asks for');
+    expect(lines()).toContain('“Question answerer”: Held by the eval gate (judged on its own cases against 3.0): 2.7 / 5, below the 3.0 it asks for');
+    expect(lines().find((l) => l.includes('Held by the eval gate'))!.match(/2\.7 \/ 5/g)).toHaveLength(1); // the score is said once
     const designs = apiCalls.filter((c) => c.path === '/api/agents/design');
     expect(designs).toHaveLength(2);
     expect(JSON.stringify(designs[1].json)).toContain('Sales by region?');
@@ -360,7 +361,7 @@ describe('an autonomous fix session on a saved, published flow (switch on)', () 
     runs = [{ 'Ask analyst': { items: 1 }, Post: { items: 1 } }];
     replies = [{ text: 'No, the agent has no database tool.', agentFix: lack }];
     await testUntilItRuns('Post the sales by region to the receiver');
-    expect(outcomes()[0].text).toContain('“Question answerer”: Held by the eval gate: 2.7 / 5');
+    expect(outcomes()[0].text).toContain('“Question answerer”: Held by the eval gate (judged on its own cases against 3.0): 2.7 / 5');
     expect(outcomes()[0].text).toContain('out of fixes');
     expect(published).not.toHaveBeenCalled();
     expect(everyBody()).not.toMatch(/skipEval|as-published/);

@@ -318,6 +318,10 @@ describe('destinations nobody gave (lesson 21)', () => {
     expect(await spotlightDestinations({ destinationsOf: async () => [] }, {}, undefined)).toEqual(['{{ … }}']);
     expect(spotlightVerdict(await spotlightDestinations({ destinationsOf: async () => [] }, {}, undefined), [])).toBe('leave');
     expect(spotlightVerdict(await spotlightDestinations({}, {}, undefined), ['x'])).toBe('leave');
+    // A stand-in with no operation is a plain name, never a host: a URL on a host of that name does not give it.
+    expect(callDestinations('databases.postgres', {})).toEqual(['databases.postgres']);
+    expect(spotlightVerdict(['databases.postgres'], ['http://databases.postgres'])).toBe('leave');
+    expect(spotlightVerdict(['databases.postgres'], ['databases.postgres'])).toBe('approve');
     // An HTTP call to a given URL is still approved.
     const url = 'https://api.landflow.test/x';
     expect(spotlightVerdict(callDestinations('core.httpRequest', { method: 'POST', url }), [callDestinations('core.httpRequest', { url })[0]])).toBe('approve');

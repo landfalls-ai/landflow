@@ -133,18 +133,21 @@ export function duplicatedSteps(
   return new Map(dropRepeatedAgentWork(nodes, edges, briefs).by.map((d) => [d.key, d.agent]));
 }
 
-/** Headers a trigger's last event keeps out of a test run: what authenticates the caller or signs the call is not test data. */
-export const SECRET_HEADERS = /^(?:authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token|x-webhook-secret|x-hub-signature.*|.*-signature|.*token.*|.*secret.*)$/i;
-/** Query parameters that look like a secret (a token, key, signature, password or auth value). */
-export const SECRET_PARAMS = /token|secret|signature|password|passwd|api[-_]?key|\bkey$|^sig$|auth/i;
+/** Headers a trigger's last event keeps out of a test run: what authenticates the caller or signs the call is not test data (`author` stays). */
+export const SECRET_HEADERS = /^(?:authorization.*|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token|x-webhook-secret|x-hub-signature.*|x-signature-.*|x-amz-.*|.*-signature|.*hmac.*|.*token.*|.*secret.*)$/i;
+/** Query parameters that look like a secret: a token, key, signature, password, auth value, `code`, `sig` or an `x-amz-*` parameter (`author` stays). */
+export const SECRET_PARAMS = /token|secret|signature|password|passwd|hmac|api[-_]?key|[-_]key$|^key$|^(?:sig|code|auth|authorization)$|^x-amz-/i;
+/** A top-level body field that is a secret by its name. */
+export const SECRET_BODY_FIELDS = /^(?:token|verification_token|secret|password)$/i;
 
-/** A trigger event's JSON without the secrets of the call: its signature, token and secret headers and its secret-looking query parameters. */
+/** A trigger event's JSON without the secrets of the call: its signature, token and secret headers, its secret-looking query parameters and a top-level body field named token, verification_token, secret or password. */
 export function withoutSecrets(item: Record<string, unknown>): Record<string, unknown> {
   const pick = (value: unknown, secret: (key: string) => boolean) =>
     value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([key]) => !secret(key))) : undefined;
   const headers = pick(item.headers, (k) => SECRET_HEADERS.test(k));
   const query = pick(item.query, (k) => SECRET_PARAMS.test(k));
-  return { ...item, ...(headers && { headers }), ...(query && { query }) };
+  const body = pick(item.body, (k) => SECRET_BODY_FIELDS.test(k));
+  return { ...item, ...(headers && { headers }), ...(query && { query }), ...(body && { body }) };
 }
 
 /**

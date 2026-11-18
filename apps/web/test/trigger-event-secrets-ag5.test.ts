@@ -18,6 +18,17 @@ describe('withoutSecrets', () => {
     expect(out.body).toEqual({ report: 'x' });
   });
 
+  it('also drops x-signature-*, *hmac*, x-amz-* and authorization* headers, the query parameters code, sig, signature and x-amz-*, and a top-level body token, verification_token, secret or password; keeps author', () => {
+    const out = withoutSecrets({
+      headers: { 'x-signature-ed25519': 'a', 'x-body-hmac': 'b', 'x-amz-security-token': 'c', 'x-amz-date': 'd', 'authorization-extra': 'e', author: 'ann', 'x-request-id': 'r' },
+      query: { code: '1', sig: '2', signature: '3', 'x-amz-signature': '4', 'X-Amz-Credential': '5', author: 'ann', month: 'october' },
+      body: { token: 't', verification_token: 'v', secret: 's', password: 'p', Password: 'q', author: 'ann', nested: { token: 'kept: not top level' }, report: 'x' },
+    });
+    expect(out.headers).toEqual({ author: 'ann', 'x-request-id': 'r' });
+    expect(out.query).toEqual({ author: 'ann', month: 'october' });
+    expect(out.body).toEqual({ author: 'ann', nested: { token: 'kept: not top level' }, report: 'x' });
+  });
+
   it('an event with no headers or query is unchanged', () => {
     expect(withoutSecrets({ a: 1 })).toEqual({ a: 1 });
   });

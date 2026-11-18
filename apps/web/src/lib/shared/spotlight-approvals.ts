@@ -112,10 +112,18 @@ export function flowDestinations(workflow: Pick<Workflow, 'nodes'>): string[] {
   return given.filter((d) => d !== NOT_GIVEN && !isUnreadHost(d));
 }
 
+/** A stand-in with no operation: `<plugin>.<node>` with no scheme, address, space or port (what `callDestinations` gives a call that names nothing). */
+const isStandIn = (d: string): boolean => /^[a-z][a-z0-9-]*\.[A-Za-z][A-Za-z0-9]*$/.test(d.trim()) && !/^(?:https?|ftp)$/i.test(d);
+
 /** Spotlight's verdict on one held call: it may approve it, or it is left for the person. */
 export function spotlightVerdict(callDestinationList: readonly string[], given: readonly string[]): 'approve' | 'leave' {
   if (callDestinationList.includes(NOT_GIVEN) || callDestinationList.some(isUnreadHost)) return 'leave';
-  return spotlightMayApprove({ destinations: callDestinationList }, given.filter((d) => d !== NOT_GIVEN)) ? 'approve' : 'leave';
+  const known = given.filter((d) => d !== NOT_GIVEN);
+  // A stand-in with no operation (`databases.postgres`) is a plain name, never a host: it is compared as written, so a URL on a host of that name does not give it.
+  const plain = new Set(known.filter(isStandIn).map((d) => d.trim().toLowerCase()));
+  const real = callDestinationList.filter((d) => !isStandIn(d));
+  if (!callDestinationList.filter(isStandIn).every((d) => plain.has(d.trim().toLowerCase()))) return 'leave';
+  return spotlightMayApprove({ destinations: real }, known.filter((d) => !isStandIn(d))) ? 'approve' : 'leave';
 }
 
 /**

@@ -93,7 +93,10 @@ export function compareRuns(draft: Pick<AgentEvalRun, 'average' | 'results'>, ad
 /** AG24: a held verdict as one line, with its score and what it was judged on (the publish card, the agent card, the session). */
 export function heldLine(verdict: Pick<GateVerdict, 'average' | 'basis' | 'shared' | 'reason'>): string {
   const basis = verdict.basis === 'same-cases' ? `judged on the ${verdict.shared} cases both versions ran` : verdict.basis === 'threshold' ? `judged on its own cases against ${GATE_MIN_AVERAGE.toFixed(1)}` : '';
-  return `Held by the eval gate: ${verdict.average.toFixed(1)} / 5${basis ? ` (${basis})` : ''}${verdict.reason ? `. ${verdict.reason}` : ''}`;
+  const score = `${verdict.average.toFixed(1)} / 5`;
+  // The score is said once: a reason that already holds it ("The draft averages 2.7 / 5 …") follows the basis, else the score does.
+  if (verdict.reason?.includes(score)) return `Held by the eval gate${basis ? ` (${basis})` : ''}: ${verdict.reason}`;
+  return `Held by the eval gate: ${score}${basis ? ` (${basis})` : ''}${verdict.reason ? `. ${verdict.reason}` : ''}`;
 }
 
 /** AG24: the held run's lowest cases (at most three), clipped. */
