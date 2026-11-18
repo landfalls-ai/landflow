@@ -30,8 +30,6 @@ export interface AgentBrief {
   published?: boolean;
   /** How many workflows run it. */
   usedBy?: number;
-  /** The node types of its node tools (`messaging.emailSend`): a flow step of the same type after it would do twice what the agent does itself. */
-  toolNodes?: string[];
   /** Each node tool with what decides whether a flow step would repeat it: its type, whether it asks first, and its destination (fixed value, or free when empty / `$fromAI`). */
   nodeTools?: AgentNodeTool[];
 }
@@ -46,12 +44,8 @@ export interface AgentNodeTool {
   free?: string[];
 }
 
-/** The destination parameters of the send nodes a flow step may repeat (the only types `dropRepeatedAgentWork` ever drops). */
-export const SENDER_DESTINATIONS: Record<string, string[]> = {
-  'messaging.emailSend': ['toEmail'],
-  'messaging.slack': ['channel'],
-  'messaging.telegram': ['chatId'],
-};
+/** The destination parameter of the one send node a flow step may repeat (`dropRepeatedAgentWork`): Send Email's To. Nothing else is ever dropped. */
+export const SENDER_DESTINATIONS: Record<string, string[]> = { 'messaging.emailSend': ['toEmail'] };
 
 const clip = (value: string | undefined, max: number) => {
   const text = value?.replace(/\s+/g, ' ').trim();
@@ -72,7 +66,6 @@ export function agentBrief(agent: Agent, nameOf: (id: string) => string | undefi
   const knowledge = config.tools.flatMap((t) => (t.type === 'knowledge' ? [toolName(t)] : []));
   const description = clip(config.description, 200) ?? clip(config.persona?.mission, 200);
   const role = clip(config.persona?.role, 80);
-  const toolNodes = [...new Set(config.tools.flatMap((t) => (t.type === 'node' ? [t.nodeType] : [])))];
   const nodeTools = config.tools.flatMap((t): AgentNodeTool[] => {
     if (t.type !== 'node') return [];
     const fixed: Record<string, string> = {};
@@ -98,7 +91,6 @@ export function agentBrief(agent: Agent, nameOf: (id: string) => string | undefi
     ...(asksFirst.length && { asksFirst }),
     ...(!published && { published: false }),
     ...(options.usedBy && { usedBy: options.usedBy }),
-    ...(toolNodes.length && { toolNodes }),
     ...(nodeTools.length && { nodeTools }),
   };
 }

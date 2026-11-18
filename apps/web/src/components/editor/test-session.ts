@@ -455,7 +455,9 @@ function leftForAgent(node: string | undefined, part?: string): string {
   if (name && /\b(?:tool|isn.t available|not available|no access|can.?t (?:query|reach|read|send)|lacks?|doesn.t have|has no)\b/i.test(part ?? 'tool')) {
     // What it lacks, as the person's words say it: a quoted name (a credential or tool), else "the <thing> tool".
     const lacking = /[“"]([^”"]{2,40})[”"]/.exec(part ?? '')?.[1] ?? /\b(?:the |a |an )?((?:[\w-]+ ){0,2}(?:tool|credential|connection))\b/i.exec(part ?? '')?.[1];
-    return `connect ${lacking ? `“${lacking}”` : 'the tool it needs'} to “${name}” (the + under Tool on the step), then tell me to test again, or tell me what to change.`;
+    // A phrase that is itself a complaint (“lacks a tool”, “has no tool”) names nothing: say “the tool it needs”.
+    const names = lacking && !/\b(?:lacks?|has|have|no|an?|any|doesn.t|isn.t|not)\b/i.test(lacking) ? lacking : undefined;
+    return `connect ${names ? `“${names}”` : 'the tool it needs'} to “${name}” (the + under Tool on the step), then tell me to test again, or tell me what to change.`;
   }
   return `open ${node ? `“${node}”` : 'the step'} and change it by hand, or tell me what to change.`;
 }

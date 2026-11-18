@@ -5,7 +5,7 @@
  * manual trigger is added when the model forgot one.
  */
 import type { ConnectionType, NodeItem, NodeTypeInfo, PropertyDescriptor } from '@/lib/shared/types';
-import { describeAgents, SENDER_DESTINATIONS, withAgentId, type AgentBrief } from '@/lib/shared/agent-brief';
+import { describeAgents, withAgentId, type AgentBrief } from '@/lib/shared/agent-brief';
 import { reuseSentence } from '@/lib/shared/tenant-catalog'; // AG19:
 import { describeTeams, withTeamId, type TeamBrief } from '@/lib/shared/agent-teams';
 import { registry } from './plugins/registry';
@@ -168,12 +168,13 @@ export function agentReading(nodes: ReadonlyArray<{ type: string; name: string; 
 }
 
 /**
- * AG19: a Run an Agent step bound to an agent that has a send tool (send_email: `messaging.emailSend`) sends it itself, so
- * a step of that type right after it is dropped (the later steps hang on the agent instead) and the summary says why. The
- * model still adds such a step now and then. Dropped only when all hold: the type is a sender (`SENDER_DESTINATIONS`); the
- * agent's tool does not ask first (a workflow run refuses a tool that asks, so the step is the only send); the step's
- * destination is empty, an expression, or the tool's fixed one (or the tool takes it from the model); the agent is the
- * step's only main input; the step has no wired sub-nodes. Anything else the person asked for stays.
+ * AG19: a Run an Agent step bound to an agent that has a Send Email tool (`send_email`: `messaging.emailSend`) sends the mail
+ * itself, so a Send Email step right after it is dropped (the later steps hang on the agent instead) and the summary says
+ * why. The model still adds such a step now and then. The rule is narrow on purpose; the step is dropped only when all hold:
+ * the agent has a Send Email tool that does not ask first (a workflow run refuses one that asks, so the step would be the
+ * only mail); the agent is the step's only main input; the step has no wired sub-nodes; it sets no CC, BCC or attachments;
+ * and its To is empty, or a literal equal (trimmed, any case) to the tool's fixed To. Any expression, any other address, a
+ * tool that takes the address from the model (unless the step's To is empty), and every other node type: the step stays.
  */
 export function dropRepeatedAgentWork<N extends { key: string; type: string; name: string; parameters?: Record<string, unknown> }>(
   nodes: N[],
@@ -184,33 +185,27 @@ export function dropRepeatedAgentWork<N extends { key: string; type: string; nam
   let keptEdges = edges;
   const notes: string[] = [];
   const dropped: string[] = [];
-  const same = (a: unknown, b: string) => typeof a === 'string' && a.trim().toLowerCase() === b.toLowerCase();
+  const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
   for (const n of nodes) {
     if (n.type !== 'core.messageAgent') continue;
     const id = typeof n.parameters?.agentId === 'string' ? n.parameters.agentId : '';
     const agent = id ? agents.find((a) => a.id === id) : undefined;
-    if (!agent?.nodeTools?.length) continue;
+    const tools = (agent?.nodeTools ?? []).filter((t) => t.type === 'messaging.emailSend');
+    if (!agent || !tools.length || tools.some((t) => t.requireApproval)) continue;
     for (const [from, to, output, type] of keptEdges) {
       if (from !== n.key || type !== 'main') continue;
       const next = keptNodes.find((m) => m.key === to);
-      const keys = next ? SENDER_DESTINATIONS[next.type] : undefined;
-      if (!next || !keys) continue;
-      const tools = agent.nodeTools.filter((t) => t.type === next.type);
-      if (!tools.length || tools.some((t) => t.requireApproval)) continue;
-      const destinationOk = tools.some((t) =>
-        keys.every((key) => {
-          const value = next.parameters?.[key];
-          const empty = value === undefined || value === null || (typeof value === 'string' && (!value.trim() || value.includes('{{') || value.trim().startsWith('=')));
-          return empty || t.free?.includes(key) || same(value, t.fixed?.[key] ?? '\u0000');
-        }),
-      );
-      if (!destinationOk) continue;
+      if (!next || next.type !== 'messaging.emailSend') continue;
+      const options = (next.parameters?.options ?? {}) as Record<string, unknown>;
+      if (text(options.ccEmail) || text(options.bccEmail) || (Array.isArray(options.attachments) ? options.attachments.length : text(options.attachments))) continue;
+      const toEmail = text(next.parameters?.toEmail);
+      if (toEmail && !tools.some((t) => t.fixed?.toEmail && t.fixed.toEmail.trim().toLowerCase() === toEmail.toLowerCase())) continue;
       if (keptEdges.some((e) => e[1] === next.key && (e[3] !== 'main' || e[0] !== n.key))) continue; // another input, or wired sub-nodes
       if (keptEdges.some((e) => e[0] === next.key && e[3] !== 'main')) continue;
       const after = keptEdges.filter((e) => e[0] === next.key && e[3] === 'main');
       keptNodes = keptNodes.filter((m) => m.key !== next.key);
       keptEdges = [...keptEdges.filter((e) => e[0] !== next.key && e[1] !== next.key), ...after.map(([, target, , t]): [string, string, number, ConnectionType] => [n.key, target, output, t])];
-      notes.push(`“${agent.name}” ${/email/i.test(next.type) ? 'sends the email' : `does “${next.name}”`} itself, so the flow has no “${next.name}” step after it`);
+      notes.push(`“${agent.name}” sends the email itself, so the flow has no “${next.name}” step after it`);
       dropped.push(next.name);
     }
   }

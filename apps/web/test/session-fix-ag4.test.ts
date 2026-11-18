@@ -356,6 +356,18 @@ describe('a run that passed, with an agent that lacks a tool (AG20, live pass S3
     useBubbleData.setState({ answers: {} });
   });
 
+  it('a phrase that is only a complaint is not a name: “lacks a tool” and “has no tool for that” read “the tool it needs”', async () => {
+    for (const text of ['No, the agent lacks a tool to send email.', 'No, it has no tool for that.']) {
+      openAgentFlow();
+      runs = [{ 'Ask sales analyst': { items: 1 } }];
+      replies = [{ text }];
+      await testUntilItRuns('sales by region');
+      const left = outcomes().at(-1)!.text;
+      expect(left).toContain('Left: connect the tool it needs to “');
+      expect(left).not.toMatch(/connect “(?:lacks|has|no|a|any)/i);
+    }
+  });
+
   it('a pass with nothing to propose stops and names what is left, not “tell me what to change” alone', async () => {
     openAgentFlow();
     runs = [{ 'Ask sales analyst': { items: 1 } }];

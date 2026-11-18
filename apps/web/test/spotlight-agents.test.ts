@@ -63,7 +63,7 @@ describe('agent briefs', () => {
       version: 3,
       skills: ['Route a ticket (Use when a ticket needs an owner)'],
       tools: ['search_crm', 'asks Writer'],
-      toolNodes: ['attio.record'], nodeTools: [{ type: 'attio.record', name: 'search_crm' }], // wave ag4 (AG19): the node types its tools are, for the builder's guard against a repeated step
+      nodeTools: [{ type: 'attio.record', name: 'search_crm' }], // wave ag4 (AG19): the node types its tools are, for the builder's guard against a repeated step
     });
     expect(describeAgents([brief])).toBe(
       '- “Support triage” (agentId ag_triage, v3): Reads a support ticket, finds the customer and routes it to the right team Role: Support lead. Skills: Route a ticket (Use when a ticket needs an owner). Tools: search_crm, asks Writer.',

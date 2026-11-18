@@ -318,7 +318,7 @@ describe('the design route', () => {
   });
 
   it('dropRepeatedAgentWork keeps what the agent has no tool for, and hangs later steps on the agent', () => {
-    const brief = { id: 'a1', name: 'Alert triager', version: 1, skills: [], tools: ['send_email'], toolNodes: ['messaging.emailSend'], nodeTools: [{ type: 'messaging.emailSend', name: 'send_email', free: ['toEmail'] }] };
+    const brief = { id: 'a1', name: 'Alert triager', version: 1, skills: [], tools: ['send_email'], nodeTools: [{ type: 'messaging.emailSend', name: 'send_email', free: ['toEmail'] }] };
     const nodes = [
       { key: 'a', type: 'core.messageAgent', name: 'Alert triager', parameters: { agentId: 'a1' } },
       { key: 'mail', type: 'messaging.emailSend', name: 'Email On-Call', parameters: {} },
@@ -328,21 +328,36 @@ describe('the design route', () => {
     expect(out.nodes.map((n) => n.key)).toEqual(['a', 'log']);
     expect(out.edges).toEqual([['a', 'log', 0, 'main']]);
     expect(dropRepeatedAgentWork(nodes, [['a', 'log', 0, 'main']], [brief]).notes).toEqual([]);
-    expect(dropRepeatedAgentWork(nodes, [['a', 'mail', 0, 'main']], [{ ...brief, toolNodes: [], nodeTools: [] }]).nodes).toHaveLength(3);
+    expect(dropRepeatedAgentWork(nodes, [['a', 'mail', 0, 'main']], [{ ...brief, nodeTools: [] }]).nodes).toHaveLength(3);
   });
 
   describe('dropRepeatedAgentWork keeps every step the person may have asked for', () => {
     const agentNode = { key: 'a', type: 'core.messageAgent', name: 'Alert triager', parameters: { agentId: 'a1' } };
     const mail = (parameters: Record<string, unknown> = {}) => ({ key: 'mail', type: 'messaging.emailSend', name: 'Email finance', parameters });
     const fixedTool = { type: 'messaging.emailSend', name: 'send_email', fixed: { toEmail: 'oncall@example.com' } };
-    const brief = (nodeTools: unknown[]) => ({ id: 'a1', name: 'Alert triager', version: 1, skills: [], tools: ['send_email'], toolNodes: ['messaging.emailSend'], nodeTools }) as never;
+    const brief = (nodeTools: unknown[]) => ({ id: 'a1', name: 'Alert triager', version: 1, skills: [], tools: ['send_email'], nodeTools }) as never;
     const run = (nodes: unknown[], edges: Array<[string, string, number, 'main' | 'ai_tool']>, b: unknown) => dropRepeatedAgentWork(nodes as never[], edges as never, [b as never]);
     const main: Array<[string, string, number, 'main']> = [['a', 'mail', 0, 'main']];
 
-    it('drops a step with no destination, an expression, or the tool’s own address', () => {
+    const freeTool = { type: 'messaging.emailSend', name: 'send_email', free: ['toEmail'] };
+    it('drops a step with an empty To, or the tool’s own address as a literal (trimmed, any case)', () => {
       expect(run([agentNode, mail()], main, brief([fixedTool])).dropped).toEqual(['Email finance']);
-      expect(run([agentNode, mail({ toEmail: '{{ $json.owner }}' })], main, brief([fixedTool])).dropped).toHaveLength(1);
-      expect(run([agentNode, mail({ toEmail: 'Oncall@example.com' })], main, brief([fixedTool])).dropped).toHaveLength(1);
+      expect(run([agentNode, mail({ toEmail: ' Oncall@example.com ' })], main, brief([fixedTool])).dropped).toHaveLength(1);
+      expect(run([agentNode, mail()], main, brief([freeTool])).dropped).toHaveLength(1);
+    });
+    it('keeps a step whose To is an expression (against a fixed or a free tool) or a literal against a free tool', () => {
+      expect(run([agentNode, mail({ toEmail: '{{ $json.owner }}' })], main, brief([fixedTool])).nodes).toHaveLength(2);
+      expect(run([agentNode, mail({ toEmail: '{{ $json.owner }}' })], main, brief([freeTool])).nodes).toHaveLength(2);
+      expect(run([agentNode, mail({ toEmail: 'oncall@example.com' })], main, brief([freeTool])).nodes).toHaveLength(2);
+    });
+    it('keeps a step that sets CC, BCC or attachments', () => {
+      for (const options of [{ ccEmail: 'boss@example.com' }, { bccEmail: 'x@example.com' }, { attachments: 'report' }]) expect(run([agentNode, mail({ options })], main, brief([fixedTool])).nodes).toHaveLength(2);
+    });
+    it('keeps a Slack step after a Slack tool (Slack is not on the list)', () => {
+      const slack = { key: 's', type: 'messaging.slack', name: 'Post to Slack', parameters: { channelId: 'C1' } };
+      const out = run([agentNode, slack], [['a', 's', 0, 'main']], brief([{ type: 'messaging.slack', name: 'post', free: [] }]));
+      expect(out.nodes).toHaveLength(2);
+      expect(out.notes).toEqual([]);
     });
     it('keeps a step that mails someone else than the tool’s fixed address', () => {
       const out = run([agentNode, mail({ toEmail: 'finance@example.com' })], main, brief([fixedTool]));
@@ -355,7 +370,7 @@ describe('the design route', () => {
     it('keeps an HTTP Request or Code step after an agent that has such a tool (generic types are never dropped)', () => {
       const http = { key: 'h', type: 'core.httpRequest', name: 'Call API', parameters: { url: 'https://x.example' } };
       const tool = { type: 'core.httpRequest', name: 'fetch', free: [] };
-      const out = run([agentNode, http], [['a', 'h', 0, 'main']], { ...(brief([tool]) as object), toolNodes: ['core.httpRequest'] });
+      const out = run([agentNode, http], [['a', 'h', 0, 'main']], brief([tool]));
       expect(out.nodes).toHaveLength(2);
     });
     it('keeps a step that has another main input or wired sub-nodes', () => {
