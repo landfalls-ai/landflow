@@ -137,6 +137,29 @@ describe('the live change text, with a comma inside brackets (fix pass, item 2)'
     expect(instructions).toMatch(/sqlite/i);
   });
 
+  const whenClauses = (instructions: string) => instructions.split('\n').flatMap((l) => (/^\d+\.\s*When /.test(l) ? [l] : []));
+  const noGarble = (instructions: string) => {
+    expect(instructions).not.toMatch(/When asked to (?:the|a|an|Give|Change|[“"])/);
+    for (const line of whenClauses(instructions)) expect(/^\d+\.\s*When ([^,]*(?:\([^)]*\))?[^,]*), call /.exec(line)?.[1] ?? line, line).not.toContain(':');
+    for (const line of instructions.split('\n')) expect(readsAsSentence(line), line).toBe(true);
+  };
+
+  it('two tools named in one change, with brackets and commas: every step reads, none repeats the ask', async () => {
+    const { agent } = await writer([]);
+    const change = 'Give it the SQLite tool to read the sales and the Change Case tool (upper, lower) to format the region names';
+    const body = (await (await withModel({ design: { instructions: STEPS, nodeTools: 'databases.sqlite' } }, () => post({ name: 'Short writer', preview: true, base: { agentId: agent.id }, change }))).json()) as Body;
+    expect(body.config.tools.some((t) => 'nodeType' in t && t.nodeType === 'databases.sqlite')).toBe(true);
+    noGarble(body.config.instructions ?? '');
+    expect(whenClauses(body.config.instructions ?? []).length).toBeGreaterThan(0);
+  });
+
+  it('the held retry text as the change (a quoted name, a colon, “Change”) never becomes a step', async () => {
+    const { agent } = await writer([]);
+    const change = 'The eval gate held “Short writer”. Change “Short writer” so these cases pass without removing what it already does: a case with the input “Read the sqlite sales” scored low: it did not name the regions.';
+    const body = (await (await withModel({ design: { instructions: STEPS, nodeTools: 'databases.sqlite' } }, () => post({ name: 'Short writer', preview: true, base: { agentId: agent.id }, change }))).json()) as Body;
+    noGarble(body.config.instructions ?? '');
+  });
+
   it('a line the proposal itself carried is checked too: wholeSentences judges the proposal, not the text it was rewritten from', () => {
     const garbled = 'Steps:\n1. Write the summary.\n2. When asked to Give it the SQLite tool (select / executeQuery, call sqlite (it asks the person first).';
     const fixed = wholeSentences(garbled, 'Steps:\n1. Write the summary.', '');

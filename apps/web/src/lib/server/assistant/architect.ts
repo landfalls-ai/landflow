@@ -1837,7 +1837,11 @@ function withToolSteps(text: string, added: Array<{ tool: AgentToolConfig; line?
     if (line) return line;
     const built = `0. When ${changeClause(change, t)}, call ${call(t)}.`;
     // A step cut mid-bracket, or one that repeats the ask's own "Give it …", falls back to a step built from the tool's description.
-    return readsAsSentence(built) && !/^\d+\.\s*When asked to (?:add|attach|include|install|enable|connect|use|give)\b/i.test(built) ? built : `0. When ${descriptionClause(t)}, call ${call(t)}.`;
+    // The clause after "asked to" must start with a verb: an article, a quote, a capitalised word (the ask's own "Give it …", “X”) or a ":" in the clause means the ask was not cut into a task.
+    const clause = /^0\. When (.*), call /.exec(built)?.[1] ?? '';
+    const afterAsked = /^asked to (.*)$/i.exec(clause)?.[1];
+    const notATask = afterAsked !== undefined && (/^(?:the|a|an|this|that|these|those|[“"'‘]|[A-Z])/.test(afterAsked) || /^(?:add|attach|include|install|enable|connect|use|give)\b/i.test(afterAsked));
+    return readsAsSentence(built) && !notATask && !clause.includes(':') ? built : `0. When ${descriptionClause(t)}, call ${call(t)}.`;
   });
   const toolsAt = lines.findIndex((l, i) => i >= start && i < end && TOOLS_LINE.test(l));
   let at = toolsAt;
