@@ -51,7 +51,8 @@ export function addressesOf(value: unknown): string[] {
  * Where a node call goes, from the parameters it runs with: an email's To, CC and BCC; an HTTP call's URL; a channel or chat id;
  * else `<type> <operation>` (the `destinationsOf` form). Empty when the call reaches nothing outside (a read).
  */
-export function callDestinations(nodeType: string | undefined, parameters: Record<string, unknown>): string[] {
+export function callDestinations(nodeType: string | undefined, parameters: Record<string, unknown>, opts: { fallback?: boolean } = {}): string[] {
+  const fallback = opts.fallback ?? true;
   const type = nodeType ?? '';
   const options = parameters.options && typeof parameters.options === 'object' ? (parameters.options as Record<string, unknown>) : {};
   const out: string[] = [];
@@ -61,25 +62,38 @@ export function callDestinations(nodeType: string | undefined, parameters: Recor
     if (isUnreadHost(host) || isExpression(url) || !/^[a-z][a-z0-9+.-]*:\/\//i.test(url.trim())) return [NOT_GIVEN];
     return [normalDestination(url)];
   }
-  for (const key of ['toEmail', 'to']) if (typeof parameters[key] === 'string' && (key === 'toEmail' || /email|mail/i.test(type))) out.push(...addressesOf(parameters[key]));
+  // Recipient fields are read on any messaging type (`to`, `recipient*`, `sendTo`, phone numbers), not only email.
+  const messaging = /email|mail|sms|twilio|whatsapp|telegram|slack|message|phone|call|chat|teams|discord/i.test(type);
+  for (const [key, value] of Object.entries(parameters)) {
+    if (typeof value !== 'string' || !value.trim()) continue;
+    const recipient = key === 'toEmail' || (messaging && /^(to|sendTo|recipient\w*|\w*phone\w*|toNumber|toPhone)$/i.test(key));
+    if (!recipient) continue;
+    if (isExpression(value)) out.push(NOT_GIVEN);
+    else if (key === 'toEmail' || /@/.test(value)) out.push(...addressesOf(value));
+    else out.push(`${type} ${key} ${value.trim().toLowerCase()}`);
+  }
   out.push(...addressesOf(options.ccEmail ?? parameters.ccEmail), ...addressesOf(options.bccEmail ?? parameters.bccEmail));
   for (const key of ['channel', 'chatId', 'channelId']) {
     const value = parameters[key];
     if (typeof value === 'string' && value.trim()) out.push(isExpression(value) ? NOT_GIVEN : `${type} ${key} ${value.trim().toLowerCase()}`);
   }
   if (out.length) return out;
+  if (!fallback) return [];
   const step = { type, parameters };
   if (!writesOutside(step)) return [];
   const [sent] = destinationsOf([{ name: '', ...step }]);
   return sent ? [sent.destination] : [];
 }
 
-/** The destinations an agent's own saved config fixes: each asks-first node tool's fixed To, CC, BCC, URL or channel (never an expression). */
+/**
+ * The destinations an agent's own saved config fixes: each asks-first node tool's fixed To, CC, BCC, URL, channel or recipient
+ * (never an expression, never the `<type> <operation>` stand-in: a write that names no address is not given by being configured).
+ */
 export function agentDestinations(config: Pick<AgentConfig, 'tools'>): string[] {
   const given: string[] = [];
   for (const tool of config.tools) {
     if (tool.type !== 'node' || !tool.requireApproval) continue;
-    given.push(...callDestinations(tool.nodeType, tool.parameters).filter((d) => d !== NOT_GIVEN));
+    given.push(...callDestinations(tool.nodeType, tool.parameters, { fallback: false }).filter((d) => d !== NOT_GIVEN));
   }
   return given;
 }
@@ -90,6 +104,7 @@ export function flowDestinations(workflow: Pick<Workflow, 'nodes'>): string[] {
   for (const node of workflow.nodes) {
     if (node.disabled) continue;
     const step = { name: node.name ?? node.id, type: node.type, parameters: (node.parameters ?? {}) as Record<string, unknown> };
+    if (!writesOutside(step)) continue; // a read (an HTTP GET, a Slack lookup) gives nothing
     given.push(...callDestinations(step.type, step.parameters), ...destinationsOf([step]).map((d) => d.destination));
   }
   return given.filter((d) => d !== NOT_GIVEN && !isUnreadHost(d));

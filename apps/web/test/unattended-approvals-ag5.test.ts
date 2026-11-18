@@ -81,6 +81,24 @@ describe('GET /api/workflows/:id/unattended-approvals', () => {
     expect((await ask(flow('core.manualTrigger', triager.id).id, '?version=draft')).body).toEqual([]);
   });
 
+  it('counts every trigger but the manual and evaluation ones: usage, suggestion, detector, cap raise, error, called workflow, MCP', async () => {
+    const words: Array<[string, string]> = [
+      ['core.usageTrigger', 'usage event'],
+      ['core.suggestionDecidedTrigger', 'suggestion decision'],
+      ['core.detectorTrigger', 'detector'],
+      ['core.capRaiseTrigger', 'cap raise'],
+      ['core.errorTrigger', 'error workflow'],
+      ['core.workflowTrigger', 'called workflow'],
+      ['core.executeWorkflowTrigger', 'called workflow'],
+      ['core.mcpTrigger', 'MCP call'],
+    ];
+    for (const [type, word] of words) {
+      const answer = await ask(flow(type, triager.id).id, '?version=draft');
+      expect(answer.body, type).toEqual([expect.objectContaining({ tool: 'Send Email', trigger: word, line: unattendedLine('Send Email', word) })]);
+    }
+    expect((await ask(flow('core.evaluationTrigger', triager.id).id, '?version=draft')).body).toEqual([]);
+  });
+
   it('a version pinned to an agent version without the tool says nothing, and an agent that reads only says nothing', async () => {
     const wf = flow('core.webhook', triager.id, { path: 'ag23u-pin' });
     await publish(wf); // pinned to Triager v1 (asks first)

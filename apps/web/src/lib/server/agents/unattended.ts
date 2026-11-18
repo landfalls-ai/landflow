@@ -20,17 +20,33 @@ import { agentStore, configOf } from './store';
 
 export type { UnattendedApproval } from '../../shared/unattended';
 
-/** The word for a trigger that starts a run without a person in the editor; undefined for one a person starts (manual) or that is no entry point (error, sub-workflow). */
+/** The plain word for each core trigger that starts a production run without a person in the editor. */
+const CORE_TRIGGER_WORDS: Record<string, string> = {
+  'core.webhook': 'webhook',
+  'core.schedule': 'schedule',
+  'core.chatTrigger': 'chat',
+  'core.formTrigger': 'form',
+  'core.usageTrigger': 'usage event',
+  'core.suggestionDecidedTrigger': 'suggestion decision',
+  'core.detectorTrigger': 'detector',
+  'core.capRaiseTrigger': 'cap raise',
+  'core.errorTrigger': 'error workflow',
+  'core.workflowTrigger': 'called workflow',
+  'core.executeWorkflowTrigger': 'called workflow',
+  'core.mcpTrigger': 'MCP call',
+};
+
+/**
+ * The word for a trigger that starts a run without a person in the editor: every trigger but the manual one (a person's run)
+ * and the evaluation one (an eval run, not production). Undefined for those and for a node that is no trigger.
+ */
 export function unattendedTrigger(type: string): string | undefined {
-  if (type === 'core.manualTrigger' || type === 'core.errorTrigger' || type === 'core.executeWorkflowTrigger') return undefined;
-  if (type === 'core.webhook') return 'webhook';
-  if (type === 'core.schedule') return 'schedule';
-  if (type === 'core.chatTrigger') return 'chat';
-  if (type === 'core.formTrigger') return 'form';
+  if (type === 'core.manualTrigger' || type === 'core.evaluationTrigger') return undefined;
+  if (CORE_TRIGGER_WORDS[type]) return CORE_TRIGGER_WORDS[type];
   const resolved = registry.resolve(type);
   if ('error' in resolved || resolved.descriptor.kind !== 'trigger') return undefined;
   const source = resolved.descriptor.triggerSource;
-  if (source === 'manual') return undefined;
+  if (source === 'manual') return 'trigger';
   return source === 'webhook' || source === 'schedule' || source === 'chat' ? source : 'app trigger';
 }
 

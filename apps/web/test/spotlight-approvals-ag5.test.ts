@@ -225,3 +225,36 @@ describe('what Spotlight never approves', () => {
     expect(JSON.stringify(smoke)).toMatch(/approval|denied/);
   });
 });
+
+describe('destinations nobody gave (lesson 21)', () => {
+  it('a recipient on a non-email write is never given by being configured: a WhatsApp or Twilio number, a SQL change', async () => {
+    const { callDestinations, agentDestinations, spotlightVerdict } = await import('@/lib/server/agents/spotlight-approvals');
+    const tool = (nodeType: string, parameters: Record<string, unknown>) => ({ id: 'x', type: 'node' as const, name: 'T', description: 'd', nodeType, parameters, requireApproval: true });
+    const cases: Array<[string, Record<string, unknown>, Record<string, unknown>]> = [
+      ['messaging.whatsappSend', { recipientPhoneNumber: "={{ $fromAI('n') }}", text: 'hi' }, { recipientPhoneNumber: '+15550000999', text: 'hi' }],
+      ['messaging.twilioSend', { to: "={{ $fromAI('n') }}", body: 'hi' }, { to: '+15550000999', body: 'hi' }],
+      ['databases.postgres', { operation: 'executeQuery', query: "={{ $fromAI('q') }}" }, { operation: 'executeQuery', query: 'DROP TABLE customers' }],
+    ];
+    for (const [type, configured, call] of cases) {
+      const given = agentDestinations({ tools: [tool(type, configured)] });
+      expect(given, type).toEqual([]);
+      expect(spotlightVerdict(callDestinations(type, call), given), type).toBe('leave');
+    }
+    // A number the agent fixed is given; the same number from the person's words gives the write with no address, too.
+    const fixedNumber = agentDestinations({ tools: [tool('messaging.whatsappSend', { recipientPhoneNumber: '+15550000111' })] });
+    expect(spotlightVerdict(callDestinations('messaging.whatsappSend', { recipientPhoneNumber: '+15550000111' }), fixedNumber)).toBe('approve');
+    expect(spotlightVerdict(callDestinations('messaging.whatsappSend', { recipientPhoneNumber: '+15550000999' }), fixedNumber)).toBe('leave');
+    const standIn = callDestinations('databases.postgres', { operation: 'executeQuery', query: 'DROP TABLE customers' });
+    expect(spotlightVerdict(standIn, standIn)).toBe('approve'); // named in the person's body destinations
+  });
+
+  it('an asks-first workflow tool is left for the person, not run', async () => {
+    const sub: Workflow = { id: 'wf_ag23_sub', name: 'Notify sub', nodes: [node('In', 'core.workflowTrigger', {})], connections: [] };
+    store.saveWorkflow(sub);
+    const agent = agentStore.create({ name: 'Flow caller', instructions: 'You call a flow.', model: { provider: 'ollama', model: 'm-flowcaller', baseUrl }, tools: [{ id: 'w1', type: 'workflow', name: 'Notify', description: 'Notify', workflowId: sub.id, requireApproval: true }] });
+    agentStore.publish(agent.id);
+    script = (t) => (t === 1 ? { toolCalls: [{ id: 'c_wf', name: toToolName('Notify'), arguments: {} }] } : { text: 'Left.' });
+    const result = resultOf((await post(runRoute.POST, flow(agent.id).id, SPOTLIGHT)).text)!;
+    expect(result.status).toBe('waiting');
+  });
+});
