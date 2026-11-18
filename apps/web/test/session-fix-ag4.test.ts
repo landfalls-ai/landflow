@@ -58,6 +58,7 @@ const { useAssistant, undos } = await import('@/components/editor/assistant');
 const { testUntilItRuns, approveDestinations, sendsAllowed } = await import('@/components/editor/test-session');
 const { applyAgentChange, publishAgentChange } = await import('@/components/editor/spotlight/agent-ask');
 const { ApiError } = await import('@/lib/client/api');
+const { showSmoke } = await import('@/components/editor/spotlight/agent-credential-picker');
 const { fixLine } = await import('@/lib/shared/agent-card');
 const { autonomyOf, noteOpened, useAutonomyFacts } = await import('@/components/editor/spotlight-autonomy');
 
@@ -84,6 +85,7 @@ const run = vi.fn();
 const send = vi.fn();
 let sentSessions: Array<string | undefined> = [];
 let sentRequests: string[] = [];
+let sentAutonomy: Array<string | undefined> = [];
 
 /** The next scripted reply of the assistant: text and proposals. */
 let replies: Array<{ text?: string; proposals?: Array<{ summary: string; ops: AssistantOp[] }>; agentFix?: unknown }> = [];
@@ -95,6 +97,7 @@ beforeEach(() => {
   replies = [];
   sentSessions = [];
   sentRequests = [];
+  sentAutonomy = [];
   apiCalls.length = 0;
   apiAnswers = {};
   sendsAllowed.clear();
@@ -118,7 +121,8 @@ beforeEach(() => {
     }, 0);
   });
   useEditor.setState({ run: run as never });
-  send.mockReset().mockImplementation(async (request: string, options: { session?: string; testId?: string }) => {
+  send.mockReset().mockImplementation(async (request: string, options: { session?: string; testId?: string; autonomy?: string }) => {
+    sentAutonomy.push(options.autonomy);
     sentSessions.push(options.session);
     sentRequests.push(request);
     const next = replies.shift() ?? { text: 'No change.' };
@@ -191,6 +195,24 @@ describe('wave ag4 carryover: an Apply that lands before the reply ends', () => 
   });
 });
 
+describe('re-check 3 (item 10): a saved workflow is never auto-applied, with the switch on', () => {
+  it('a wrong-output session on a workflow opened with nodes asks first: the fix is a card that waits, nothing is applied by itself', async () => {
+    noteOpened(WF, 3); // opened with nodes: saved
+    yes();
+    runs = [{ 'Notify VIP': { items: 1 }, 'Notify Standard': { items: 1 } }];
+    replies = [{ text: 'No, the numbers look invented.', proposals: [{ summary: 'Fix body', ops: [fixBody] }] }];
+    const session = testUntilItRuns('The numbers in the report look made up. Test it and fix it.');
+    await vi.waitFor(() => expect(sentSessions).toEqual(['review']));
+    expect(useAutonomyFacts.getState().switchOn).toBe(true);
+    expect(sentAutonomy).toEqual(['asks-first']);
+    expect(autonomyOf(WF)).toBe('asks-first');
+    await new Promise((r) => setTimeout(r, 30));
+    expect(applied).toEqual([]);
+    decide('r1p0', 'dismissed');
+    await session;
+  });
+});
+
 describe('runs that write outside ask first', () => {
   it('asks before the run, and not again after the yes', async () => {
     noteOpened(WF, 3);
@@ -250,6 +272,35 @@ describe('a failure inside an agent', () => {
     expect(publish.method).toBe('POST');
     expect(JSON.stringify(publish.json ?? {})).not.toContain('skipEval');
     expect(run).toHaveBeenCalledTimes(2);
+    expect(actions()).toEqual(['publish']);
+  });
+
+  it('re-check 3: an applied fix whose test stops for a credential waits for the pick on the card, then Publish and the run, with no stop row', async () => {
+    noteOpened(WF, 3);
+    yes();
+    let smokes = 0;
+    apiAnswers = {
+      'POST /api/agents/design': design,
+      'POST /api/agents/ag_mail/smoke-test': () => (smokes++ === 0 ? { smoke: { state: 'untested', reason: 'needs a credential: SQLite' } } : { smoke: { state: 'passed', reply: 'sent' } }),
+    };
+    runs = [{ 'Notify VIP': { error: 'send_email failed' } }, { 'Notify VIP': { items: 1 }, 'Notify Standard': { items: 1 } }];
+    replies = [{ text: 'It failed inside the agent.', agentFix }];
+    const session = testUntilItRuns();
+    await waitForCard();
+    const [{ itemId, card }] = cards();
+    await applyAgentChange(itemId, card);
+    await new Promise((r) => setTimeout(r, 30));
+    // It waits: no stop row, no second run, and the card says a credential is left.
+    expect(outcomes()).toEqual([]);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(cards()[0].card.smoke).toMatchObject({ state: 'untested', reason: 'needs a credential: SQLite' });
+    // The person picks it in place: the picker's smoke result lands on the card.
+    showSmoke('ag_mail', { state: 'passed', reply: 'sent' });
+    await vi.waitFor(() => expect(cards()[0].card.smoke?.state).toBe('passed'));
+    await publishAgentChange(itemId, cards()[0].card);
+    await session;
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(outcomes()).toEqual([]);
     expect(actions()).toEqual(['publish']);
   });
 

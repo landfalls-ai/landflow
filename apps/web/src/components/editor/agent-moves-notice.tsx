@@ -270,6 +270,25 @@ export function AgentMovesNotice({ workflowId }: { workflowId: string }) {
     );
   }
 
+  // The same Publish and Open buttons in the first-open view and in the record the pill opens (a move still pending can be published from either).
+  const agentRows = (
+    <>
+      {agents.map((a) => (
+        <div key={a.id} className="space-y-1">
+          <div className="flex flex-wrap gap-1.5">
+            <Button size="sm" variant="primary" disabled={readOnly || publishing[a.id]?.endsWith('…')} onClick={() => void publish(a)}>
+              Publish {a.name}
+            </Button>
+            <a className="inline-flex h-7 items-center rounded-md border border-hair px-2 text-[12px] font-medium text-t1 hover:border-ac" href={`/agents/${a.id}`} target="_blank" rel="noreferrer">
+              Open {a.name}
+            </a>
+          </div>
+          {publishing[a.id] && <p className="text-t3">{publishing[a.id]}</p>}
+        </div>
+      ))}
+    </>
+  );
+
   return (
     <aside
       ref={asideRef}
@@ -287,7 +306,10 @@ export function AgentMovesNotice({ workflowId }: { workflowId: string }) {
       </header>
       <div className="min-h-0 space-y-3 overflow-y-auto px-3 py-2.5 text-[12px]">
         {record ? (
-          <MoveRecord moves={moves} onRetry={(m) => void again(m, false)} onResolve={(m) => void again(m, true)} />
+          <>
+            <MoveRecord moves={moves} onRetry={(m) => void again(m, false)} onResolve={(m) => void again(m, true)} />
+            {agentRows}
+          </>
         ) : (
           <>
             <p className="text-t3">A model or tool wired into a Run an Agent node is now the agent’s: its model, memory, tools and knowledge are the bubbles under the node. What can’t move stays here and runs in this flow only.</p>
@@ -298,19 +320,7 @@ export function AgentMovesNotice({ workflowId }: { workflowId: string }) {
                 </li>
               ))}
             </ul>
-            {agents.map((a) => (
-              <div key={a.id} className="space-y-1">
-                <div className="flex flex-wrap gap-1.5">
-                  <Button size="sm" variant="primary" disabled={readOnly || publishing[a.id]?.endsWith('…')} onClick={() => void publish(a)}>
-                    Publish {a.name}
-                  </Button>
-                  <a className="inline-flex h-7 items-center rounded-md border border-hair px-2 text-[12px] font-medium text-t1 hover:border-ac" href={`/agents/${a.id}`} target="_blank" rel="noreferrer">
-                    Open {a.name}
-                  </a>
-                </div>
-                {publishing[a.id] && <p className="text-t3">{publishing[a.id]}</p>}
-              </div>
-            ))}
+            {agentRows}
             <button type="button" onClick={() => setRecord(true)} className="text-[12px] font-medium text-ac hover:underline">
               Show everything that moved
             </button>

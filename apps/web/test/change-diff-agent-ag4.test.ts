@@ -15,6 +15,12 @@ describe('ChangeDiff with a changeAgent op', () => {
     expect(el.textContent).not.toContain('No step changes');
     expect(el.textContent).toContain('Changes the agent of “Ask sales analyst”: give it the SQLite tool');
   });
+  it('a changeAgent that names only the agent still says whose: the step that runs it (re-check 3)', async () => {
+    const el = document.createElement('div');
+    document.body.append(el);
+    await act(async () => createRoot(el).render(createElement(ChangeDiff, { before: flow as never, ops: [{ op: 'changeAgent', agentId: 'ag_q', change: 'connect Sales DB' }] as never })));
+    expect(el.textContent).toContain('Changes the agent of “Ask sales analyst”: connect Sales DB');
+  });
   it('a mixed proposal still shows its step changes', async () => {
     const el = document.createElement('div');
     document.body.append(el);

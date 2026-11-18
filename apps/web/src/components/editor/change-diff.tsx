@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { diffOps, type AssistantOp, type ChangeDiff as Diff, type FieldDiff, type StepDiff } from '@/lib/shared/assistant-ops';
 import type { Workflow } from '@/lib/shared/types';
 import { editorLookup } from './assistant';
+import { useBubbleData } from '@/lib/client/agent-bubble-data';
 import { useEditor } from './store';
 
 const SIGN: Record<StepDiff['kind'], { sign: string; tone: string }> = {
@@ -107,6 +108,16 @@ function StepBlock({ step }: { step: StepDiff }) {
  * leaves as they are. `open` is whether it starts open (a waiting card) or folded (an applied row). With `id` (the
  * proposal) and `settled` (it is applied), the diff the card showed while it waited is shown, since the canvas has it now.
  */
+/** Whose agent a changeAgent changes: the step it names, else the step on the canvas that runs the agent, else the agent's own name. */
+function agentOwner(op: { node?: string; agentId?: string }, before?: Workflow): string | undefined {
+  if (op.node) return op.node;
+  if (!op.agentId) return undefined;
+  const step = before?.nodes.find((n) => n.parameters?.agentId === op.agentId)?.name ?? useEditor.getState().nodes.find((n) => n.data.wf.parameters?.agentId === op.agentId)?.data.wf.name;
+  if (step) return step;
+  const known = Object.entries(useBubbleData.getState().answers).find(([k, a]) => a && k.startsWith(`${op.agentId}|`))?.[1];
+  return known?.agent.name;
+}
+
 export function ChangeDiff({ before, ops, open = true, id, settled }: { before?: Workflow; ops: AssistantOp[] | AssistantOp[][]; open?: boolean; id?: string | string[]; settled?: boolean }) {
   const [on, setOn] = useState(open);
   const ids = id === undefined ? [] : Array.isArray(id) ? id : [id];
@@ -127,7 +138,7 @@ export function ChangeDiff({ before, ops, open = true, id, settled }: { before?:
       <div data-testid="agent-change-line" className="rounded-lg border border-hair bg-sf px-2 py-1.5 text-[12px] leading-snug text-t2">
         {agentOps.map((o, i) => (
           <div key={i}>
-            Changes the agent{o.node ? ` of “${o.node}”` : ''}: <span className="text-t1">{o.change}</span>
+            Changes the agent{agentOwner(o, before) ? ` of “${agentOwner(o, before)}”` : ''}: <span className="text-t1">{o.change}</span>
           </div>
         ))}
         <div className="text-t3">The steps stay as they are; Apply shows the agent’s change card.</div>

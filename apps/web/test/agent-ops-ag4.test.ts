@@ -296,6 +296,9 @@ describe('the open path', () => {
       const record = container.querySelector('[data-testid="agent-moves-notice"]')!;
       expect(record.textContent).toContain('kept in this flow');
       expect(record.textContent).toContain('moved into Alert triager');
+      // Re-check 3: the record view has the same Publish and Open buttons while a move is pending.
+      expect(record.textContent).toContain('Publish Alert triager');
+      expect(record.textContent).toContain('Open Alert triager');
 
       // Closed and remembered: a later open (a new mount) shows the pill only.
       await act(async () => (container.querySelector('[aria-label="Close"]') as HTMLButtonElement).click());

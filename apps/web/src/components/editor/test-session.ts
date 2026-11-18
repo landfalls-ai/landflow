@@ -510,6 +510,9 @@ async function showAgentFix(event: AgentFixEvent, attempt: number, signal: Abort
   }
 }
 
+/** The applied change's test stopped for a credential: the person picks it on the card (Pick it), in place. */
+const needsPick = (card: AgentCard) => card.smoke?.state === 'untested' && Boolean(card.smoke.reason?.startsWith('needs a credential'));
+
 /** The card of an item, or undefined once it is gone (dismissed, a new conversation). */
 const cardIn = (itemId: string): AgentCard | undefined => {
   const item = useAssistant.getState().items.find((i) => i.id === itemId);
@@ -524,7 +527,8 @@ const cardIn = (itemId: string): AgentCard | undefined => {
 async function agentFixOutcome(itemId: string, signal: AbortSignal): Promise<string | undefined> {
   const settled = () => {
     const card = cardIn(itemId);
-    return !card || card.state === 'failed' || (card.state === 'created' && card.smoke?.state !== 'testing' && card.smoke !== undefined);
+    // A test that stopped for a credential is not an answer: the card offers Pick it, and the session waits for the pick (its smoke result lands on the card).
+    return !card || card.state === 'failed' || (card.state === 'created' && card.smoke?.state !== 'testing' && card.smoke !== undefined && !needsPick(card));
   };
   if (!(await untilAssistant(settled, signal))) return signal.aborted ? undefined : 'You kept the agent as it was.';
   let card = cardIn(itemId);
