@@ -7,6 +7,7 @@ import { teamBrief, type TeamBrief } from '@/lib/shared/agent-teams';
 import { agentTeamStore } from '../agent-teams/store';
 import { agentStore } from '../agents/store';
 import { withOwnership } from '../projects';
+import { catalogAgents } from './tenant-catalog';
 import { routeActor } from '../projects/http';
 
 /** At most this many of each go in a prompt. */
@@ -23,9 +24,15 @@ export function roster(): { agents: AgentBrief[]; teams: TeamBrief[] } {
   const all = agentStore.list();
   const visibleAgents = new Set(withOwnership(actor, 'agent', all.map((a) => ({ id: a.id }))).map((a) => a.id));
   const names = new Map(all.map((a) => [a.id, a.published?.config.name ?? a.name]));
-  const agents = all
-    .filter((a) => visibleAgents.has(a.id))
-    .flatMap((a) => agentBrief(a, (id) => names.get(id)) ?? [])
-    .slice(0, ROSTER_LIMIT);
+  // AG18: drafts too, after the published ones (a flow can't run a draft yet; Spotlight can say it exists and reuse it once published)
+  const visible = all.filter((a) => visibleAgents.has(a.id));
+  const used = usedByCounts(actor);
+  const brief = (a: (typeof all)[number]) => agentBrief(a, (id) => names.get(id), { drafts: true, usedBy: used.get(a.id) });
+  const agents = [...visible.filter((a) => a.published), ...visible.filter((a) => !a.published)].flatMap((a) => brief(a) ?? []).slice(0, ROSTER_LIMIT);
   return { agents, teams };
+}
+
+/** AG18: how many workflows (the caller can read) run each agent, from the same rule the catalog uses. */
+function usedByCounts(actor: ReturnType<typeof routeActor>): Map<string, number> {
+  return new Map(catalogAgents(actor).map((a) => [a.id, a.usedBy.count]));
 }

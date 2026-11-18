@@ -31,7 +31,9 @@ export const POST = handler(async (request: Request) => {
     const scope = assistantScope({ surface: 'spotlight', ...(userId && { userId }), ...(workflowId && { workflowId }) });
     const stages: BuildStage[] = [];
     const result = await runInUsageScope(scope, () => planFlow(prompt, { model: picked.model, types, agents, teams, stages, ...(plan && { plan }), ...(change && { change }) }));
-    return json({ ...result, stages, model: picked.model });
+    // AG18: the build has no tool loop, so the roster is how it reads the tenant: said as a step of the build's trace, like chat's list_agents.
+    const steps = [{ tool: 'list_agents', label: `Looked at ${agents.length} agent${agents.length === 1 ? '' : 's'}`, ok: true }];
+    return json({ ...result, stages, steps, model: picked.model });
   } catch (e) {
     return error((e as Error).message, isUsageCapError(e) ? 429 : 502);
   }
