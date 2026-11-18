@@ -351,18 +351,22 @@ reply's `done` model or the draft's. Two shared checks read what a designed agen
 
 Each backbone wave's packages are joined on their real sides in a joins file (`spotlight-sb1-joins.test.ts` …
 `spotlight-sb3-joins.test.ts`, `agents-ag1-joins.test.ts`, `agents-ag2-joins.test.ts`, `agents-ag3-joins.test.ts`,
-`agents-ag4-joins.test.ts`); they always run with scripted models. Their last block compares the contract copies in the
+`agents-ag4-joins.test.ts`, `fix-path-ag5-joins.test.ts`); they always run with scripted models. Their last block compares the contract copies in the
 repository (wave ag4's: `lib/shared/agent-card.ts`, `lib/shared/tenant-catalog.ts`, `lib/shared/agent-bubbles.ts`,
 `lib/shared/agent-versions.ts`, `components/canvas/bubble-view.tsx`, `test/spotlight-scenarios/scenario.ts` and
 `test/fixtures/legacy-agent-flow.json`; wave ag3's `lib/shared/tool-target.ts` and the runbooks in
 `test/spotlight-scenarios/fixtures/runbooks/`) byte for byte with the program's contracts folder, and runs only when
-`LANDFLOW_BACKBONE_CONTRACTS` names that folder (it holds `ag3/` and `ag4/`; the older joins' card and scenario checks
+`LANDFLOW_BACKBONE_CONTRACTS` names that folder (it holds `ag3/`, `ag4/` and `ag5/`, whose `fix-autonomy.ts` is `lib/shared/fix-autonomy.ts`; the older joins' card and scenario checks
 point at `ag4`, since wave ag4 replaced those two contracts). Wave ag3's package tests are `agent-gate-ag3`, `tool-proof-ag3`, `tool-proof-ui-ag3`,
 `agent-knowledge-ag3` and `agent-connections-ag3` (`apps/web/test/`; `agent-node-band-ag3` went with the band), and
 `packages/sdk/test/stream-target.test.ts`; wave ag4's are `agent-bubbles-ag4`, `agent-layout-ag4` and
 `agent-connections-draft-ag4` (AG16), `agent-overrides-ag4` and `agent-ops-ag4` (AG17), `tenant-catalog-ag4` and
 `tenant-mcp-ag4` (AG18), `agent-reuse-ag4` and `agent-reuse-card-ag4` (AG19), `run-log-ag4` and `session-fix-ag4` (AG20),
-`agent-versions-ag4` and `agent-updates-ag4` (AG21).
+`agent-versions-ag4` and `agent-updates-ag4` (AG21). Wave ag5's are `gate-same-cases-ag5` and `agent-change-quality-ag5` (AG24), `spotlight-approvals-ag5` and
+`unattended-approvals-ag5` (AG23), `flow-saved-agent-ag5` and `flow-saved-agent-ag5-editor` (AG25), `fix-autonomy-ag5`,
+`session-auto-ag5` and `session-stable-ag5` (AG22); its joins (`fix-path-ag5-joins`) drive the real editor stores and the
+route handlers together (each browser `api` call goes to the `route.ts` its path names) with a fake Anthropic, a scripted
+agent model and judge, a strict receiver and a fake SMTP server.
 
 `cluster-runtime.test.ts` always runs: a main and workers through the runner on the in-process coordinator.
 
