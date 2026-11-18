@@ -298,7 +298,9 @@ export async function publishUpdate(workflowId: string, agentIds: readonly strin
   if (!changes.length) throw new PublishError('Nothing to update: production already runs the latest published versions of these agents', 409, { code: 'nothing_to_update' });
   const tested = testPassed(workflowId, testedExecutionId, wanted);
   if (tested !== true) throw new PublishError(tested, 409, { code: 'not_tested' });
-  const graph = applyVersion(workflow, base);
+  // The graph the test ran: without wiring AG17 moved into an agent whose new version holds it.
+  const { updateGraph } = await import('./agents/update-graph');
+  const graph = updateGraph(workflowId, applyVersion(workflow, base), current, wanted);
   const version = recordVersion(graph, { force: true, summary: pinsSummary(changes), ...(by && { author: by }) });
   if (!version) throw new PublishError('Could not record the new version', 500);
   return publishVersion(workflowId, version.id, by, `Moved to ${pinsSummary(changes)} after a passing test`, { pins: wanted });

@@ -198,7 +198,7 @@ const versions = await import('@/lib/server/agents/versions');
 const publish = await import('@/lib/server/publish');
 await import('@/lib/server/agents/publish-first'); // registers publishing an agent first (the publish route imports it)
 const { getPublication, setPublication } = await import('@/lib/server/publications');
-const { listVersions } = await import('@/lib/server/versions');
+const { getVersion, listVersions } = await import('@/lib/server/versions');
 const { testUpdate } = await import('@/lib/server/agents/updates');
 const designRoute = await import('@/app/api/agents/design/route');
 const importRoute = await import('@/app/api/agents/import/route');
@@ -1014,6 +1014,79 @@ describe('10. the moves compose with the pins (AG17 × AG21)', () => {
     // Both tables read back (the two migrations, in order, on this SQLite).
     expect(database().all('SELECT id FROM agent_flow_moves WHERE workflow_id = ?', a.id).length).toBeGreaterThan(0);
     expect(database().all('SELECT * FROM workflow_version_pins WHERE version_id = ?', vNew)).toHaveLength(1);
+  });
+
+  it('the update path offers the moved Slugify once: published before ag4 → backfill → start pass → S4 v2 published alone → the update’s test and its version', async () => {
+    const s4 = utility('Utility helper update tool');
+    const a = legacy(s4.id, 'legacy_update_tool', (f) => ({ ...f, active: true }));
+    const version = listVersions(a.id)[0]!;
+    setPublication(a.id, version.id, 'migration');
+    database().delete('workflow_version_pins', { version_id: version.id });
+    database().delete('meta', { key: 'agents.versions.backfilled' });
+    await versions.backfillVersions();
+    await flowMoves.startPass();
+    await runWorkflow({ workflow: prod(a.id), mode: 'webhook', startNodeId: 'n-trigger' });
+    expect((await call(smokeRoute.POST, 'POST', `/api/agents/${s4.id}/smoke-test`, { message: 'slugify "x"' }, { id: s4.id })).status).toBe(200);
+    expect((await call(agentPublishRoute.POST, 'POST', `/api/agents/${s4.id}/publish`, {}, { id: s4.id })).status).toBe(200);
+    expect(versions.agentUpdates({ workflowId: a.id })).toMatchObject([{ agentId: s4.id, pinned: 1, latest: 2 }]);
+    const turns = agentSide.offered.length;
+    const tested = await testUpdate(a.id, [s4.id], 'owner');
+    expect(tested.status).toBe('success');
+    expect(agentSide.offered.length).toBe(turns + 1);
+    expect(lastOffered().filter((n) => /slug/i.test(n))).toEqual(['slugify']);
+    await publish.publishUpdate(a.id, [s4.id], 'owner', tested.executionId);
+    expect(versions.pinsFor(getPublication(a.id)!.versionId)).toMatchObject([{ agentId: s4.id, version: 2 }]);
+    expect(prod(a.id).nodes.some((n) => n.id === 'n-slug')).toBe(false);
+  });
+
+  it('the update path drops what moved: published before ag4, the pass moves Slugify and the model, S4 v2 is published alone (with a model the person changed); the update tests and publishes without them, Slugify offered once, v2’s model', async () => {
+    const s4 = utility('Utility helper update');
+    const a = legacy(s4.id, 'legacy_update', (f) => ({ ...wireInto(f, { id: 'n-model', name: 'Anthropic Chat Model', type: 'core.anthropicChatModel', parameters: { model: 'claude-haiku-5-5' } }, 'ai_languageModel'), active: true }));
+    const version = listVersions(a.id)[0]!;
+    setPublication(a.id, version.id, 'migration');
+    database().delete('workflow_version_pins', { version_id: version.id });
+    database().delete('meta', { key: 'agents.versions.backfilled' });
+    await versions.backfillVersions();
+    expect(versions.pinsFor(version.id)).toMatchObject([{ agentId: s4.id, version: 1 }]);
+    await flowMoves.startPass();
+    expect(store.getWorkflow(a.id)!.nodes.some((n) => n.id === 'n-slug' || n.id === 'n-model')).toBe(false);
+    expect(agentStore.get(s4.id)!.model).toMatchObject({ model: 'claude-haiku-5-5' });
+    const p1 = await runWorkflow({ workflow: prod(a.id), mode: 'webhook', startNodeId: 'n-trigger' });
+    expect(p1.status, json(p1.error)).toBe('success');
+
+    // The person changes the moved model and publishes S4 alone (the notice's "Publish Utility helper update"): v2.
+    agentStore.saveDraft(s4.id, { ...agentStore.get(s4.id)!, model: { provider: 'anthropic', model: 'claude-sonnet-5-5' } } as never);
+    expect((await call(smokeRoute.POST, 'POST', `/api/agents/${s4.id}/smoke-test`, { message: 'slugify "x"' }, { id: s4.id })).status).toBe(200);
+    expect((await call(agentPublishRoute.POST, 'POST', `/api/agents/${s4.id}/publish`, {}, { id: s4.id })).status).toBe(200);
+    expect(agentStore.get(s4.id)!.published!.version).toBe(2);
+    expect(versions.agentUpdates({ workflowId: a.id })).toMatchObject([{ agentId: s4.id, pinned: 1, latest: 2 }]);
+
+    // Test the update: v2's model (the mock below records it; the wired chat model would answer through the fake server instead)
+    // and Slugify once (the agent's, not slugify_2 beside it).
+    const turns = agentSide.offered.length;
+    const tested = await testUpdate(a.id, [s4.id], 'owner');
+    expect(tested.status).toBe('success');
+    expect(agentSide.offered.length).toBe(turns + 1);
+    expect(lastOffered().filter((n) => /slug/i.test(n))).toEqual(['slugify']);
+    expect(agentSide.models.at(-1)).toBe('anthropic/claude-sonnet-5-5');
+    expect(versions.runVersions(tested.executionId)!.agents).toMatchObject([{ agentId: s4.id, version: 2, source: 'pinned' }]);
+
+    // Publish it: the new version has neither sub-node, keeps the memory, pins v2; production runs the same.
+    await publish.publishUpdate(a.id, [s4.id], 'owner', tested.executionId);
+    const vNew = getPublication(a.id)!.versionId;
+    expect(vNew).not.toBe(version.id);
+    expect(versions.pinsFor(vNew)).toMatchObject([{ agentId: s4.id, version: 2 }]);
+    const live = prod(a.id);
+    expect(live.nodes.some((n) => n.id === 'n-slug' || n.id === 'n-model')).toBe(false);
+    expect(live.connections.some((c) => c.type === 'ai_tool' || c.type === 'ai_languageModel')).toBe(false);
+    expect(live.connections.some((c) => c.type === 'ai_memory')).toBe(true);
+    const before = agentSide.offered.length;
+    await runWorkflow({ workflow: live, mode: 'webhook', startNodeId: 'n-trigger' });
+    expect(agentSide.offered.length).toBe(before + 1);
+    expect(lastOffered().filter((n) => /slug/i.test(n))).toEqual(['slugify']);
+    expect(agentSide.models.at(-1)).toBe('anthropic/claude-sonnet-5-5');
+    // The version that ran before is untouched (a rollback runs v1 with its own wiring).
+    expect(getVersion(a.id, version.id)!.workflow.nodes.some((n) => n.id === 'n-slug')).toBe(true);
   });
 });
 

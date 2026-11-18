@@ -711,7 +711,11 @@ request: the run goes on when the last one is decided). The Platform analyst's o
     graph on the agent's published config (a never-published workflow called as a sub-workflow, or any editor run before the versions wave)
     adds the items moved from that node and still pending, as it ran them before (`pendingFor`: only when the node carries no pin, the
     running graph no longer wires the sub-node and the config lacks the item). A moved tool counts as a wired one for **Tool Approvals**:
-    it is refused, not waited for.
+    it is refused, not waited for. **Test and update** (an agent published alone, "Alert triager v2 is available") tests and publishes the
+    production graph without the sub-nodes moved from that node into that agent when the new pin owns them: published at or after the
+    move, or holding the moved tool (or model) itself. So the run offers a moved tool once (never `slugify` beside `slugify_2`), a wired
+    chat model no longer wins over the version's own, and the new workflow version matches the saved flow; an item the new version
+    lacks stays wired, and the older version keeps its wiring for a rollback (`withoutPublishedMoves` in agents/update-graph.ts).
   - **New wiring is refused**: a drag that would wire a model, memory or tool into a bound node shows a toast, and Spotlight's ops refuse
     it ("change the agent instead"): Spotlight's `changeAgent` op shows the agent's change card ([assistant.md](assistant.md#agents-and-teams)).
     The server's save is unchanged: an API or MCP write that wires one is saved and moved on the next open or start. The AI Agent node and

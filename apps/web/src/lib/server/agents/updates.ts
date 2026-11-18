@@ -9,6 +9,7 @@ import { runWorkflow } from '../runner/run';
 import { store } from '../store';
 import { applyVersion, getVersion } from '../versions';
 import { PublishError } from '../publish';
+import { updateGraph } from './update-graph';
 import { pinsFor, repinned, withPins } from './versions';
 
 /** The trigger and the items of the last production run: what the test replays. */
@@ -27,7 +28,7 @@ async function lastInput(workflowId: string): Promise<{ nodeId: string; items?: 
 }
 
 /**
- * Run the production version's graph once, by hand, with these agents at their latest published versions. The trigger's
+ * Run the production version's graph once, by hand, with these agents at their latest published versions (`updateGraph`). The trigger's
  * data is replayed from the last production run, else the trigger's pinned test data, else 409 `no_input`.
  */
 export async function testUpdate(workflowId: string, agentIds: readonly string[], by?: string, signal?: AbortSignal): Promise<{ executionId: string; status: string }> {
@@ -36,8 +37,9 @@ export async function testUpdate(workflowId: string, agentIds: readonly string[]
   const production = getPublication(workflowId);
   const base = production && getVersion(workflowId, production.versionId);
   if (!production || !base) throw new PublishError('This workflow is not published, so there is no production version to test', 409, { code: 'not_published' });
-  const wanted = repinned(pinsFor(base.id), agentIds);
-  const graph = withPins(applyVersion(workflow, base), wanted);
+  const current = pinsFor(base.id);
+  const wanted = repinned(current, agentIds);
+  const graph = withPins(updateGraph(workflowId, applyVersion(workflow, base), current, wanted), wanted);
   const replay = await lastInput(workflowId);
   const targets = new Set(graph.connections.map((c) => c.target));
   const pinned = Object.keys(graph.pinData ?? {}).find((id) => !targets.has(id));
