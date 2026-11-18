@@ -8,7 +8,9 @@ import type { AssistantOp } from '@/lib/shared/assistant-ops';
 import { fixAutonomyFor, keptOwnFixLine, normalDestination, type FixAutonomy, type SessionFix } from '@/lib/shared/fix-autonomy';
 import { dropRepeatedAgentWork, type AgentBrief } from '@/lib/shared/agent-brief';
 import { heldLine as gateHeldLine } from '@/lib/shared/agent-eval';
-import { needsAClick, useAutonomyFacts, type ChangeGraph, type ChangeOp } from './spotlight-autonomy';
+import type { Workflow } from '@landflow/engine';
+import { applyOps, type DescriptorLookup } from '@/lib/shared/assistant-ops';
+import { useAutonomyFacts } from './spotlight-autonomy';
 
 /** What a test-and-fix session takes when nothing names it: the switch alone (decision of 2026-11-18); never `autonomyOf`. */
 export const fixAutonomyNow = (): FixAutonomy => fixAutonomyFor({ switchOn: useAutonomyFacts.getState().switchOn });
@@ -148,45 +150,48 @@ export function withoutSecrets(item: Record<string, unknown>): Record<string, un
 /**
  * The removals an autonomous fix session may make without a click (the person's decision of 2026-11-18): a step the session
  * itself added (`own`, node ids) and a step that plainly duplicates what the bound agent does (`duplicates`: node id to the
- * agent's name, from `duplicatedSteps`). Anything else, a step the person built included, still waits. sb1's `needsAClick` is not
- * edited: this wraps it and takes the allowed removals out of what it reads.
+ * agent's name, from `duplicatedSteps`). Anything else, a step the person built included, still waits.
  */
 export interface RemovalsAllowed {
   own?: ReadonlySet<string>;
   duplicates?: ReadonlyMap<string, string>;
 }
 
-/** The steps these ops remove that `allowed` lets go without a click, by node id, with the timeline's line (*Removed “X”: why*). */
-function allowedGone(ops: readonly ChangeOp[], before: ChangeGraph, allowed: RemovalsAllowed | undefined): Map<string, string> {
-  const gone = new Map<string, string>();
-  if (!allowed) return gone;
-  for (const op of ops) {
-    if (op.op !== 'removeNode') continue;
-    const node = op.node ? before.nodes.find((n) => n.name === op.node || n.id === op.node) : undefined;
-    if (!node) continue;
-    if (allowed.own?.has(node.id)) gone.set(node.id, `Removed “${node.name}”: this session added it`);
-    else if (allowed.duplicates?.has(node.id)) gone.set(node.id, `Removed “${node.name}”: “${allowed.duplicates.get(node.id)}” does it itself`);
+/**
+ * What a fix would do to the person's steps, read from the result and not from the words of its ops (names match without case,
+ * and a rename can come before a removal): the ops are applied to a copy of the workflow (`applyOps`, the same code Apply runs)
+ * and the node ids before and after are compared. `reasons` are what still needs a click: a step that is gone and is neither the
+ * session's own nor a duplicate, a step newly turned off, and a step an explicit `disconnect` leaves without any main input (the
+ * session's own steps excepted). `lines` are the removals that go through without one, each with its reason.
+ */
+export function fixRemovals(ops: readonly AssistantOp[], workflow: Workflow, lookup: DescriptorLookup, allowed: RemovalsAllowed | undefined): { reasons: string[]; lines: string[] } {
+  const after = applyOps(workflow, [...ops], lookup).workflow;
+  const reasons: string[] = [];
+  const lines: string[] = [];
+  const nowIds = new Set(after.nodes.map((n) => n.id));
+  for (const node of workflow.nodes) {
+    if (nowIds.has(node.id)) continue;
+    if (allowed?.own?.has(node.id)) lines.push(`Removed “${node.name}”: this session added it`);
+    else if (allowed?.duplicates?.has(node.id)) lines.push(`Removed “${node.name}”: “${allowed.duplicates.get(node.id)}” does it itself`);
+    else reasons.push(`removes “${node.name}”`);
   }
-  return gone;
-}
-
-/** The timeline's line for each removal that went through without a click, with its reason. */
-export function removedWithoutClick(ops: readonly ChangeOp[], before: ChangeGraph, allowed: RemovalsAllowed | undefined): string[] {
-  return [...allowedGone(ops, before, allowed).values()];
-}
-
-/** `needsAClick` for an autonomous fix session: the same rule, minus the allowed removals (and the disconnects that only leave a step going or the session's own without input). */
-export function fixNeedsAClick(ops: readonly ChangeOp[], before: ChangeGraph, allowed: RemovalsAllowed | undefined): string[] {
-  const gone = allowedGone(ops, before, allowed);
-  if (!gone.size && !allowed?.own?.size) return needsAClick(ops, before);
-  const find = (ref: string | undefined) => (ref ? before.nodes.find((n) => n.name === ref || n.id === ref) : undefined);
-  const rest = ops.filter((op) => {
-    if (op.op === 'removeNode') return !(find(op.node) && gone.has(find(op.node)!.id));
-    if (op.op === 'disconnect') {
-      const target = find(op.to);
-      return !(target && (gone.has(target.id) || allowed?.own?.has(target.id)));
-    }
-    return true;
-  });
-  return needsAClick(rest, before);
+  for (const node of after.nodes) {
+    const was = workflow.nodes.find((n) => n.id === node.id);
+    if (was && node.disabled === true && was.disabled !== true) reasons.push(`turns off “${node.name}”`);
+  }
+  const mainIn = (wf: Workflow, id: string) => wf.connections.filter((c) => c.target === id && (c.type ?? 'main') === 'main').length;
+  const disconnectTargets = new Set(
+    ops.flatMap((op) => {
+      if (op.op !== 'disconnect' || (op.type ?? 'main') !== 'main') return [];
+      const ref = op.to.toLowerCase();
+      const target = workflow.nodes.find((n) => n.name === op.to || n.id === op.to) ?? workflow.nodes.find((n) => n.name.toLowerCase() === ref);
+      return target ? [target.id] : [];
+    }),
+  );
+  for (const id of disconnectTargets) {
+    const node = after.nodes.find((n) => n.id === id);
+    if (!node || allowed?.own?.has(id)) continue;
+    if (mainIn(workflow, id) > 0 && mainIn(after, id) === 0) reasons.push(`leaves “${node.name}” without its input`);
+  }
+  return { reasons: [...new Set(reasons)], lines };
 }

@@ -39,7 +39,8 @@ vi.mock('@/components/editor/assistant', async (original) => {
           }
         }
       }
-      options.onApplied?.({ undo: () => useEditor.getState().load(before, []), skipped: [] });
+      const had = new Set(before.nodes.map((n) => n.id));
+      options.onApplied?.({ undo: () => useEditor.getState().load(before, []), skipped: [], added: useEditor.getState().nodes.filter((n) => !had.has(n.id)).map((n) => n.id) });
       return true;
     }),
   };
@@ -260,6 +261,23 @@ describe('removals in an autonomous fix session', () => {
     await waiting(testUntilItRuns('Send the sales figures on'));
     expect(applied).toEqual([]);
     expect(stillThere('Send Email')).toBe(true);
+  });
+
+  it('a step the person adds while a card waits is theirs: its later removal waits for a click', async () => {
+    runs = [{ Post: { error: 'HTTP 500' } }, { Post: { error: 'connection refused by the receiver' } }];
+    replies = [{ proposals: [{ summary: 'Drop Post', ops: [removePost] }] }, { proposals: [{ summary: 'Drop Mine', ops: [{ op: 'removeNode', node: 'Mine' }] }] }];
+    const start = testUntilItRuns('Send the sales figures on');
+    await vi.waitFor(() => expect(proposals().some((p) => !p.state)).toBe(true));
+    const wf = useEditor.getState().toWorkflow();
+    wf.nodes.push(node('m', 'Mine', 'core.code'));
+    useEditor.getState().load(wf, []); // the person adds a step while the card waits
+    useEditor.setState({ nodeTypes });
+    decide(proposals().find((p) => !p.state)!.id, 'applied');
+    await vi.waitFor(() => expect(proposals().filter((p) => !p.state)).toHaveLength(1));
+    expect(applied).toEqual([]); // the removal of the person's step waits
+    expect(stillThere('Mine')).toBe(true);
+    for (const p of proposals()) if (!p.state) decide(p.id, 'dismissed');
+    await start;
   });
 
   it('Asks first waits for all three: the session’s own step, the duplicate and the person’s step', async () => {

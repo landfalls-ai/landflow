@@ -14,7 +14,7 @@ import { nanoid } from 'nanoid';
 import { toast } from 'sonner';
 import { opsTitle } from '@/lib/shared/assistant-ops';
 import { checkRun, destinationsOf, writesOutside, givenKept, hollowSteps, hostOf, multipliedSteps, needsPerson, rawMarkupSteps, isUnreadHost, NO_ADDRESS, sameFailure, type CheckedRun, type RunVerdict } from '@/lib/shared/run-check';
-import { applyChanges, fixedNodes, ownRun, runDigests, undos, useAssistant, type ChatItem, type Need, type Outcome, type ReplyPart } from './assistant';
+import { applyChanges, editorLookup, fixedNodes, ownRun, runDigests, undos, useAssistant, type ChatItem, type Need, type Outcome, type ReplyPart } from './assistant';
 import { nextRound } from './timeline';
 import { agentsSettled, itemReaching, smokeTestAgent } from './new-agent'; // SB18:
 import { smokeLine, fixLine, type AgentCard, type AgentSmoke } from '@/lib/shared/agent-card'; // SB18: (AG20: fixLine)
@@ -23,7 +23,7 @@ import { designChange, heldOf, readDraft, type ChangeDesign } from '@/lib/client
 import { api } from '@/lib/client/api'; // AG22:
 import { keptToolOf } from '@/lib/shared/kept-tool';
 import { normalDestination, publishedLine, SPOTLIGHT_APPROVALS, unattendedLine, type SpotlightRunApprovals } from '@/lib/shared/fix-autonomy'; // AG22:
-import { agentReplyText, agentUndoneBy, destinationsInText, droppedLine, fixAutonomyNow, fixesOf, heldLine, heldRequest, KEEP_REASON, keptTools, leftForNextRound, duplicatedSteps, sameFixTwice, toolsAdded, undoneBy, withoutSecrets, fixNeedsAClick, removedWithoutClick, type OwnFix, type RemovalsAllowed } from './fix-session'; // AG22:
+import { agentReplyText, agentUndoneBy, destinationsInText, droppedLine, fixAutonomyNow, fixesOf, heldLine, heldRequest, KEEP_REASON, keptTools, leftForNextRound, duplicatedSteps, sameFixTwice, toolsAdded, undoneBy, withoutSecrets, fixRemovals, type OwnFix, type RemovalsAllowed } from './fix-session'; // AG22:
 import { followsPractices, guardrailWords, type AgentConfig } from '@/lib/shared/agents'; // AG20:
 import { useBubbleData } from '@/lib/client/agent-bubble-data'; // ag4 review: the agent's name in what is left
 import { pickedModel } from './spotlight-model'; // AG20:
@@ -800,10 +800,6 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     const changedAgents: ChangedAgent[] = resumed?.changedAgents ?? [];
     /** Wave ag5 fix pass: the steps this session added (an autonomous session removes or replaces them without a click). */
     const ownNodes = new Set<string>(resumed?.ownNodes ?? []);
-    const noteAdded = (before: ReadonlyArray<{ id: string }>) => {
-      const had = new Set(before.map((n) => n.id));
-      for (const n of useEditor.getState().nodes) if (!had.has(n.id)) ownNodes.add(n.id);
-    };
     const given: string[] = resumed?.given ?? (autonomy === 'auto' ? givenDestinations(wfId, goal) : []);
     if (!resumed && given.length) approveDestinations(wfId, given); // AG22: a destination the flow already sent to, or the ask names, needs no "Run it now?"
 
@@ -1059,7 +1055,6 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       if (failed && appliedEarly.length) {
         lastApplied.push({ item: reply.id, proposals: appliedEarly.map((p) => p.id) });
         for (const p of appliedEarly) ownFixes.push(...fixesOf(p.ops, useEditor.getState().nodes.map((n) => ({ id: n.id, name: n.data.wf.name, parameters: n.data.wf.parameters })))); // AG22:
-        noteAdded(nodesBefore);
         for (const proposal of appliedEarly) useAssistant.getState().noteFix(fixedNodes(proposal.ops, nodeId), opsTitle(proposal.ops));
         tried.push(...appliedEarly.map((p) => p.summary));
         lastFix = 'flow';
@@ -1104,10 +1099,10 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         return;
       }
       // SB03 (D1): asks-first, and a change that removes a step even under auto, waits for the person's Apply.
-      const graph = { nodes: useEditor.getState().nodes.map((n) => ({ id: n.id, name: n.data.wf.name })), connections: useEditor.getState().edges.map((e) => ({ source: e.source, target: e.target, type: e.data?.connectionType })) };
       // The person's decision of 2026-11-18: an autonomous session removes a step it added, or one the bound agent plainly does itself, without a click.
       const allowed: RemovalsAllowed | undefined = autonomy === 'auto' ? { own: ownNodes, duplicates: await repeatedByAgents() } : undefined;
-      const reasons = autonomy === 'auto' ? fixNeedsAClick(proposals.flatMap((p) => p.ops), graph, allowed) : [];
+      const removals = autonomy === 'auto' ? fixRemovals(proposals.flatMap((p) => p.ops), useEditor.getState().toWorkflow(), editorLookup(), allowed) : undefined;
+      const reasons = removals?.reasons ?? [];
       if (autonomy === 'asks-first' || reasons.length) {
         if (reasons.length) {
           const note = `Waits for you: ${reasons.join(', ')}`;
@@ -1130,7 +1125,6 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
           return;
         }
         lastApplied.push({ item: reply.id, proposals: taken.map((p) => p.id) });
-        noteAdded(nodesBefore);
         for (const p of taken) ownFixes.push(...fixesOf(p.ops, nodesBefore)); // AG22:
         for (const proposal of taken) useAssistant.getState().noteFix(fixedNodes(proposal.ops, nodeId), opsTitle(proposal.ops));
         tried.push(...taken.map((p) => p.summary));
@@ -1138,13 +1132,14 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         fixes++;
         continue;
       }
-      const removalLines = removedWithoutClick(proposals.flatMap((p) => p.ops), graph, allowed);
+      const removalLines = removals?.lines ?? [];
       const label = proposals.length === 1 ? `Spotlight applied “${proposals[0].summary}”` : `Spotlight applied ${proposals.length} fixes`;
       let skipped = 0;
       const applied = applyChanges(proposals.map((p) => ({ ops: p.ops, kind: 'proposal' as const })), label, {
         publishAgents, // SB18:
         quiet: true,
-        onApplied: ({ undo, skipped: dropped }) => {
+        onApplied: ({ undo, skipped: dropped, added }) => {
+          for (const id of added ?? []) ownNodes.add(id); // only the ids these proposals created
           for (const p of proposals) undos.set(p.id, undo);
           skipped = dropped.length;
         },
@@ -1155,7 +1150,6 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         return;
       }
       lastApplied.push({ item: reply.id, proposals: proposals.map((p) => p.id) });
-      noteAdded(nodesBefore);
       if (removalLines.length) say([{ kind: 'text', text: `${removalLines.join('. ')}.` }], testId); // each removal named with its reason
       for (const p of proposals) ownFixes.push(...fixesOf(p.ops, nodesBefore)); // AG22:
       for (const proposal of proposals) {
