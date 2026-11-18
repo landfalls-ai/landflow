@@ -21,6 +21,7 @@ import { corePlugin } from '@/lib/server/nodes';
 import { registry } from '@/lib/server/plugins/registry';
 import { registryLookup } from '@/lib/server/assistant/ops';
 import { agentStore } from '@/lib/server/agents/store';
+import { store } from '@/lib/server/store'; // AG20:
 import { listCases } from '@/lib/server/agents/eval-gate'; // SB17:
 import { guardrailWords } from '@/lib/shared/agents'; // SB17:
 import { agentAsk, agentChangeAsk, askCatalog, fallbackName } from '@/lib/shared/agent-ask'; // SB16: AG02: fallbackName; AG04: agentChangeAsk
@@ -357,6 +358,7 @@ interface Collected {
   draftCases: number[]; // SB17: the cases each draft came with
   asked: Array<{ question: string; choices: string[] }>; // SB11:
   offers: NonNullable<Outcome['offers']>; // SB12:
+  agentFix?: { agentId: string; agent: string; change: string; fix: { executionId: string; step: string; tool?: string; cause: string; attempt: number } }; // AG20:
 }
 
 function collect(events: Array<{ event: string; data: any }>): Collected { // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -380,6 +382,7 @@ function collect(events: Array<{ event: string; data: any }>): Collected { // es
         out.draftCases.push(Array.isArray(data.cases) ? data.cases.length : 0); // SB17:
         break;
       case 'credential': out.offers.push({ node: data.node, credentialTypes: data.credentialTypes }); break; // SB12:
+      case 'agent-fix': out.agentFix = { agentId: data.agentId, agent: data.agent, change: data.change, fix: data.fix }; break; // AG20:
       case 'done':
         out.done = data;
         break;
@@ -545,6 +548,15 @@ async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, fi
   const rounds = scenario.start?.sessionRuns ?? [];
   const roundOf = (all: typeof rounds, i: number) => all[Math.min(Math.max(i, 0), Math.max(all.length - 1, 0))] ?? {};
   let round = 0;
+  // AG20: the session's runs, for the scorecard (`Outcome.runs`): and whether a run that writes outside had the person's yes first.
+  const ran: NonNullable<Outcome['runs']> = [];
+  const { destinationsOf } = await import('@/lib/shared/run-check');
+  const asksBeforeRun = (id: string, wf: Workflow): boolean | undefined => {
+    const sends = destinationsOf(wf.nodes.filter((n) => !n.disabled).map((n) => ({ name: n.name, type: n.type, parameters: n.parameters }))).map((d) => d.destination);
+    if (!sends.length) return undefined;
+    const allowed = sendsAllowed.get(id);
+    return sends.every((d) => allowed?.has(d) || allowed?.has(d.replace(/^https?:\/\//, '')));
+  };
 
   // The editor's run: scripted rounds (unit) or the product's runner on the canvas, in this process (live).
   useEditor.setState({
@@ -578,12 +590,39 @@ async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, fi
             return [n.id, [run]];
           }),
         );
-        useEditor.setState({ running: false, statuses, runs, runStatus: failed ? 'error' : 'success' });
+        // AG20: the run's record is in the store, so `get_run_log` reads it as it reads a real one: a scripted error "HTTP 400: <body>" is the node's HTTP code and body.
+        const executionId = `ex_${nanoid(8)}`;
+        const wf = useEditor.getState().toWorkflow();
+        const failedNode = nodes.find((n) => thisRound[n.data.wf.name]?.error);
+        for (const n of nodes) {
+          const r = thisRound[n.data.wf.name];
+          const http = r?.error ? /^(HTTP \d{3})\b[:\s]*([\s\S]*)$/.exec(r.error) : null;
+          if (r?.error) (runs[n.id][0] as NodeRun).error = http ? { message: http[1], ...(http[2] && { description: http[2] }) } : { message: r.error };
+        }
+        store.saveExecution({
+          executionId,
+          workflowId: useEditor.getState().workflowId || 'wf_scenario',
+          workflowName: wf.name,
+          mode: 'manual',
+          status: failed ? 'error' : 'success',
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+          durationMs: 5,
+          runData: runs as never,
+          executionOrder: nodes.map((n) => n.id),
+          nodeNames: Object.fromEntries(nodes.map((n) => [n.id, n.data.wf.name])),
+          workflow: wf,
+          ...(failedNode && { error: { message: thisRound[failedNode.data.wf.name].error as string, nodeId: failedNode.id, nodeName: failedNode.data.wf.name } }),
+        } as never);
+        ran.push({ status: failed ? 'error' : 'success', ...(failedNode && { node: failedNode.data.wf.name, error: thisRound[failedNode.data.wf.name].error as string }), asked: asksBeforeRun(workflowId, wf) });
+        useEditor.setState({ running: false, executionId, statuses, runs, runStatus: failed ? 'error' : 'success' });
         return;
       }
       const { runWorkflow } = await import('@/lib/server/runner');
       const record = await runWorkflow({ workflow: useEditor.getState().toWorkflow(), mode: 'manual' });
-      useEditor.setState({ running: false, statuses: statusesOf(record.runData), runs: record.runData, runStatus: record.status as never });
+      const failing = Object.entries(record.runData).find(([, r]) => r.at(-1)?.status === 'error');
+      ran.push({ status: record.status === 'success' ? 'success' : 'error', ...(failing && { node: useEditor.getState().nodes.find((n) => n.id === failing[0])?.data.wf.name ?? failing[0], error: failing[1].at(-1)?.error?.message ?? '' }), asked: asksBeforeRun(workflowId, useEditor.getState().toWorkflow()) }); // AG20:
+      useEditor.setState({ running: false, executionId: record.executionId, statuses: statusesOf(record.runData), runs: record.runData, runStatus: record.status as never });
     }) as never,
   });
 
@@ -604,6 +643,7 @@ async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, fi
           role: 'assistant',
           ...(result.error ? { error: result.error } : { done: { model: 'spotlight-scenarios', durationMs: 0, steps: result.done?.steps ?? 1 } }),
           ...(sendOptions.testId && { testId: sendOptions.testId }),
+          ...(result.agentFix && { agentFix: { type: 'agent-fix' as const, ...result.agentFix } }), // AG20:
           parts: [
             ...(result.text ? [{ kind: 'text' as const, text: result.text }] : []),
             ...result.proposals.map((p) => ({ kind: 'proposal' as const, proposal: { id: nanoid(6), ...p } })),
@@ -631,7 +671,17 @@ async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, fi
   const needs = useAssistant
     .getState()
     .items.flatMap((item) => (item.role === 'assistant' ? item.parts.flatMap((p) => (p.kind === 'needs' ? [p.need.what as string] : [])) : []));
-  return { before, after: useEditor.getState().toWorkflow(), needs, replies };
+  // AG20: the fixes Spotlight proposed between runs: a flow change (applied when its card was) or an agent's (a card nobody clicks here).
+  const fixes: NonNullable<Outcome['fixes']> = useAssistant.getState().items.flatMap((item) =>
+    item.role !== 'assistant'
+      ? []
+      : [
+          ...item.parts.flatMap((p) => (p.kind === 'proposal' ? [{ target: 'flow' as const, summary: p.proposal.summary, applied: p.proposal.state === 'applied' }] : [])),
+          ...(item.agentFix ? [{ target: 'agent' as const, summary: item.agentFix.change, agent: item.agentFix.agent, applied: false }] : []),
+        ],
+  );
+  const said = useAssistant.getState().items.flatMap((item) => (item.role === 'assistant' ? item.parts.flatMap((p) => (p.kind === 'outcome' ? [p.outcome.text] : p.kind === 'text' && item.agentFix ? [p.text] : [])) : []));
+  return { before, after: useEditor.getState().toWorkflow(), needs, replies, ran, fixes, said };
 }
 
 // ---------------------------------------------------------------------------
@@ -735,6 +785,10 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
         outcome.before = session.before;
         outcome.after = session.after;
         outcome.needs = session.needs;
+        outcome.runs = session.ran; // AG20:
+        outcome.tools.push(...session.replies.slice(1).flatMap((r) => r.tools)); // AG20: the session's own tool calls (get_run_log, propose_agent_fix)
+        if (session.said.length) outcome.text = `${outcome.text} ${session.said.join(' ')}`.trim(); // AG20: how the session ended
+        outcome.fixes = session.fixes; // AG20:
         outcome.modelCalls += session.replies.slice(1).reduce((n, r) => n + r.calls, 0);
         outcome.proposals.push(...session.replies.slice(1).flatMap((r) => r.proposals));
         // SB10: what a session applied is the canvas in the store; a card the guard refused or that waits for Apply changed nothing.

@@ -35,6 +35,7 @@ import { registerBrainTools } from './brain-tools';
 import { registerPracticeTools } from './practice-tools'; // PR04
 import { registerProjectTools } from './project-tools'; // PC10
 import { registerDebugTools } from './debug-tools';
+import { registerRunLogTool } from './run-log-tool'; // AG20:
 import { normalizeWorkflow, validateWorkflow, type WorkflowInput } from './workflows';
 
 const INSTRUCTIONS = `Landflow is an n8n-like workflow platform. A workflow is a graph of nodes: a trigger starts it, items (JSON objects) flow along "main" connections from left to right, and each node processes the items it gets.
@@ -514,6 +515,8 @@ export function instanceServer(actor?: Actor, scope?: McpScope, keyScopes?: read
     workflowUrl,
     digest: executionDigest,
   });
+
+  registerRunLogTool(server, { actor, inScope: (id) => inScope(scope, id), json, failure }); // AG20:
 
   registerBrainTools(server, { actor, scope, denied: (id, action) => denied(id, action), json, failure });
   // PR04: practices (tools and resources)

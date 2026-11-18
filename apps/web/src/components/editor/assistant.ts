@@ -16,6 +16,7 @@ import type { ActivityKind, ActivityStep } from '@/lib/shared/activity';
 import type { NodeRun } from '@/lib/shared/types';
 import type { MentionRef } from '@/lib/shared/mentions';
 import type { AgentCard } from '@/lib/shared/agent-card'; // SB16:
+import type { AgentFixEvent } from '@/lib/shared/agent-fix'; // AG20:
 import { askedLine, type AskEvent, type AskPart } from '@/lib/shared/spotlight-wire'; // SB11: (askedLine: SB09 × SB11)
 import type { ReplyInfo } from '../ui/chat';
 import type { CredentialNeedFields, CredentialOfferEvent } from '@/lib/shared/spotlight-wire'; // SB12:
@@ -373,6 +374,8 @@ export type ChatItem =
       forCard?: string;
       /** AG04: what Try again runs for this failed reply, when it is not a chat message (a revise of an agent card). */
       retry?: { kind: 'agentRevise'; itemId: string };
+      /** AG20: the chat proposed a change to the agent a run failed in; the test session turns it into the agent's change card. */
+      agentFix?: AgentFixEvent;
     };
 
 /** A tag as the chat keeps and sends it: what it points at, and the name it showed. */
@@ -391,7 +394,8 @@ export type StreamEvent =
   | AskEvent // SB11:
   | { type: 'done'; model: string; durationMs: number; steps: number; usage?: { inputTokens: number; outputTokens: number }; costUsd?: number; local?: boolean }
   | { type: 'error'; message: string; kind?: 'model' | 'cap' | 'stalled' | 'internal'; checkpoint?: string; step?: number }
-  | CredentialOfferEvent; // SB12:
+  | CredentialOfferEvent // SB12:
+  | AgentFixEvent; // AG20: a change to the agent the run failed in
 
 /** What kind of trace row a tool call is. */
 export function toolKind(name: string): ActivityKind {
@@ -464,6 +468,9 @@ export function applyStreamEvent(turn: AssistantTurn, event: StreamEvent, now: n
     // SB12: a step that needs a credential: a "Needs you" row with the picker (decision D2), never one set by Spotlight.
     case 'credential':
       return { ...turn, parts: [...turn.parts, { kind: 'needs', need: { what: 'credential', text: event.text, node: event.node, ...(event.nodeId && { nodeId: event.nodeId }), credentialTypes: event.credentialTypes } }] };
+    // AG20: a failed run's cause is inside an agent: the session shows the agent's change card (./test-session.ts).
+    case 'agent-fix':
+      return { ...turn, agentFix: event };
   }
 }
 

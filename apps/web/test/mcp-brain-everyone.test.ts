@@ -66,7 +66,7 @@ describe('tool scopes', () => {
     expect(toolAllowed(['brain:write'], 'my_briefing')).toBe(true);
     expect(toolAllowed(['admin'], 'run_node')).toBe(true);
     expect(toolAllowed(['workflows:read'], 'unknown_tool')).toBe(false);
-    expect(Object.keys(TOOL_SCOPES).length).toBe(31);
+    expect(Object.keys(TOOL_SCOPES).length).toBe(32);
   });
 });
 

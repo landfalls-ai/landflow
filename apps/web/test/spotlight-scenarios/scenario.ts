@@ -1,21 +1,22 @@
 /**
  * The Spotlight scenario suite's API: what a scenario is, what running it gives, and the checks the scorecards count.
  *
- * Contract file: backbone/contracts/ag3/spotlight-scenario.ts (version 6, wave ag3), copied byte for byte to
- * apps/web/test/spotlight-scenarios/scenario.ts by AG13 (owner this wave; no other ag3 package copies it: AG15's scenario
- * file uses version 5's fields only). Version 5 was backbone/contracts/ag2/spotlight-scenario.ts (AG08), version 4
+ * Contract file: backbone/contracts/ag4/spotlight-scenario.ts (version 7, wave ag4), copied byte for byte to
+ * apps/web/test/spotlight-scenarios/scenario.ts by AG19 (owner this wave) and AG20 (copier: its scenario file reads v7's
+ * run and fix fields). Version 6 was backbone/contracts/ag3/spotlight-scenario.ts (AG13), version 5
+ * backbone/contracts/ag2/spotlight-scenario.ts (AG08), version 4
  * backbone/contracts/ag1/spotlight-scenario.ts (AG02), version 3
  * backbone/contracts/sb3/spotlight-scenario.ts (SB13), version 2 backbone/contracts/sb2/spotlight-scenario.ts (SB10),
  * version 1 backbone/contracts/sb1/spotlight-scenario.ts (SB00); each version only adds optional fields and helpers, so
  * every earlier scenario still type-checks. Wave ag1's, ag2's and ag3's scenario files are named `sb-agNN.ts` (ag2: sb-ag07,
- * sb-ag08, sb-ag09; ag3: sb-ag13, sb-ag15; the runner globs `sb*.ts`; nobody changes the glob) with `owner: 'AGNN'`. Change it in the contracts folder first. Types and pure helpers only: no server import, no I/O. SB00's runner
+ * sb-ag08, sb-ag09; ag3: sb-ag13, sb-ag15; ag4: sb-ag19, sb-ag20; the runner globs `sb*.ts`; nobody changes the glob) with `owner: 'AGNN'`. Change it in the contracts folder first. Types and pure helpers only: no server import, no I/O. SB00's runner
  * (apps/web/test/spotlight-scenarios.test.ts, with apps/web/test/spotlight-scenarios/harness.ts) finds every
  * `apps/web/test/spotlight-scenarios/<owner>.ts` (lower case, e.g. `sb03.ts`) with `import.meta.glob`, so packages never
  * edit a shared index: each adds one file that `export default defineScenarios([...])`.
  *
  * Two forms of one scenario: the unit form (always run) answers with `script`, a scripted model, and every check must
- * hold; the live form (only with LANDFLOW_INTEGRATION=spotlight) asks the host's builder model (waves ag1–ag3:
- * `anthropic/claude-sonnet-5-5`, backbone/contracts/ag3/live-host.md) `live.runs` times and the checks are counted into the
+ * hold; the live form (only with LANDFLOW_INTEGRATION=spotlight) asks the host's builder model (waves ag1–ag4:
+ * `anthropic/claude-sonnet-5-5`, backbone/contracts/ag4/live-host.md) `live.runs` times and the checks are counted into the
  * scorecard. A scenario without `script` is live only.
  */
 import type { LanguageModel, ModelTurn, Workflow } from '@landflow/engine';
@@ -110,6 +111,16 @@ export interface Start {
    * `LANDFLOW_SPOTLIGHT_PLUGINS` endpoints, and a scenario whose plugin is in neither is skipped with the reason.
    */
   plugins?: string[];
+  /**
+   * Wave ag4 (AG19): agents that exist before the ask (`POST /api/agents/import`, then published unless `published:
+   * false`), so `list_agents` has something to reuse. Each config as the import route takes it.
+   */
+  agents?: Array<{ config: Record<string, unknown>; published?: boolean }>;
+  /**
+   * Wave ag4 (AG19): knowledge bases that exist before the ask: an agent named `owner` (made from `agents`) searches
+   * `collection`, indexed from `folder` (a fixture folder copied into the files directory) with keyword search.
+   */
+  knowledgeBases?: Array<{ collection: string; folder: string; owner: string }>;
 }
 
 /** What running a scenario once gave. Every list is empty, never absent. */
@@ -199,6 +210,19 @@ export interface Outcome {
   toolInputs?: Array<{ tool: string; input: Record<string, unknown> }>;
   /** Wave ag1 (AG04): an `agent-revise` on an existing agent: whether Apply saved its draft, and whether anything published it. */
   revised?: { agentId: string; savedDraft: boolean; published: boolean };
+  /** Wave ag4 (AG19): the agent Spotlight reused (a Run an Agent node placed with an agent that existed before), with its why. */
+  reused?: { agentId: string; name: string; why: string };
+  /** Wave ag4 (AG19): the Run an Agent / Run a Team nodes on the canvas after it, with the agent each runs (`agentId` '' when none). */
+  placed?: Array<{ node: string; type: string; agentId: string }>;
+  /** Wave ag4 (AG19): the number of agents before and after (made by anything: a reuse leaves it equal). */
+  agentCount?: { before: number; after: number };
+  /**
+   * Wave ag4 (AG20): a session's runs in order: status, the failing node and its error (as the run log read it), and
+   * whether a person's click allowed it (`asked`: Spotlight asked first and the scenario's script said yes).
+   */
+  runs?: Array<{ status: 'success' | 'error'; node?: string; error?: string; asked?: boolean }>;
+  /** Wave ag4 (AG20): the fixes Spotlight proposed between runs, in order: a flow change or an agent change (with the agent's name). */
+  fixes?: Array<{ target: 'flow' | 'agent'; summary: string; agent?: string; applied: boolean }>;
 }
 
 /** A check: true, false, or 'n/a' (it does not apply to this outcome; not counted). */
@@ -456,6 +480,103 @@ export const checks = {
       const docs = o.agents.flatMap((a) => a.knowledgeDocs ?? []).flatMap((d) => d.sources);
       return !card?.folder && !(card?.files?.length) && docs.length === 0 && (o.card?.needs ?? []).some((n) => /\b(?:folder|source|documents?|files?)\b/i.test(n));
     },
+  } satisfies Check,
+  /**
+   * Wave ag4 (AG18): Spotlight read the tenant through its tools before it chose: every tool in `names` was called (in any
+   * order) before the first `propose_changes` / `propose_agent`.
+   */
+  readTenant: (names: string[]): Check => ({
+    id: 'read-tenant',
+    label: `Read the tenant first (${names.join(', ')})`,
+    judge: (o) => {
+      const first = o.tools.findIndex((t) => t === 'propose_changes' || t === 'propose_agent');
+      const before = first < 0 ? o.tools : o.tools.slice(0, first);
+      return names.every((n) => before.includes(n));
+    },
+  }),
+  /** Wave ag4 (AG19): an existing agent named `name` was reused (placed, said why) and no agent was made. */
+  reusedAgent: (name: string): Check => ({
+    id: 'reused-agent',
+    label: `Reused “${name}”, made no agent`,
+    judge: (o) => {
+      if (!o.reused || o.reused.name.toLowerCase() !== name.toLowerCase() || !o.reused.why.trim()) return false;
+      if (o.agentCount && o.agentCount.after !== o.agentCount.before) return false;
+      return (o.placed ?? []).some((p) => p.agentId === o.reused!.agentId) && o.text.toLowerCase().includes(name.toLowerCase());
+    },
+  }),
+  /** Wave ag4 (AG19): a new agent was made (none fitted) and placed in the flow. */
+  builtAndPlaced: {
+    id: 'built-and-placed',
+    label: 'Made one agent and placed it',
+    judge: (o: Outcome) => {
+      if (!o.agentCount) return 'n/a';
+      if (o.agentCount.after !== o.agentCount.before + 1) return false;
+      return (o.placed ?? []).some((p) => p.type === 'core.messageAgent' && p.agentId);
+    },
+  } satisfies Check,
+  /** Wave ag4 (AG19): the agent made has a node tool of `nodeType` (the plugin Spotlight found; the ask never named it). */
+  usesNode: (nodeType: string): Check => ({
+    id: `uses-node-${nodeType}`,
+    label: `Its tools include ${nodeType}`,
+    judge: (o) => {
+      const tools = o.agents.flatMap((a) => a.toolsDetail ?? []);
+      if (!o.agents.length) return 'n/a';
+      return tools.some((t) => t.type === nodeType);
+    },
+  }),
+  /** Wave ag4 (AG19): the agent made searches the existing `collection` and nothing was indexed again for it. */
+  attachedKnowledge: (collection: string): Check => ({
+    id: 'attached-knowledge',
+    label: `Searches the existing “${collection}”, indexed nothing new`,
+    judge: (o) => {
+      if (!o.agents.length) return 'n/a';
+      const has = o.agents.some((a) => a.knowledge && (a.knowledgeDocs ?? []).some((d) => d.collection === collection));
+      return has && !o.card?.knowledge?.folder;
+    },
+  }),
+  /** Wave ag4 (AG19): the model: the asked one when this host lists it, else the host's, and the reply says which. */
+  modelChosen: (asked: RegExp | undefined): Check => ({
+    id: 'model-chosen',
+    label: asked ? `Model as asked (${asked.source}) or said unavailable` : 'The host model, no upgrade',
+    judge: (o) => {
+      const model = o.agents[0]?.model ?? o.card?.model;
+      if (!model) return 'n/a';
+      if (!asked) return !o.hostModel || model.endsWith(o.hostModel.split('/').pop()!);
+      const listed = (o.card?.models ?? []).some((m) => asked.test(m));
+      return listed ? asked.test(model) : /not (?:available|listed|offered)|isn.t (?:available|listed)/i.test(o.text);
+    },
+  }),
+  /**
+   * Wave ag4 (AG20): the session ran, failed, read the run's log, proposed one focused fix, and the next run passed,
+   * within `maxRuns` runs.
+   */
+  fixedFromLogs: (maxRuns: number): Check => ({
+    id: 'fixed-from-logs',
+    label: `Failed, read the log, fixed, passed within ${maxRuns} runs`,
+    judge: (o) => {
+      const runs = o.runs ?? [];
+      if (!runs.length) return 'n/a';
+      const firstFail = runs.findIndex((r) => r.status === 'error');
+      const pass = runs.findIndex((r, i) => i > firstFail && r.status === 'success');
+      return firstFail >= 0 && pass > firstFail && runs.length <= maxRuns && o.tools.includes('get_run_log') && (o.fixes ?? []).some((f) => f.applied);
+    },
+  }),
+  /** Wave ag4 (AG20): it stopped within the bound and said what is left (a failing session never loops). */
+  stopsAndSays: (maxFixes: number): Check => ({
+    id: 'stops-and-says',
+    label: `At most ${maxFixes} fixes, then says what is left`,
+    judge: (o) => {
+      const fixes = (o.fixes ?? []).length;
+      if (fixes > maxFixes) return false;
+      const last = (o.runs ?? []).at(-1);
+      return !last || last.status === 'success' || /still failing|left|you (?:need|must)|can.t fix/i.test(o.text);
+    },
+  }),
+  /** Wave ag4 (AG20): every run that writes outside was asked first (unless the scenario is a brand-new draft in autonomous mode). */
+  askedBeforeWrites: {
+    id: 'asked-before-writes',
+    label: 'Asked before each run that writes',
+    judge: (o: Outcome) => ((o.runs ?? []).length ? (o.runs ?? []).every((r) => r.asked !== false) : 'n/a'),
   } satisfies Check,
 };
 
