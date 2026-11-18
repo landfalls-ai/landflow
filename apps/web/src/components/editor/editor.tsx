@@ -972,9 +972,9 @@ export function Editor({ workflowId }: { workflowId: string }) {
       const started = Date.now();
       if (useTestListener.getState().listening) return;
       // A Webhook or Form trigger without test data: listen for a test event instead, as n8n does.
-      const listenOn = testTriggerFor(command);
+      const listenOn = command.kind === 'run' && command.items ? undefined : testTriggerFor(command); // ag5 carryover: a session's run with the trigger's last event runs now
       if (listenOn) return listenForTestEvent(listenOn);
-      if (command.kind === 'run') return report(await execute({ ...command.approvals } /* AG22: approvals, sessionId, destinations */), started, 'Workflow', command.by === 'spotlight');
+      if (command.kind === 'run') return report(await execute({ ...command.approvals, ...(command.items && { items: command.items }) } /* AG22: approvals, sessionId, destinations */), started, 'Workflow', command.by === 'spotlight');
       if (command.kind === 'debug') return report(await execute({}, true), started, 'Debug run');
 
       const state = useEditor.getState();

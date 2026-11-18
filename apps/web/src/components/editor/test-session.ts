@@ -29,7 +29,7 @@ import { pickedModel } from './spotlight-model'; // AG20:
 import { publishVersion, toastApprovalRequested } from './publish-control';
 import { autonomyOf, needsAClick, notePublished, type Autonomy } from './spotlight-autonomy'; // SB03:
 import { useEditor } from './store';
-import { useTestListener } from './test-listener';
+import { testTriggerFor, useTestListener } from './test-listener';
 
 export const MAX_FIXES = 4;
 
@@ -331,14 +331,45 @@ function weakSteps(): Array<{ node: string; problem: string }> {
   return [...hollowSteps(steps), ...multipliedSteps(canvasRun(), steps), ...rawMarkupSteps(replies)];
 }
 
+/** Headers a trigger's last event keeps out of a test run: what authenticates the caller is not test data. */
+const SECRET_HEADERS = /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token)$/i;
+
+/**
+ * ag5 carryover (the live pass's G): a flow whose trigger waits for a test event (a Webhook or Form trigger with no pinned
+ * data) is tested with the event that trigger got last (the newest run that reached it, production or test), so the session
+ * runs instead of stopping at "send one". Undefined when it never got one: then the run listens, as before.
+ */
+async function lastTriggerEvent(): Promise<{ items: Array<{ json: Record<string, unknown> }>; trigger: string; at: string } | undefined> {
+  const nodeId = testTriggerFor({ kind: 'run' });
+  if (!nodeId) return undefined;
+  const { workflowId, nodes } = useEditor.getState();
+  const trigger = nodes.find((n) => n.id === nodeId)?.data.wf.name ?? 'the trigger';
+  try {
+    const { executions } = await api<{ executions: Array<{ id: string; startedAt?: string }> }>(`/api/executions?workflowId=${encodeURIComponent(workflowId)}&limit=5`, { background: true });
+    for (const summary of executions) {
+      const { execution } = await api<{ execution: { startedAt?: string; runData?: Record<string, Array<{ outputs?: Array<Array<{ json?: Record<string, unknown> }>> }>> } }>(`/api/executions/${summary.id}`, { background: true });
+      const item = execution.runData?.[nodeId]?.[0]?.outputs?.[0]?.[0]?.json;
+      if (!item) continue;
+      const headers = item.headers && typeof item.headers === 'object' ? Object.fromEntries(Object.entries(item.headers as Record<string, unknown>).filter(([k]) => !SECRET_HEADERS.test(k))) : undefined;
+      return { items: [{ json: { ...item, ...(headers && { headers }) } }], trigger, at: execution.startedAt ?? summary.startedAt ?? '' };
+    }
+  } catch {
+    /* no run to read: the run listens */
+  }
+  return undefined;
+}
+
 /** Run the workflow once and judge it; `stopped` when the session can't go on. */
-async function runOnce(signal: AbortSignal, approvals?: SpotlightRunApprovals /* AG22: */): Promise<RunVerdict | { stopped: string }> {
+async function runOnce(signal: AbortSignal, approvals?: SpotlightRunApprovals /* AG22: */, testId?: string): Promise<RunVerdict | { stopped: string }> {
   await until(() => !useEditor.getState().running, signal);
   if (signal.aborted) return { stopped: 'Stopped.' };
   const { run } = useEditor.getState();
   if (!run) return { stopped: 'The editor can’t run the workflow right now.' };
+  const last = await lastTriggerEvent(); // ag5 carryover: a trigger that waits for a test event is tested with its last event
+  if (signal.aborted) return { stopped: 'Stopped.' };
+  if (last) say([{ kind: 'text', text: `I test it with the last call “${last.trigger}” got${last.at ? ` (${new Date(last.at).toLocaleString()})` : ''}, since it waits for a test event.` }], testId);
   // This run is Spotlight's: its end is a row of the timeline, even once the session is over (no toast).
-  run({ kind: 'run', by: 'spotlight', ...(approvals && { approvals }) }); // AG22: an autonomous fix session lets Spotlight approve its test run's tool calls
+  run({ kind: 'run', by: 'spotlight', ...(approvals && { approvals }), ...(last && { items: last.items }) }); // AG22: an autonomous fix session lets Spotlight approve its test run's tool calls
   const started = await until(() => useEditor.getState().running, signal, 3000);
   // A run followed from the server (the stream dropped) is matched by its execution, once the server names it.
   if (started) void until(() => Boolean(useEditor.getState().executionId), signal, 10000).then((named) => named && ownRun(useEditor.getState().executionId));
@@ -828,7 +859,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       const runItem = say([{ kind: 'run', run: { round, state: 'running' } }], testId);
       // AG22: an autonomous fix session's run carries Spotlight's approvals, with the destinations given (the person's yes too).
       const approvals: SpotlightRunApprovals | undefined = autonomy === 'auto' ? { approvals: SPOTLIGHT_APPROVALS, sessionId: testId, destinations: [...new Set([...given, ...(sendsAllowed.get(wfId) ?? [])].map(normalDestination))] } : undefined;
-      const result = await runOnce(signal, approvals);
+      const result = await runOnce(signal, approvals, testId);
       approvedOnce.clear(); // a yes for an expression destination covered that run only
       if ('stopped' in result) {
         // The run that didn't happen gives way to why.
