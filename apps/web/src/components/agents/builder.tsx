@@ -69,6 +69,7 @@ import { AGENT_CHANGED, announceSaved } from '@/lib/client/agent-change'; // AG0
 import { BackLink } from '../shell/page-header';
 import { ExportPluginDialog } from './export-plugin-dialog';
 import { AvailabilityDialog } from './availability-dialog';
+import { AgentScopeProvider } from '../credentials/agent-scope';
 import { canMakeAvailable, ownershipOfSummary } from './project-names';
 import {
   abilityRows,
@@ -595,6 +596,7 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
   const nextVersion = (published?.version ?? agent.history[0]?.version ?? 0) + 1;
 
   return (
+    <AgentScopeProvider value={agentId}>
     <div className="flex h-screen min-h-0">
       <div className="min-w-0 flex-1 overflow-y-auto">
         <header className="sticky top-0 z-20 flex h-[52px] shrink-0 items-center gap-2 border-b border-hair bg-bg px-6 max-md:px-4">
@@ -1085,5 +1087,6 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
         </Dialog>
       )}
     </div>
+    </AgentScopeProvider>
   );
 }

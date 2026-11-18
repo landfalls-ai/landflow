@@ -244,6 +244,11 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   none (wave ag3's live pass found the change said "No change" instead).
   The card's **Left** row then drops "fill in From Email" (any "fill in" or "set" line whose field the agent's draft now
   holds), as it drops a credential line once the slot is set.
+- **Credentials follow the agent's project.** Every credential picker that edits an agent (the agent page's model and tool
+  dialogs, and Spotlight's **Pick it**) lists only what the agent's home project may use (`GET /api/credentials?agentId=`)
+  and **Create** makes the credential in that project; nothing is picked on its own until that list has loaded, and when
+  it cannot be read the picker says so with **Retry** (the page lists every credential and picks none). The save refuses
+  a new credential outside the project (403), so a team agent can no longer be given a personal credential.
 - After Apply the card offers **Test again** next to Publish: the smoke test on the draft as it is, no save. Publish
   waits for a pass as before.
 - A pending card's name that the design made ("Crypto Toolkit agent") is made again from the tools the card has now

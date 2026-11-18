@@ -15,6 +15,7 @@ const { useAssistant } = await import('@/components/editor/assistant');
 const { toolNeedingCredential } = await import('@/components/editor/spotlight/agent-credential-picker');
 const { useCredentialStore } = await import('@/components/credentials/use-credentials');
 
+let failScope = false;
 let container: HTMLDivElement;
 let root: Root;
 const gets: string[] = [];
@@ -23,6 +24,7 @@ const draft = { id: 'ag_q', name: 'Question answerer', model: { provider: 'anthr
 beforeEach(() => {
   puts.length = 0;
   gets.length = 0;
+  failScope = false;
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -34,6 +36,7 @@ beforeEach(() => {
     if (init?.method === 'PUT') { puts.push({ url: u, body: JSON.parse(init.body!) }); return ok({ agent: draft }); }
     if (/smoke-test/.test(u)) return ok({ smoke: { state: 'passed' } });
     if (/\/api\/credentials/.test(u)) gets.push(u);
+    if (failScope && /agentId=/.test(u)) return new Response('{"error":"x"}', { status: 500, headers: { 'content-type': 'application/json' } });
     if (/\/api\/credentials/.test(u)) return ok({ credentials: [{ id: 'c1', name: 'Sales DB', type: 'databases.sqlite' }, { id: 'c2', name: 'Other', type: 'slack.slackApi' }], projectId: 'proj_team' });
     if (/credential-types/.test(u)) return ok({ types: [] });
     if (/\/api\/agents\/ag_q/.test(u)) return ok({ agent: draft });
@@ -70,6 +73,19 @@ describe('Pick it, in place', () => {
     // Blocker: the list is the agent's project's (?agentId=), never everything the person sees.
     expect(gets.some((u) => /agentId=ag_q/.test(u)), 'asked for the agent’s credentials').toBe(true);
     expect(gets.filter((u) => !/agentId=ag_q/.test(u))).toEqual([]);
+  });
+
+  it('a failed filter says so with Retry instead of an empty list, and Retry lists them', async () => {
+    failScope = true;
+    await act(async () => root.render(createElement(AgentCardView, { itemId: 'i1', card: card as never })));
+    await settle();
+    await act(async () => button(/^Pick it$/)!.click());
+    await settle();
+    expect(container.textContent).toMatch(/Couldn’t check which credentials this agent’s project may use/);
+    failScope = false;
+    await act(async () => button(/^Retry$/)!.click());
+    await settle();
+    expect([...container.querySelectorAll('[data-testid="credential-picker"] label')].map((l) => l.textContent)).toEqual(['Sales DB']);
   });
 
   it('after a pick the card stops saying it needs a credential', async () => {

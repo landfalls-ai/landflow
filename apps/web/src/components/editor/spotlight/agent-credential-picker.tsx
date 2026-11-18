@@ -51,7 +51,14 @@ export function AgentCredentialPicker({ agentId, onDone, startCreating = false }
   const nodeTypes = useEditor((s) => s.nodeTypes);
   // The credentials the agent's own project may use (not every one the person sees), and that project for "Create one".
   const [scope, setScope] = useState<{ credentials: Array<{ id: string; name: string; type: string }>; projectId?: string }>();
-  const loadScope = useCallback(() => api<{ credentials: Array<{ id: string; name: string; type: string }>; projectId?: string }>(`/api/credentials?agentId=${encodeURIComponent(agentId)}`).then(setScope, () => setScope({ credentials: [] })), [agentId]);
+  const [failed, setFailed] = useState(false);
+  const loadScope = useCallback(() => api<{ credentials: Array<{ id: string; name: string; type: string }>; projectId?: string }>(`/api/credentials?agentId=${encodeURIComponent(agentId)}`).then(
+      (r) => {
+        setFailed(false);
+        setScope(r);
+      },
+      () => setFailed(true),
+    ), [agentId]);
   useEffect(() => {
     void loadScope();
   }, [loadScope]);
@@ -72,6 +79,15 @@ export function AgentCredentialPicker({ agentId, onDone, startCreating = false }
     const parameters = withPropertyDefaults(descriptor?.properties ?? [], (tool.parameters ?? {}) as never);
     return (descriptor?.credentials ?? []).filter((c) => isPropertyVisible(c as never, parameters)) as CredentialSlot[];
   });
+  if (failed)
+    return (
+      <p className="text-[11.5px] text-warn" role="status">
+        Couldn’t check which credentials this agent’s project may use, so none is offered.{' '}
+        <button type="button" className="underline" onClick={() => void loadScope()}>
+          Retry
+        </button>
+      </p>
+    );
   if (!draft) return <p className="text-[11.5px] text-t3">Looking for your credentials…</p>;
   if (!need) return <p className="text-[11.5px] text-t3">Nothing in this agent needs a credential now.</p>;
   const type = need.tool.nodeType!;
