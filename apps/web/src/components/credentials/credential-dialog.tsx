@@ -25,6 +25,7 @@ import { OAuth2Connection, OAuth2Presets } from './oauth2-connect';
 import { useCredentialStore } from './use-credentials';
 import { useDialogFocus } from '../ui/use-dialog-focus';
 import { usePhone } from '@/lib/client/use-phone';
+import { credentialUsageLine } from '@/lib/shared/credential-usage';
 
 type TestResult = { ok: boolean; message?: string; durationMs?: number };
 
@@ -353,7 +354,7 @@ export function CredentialDialog({
               {existing &&
                 (confirmDelete ? (
                   <div role="alertdialog" aria-label="Delete this credential?" className="flex items-center gap-2 animate-fade-up">
-                    <span className="text-[12px] text-t2">{existing.usedBy.length ? `Used by ${existing.usedBy.length} workflow(s). Delete?` : 'Delete?'}</span>
+                    <span className="text-[12px] text-t2">{existing.usedBy.length || existing.usedByAgents?.length ? `${credentialUsageLine(existing.usedBy, existing.usedByAgents)}. Delete?` : 'Delete?'}</span>
                     <Button size="sm" variant="danger" onClick={remove}>
                       <Trash2 className="size-3" /> Delete
                     </Button>

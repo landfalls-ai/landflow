@@ -75,6 +75,9 @@ function agentMcpServer(agent: Agent, config: AgentConfig, version: number, sign
     if (tool.kind === 'notebook') return notebookCall(agent, tool.name, args);
     const ctx = toolContext(agent, config, version, signal);
     try {
+      // A tool set up as a read whose call is not one: this path cannot pause for a person, so it is refused (agents/runtime.ts holds it).
+      const held = tool.requireApproval ? undefined : await tool.holdReason?.(args, ctx).catch(() => 'The call’s parameters could not be checked.');
+      if (held) return textResult(`${held} kagent cannot pause this call`, true);
       const outcome = await traceToolCall({ agentId: agent.id, agentName: config.name, tool: tool.name, callId: `kagent_${nanoid(10)}`, kind: tool.kind }, () =>
         tool.invoke((request.params.arguments ?? {}) as Record<string, unknown>, ctx),
       );

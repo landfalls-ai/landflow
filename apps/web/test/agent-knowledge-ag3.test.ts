@@ -42,6 +42,9 @@ vi.mock('@/lib/server/assistant/architect', async (importActual) => {
 const root = mkdtempSync(join(tmpdir(), 'landflow-ag13-'));
 const files = join(root, 'files');
 process.env.LANDFLOW_FILES_DIR = files;
+// Wave ag4: its own store. The suite's shared data directory can hold another file's agents with a `runbooks` base (ag4's
+// reuse scenarios seed one), and this file's 'existing: false' readings are about a tenant that has none.
+process.env.LANDFLOW_DATA_DIR = join(root, 'data');
 const embedCalls: string[] = [];
 let embedServer: Server;
 

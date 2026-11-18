@@ -173,6 +173,8 @@ export const SERVICES: ServiceSpec[] = [
   { name: 'binary maintenance', roles: BOTH, start: startBinaryMaintenance },
   // Draft and publish: an active workflow without a publication (imported after migration 200) publishes its newest version.
   { name: 'publications', roles: MAIN, leader: true, start: ensurePublications },
+  // AG21: agent versions are kept for the workflow versions that pin them; what is published now is pinned once, so nothing changes at the upgrade.
+  { name: 'agent versions backfill', roles: MAIN, leader: true, start: async () => void (await (await import('./agents/versions')).backfillVersions()) },
   // LL05: Cap Raise Request (docs/llm-gateway.md#asking-for-a-higher-cap). A request starts its run on the process that took it, so not a leader service.
   { name: 'cap-raise trigger', roles: MAIN, start: startCapRaiseTrigger },
   // Projects: credentials and agents (files) and anything else without a project go to the owner's personal project.
@@ -227,6 +229,8 @@ export const SERVICES: ServiceSpec[] = [
   { name: 'node plugins', roles: MAIN, start: () => marketplace.startNodePlugins() },
   // App webhook triggers: check the hooks of published workflows once plugins had a moment to announce; retry failures.
   { name: 'app webhooks', roles: MAIN, leader: true, delayMs: 3_000, start: () => appWebhooks.start(), stop: () => appWebhooks.stop() },
+  // AG17: a Run an Agent node follows its agent: the wiring flows kept of their own moves into the agents' drafts, once plugins announced.
+  { name: 'agent flow moves', roles: MAIN, leader: true, delayMs: 3_000, start: () => void import('./agents/flow-moves').then((m) => m.startPass()) },
   // Email Trigger (IMAP) with Listen: IDLE keeps a connection per published trigger and polls on new mail.
   { name: 'IMAP IDLE', roles: MAIN, leader: true, delayMs: 3_000, start: () => imapIdle.start(), stop: () => imapIdle.stop() },
   // A worker takes jobs only now: plugins and brokers are up, so what it picks up can run.

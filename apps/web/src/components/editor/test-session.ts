@@ -13,11 +13,16 @@
 import { nanoid } from 'nanoid';
 import { toast } from 'sonner';
 import { opsTitle } from '@/lib/shared/assistant-ops';
-import { checkRun, destinationsOf, givenKept, hollowSteps, hostOf, multipliedSteps, needsPerson, isUnreadHost, NO_ADDRESS, sameFailure, type CheckedRun, type RunVerdict } from '@/lib/shared/run-check';
-import { applyChanges, fixedNodes, ownRun, runDigests, undos, useAssistant, type Need, type Outcome, type ReplyPart } from './assistant';
+import { checkRun, destinationsOf, writesOutside, givenKept, hollowSteps, hostOf, multipliedSteps, needsPerson, rawMarkupSteps, isUnreadHost, NO_ADDRESS, sameFailure, type CheckedRun, type RunVerdict } from '@/lib/shared/run-check';
+import { applyChanges, fixedNodes, ownRun, runDigests, undos, useAssistant, type ChatItem, type Need, type Outcome, type ReplyPart } from './assistant';
 import { nextRound } from './timeline';
 import { agentsSettled, itemReaching, smokeTestAgent } from './new-agent'; // SB18:
-import { smokeLine } from '@/lib/shared/agent-card'; // SB18:
+import { smokeLine, fixLine, type AgentCard } from '@/lib/shared/agent-card'; // SB18: (AG20: fixLine)
+import type { AgentFixEvent } from '@/lib/shared/agent-fix'; // AG20:
+import { designChange } from '@/lib/client/agent-change'; // AG20:
+import { followsPractices, guardrailWords, type AgentConfig } from '@/lib/shared/agents'; // AG20:
+import { useBubbleData } from '@/lib/client/agent-bubble-data'; // ag4 review: the agent's name in what is left
+import { pickedModel } from './spotlight-model'; // AG20:
 import { publishVersion, toastApprovalRequested } from './publish-control';
 import { autonomyOf, needsAClick, notePublished, type Autonomy } from './spotlight-autonomy'; // SB03:
 import { useEditor } from './store';
@@ -303,7 +308,13 @@ function personNeed(result: RunVerdict, error: string | undefined, goal: string 
  */
 function weakSteps(): Array<{ node: string; problem: string }> {
   const steps = useEditor.getState().nodes.map((n) => ({ id: n.id, name: n.data.wf.name, type: n.data.wf.type, parameters: n.data.wf.parameters }));
-  return [...hollowSteps(steps), ...multipliedSteps(canvasRun(), steps)];
+  // AG20: an agent step whose reply is raw tool-call markup did not answer, whatever the run's status says.
+  const digests = runDigests();
+  const replies = steps.map((s) => {
+    const sample = digests[s.id]?.outputs[0]?.sample;
+    return { name: s.name, type: s.type, reply: sample === undefined ? undefined : JSON.stringify(sample) };
+  });
+  return [...hollowSteps(steps), ...multipliedSteps(canvasRun(), steps), ...rawMarkupSteps(replies)];
 }
 
 /** Run the workflow once and judge it; `stopped` when the session can't go on. */
@@ -370,6 +381,7 @@ interface Paused {
   tried: string[];
   lastApplied: Array<{ item: string; proposals: string[] }>;
   lastFailure: string | undefined;
+  lastFix?: 'flow' | 'agent';
   reviewedAt: number | undefined;
   ran: boolean;
   autonomy: Autonomy;
@@ -416,6 +428,130 @@ function unpublishedAgentAt(node: string | undefined, error: string | undefined)
   return step && useAssistant.getState().agents.find((a) => a.nodeId === step.id && a.agentId && !a.taken);
 }
 
+// AG20: what Spotlight reads of a failed run besides its one-line summary: the response body an HTTP node got back.
+const errorBody = (node: string | undefined): string => {
+  const step = node ? useEditor.getState().nodes.find((n) => n.data.wf.name === node) : undefined;
+  return (step && runDigests()[step.id]?.error?.description) || '';
+};
+
+/** AG20: the cause in one clause, "HTTP 400 (… the JSON body needs a non-empty string field "report_text" …)": the error and its body's first words. */
+const causeOf = (summary: string, body: string): string => {
+  const error = summary.replace(/^failed at “[^”]+”:\s*/, '').slice(0, 80);
+  const words = body.replace(/\s+/g, ' ').trim().split(' ').slice(0, 14).join(' ');
+  return words ? `${error} (${words})` : error;
+};
+
+/**
+ * AG20: what is left when a pass falls short and nothing can be proposed: when the missing part reads like a tool the
+ * agent lacks, the step to connect it at ("connect a tool to “Question answerer”"), else the step to open.
+ */
+function leftForAgent(node: string | undefined, part?: string): string {
+  const agentStep = useEditor.getState().nodes.find((n) => n.data.wf.type === 'core.messageAgent' && (n.data.wf.name === node || !node)) ?? useEditor.getState().nodes.find((n) => n.data.wf.type === 'core.messageAgent');
+  const stepName = agentStep?.data.wf.name;
+  // The agent's own name (the bubbles' read of it), else the step's.
+  const agentId = typeof agentStep?.data.wf.parameters?.agentId === 'string' ? agentStep.data.wf.parameters.agentId : '';
+  const known = agentId ? Object.entries(useBubbleData.getState().answers).find(([k, a]) => a && k.startsWith(`${agentId}|`))?.[1] : undefined;
+  const name = known?.agent.name || stepName;
+  if (name && /\b(?:tool|isn.t available|not available|no access|can.?t (?:query|reach|read|send)|lacks?|doesn.t have|has no)\b/i.test(part ?? 'tool')) {
+    // What it lacks, as the person's words say it: a quoted name (a credential or tool), else "the <thing> tool".
+    const lacking = /[“"]([^”"]{2,40})[”"]/.exec(part ?? '')?.[1] ?? /\b(?:the |a |an )?((?:[\w-]+ ){0,2}(?:tool|credential|connection))\b/i.exec(part ?? '')?.[1];
+    // A phrase that is itself a complaint (“lacks a tool”, “has no tool”) names nothing: say “the tool it needs”.
+    const names = lacking && !/\b(?:lacks?|has|have|no|an?|any|doesn.t|isn.t|not)\b/i.test(lacking) ? lacking : undefined;
+    return `connect ${names ? `“${names}”` : 'the tool it needs'} to “${name}” (the + under Tool on the step), then tell me to test again, or tell me what to change.`;
+  }
+  return `open ${node ? `“${node}”` : 'the step'} and change it by hand, or tell me what to change.`;
+}
+
+/** Re-check 3: the rule the retry (and the review prompt) carries: an agent that states facts with nothing that could give them invents them. */
+const AGENT_FACTS_RULE = 'An agent that states facts (numbers, records, names) with no tool or knowledge that could give them is inventing them: read the run log (get_run_log; its tool list says none) and call propose_agent_fix to connect the source the tenant has (list_tool_nodes, list_credentials), never a change to the flow or its prompt.';
+
+/** AG20: what is left for the person when the same failure comes twice. */
+const leftFor = (node: string | undefined) => `open ${node ? `“${node}”` : 'the step'} and fix it by hand, or tell me what it should do instead.`;
+
+/** The change card's body from the design route's config (the same fields `cardFromPreview` fills; it cannot be imported here without a cycle with autonomous.ts). */
+function cardOf(config: Partial<AgentConfig>, name: string, needs: Array<{ text: string }> = [], missing: Array<{ capability: string }> = []): AgentCard {
+  const tools = config.tools ?? [];
+  const knowledge = tools.find((t) => t.type === 'knowledge');
+  return {
+    name: config.name || name,
+    description: config.description || '',
+    ...(config.model && { model: `${config.model.provider}/${config.model.model}` }),
+    tools: tools
+      .filter((t) => t.type !== 'knowledge')
+      .map((t) => {
+        const node = t.type === 'node' ? t : undefined;
+        const operation = typeof node?.parameters?.operation === 'string' ? node.parameters.operation : undefined;
+        const requireApproval = Boolean(t.requireApproval);
+        return { name: ('name' in t && t.name) || t.type, ...(node && { type: node.nodeType }), ...(operation && { operation }), writes: Boolean(node && (requireApproval || writesOutside({ type: node.nodeType, parameters: node.parameters ?? {} }))), requireApproval };
+      }),
+    ...(knowledge && knowledge.type === 'knowledge' && { knowledge: ('collection' in knowledge && knowledge.collection) || knowledge.name }),
+    practices: followsPractices(config.practices),
+    guardrails: guardrailWords(config.guardrails),
+    cases: [],
+    needs: needs.map((n) => n.text),
+    missing: missing.map((m) => m.capability),
+    config: config as Record<string, unknown>,
+    state: 'designed',
+  };
+}
+
+/** The agent change card of an `agent-fix`, as the AG04 change card with the failed run's `fix` on it (never applied by itself: a saved agent is not a brand-new draft). */
+async function showAgentFix(event: AgentFixEvent, attempt: number, signal: AbortSignal, testId: string, typedAsk = ''): Promise<string | undefined> {
+  try {
+    const design = await designChange({ name: event.agent, description: '', base: { agentId: event.agentId }, change: event.change, typedAsk, ...pickedModel() }, signal);
+    const fix = { ...event.fix, attempt };
+    const card: AgentCard = { ...cardOf(design.config as Partial<AgentConfig>, event.agent, design.needs, design.missing), base: { agentId: event.agentId, name: event.agent }, changes: design.changes, cases: design.cases ?? [], ...(design.replaceCases?.length && { replaceCases: design.replaceCases }), askedChange: event.change, typedAsk, fix };
+    const id = nanoid(8);
+    useAssistant.getState().append([{ id, role: 'assistant', testId, parts: [{ kind: 'text', text: fixLine(event.agent, fix) }, { kind: 'agentCard', card }] }]);
+    return id;
+  } catch (e) {
+    if (!signal.aborted) say([{ kind: 'text', text: `I couldn’t design the change to “${event.agent}”: ${(e as Error).message}` }]);
+    return undefined;
+  }
+}
+
+/** The applied change's test stopped for a credential: the person picks it on the card (Pick it), in place. */
+const needsPick = (card: AgentCard) => card.smoke?.state === 'untested' && Boolean(card.smoke.reason?.startsWith('needs a credential'));
+
+/** The card of an item, or undefined once it is gone (dismissed, a new conversation). */
+const cardIn = (itemId: string): AgentCard | undefined => {
+  const item = useAssistant.getState().items.find((i) => i.id === itemId);
+  const part = item?.role === 'assistant' ? item.parts.find((p) => p.kind === 'agentCard') : undefined;
+  return part?.kind === 'agentCard' ? part.card : undefined;
+};
+
+/**
+ * Waits for the person on the agent's change card: Apply (saves the draft and smoke-tests it), then Publish (through the
+ * gate). Undefined when the agent is published and the session can run again; else why it stops.
+ */
+export async function agentFixOutcome(itemId: string, signal: AbortSignal): Promise<string | undefined> {
+  // Once Apply has saved the change, "kept it as it was" would be wrong: the draft holds the change, it is just not published.
+  let applied = false;
+  const kept = () => (applied ? 'The change is saved to the draft, not published.' : 'You kept the agent as it was.');
+  const settled = () => {
+    const card = cardIn(itemId);
+    if (card?.state === 'created') applied = true;
+    // A test that stopped for a credential is not an answer: the card offers Pick it, and the session waits for the pick (its smoke result lands on the card).
+    return !card || card.state === 'failed' || (card.state === 'created' && card.smoke?.state !== 'testing' && card.smoke !== undefined && !needsPick(card));
+  };
+  if (!(await untilAssistant(settled, signal))) return signal.aborted ? undefined : kept();
+  let card = cardIn(itemId);
+  if (!card) return kept();
+  if (card.state === 'failed') return `Saving the change to “${card.name}” failed: ${card.error ?? 'unknown error'}. Left: open the agent and try again.`;
+  if (card.smoke?.state !== 'passed') return `The change to “${card.name}” did not pass its test (${smokeLine(card.smoke)}). Left: open the agent and look at what it did.`;
+  const published = () => {
+    const now = cardIn(itemId);
+    if (now?.state === 'created') applied = true;
+    return !now || (now.publish !== undefined && now.publish.state !== 'publishing');
+  };
+  if (!(await untilAssistant(published, signal))) return signal.aborted ? undefined : kept();
+  card = cardIn(itemId);
+  if (!card) return kept();
+  if (card.publish?.state === 'published') return undefined;
+  if (card.publish?.state === 'held') return `Publishing “${card.name}” is held by its eval gate${card.publish.reason ? `: ${card.publish.reason}` : ''}. Left: open the agent, look at its cases, then publish it.`;
+  return `Publishing “${card.name}” failed${card.publish?.reason ? `: ${card.publish.reason}` : ''}. Left: open the agent and publish it.`;
+}
+
 /**
  * Run, fix, run again until a run passes, MAX_FIXES fixes are spent, or the user stops it. With a `goal` (the description
  * the workflow was drafted from), a run without errors is checked against it as well: the assistant compares the output
@@ -443,13 +579,15 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     let ran = resumed?.ran ?? false;
     /** The last failure, to tell a fix that changed nothing. */
     let lastFailure: string | undefined = resumed?.lastFailure;
+    /** AG20: what the last fix changed: an agent's change is not undone with the flow's. */
+    let lastFix: 'flow' | 'agent' | undefined = resumed?.lastFix;
     /** What was applied so far: the assistant gets no history, so it hears what didn't help. */
     const tried: string[] = resumed?.tried ?? [];
     /** The fixes applied, newest last, for undoing one that changed nothing (or all of them, from the outcome card). */
     const lastApplied: Array<{ item: string; proposals: string[] }> = resumed?.lastApplied ?? [];
     /** SB18: a row waits for the person: the session's state is kept for the click that goes on. */
     const waitFor = (need: Need) => {
-      paused.set(wfId, { fixes, startNodes, tried, lastApplied, lastFailure, reviewedAt, ran, autonomy, publishAgents });
+      paused.set(wfId, { fixes, startNodes, tried, lastApplied, lastFailure, lastFix, reviewedAt, ran, autonomy, publishAgents });
       ask(need);
     };
     /** SB18: agents whose "Publish … first" was already handled once this session. */
@@ -502,6 +640,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         return;
       }
       setRun(runItem, { round, state: result.passed ? 'passed' : 'failed', summary: result.summary });
+      const executionId = useEditor.getState().executionId; // AG20: the fix reads this run's log
       if (!result.passed) {
         const failedNode = result.node ? useEditor.getState().nodes.find((n) => n.data.wf.name === result.node) : undefined;
         const error = failedNode ? (useEditor.getState().statuses[failedNode.id]?.error ?? runError()) : runError();
@@ -530,14 +669,19 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
           return;
         }
         // The same failure after a fix: the fix didn't help. Undo it and stop, rather than spend another.
-        if (lastFailure && sameFailure(result.summary) === lastFailure) {
+        // AG20: two runs in a row failing at the same node with the same error (and the same response body) stop here, with what is left.
+        const failure = sameFailure(`${result.summary} ${errorBody(result.node)}`);
+        if (lastFailure && failure === lastFailure) {
           const last = lastApplied.at(-1);
-          if (last) undoApplied(last);
-          lastApplied.pop();
-          stop(`The last fix didn’t change the error${result.node ? ` at “${result.node}”` : ''}, so I undid it.`, result.node);
+          const undo = Boolean(last) && lastFix === 'flow';
+          if (last && undo) {
+            undoApplied(last);
+            lastApplied.pop();
+          }
+          stop(`Still failing${result.node ? ` at “${result.node}”` : ''}: ${causeOf(result.summary, errorBody(result.node))}. The last fix didn’t change the error${undo ? ', so I undid it' : ''}. Left: ${leftFor(result.node)}`, result.node);
           return;
         }
-        lastFailure = sameFailure(result.summary);
+        lastFailure = failure;
       } else lastFailure = undefined;
       // A step that does nothing, or repeats every result, isn't caught by a run: it needs a fix too.
       const hollow = result.passed ? weakSteps() : [];
@@ -569,21 +713,69 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       const asked = goal ? ` I asked for: “${goal}”.` : '';
       const before = tried.length ? ` Already tried: ${tried.map((t) => `“${t}”`).join('; ')}.` : '';
       const request = !result.passed
-        ? `Test run ${round} ${result.summary}.${asked} Fix it.${before}`
+        ? `Test run ${round} ${executionId ? `(execution ${executionId}) ` : ''}${result.summary}.${asked} Fix it.${before}`
         : hollow.length
-          ? `Test run ${round} had no errors, but ${hollow.map((h) => h.problem).join('; ')}.${asked} Fix it.${before}`
-          : `Test run ${round} had no errors: ${result.summary}.${outputOf(result.node)} Does that do what I asked for: “${goal}”?${outputFields() /* SB18: */} Check each part of what I asked against it. If it does, start your reply with "Yes," and say so in one sentence. If not, start your reply with "No," and name the part of what I asked that did not happen, then fix it.${before}`;
+          ? `Test run ${round} ${executionId ? `(execution ${executionId}) ` : ''}had no errors, but ${hollow.map((h) => h.problem).join('; ')}.${asked} Read the run log (get_run_log) for what the agent said and which tools it has, then fix it.${before}`
+          : `Test run ${round} ${executionId ? `(execution ${executionId}) ` : ''}had no errors: ${result.summary}.${outputOf(result.node)} Does that do what I asked for: “${goal}”?${outputFields() /* SB18: */} Check each part of what I asked against it. If the output falls short, read the run log (get_run_log): for a Run an Agent step it shows the agent's tools, tool calls and reply, so a tool the agent lacks is read there (propose_agent_fix), not guessed. ${AGENT_FACTS_RULE} If it does, start your reply with "Yes," and say so in one sentence. If not, start your reply with "No," and name the part of what I asked that did not happen, then fix it.${before}`;
       if (!failed) reviewedAt = fixes; // SB03:
       useAssistant.setState({ fixing: failed ? nodeId : undefined });
       await useAssistant.getState().send(request, { auto: true, fresh: true, session: failed ? 'fix' : 'review', autonomy, withoutSelection: true, testId, ...(nodeId && { nodeId }) });
       useAssistant.setState({ fixing: undefined });
       if (signal.aborted) return;
-      const reply = useAssistant.getState().items.at(-1);
+      let reply = useAssistant.getState().items.at(-1);
       if (reply?.role !== 'assistant' || reply.error) {
         stop(`I couldn’t work out a fix${result.node ? ` for “${result.node}”` : ''}.`, result.node);
         return;
       }
+      // Re-check 3: a round that answers "no" and names no change, with a Run an Agent step in the flow, asks once more, as "Try again" did: the
+      // agent may state facts it has no tool or knowledge to give, and the log says so. The same round then reaches the agent fix card.
+      const noChange = (r: ChatItem | undefined) => r?.role === 'assistant' && !r.agentFix && !r.parts.some((p) => p.kind === 'proposal') && missingPartOf(r) !== undefined;
+      if (!failed && goal && noChange(reply) && useEditor.getState().nodes.some((n) => n.data.wf.type === 'core.messageAgent' && !n.data.wf.disabled) && fixes < MAX_FIXES) {
+        const again = `Test run ${round} ${executionId ? `(execution ${executionId}) ` : ''}did not do what I asked for: “${goal ?? ''}”. ${AGENT_FACTS_RULE}${before}`;
+        useAssistant.setState({ fixing: nodeId });
+        await useAssistant.getState().send(again, { auto: true, fresh: true, session: 'fix', autonomy, withoutSelection: true, testId, ...(nodeId && { nodeId }) });
+        useAssistant.setState({ fixing: undefined });
+        if (signal.aborted) return;
+        const next = useAssistant.getState().items.at(-1);
+        if (next?.role === 'assistant' && !next.error && (next.agentFix || next.parts.some((p) => p.kind === 'proposal'))) reply = next;
+      }
+      // AG20: the log shows the cause inside an agent: its change card goes through Apply, the smoke test and Publish, then the run goes again.
+      // AG20: a run that passed can need it too: the agent said a tool is not available, and the review reads that from the log.
+      if (reply.agentFix) {
+        if (fixes >= MAX_FIXES) {
+          stop(failed ? `Still failing${result.node ? ` at “${result.node}”` : ''} after ${MAX_FIXES} fixes. Left: ${leftFor(result.node)}` : `It runs, but doesn’t do all you asked yet, and I am out of fixes. Left: ${leftForAgent(result.node)}`, result.node);
+          return;
+        }
+        const cardItem = await showAgentFix(reply.agentFix, fixes + 1, signal, testId, goal ?? '');
+        if (signal.aborted) return;
+        if (!cardItem) {
+          stop(`I couldn’t work out a change to “${reply.agentFix.agent}”.`, result.node);
+          return;
+        }
+        const why = await agentFixOutcome(cardItem, signal);
+        if (signal.aborted) return;
+        if (why) {
+          stop(why, result.node);
+          return;
+        }
+        tried.push(`changed the agent “${reply.agentFix.agent}”: ${reply.agentFix.change}`.slice(0, 200));
+        useAssistant.getState().noteFix(nodeId ? [nodeId] : [], `Changed “${reply.agentFix.agent}”`);
+        lastFix = 'agent';
+        fixes++;
+        continue;
+      }
       const proposals = reply.parts.flatMap((p) => (p.kind === 'proposal' && !p.proposal.state ? [p.proposal] : []));
+      // Wave ag4 carryover (the live pass's asks.md C): the card shows while the reply still works, so the person's Apply can
+      // land before it ends: a fix they already applied is taken, and the run goes again (never "I found no fix").
+      const appliedEarly = proposals.length ? [] : reply.parts.flatMap((p) => (p.kind === 'proposal' && p.proposal.state === 'applied' && !lastApplied.some((a) => a.item === reply.id && a.proposals.includes(p.proposal.id)) ? [p.proposal] : []));
+      if (failed && appliedEarly.length) {
+        lastApplied.push({ item: reply.id, proposals: appliedEarly.map((p) => p.id) });
+        for (const proposal of appliedEarly) useAssistant.getState().noteFix(fixedNodes(proposal.ops, nodeId), opsTitle(proposal.ops));
+        tried.push(...appliedEarly.map((p) => p.summary));
+        lastFix = 'flow';
+        fixes++;
+        continue;
+      }
       if (!proposals.length) {
         // Nothing to change: a run the review said yes to is ready; a "no" without a fix, or a failed run, needs the person.
         const said = reply.parts.find((p) => p.kind === 'text');
@@ -594,7 +786,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         else if (!failed && !part) {
           say([{ kind: 'text', text: 'Reviewed: nothing missing.' }]);
           say([{ kind: 'action', action: 'publish' }]);
-        } else if (!failed) stop(`It runs, but doesn’t do all you asked yet: ${part}. I have no change for it: tell me what to change.`, result.node);
+        } else if (!failed) stop(`It runs, but doesn’t do all you asked yet: ${part}. I have no change for it. Left: ${leftForAgent(result.node, part)}`, result.node);
         // The reply above already says why.
         else stop(`I found no fix for “${result.node ?? 'this step'}”. Tell me what it should do, or open it.`, at);
         return;
@@ -642,6 +834,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         lastApplied.push({ item: reply.id, proposals: taken.map((p) => p.id) });
         for (const proposal of taken) useAssistant.getState().noteFix(fixedNodes(proposal.ops, nodeId), opsTitle(proposal.ops));
         tried.push(...taken.map((p) => p.summary));
+        lastFix = 'flow'; // AG20:
         fixes++;
         continue;
       }
@@ -667,6 +860,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         useAssistant.getState().noteFix(fixedNodes(proposal.ops, nodeId), opsTitle(proposal.ops));
       }
       tried.push(...proposals.map((p) => p.summary));
+      lastFix = 'flow'; // AG20:
       fixes++;
     }
   } catch (e) {

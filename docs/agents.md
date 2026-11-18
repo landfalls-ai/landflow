@@ -49,6 +49,8 @@ project when it's transferred.
 
 ### Agent architect
 
+AG19 (wave ag4): the architect also sees the agents the caller can read (with ids) and may propose `reuse` instead of a new agent; it finds plugin tools by what the job needs (a read-only tool the ask implies, such as Extract IOCs for an alert, is kept without the ask naming it), attaches an existing knowledge base as it is (`runbooks`, keyword search), and says when the model the person named is not available on the host.
+
 Instead of filling in a template, you can describe the agent to the **Agent architect**: a specialist with its own face
 that designs it with you. Open it from **New agent** → **Design it with the Agent architect**, or **Ask the Agent
 architect** on the roster. The chat is on the left; the draft it proposes stays on the right, whole: avatar, name, role,
@@ -242,6 +244,61 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   none (wave ag3's live pass found the change said "No change" instead).
   The card's **Left** row then drops "fill in From Email" (any "fill in" or "set" line whose field the agent's draft now
   holds), as it drops a credential line once the slot is set.
+- **A change never undoes itself, and a second tool of a type is a tool of its own (ag4 re-check 3-7).** Before the card, the design
+  route (`lib/server/agents/change-tools.ts`) only dedupes: a new tool is dropped as a duplicate when it has the same node type as a
+  kept tool, brings no credential (a slot with no id is a placeholder), sets no non-empty parameter where the kept tool's is empty or
+  different, and carries the kept tool's name or its auto-suffix (`SQLite_2`, `SQLite 2` beside `sqlite`). Nothing is ever moved onto
+  a kept tool. Every other new tool stands as its own tool with its own **Pick it** row: *add a SQLite tool for the archive DB*
+  (`sqlite_archive`, `Archive DB`, or a table of its own), *also let it call the weather API* (a URL the kept HTTP tool lacks, or its
+  bearer credential). A tool the design dropped never
+  comes back. A change to a kept tool (*make sqlite read-only*) is made in place by the architect's revise: the design's tool of the same
+  type and name with another operation changes the kept tool (same id, same credential, its operation; an explicit approval on a tool that was a read stays), never a second tool
+  beside it. What an agent fix may add is the prompt's to say; the card lists every tool it adds. The Left rows are worked out after
+  the dedupe.
+- **A data tool takes back the one sentence that denies it (final run 2).** When a change adds a data (`databases.*`) or knowledge
+  tool, the design route (`agents/change-lookup.ts`) removes a persona or instruction sentence that is nothing but the denial
+  (*Never claim to have looked up data.*, *Uses only the text it receives.*, *Do not look up data.*) and shows it on the card
+  (*Instructions: removed …*, *Persona: removed …*, *Persona: removed example …*). A sentence with a qualifier or scope (*… data you did
+  not query*, *Do not access databases other than the sales one*, *Never read data from the HR table*) is a real rule and stays; only the
+  sentence goes, never its paragraph or the mission. Any other instruction that contradicts the tool is the architect's to rewrite: the
+  change prompt says so (*Instructions rewritten …* on the card). **Which cases are replaced is the design's call, not a regex's:** the
+  design is given the agent's cases with their ids and names the ones the change makes wrong (`contradictedCases`), with 1 to 2 cases
+  that replace them. When a denial went (removed, or rewritten away by the design), a case whose *expected answer* is nothing but a
+  denial sentence is replaced too (the strict fallback); safety, format and greeting cases stay unless the design names them. The card
+  has one line per replaced case (*Test removed: “…”*) and one per new case (*Test added: “…”*); the card's `replaceCases` carries the ids
+  and the inputs. **Apply saves the draft first, then swaps the cases** in one all-or-nothing call (`PATCH /api/agents/:id/eval-gate`),
+  with no undo. A stale id (409) is worked out again from the agent's cases now, matched by input text, and tried once more; if that
+  fails too, the card says *The tests changed since this was designed; ask again.* (any other failed swap says why) and offers **Ask
+  again**, which designs the same words again against the agent as it is. After Apply, a dismissed card ends the session with *The
+  change is saved to the draft, not published.*, and **Not now** is hidden while a publish runs. First-person denials in a persona
+  **A replace never only removes:** when the design names cases but writes none to replace them, none is replaced and the card says
+  *Test may now be wrong: “…”* (an agent with no cases skips the publish gate); the server refuses a `PATCH` eval-gate with `remove` and
+  an empty `add` (400), and Apply swaps only when there are both ids and new cases. A failed swap adds *The old tests are still there;
+  Publish checks against them.* Ask again on a fix card sends the typed ask the session had (`typedAsk`), never the model's text.
+  example (*I can not look anything up.*) count as denials, and an examples list left empty is dropped. A write needs a data object
+  (*write the totals to the sales database*, *insert rows*), never *add read access to the database* or *add SQLite to the db agent*.
+- **An empty Table on a Select tool (final run 2).** A tool a design leaves on Select keeps it (the safer, simpler choice: Select cannot
+  run arbitrary SQL, and Execute Query for free reads would need the SELECT check on every call and change how existing designs
+  read). Its `table` stays empty: the tool's input schema offers `table` and `query`, so the call names the table, and `operation` is pinned.
+  The Table is not a Left row. A change that only gives access never turns a read tool into a write (select does not become insert, and
+  it does not start asking first): the write needs a write verb with data in the ask (*insert rows*, *update the records*, *write the
+  totals to the sales database*; not *update me*, *save time* or *update the agent so it can read the database*); in an agent-fix
+  session only what the person typed counts, not the model's own change text. Otherwise the card says the agent already has read access and nothing changes.
+- **What a read is, and the run-time hold.** On SQLite (`readsByQuery` in `run-check.ts`; Postgres and MySQL Execute Query are always
+  writes) a read is the plugin's Select, or an Execute Query that is one statement after the comments are gone, starts with `SELECT`
+  and has no `INTO`, `FOR UPDATE`, `load_extension`, `nextval` or `dblink`. `WITH`, `PRAGMA`, `EXPLAIN`, an empty, per-call (`$fromAI`)
+  or non-string query are no read, so a tool built on them asks first. A tool a design leaves on the node default becomes the node's
+  Select. At run time a tool set up as a read (no approval, stored parameters only read) judges **each call** on the parameters it
+  would run with (`holdReason` in `agents/tools.ts`, checked by `agents/runtime.ts`): a call that names another operation or brings SQL
+  that is not one read-only SELECT is held for a person, and an unattended run refuses it with the reason in the run log, and so does the kagent MCP endpoint (`kagent/mcp.ts`, which also serves the Claude Code harness): it cannot pause, so it answers *… kagent cannot pause this call*. The tool's
+  input schema does not offer `operation`, and its SQLite connection is read-only (the plugin's Read Only: `mode=ro`, `_query_only=1`).
+  **Pick it** shows on a change card after Apply too, and wherever a Left row says *pick a … credential*; its smoke result also
+  reaches the applied build and change cards' status line (a change card still waiting for Apply is left alone).
+- **Credentials follow the agent's project.** Every credential picker that edits an agent (the agent page's model and tool
+  dialogs, and Spotlight's **Pick it**) lists only what the agent's home project may use (`GET /api/credentials?agentId=`)
+  and **Create** makes the credential in that project; nothing is picked on its own until that list has loaded, and when
+  it cannot be read the picker says so with **Retry** (the page lists every credential and picks none). The save refuses
+  a new credential outside the project (403), so a team agent can no longer be given a personal credential.
 - After Apply the card offers **Test again** next to Publish: the smoke test on the draft as it is, no save. Publish
   waits for a pass as before.
 - A pending card's name that the design made ("Crypto Toolkit agent") is made again from the tools the card has now
@@ -654,9 +711,9 @@ request: the run goes on when the last one is decided). The Platform analyst's o
   into Spotlight is designed by the Agent architect without being saved, shown as a card, and **Create agent**
   imports it as a draft with its test cases in the eval gate. On an empty canvas, **Create agent and flow** also adds
   the starter flow: **Chat message** into **Run an Agent** pointed at the agent, with a sample chat item pinned on
-  the trigger. The agent stays a draft, and a Run an Agent step runs the published version: publish it from its page.
+  the trigger. The agent stays a draft: the editor runs its draft, and a published workflow runs the version it was published with, so publish the agent from its page (or with the workflow) before it goes live.
 - **Run an Agent** (`core.messageAgent`, formerly "Message an Agent"; the type is unchanged) runs
-  a published agent as a step of the flow. The agent brings its persona, skills, capabilities,
+  an agent as a step of the flow (the editor runs its draft, production the version the workflow was published with). The agent brings its persona, skills, capabilities,
   guardrails and usage limits. Used as a tool, the node (like Run a Team) takes `message` and a required `reason`. Tool images: the node's **Tool Images to Keep** option, else the agent's **Tool images to keep** (Abilities → Guardrails), else `LANDFLOW_TOOL_IMAGES_KEPT`, else 2; Run Trace shows each image as a thumbnail ([features/ai.md](features/ai.md)). Like the AI Agent, the node has three optional sub-node ports:
   - **Chat Model**: a chat model node (Ollama, Anthropic, OpenAI…) that replaces the agent's own
     model for this run.
@@ -669,23 +726,59 @@ request: the run goes on when the last one is decided). The Platform analyst's o
     it. Without one, *Continue by key* keeps one agent session per key (for example
     `{{ $json.sessionId }}`).
 
-  **What the node shows** (AG12, wave ag3): under its name, a dashed **band** says what the agent is connected to,
-  read-only, in three columns straight above the Chat Model, Memory and Tool slots: the model (the provider's logo and
-  the name, *project default* when the agent has none and the project gives one), memory (*Remembers across sessions* or
-  *This conversation*) and the tools and knowledge bases (each with its icon, a lock for a tool that
-  waits for approval (*asks first* is in its hover title), a knowledge base's count as *N docs*, and a credential's name and a
-  withheld tool's reason in the hover title; one line each, the ones that ask first leading, at most
-  two rows, then *+N more*, so the node ends above where wired sub-nodes sit (a tall node, such as a team's, pushes sub-nodes placed by Tidy up or by a slot's + further down); a tool the project's settings keep out is greyed with the reason). A **Chat Model** or
-  **Memory** wired to the node shows the agent's own struck through and *replaced by* that node; wired tools add
-  (*+ 1 wired*). The node runs the **published** version, so the band shows it: *Not published* for an agent never
-  published (the band shows its draft and the node says "Publish X first" when run), *Draft has changes* when the
-  draft differs from what runs. A click on a row opens the agent's page in a new tab at that ability
-  (`/agents/<id>?tab=abilities&open=model`, or `&open=capabilities&tool=<tool id>`: the row is scrolled into view and
-  outlined for two seconds); the band never edits anything. It reads `GET /api/agents/:id/connections` once per agent
-  and again when the agent changes: a save, a publish (the agent page's, the change card's and, since wave ag3's live pass, the Publish on Spotlight's created-agent row), an Apply in Spotlight, in this tab or another (the tabs tell each
-  other over a `BroadcastChannel`, which also keeps Spotlight's created card's Left row current after a pick on the
-  agent page opened by **Pick it**). A Run a Team node shows its lead's band, and on a phone a Run an Agent step's card
-  reads "Run an Agent · claude-sonnet-5-5 · 4 tools · 1 knowledge base".
+  **A Run an Agent node follows its agent** (AG17, wave ag4). The three ports above are for flows saved before wave ag4: since then
+  the agent's model, memory, tools and knowledge are the agent's own, the **bubbles** under the node, and a model, memory or tool a
+  flow wired into a Run an Agent node is **moved into the agent's draft**, all of it, now (a Run a Team node's wiring stays in the flow until `run-team.ts` has the same overlay; see [limitations](limitations.md)):
+  - **When**: the editor on open (a tab that holds the edit lock and loads a flow that still wires sub-nodes posts
+    [`POST /api/workflows/:id/agent-moves`](reference/api.md) with the `updatedAt` it loaded, as the person, then loads the flow again),
+    and the host's start pass (a leader-only service, 3 s after start, over every saved flow with wired sub-nodes in a bound node, each as
+    the workflow's creator or else the instance owner; `meta` `agents.flowOverrides.migrated` marks its first complete pass, and later starts
+    sweep only what is left: an import, a restored version, an API write). Both run the same idempotent function, `moveFlowOverrides`
+    (`lib/server/agents/flow-moves.ts`); a second run over the same data writes no draft, saves no workflow and adds no row.
+  - **What moves**: a chat model node becomes the agent's model (the provider from the node type, the model, the credential reference) when
+    it equals the draft's, or when the draft's model is still the published one and every saved flow that wires a model into this agent
+    wires this same one (the note says when it will run in the agent's other workflows). A tool node (an action node an agent can call,
+    its plugin online) becomes a node tool: its type, parameters as they are, credential references, a snake_case name from the node's
+    name (a clash becomes `name_2`, said), and `requireApproval` as it ran, false: a tool that writes outside says it no longer asks a
+    person first. A vector store in *Retrieve Documents (As Tool)* mode becomes a knowledge tool on the same store, collection and
+    embeddings, and the embeddings sub-node wired only into it leaves with it. The same tool already in the agent is `same`: the
+    sub-node is removed and the agent unchanged. Nothing is published: the destination is the agent's **draft**.
+  - **What stays, and says why** (*this flow only*, in the notice and the record): a **memory node** never moves (an agent remembers
+    this conversation or across sessions; the flow keeps its own history); a model another flow disagrees on, or that the draft already
+    changes (*Use <model> for <agent> everywhere* is the person's choice); a tool whose credential differs from the agent's (names
+    only), or one the agent's owner may not use; a node type the host does not know or whose plugin is offline (*Try again*, and the next
+    open or start moves it); a node an agent cannot hold; an agent the person cannot change; a protected environment. A kept item keeps
+    working in that flow exactly as before.
+  - **One step per flow**: every affected agent draft is written, then the workflow is saved without the moved sub-nodes (a new version
+    as any save, under the `workflow_conflict` rule); if the save fails every draft is put back and the items stay (*saved meanwhile*).
+  - **The instructions**: a tool moved in adds one line to the draft's instructions (*Also your job: slugify (…), moved in from a workflow that ran it: use it when a message asks for that.*; taking the tool out of the draft takes the line with it), so an agent whose instructions list its jobs and hand over the rest uses the tool as the flow did (the ag4 carryover, live pass E1, where the utility helper answered *Slugifying text is outside what I handle*).
+  - **The record**: one row per workflow and sub-node in `agent_flow_moves` (outcome, the agent and its tool, why, who (`migration` or the
+    person), when, the workflow version before, and a snapshot of the sub-node and its edges: credentials by reference, never a secret),
+    read by `GET /api/workflows/:id/agent-moves` and `GET /api/agents/:id/moves`, each moved item with its `state` against the agent now:
+    `pending` (in the draft, not published), `live` (published) or `withdrawn` (a person took it out of the draft).
+  - **Said, never silent**: the editor shows a side card the first time a person opens the flow after a move (each item and its agent, each
+    kept item and why, and each agent's unpublished changes with **Publish** (the smoke test on the draft, then the eval gate: never
+    skipped) and **Open <agent>**); closed, it stays as a pill ("Moved into agents · 2") that reopens the whole record, with **Try again** and
+    **Use for <agent> everywhere** on the items that allow it. On a phone the notice starts as that pill and opens only on a tap (the sheet hid the canvas); **X** goes back to the pill. On the desktop it opens expanded once per flow (remembered in the browser), is at most 300 px wide, and folds to the pill on **X** or on any pointer press on the canvas. Its lines follow the agent's live state: *Moved into X, published* once the agent's published version holds the item (*not published yet* only while it does not). Published is not in production: while this workflow's production version pins an older agent version (*Keep v2 until republish*), a published move adds *Publish this workflow to put it in production*, and the line goes as soon as the workflow is published (the notice looks again when the production version changes).
+  - **It keeps running until republished**: a move changes only the saved workflow and the agent's draft, never a workflow version, a
+    publication or a pin, so **production keeps running its published workflow version** (its own wiring and the agent version it was
+    published with) until a person publishes the workflow again; republishing needs the agent's draft published first. A run of the saved
+    graph on the agent's published config (a never-published workflow called as a sub-workflow, or any editor run before the versions wave)
+    adds the items moved from that node and still pending, as it ran them before (`pendingFor`: only when the node carries no pin, the
+    running graph no longer wires the sub-node and the config lacks the item). The overlay is only for a run on the *published* config:
+    an editor run (a manual run, which uses the agent's draft that already holds what moved) and a pinned run take none, so the editor's
+    tests keep Tool Approvals' ask in the chat, the router and the cache the way production will after publish. A moved tool counts as a wired one for **Tool Approvals** in a run that
+    takes the overlay: it is refused, not waited for. **Test and update** (an agent published alone, "Alert triager v2 is available") tests and publishes the
+    production graph without the sub-nodes moved from that node into that agent when the new pin owns them: published at or after the
+    move, or holding the moved tool (or model) itself. So the run offers a moved tool once (never `slugify` beside `slugify_2`), a wired
+    chat model no longer wins over the version's own, and the new workflow version matches the saved flow; an item the new version
+    lacks stays wired, and the older version keeps its wiring for a rollback (`withoutPublishedMoves` in agents/update-graph.ts).
+  - **New wiring is refused**: a drag that would wire a model, memory or tool into a bound node shows a toast, and Spotlight's ops refuse
+    it ("change the agent instead"): Spotlight's `changeAgent` op shows the agent's change card ([assistant.md](assistant.md#agents-and-teams)).
+    The server's save is unchanged: an API or MCP write that wires one is saved and moved on the next open or start. The AI Agent node and
+    its sub-nodes are unchanged. Tests: `test/agent-overrides-ag4.test.ts`, `test/agent-ops-ag4.test.ts`.
+
+  **What the node shows** (AG16, wave ag4; AG12's band is gone): nothing about the agent is written in the node card. The agent is drawn as **bubbles** under the node: its model, memory (*This conversation*, or *Across sessions*), each tool and each knowledge base is a round bubble with its logo, wired to the Chat Model, Memory or Tool slot by a dashed line, the way a wired sub-node is. They are canvas-only (not in the saved workflow, the undo history, a copy or the minimap's selection). A bubble marks *asks first* with a lock (named in its hover title), a knowledge base shows *N documents*, and one that needs a credential says so. A small chip above the node says what is not published (*Not published*, *2 changes not published*) with **Publish**, and for a team's lead *Lead · name*; Publish runs the draft's test, then the eval gate (a hold is an answer, never skipped). A click on a bubble opens its menu: *Open on the agent's page*, *Change…*, *Remove from the agent* (a model or memory is changed, not removed), *Pick a credential* when a tool has none. The **+** under a slot adds to the agent: a model, a memory, a tool or a knowledge base (*Knowledge from a folder…* indexes a folder into a new keyword-search knowledge base). **These edits change the agent's draft, never the flow**: they are live, in every workflow that runs the agent, only after Publish, so a bubble that was added, changed or removed carries a dashed mark and a hover line; when more than one workflow runs the agent, the edit asks first ("Alert triager runs in 2 workflows: this changes both"). Wiring a flow had before (AG17) is marked: a model or tool moved into the agent shows *moved here* until published, and a sub-node that stayed in the flow says **this flow only** with why, **Try again** where it can, and **Use for <agent> everywhere**. A sub-node still wired into the node keeps its place and the bubbles go right of it. The node creator's **Your agents** lists the saved agents (published first); a click, or a drag onto the canvas, places a Run an Agent node already bound to the agent. The bubbles read `GET /api/agents/:id/connections` (with `draft` and `usedBy`) once per agent and again when it changes (a save, a publish, Spotlight's Apply, in this tab or another). Tidy up and a placed next step keep the bubbles' box clear (a step after the node lands right of it). On a phone the steps list shows a Run an Agent step as "Run an Agent" and a row of mini bubbles (logos only, at most six, then *+N*). A version preview and a run's canvas draw the agent version they pinned, read-only, with a chip reading "<name> v1" ("<name> draft" for a run of the draft), when the host answers AG21's pins route or the run's `versions`; a 404 keeps the plain node.
 
   It outputs `{ reply, sessionId, agentId, version, model, endReason, usage, steps }`, where
   `steps` lists each tool call with its kind and status. Answers and tool calls stream to the
@@ -747,6 +840,18 @@ Each publish snapshots the agent as a version (the last 20 are kept). The builde
 with **Changed:**, the fields that differ from the version before (name, model, persona, instructions, tools,
 limits and so on; the look is left out). **Restore** copies a version into the draft and publishes nothing, so you
 can read it, test it and publish it as a new version. `POST /api/agents/:id/restore { version }`.
+
+### Versions and the workflows that pin them
+
+Every agent version is also kept in the `agent_versions` table (migration 2906), so a version older than the 20 in the
+history still exists while a workflow version pins it. A workflow version pins the agent versions it was published
+with (`workflow_version_pins`); production runs them until a republish, and each run records the versions it used
+(`execution_agent_versions`). The builder's **Live v3** and each History row say "v2 · used by Alerts v4 (production), Alerts v3" (`GET /api/agents/:id/versions`, `.../versions/:version/connections`), and publishing an agent that live
+workflows pin says they keep the older version until they are republished. An agent a workflow pins cannot be
+deleted without stopping those workflow versions (*… no longer exists*). A backfill at boot (meta key
+`agents.versions.backfilled`) pins what production runs today and changes nothing on a second call. Test-then-publish
+for a workflow is in [the editor](features/editor.md) and Spotlight (`list_agent_updates`, `propose_publish`,
+`propose_agent_update`; the card is [assistant.md](assistant.md#publishing-agent-updates)).
 
 ## Layers
 

@@ -17,6 +17,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { MenuItem, Popover } from '@/components/ui/popover';
+import { credentialUsageLine } from '@/lib/shared/credential-usage';
 
 /** A listed credential with its project and the viewer's access (GET /api/credentials). */
 type Listed = CredentialSummary & { ownership?: ResourceOwnership };
@@ -122,8 +123,8 @@ function CredentialsView() {
                           {credential.oauth2.connected ? (credential.oauth2.expired && !credential.oauth2.refreshable ? 'expired' : 'connected') : 'not connected'}
                         </Badge>
                       )}
-                      <span className="w-40 shrink-0 truncate text-right text-[12px] text-t2 max-md:w-auto max-md:min-w-0 max-md:shrink max-md:text-left" title={credential.usedBy.map((u) => u.workflowName).join(', ')}>
-                        {credential.usedBy.length ? `Used by ${credential.usedBy.length} workflow${credential.usedBy.length === 1 ? '' : 's'}` : 'Not used yet'}
+                      <span className="w-40 shrink-0 truncate text-right text-[12px] text-t2 max-md:w-auto max-md:min-w-0 max-md:shrink max-md:text-left" title={[...credential.usedBy.map((u) => u.workflowName), ...(credential.usedByAgents ?? []).map((a) => a.agentName)].join(', ')}>
+                        {credentialUsageLine(credential.usedBy, credential.usedByAgents)}
                       </span>
                       <span className="w-28 shrink-0 text-right text-[12px] text-t3 max-md:w-auto max-md:text-left">Updated {timeAgo(credential.updatedAt)}</span>
                     </span>

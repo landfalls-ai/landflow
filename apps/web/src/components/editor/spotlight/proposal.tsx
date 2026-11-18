@@ -109,7 +109,7 @@ export function ProposalCard({ itemId, proposal }: { itemId: string; proposal: P
  * A change as a row of the timeline: applied by Spotlight (autonomous mode, a fix). Its title says what it did, read from
  * its ops; the model's words and the diff open on a click. The latest one has Undo (a phone has no ⌘Z).
  */
-export function ProposalRow({ proposal, fix }: { proposal: Proposal; fix: boolean }) {
+export function ProposalRow({ proposal, fix, cause }: { proposal: Proposal; fix: boolean; cause?: string }) {
   const [open, setOpen] = useState(false);
   // Re-read on each render: the newest undo is the only one that is safe to use.
   const latest = useAssistant((s) => s.items.length) >= 0 && isNewestUndo(undos, proposal.id);
@@ -130,6 +130,12 @@ export function ProposalRow({ proposal, fix }: { proposal: Proposal; fix: boolea
             <span className="font-semibold text-t1">{verb}</span>
             <span className="text-t2"> · {opsTitle(proposal.ops)}</span>
             {proposal.skipped ? <span className="text-warn"> ({proposal.skipped} part{proposal.skipped === 1 ? '' : 's'} skipped)</span> : null}
+            {/* AG20: the cause the run log showed, in one clause, under what was done. */}
+            {cause && (
+              <span data-testid="fix-cause" className="mt-0.5 block text-[11.5px] text-t3">
+                {cause}
+              </span>
+            )}
           </span>
           <ChevronRight className={cn('mt-px size-3.5 shrink-0 text-t3 transition-transform', open && 'rotate-90')} />
         </button>
@@ -170,13 +176,16 @@ export function useAutonomousExplainer(): { note: boolean; close: () => void } {
 
 /** The note itself. `className` places it: pinned to the phone's bottom edge, or in the panel's flow on a desktop. */
 export function AutonomousExplainer({ onClose, className }: { onClose: () => void; className?: string }) {
+  // The "(now)" marks the mode in effect (`autonomyOf`: the switch, and a brand-new draft), not the mode the note happens to list first.
+  const workflowId = useEditor((st) => st.workflowId);
+  const autonomous = useAutonomyFacts(() => (workflowId ? autonomyOf(workflowId) : 'asks-first') === 'auto');
   return (
     <div role="dialog" aria-label="Asks first or Autonomous" className={cn('animate-fade-up space-y-1.5 rounded-xl border border-hair bg-sf p-3 text-[12px] leading-snug text-t2 shadow-pop', className)}>
       <p>
-        <span className="font-semibold text-t1">Autonomous</span> (now): Spotlight applies its changes, then tests and fixes the flow by itself. Every change has Undo.
+        <span className="font-semibold text-t1">Autonomous</span>{autonomous && ' (now)'}: Spotlight applies its changes, then tests and fixes the flow by itself. Every change has Undo.
       </p>
       <p>
-        <span className="font-semibold text-t1">Asks first</span>: it waits for your Apply before changing anything.
+        <span className="font-semibold text-t1">Asks first</span>{!autonomous && ' (now)'}: it waits for your Apply before changing anything.
       </p>
       <Button size="sm" variant="primary" onClick={onClose}>
         Got it

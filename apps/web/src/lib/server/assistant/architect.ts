@@ -12,10 +12,12 @@ import { plainDraft } from '../ai-usage/drafts'; // SP03:
 import { defaultParameters, isPropertyVisible } from '@landflow/protocol';
 import { toToolName, type AgentMessage, type LanguageModel, type ToolCall, type ToolResult, type ToolSpec } from '@landflow/engine';
 import { deriveToolSchema } from '@landflow/engine'; // AG08:
-import type { AgentConfig, AgentGuardrails, AgentModel, AgentPersona, AgentTemplate, AgentToolConfig, AnswerLength } from '@/lib/shared/agents';
+import type { AgentConfig, AgentGuardrails, AgentModel, AgentPersona, AgentTemplate, AgentToolConfig, AnswerLength, NodeToolConfig } from '@/lib/shared/agents';
 import { DEFAULT_BRIEF_GUARDRAILS, isNodeKnowledge } from '@/lib/shared/agents';
-import type { AgentCaseDraft, AgentNotAdded } from '@/lib/shared/agent-card'; // SB17: AG02:
-import { writesOutside } from '@/lib/shared/run-check'; // SB17:
+import type { AgentCaseDraft, AgentNotAdded, AgentReuse, AgentCard } from '@/lib/shared/agent-card'; // SB17: AG02: AG19: AgentReuse, AgentCard
+import { agentLine, type CatalogAgent } from '@/lib/shared/tenant-catalog'; // AG19:
+import { catalogCredentials, catalogToolNodes } from './tenant-catalog'; // wave ag4 carryover: the brief reads the person's credentials
+import { readsByQuery, writesOutside } from '@/lib/shared/run-check'; // SB17:
 import { missingSystem, type ArchitectEvent, type ArchitectMissing, type ArchitectNeed, type ArchitectTurn } from '@/lib/shared/agent-architect';
 import { randomFace } from '@/lib/shared/faces';
 import type { NodeTypeInfo } from '@/lib/shared/types';
@@ -38,6 +40,7 @@ import { saveCheckpoint } from './checkpoints';
 import { assistantModel, errorText, modelLabel } from './model';
 import { isParseError, parseErrorText } from './parse-retry';
 import { catalogSummary, nodeDocs, searchNodes } from './research';
+import { TENANT_TOOLS, tenantTool } from './tenant-tools'; // AG18:
 import { builderContextEntry } from '../project-context/by-repo';
 
 export const MAX_ARCHITECT_STEPS = 10;
@@ -95,6 +98,8 @@ export interface ArchitectInput {
   noCases?: boolean;
   /** ag1: the draft is an agent that exists, and the call changes it (Spotlight's revise): its own tools stay callable in the steps. */
   revise?: boolean;
+  /** AG19: what each proposal says besides the config (an agent to reuse, the model's why), and which tenant tools were read so far, in order. */
+  onDesign?: (extras: DesignExtras, read: Array<{ tool: string; count?: number }>) => void;
 }
 
 const TOOL_SCHEMA = {
@@ -117,6 +122,8 @@ const TOOL_SCHEMA = {
 const BRIEF_PARTS =
   'Four parts, each starting a line: "Input:" (what each message or item brings), "Steps:" (numbered, naming its tools), "Output:" (what it answers, how long), "Hand over when:" (what it does not decide alone)';
 // AG08: the cases are the inputs themselves, written out.
+// A change to an agent that has test cases: the ones the change makes wrong are named by id.
+const CONTRADICTED_ASK = 'Only when changing an agent that has test cases (listed with their ids): the ids of the cases this change makes wrong (the case says the agent must do the opposite of what the change makes it do); empty when none. Name no case that still holds. Write 1 to 2 new cases in `cases` to replace them.';
 const CASES_ASK = '3 to 5 test cases, one plain line each: what a person would actually send it, written out (the alert, the question, the text itself; never a description of it or a placeholder) => what a right answer says';
 
 const TOOLS: ToolSpec[] = [
@@ -135,26 +142,8 @@ const TOOLS: ToolSpec[] = [
     description: 'The workflows an agent can call as tools (they start with "When Called by a Workflow or Agent"), with ids and descriptions.',
     inputSchema: { type: 'object', properties: {} },
   },
-  {
-    name: 'list_agents',
-    description: 'The other agents on this instance an agent can delegate to, with ids, roles and descriptions.',
-    inputSchema: { type: 'object', properties: {} },
-  },
-  {
-    name: 'list_credentials',
-    description: 'The credentials the user has, by name and type (never their values): which tools can work right away.',
-    inputSchema: { type: 'object', properties: {} },
-  },
-  {
-    name: 'list_models',
-    description: 'The chat models the agent can run on, best first: local Ollama models (which call tools) before hosted ones.',
-    inputSchema: { type: 'object', properties: {} },
-  },
-  {
-    name: 'list_knowledge_bases',
-    description: 'The knowledge bases other agents search (vector store collections of documents), with what each holds, and whether a new empty one can be started.',
-    inputSchema: { type: 'object', properties: {} },
-  },
+  // AG18: the tenant tools (list_agents, list_credentials, list_models, list_knowledge_bases, list_tool_nodes, get_agent, read_agent_practices), one implementation with Spotlight's chat and the MCP server
+  ...TENANT_TOOLS,
   {
     name: 'list_templates',
     description: 'Persona templates to start from (support lead, researcher, incident responder…), with ids, roles and tones.',
@@ -180,7 +169,15 @@ const TOOLS: ToolSpec[] = [
         never: { type: 'array', items: { type: 'string' } },
         instructions: { type: 'string', description: BRIEF_PARTS }, // SB17:
         cases: { type: 'array', items: { type: 'string' }, description: CASES_ASK }, // SB17:
+        contradictedCases: { type: 'array', items: { type: 'string' }, description: CONTRADICTED_ASK },
         model: { type: 'string', description: 'The chat model it runs on, as list_models gives it ("ollama/qwen3-coder:30b"): the first one unless the job needs another' },
+        // AG19: an agent that already does the job, and an existing knowledge base it searches as it is.
+        reuse: {
+          type: 'object',
+          description: 'An existing agent (list_agents) that already does the whole job: { agentId, why (one clause: what it already does that the request needs), gaps (what the request needs that it lacks, empty when none) }. Still propose the closest design: the person may want a new one.',
+          properties: { agentId: { type: 'string' }, why: { type: 'string' }, gaps: { type: 'array', items: { type: 'string' } } },
+        },
+        knowledgeBase: { type: 'string', description: 'An existing knowledge base (list_knowledge_bases collection) whose description or indexedFrom fits: the agent searches it as it is, nothing is indexed again' },
         icon: { type: 'string', description: 'A lucide icon name: bot, headset, siren, search, database, chart-line, mail, calendar, code, shield, rocket, newspaper, briefcase' },
         tools: { type: 'array', items: TOOL_SCHEMA },
         missing: { type: 'array', items: { type: 'string' }, description: 'Parts of the job no node online can do, left out of the tools, as the app’s name, a colon and what the agent would do: "Grafana: read firing alerts"' },
@@ -230,11 +227,16 @@ const DESIGN_TOOL: ToolSpec = {
       description: { type: 'string', description: 'One sentence: what it does' },
       instructions: { type: 'string', description: BRIEF_PARTS }, // SB17:
       cases: { type: 'string', description: `${CASES_ASK}; one line per case` }, // SB17:
+      contradictedCases: { type: 'string', description: `${CONTRADICTED_ASK} Comma-separated ids.` },
       whatIDo: { type: 'string', description: 'Up to 3 short lines for its team card, one per line' },
       tones: { type: 'string', description: '2–3 words, comma-separated: Precise, Direct, Thorough…' },
       model: { type: 'string', description: 'One of the models listed ("ollama/qwen3-coder:30b")' },
       knowledge: { type: 'string', description: 'A knowledge base collection it searches (an existing one, or a new lowercase-dashes name); empty for none' },
       knowledgeDescription: { type: 'string', description: 'What that knowledge base holds, one sentence' },
+      knowledgeBase: { type: 'string', description: 'An existing knowledge base collection that fits, searched as it is (nothing indexed again); empty for none' }, // AG19:
+      reuseAgentId: { type: 'string', description: 'The id of an existing agent that already does the whole job (the agents listed); empty when none does' }, // AG19:
+      reuseWhy: { type: 'string', description: 'One clause: what that agent already does that the request needs; empty when none' }, // AG19:
+      reuseGaps: { type: 'string', description: 'What the request needs that it lacks, one noun phrase per line ("IOC extraction", "a Haiku model", "the runbooks"), never a sentence; empty when none' }, // AG19:
       nodeTools: { type: 'string', description: 'Node type ids it calls as tools, comma-separated; empty for none' },
       missing: { type: 'string', description: 'What no node here can do, one per line: "Grafana: read firing alerts"; empty for none' },
     },
@@ -293,15 +295,18 @@ export function fromDesign(args: Record<string, unknown>): Record<string, unknow
     ...(plain(args.description) && { description: plain(args.description) }),
     instructions: plain(args.instructions),
     ...(plain(args.cases) && { cases: list(args.cases, /\n/) }), // SB17:
+    ...(plain(args.contradictedCases) && { contradictedCases: list(args.contradictedCases, /[,\n]/).filter((id) => !none.test(id)) }),
     whatIDo: list(args.whatIDo, /\n/),
     tones: list(args.tones, /,/),
     ...(plain(args.model) && { model: plain(args.model) }),
+    ...(plain(args.knowledgeBase) && !none.test(plain(args.knowledgeBase)) && { knowledgeBase: plain(args.knowledgeBase) }), // AG19:
+    ...(plain(args.reuseAgentId) && !none.test(plain(args.reuseAgentId)) && { reuse: { agentId: plain(args.reuseAgentId), why: plain(args.reuseWhy), gaps: list(args.reuseGaps, /\n/).filter((g) => !none.test(g) && !/^(?:none|no|nothing|n\/a)\b/i.test(g.trim())) } }), // AG19:
     tools,
     missing: list(args.missing, /\n/).filter((m) => !/^(none|no|n\/a|-)$/i.test(m)),
   };
 }
 
-const SYSTEM = `You are the Agent architect in Landflow, an n8n-like automation platform where every node comes from a plugin (TypeScript, Python or Go). You design agents with the user: who the agent is, how it talks, its instructions and the tools it uses. You never create the agent: you propose it, and the user reviews the draft and clicks Create.
+export const ARCHITECT_SYSTEM = `You are the Agent architect in Landflow, an n8n-like automation platform where every node comes from a plugin (TypeScript, Python or Go). You design agents with the user: who the agent is, how it talks, its instructions and the tools it uses. You never create the agent: you propose it, and the user reviews the draft and clicks Create.
 
 An agent is:
 - a persona: name, role, who it helps (audience), what it does for them (mission), 2–3 tones, answer length, rules it always and never follows;
@@ -311,10 +316,11 @@ An agent is:
 
 How to work:
 - If the request is too vague to pick tools (no task, or no system to work in), ask one short question. Otherwise don't ask: design.
-- Research before proposing: search_nodes for each thing the agent must do (read tickets, post to Slack, query a database…), get_node_docs for each node you use, list_workflows and list_agents when an existing workflow or agent could do part of the job, list_credentials to see what works right away, list_templates when one fits as a start.
-- Use only node types search_nodes returned, and ids list_workflows and list_agents returned. If nothing online can do a part of the job, leave it out of the tools, list it in propose_agent's "missing" as the app's name, a colon and what the agent would do ("Grafana: read firing alerts"), and say so in one sentence; never invent a node type.
+- Research before your first propose_agent, every time (the person sees each read as a step, and a draft made without them is not trusted). Start with these together in one turn: list_agents (an agent that already does the whole job goes in propose_agent's "reuse": its id, why in one clause, and what it lacks; documents the request answers from, a tool it needs or a model the person named that the agent does not have are things it lacks, listed one per line; still propose the closest design, the person may want a new one), list_tool_nodes with a short query for what the agent must do (it names the plugin, the credential and whether the node writes; ask once for each thing the job needs, found by what the job needs, never only by a name the request gave), list_knowledge_bases when it answers from documents, list_models, list_credentials to see what works right away and read_agent_practices. Then get_node_docs for each node you use, search_nodes only when list_tool_nodes did not name a node, list_workflows when an existing workflow could do part of the job, and list_templates when one fits as a start.
+- Use only node types list_tool_nodes or search_nodes returned, and ids list_workflows and list_agents returned. If nothing online can do a part of the job, leave it out of the tools, list it in propose_agent's "missing" as the app's name, a colon and what the agent would do ("Grafana: read firing alerts"), and say so in one sentence; never invent a node type.
 - A node tool's parameters: set what is fixed for this agent (the operation, a resource); what the agent writes or decides per call (a subject, a body, a message, an id) is "{{ $fromAI('key', 'what it is', 'string') }}". A destination (To, URL, channel, path, repository) is set only to a value the request gives, word for word, else left empty. Never make up ids, channels, URLs or emails the user didn't give: leave those for the user.
-- An agent that answers from documents (policies, contracts, docs, past tickets) searches a knowledge base: list_knowledge_bases, use one whose description fits, else start an empty one (type "knowledge" with a new collection name) and tell the user to add documents to it.
+- An agent that answers from documents (policies, contracts, docs, past tickets, runbooks) searches a knowledge base: list_knowledge_bases; one whose description or folder fits is attached as it is (propose_agent's "knowledgeBase": its collection; nothing is indexed again), a folder the request names is indexed for it, else say in "missing" that it needs a source: never invent one.
+- The model is the one the person named when list_models has it, else this host's own (the first listed): say which in your reply, never another and never a bigger one.
 - Give each node tool a snake_case name and a one-sentence description of when to call it.
 - Tools are actions the agent takes. How it is started (a webhook, a schedule, Slack or Teams, a workflow) isn't a tool: the user sets that under the agent's Abilities → Triggers, so say it in your reply instead.
 - The model itself reads, parses, summarises and formats text: don't add a tool (a Code node, a formatter) for that.
@@ -367,6 +373,34 @@ function callableWorkflows(actor: Actor) {
 }
 
 const otherAgents = (actor: Actor) => agentStore.summaries().filter((a) => canResource(actor, 'agent', a.id, 'read'));
+
+/** AG19: the architect's own tools, by the tenant tool (lib/shared/tenant-catalog.ts) they read (the counted ones are recorded where they answer). */
+const TENANT_READS: Record<string, string | undefined> = { read_agent_practices: 'read_agent_practices', list_credentials: 'list_credentials', get_agent: 'get_agent', list_tool_nodes: 'list_tool_nodes' };
+
+/** AG19: the agents this caller can read, as the catalog lists them (the architect's brief and a reuse read the same lines). */
+export function catalogAgents(actor: Actor): CatalogAgent[] {
+  return agentStore
+    .list()
+    .filter((a) => canResource(actor, 'agent', a.id, 'read'))
+    .map((a): CatalogAgent => ({
+      id: a.id,
+      name: a.name,
+      ...(a.persona?.role && { role: a.persona.role }),
+      ...(a.description && { description: a.description }),
+      ...(a.model && { model: `${a.model.provider}/${a.model.model}` }),
+      memory: a.memory?.crossSession ? 'across sessions' : 'this conversation',
+      tools: a.tools.map((t) => ({
+        name: ('name' in t && t.name) || t.type,
+        kind: t.type === 'knowledge' ? 'knowledge' : t.type === 'node' ? 'node' : t.type === 'agent' ? 'agent' : t.type === 'workflow' ? 'workflow' : 'mcp',
+        ...(t.type === 'node' && { nodeType: t.nodeType }),
+        ...(t.type === 'node' && t.requireApproval && { asksFirst: true }),
+      })),
+      knowledge: a.tools.flatMap((t) => (t.type === 'knowledge' && 'collection' in t && t.collection ? [t.collection] : [])),
+      ...(a.published && { published: a.published.version }),
+      draftDiffers: false,
+      usedBy: { count: 0, names: [] },
+    }));
+}
 
 // SB17: the agent brief: fixed parts, approved practices, least privilege, approval on writes, guardrails and cases.
 
@@ -422,7 +456,12 @@ function operationsOf(info: NodeTypeInfo, parameters: Record<string, unknown>) {
  * name; a plugin that marks its reads (`idempotent: true` on an operation) also tells which operations are not reads
  * ("commit", "merge"), so an operation of such a node that is not marked is a write.
  */
+function isQueryRead(info: NodeTypeInfo, parameters: Record<string, unknown>): boolean {
+  return readsByQuery(parameters, info.type);
+}
 function toolWrites(info: NodeTypeInfo, parameters: Record<string, unknown>): boolean {
+  // A query operation (SQLite's Execute Query) is a read while its SQL is empty (the agent writes it per call) or only reads: its name starts with a write verb.
+  if (isQueryRead(info, parameters)) return false;
   if (writesOutside({ type: info.type, parameters })) return true;
   // A plugin node with no operation to read (Acknowledge Alert) is a write when its own name starts with a write verb.
   if (info.pluginId !== 'core' && !info.descriptor.properties.some((p) => p.name === 'operation') && WRITE_NAME.test(info.descriptor.displayName)) return true;
@@ -753,6 +792,26 @@ export interface DraftResult {
   missing: ArchitectMissing[];
   /** SB17: 3 to 5 test cases for the eval gate, from the proposal (fewer when it sent fewer: the architect asks once more). */
   cases: AgentCaseDraft[];
+  /** AG19: what the proposal says besides the config: an agent that already does the job, and the model's why. */
+  design?: DesignExtras;
+}
+
+/** AG19: the card's `reuse`, `modelWhy` and `modelNote` (lib/shared/agent-card.ts), as a proposal makes them. */
+export interface DesignExtras {
+  reuse?: AgentReuse;
+  modelWhy?: NonNullable<AgentCard['modelWhy']>;
+  modelNote?: string;
+  /** A change: the ids of the agent's test cases the design says the change makes wrong (the route keeps only ids the agent has). */
+  contradicted?: string[];
+}
+
+/** A gap in plain words: a tool id the model wrote ("no extract_iocs tool") is the node's title ("no Extract IOCs tool"). */
+export function plainGap(gap: string, types: readonly NodeTypeInfo[]): string {
+  return gap.replace(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g, (id) => {
+    const key = squash(id);
+    const hit = types.find((t) => squash(t.descriptor.displayName) === key || squash(t.type.split('.').pop() ?? '') === key);
+    return hit?.descriptor.displayName ?? id.replace(/_/g, ' ');
+  });
 }
 
 /**
@@ -812,8 +871,15 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
     return candidate;
   };
   const credentialList = withOwnership(actor, 'credential', credentials.list());
-  const rawTools = parsed(args.tools);
-  for (const raw of Array.isArray(rawTools) ? rawTools : []) {
+  // AG19: an existing knowledge base the model chose (`knowledgeBase`) is one more knowledge tool, kept as the tenant has it; one the tenant lacks is said, not made.
+  const parsedTools = parsed(args.tools);
+  const rawTools = [...(Array.isArray(parsedTools) ? parsedTools : [])];
+  const chosenBase = text(args.knowledgeBase, 80)?.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+  if (chosenBase) {
+    if (context.resources && !context.resources.knowledge.some((k) => k.collection === chosenBase)) dropped.push(`the knowledge base “${chosenBase}”: this tenant has no knowledge base by that name`);
+    else if (!rawTools.some((t) => t && typeof t === 'object' && (t as Record<string, unknown>).type === 'knowledge' && String((t as Record<string, unknown>).collection ?? '').toLowerCase() === chosenBase)) rawTools.push({ type: 'knowledge', collection: chosenBase });
+  }
+  for (const raw of rawTools) {
     if (!raw || typeof raw !== 'object') continue;
     const tool = raw as Record<string, unknown>;
     const kind = tool.type ?? (tool.nodeType ? 'node' : tool.workflowId ? 'workflow' : tool.agentId ? 'agent' : undefined);
@@ -856,7 +922,7 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
       // (AG02: per tool, whether the model left the operation out or wrote one) becomes a read the node has.
       if (request !== undefined && toolWrites(info, parameters) && !asksToWriteTo(info, request)) parameters = readDefaults(info, parameters, request);
       const writes = toolWrites(info, parameters);
-      if (request !== undefined && info.pluginId !== 'core' && !appNamed(info, request)) {
+      if (request !== undefined && info.pluginId !== 'core' && !appNamed(info, request) && !(!writes && jobNeeds(info, request, types)) /* AG19: a read the job needs, found by what it does, not only by a name the person gave */) {
         names.delete(toolLabel);
         dropped.push(`${d.displayName}: the request never asks for it${writes ? ' (it would change things there)' : ''}`);
         continue;
@@ -994,6 +1060,8 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
       : context.resources
         ? chooseModel(args.model, context.resources.models)
         : undefined;
+  // AG19: why this model: the person named it (and the host has it), named one the host lacks (the default stays, said), or nobody named one.
+  const modelWhy = context.resources && request !== undefined ? modelWhyOf(request, context.resources.models, model, context.model) : undefined;
   if (context.model === undefined && args.model && model && !String(args.model).endsWith(model.model)) dropped.push(`the model “${String(args.model)}”, which isn't here: it runs on ${model.provider}/${model.model}`);
   if (context.resources && !model) needs.push({ tool: 'model', kind: 'parameter', text: 'Pick a model: no local model is pulled in Ollama' });
 
@@ -1028,7 +1096,44 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
     ...(practicesAsked && { practices: 'on' as const }), // SB17:
     guardrails: briefGuardrails(keep?.guardrails ?? base.guardrails, tools.length > 0, readsTokenJob(request, tools)), // SB17: AG02: the token flag
   };
-  return { config, needs, dropped, missing, cases: parseCases(parsed(args.cases)) /* SB17: */ };
+  // AG19: an existing agent that already does the job: the model's `reuse`, checked against the agents this caller can read.
+  let reuse: AgentReuse | undefined;
+  const reuseArg = parsed(args.reuse);
+  if (reuseArg && typeof reuseArg === 'object' && !Array.isArray(reuseArg)) {
+    const r = reuseArg as Record<string, unknown>;
+    const wanted = text(r.agentId, 200);
+    const agent = otherAgents(actor).find((a) => a.id === wanted) ?? otherAgents(actor).filter((a) => a.name.toLowerCase() === wanted?.toLowerCase()).at(0); // a model writes the name where the id goes, as it does for Run an Agent
+    if (!agent) dropped.push(`the agent ${text(r.agentId, 80) ?? ''} to reuse: not on this instance`);
+    else {
+      const gaps = (Array.isArray(r.gaps) ? r.gaps : typeof r.gaps === 'string' ? r.gaps.split('\n') : []).flatMap((g) => text(g, 120) ?? []).filter((g) => !/^(?:none|no|nothing|n\/a|-)\b/i.test(g.trim())).map((g) => plainGap(g, types)).slice(0, 6); // a model writes "None known" for no gap
+      reuse = { agentId: agent.id, name: agent.name, why: text(r.why, 200) ?? shorten(agent.description ?? '', 160), published: agent.publishedVersion !== undefined, gaps };
+    }
+  }
+  return { config, needs, dropped, missing, cases: parseCases(parsed(args.cases)) /* SB17: */, ...((reuse || modelWhy) && { design: { ...(reuse && { reuse }), ...(modelWhy ?? {}) } }) /* AG19: */ };
+}
+
+/**
+ * AG19: a read node the job needs, found by what it does and not only by a name the request gave: its words (name, keywords,
+ * plugin, description) meet the request's own, by at least one term of a keyword or the plugin. A write still needs the request to ask for it.
+ */
+function jobNeeds(info: NodeTypeInfo, request: string, types: NodeTypeInfo[]): boolean {
+  return searchNodes(searchWords(request), types, 8).some((hit) => hit.type === info.type && hit.score >= 3);
+}
+
+const FAMILY_WORD = /\b(haiku|sonnet|opus)\b/i;
+
+/** AG19: the model's why for the card: `asked` when the person named a model the host lists, `unavailable` (with the note) when they named one it lacks, else `default`. */
+export function modelWhyOf(request: string, models: readonly AgentModel[], chosen: AgentModel | undefined, picked?: string): Pick<DesignExtras, 'modelWhy' | 'modelNote'> {
+  const family = FAMILY_WORD.exec(request)?.[1]?.toLowerCase();
+  const named = modelNamedIn(request, models);
+  const label = chosen ? chosen.model : 'the host’s model';
+  if (named) return { modelWhy: 'asked' };
+  if (family) return { modelWhy: 'unavailable', modelNote: `${family.charAt(0).toUpperCase()}${family.slice(1)} isn’t available on this host: it runs on ${label}` };
+  const builder = agentModelOf(builderModel());
+  const pick = agentModelOf(picked);
+  // A model picked in Spotlight's own picker (other than the host's default) is the person's.
+  if (pick && chosen && builder && (pick.model !== builder.model || pick.provider !== builder.provider) && pick.model === chosen.model) return { modelWhy: 'asked' };
+  return { modelWhy: 'default' };
 }
 
 /** AG02: a model the request names ("on Haiku", "use claude-opus-5-5") as one of `models`: the model id, or its family word after on/use/using/with. */
@@ -1038,7 +1143,8 @@ function modelNamedIn(request: string, models: readonly AgentModel[]): AgentMode
     const id = m.model.toLowerCase();
     const family = /^claude-([a-z]+)-/.exec(id)?.[1];
     if (new RegExp(`(?<![a-z0-9.-])${escapeRegExp(id)}(?![a-z0-9-]|\\.[a-z0-9])`).test(asked)) return { provider: m.provider, model: m.model };
-    if (family && new RegExp(`\\b(?:on|use|using|with|run(?:s)?\\s+on)\\s+(?:claude\\s+)?${family}\\b`).test(asked)) return { provider: m.provider, model: m.model };
+    // AG19: a bare family word names it too ("Haiku is fine"); the first listed of that family.
+    if (family && (new RegExp(`\\b(?:on|use|using|with|run(?:s)?\\s+on)\\s+(?:claude\\s+)?${family}\\b`).test(asked) || (/^(?:haiku|sonnet|opus)$/.test(family) && new RegExp(`\\b${family}\\b`).test(asked)))) return { provider: m.provider, model: m.model };
   }
   return undefined;
 }
@@ -1169,7 +1275,7 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
   const known = () => [...input.messages.map((m) => m.content), JSON.stringify(draft ?? {})].join('\n');
   const draftJson = draft ? JSON.stringify({ ...draft, avatar: undefined }).slice(0, 6000) : '';
   const system = [
-    SYSTEM,
+    ARCHITECT_SYSTEM,
     `\nPlugins online and the nodes an agent can use from them (search_nodes for details):\n${catalogSummary(types)}`,
     input.projectId ? builderContextEntry(input.actor, { projectId: input.projectId }) : '', // PC10
     draft
@@ -1178,6 +1284,14 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
   ].join('\n');
 
   let currentStep = 0;
+  // AG19: the tenant tools this design called, in order, with how many each answered (the card's "Looked at" line).
+  const read: Array<{ tool: string; count?: number }> = [];
+  const readTenant = (tool: string, count?: number) => {
+    const seen = read.find((r) => r.tool === tool);
+    if (seen) {
+      if (count !== undefined) seen.count = count;
+    } else read.push({ tool, ...(count !== undefined && { count }) });
+  };
   const execute = async (call: ToolCall): Promise<ToolResult> => {
     const toolStarted = Date.now();
     let detail: string | undefined;
@@ -1187,10 +1301,12 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
     };
     const design = call.name === DESIGN_TOOL.name;
     const args = design ? fromDesign(call.input ?? {}) : (call.input ?? {});
+    if (TENANT_READS[call.name]) readTenant(TENANT_READS[call.name]!); // AG19: the "Looked at" line
     switch (design ? 'propose_agent' : call.name) {
       case 'search_nodes': {
         const query = String(args.query ?? '');
         detail = `“${query}”`;
+        readTenant('list_tool_nodes'); // AG19: the node search is how this base lists the plugins' tools
         const hits = searchNodes(query, types).map(({ score: _score, ...hit }) => {
           const info = types.find((t) => t.type === hit.type);
           const needed = info?.descriptor.credentials?.filter((c) => c.required).map((c) => c.name);
@@ -1216,23 +1332,18 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
         const list = callableWorkflows(actor).map((w) => ({ id: w.id, name: w.name, ...(w.description && { description: w.description }) }));
         return result(list.length ? JSON.stringify(list) : 'No workflow starts with “When Called by a Workflow or Agent” yet.', `Listed ${list.length} callable workflow${list.length === 1 ? '' : 's'}`);
       }
-      case 'list_agents': {
-        const list = otherAgents(actor).map((a) => ({ id: a.id, name: a.name, ...(a.role && { role: a.role }), ...(a.description && { description: shorten(a.description, 160) }) }));
-        return result(list.length ? JSON.stringify(list) : 'There are no other agents yet.', `Listed ${list.length} agent${list.length === 1 ? '' : 's'}`);
-      }
-      case 'list_credentials': {
-        const list = withOwnership(actor, 'credential', credentials.list()).map((c) => ({ name: c.name, type: c.type }));
-        return result(list.length ? JSON.stringify(list) : 'The user has no credentials yet.', `Listed ${list.length} credential${list.length === 1 ? '' : 's'}`);
-      }
-      case 'list_models': {
-        const list = input.resources?.models ?? [];
-        return result(list.length ? JSON.stringify(list.map((m) => ({ model: `${m.provider}/${m.model}`, note: m.note }))) : 'No models are known here: leave the model out; the user picks one.', `Listed ${list.length} model${list.length === 1 ? '' : 's'}`);
-      }
-      case 'list_knowledge_bases': {
-        const list = input.resources?.knowledge ?? [];
-        // AG13: a new knowledge base can always be started: with the host's embeddings model, or searched by keywords (built in) when it has none
-        const fresh = `A new empty one can be started (type "knowledge" with a new collection name), ${input.resources?.embeddings?.provider === 'none' || !input.resources?.embeddings ? 'searched by keywords (built in, no embeddings model needed)' : `embedded with ${input.resources.embeddings.model}`}.`;
-        return result(`${list.length ? JSON.stringify(list.map((k) => ({ collection: k.collection, description: k.description, store: k.store, usedBy: k.usedBy }))) : 'No agent searches a knowledge base yet.'} ${fresh}`, `Listed ${list.length} knowledge base${list.length === 1 ? '' : 's'}`);
+      // AG18: the tenant tools answer from tenant-tools.ts (drafts, models, plugin and credential needs, document counts)
+      case 'list_agents':
+      case 'get_agent':
+      case 'list_tool_nodes':
+      case 'list_credentials':
+      case 'list_models':
+      case 'list_knowledge_bases':
+      case 'read_agent_practices': {
+        const answer = await tenantTool(call.name, args, { actor });
+        readTenant(call.name, answer.count); // AG19: the card's "Looked at" line, with how many each answered
+        detail = answer.label;
+        return result(answer.text, answer.label, answer.ok);
       }
       case 'list_templates': {
         const list = agentTemplates
@@ -1247,7 +1358,7 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
         const asSent = JSON.stringify(rest);
         if (asSent === lastProposal) return result('Nothing changes: you proposed exactly this agent already. Do not propose it again; answer the user.', 'Skipped a repeated proposal');
         lastProposal = asSent;
-        const { config, needs, dropped, missing, cases: proposed } = draftFrom(args, { types, actor, known: known(), keep: draft, request: requestText, ...(input.revise && { revise: true }), ...(input.agentModel && { model: input.agentModel }) /* AG02: */, ...(input.resources && { resources: input.resources }) });
+        const { config, needs, dropped, missing, cases: proposed, design: extras } = draftFrom(args, { types, actor, known: known(), keep: draft, request: requestText, ...(input.revise && { revise: true }), ...(input.agentModel && { model: input.agentModel }) /* AG02: */, ...(input.resources && { resources: input.resources }) });
         const summary = shorten(text(args.summary, 200) ?? `Draft: ${config.name}`, 140);
         draft = config;
         proposals++;
@@ -1265,6 +1376,8 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
           cases = more.length > proposed.length ? more : proposed;
         }
         if (cases.length < 3 && !input.noCases /* AG04: */) needs.push({ tool: 'test cases', kind: 'parameter', text: 'Add test cases on the Evaluations tab' });
+        const contradicted = Array.isArray(args.contradictedCases) ? (args.contradictedCases as unknown[]).flatMap((id) => (typeof id === 'string' && id.trim() ? [id.trim()] : [])) : [];
+        input.onDesign?.({ ...(extras ?? {}), ...(contradicted.length > 0 ? { contradicted } : {}) }, [...read]); // AG19: the reuse and the model's why of this proposal, and what was read
         onEvent({ type: 'draft', id: `dr_${nanoid(8)}`, summary, config, needs, dropped, missing, cases });
         const notes = [dropped.length ? `Left out: ${dropped.join('; ')}.` : '', missing.length ? `Noted as missing (the user sees it): ${missing.map((m) => m.capability).join('; ')}.` : '', needs.length ? `The user still has to: ${needs.map((n) => n.text).join('; ')}.` : ''].filter(Boolean).join(' ');
         return result(`Shown to the user beside the chat with a Create button (${config.tools?.length ?? 0} tools). ${notes} Don't repeat the draft or say it was created.`, `Proposed “${shorten(config.name ?? 'agent', 40)}” with ${config.tools?.length ?? 0} tools`);
@@ -1365,11 +1478,19 @@ export interface AgentSpec {
   /** SB05: the apps or actions it needs ("Linear: read issues"), and the documents it answers from. */
   tools?: string[];
   knowledge?: string;
+  /** AG19: Spotlight's hints (`newAgent`): a model (`provider/model` from list_models), an existing knowledge base's collection and the node types it found; each is kept when the tenant has it and said when it does not. */
+  agentModel?: string;
+  knowledgeBase?: string;
+  toolNodes?: Array<{ nodeType: string; operation?: string }>;
   /** AG02: the person's whole message: the checks read it (which apps it names, whether it asks to write there), not the short description. */
   ask?: string;
+  /** A change in an agent-fix session: what the person typed ("" when they typed nothing), which alone decides whether a read tool may become a write. */
+  typedAsk?: string;
   /** AG04: a change to an agent that exists (or to a card's config): the config it starts from and what the person asked to change. */
   base?: Partial<AgentConfig>;
   change?: string;
+  /** A change to an agent that exists: its test cases, so the design can name the ones the change makes wrong. */
+  cases?: Array<{ id: string; input: string; expected?: string }>;
 }
 
 /** The person's own words for an agent (no fixed sentences): the text the least-privilege rules read. */
@@ -1380,7 +1501,7 @@ export function designWords(spec: AgentSpec): string {
 
 /** The request the architect gets for Spotlight's newAgent: design it now, model, tools and knowledge included. */
 export function designRequest(spec: AgentSpec): string {
-  if (spec.base && spec.change) return reviseRequest(spec.base, spec.change); // AG04:
+  if (spec.base && spec.change) return reviseRequest(spec.base, spec.change, spec.cases); // AG04:
   const where = [spec.workflow && `in the workflow “${spec.workflow}”`, spec.after && `after the step “${spec.after}”`, spec.before && `before “${spec.before}”`].filter(Boolean).join(', ');
   return [
     // SB17: design from what is written; what only the person can give is left out (it is listed for them), never invented.
@@ -1412,12 +1533,14 @@ function baseAsk(base: Partial<AgentConfig>): string {
 }
 
 /** AG04: the request for a change: the agent as it is, then the change, with every tool proposed again. */
-function reviseRequest(base: Partial<AgentConfig>, change: string): string {
+function reviseRequest(base: Partial<AgentConfig>, change: string, cases: AgentSpec['cases'] = []): string {
   return [
     'Change this agent now and propose the whole agent again, with the change made and nothing else touched. Keep its name, model, instructions, guardrails and every tool the change does not name; leave out a tool only if the change removes it. Leave out what only I can give (a repository, a channel, an id): it is listed for me to fill in.',
+    'If the change gives the agent a database or a knowledge base, also rewrite any instruction sentence that says it cannot look data up or may use only the text it is given, so it agrees with the new tool; leave every other sentence as it is.',
     baseAsk(base),
+    cases.length ? `Its test cases (id: input => what a right answer says):\n${cases.slice(0, 20).map((c) => `${c.id}: ${c.input.slice(0, 200)}${c.expected ? ` => ${c.expected.slice(0, 200)}` : ''}`).join('\n')}\nIf the change makes a case wrong, name its id in contradictedCases and write 1 to 2 new cases in cases; name no case that still holds.` : '',
     `The change: ${change}`,
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 }
 
 const REMOVES = /\b(?:remove|delete|drop|stop using|get rid of|take away|disable)\b/gi;
@@ -1639,17 +1762,41 @@ function withSenderGiven(tool: AgentToolConfig, change: string, types: NodeTypeI
 }
 
 /**
+ * A change that says to write to data: a write verb with rows, records or entries (insert rows, update records), or a write verb that
+ * puts something into a table or database (write the totals to the sales database). "Update me", "save time", "update the agent
+ * so it can read the database" and "add rows of the table to the report" say nothing of the kind.
+ */
+export const EXPLICIT_WRITE = /\b(?:insert|updat(?:e|es|ing)|delet(?:e|es|ing)|writ(?:e|es|ing)|sav(?:e|es|ing))(?:s|ed|ing)?\s+(?:(?:the|all|old|new|any|its|these|those|stale)\s+)*(?:rows?|records?|entries)\b|\b(?:add(?:s|ing)?|insert(?:s|ing)?|writ(?:e|es|ing)|sav(?:e|es|ing))\s+(?:the\s+)?(?:\w+\s+){0,2}(?:rows?|records?|entries|results?|totals?|data|summar(?:y|ies)|figures|counts)\s+(?:to|into)\s+(?:the\s+)?\w*\s*(?:table|database|db)\b/i;
+
+/**
  * AG04: the proposal of a change as the agent it changes: the base's own tools stay unless the change removes them (least
  * privilege holds for the tools the change does not name), a new tool stays only when the change names it, and the name, model,
  * practices, look and team stay unless the change names them.
  */
-function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: string, types: NodeTypeInfo[] = []): void {
+function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: string, types: NodeTypeInfo[] = [], typedAsk?: string): void {
+  // What the person said decides whether a read may become a write; in an agent-fix session that is their typed ask, not the model's own change text.
+  const said = typedAsk ?? change;
   const kept = (base.tools ?? []).filter((t) => !removed(change, t)).map((t) => withSenderGiven(t, change, types)); // ag3 carryover:
   const have = new Set(kept.map(toolKey));
   const added: AgentToolConfig[] = [];
   const addedLabels = new Set<string>(); // AG09:
   const ownBy = new Map<string, AgentToolConfig | undefined>(); // AG09:
   for (const tool of draft.config.tools ?? []) {
+    // "Make sqlite read-only": the design's tool of the same type and name as a kept one, with another operation, changes that tool in place (its id, its credential), never a second tool beside it.
+    const place = tool.type === 'node' && tool.parameters?.operation !== undefined ? kept.findIndex((t) => t.type === 'node' && t.nodeType === tool.nodeType && String(t.name ?? '').toLowerCase() === String(tool.name ?? '').toLowerCase() && t.parameters?.operation !== undefined && t.parameters.operation !== tool.parameters?.operation) : -1;
+    // A read tool turns into a write, or a write tool is added beside it, only when the ask itself says so: a write verb with rows, records or entries (insert rows, update the records, delete old records), or write, add or save of data (results, totals, summary, figures, counts) to or into a table or database. "Give it access", "add read access" and "add SQLite to the agent" never do.
+    if (tool.type === 'node' && !EXPLICIT_WRITE.test(said) && writesOutside({ type: tool.nodeType, parameters: tool.parameters ?? {} }) && kept.some((t) => t.type === 'node' && t.nodeType === tool.nodeType && !writesOutside({ type: t.nodeType, parameters: t.parameters ?? {} }))) {
+      draft.dropped.push(`${tool.name || tool.nodeType}: the agent already has read access; the change doesn’t ask to write, so nothing changes`);
+      continue;
+    }
+    if (place >= 0 && tool.type === 'node' && kept[place].type === 'node') {
+      const own = kept[place] as NodeToolConfig;
+      const { requireApproval: _drop, ...rest } = own;
+      const turned: NodeToolConfig = { ...rest, parameters: { ...own.parameters, ...Object.fromEntries(Object.entries(tool.parameters ?? {}).filter(([, v]) => v !== undefined && v !== '' && !(Array.isArray(v) && !v.length))) }, ...((tool.requireApproval || (own.requireApproval && !writesOutside({ type: own.nodeType, parameters: own.parameters }))) && { requireApproval: true }) };
+      kept[place] = turned;
+      ownBy.set(own.name, turned);
+      continue;
+    }
     if (have.has(toolKey(tool)) && 'name' in tool && tool.name) ownBy.set(tool.name, kept.find((t) => toolKey(t) === toolKey(tool))); // AG09: the base's own tool under the name the design gave it
     if (have.has(toolKey(tool)) || removed(change, tool)) continue; // ag1-int: a tool the change removes is not proposed back
     if (tool.type === 'node' && !names(change, tool)) {
@@ -1718,7 +1865,7 @@ const searchWords = (value: string | undefined) =>
     .filter((w) => w.length > 2 && !FILLER.has(w))
     .join(' ');
 
-export function designBrief(spec: AgentSpec, input: Pick<ArchitectInput, 'types' | 'resources'>): string {
+export function designBrief(spec: AgentSpec, input: Pick<ArchitectInput, 'types' | 'resources'> & Partial<Pick<ArchitectInput, 'actor'>> /* AG19: */): string {
   const types = input.types.filter(usableAsTool);
   const hits = new Map<string, string>();
   // SB05: the tools it was said to need are searched first, so their nodes rank first.
@@ -1726,15 +1873,25 @@ export function designBrief(spec: AgentSpec, input: Pick<ArchitectInput, 'types'
     // A score under 4 is words of the request found only in a node's description: not a match.
     for (const hit of query ? searchNodes(query, types, 6) : []) if (hit.score >= 4 && !hits.has(hit.type) && hits.size < 8) hits.set(hit.type, `${hit.type} (${hit.displayName}): ${shorten(hit.description, 120)}`);
   }
+  // Wave ag4 carryover: the credentials the person has (list_credentials): a matched node one of them fits says so and is
+  // listed first, so "the sales database" with a SQLite credential named Sales DB is the SQLite node, not Postgres.
+  const creds = input.actor ? catalogCredentials(input.actor) : [];
+  const yours = new Map((input.actor && hits.size ? catalogToolNodes(input.actor, { types: [...hits.keys()] }) : []).map((n) => [n.nodeType, n.credentials.flatMap((c) => c.yours)]));
+  const matched = [...hits.entries()].map(([type, line]) => (yours.get(type)?.length ? `${line} (works with your credential ${yours.get(type)!.map((n) => `“${n}”`).join(', ')})` : line));
+  matched.sort((a, b) => Number(b.includes('(works with your credential')) - Number(a.includes('(works with your credential')));
   const models = input.resources?.models ?? [];
   const knowledge = input.resources?.knowledge ?? [];
+  const agents = input.actor ? catalogAgents(input.actor) : []; // AG19:
   return [
-    models.length ? `Models (pick one, the first is best here): ${models.map((m) => `${m.provider}/${m.model} (${m.note})`).join('; ')}` : 'Models: none known; leave the model out.',
-    knowledge.length ? `Knowledge bases: ${knowledge.map((k) => `${k.collection}: ${k.description}`).join('; ')}` : 'Knowledge bases: none yet.',
+    // AG19: the agents that exist, so one that already does the job is reused, not made again.
+    agents.length ? `Agents that already exist (one that already does the whole job goes in reuseAgentId with reuseWhy and reuseGaps; still propose the closest design): ${agents.map((a) => `[${a.id}] ${agentLine(a)}`).join(' | ')}` : 'Agents that already exist: none.',
+    models.length ? `Models (pick one, the first is best here; the model the request names, when listed): ${models.map((m) => `${m.provider}/${m.model} (${m.note})`).join('; ')}` : 'Models: none known; leave the model out.',
+    knowledge.length ? `Knowledge bases (one whose description or folder fits goes in knowledgeBase as it is: nothing is indexed again): ${knowledge.map((k) => `${k.collection}: ${k.description}${k.indexedFrom ? ` (indexed from ${k.indexedFrom}/)` : ''}`).join('; ')}` : 'Knowledge bases: none yet.',
     // AG13: a new knowledge base can always be started (the host's embeddings model, else keyword search), so the brief never says it cannot
     'Knowledge: only if its job means looking things up in documents (policies, contracts, playbooks, past answers). Use an existing collection only if it holds those documents; else a new name (lowercase-dashes) for an empty one the user fills (it is searched with the host\'s embeddings model, or by keywords when it has none). Most agents that act need none: leave knowledge empty.',
     'Node tools: only for what it must do outside its reply (post a message, create a ticket, fetch a record). Reading, judging or summarising the message it gets needs no tool: then leave nodeTools empty.',
-    hits.size ? `Nodes that matched the request (most are probably not needed): ${[...hits.values()].join('; ')}` : 'No node matched the request.',
+    creds.length ? `Credentials the person has (names and types only; of two nodes that do the same job, pick the one a credential here fits; never set one, the person picks): ${creds.map((c) => `${c.name} (${c.type})`).join('; ')}` : 'Credentials the person has: none yet.',
+    hits.size ? `Nodes that matched the request (most are probably not needed): ${matched.join('; ')}` : 'No node matched the request.',
     'If it must act in an app none of these nodes covers (Slack, Jira…), name it in missing ("Slack: post a message") instead of picking a node that doesn\'t do it.',
   ].join('\n');
 }
@@ -1764,6 +1921,30 @@ function withSpecHints(draft: DraftResult, spec: AgentSpec, input: Pick<Architec
     draft.needs.push(...added.needs);
     return true;
   };
+  // AG19: the node types Spotlight found in the tenant (`toolNodes`): kept when this host has them and the same rules allow them, else said why.
+  if (!base) {
+    for (const hint of spec.toolNodes ?? []) {
+      const info = types.find((t) => t.type === hint.nodeType);
+      const label = info?.descriptor.displayName ?? hint.nodeType;
+      if (!info) {
+        notAdded.push({ name: label, reason: 'no plugin online has it' });
+        continue;
+      }
+      if (nodeTool(info)) continue;
+      if (!add(label, info.type)) {
+        notAdded.push({ name: label, reason: draft.dropped.at(-1)?.replace(/^[^:]*:\s*/, '') || 'it could not be added' });
+        continue;
+      }
+      const added = tools[tools.length - 1];
+      if (hint.operation && added?.type === 'node' && info.descriptor.properties.some((p) => p.name === 'operation')) added.parameters = { ...added.parameters, operation: hint.operation };
+    }
+    // AG19: an existing knowledge base Spotlight chose (`knowledgeBase`): attached as the tenant has it, or said when it is not here.
+    if (spec.knowledgeBase && !tools.some((t) => t.type === 'knowledge')) {
+      const added = draftFrom({ name: draft.config.name, knowledgeBase: spec.knowledgeBase }, { types, actor: input.actor, known: '', ...(input.resources && { resources: input.resources }) });
+      if (added.config.tools?.length) tools.push(...added.config.tools);
+      else notAdded.push({ name: spec.knowledgeBase, reason: added.dropped.at(-1)?.replace(/^[^:]*:\s*/, '') || 'this tenant has no knowledge base by that name' });
+    }
+  }
   for (const wanted of spec.tools ?? []) {
     // toolsOf found several mail nodes for "email … to <address>": said, not guessed.
     const several = /^([^:]{2,40}): (several nodes match \(.*\), pick one)$/.exec(wanted);
@@ -1873,7 +2054,7 @@ export function designFailure(caught: unknown): string {
  * what Spotlight gave, on the first model the host has, so the step still has an agent to run. A reached usage cap is
  * thrown, not swallowed.
  */
-export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, 'messages' | 'onEvent' | 'draft' | 'only' | 'request'>): Promise<DraftResult & { designed: boolean; notAdded: AgentNotAdded[] /* AG02: */; failure?: string }> {
+export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, 'messages' | 'onEvent' | 'draft' | 'only' | 'request'>): Promise<DraftResult & { designed: boolean; notAdded: AgentNotAdded[] /* AG02: */; failure?: string; contradicted?: string[]; extras?: DesignExtras & { catalog: Array<{ tool: string; count?: number }> } /* AG19: */ }> {
   // AG02: the agent runs on Spotlight's model (the picker's, else the builder model); the whole ask goes to the architect beside the short spec.
   const agentModel = typeof input.model === 'string' && input.model.trim() ? input.model.trim() : builderModel();
   const asked = spec.ask ? `\n\nThe person's own words, all of it (keep every address, name and id exactly as written):\n${spec.ask}` : '';
@@ -1883,6 +2064,18 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
     if (event.type === 'draft') last = { config: event.config, needs: event.needs, dropped: event.dropped, missing: event.missing, cases: event.cases ?? [] /* SB17: */ };
     if (event.type === 'error' && !('kind' in event && event.kind === 'cap')) failure = designFailure(event.message); // ag1-int:
   };
+  // AG19: what the architect's own tools read (second attempt), and what the brief gave it (first): the card's "Looked at" line.
+  let extras: DesignExtras = {};
+  const looked: Array<{ tool: string; count?: number }> = [];
+  const lookedAt = (tool: string, count?: number) => {
+    const seen = looked.find((r) => r.tool === tool);
+    if (seen) seen.count = count ?? seen.count;
+    else looked.push({ tool, ...(count !== undefined && { count }) });
+  };
+  const onDesign: NonNullable<ArchitectInput['onDesign']> = (design, read) => {
+    extras = design;
+    for (const r of read) lookedAt(r.tool, r.count);
+  };
   const attempts: Array<Pick<ArchitectInput, 'messages' | 'only'>> = [
     { messages: [{ role: 'user', content: `${designRequest(spec)}${asked}\n\n${designBrief(spec.change ? { name: spec.name, description: spec.change, instructions: '' } /* AG04: the nodes the change matches */ : spec, input)}\n\nPropose it in one propose_design call now: short instructions, only the tools it needs.` }], only: [DESIGN_TOOL.name] },
     { messages: [{ role: 'user', content: `${designRequest(spec)}${asked}` }] },
@@ -1891,7 +2084,15 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
     if (last || input.signal?.aborted) break;
     // A model that fails gets the fallback below; a reached usage cap is the caller's answer (the route says 429).
     // SB17: `request` is the least-privilege rules' text: the request alone, not the brief's hints.
-    await runArchitect({ ...input, ...attempt, agentModel, ...(spec.base && spec.change && { draft: spec.base, noCases: true, revise: true }) /* AG04: */, request: spec.change ? `${designWords(spec)}\n${spec.change}` /* AG04: */ : designWords(spec), onEvent }).catch((caught: unknown) => {
+    if (!spec.base && attempt === attempts[0]) {
+      // AG19: the brief of the first attempt is the architect's read of the tenant: the agents, the plugins' tools, the knowledge bases and the models.
+      lookedAt('list_agents', catalogAgents(input.actor).length);
+      lookedAt('list_tool_nodes', input.types.filter(usableAsTool).length);
+      lookedAt('list_knowledge_bases', input.resources?.knowledge.length ?? 0);
+      lookedAt('list_models', input.resources?.models.length ?? 0);
+      lookedAt('list_credentials', catalogCredentials(input.actor).length); // wave ag4 carryover: the brief lists them
+    }
+    await runArchitect({ ...input, ...attempt, onDesign, agentModel, ...(spec.base && spec.change && { draft: spec.base, noCases: true, revise: true }) /* AG04: */, request: spec.change ? `${designWords(spec)}\n${spec.change}` /* AG04: */ : designWords(spec), onEvent }).catch((caught: unknown) => {
       if (isUsageCapError(caught)) throw caught;
       failure = designFailure(caught); // ag1-int:
     });
@@ -1900,16 +2101,25 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
     const kept: DraftResult = last;
     let notAdded: AgentNotAdded[] = [];
     if (spec.base && spec.change) {
-      reviseDraft(kept, spec.base, spec.change, input.types); // AG04: the base's tools stay, a new one only when named
+      reviseDraft(kept, spec.base, spec.change, input.types, spec.typedAsk); // AG04: the base's tools stay, a new one only when named
       // ag1-int: AG02's promise holds for a change too: a tool it names is added (the same least-privilege rules), or said why not.
       notAdded = withSpecHints(kept, { name: spec.name, description: '', instructions: '', ask: spec.change, tools: changeTools(spec.change, input.types.filter(usableAsTool)) }, input, spec.base);
     } else notAdded = withSpecHints(kept, spec, input); // SB17: AG02: what the ask named and the agent did not get
+    // AG19: the model Spotlight's chat named (`newAgent.model`): kept when this host lists it, else the default stays and the card says so.
+    if (!spec.base && spec.agentModel && input.resources) {
+      const hint = agentModelOf(spec.agentModel);
+      const listed = hint && input.resources.models.find((m) => m.provider === hint.provider && m.model === hint.model);
+      if (listed) {
+        kept.config.model = { provider: listed.provider, model: listed.model };
+        extras = { ...extras, modelWhy: 'asked', modelNote: undefined };
+      } else extras = { ...extras, modelWhy: 'unavailable', modelNote: `${spec.agentModel} isn’t available on this host: it runs on ${kept.config.model ? kept.config.model.model : 'the host’s model'}` };
+    }
     kept.cases = asksFirstCases(kept.cases, kept.config); // AG15: a case about a tool that asks first expects the ask
     // ag3 carryover: a case naming a URL nobody gave is dropped (never a destination nobody gave); too few left → the card asks for cases.
     const before = kept.cases.length;
     kept.cases = casesWithoutMadeUpUrls(kept.cases, spec.change ? `${designWords(spec)}\n${spec.change}` : designWords(spec), kept.config);
     if (before >= 3 && kept.cases.length < 3 && !(spec.base && spec.change) && !kept.needs.some((n) => n.tool === 'test cases')) kept.needs.push({ tool: 'test cases', kind: 'parameter', text: 'Add test cases on the Evaluations tab' });
-    return { ...kept, config: { ...kept.config, name: spec.base && spec.change ? (kept.config.name ?? spec.name) /* AG04: a rename is the change's */ : spec.name, description: kept.config.description || spec.description }, designed: true, notAdded };
+    return { ...kept, config: { ...kept.config, name: spec.base && spec.change ? (kept.config.name ?? spec.name) /* AG04: a rename is the change's */ : spec.name, description: kept.config.description || spec.description }, designed: true, notAdded, ...(!spec.base && { extras: { ...extras, catalog: looked } }) /* AG19: */, ...(spec.base && extras.contradicted && { contradicted: extras.contradicted }) };
   }
   // AG04: a change nothing proposed is no change: the base as it is.
   if (spec.base && spec.change) return { config: spec.base, needs: [], dropped: [], missing: [], cases: [], designed: false, notAdded: [], ...(failure && { failure }) };

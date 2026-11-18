@@ -53,6 +53,7 @@ repository's marketplace. A skill links to its page here instead of repeating it
 | [overview.md](overview.md) | what Landflow is made of, how a run goes from trigger to Run Trace, the data, identity, the AI parts, the repo layout | `landflow-platform-overview` |
 | [server-layers.md](server-layers.md) | the host's layers (routes, `handler()`, access, validation, services, engine, store, plugins, queue, jobs, public API, client) and how to add a route end to end | `landflow-server-change` |
 | [agents.md](agents.md) | what an agent is, where it runs (in-host, kagent, Claude Code, LiteLLM, Ollama), teams, the agent nodes, the routes | `landflow-agents` |
+| [agent-best-practices.md](agent-best-practices.md) | the written practices for building an agent; Spotlight and MCP clients read them with `read_agent_practices` | `landflow-agents` |
 | [kubernetes.md](kubernetes.md) | the components Landflow uses in Kubernetes and how to run, change and check them locally | `landflow-kubernetes` |
 | [sdk/README.md](sdk/README.md) | what a plugin is and how the three SDKs compare | `landflow-plugin-typescript`, `landflow-plugin-python`, `landflow-plugin-go` |
 | [sdk/typescript.md](sdk/typescript.md) | writing a plugin with `@landflow/sdk` | `landflow-plugin-typescript` |

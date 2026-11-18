@@ -17,6 +17,7 @@
  */
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type EdgeChange, type Node, type NodeChange } from '@xyflow/react';
 import { nanoid } from 'nanoid';
+import { toast } from 'sonner'; // AG17:
 import { create } from 'zustand';
 import { defaultParameters, defaultVersionOf, portParameters, withPropertyDefaults } from '@landflow/protocol';
 import type { NodeProgress } from '@/lib/client/node-progress';
@@ -39,7 +40,10 @@ import type {
 } from '@/lib/shared/types';
 import { STICKY_DEFAULT_CONTENT, STICKY_DEFAULT_SIZE } from '../canvas/sticky-note';
 import { preparePaste, remapReferences, selectionOrigin, serializeSelection, type ClipboardData } from './clipboard';
+import { boundCountOf } from '@/lib/client/agent-bubble-data'; // AG16
+import { clearOfBubbles, occupiedOf, type ClearBox } from './bubble-clearance'; // AG16
 import { GROUP_NAME_MAX, NODE_TILE, NODE_WIDE_TILE, ancestorsOf, clearSpot, descendantGroupIds, descendantNodeIds, nodeBox, normalizeGroups } from '@/lib/shared/groups';
+import { boundAgentRef } from '@/lib/shared/assistant-ops'; // AG17:
 import { autoBind, bindSlot, compositeLookup, compositeOfNode, instantiateComposite, unbindSlot, type CompositeFix, type CompositeTypeInfo } from '@/lib/shared/composites';
 import {
   adoptFrames,
@@ -66,6 +70,38 @@ const TIDY_GAP_X = 280 - NODE_TILE;
 const SUBNODE_PITCH = 170;
 /** AG12 (ag3 fix): a sub-node sits this far under a tall parent's measured height: the ~50 px block of slot labels and + buttons, then the sub-node's own handle. */
 export const SUBNODE_CLEARANCE = 64;
+
+/** AG16: the bound nodes' boxes for the layout (each node's size, its bubbles' count and the real sub-nodes wired into it). */
+function bubbleBoxes(nodes: readonly FlowNode[], edges: readonly FlowEdge[], types: Record<string, NodeTypeInfo>, skip?: ReadonlySet<string>): ClearBox[] {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const next = new Map<string, string[]>();
+  for (const e of edges) if (e.data?.connectionType === 'main') next.set(e.source, [...(next.get(e.source) ?? []), e.target]);
+  /** Every node after `id` on the main chain. */
+  const downstream = (id: string) => {
+    const seen = new Set<string>();
+    const todo = [...(next.get(id) ?? [])];
+    while (todo.length) {
+      const at = todo.pop()!;
+      if (seen.has(at) || at === id) continue;
+      seen.add(at);
+      todo.push(...(next.get(at) ?? []));
+    }
+    return seen;
+  };
+  return nodes
+    .filter((n) => !skip?.has(n.id))
+    .map((n) => ({
+      id: n.id,
+      x: n.position.x,
+      y: n.position.y,
+      width: n.measured?.width ?? (types[n.data.wf.type]?.descriptor.inputs.some((p) => p.type !== 'main') ? NODE_WIDE_TILE : NODE_TILE),
+      height: n.measured?.height ?? NODE_TILE,
+      bubbles: boundCountOf(n.data.wf, n.id),
+      subNodes: new Set(edges.filter((e) => e.target === n.id && e.data?.connectionType !== 'main').map((e) => e.source)),
+      occupied: occupiedOf(n, edges, byId), // the kept wired sub-nodes the drawn bubble row is shifted past
+      downstream: downstream(n.id),
+    }));
+}
 
 export type { NodeRunState, NodeStatus } from '@/lib/client/run-data';
 export type { GroupData, GroupFlowNode } from './groups';
@@ -664,6 +700,14 @@ export const useEditor = create<EditorState>((set, get) => {
     const source = parseHandle(connection.sourceHandle);
     const target = parseHandle(connection.targetHandle);
     if (source.type !== target.type) return;
+    // AG17: a Run an Agent / Run a Team node runs a saved agent: its model, memory and tools are the agent's, so a drag that would wire one in is refused.
+    if (['ai_languageModel', 'ai_memory', 'ai_tool'].includes(target.type)) {
+      const bound = get().nodes.find((n) => n.id === connection.target);
+      if (bound && boundAgentRef(bound.data.wf)) {
+        toast.message(`${bound.data.wf.name}’s model, memory and tools are the agent’s: use + under the slot to change the agent`);
+        return;
+      }
+    }
     record();
     set((s) => {
       // Respect maxConnections on the target port.
@@ -756,6 +800,14 @@ export const useEditor = create<EditorState>((set, get) => {
     // Don't drop it on top of another node.
     const taken = (p: { x: number; y: number }) => state.nodes.some((n) => Math.abs(n.position.x - p.x) < 120 && Math.abs(n.position.y - p.y) < 110);
     if (!split) for (let i = 0; i < 12 && taken(position); i++) position = { x: position.x, y: position.y + 140 };
+    // AG16: never on a bound node's bubbles: a next step lands right of them (+ 40), anything else below.
+    if (!split && !(from?.handleType === 'target' && parseHandle(from.handleId).type !== 'main')) {
+      const info = state.nodeTypes[type];
+      const width = info?.descriptor.inputs.some((p) => p.type !== 'main') ? NODE_WIDE_TILE : NODE_TILE;
+      const probe: ClearBox = { id: '__new__', x: position.x, y: position.y, width, height: NODE_TILE };
+      const moved = clearOfBubbles([...bubbleBoxes(state.nodes, state.edges, state.nodeTypes), probe], new Set(['__new__']))['__new__'];
+      if (moved) position = moved;
+    }
 
     if (split) {
       // Make room: everything downstream of the split shifts one column right.
@@ -928,6 +980,17 @@ export const useEditor = create<EditorState>((set, get) => {
       // AG12: below the slot labels and + buttons of a tall parent (a banded agent or team tile), 200 otherwise (ag3 fix: SUBNODE_CLEARANCE).
       const below = Math.max(200, (node.measured?.height ?? 0) + SUBNODE_CLEARANCE);
       children.forEach((id, i) => (positions[id] = { x: left + i * SUBNODE_PITCH, y: base.y + below }));
+    }
+    // AG16: nothing sits on a bound node's bubbles (its footprint): what overlaps goes right of it (a next step) or below it.
+    const laidOut = nodes.map((n) => (positions[n.id] ? { ...n, position: positions[n.id], measured: { width: widthOf(n), height: n.measured?.height ?? NODE_TILE } } : n));
+    const clear = clearOfBubbles(bubbleBoxes(laidOut, edges, nodeTypes, new Set(subIds)));
+    // A node moved off the bubbles takes its wired sub-nodes along (they were centred under it by the pass above).
+    const before = { ...positions };
+    for (const [id, at] of Object.entries(clear)) positions[id] = at;
+    for (const e of subEdges) {
+      const to = clear[e.target];
+      const was = before[e.target];
+      if (to && was && positions[e.source] && !clear[e.source]) positions[e.source] = { x: positions[e.source].x + to.x - was.x, y: positions[e.source].y + to.y - was.y };
     }
     set((s) => {
       const nodes = s.nodes.map((n) => (positions[n.id] ? { ...n, position: positions[n.id] } : n));

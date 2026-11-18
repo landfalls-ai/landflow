@@ -25,9 +25,14 @@ import { saveCheckpoint } from './checkpoints';
 import { assistantModel, errorText, modelLabel } from './model';
 import { withParseRetry } from './parse-retry'; // SB05:
 import { authHeaderProblems, cronProblems, expressionMisses, retryProblems } from './change-checks'; // SB09:
+import { publishOfferLine, type PublishOffer } from '../../shared/agent-versions'; // AG21:
+import { draftOffer, listAgentUpdates, updateOffer } from './publish-tools'; // AG21:
 import { ASK_CHOICES_MAX, ASK_CHOICES_MIN, ASK_CHOICE_MAX_CHARS, ASK_USER_TOOL, requestAcrossAsk, type AskEvent, type CredentialOfferEvent } from '../../shared/spotlight-wire'; // SB11: (CredentialOfferEvent: SB12; requestAcrossAsk: SB09 × SB11)
 import { claimsAChange } from './guards'; // SB12:
 import { withAskedTools } from '@/lib/shared/agent-ask'; // SB16:
+import type { AgentFixEvent } from '@/lib/shared/agent-fix'; // AG20:
+import { agentToolLines, failureClause } from '@/lib/shared/tenant-catalog'; // AG20:
+import { runLog } from './run-log'; // AG20:
 import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol'; // SB12:
 import { needsPerson } from '@/lib/shared/run-check'; // SB12:
 import { redundantBranches, registryLookup, validateOps, withoutRepeatedAdds } from './ops';
@@ -55,10 +60,11 @@ import {
   withoutNarration,
   withoutRepeats,
 } from './guards';
+import { isTenantTool, TENANT_TOOLS, tenantTool } from './tenant-tools'; // AG18:
 import { availableTypes, catalogSummary, FOCUS_PARAMETER_CHARS, nodeContext, nodeDocs, searchNodes, workflowOutline } from './research';
 import { MENTION_LIMITS, mentionKey, type MentionRef } from '../../shared/mentions';
 import { BLOCK_CLOSE, BLOCK_OPEN, resolveMentions, type MentionRead, type SentMention } from '../mentions/resolve';
-import type { Actor } from '../projects/access';
+import { canResource, type Actor } from '../projects/access';
 import { builderContextEntry } from '../project-context/by-repo';
 
 /** The most model calls for one message. A reply stops sooner when two steps in a row add nothing new. */
@@ -88,7 +94,9 @@ export type ChatEvent =
   | AskEvent // SB11:
   | { type: 'done'; model: string; durationMs: number; steps: number; usage: { inputTokens: number; outputTokens: number }; costUsd?: number; local: boolean }
   | { type: 'error'; message: string; kind: ChatErrorKind; checkpoint?: string; step?: number }
-  | CredentialOfferEvent; // SB12:
+  | CredentialOfferEvent // SB12:
+  | { type: 'publishOffer'; offer: PublishOffer } // AG21: a card to publish the draft, or to test and publish an agent update
+  | AgentFixEvent; // AG20: a change to the agent a run failed in
 
 /** What a chat keeps to be continued after an error: the messages with the tool results so far, and what the guards remember. */
 export interface ChatState {
@@ -150,7 +158,7 @@ export interface ChatInput {
 const OP_SCHEMA = {
   type: 'object',
   properties: {
-    op: { type: 'string', enum: ['addNode', 'newAgent', 'setParameters', 'setNodeSettings', 'connect', 'disconnect', 'removeNode', 'renameNode', 'turnIntoTeam', 'setWorkflowSettings'] }, // SB10:
+    op: { type: 'string', enum: ['addNode', 'newAgent', 'changeAgent' /* AG19: AG17 parses and applies it */, 'setParameters', 'setNodeSettings', 'connect', 'disconnect', 'removeNode', 'renameNode', 'turnIntoTeam', 'setWorkflowSettings'] }, // SB10:
     ref: { type: 'string', description: 'addNode: handle for this new node in later ops' },
     type: { type: 'string', description: 'addNode: node type id. connect/disconnect: main, ai_languageModel, ai_memory or ai_tool' },
     name: { type: 'string', description: 'addNode: node name. renameNode: the new name. newAgent: the new agent\'s name' },
@@ -159,6 +167,13 @@ const OP_SCHEMA = {
     tools: { type: 'array', items: { type: 'string' }, description: 'newAgent: the apps or actions it needs, e.g. "Linear: read issues" (at most 8)' },
     knowledge: { type: 'string', description: 'newAgent: the documents it answers from, e.g. "our product docs"' },
     instructions: { type: 'string', description: 'newAgent: the new agent\'s instructions: how it does the job' },
+    // AG19: hints from the tenant the architect keeps when they fit.
+    model: { type: 'string', description: 'newAgent: a model as list_models gives it (provider/model), only when the person named one and it is listed; otherwise leave it out (the host\'s model is used)' }, // AG19:
+    knowledgeBase: { type: 'string', description: 'newAgent: an existing knowledge base (a collection from list_knowledge_bases) that fits what it answers from, attached as it is' }, // AG19:
+    knowledgeFolder: { type: 'string', description: 'newAgent: a folder the person named for its documents (relative to the files directory), exactly as they wrote it' }, // AG19:
+    toolNodes: { type: 'array', items: { type: 'object', properties: { nodeType: { type: 'string' }, operation: { type: 'string' } }, required: ['nodeType'] }, description: 'newAgent: node types from list_tool_nodes the job needs (found by what it does), each with its operation when it has one (at most 8)' }, // AG19:
+    agentId: { type: 'string', description: 'changeAgent: the agent to change (when no node is given)' }, // AG19:
+    change: { type: 'string', description: 'changeAgent: what to change about the agent, in words' }, // AG19:
     parameters: { type: 'object', description: 'addNode / setParameters: parameter values (merged)' },
     after: { type: 'string', description: 'addNode: existing node name or ref to wire the new node after' },
     before: { type: 'string', description: 'addNode: insert the new node in front of this node (what fed it feeds the new node)' },
@@ -175,6 +190,23 @@ const OP_SCHEMA = {
 };
 
 export const TOOLS: ToolSpec[] = [
+  // AG21: publishing and the agent versions production runs.
+  {
+    name: 'list_agent_updates',
+    description:
+      'Read which agents have a newer published version than the one this workflow runs in production (or, with agentId, which production workflows run an older version of that agent). A production workflow keeps the agent version it was published with until it is published again: to move it, test first, then offer the update with propose_agent_update. Never publish by yourself.',
+    inputSchema: { type: 'object', properties: { agentId: { type: 'string', description: 'An agent id: the workflows that pin an older version of it. Omit for this workflow.' } } },
+  },
+  {
+    name: 'propose_publish',
+    description: 'Show the person a card to publish this workflow\'s draft (what it will run, and what stops it). Offer it only when they ask to publish the flow or put it live, never on your own. Nothing is published until they press Publish on the card.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'propose_agent_update',
+    description: 'Show the person a card that tests this workflow\'s production graph with newer published versions of these agents and then publishes it. Use after list_agent_updates, when they ask to move the flow to the new version. Nothing is published until they press Test, then Publish, on the card.',
+    inputSchema: { type: 'object', properties: { agentIds: { type: 'array', items: { type: 'string' } } }, required: ['agentIds'] },
+  },
   {
     name: 'search_nodes',
     description: 'Search the node catalog by keywords (e.g. "google sheets", "dedupe", "send message"). Returns type ids, names and descriptions.',
@@ -185,6 +217,7 @@ export const TOOLS: ToolSpec[] = [
     description: 'Read a node type\'s docs: parameters with options, defaults and when they show, ports and credentials. Takes a type id, or the name of a node in the workflow.',
     inputSchema: { type: 'object', properties: { type: { type: 'string' } }, required: ['type'] },
   },
+  ...TENANT_TOOLS, // AG18: the tenant's agents, tool nodes, knowledge bases, models, credentials and the agent practices
   {
     name: 'get_workflow',
     description: 'Read the current workflow: nodes with their parameters, the outputs of nodes that branch and what is connected to each, connections, and which nodes have run data. Includes changes proposed earlier (marked pending: not applied yet).',
@@ -194,6 +227,27 @@ export const TOOLS: ToolSpec[] = [
     name: 'get_run_data',
     description: 'Read what a node received and produced in the last run (first items), its error and its parameters.',
     inputSchema: { type: 'object', properties: { node: { type: 'string', description: 'Node name' } }, required: ['node'] },
+  },
+  // AG20: the run's whole log, and the agent a run failed in.
+  {
+    name: 'get_run_log',
+    description: 'Read the log of the test run the message names: every node\'s status and error (an HTTP node\'s status code and the response body), its first input and output items, the plugin\'s log lines, and for a Run an Agent node the agent\'s tool calls in order (each with its status, error and input) and its reply. Call it first when a run failed.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'propose_agent_fix',
+    description: 'The run failed inside a Run an Agent step\'s agent (a tool call that failed for a fixed parameter, a tool the agent lacks, its instructions): show the person a change to that agent, which they apply, test and publish. Not a change to the workflow: do not also call propose_changes for it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent: { type: 'string', description: 'The agent\'s name' },
+        step: { type: 'string', description: 'The Run an Agent node that failed' },
+        tool: { type: 'string', description: 'The agent\'s tool call that failed, when one did' },
+        cause: { type: 'string', description: 'The cause in one clause of at most 12 words' },
+        change: { type: 'string', description: 'What to change in the agent, in words (its instructions, a tool\'s fixed parameter, a tool it lacks)' },
+      },
+      required: ['agent', 'step', 'cause', 'change'],
+    },
   },
   {
     name: 'propose_changes',
@@ -239,19 +293,19 @@ How to work:
 - A connection back to an earlier node is allowed and makes a loop; the engine runs loops. To limit the rounds, use a round counter: a Code node that adds 1 to a round number (kept in a field the loop's nodes pass on, or read from the counter node's own previous output), then an If "round < N" whose true branch connects back to the node to repeat and whose false branch goes on to what happens after the last round.
 - To fix a node's input, prefer changing the node's own parameters (read a field the items have). To put a node between two nodes, use addNode with "before": "<the later node>".
 - ops: {"op":"addNode","ref":"r1","type":"<type id>","name":"Short name","parameters":{…},"after":"<node name or ref>","output":0} (or "before":"<node name>" to insert it in front of a node, rewiring what fed that node), {"op":"setParameters","node":"<name>","parameters":{…}}, {"op":"setNodeSettings","node":"<name>","settings":{"executeOnce":true}} (a node's settings, not its parameters: executeOnce runs it once for all its input items instead of once per item; also retryOnFail, maxTries, waitBetweenTriesMs, retryBackoff, onError, timeoutSeconds, alwaysOutputData, disabled), {"op":"setWorkflowSettings","settings":{"timeoutSeconds":300}} (the workflow's own settings, not a step's: errorWorkflowId, timeoutSeconds, retryMaxAttempts, retryBaseDelaySeconds), {"op":"connect","from":"<name or ref>","to":"<name or ref>","output":0,"type":"main"}, {"op":"disconnect","from":"…","to":"…"}, {"op":"removeNode","node":"…"}, {"op":"renameNode","node":"…","name":"…"}, {"op":"turnIntoTeam","node":"<a Run an Agent node with A2A Agent or Run an Agent nodes attached as its tools>"}. A new workflow starts with a trigger (core.manualTrigger unless the user wants a webhook, schedule or chat). Sub-nodes (chat models, memory, tools) attach to an AI Agent with "after": "<agent>" or connect with type ai_languageModel / ai_memory / ai_tool.
-- Agents: before you add an AI Agent (core.aiAgent) for a job, check "Your agents" and "Published agent teams" below. If one's description, skills and tools cover the job, run it: Run an Agent (core.messageAgent, parameters agentId and message, what to do with the item) or Run a Team, and say in your closing sentence which one you picked and why. Use core.aiAgent only for a small step that needs no specialist (classify, summarize, extract, draft a reply). When the job needs a specialist none of them is (its own instructions, tools or knowledge, work other flows will reuse, or the user asks for an agent, a specialist or an expert to do it: that is an agent, never Ask a Person or a Confirm step), say so and propose {"op":"newAgent","ref":"a1","name":"<agent name>","description":"<what it does, one or two sentences>","instructions":"<how it does the job>","tools":["<an app or action it needs, e.g. Linear: read issues>"],"knowledge":"<the documents it answers from>","parameters":{"message":"…"},"after":"<the step it goes after>"} (use "after" when the request says after a step, "before":"<the step it goes in front of>" when it says before; an agent between two steps takes both; tools and knowledge only when it needs them: the Agent architect picks them): applying it saves the agent as a draft and adds a Run an Agent node for it. That node runs the agent with the agent's own model and instructions: attach no chat model, memory or tools to it, and don't also add an AI Agent for the same job. One newAgent per agent, then stop. Then tell the user to give it tools on the Agents page (the Agent architect can) and publish it before the flow runs. Never invent an agentId.
-- Teams: an agent team (Agents page → Teams) is a lead with members who report to it, with reviews and budgets; the Run a Team node (core.runTeam, parameters teamId and teamName, message) runs a published one as a single step, with Done and Needs a person outputs. When the user wants a team that already exists, add that node with its teamId and teamName from "Published agent teams" below; the chat model, memory and tools attached to the node go to the lead. When the user wants a lead and the agents under it turned into a team, propose {"op":"turnIntoTeam","node":"<the lead>"}: applying it creates and publishes the team and swaps the nodes, so never tell the person to create a team first or to pick one afterwards. The same action is "Turn into a team" in the toolbar of a selected Run an Agent node that has agents as tools. Never invent a teamId.
+- Agents: before you add an AI Agent (core.aiAgent) for a job, call list_agents ("Your agents" below is the same list; also check "Published agent teams"). One whose description, tools and knowledge cover the job is reused: Run an Agent (core.messageAgent, parameters agentId and message, what to do with the item) with its agentId, and no node that does what the agent does (an agent that sends the email needs no Send Email step); a draft-only one is placed too, and your reply says it must be published first; end your reply with "Reuses “<agent name>”: <why, one clause>." Use core.aiAgent only for a small step that needs no specialist (classify, summarize, extract, draft a reply). When none fits and the job needs a specialist (its own instructions, tools or knowledge, work other flows will reuse, or the user asks for an agent, a specialist or an expert to do it: that is an agent, never Ask a Person or a Confirm step), build one from the tenant: call read_agent_practices, list_tool_nodes (the plugins' nodes found by what the job needs, never only by a name the person gave), list_knowledge_bases (an existing base that fits goes in "knowledgeBase"; a folder the person named goes in "knowledgeFolder"; neither: leave both out, the card asks) and list_models (the model the person named when it is listed, else leave "model" out: the host's is used), then propose {"op":"newAgent","ref":"a1","name":"<agent name>","description":"<what it does, one or two sentences>","instructions":"<how it does the job>","tools":["<an app or action it needs, e.g. Linear: read issues>"],"toolNodes":[{"nodeType":"<type id>","operation":"<operation>"}],"knowledgeBase":"<collection>","knowledgeFolder":"<folder>","model":"<provider/model>","knowledge":"<the documents it answers from>","parameters":{"message":"…"},"after":"<the step it goes after>"} (use "after" when the request says after a step, "before":"<the step it goes in front of>" when it says before; an agent between two steps takes both; every field after instructions only when it applies: the Agent architect keeps a hint when the tenant has it and says why when it does not). Credentials are offered to the person, never picked by you. Applying it saves the agent as a draft, Spotlight tests and publishes it and adds a Run an Agent node for it. That node runs the agent with the agent's own model and instructions: never attach a chat model, memory or tools to it, and don't also add an AI Agent for the same job. One newAgent per agent, then stop. Never invent an agentId.
+- Teams: an agent team (Agents page → Teams) is a lead with members who report to it, with reviews and budgets; the Run a Team node (core.runTeam, parameters teamId and teamName, message) runs a published one as a single step, with Done and Needs a person outputs. When the user wants a team that already exists, add that node with its teamId and teamName from "Published agent teams" below; the lead’s model, memory and tools are the lead agent’s: change them with changeAgent on the node. When the user wants a lead and the agents under it turned into a team, propose {"op":"turnIntoTeam","node":"<the lead>"}: applying it creates and publishes the team and swaps the nodes, so never tell the person to create a team first or to pick one afterwards. The same action is "Turn into a team" in the toolbar of a selected Run an Agent node that has agents as tools. Never invent a teamId.
 - Expressions read the current item with "{{ $json.field }}" and other nodes with "{{ $('Node name').item.json.field }}".
 - Never make up ids, channels, email addresses, URLs or keys the user didn't give: leave those parameters empty and say the user fills them in.
 - A tool attached to an agent: a value the agent should choose when it calls the tool (a branch, a file path, an issue or pull request number, a message) is the expression {{ $fromAI('<parameter name>', '<what it is>', 'string' | 'number' | 'boolean') }}, never a bare $fromAI; fixed values (the owner, the repository, a channel) are set plainly. Credentials are the person's to pick, on the reply: never set one and never name a credential to use; say which step needs one.
 - After proposing, say in one sentence what it does and what the user still has to do (click Apply, pick a credential, run it). Nothing is applied yet: never say the change was applied, made, set or updated, a change exists only as the card. When you change nothing, say why in one sentence. Don't repeat the ops in prose.
-- When asked whether a test run's result does what the user asked for, read the output of the last step with get_run_data and compare it with the request: if it falls short (wrong items, a filter that keeps everything, fields missing), propose the change; if it does what was asked, say so in one sentence and propose nothing.
+- When asked whether a test run's result does what the user asked for, read the output of the last step with get_run_data and compare it with the request; when the output came from a Run an Agent step, read get_run_log as well (the execution id is in the message): the agent's tool list and reply show a tool it lacks. If it falls short (wrong items, a filter that keeps everything, fields missing), propose the change (an agent that lacks a tool: propose_agent_fix); if it does what was asked, say so in one sentence and propose nothing.
 - A question about the flow or a run (why, what, how…) is answered from the workflow and the run data in at most two sentences, naming the cause; propose nothing unless the message asks for a change.
-- When a message reports a failed test run, read the failing node's run data with get_run_data, find the cause and propose the smallest change that fixes it, without asking first. Say the cause in one clause of at most 12 words ("“Triage Ticket” got an empty message."). Fix the failing node or what feeds it, never something else, and never by removing a node and adding the same one back. If only the user can fix it (a credential, an id, an account), say what to do in one sentence and propose nothing.
+- When a message reports a failed test run, read its log with get_run_log first (the failing node, its error and the HTTP response body, the plugin's log lines, an agent's tool calls), then get_run_data for a node's full data if you need it. Find the cause and say it in one clause of at most 12 words ("“Triage Ticket” got an empty message."), then make one focused change without asking first: in the flow (a parameter of the failing node or what feeds it, never something else, never by removing a node and adding the same one back), or, when the log shows the cause inside a Run an Agent step's agent (a tool call that failed for a fixed parameter, a tool the agent lacks, its instructions), call propose_agent_fix and no flow change. Never change a URL, address or id the person gave, never remove a step, never wire a sub-node into a Run an Agent node. If the message says the same failure happened twice in a row, propose nothing and say what is left for the person. If only the user can fix it (a credential, an id, an account), say what to do in one sentence and propose nothing. // AG20:
 - Ask when it is not clear (ask_user): when several steps could be the one the request means and it names none, or a value only the person knows (a channel, a table, an id, a recipient) is missing and has no default. Ask one question with 2 to 4 short choices that are what the person would type, then stop: never ask and propose in the same step, and never ask what search_nodes, get_workflow or get_run_data can tell you.
 - When no change is needed, just answer. Write for a phone: at most two short sentences (about 25 words), no headings or lists unless asked. Start with the result or the answer. Never describe what you are about to do or what you looked at ("Let me…", "I'll…", "Looking at…", "The error indicates…").
 - A parameter that get_node_docs shows with "stored as …" (a collection or fixed collection) is written exactly in that shape: the group names, the field names and, for a field with options, one of the listed values. Never a flat list, never a field or option value the docs don't list.
-- Chat models, memory and tools are sub-nodes: attach them to the agent with a connection of type ai_languageModel, ai_memory or ai_tool (addNode "after": "<agent>" does it), never as a normal step after the agent. Don't pin test data on a trigger unless asked.
+- Chat models, memory and tools are sub-nodes: attach them to the agent with a connection of type ai_languageModel, ai_memory or ai_tool (addNode "after": "<agent>" does it), never as a normal step after the agent. A Run an Agent or Run a Team node’s model, memory, tools and knowledge are its agent’s: never wire sub-nodes into it; to change them propose {"op":"changeAgent","node":"<the node>","change":"<what to change, in the person’s words>"}. Sub-nodes a flow wired before are moved into the agent by the product: never propose moving them. Don't pin test data on a trigger unless asked.
 - If the user names a model, a provider or a value you can't set (a model that isn't in the docs' options, a credential), say so in your closing sentence rather than silently picking another; a node that needs a credential gets none from you: say which step needs one, never name a credential to use.
 - Use only node types from the catalog below and search_nodes; anything else is not installed, offline or not allowed in this workflow.
 
@@ -260,13 +314,14 @@ ${PARAMETER_FORMATS}`;
 const NEVER_CHANGE = 'A run blocked by the host\'s outbound policy, a credential or an account is the person\'s to fix: propose nothing and say what they must do. Never change a URL, channel, address or id the person gave, and never remove a step they asked for.'; // SB03:
 
 /** A test-and-fix session's message, by what Spotlight may do alone: `auto` applies the proposal, `asks-first` shows it as a card and waits for Apply. */
+const SESSION_RUN = ' A run\'s message names its execution id: get_run_log reads that run (the node errors with HTTP bodies, plugin lines, an agent\'s tools, tool calls and reply). When a run passed but its output falls short of what was asked, read get_run_log too: an agent that says a tool is not available, or puts out raw tool-call markup, lacks that tool (its tool list is in the log, an empty list means none), so call propose_agent_fix, never a change to the flow\'s prompt. Invented output is the same cause: an agent that states facts (numbers, records, names) with no tool or knowledge that could give them is inventing them, whatever its instructions say. Read get_run_log (its tool list says none), never answer that the figures are real, never only reword its instructions, and call propose_agent_fix to connect the source the tenant has (list_tool_nodes for the tool, list_credentials for the credential, such as the Sales DB). An agent fix adds only what its cause needs: its change names that one tool or knowledge base and no other (the card lists every tool it adds, and the person applies it).'; // AG20: re-check 3:
 const sessionText = (autonomy: 'auto' | 'asks-first') =>
   autonomy === 'auto'
-    ? `This message comes from Spotlight's test-and-fix session: it applies your proposal and runs the workflow again by itself (a change that removes or turns off a step waits for the person's Apply). Never ask the user to click Apply or to run it. ${NEVER_CHANGE}`
-    : `This message comes from Spotlight's test-and-fix session: your proposal is shown to the person as a card, and the session runs the workflow again only once they have applied it. Do not say it is applied or will apply itself, and do not ask them to click anything: the card says it. ${NEVER_CHANGE}`;
+    ? `This message comes from Spotlight's test-and-fix session: it applies your proposal and runs the workflow again by itself (a change that removes or turns off a step waits for the person's Apply). Never ask the user to click Apply or to run it. ${NEVER_CHANGE}${SESSION_RUN}`
+    : `This message comes from Spotlight's test-and-fix session: your proposal is shown to the person as a card, and the session runs the workflow again only once they have applied it. Do not say it is applied or will apply itself, and do not ask them to click anything: the card says it. ${NEVER_CHANGE}${SESSION_RUN}`;
 
 /** Autonomous mode: what the person asked is applied and tested as soon as the reply ends (components/editor/autonomous.ts). */
-const AUTO = 'Autonomous mode: Spotlight applies your proposal as soon as you finish, then tests the flow. A run blocked by the host\'s outbound policy, a credential or an account is the person\'s to fix: propose nothing and say what they must do. Never change a URL, channel, address or id the person gave unless they ask for it in this message, and never remove a step they asked for. Never mention Apply, cards or running it. End with one sentence: what changed, then only what the person must do (pick a credential, fill in a value). A new agent you propose is designed and published by Spotlight: say only "Created the agent “<name>” for <job>."';
+const AUTO = 'Autonomous mode: Spotlight applies your proposal as soon as you finish, then tests the flow. A run blocked by the host\'s outbound policy, a credential or an account is the person\'s to fix: propose nothing and say what they must do. Never change a URL, channel, address or id the person gave unless they ask for it in this message, and never remove a step they asked for. Never mention Apply, cards or running it. End with one sentence: what changed, then only what the person must do (pick a credential, fill in a value). A new agent you propose is designed and published by Spotlight: say only "Created the agent “<name>” for <job>." A reused agent: say only "Reuses “<name>”: <why>."';
 
 const shorten = (value: string, max = 60) => (value.length > max ? `${value.slice(0, max - 1)}…` : value);
 
@@ -361,7 +416,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
   if (question && input.session === 'auto') input = { ...input, session: undefined };
   /** SB04: a question is offered every tool except the one that changes the workflow. */
   const testSession = input.session === 'fix' || input.session === 'review'; // SB11: a test session goes on by itself and asks through its own "Needs you" rows
-  const tools = (question ? TOOLS.filter((t) => t.name !== 'propose_changes') : TOOLS).filter((t) => !(testSession && t.name === ASK_USER_TOOL)); // SB11:
+  const tools = (question ? TOOLS.filter((t) => t.name !== 'propose_changes' && t.name !== 'propose_agent_fix' /* AG20: */) : TOOLS).filter((t) => !(testSession && t.name === ASK_USER_TOOL)).filter((t) => !(t.name === 'propose_agent_fix' && !testSession)); // SB11: AG20: a test session (fix or review) renders an agent change card
   const { onEvent, runs = {} } = input;
   const trace = input.trace === true;
   const types = input.types ?? availableTypes();
@@ -520,6 +575,29 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     };
     const args = call.input ?? {};
     switch (call.name) {
+      // AG21: the publish tools. They read and offer; the card's buttons publish.
+      case 'list_agent_updates': {
+        const agentId = typeof args.agentId === 'string' && args.agentId ? args.agentId : undefined;
+        // Another project's workflows stay out of an agent's list unless this person can read them (as the MCP tool does).
+        const answer = listAgentUpdates(agentId ? { agentId } : { workflowId: input.workflow.id }, (workflowId) => workflowId === input.workflow.id || (input.actor !== undefined && canResource(input.actor, 'workflow', workflowId, 'read')));
+        detail = `${answer.updates.length} ${answer.updates.length === 1 ? 'update' : 'updates'}`;
+        return result(answer.updates.length ? JSON.stringify(answer.updates) : 'No newer agent versions: production runs the latest published ones.', 'Checked for newer agent versions');
+      }
+      case 'propose_publish': {
+        const offer = draftOffer(input.workflow.id, input.actor?.id);
+        if (!offer) return result('This workflow is not saved yet, so there is nothing to publish.', 'Could not offer to publish', false);
+        onEvent({ type: 'publishOffer', offer });
+        detail = publishOfferLine(offer);
+        return result(`Showed a publish card (${publishOfferLine(offer)}${offer.blocks?.length ? `; an agent draft differs: ${offer.blocks.map((b) => b.name).join(', ')}` : ''}). Nothing is published until the person presses Publish on it: say so, in one sentence.`, 'Offered to publish');
+      }
+      case 'propose_agent_update': {
+        const ids = Array.isArray(args.agentIds) ? args.agentIds.filter((a): a is string => typeof a === 'string') : [];
+        const offer = updateOffer(input.workflow.id, ids);
+        if (typeof offer === 'string') return result(offer, 'Nothing to update', false);
+        onEvent({ type: 'publishOffer', offer });
+        detail = publishOfferLine(offer);
+        return result(`Showed an update card (${publishOfferLine(offer)}). The person tests it on the card and then publishes it: nothing is published without their click. Say so, in one sentence.`, 'Offered to test and update');
+      }
       case 'search_nodes': {
         const query = String(args.query ?? '');
         const hits = searchNodes(query, types);
@@ -539,6 +617,20 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         const agentsNote = info.type === 'core.messageAgent' ? `\nYour agents:\n${input.agents?.length ? describeAgents(input.agents) : '(none published yet: propose a newAgent for one)'}` : '';
         return result(`${nodeDocs(info, existing?.parameters)}${teamsNote}${agentsNote}`, `Read ${info.descriptor.displayName} docs`);
       }
+      // AG18: the tenant tools: a step of the trace, never a model call
+      case 'list_agents':
+      case 'get_agent':
+      case 'list_tool_nodes':
+      case 'list_knowledge_bases':
+      case 'list_models':
+      case 'list_credentials':
+      case 'read_agent_practices': {
+        if (!isTenantTool(call.name)) return result('Unknown tool.', 'Unknown tool', false);
+        if (!input.actor) return result('Sign in to read the tenant.', 'Could not read the tenant: sign in', false);
+        const answer = await tenantTool(call.name, args, { actor: input.actor });
+        detail = answer.label;
+        return result(answer.text, answer.label, answer.ok);
+      }
       case 'get_workflow':
         detail = `${working.nodes.length} node${working.nodes.length === 1 ? '' : 's'}`;
         return result(outline(), 'Read the workflow');
@@ -547,6 +639,36 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         detail = node?.name ?? String(args.node ?? '');
         if (!node) return result(`No node named “${String(args.node ?? '')}”. Nodes: ${working.nodes.map((n) => n.name).join(', ')}`, `Looked for “${shorten(String(args.node ?? ''), 40)}”: not found`, false);
         return result(nodeContext(working, node.id, runs[node.id], types), `Read run data of “${shorten(node.name, 40)}”`);
+      }
+      // AG20: the run the session's message names, as the logs panel and the Run Trace show it.
+      case 'get_run_log': {
+        const executionId = executionIdIn(input.messages);
+        const logWorkflowId = input.workflow.id && input.workflow.id !== 'draft' ? input.workflow.id : undefined;
+        // No run yet is not a failed step (a red row): a session's "Run it for real" row may be waiting for the person's yes.
+        if (!logWorkflowId && !executionId) return result('This workflow is not saved yet, so there is no run log to read.', 'No run log yet: not saved');
+        const log = await runLog(input.actor, { ...(logWorkflowId && { workflowId: logWorkflowId }), ...(executionId && { executionId }) });
+        if (!log) return result('No run of this workflow to read yet. If a "Run it for real" row is waiting in the panel, the run starts when the person answers it: say that, and never say you cannot run it.', 'No run yet');
+        detail = `${log.nodes.length} nodes, ${log.status}`;
+        const clause = failureClause(log);
+        const toolLines = agentToolLines(log);
+        return result(`${shorten(JSON.stringify(log), 14000)}${toolLines.length ? `\n${toolLines.join('\n')}` : ''}${clause ? `\nCause to say, in one clause: ${clause}.` : ''}`, `Read the run log${log.failed ? ` (failed at “${shorten(log.failed, 40)}”)` : ''}`);
+      }
+      case 'propose_agent_fix': {
+        const step = String(args.step ?? '').trim();
+        const named = String(args.agent ?? '').trim();
+        const node = nodeByName(step);
+        const fromNode = node && typeof node.parameters.agentId === 'string' ? node.parameters.agentId : undefined;
+        const brief = (input.agents ?? []).find((a) => a.id === fromNode) ?? (input.agents ?? []).find((a) => a.name.toLowerCase() === named.toLowerCase());
+        const agentId = fromNode ?? brief?.id;
+        const change = shorten(String(args.change ?? '').trim(), 1500);
+        const cause = shorten(String(args.cause ?? '').trim().replace(/\s+/g, ' '), 140);
+        if (!agentId || !change || !cause) return result(`Nothing proposed: ${!agentId ? `“${step}” is not a Run an Agent step with an agent chosen` : 'give the cause and the change'}.`, 'Agent fix rejected', false);
+        const executionId = executionIdIn(input.messages) ?? '';
+        const name = brief?.name ?? named;
+        detail = name;
+        onEvent({ type: 'agent-fix', agentId, agent: name, change, fix: { executionId, step: node?.name ?? step, ...(args.tool ? { tool: shorten(String(args.tool), 60) } : {}), cause, attempt: 1 } });
+        proposed = true;
+        return result(`Proposed a change to ${name}; the person applies it.`, `Proposed a change to “${shorten(name, 40)}”`);
       }
       case 'propose_changes': {
         const summary = shorten(String(args.summary ?? '').trim() || 'Proposed change', 140);
@@ -589,7 +711,8 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
           );
         }
         // SB07: a change outside the scope goes back once, then is left out and listed.
-        const outside = askScope ? outsideScope(validated.ops, askScope, working, request) : [];
+        // Wave ag4 carryover (live pass E3): a changeAgent on a step in scope is in scope (spotlight-scope.ts is a contract copy).
+        const outside = askScope ? outsideScope(validated.ops, askScope, working, request).filter((o) => !agentChangeInScope(validated.ops[o.index], askScope, working.nodes, request)) : [];
         if (askScope && outside.length) {
           const label = scopeLabel(askScope, working.nodes);
           if (!scopeSent) {
@@ -659,7 +782,17 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         }
         // Proposing the same thing twice (it happens with local models) changes nothing the second time.
         const graph = (wf: Workflow) => JSON.stringify([wf.nodes, wf.connections, wf.settings]); // SB10: the workflow's settings count, or a settings-only change reads as "already there"
-        if (graph(validated.workflow) === graph(working)) {
+        // Wave ag4 joins: a changeAgent changes the agent, never the graph (AG17), so the graph alone cannot say it is a repeat: the same
+        // change to the same agent proposed before is (a different change, or another agent, is not).
+        // A step name resolves to the agent it runs (the same agent by node or by id is one key); a team's lead by its teamId.
+        const agentChange = (op: Record<string, unknown>) => {
+          const bound = typeof op.node === 'string' ? nodeByName(op.node)?.parameters : undefined;
+          const target = op.agentId ?? bound?.agentId ?? op.teamId ?? bound?.teamId ?? op.node ?? '';
+          return `${String(target)}\u0000${String(op.change ?? '').trim().toLowerCase()}`;
+        };
+        const earlierChanges = new Set(proposalLog.flatMap((p) => p.ops.filter((op) => op.op === 'changeAgent').map((op) => agentChange(op as never))));
+        const newChange = validated.ops.some((op) => op.op === 'changeAgent' && !earlierChanges.has(agentChange(op as never)));
+        if (graph(validated.workflow) === graph(working) && !newChange) {
           return result('Nothing changes: this is already in the workflow or was proposed above. Do not propose it again.', 'Skipped a repeated proposal');
         }
         // A node that already branches needs no If / Filter / Switch after it: back once, naming its outputs.
@@ -968,4 +1101,42 @@ export async function tagMentions(actor: Actor, refs: readonly SentMention[], ca
   });
   const sections = [...(resolved.block ? resolved.block.slice(BLOCK_OPEN.length + 1, resolved.block.length - BLOCK_CLOSE.length - 1).split('\n') : []), ...extra.flatMap((e) => e.split('\n'))];
   return { block: sections.length ? [BLOCK_OPEN, ...sections, BLOCK_CLOSE].join('\n') : '', reads, elapsedMs: Date.now() - started };
+}
+
+/** AG20: the execution id the session's last message names ("execution ex_…"), if any. */
+const executionIdIn = (messages: ChatInput['messages']): string | undefined => {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== 'user') continue;
+    const id = m.content.match(/\bexecution ([\w-]{6,})/)?.[1];
+    if (id) return id;
+  }
+  return undefined;
+};
+
+/** The ask names the agent: the word "agent", or a word of its step's name ("Give the digest access…" for a step called "Digest"). "Step" and "node" alone name no agent. */
+const namesTheAgent = (request: string, step: { name: string }) => {
+  if (/\bagents?\b/i.test(request)) return true;
+  const words = step.name.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !['agent', 'run', 'step', 'node', 'this', 'that', 'with'].includes(w));
+  return words.some((w) => new RegExp(`\\b${w}`, 'i').test(request));
+};
+
+/**
+ * Wave ag4 carryover (the live pass's E3): "Wire a Sentiment tool into this step." with a Run an Agent step selected is a
+ * change to that step's agent (`changeAgent`), so it is in the request's scope when it names a step in scope, or names
+ * none and one step is in scope; another step's agent is not, and an insert's anchor never is (it adds a step).
+ */
+export function agentChangeInScope(op: { op: string; node?: unknown } | undefined, scope: { kind: string; nodes: readonly string[] }, nodes: ReadonlyArray<{ id: string; name: string; type?: string }>, request = ''): boolean {
+  if (!op || op.op !== 'changeAgent' || scope.kind === 'insert') return false;
+  // Final live run: an ask that names the agent ("Give the digest access to the sales database") is about the flow's agent when the
+  // flow has exactly one Run an Agent step, whichever step is selected. An ask that says only "step" or "node" stays under the old rule.
+  const agentSteps = nodes.filter((n) => n.type === 'core.messageAgent');
+  if (agentSteps.length === 1 && namesTheAgent(request, agentSteps[0])) {
+    const only = agentSteps[0];
+    if (op.node === undefined || op.node === '' || String(op.node) === only.name || String(op.node) === only.id || String(op.node).toLowerCase() === only.name.toLowerCase()) return true;
+  }
+  if (op.node === undefined || op.node === '') return scope.nodes.length === 1;
+  const ref = String(op.node);
+  const node = nodes.find((n) => n.name === ref || n.id === ref) ?? nodes.find((n) => n.name.toLowerCase() === ref.toLowerCase());
+  return node !== undefined && scope.nodes.includes(node.id);
 }

@@ -7,6 +7,7 @@
 import { isPhone } from '@/lib/client/use-phone';
 import { nanoid } from 'nanoid';
 import { toast } from 'sonner';
+import { useEditLock } from './edit-lock'; // wave ag4 carryover: a read-only canvas applies nothing
 import { create } from 'zustand';
 import { api, streamEvents } from '@/lib/client/api';
 import { applyOps, digestRun, type AssistantOp, type DescriptorLookup, type NewAgentSpec, type RunDigest } from '@/lib/shared/assistant-ops';
@@ -16,6 +17,7 @@ import type { ActivityKind, ActivityStep } from '@/lib/shared/activity';
 import type { NodeRun } from '@/lib/shared/types';
 import type { MentionRef } from '@/lib/shared/mentions';
 import type { AgentCard } from '@/lib/shared/agent-card'; // SB16:
+import type { AgentFixEvent } from '@/lib/shared/agent-fix'; // AG20:
 import { askedLine, type AskEvent, type AskPart } from '@/lib/shared/spotlight-wire'; // SB11: (askedLine: SB09 × SB11)
 import type { ReplyInfo } from '../ui/chat';
 import type { CredentialNeedFields, CredentialOfferEvent } from '@/lib/shared/spotlight-wire'; // SB12:
@@ -29,6 +31,8 @@ import { saveTeamFor } from './turn-into-team';
 import { defaultCollapsed } from './spotlight/states';
 import type { SpotlightScope } from '@/lib/shared/spotlight-scope'; // SB07:
 import type { PlanPart } from './spotlight/plan-part'; // SB13:
+import type { PublishOffer } from '@/lib/shared/agent-versions'; // AG21:
+import type { PublishCardState } from './spotlight/publish-part'; // AG21:
 import type { DraftSummary } from '@/lib/shared/draft-summary'; // SB15:
 
 const freshKept = (): { id?: string; stored: Stored } => ({ stored: emptyStored() });
@@ -76,11 +80,32 @@ export const draft: { request?: AbortController } = {};
 /** Undo for a change Spotlight applied by itself, by proposal id: its row's Undo button (a phone has no ⌘Z). */
 export const undos = new Map<string, () => void>();
 
+/** AG17: a `changeAgent` op that applied: the agent to change and what to change, in the person's words (Spotlight's change card for that agent). */
+export interface AgentChange {
+  agentId?: string;
+  /** A Run a Team node's team: the card changes its lead. */
+  teamId?: string;
+  change: string;
+  nodeId?: string;
+}
+
+/** The window event an applied changeAgent op raises (`detail`: an AgentChange); Spotlight's card (spotlight/agent-ask.ts) listens, so this module imports nothing of it. */
+export const AGENT_CHANGE_ASKED = 'landflow:agent-change-asked';
+const handOver = (change: AgentChange) => {
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(AGENT_CHANGE_ASKED, { detail: change }));
+};
+
 export function applyChanges(
   changes: Array<{ ops: AssistantOp[]; kind: ChangeKind; nodeType?: string }>,
   label: string,
-  options: { publishAgents?: boolean; quiet?: boolean; onApplied?: (applied: { undo: () => void; skipped: string[] }) => void } = {},
+  options: { publishAgents?: boolean; quiet?: boolean; onApplied?: (applied: { undo: () => void; skipped: string[]; agentChanges?: AgentChange[] }) => void } = {},
 ): boolean {
+  // Wave ag4 carryover (the live pass's F3): another tab holds the edit lock, so this canvas is read-only and its editing
+  // actions do nothing: refuse, and never mark a proposal "Applied" that changed nothing.
+  if (useEditLock.getState().readOnly) {
+    toast.error('Couldn’t apply the change', { description: 'This workflow is open for editing in another tab: read-only here. Use Edit here, then apply it again.' });
+    return false;
+  }
   const state = useEditor.getState();
   const lookup = editorLookup();
   let workflow = state.toWorkflow();
@@ -92,6 +117,8 @@ export function applyChanges(
   const teams: Array<{ nodeId: string; config: AgentTeamConfig }> = [];
   /** Agents to save once the graph is swapped: Spotlight's newAgent ops, each with the Run an Agent node it added. */
   const agents: Array<{ nodeId: string; spec: NewAgentSpec; place: AgentPlace }> = [];
+  /** AG17: Spotlight's changeAgent ops: nothing changes in the graph; the agent's change card is the next step. */
+  const agentChanges: AgentChange[] = [];
   for (const change of changes) {
     const before = workflow;
     const result = applyOps(workflow, change.ops, lookup);
@@ -107,6 +134,11 @@ export function applyChanges(
           const before = nameOf(main.find((c) => c.source === node.id)?.target ?? '');
           agents.push({ nodeId: node.id, spec: op.newAgent, place: { workflow: result.workflow.name, ...(after && { after }), ...(before && { before }) } });
         }
+        continue;
+      }
+      if (op.op === 'changeAgent' && (op.agentId || op.teamId)) {
+        const node = op.node ? result.workflow.nodes.find((n) => n.name === op.node || n.id === op.node) : undefined;
+        agentChanges.push({ ...(op.agentId && { agentId: op.agentId }), ...(op.teamId && { teamId: op.teamId }), change: op.change, ...(node && { nodeId: node.id }) });
         continue;
       }
       if (op.op !== 'turnIntoTeam') continue;
@@ -126,6 +158,12 @@ export function applyChanges(
     toast.error('Couldn’t apply the change', { description: dropped[0] ?? 'Nothing to change.' });
     return false;
   }
+  // AG17: only changeAgent ops: the graph stays as it is; Spotlight shows each agent's change card.
+  if (agentChanges.length && agentChanges.length === count) {
+    for (const change of agentChanges) handOver(change);
+    options.onApplied?.({ undo: () => {}, skipped: dropped, agentChanges });
+    return true;
+  }
   // Select what changed: the last node added, else the node edited.
   const focusId = added.at(-1) ?? edited;
   // Spotlight's own applies leave the selection alone: selecting would hide its chip and put the node in the composer.
@@ -142,7 +180,8 @@ export function applyChanges(
     : undoGraph;
   for (const { nodeId, config } of teams) void saveTeamFor(nodeId, config);
   for (const { nodeId, spec, place } of agents) void saveAgentFor(nodeId, spec, place, { publish: options.publishAgents });
-  options.onApplied?.({ undo, skipped: dropped });
+  for (const change of agentChanges) handOver(change); // AG17:
+  options.onApplied?.({ undo, skipped: dropped, ...(agentChanges.length && { agentChanges }) });
   // Spotlight's own applies (autonomous mode, a test-and-fix session) are rows in its timeline, each with Undo.
   if (options.quiet) return true;
   const skipped = dropped.length ? `Skipped ${dropped.length}: ${dropped[0]}` : undefined;
@@ -336,6 +375,7 @@ export type ReplyPart =
   | AskPart // SB11: a question back with its choices
   | { kind: 'plan'; plan: PlanPart } // SB13: the first draft's plan card
   | { kind: 'summary'; summary: DraftSummary; workflowName: string } // SB15: the build summary
+  | { kind: 'publishOffer'; offer: PublishOffer; card?: PublishCardState } // AG21: publish the draft, or test and publish an agent update (./spotlight/publish-card.tsx)
   | { kind: 'agentCard'; card: AgentCard }; // SB16: an agent Spotlight designed, to review and create (./spotlight/agent-ask.ts)
 
 /**
@@ -373,6 +413,8 @@ export type ChatItem =
       forCard?: string;
       /** AG04: what Try again runs for this failed reply, when it is not a chat message (a revise of an agent card). */
       retry?: { kind: 'agentRevise'; itemId: string };
+      /** AG20: the chat proposed a change to the agent a run failed in; the test session turns it into the agent's change card. */
+      agentFix?: AgentFixEvent;
     };
 
 /** A tag as the chat keeps and sends it: what it points at, and the name it showed. */
@@ -391,7 +433,9 @@ export type StreamEvent =
   | AskEvent // SB11:
   | { type: 'done'; model: string; durationMs: number; steps: number; usage?: { inputTokens: number; outputTokens: number }; costUsd?: number; local?: boolean }
   | { type: 'error'; message: string; kind?: 'model' | 'cap' | 'stalled' | 'internal'; checkpoint?: string; step?: number }
-  | CredentialOfferEvent; // SB12:
+  | CredentialOfferEvent // SB12:
+  | { type: 'publishOffer'; offer: PublishOffer } // AG21:
+  | AgentFixEvent; // AG20: a change to the agent the run failed in
 
 /** What kind of trace row a tool call is. */
 export function toolKind(name: string): ActivityKind {
@@ -464,6 +508,12 @@ export function applyStreamEvent(turn: AssistantTurn, event: StreamEvent, now: n
     // SB12: a step that needs a credential: a "Needs you" row with the picker (decision D2), never one set by Spotlight.
     case 'credential':
       return { ...turn, parts: [...turn.parts, { kind: 'needs', need: { what: 'credential', text: event.text, node: event.node, ...(event.nodeId && { nodeId: event.nodeId }), credentialTypes: event.credentialTypes } }] };
+    // AG21: a card to publish the draft or to test and publish an agent update: the person's click does it, never the chat.
+    case 'publishOffer':
+      return { ...turn, parts: [...turn.parts, { kind: 'publishOffer', offer: event.offer }] };
+    // AG20: a failed run's cause is inside an agent: the session shows the agent's change card (./test-session.ts).
+    case 'agent-fix':
+      return { ...turn, agentFix: event };
   }
 }
 

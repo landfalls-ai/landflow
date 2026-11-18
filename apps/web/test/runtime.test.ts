@@ -42,9 +42,9 @@ const OLD_MAIN = [
   // LL03: the spend import of agents outside Landflow.
   'LLM gateway spend import', 'AI spend rollup', 'AI spend flags', 'audit', 'audit head signing',
   // LL04: the budgets sync to LiteLLM.
-  'LLM gateway budgets sync', 'binary maintenance', 'publications', 'cap-raise trigger', 'project adoption', 'scheduled publishes', 'scheduler', 'mcp trigger subscriptions', 'wait timers', 'trigger buffers',
+  'LLM gateway budgets sync', 'binary maintenance', 'publications', 'agent versions backfill', 'cap-raise trigger', 'project adoption', 'scheduled publishes', 'scheduler', 'mcp trigger subscriptions', 'wait timers', 'trigger buffers',
   'held trigger events', 'recovery', 'retry timers', 'alerts', 'agent triggers', 'project task wake-ups', 'evaluation schedules', 'online evaluations', 'usage listeners', 'usage trigger', 'second brain',
-  'registry gRPC server', 'static plugin seeds', 'kubernetes discovery', 'startup scan', 'node plugins', 'app webhooks', 'IMAP IDLE',
+  'registry gRPC server', 'static plugin seeds', 'kubernetes discovery', 'startup scan', 'node plugins', 'app webhooks', 'agent flow moves', 'IMAP IDLE',
 ];
 
 describe('service table', () => {

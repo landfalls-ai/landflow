@@ -2,7 +2,7 @@
 /** One reply of the timeline: its text, changes, runs, needs and buttons (docs/assistant.md#the-spotlight-panel). */
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
-import { Bot, Check, CircleCheck, CircleStop, CircleX, ExternalLink, Hand, Loader2, Play, Rocket, Sparkles } from 'lucide-react';
+import { Bot, Check, CircleCheck, CircleStop, CircleX, ExternalLink, FileSearch, Hand, Loader2, Play, Rocket, Sparkles } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { holdsForClick, typedSession } from '../autonomous'; // SB04:
 import { afterReply, useAutonomous } from '../autonomous';
@@ -15,8 +15,10 @@ import { ActivityTrace } from '../../ui/activity-trace';
 import { StatusSwap, StreamingText } from '../../ui/chat-motion';
 import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta, ShortReply } from '../../ui/chat';
 import { MAX_FIXES, approveDestinations, productionNote, publishToProduction, testUntilItRuns, undoApplied } from '../test-session'; // SB03:
-import { agentStep, runRow } from '../timeline';
+import { agentStep, logRead, runRow } from '../timeline';
 import { AgentCardView } from './agent-card'; // SB16:
+import { AgentCredentialPicker } from './agent-credential-picker'; // Pick it, in place
+import { PublishCardView } from './publish-card'; // AG21:
 import { reviseAgentCard } from './agent-ask'; // AG04:
 import { CredentialPicker } from './credential-picker';
 import { PlanCard } from './plan-card'; // SB13:
@@ -239,6 +241,7 @@ export function AgentRow({ agent }: { agent: AgentProgress }) {
   const step = agentStep(agent);
   const busy = useAssistant((s) => s.pending || Boolean(s.testing));
   const [working, setWorking] = useState(false);
+  const [picking, setPicking] = useState(false); // Pick it: the credential picker in place
   // SB18: Publish only after a pass; Test again after a failure; Test when no item reached the step yet.
   const act = !agent.agentId || agent.taken || busy || agent.state === 'publishing'
     ? undefined
@@ -252,7 +255,7 @@ export function AgentRow({ agent }: { agent: AgentProgress }) {
           ? { label: 'Test', run: () => smokeTestAgent(agent.nodeId, { publish: autonomyOf(useEditor.getState().workflowId) === 'auto' }) }
           : undefined;
   return (
-    <div className="flex animate-in items-start gap-1.5 text-[12.5px] leading-snug">
+    <div className="flex animate-in flex-wrap items-start gap-1.5 text-[12.5px] leading-snug">
       {agent.state === 'designing' || agent.state === 'testing' || agent.state === 'publishing' ? <Loader2 className="mt-px size-3.5 shrink-0 animate-spin text-viz-7" /> : agent.state === 'failed' ? <CircleX className="mt-px size-3.5 shrink-0 text-rd" /> : <Bot className="mt-px size-3.5 shrink-0 text-viz-7" />}
       {/* AG05: the held verdict in the warning colour with its cases; a missing credential with where to pick it. */}
       <span className={cn('min-w-0 flex-1 [overflow-wrap:anywhere]', agent.publish?.state === 'held' || agent.publish?.state === 'failed' ? 'text-warn' : 'text-t2')}>{step.text}</span>
@@ -262,9 +265,9 @@ export function AgentRow({ agent }: { agent: AgentProgress }) {
         </a>
       )}
       {agent.agentId && !agent.taken && agent.smoke?.state === 'untested' && agent.smoke.reason?.startsWith('needs a credential') && (
-        <a href={`/agents/${agent.agentId}?tab=abilities`} target="_blank" rel="noopener" className="shrink-0 text-[11.5px] font-semibold text-ac hover:underline max-md:flex max-md:min-h-11 max-md:items-center">
+        <button type="button" aria-expanded={picking} onClick={() => setPicking((p) => !p)} className="shrink-0 text-[11.5px] font-semibold text-ac hover:underline max-md:flex max-md:min-h-11 max-md:items-center">
           Pick it
-        </a>
+        </button>
       )}
       {act && (
         <button
@@ -284,6 +287,7 @@ export function AgentRow({ agent }: { agent: AgentProgress }) {
           Open <ExternalLink className="size-3" />
         </a>
       )}
+      {picking && agent.agentId && <div className="basis-full pl-5"><AgentCredentialPicker agentId={agent.agentId} onDone={() => setPicking(false)} /></div>}
     </div>
   );
 }
@@ -425,6 +429,9 @@ function ReplyError({ item, canRetry }: { item: Reply; canRetry: boolean }) {
 export function ReplyView({ item, live, status }: { item: Reply; live: boolean; status?: string }) {
   const autonomous = useAutonomous((s) => s.on);
   const spotlightBusy = useAssistant((s) => s.pending || Boolean(s.testing));
+  // A Test and fix session that reached an agent fix is waiting for the person on that card (`agentFixOutcome`): its own turn must not
+  // keep the card's Apply and Dismiss disabled. Any other card, and any other busy turn, still waits.
+  const waitingOnCard = useAssistant((s) => !s.pending && Boolean(s.testing) && Boolean(item.testId) && item.testId === s.testingId);
   const building = useLive();
   const pending = item.parts.flatMap((p) => (p.kind === 'proposal' && !p.proposal.state ? [p.proposal] : []));
   const lastTool = item.parts.findLast((p) => p.kind === 'tool');
@@ -464,6 +471,8 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
   const firstText = item.parts.findIndex((p) => p.kind === 'text');
   const firstProposal = item.parts.findIndex((p) => p.kind === 'proposal');
   const hasTrace = (item.steps?.length ?? 0) > 0;
+  const logRow = logRead(item); // AG20: a session's fix read the run log: its row, and the cause under "Fixed"
+  const logCause = logRow?.cause;
   // SB11: a question back shows its words in its own row (never cut to two sentences).
   const asked = item.parts.find((p) => p.kind === 'ask');
   const words = quietText || !text.trim() || (asked && asked.ask.question.trim() === text.trim()) ? null : provisional ? (
@@ -476,6 +485,12 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
   return (
     <AssistantRow mark={swap.spinner ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}>
       {streamed && steps && <LiveSteps live={steps} trace={item.steps} durationMs={item.meta?.durationMs} />}
+      {logRow && quietText && (
+        <div data-testid="run-log-read" className="flex min-h-6 items-start gap-1.5 py-0.5 text-[12.5px] leading-snug text-t2">
+          <FileSearch className="mt-px size-3.5 shrink-0 text-t3" />
+          <span className="min-w-0 [overflow-wrap:anywhere]">{logRow.label}</span>
+        </div>
+      )}
       {streamed && !steps && hasTrace && !quietText && <ActivityTrace steps={item.steps!} live={live} durationMs={item.meta?.durationMs ?? item.done?.durationMs} />}
       {swap.mounted && (
         <StatusSwap working={swap.working} silent={swap.silent} label={status ?? (lastTool?.kind === 'tool' ? `${lastTool.tool.label}…` : 'Thinking…')}>
@@ -493,7 +508,7 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
           steps ? (
             !streamed && i === firstProposal && <LiveSteps key="steps" live={steps} />
           ) : asRows && (part.proposal.state || live || spotlightBusy) ? (
-            <ProposalRow key={part.proposal.id} proposal={part.proposal} fix={Boolean(item.testId)} />
+            <ProposalRow key={part.proposal.id} proposal={part.proposal} fix={Boolean(item.testId)} {...(logCause && { cause: logCause })} />
           ) : (
             // Not applied by Spotlight (a stopped reply, a change that no longer fits, a Fix bubble): the person decides.
             <ProposalCard key={part.proposal.id} itemId={item.id} proposal={part.proposal} />
@@ -515,9 +530,12 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
         ) : part.kind === 'summary' ? (
           // SB15:
           <BuildSummaryCard key={i} summary={part.summary} workflowName={part.workflowName} onOpen={openNodeNamed} />
+        ) : part.kind === 'publishOffer' ? (
+          // AG21: publish the draft, or test and publish an agent update
+          <PublishCardView key={i} itemId={item.id} offer={part.offer} card={part.card} />
         ) : part.kind === 'agentCard' ? (
           // SB16:
-          <AgentCardView key={i} itemId={item.id} card={part.card} busy={spotlightBusy} earlier={Boolean(item.earlier)} />
+          <AgentCardView key={i} itemId={item.id} card={part.card} busy={spotlightBusy && !(waitingOnCard && part.card.fix)} earlier={Boolean(item.earlier)} />
         ) : null,
       )}
       {!streamed && steps && firstProposal < 0 && <LiveSteps live={steps} />}

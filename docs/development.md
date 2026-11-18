@@ -350,14 +350,19 @@ echo answers `?fail=NNN` with that status; a session's "changed nothing" ignores
 reply's `done` model or the draft's. Two shared checks read what a designed agent holds (`Outcome.agents[].caseInputs` and `toolParameters`, `card.needs`): `caseInputsReal` (no test case's input is a description, a `<placeholder>` or under 12 characters) and `destinationsGiven(ask)` (every destination parameter of every node tool is empty or a value the ask holds). [assistant.md](assistant.md#how-spotlight-is-measured) says what the checks mean.
 
 Each backbone wave's packages are joined on their real sides in a joins file (`spotlight-sb1-joins.test.ts` …
-`spotlight-sb3-joins.test.ts`, `agents-ag1-joins.test.ts`, `agents-ag2-joins.test.ts`, `agents-ag3-joins.test.ts`); they
-always run with scripted models. Their last block compares the contract copies in the repository (wave ag3's:
-`lib/shared/agent-card.ts`, `lib/shared/tool-target.ts`, `test/spotlight-scenarios/scenario.ts` and the runbooks in
+`spotlight-sb3-joins.test.ts`, `agents-ag1-joins.test.ts`, `agents-ag2-joins.test.ts`, `agents-ag3-joins.test.ts`,
+`agents-ag4-joins.test.ts`); they always run with scripted models. Their last block compares the contract copies in the
+repository (wave ag4's: `lib/shared/agent-card.ts`, `lib/shared/tenant-catalog.ts`, `lib/shared/agent-bubbles.ts`,
+`lib/shared/agent-versions.ts`, `components/canvas/bubble-view.tsx`, `test/spotlight-scenarios/scenario.ts` and
+`test/fixtures/legacy-agent-flow.json`; wave ag3's `lib/shared/tool-target.ts` and the runbooks in
 `test/spotlight-scenarios/fixtures/runbooks/`) byte for byte with the program's contracts folder, and runs only when
-`LANDFLOW_BACKBONE_CONTRACTS` names that folder (it holds `ag3/`; the older joins' checks point at `ag3` too, since wave
-ag3 replaced their two contracts). Wave ag3's package tests are `agent-gate-ag3`, `tool-proof-ag3`, `tool-proof-ui-ag3`,
-`agent-knowledge-ag3`, `agent-connections-ag3` and `agent-node-band-ag3` (`apps/web/test/`), and
-`packages/sdk/test/stream-target.test.ts`.
+`LANDFLOW_BACKBONE_CONTRACTS` names that folder (it holds `ag3/` and `ag4/`; the older joins' card and scenario checks
+point at `ag4`, since wave ag4 replaced those two contracts). Wave ag3's package tests are `agent-gate-ag3`, `tool-proof-ag3`, `tool-proof-ui-ag3`,
+`agent-knowledge-ag3` and `agent-connections-ag3` (`apps/web/test/`; `agent-node-band-ag3` went with the band), and
+`packages/sdk/test/stream-target.test.ts`; wave ag4's are `agent-bubbles-ag4`, `agent-layout-ag4` and
+`agent-connections-draft-ag4` (AG16), `agent-overrides-ag4` and `agent-ops-ag4` (AG17), `tenant-catalog-ag4` and
+`tenant-mcp-ag4` (AG18), `agent-reuse-ag4` and `agent-reuse-card-ag4` (AG19), `run-log-ag4` and `session-fix-ag4` (AG20),
+`agent-versions-ag4` and `agent-updates-ag4` (AG21).
 
 `cluster-runtime.test.ts` always runs: a main and workers through the runner on the in-process coordinator.
 

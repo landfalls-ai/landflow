@@ -614,6 +614,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Executions',
     id: 'getExecution',
     summary: 'Get an execution with its run data',
+    description: '`execution.versions` (AG21) says which workflow version ran and which agent version each bound node used (`pinned`, `draft` for an editor run, or `published`): "workflow v4 \u00b7 Alert triager v2".',
     responses: { 200: reply('The execution (and a trace link when LANDFLOW_TRACE_URL is set)', object({ execution: ref('ExecutionRecord'), traceUrl: { type: 'string' } }, ['execution'])), 404: notFound },
   });
   add('get', '/api/executions/{id}/spend', {
@@ -936,6 +937,84 @@ function paths(): Record<string, Record<string, Json>> {
       { name: 'nodeId', description: 'The Run an Agent node in it (its wired sub-nodes are read)', schema: { type: 'string' } },
     ],
     responses: { 200: reply('The agent and its connections', object({ agent: object({ id: { type: 'string' }, name: { type: 'string' }, published: { type: 'boolean' }, draftDiffers: { type: 'boolean' }, icon: { type: 'string' }, color: { type: 'string' }, avatar: { type: 'object' } }, ['id', 'name', 'published', 'draftDiffers']), connections: array({ type: 'object', description: 'kind, name, detail, nodeType, icon, from, toolId, asksFirst, credential, overriddenBy, withheld, documents' }) }, ['agent', 'connections'])), 404: notFound },
+  });
+  // AG17:
+  add('get', '/api/workflows/{id}/agent-moves', {
+    tag: 'Workflows',
+    id: 'getWorkflowAgentMoves',
+    summary: 'What moved from a workflow into its agents',
+    description: 'The record of the wired sub-nodes the flow handed to its agents’ drafts (or kept, with why), newest first; each moved item carries its `state` against the agent now (`pending`, `live`, `withdrawn`). Credentials by name only.',
+    pathParams: { id: 'The workflow id' },
+    responses: { 200: reply('The moves', object({ moves: array({ type: 'object' }) }, ['moves'])), 404: notFound },
+  });
+  add('post', '/api/workflows/{id}/agent-moves', {
+    tag: 'Workflows',
+    id: 'moveWorkflowAgentWiring',
+    summary: 'Move a flow’s wired sub-nodes into its agents’ drafts',
+    description: 'Moves every movable chat model, tool and knowledge base wired into a Run an Agent (or Run a Team) node into the agent’s draft and saves the flow without them, in one step; nothing is published. A memory node, and anything that cannot move, stays and is returned in `kept` with why. `?dryRun=1` answers the same and changes nothing. 412 when `updatedAt` is not the stored one.',
+    pathParams: { id: 'The workflow id' },
+    query: [{ name: 'dryRun', description: '`1`: answer without changing anything', schema: { type: 'string' } }],
+    body: jsonBody(object({ updatedAt: { type: 'string' }, subNodeIds: array({ type: 'string' }), resolve: { type: 'object', description: 'sub-node id → `useEverywhere`: a person’s choice for a kept item' } })),
+    responses: { 200: reply('The moves', object({ workflowId: { type: 'string' }, moved: array({ type: 'object' }), kept: array({ type: 'object' }), agents: array({ type: 'object' }), updatedAt: { type: 'string' }, dryRun: { type: 'boolean' } }, ['workflowId', 'moved', 'kept', 'agents'])), 403: errorRef('No update access to the workflow, or a protected environment'), 404: notFound, 412: errorRef('The workflow changed since it was opened (`workflow_conflict`); nothing was moved') },
+  });
+  add('get', '/api/agents/{id}/moves', {
+    tag: 'Agents',
+    id: 'getAgentMoves',
+    summary: 'What moved into an agent from workflows',
+    description: 'The wired sub-nodes of flows the caller can read that moved into this agent’s draft, newest first, with their `state`.',
+    pathParams: { id: 'The agent id' },
+    responses: { 200: reply('The moves', object({ moves: array({ type: 'object' }) }, ['moves'])), 404: notFound },
+  });
+  // AG21: workflow versions pin agent versions.
+  const agentPin = object({ nodeId: { type: 'string' }, nodeName: { type: 'string' }, agentId: { type: 'string' }, agentName: { type: 'string' }, version: { type: 'integer' } }, ['nodeId', 'agentId', 'version']);
+  const pinBlock = object({ agentId: { type: 'string' }, name: { type: 'string' }, published: { type: 'integer', description: 'Absent when the agent was never published' }, changes: array({ type: 'string' }), canPublish: { type: 'boolean', description: 'False: the caller may use the agent but not change (publish) it' } }, ['agentId', 'name', 'changes']);
+  add('post', '/api/workflows/{id}/publish', {
+    tag: 'Workflows',
+    id: 'publishWorkflow',
+    summary: 'Publish a workflow version',
+    description:
+      'Publishes `versionId` (default: the saved draft; an older version is a rollback). The version pins each bound Run an Agent / Run a Team agent at its published version and production keeps those versions until a republish. An agent whose draft differs refuses the publish (409 `agent_changes_unpublished` `{ agents }`) unless `agents` says what to do: `publish-first` (smoke test and eval gate, then publish; needs the right to change the agent, else 403 `agent_publish_forbidden`; a hold or failed smoke is 409 `agent_publish_held`) or `as-published` (pin the published versions knowingly). `update: { agents }` with `testedExecutionId` records a new version of the production graph with only those agents moved to their published versions (a passing test run is required). `at` schedules it (202 `{ scheduled }`); four-eyes publishing answers 202 `{ approvalRequired, request }`.',
+    body: jsonBody(
+      object({ versionId: { type: 'string' }, note: { type: 'string', maxLength: 2000 }, at: { type: 'string', format: 'date-time' }, agents: { type: 'string', enum: ['publish-first', 'as-published'] }, update: object({ agents: array({ type: 'string' }) }, ['agents']), testedExecutionId: { type: 'string' } }),
+      undefined,
+      false,
+    ),
+    responses: { 200: reply('The publication', { type: 'object', additionalProperties: true }), 202: reply('Scheduled, or waiting for approval', { type: 'object', additionalProperties: true }), 403: errorRef('The caller may not change an agent that `publish-first` would publish'), 404: notFound, 409: reply('An agent draft differs (`agent_changes_unpublished`, with `agents`), a hold (`agent_publish_held`) or a missing test (`not_tested`)', object({ error: { type: 'string' }, code: { type: 'string' }, agents: array(pinBlock) }, ['error'])), 422: errorRef('Nodes the governance policy does not allow, or a composite that breaks its contract') },
+  });
+  add('get', '/api/workflows/{id}/agent-updates', {
+    tag: 'Workflows',
+    id: 'listWorkflowAgentUpdates',
+    summary: 'Agents with a newer published version than production runs',
+    description: '"Alert triager v3 is available": each agent the production version pins whose published version is newer, with the nodes that use it. `offer` is the update card\u2019s data when there are updates. Read access is the workflow\u2019s.',
+    responses: { 200: reply('The updates', object({ updates: array({ type: 'object', additionalProperties: true }), offer: { type: 'object', additionalProperties: true } }, ['updates'])), 404: notFound },
+  });
+  add('post', '/api/workflows/{id}/test-update', {
+    tag: 'Workflows',
+    id: 'testWorkflowAgentUpdate',
+    summary: 'Test the production graph with newer agent versions',
+    description: 'A manual run of the production version\u2019s graph with the named agents at their latest published versions. The trigger\u2019s data is replayed from the last production run, else the trigger\u2019s pinned data, else 409 `no_input`. Recorded like any run, with both versions. Needs the right to run the workflow.',
+    body: jsonBody(object({ agents: array({ type: 'string' }) }, ['agents'])),
+    responses: { 200: reply('The run', object({ executionId: { type: 'string' }, status: { type: 'string' } }, ['executionId', 'status'])), 404: notFound, 409: errorRef('No input to replay (`no_input`) or nothing to update') },
+  });
+  add('get', '/api/workflows/{id}/versions/{versionId}/pins', {
+    tag: 'Workflows',
+    id: 'getWorkflowVersionPins',
+    summary: 'The agent versions a workflow version pins',
+    responses: { 200: reply('The pins', object({ pins: array(agentPin) }, ['pins'])), 404: notFound },
+  });
+  add('get', '/api/agents/{id}/versions', {
+    tag: 'Agents',
+    id: 'listAgentVersions',
+    summary: 'An agent\u2019s published versions and the workflow versions that pin each',
+    description: 'Newest first; `usedBy` lists the workflow versions that pin the version (production first) and holds only workflows the caller can read. Read access is the agent\u2019s.',
+    responses: { 200: reply('The versions', object({ versions: array(object({ version: { type: 'integer' }, publishedAt: { type: 'string', format: 'date-time' }, publishedBy: { type: 'string' }, usedBy: array(object({ workflowId: { type: 'string' }, name: { type: 'string' }, workflowVersion: { type: 'integer' }, production: { type: 'boolean' } }, ['workflowId', 'name', 'workflowVersion', 'production'])) }, ['version', 'publishedAt', 'usedBy'])) }, ['versions'])), 404: notFound },
+  });
+  add('get', '/api/agents/{id}/versions/{version}/connections', {
+    tag: 'Agents',
+    id: 'getAgentVersionConnections',
+    summary: 'What one published version of an agent is connected to',
+    description: 'As `/api/agents/{id}/connections`, for that version\u2019s config (the bubbles of a version view, read-only). Credentials come as names, never data.',
+    responses: { 200: reply('The version and its connections', object({ agent: { type: 'object', additionalProperties: true }, version: { type: 'integer' }, connections: array({ type: 'object', additionalProperties: true }) }, ['agent', 'version', 'connections'])), 404: notFound },
   });
   add('get', '/api/agent-teams/{id}/export', {
     tag: 'Agent teams',

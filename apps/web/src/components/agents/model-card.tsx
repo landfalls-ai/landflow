@@ -6,7 +6,9 @@ import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import type { AgentConfig, AgentModel, ModelOption, ModelProvider } from '@/lib/shared/agents';
 import { CredentialDialog } from '../credentials/credential-dialog';
-import { useCredentials } from '../credentials/use-credentials';
+import { useAgentScope } from '../credentials/agent-scope';
+import { credentialInputs, useCredentials } from '../credentials/use-credentials';
+import { useCredentialScope } from '../projects/use-projects';
 import { Button } from '../ui/button';
 import { Input, Select, Textarea } from '../ui/inputs';
 import { Field, Section } from './dialog';
@@ -144,10 +146,15 @@ export function ModelPicker({ model, onChange }: { model: AgentModel; onChange: 
 export function ModelCard({ config, update }: { config: AgentConfig; update: UpdateConfig }) {
   const model = config.model;
   const provider = PROVIDERS.find((p) => p.value === model?.provider);
-  const { credentials } = useCredentials();
+  const { credentials: all } = useCredentials();
+  // The agent's project limits the choice (the server refuses a new credential outside it); nothing is picked on its own until that is known.
+  const agentId = useAgentScope();
+  const { scope, failed, reload } = useCredentialScope(undefined, agentId);
+  const { candidates: credentials, scopeKnown } = credentialInputs({ all, scope, workflowId: agentId });
   const [dialog, setDialog] = useState<{ id?: string } | null>(null);
   const options = provider?.credentialType ? (credentials ?? []).filter((c) => c.type === provider.credentialType) : [];
-  const missing = model?.credential && credentials && !options.some((c) => c.id === model.credential?.id);
+  const missing = model?.credential && all && !all.some((c) => c.id === model.credential?.id);
+  const unusable = model?.credential && !missing && credentials && scopeKnown && !options.some((c) => c.id === model.credential?.id);
 
   const setModel = (patch: Partial<AgentModel>) =>
     update((c) => ({
@@ -157,10 +164,10 @@ export function ModelCard({ config, update }: { config: AgentConfig; update: Upd
 
   // Like the node panel: an OpenAI-compatible model needs a credential, so when exactly one exists, pick it.
   useEffect(() => {
-    if (!provider?.credentialRequired || model?.credential || options.length !== 1) return;
+    if (!provider?.credentialRequired || model?.credential || options.length !== 1 || (agentId && !scopeKnown)) return;
     setModel({ credential: { id: options[0].id, name: options[0].name } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider?.value, options.length, model?.credential]);
+  }, [provider?.value, options.length, model?.credential, scopeKnown]);
 
   const changeProvider = (value: ModelProvider | '') =>
     update((c) => {
@@ -203,6 +210,15 @@ export function ModelCard({ config, update }: { config: AgentConfig; update: Upd
               hint={
                 missing ? (
                   <span className="text-warn">“{model.credential?.name}” was deleted. Choose or create another.</span>
+                ) : unusable ? (
+                  <span className="text-warn">“{model.credential?.name}” isn’t shared with this agent’s project. Choose another, or ask its owner to share it.</span>
+                ) : agentId && failed ? (
+                  <span className="text-warn">
+                    Couldn’t check which credentials this agent’s project may use, so every credential is listed and none is picked automatically.{' '}
+                    <button type="button" className="underline" onClick={() => void reload()}>
+                      Retry
+                    </button>
+                  </span>
                 ) : !provider.credentialRequired && !model.credential ? (
                   'Optional: without one the server’s ANTHROPIC_API_KEY is used.'
                 ) : undefined
@@ -212,7 +228,7 @@ export function ModelCard({ config, update }: { config: AgentConfig; update: Upd
                 <div className="min-w-0 flex-1">
                   <Select
                     id="agent-credential"
-                    value={missing ? '' : (model.credential?.id ?? '')}
+                    value={missing || unusable ? '' : (model.credential?.id ?? '')}
                     onChange={(e) => {
                       if (e.target.value === CREATE) return setDialog({});
                       const picked = options.find((c) => c.id === e.target.value);
@@ -305,12 +321,14 @@ export function ModelCard({ config, update }: { config: AgentConfig; update: Upd
         <CredentialDialog
           credentialId={dialog.id}
           allowedTypes={[provider.credentialType]}
+          {...(scope?.projectId && { projectId: scope.projectId })}
           onClose={() => setDialog(null)}
-          onSaved={(credential) =>
+          onSaved={(credential) => {
             setModel({
               credential: { id: credential.id, name: credential.name },
-            })
-          }
+            });
+            void reload();
+          }}
         />
       )}
     </Section>

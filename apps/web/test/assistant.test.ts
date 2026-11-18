@@ -397,6 +397,15 @@ describe('after-run suggestions', () => {
 });
 
 describe('builder chat', () => {
+  it('a test-and-fix session’s prompt says that facts with no tool or knowledge behind them are invented, and to connect the source (re-check 3)', async () => {
+    const { model, calls } = scripted([{ text: 'No change.' }, { text: 'No change.' }, { text: 'No change.' }]);
+    await runChat({ messages: [{ role: 'user', content: 'Test run 1 (execution ex_1) had no errors: the numbers look made up. Fix it.' }], workflow: workflow(), model, types, session: 'fix', onEvent: () => undefined });
+    const system = calls[0].system ?? '';
+    expect(system).toContain('states facts (numbers, records, names) with no tool or knowledge that could give them is inventing them');
+    expect(system).toContain('never answer that the figures are real');
+    expect(system).toMatch(/call propose_agent_fix to connect the source the tenant has \(list_tool_nodes/);
+  });
+
   it('researches with tools, then proposes validated changes', async () => {
     const dedupe = { summary: 'Dedupe after Code', ops: JSON.stringify([{ op: 'addNode', ref: 'd', type: 'core.removeDuplicates', name: 'Dedupe', after: 'Code' }, { op: 'connect', from: 'd', to: 'Nowhere' }]) };
     const { model, calls } = scripted([
@@ -437,7 +446,7 @@ describe('builder chat', () => {
 
     // The system prompt carries the workflow and the selected node; tool results go back to the model.
     expect(calls[0].system).toContain('The user has “Code” selected');
-    expect(calls[0].tools.map((t) => t.name)).toEqual(['search_nodes', 'get_node_docs', 'get_workflow', 'get_run_data', 'propose_changes', 'ask_user']); // SB11:
+    expect(calls[0].tools.map((t) => t.name)).toEqual(['list_agent_updates', 'propose_publish', 'propose_agent_update' /* AG21: */, 'search_nodes', 'get_node_docs', 'list_agents', 'get_agent', 'list_tool_nodes', 'list_knowledge_bases', 'list_models', 'list_credentials', 'read_agent_practices' /* AG18: */, 'get_workflow', 'get_run_data', 'get_run_log', 'propose_changes', 'ask_user']); // SB11: AG20: propose_agent_fix is offered to the fix session only
     const results = calls[1].messages.at(-1) as { role: 'tool'; results: Array<{ name: string; content: string }> };
     expect(results.results[0].content).toContain('core.removeDuplicates');
     expect(results.results[1].content).toContain('Parameters:');

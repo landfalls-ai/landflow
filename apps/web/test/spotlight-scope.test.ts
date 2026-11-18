@@ -227,3 +227,35 @@ describe('the chat', () => {
     expect((await send({ kind: 'only', nodes: Array.from({ length: 21 }, (_, i) => `n${i}`) })).status).toBe(400);
   });
 });
+
+describe('final live run: a change to the flow’s one agent while another step is selected', () => {
+  it('is in scope when the ask names the agent (its name or the word agent) and the flow has exactly one Run an Agent step', async () => {
+    const { agentChangeInScope } = await import('@/lib/server/assistant/chat');
+    const nodes = [{ id: 'post', name: 'Post to Reports', type: 'core.httpRequest' }, { id: 'digest', name: 'Digest', type: 'core.messageAgent' }];
+    const selected = { kind: 'selected' as const, nodes: ['post'] };
+    const ask = 'Give the digest access to the sales database.';
+    expect(agentChangeInScope({ op: 'changeAgent', node: 'Digest' }, selected, nodes, ask)).toBe(true);
+    expect(agentChangeInScope({ op: 'changeAgent' }, selected, nodes, ask)).toBe(true);
+    expect(agentChangeInScope({ op: 'changeAgent', node: 'Digest' }, selected, nodes, 'Make it shorter.')).toBe(false);
+    expect(agentChangeInScope({ op: 'changeAgent', node: 'Digest' }, selected, nodes, 'Give the agent access to the sales database.')).toBe(true);
+    // "step" or "node" alone name no agent: the old rule holds.
+    expect(agentChangeInScope({ op: 'changeAgent', node: 'Digest' }, selected, nodes, 'add a database step')).toBe(false);
+    expect(agentChangeInScope({ op: 'changeAgent' }, selected, nodes, 'Wire a database into this node.')).toBe(true); // one step in scope: the old rule
+    expect(agentChangeInScope({ op: 'changeAgent', node: 'Digest' }, selected, [...nodes, { id: 'two', name: 'Second', type: 'core.messageAgent' }], ask)).toBe(false);
+    expect(agentChangeInScope({ op: 'changeAgent', node: 'Digest' }, { kind: 'insert', nodes: ['post'] }, nodes, ask)).toBe(false);
+  });
+});
+
+describe('wave ag4 carryover (E3): a change to the selected step’s agent', () => {
+  it('is in scope for that step (or none named with one in scope), not for another step’s agent or an insert', async () => {
+    const { agentChangeInScope } = await import('@/lib/server/assistant/chat');
+    const selected = { kind: 'selected' as const, nodes: ['http'] };
+    const out = outsideScope([{ op: 'changeAgent', node: 'Open status incident' }], selected, graph, 'Wire a Sentiment tool into this step.');
+    expect(out).toHaveLength(1); // the contract's filter alone sends it back; chat.ts keeps it
+    expect(agentChangeInScope({ op: 'changeAgent', node: 'Open status incident' }, selected, graph.nodes)).toBe(true);
+    expect(agentChangeInScope({ op: 'changeAgent' }, selected, graph.nodes)).toBe(true);
+    expect(agentChangeInScope({ op: 'changeAgent', node: 'Save to backlog' }, selected, graph.nodes)).toBe(false);
+    expect(agentChangeInScope({ op: 'changeAgent', node: 'Open status incident' }, { kind: 'insert', nodes: ['http'] }, graph.nodes)).toBe(false);
+    expect(agentChangeInScope({ op: 'setParameters', node: 'Open status incident' }, selected, graph.nodes)).toBe(false);
+  });
+});

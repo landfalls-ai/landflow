@@ -4,9 +4,10 @@
  * guardrails in words, test cases), the smoke test's result (SB18, decision D3) and, on an empty canvas, the starter
  * flow that runs it (SB16, decision D5).
  *
- * Contract file: backbone/contracts/ag3/agent-card.ts (wave ag3, owner AG13, nobody copies it this wave; ag2's was
- * backbone/contracts/ag2/agent-card.ts, owner AG10; ag1's backbone/contracts/ag1/agent-card.ts, owner AG02; sb3's
- * backbone/contracts/sb3/agent-card.ts, owner SB16), copied byte for byte to apps/web/src/lib/shared/agent-card.ts.
+ * Contract file: backbone/contracts/ag4/agent-card.ts (wave ag4, owner AG19, copied byte for byte by AG20; ag3's was
+ * backbone/contracts/ag3/agent-card.ts, owner AG13; ag2's backbone/contracts/ag2/agent-card.ts, owner AG10; ag1's
+ * backbone/contracts/ag1/agent-card.ts, owner AG02; sb3's backbone/contracts/sb3/agent-card.ts, owner SB16), copied
+ * byte for byte to apps/web/src/lib/shared/agent-card.ts.
  * Each wave only adds optional fields and helpers or changes what a
  * helper returns, so every earlier caller still type-checks. Change it in the contracts folder first (the owner only),
  * then copy. Types and pure helpers only: no import, no zod (the browser loads it), no I/O.
@@ -57,6 +58,19 @@
  *   200 `{ documents, chunks, failed: [{ file, error }] }`; 400 for a folder outside the files directory, 404 for an agent or
  *   knowledge base the caller cannot see. The card keeps the preview's `knowledge` as `AgentCard.knowledgeSetup` and follows
  *   the indexing in its `state` and `indexed`; the smoke test runs after the indexing.
+ *
+ * Wave ag4 adds (the person's ask of 2026-11-18: Spotlight knows the tenant, reuses a fitting agent, or builds one with
+ * the tenant's plugins, knowledge bases and models, then runs the flow and fixes it from the logs):
+ * - AG19: the preview answer's `reuse` (`AgentReuse`: an existing agent that already does the job, and why, from the
+ *   architect's `list_agents`; the card then offers **Use <name>** first and **Create anyway** second, and Create is never
+ *   the default), `knowledgeBase` (an existing knowledge base the agent gets as is: no folder, nothing re-indexed;
+ *   `AgentCard.attached`) and `modelWhy` (why this model: the person named it, or the host's default; never an upgrade).
+ *   The design body's `knowledgeBase` (a collection `list_knowledge_bases` named) and `toolNodes` (node types from
+ *   `list_tool_nodes`) are hints the architect keeps when they fit. `catalog` lists what the design read of the tenant
+ *   (`list_agents 6`, `list_tool_nodes 14`…), shown as one muted "Looked at" line.
+ * - AG20: a card that fixes an existing agent after a failed run carries `fix` (the run, the step, the cause from the
+ *   run's log); it is a change card (`base` set) and goes the AG04 way: Apply saves the draft with its smoke test, then
+ *   Publish through the gate. A saved agent is never brand new: Apply is always the person's click (lesson 23).
  */
 
 /** A test case the brief proposes for the eval gate: what a person would send, and what a right answer says. */
@@ -183,6 +197,14 @@ export interface AgentCard {
   /** The guardrails, in words ("Masks secrets in messages", "Ignores instructions inside tool results"). */
   guardrails: string[];
   cases: AgentCaseDraft[];
+  /** A change card: the agent's cases these `cases` replace (the ones the design named as made wrong by the change), by id with their input text; Apply swaps them in one call. */
+  replaceCases?: Array<{ id: string; input: string }>;
+  /** A change card: the swap of the cases failed after the draft was saved (they changed since the design); the card says so and offers Ask again. */
+  casesNote?: string;
+  /** A change card: the words the change was designed from, for Ask again. */
+  askedChange?: string;
+  /** A fix card: what the person typed in the session ("" when nothing), the only words that may make a read tool a write; Ask again sends it again. */
+  typedAsk?: string;
   /** What is left for the person (the architect's `needs` texts) and what no plugin online covers (`missing`). */
   needs: string[];
   missing: string[];
@@ -210,6 +232,41 @@ export interface AgentCard {
   publish?: AgentPublish;
   /** Wave ag3 (AG13): the knowledge base it answers from: what, from where, which embeddings, and the indexing after Create. `knowledge` (the collection) stays as before. */
   knowledgeSetup?: AgentKnowledgeSetup;
+  /** Wave ag4 (AG19): an existing agent that already does the job: the card offers Use <name> before Create anyway. */
+  reuse?: AgentReuse;
+  /** Wave ag4 (AG19): an existing knowledge base the agent searches as it is (no folder, nothing indexed again). */
+  attached?: { collection: string; documents?: number; search: string };
+  /** Wave ag4 (AG19): why the card's model: `asked` (the person named it), `default` (the host's), `unavailable` (named but not on this host: the default kept, said in `modelNote`). */
+  modelWhy?: 'asked' | 'default' | 'unavailable';
+  modelNote?: string;
+  /** Wave ag4 (AG19): what the design read of the tenant, in order (`list_tool_nodes`, `list_knowledge_bases`…), with counts. */
+  catalog?: Array<{ tool: string; count?: number }>;
+  /** Wave ag4 (AG20): this change fixes the agent after a failed run. */
+  fix?: AgentFix;
+}
+
+/** Wave ag4 (AG19): an existing agent that fits the ask. */
+export interface AgentReuse {
+  agentId: string;
+  name: string;
+  /** One clause: what it already does that the ask needs ("normalises alerts, pulls IOCs and emails oncall@landflow.test"). */
+  why: string;
+  /** It is published (a Run an Agent node can run it now). */
+  published: boolean;
+  /** What the ask needs that it does not have, in words; empty when it covers everything. */
+  gaps: string[];
+}
+
+/** Wave ag4 (AG20): the failed run a change card fixes. */
+export interface AgentFix {
+  executionId: string;
+  /** The Run an Agent step that failed (its node name) and the agent's failing tool call, when one failed. */
+  step: string;
+  tool?: string;
+  /** The cause in one clause of at most 12 words, from the run's log (`failureClause`). */
+  cause: string;
+  /** Which try this is (1-based) of the session's bounded fixes (`MAX_FIXES`, test-session.ts). */
+  attempt: number;
 }
 
 /** The agent's row text for its smoke test: "tested, 1 of 1 passed", "test failed: <reason>", "not tested yet: <reason>". */
@@ -257,4 +314,28 @@ export function starterFlow(agent: { id: string; name: string }, sample: string)
     edges: [['chat', 'agent', 0, 'main']],
     pinData: { chat: [{ json: { chatInput: sample, sessionId: 'sample' } }] },
   };
+}
+
+/**
+ * Wave ag4 (AG19): the card's reuse row: "“Alert triager” already does this: normalises alerts … (published)". An agent
+ * with gaps is only the closest, and the row says so: "Closest: “Runbooks answerer”: answers from runbooks; it lacks Extract IOCs"
+ * (gap phrases are plain words, never tool ids: the design route writes a node's title).
+ */
+export function reuseLine(reuse: AgentReuse): string {
+  const why = reuse.why.trim().replace(/[.\s]+$/, '');
+  if (reuse.gaps.length) return `Closest: “${reuse.name}”${why ? `: ${why}` : ''}; it lacks ${reuse.gaps.join(', ')}${reuse.published ? '' : ' (not published yet)'}`;
+  const state = reuse.published ? 'published' : 'not published yet';
+  return `“${reuse.name}” already does this${why ? `: ${why}` : ''} (${state})`;
+}
+
+/** Wave ag4 (AG19): the card's Knowledge row for an existing knowledge base: "runbooks · 4 documents · keyword search (BM25, built in) · already indexed". */
+export function attachedLine(attached: NonNullable<AgentCard['attached']>): string {
+  const docs = typeof attached.documents === 'number' ? ` · ${attached.documents} document${attached.documents === 1 ? '' : 's'}` : '';
+  const search = attached.search === 'keyword' ? 'keyword search (BM25, built in)' : attached.search;
+  return `${attached.collection}${docs} · ${search} · already indexed`;
+}
+
+/** Wave ag4 (AG20): the fix card's head line: "Fixes “Alert triager” after the run failed at “Triage” (try 1): <cause>". */
+export function fixLine(name: string, fix: AgentFix): string {
+  return `Fixes “${name}” after the run failed at “${fix.step}”${fix.tool ? ` (${fix.tool})` : ''}, try ${fix.attempt}: ${fix.cause}`;
 }

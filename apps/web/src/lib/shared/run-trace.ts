@@ -40,6 +40,8 @@ export interface ActorConnection {
   detail?: string;
   /** The node type, for its icon. */
   nodeType?: string;
+  /** A node tool's node type display name ("Extract IOCs"): what its bubble reads (`name` is the agent's own tool id). */
+  nodeTitle?: string;
   /** An icon when there is no node type: `brand:<slug>` (lib/shared/brand-icons.ts) or `lucide:<name>`. */
   icon?: string;
   /** Where it is set: a sub-node in the flow, the agent's own settings, its kagent deployment, or the project's settings (AG12). */

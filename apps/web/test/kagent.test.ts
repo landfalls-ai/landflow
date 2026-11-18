@@ -420,6 +420,25 @@ describe('the agent’s MCP endpoint', () => {
     expect(approved.body.result?.isError).toBeFalsy();
   });
 
+  it('refuses a call that is not a read on a tool set up as one: this path cannot pause for a person', async () => {
+    const agent = publishedAgent({ ...CONFIG, tools: [{ id: 'h1', type: 'node', name: 'Rates', description: 'Read rates', nodeType: 'core.httpRequest', parameters: { url: 'http://rates.test/x', method: 'GET' } } as never] });
+    await call(kagentRoute.PUT, agent.id, 'PUT', { credentialId: cluster.id, name: 'readonly-http' });
+    const token = credentials.openSecret(agentStore.get(agent.id)!.kagent!.token!);
+    const seen: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => { seen.push(`${init?.method ?? 'GET'} ${String(input)}`); return new Response('{"rate":1}', { status: 200, headers: { 'content-type': 'application/json' } }); }));
+    try {
+      const refused = await rpc(agent.id, 'tools/call', { name: 'Rates', arguments: { method: 'DELETE' } }, token);
+      expect(refused.body.result).toMatchObject({ isError: true, content: [{ text: expect.stringContaining('kagent cannot pause this call') }] });
+      expect(refused.body.result?.content?.[0].text).toContain('DELETE');
+      expect(seen).toEqual([]);
+      const ran = await rpc(agent.id, 'tools/call', { name: 'Rates', arguments: {} }, token);
+      expect(ran.body.result?.isError).toBeFalsy();
+      expect(seen.some((line) => line.startsWith('GET'))).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('serves the version kagent runs, not a newer one it didn’t get', async () => {
     const agent = publishedAgent();
     await call(kagentRoute.PUT, agent.id, 'PUT', { credentialId: cluster.id, name: 'pinned' });

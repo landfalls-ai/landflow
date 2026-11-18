@@ -6,7 +6,7 @@ how to run it and how to change it. The [project README](../README.md) has the q
 ## Platform guide
 
 **[platform/README.md](platform/README.md)** is the guided tour of the whole platform: an [overview](platform/overview.md),
-the [layers of the host server](platform/server-layers.md), [agents](platform/agents.md), the
+the [layers of the host server](platform/server-layers.md), [agents](platform/agents.md) and their [best practices](platform/agent-best-practices.md), the
 [Kubernetes components](platform/kubernetes.md) and the three [SDKs](platform/sdk/README.md) with runnable samples in
 [`examples/sdk/`](../examples/sdk/README.md). Each page has a matching skill for Claude in the `landflow-dev` plugin
 ([`claude-plugins/landflow-dev`](../claude-plugins/landflow-dev/README.md)): open this repository with Claude Code and
@@ -49,7 +49,10 @@ marketplace.
 | LLM gateway (LiteLLM): run it, image pin, models, Kubernetes example | [llm-gateway.md](llm-gateway.md) | [deployment.md](deployment.md#the-llm-gateway) |
 | MCP gateway (agentgateway): sync, identity, tokens | [mcp-gateway.md](mcp-gateway.md) | [transports.md](transports.md) |
 | AI: AI Agent and sub-nodes, hosted chat and widget, RAG, guardrails, evaluations, MCP | [features/ai.md](features/ai.md) | |
-| Standalone agents: personas, skills, capabilities, channels (Telegram, Slack, Teams), schedules, memory; the band on a Run an Agent node showing what the agent is connected to; knowledge from a folder the Spotlight ask names | [agents.md](agents.md) ([the canvas band](agents.md#from-workflows), [knowledge folders](agents.md#agent-architect)) | |
+| Spotlight knows the tenant: tools for agents (drafts included), tool nodes with their plugin and credential needs, knowledge bases, models and credentials by name, and the written agent best practices; the same tools and `create_agent`, `update_agent`, `test_agent`, `publish_agent` on the instance MCP server | [assistant.md](assistant.md#agents-and-teams) ([MCP](features/ai.md#mcp), [best practices](platform/agent-best-practices.md)) | [reference/api.md](reference/api.md) |
+| Standalone agents: personas, skills, capabilities, channels (Telegram, Slack, Teams), schedules, memory; the bubbles under a Run an Agent node showing what the agent is connected to; knowledge from a folder the Spotlight ask names | [agents.md](agents.md) ([the canvas bubbles](agents.md#from-workflows), [knowledge folders](agents.md#agent-architect)) | |
+| Agent versions pinned in workflows: publishing pins each agent's version, production keeps it until a republish, "v3 is available" offers test-then-publish | [features/editor.md](features/editor.md) | [agents.md](agents.md#from-workflows) |
+| Wiring moving into the agent: a model, tool or knowledge sub-node wired into a Run an Agent node moves into the agent's draft, with a notice and what stays "this flow only" | [agents.md](agents.md#from-workflows) | [assistant.md](assistant.md) |
 | The LLM gateway: LiteLLM in front of the models, the Gateway field on the Anthropic API and OpenAI API credentials, who is calling, the call id and cost on each AI call | [llm-gateway.md](llm-gateway.md) | [agents.md](agents.md), [observability.md](observability.md) |
 | Project context: the mission, goals and project brief an agent is given in each run, the pinned date, the per-agent switch | [agents.md](agents.md#project-context) | [agent-teams.md](agent-teams.md) |
 | The agent roster: teams, persona templates, faces and other avatars, the Agent architect chat | [agents.md](agents.md#the-roster) | [second-brain.md](second-brain.md) |

@@ -505,7 +505,7 @@ describe('the review after a right fix names what is missing', () => {
     replies = [{ text: 'No, it never tells the desk about big orders.' }];
     await testUntilItRuns(goal);
     expect(actions()).toEqual([]);
-    expect(outcomes().at(-1)?.text).toBe('It runs, but doesn’t do all you asked yet: it never tells the desk about big orders. I have no change for it: tell me what to change.');
+    expect(outcomes().at(-1)?.text).toBe('It runs, but doesn’t do all you asked yet: it never tells the desk about big orders. I have no change for it. Left: open “Notify VIP” and change it by hand, or tell me what to change.');
   });
 });
 

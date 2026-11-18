@@ -6,7 +6,8 @@
  */
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem, type StreamChunk } from '@landflow/sdk';
 import type { AgentMemory, AgentTool, LanguageModel } from '@landflow/engine';
-import { approvalSubject, type AgentSession, type AgentStreamEvent } from '../../shared/agents';
+import { isEditorRun, PIN_PARAM, runSource } from '../../shared/agent-versions'; // AG17: AG21:
+import { approvalSubject, type Agent, type AgentSession, type AgentStreamEvent } from '../../shared/agents';
 import { agentAllowedBy } from '../../shared/project-policy';
 // AG10: the chat approval (the AI Agent node's own wait, reused).
 import { approvalSettings, askForApproval, decisionsOf, toolTargets } from './ai';
@@ -162,7 +163,7 @@ export const messageAgentNode = defineNode({
         required: true,
         noDataExpression: true,
         typeOptions: { loadOptionsMethod: 'agents' },
-        description: 'Runs the agent’s published version',
+        description: 'Production runs the agent version the workflow was published with; the editor tests the agent’s draft',
       },
       { name: 'message', displayName: 'Message', type: 'string', default: '{{ $json.chatInput ?? $json.text }}', required: true, typeOptions: { rows: 3 } },
       {
@@ -205,7 +206,8 @@ export const messageAgentNode = defineNode({
       {
         name: 'notice',
         displayName:
-          'Connect a chat model to use it instead of the agent’s own, tools (a vector store in Retrieve Documents (As Tool) mode is a knowledge base) to add to its capabilities for this run, and a memory to keep the conversation in. Tools that require approval are refused in workflow runs (nobody is there to approve them), unless Tool Approvals asks in the editor’s chat and you run the flow from its Chat (then the run waits for your Approve; with a model or tools connected here it still refuses).',
+          // AG17:
+          'Runs the agent: its model, memory, tools and knowledge are the bubbles under this node. A model, memory or tool wired here is moved into the agent’s draft when the flow is opened (or at the host’s start); what can’t move stays and runs in this flow only. Tools that require approval are refused in workflow runs (nobody is there to approve them), unless Tool Approvals asks in the editor’s chat and you run the flow from its Chat (then the run waits for your Approve; with a model or tools still wired here it refuses). Runs in the editor use the agent’s draft, which already holds what moved; a published workflow runs the agent’s published version, so what moved keeps running here until you publish the agent.',
         type: 'notice',
       },
     ],
@@ -214,12 +216,23 @@ export const messageAgentNode = defineNode({
     // Loaded lazily: the agents runtime imports the runner, which needs the registry this plugin is part of.
     const { agentStore } = await import('../agents/store');
     const { newSession, runAgent } = await import('../agents/runtime');
+    const { agentVersionConfig, agentVersionExists, fallbackPin, recordRunAgent } = await import('../agents/versions'); // AG21:
+    const { configOf } = await import('../agents/store');
     const connection = ctx.getInputConnectionData;
     const [model] = connection ? await connection<LanguageModel>('ai_languageModel') : [];
     const [memory] = connection ? await connection<AgentMemory>('ai_memory') : [];
     const tools = connection ? await connection<AgentTool>('ai_tool') : [];
     // AG14: what each wired tool reaches (its sub-node's credential and host), for the via line.
     const flowTargets = await toolTargets(ctx, tools);
+    // AG17: what the flow's own wiring moved into the agent's draft and the config this run uses does not have yet (production copies are pinned and never overlaid).
+    const moved = async (agent: Agent) => {
+      const { pendingFor } = await import('../agents/flow-moves');
+      const { configOf } = await import('../agents/store');
+      const node = ctx.getNode();
+      const wired = new Set<string>(tools.flatMap((t) => (t.nodeId ? [t.nodeId] : [])));
+      if (model) wired.add('$model');
+      return pendingFor(ctx.getWorkflowId() ?? '', node.id, agent, { pinned: ctx.getNodeParameter<string | undefined>(PIN_PARAM, 0, undefined), wired, config: configOf(agent.published?.config ?? agent) });
+    };
     const send = ctx.sendChunk;
     const items = ctx.getInputData();
     // AG10: back from a wait for the person's Approve in the editor's chat (WaitRequest.rerun): the items done, and the session to go on with.
@@ -231,8 +244,18 @@ export const messageAgentNode = defineNode({
       try {
         const agentId = ctx.getNodeParameter<string>('agentId', i);
         const agent = agentStore.get(agentId);
+        // AG21: which agent version this run uses: the pin of the published workflow version, the agent's draft in the editor, else the published one.
+        const node = ctx.getNode();
+        const editor = isEditorRun(ctx.getMode(), Boolean(ctx.putExecutionToWait));
+        const pinParam = ctx.getNodeParameter<unknown>(PIN_PARAM, i, undefined);
+        const pin = typeof pinParam === 'number' ? pinParam : editor ? undefined : fallbackPin(ctx.getExecutionId(), node.id, agentId);
+        const source = runSource(pin, editor);
+        if (source === 'pinned' && (!agent || !agentVersionExists(agentId, pin!)))
+          throw new NodeOperationError(`“${agent?.name ?? node.name ?? agentId}” v${pin}, which this version of the workflow runs, no longer exists: publish the workflow again`, { itemIndex: i });
         if (!agent) throw new NodeOperationError('Choose an agent — the selected one was deleted', { itemIndex: i });
-        if (!agent.published) throw new NodeOperationError(`Publish “${agent.name}” first`, { description: 'Workflows run the published version of an agent.', itemIndex: i });
+        if (source === 'published' && !agent.published) throw new NodeOperationError(`Publish “${agent.name}” first`, { description: 'Workflows run the published version of an agent.', itemIndex: i });
+        const runVersion: 'draft' | number = source === 'pinned' ? pin! : source === 'draft' ? 'draft' : agent.published!.version;
+        const runConfig = source === 'draft' ? configOf(agent) : source === 'pinned' ? agentVersionConfig(agentId, pin!)! : agent.published!.config;
         // A message that comes out empty ($fromAI with no argument, as when a roster pick starts the run here) falls back to the chat input.
         const chatInput = items[i]?.json?.chatInput;
         const message = (String(ctx.getNodeParameter('message', i) ?? '').trim() || (typeof chatInput === 'string' ? chatInput.trim() : '')).trim();
@@ -240,11 +263,12 @@ export const messageAgentNode = defineNode({
         const key = ctx.getNodeParameter<string>('conversation', i) === 'key' ? String(ctx.getNodeParameter('sessionKey', i) ?? '').trim() : '';
         const userId = `workflow:${ctx.getWorkflowId() ?? 'unknown'}`;
         // Links the session to this run and node, so the execution view can show the agent working.
-        const node = ctx.getNode();
         const execution = { workflowId: ctx.getWorkflowId() ?? 'unknown', executionId: ctx.getExecutionId(), nodeId: node.id, ...(node.name && { nodeName: node.name }) };
         // AG10: only the editor's chat can ask; the hosted chat page, webhooks, schedules and manual runs refuse as before.
         // A model or tools connected here do not go through a decision, so with them the node refuses too.
-        const askInChat = ctx.getNodeParameter<string>('toolApprovals', i, 'refuse') === 'askInChat' && ctx.getMode() === 'chat' && Boolean(ctx.putExecutionToWait) && !model && !tools.length;
+        // Only a run on the published config takes the overlay: an editor run on the draft (which already holds what moved) or a pinned version runs what it says, so askInChat, the router and the cache behave as they will after publish.
+        const pending = source === 'published' ? await moved(agent) : undefined;
+        const askInChat = ctx.getNodeParameter<string>('toolApprovals', i, 'refuse') === 'askInChat' && ctx.getMode() === 'chat' && Boolean(ctx.putExecutionToWait) && !model && !tools.length && !pending;
         const onEvent = send && streamer(send, i, { id: agent.id, name: agent.name, ...(agent.avatar && { face: agent.avatar as unknown as JsonObject }) });
         let result: Awaited<ReturnType<typeof runAgent>>;
         if (waited && i === waited.itemIndex) {
@@ -277,7 +301,7 @@ export const messageAgentNode = defineNode({
           let session;
           if (memory) {
             // The connected memory holds the conversation: a new session starts from its history and saves back to it.
-            session = newSession(agent, { source: 'workflow', userId, version: agent.published.version });
+            session = newSession(agent, { source: 'workflow', userId, version: runVersion });
             session.messages = await memory.load(key || 'default');
           } else {
             const conversationKey = key ? `${userId}:${key}` : undefined;
@@ -286,9 +310,10 @@ export const messageAgentNode = defineNode({
             // N6: a waiting run that was cancelled (or failed, or is gone) leaves nobody to decide: the orphan call is settled as cancelled and the conversation goes on.
             if (existing && (existing.pending || existing.status === 'awaiting_approval') && (await orphaned(existing, (await import('../store')).store))) settleOrphan(existing, agentStore);
             if (existing && (existing.pending || existing.status === 'awaiting_approval')) throw new NodeOperationError(`${agent.name} is waiting for Approve or Reject on its last tool call: decide that first, then send the next message`, { itemIndex: i });
-            session = (existing && { ...existing, version: agent.published.version }) ?? newSession(agent, { source: 'workflow', userId, version: agent.published.version, ...(conversationKey && { conversationKey }) });
+            session = (existing && { ...existing, version: runVersion }) ?? newSession(agent, { source: 'workflow', userId, version: runVersion, ...(conversationKey && { conversationKey }) });
           }
           session.execution = execution;
+          recordRunAgent(execution.executionId, { nodeId: node.id, agentId: agent.id, version: runVersion, source }); // AG21: both versions of a run
           send?.({ type: 'begin', itemIndex: i });
           result = await runAgent({
             agent,
@@ -297,6 +322,7 @@ export const messageAgentNode = defineNode({
             // AG10: 'ask' only in the editor's chat with Tool Approvals set to ask there.
             approvals: askInChat ? 'ask' : 'deny',
             toolImages: { keep: Number(ctx.getNodeParameter('toolImagesKept', i, 2)) },
+            ...(pending && { moved: pending }), // AG17:
             ...((model || tools.length) && { flow: { ...(model && { model }), ...(tools.length && { tools, targets: flowTargets }) } }),
             // The chat panel and streaming triggers get the agent's answers and tool calls as they happen.
             ...(onEvent && { onEvent }),
@@ -326,8 +352,8 @@ export const messageAgentNode = defineNode({
             reply: result.reply ?? null,
             sessionId: result.session.id,
             agentId: agent.id,
-            version: agent.published.version,
-            model: model ? `${model.provider}/${model.model}` : agent.published.config.model ? `${agent.published.config.model.provider}/${agent.published.config.model.model}` : null,
+            version: runVersion,
+            model: model ? `${model.provider}/${model.model}` : runConfig.model ? `${runConfig.model.provider}/${runConfig.model.model}` : null,
             endReason: result.reason,
             usage: { ...result.usage },
             steps,
@@ -358,7 +384,7 @@ export const messageAgentNode = defineNode({
           .filter((agent) => !available || available.has(agent.id))
           .filter((agent) => !settings || !projectId || agentAllowedBy(settings, agent.id, projects.homeProjectId('agent', agent.id) === projectId))
           .map((agent) => {
-            const state = agent.published ? `Published v${agent.published.version}` : 'Not published yet';
+            const state = agent.published ? `Published v${agent.published.version} · the editor tests the draft` : 'Not published yet'; // AG21: state
             const home = projectId ? projects.homeProjectId('agent', agent.id) : undefined;
             const from = home && home !== projectId ? projects.getProject(home)?.name : undefined;
             return { name: agent.name, value: agent.id, description: from ? `From ${from} · ${state}` : state };

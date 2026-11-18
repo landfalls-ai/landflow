@@ -97,6 +97,8 @@ export interface TeamRunRequest {
   onEvent?: (event: AgentStreamEvent) => void;
   /** The stream of a member that is a Landflow agent (its own loop: whom it asks, its own tools), by title. */
   onMemberEvent?: (title: string, event: AgentStreamEvent) => void;
+  /** AG21: the version each agent runs at, by agent id: a pinned number (production) or `draft` (the editor's test). An agent not named runs its published version. */
+  agentVersions?: Record<string, number | 'draft'>;
   /** Whether the run can wait for a person (a flow's): a member's question for a person pauses it instead of ending it. */
   canWait?: boolean;
   /**
@@ -703,7 +705,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
         session = newSession(agent, {
           source: 'agent',
           userId: `team:${request.team.id}`,
-          version: agent.published?.version ?? 'draft',
+          version: request.agentVersions?.[agent.id] ?? agent.published?.version ?? 'draft', // AG21: version
           title: cut(text ?? report.title, 80),
           parentSessionId: ctx.session.id,
           parentAgentId: ctx.agent.id,
@@ -1000,7 +1002,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     session = newSession(leadAgent, {
       source: 'workflow',
       userId,
-      version: leadAgent.published?.version ?? 'draft',
+      version: request.agentVersions?.[leadAgent.id] ?? leadAgent.published?.version ?? 'draft', // AG21: version
     });
     if (request.memory) session.messages = await request.memory.load(request.memoryKey || 'default');
     if (request.execution) session.execution = request.execution;

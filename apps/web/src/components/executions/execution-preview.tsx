@@ -40,6 +40,7 @@ import { useLiveEvents } from '@/lib/client/live';
 import { progressLine, type NodeProgress } from '@/lib/client/node-progress';
 import type { RunEntry } from '@/lib/client/run-data';
 import type { DebugCommand, ExecutionRecord } from '@/lib/shared/types';
+import { runVersionsLine, type RunVersions } from '@/lib/shared/agent-versions'; // AG21:
 import { LogsPanel, type LogsNode, type LogsPending, type LogsSelection } from '../run/logs-panel';
 import { RUN_STATE, RunStateIcon, formatStamp, runStateOf, statusText, useNow, type RunState } from '../run/run-status';
 import { Button } from '../ui/button';
@@ -282,6 +283,14 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
 
   const now = useNow(live);
   const canvasWorkflow = record?.workflow ?? currentWorkflow;
+  // AG16: a run's `versions` (AG21's answer) say which agent version each bound node ran; the canvas draws those bubbles read-only.
+  // AG21: the same answer gives the header's "workflow v4 · Alert triager v2" line below.
+  const runVersions = (record as (ExecutionRecord & { versions?: RunVersions }) | undefined)?.versions;
+  const runAgentVersions = useMemo(() => {
+    const out: Record<string, number | 'draft'> = {};
+    for (const a of runVersions?.agents ?? []) if (!(a.nodeId in out)) out[a.nodeId] = a.version;
+    return Object.keys(out).length ? out : undefined;
+  }, [runVersions]);
   const nodes = useMemo(() => {
     const map: Record<string, LogsNode> = {};
     for (const n of canvasWorkflow?.nodes ?? []) map[n.id] = { name: n.name, type: n.type };
@@ -511,6 +520,9 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
       </>
     ) : null;
 
+  // AG21: "workflow v4 · Alert triager v2", when the run used an agent (the server records both versions; `runVersions` above).
+  const versionsLine = runVersions?.agents.length ? runVersionsLine(runVersions) : undefined;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* ------------------------------------------------------------ header */}
@@ -531,6 +543,12 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                   title={record.versionPublished ? 'The published version when the run started (draft and publish)' : 'A draft: not the published version when the run started'}
                 >
                   Ran version {record.versionNumber} ({record.versionPublished ? 'published' : 'draft'})
+                </span>
+              )}
+              {versionsLine && (
+                // AG21: both versions of the run: the workflow's and each agent's ("workflow v4 · Alert triager v2")
+                <span data-testid="run-versions" className="flex items-center gap-1 rounded-full border border-hair px-2 text-[12px] text-t2" title="The workflow version and the agent versions this run used">
+                  {versionsLine}
                 </span>
               )}
               {record.mcp && (
@@ -677,6 +695,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                           Ran version {record.versionNumber} ({record.versionPublished ? 'published' : 'draft'})
                         </p>
                       )}
+                      {versionsLine && <p className="px-3 py-1.5 text-[12px] text-t2 md:hidden">{versionsLine}</p>}
                       {record.mcp && (
                         <p className="px-3 py-1.5 text-[12px] text-t2 md:hidden">
                           MCP tool <span className="font-mono">{record.mcp.tool}</span>, called by <span className="font-mono">{record.mcp.caller}</span>
@@ -881,6 +900,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
               teams={teams}
               executionId={executionId}
               onNodeClick={selectNode}
+              agentVersions={runAgentVersions}
             />
           ) : (
             <div className="canvas-readonly grid size-full place-items-center bg-[repeating-linear-gradient(-45deg,transparent_0_14px,var(--acdim)_14px_28px)] text-[13px] text-t3">

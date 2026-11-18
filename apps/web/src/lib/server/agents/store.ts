@@ -38,6 +38,7 @@ import { database, type Database } from '../db';
 import { singleton } from '../singleton';
 import { store } from '../store';
 import type { Cursor } from '../pagination';
+import { recordAgentVersion } from './version-rows'; // AG21:
 
 /** A `running` session no process has saved for this long is idle again (its process died; files mode resets them at boot). */
 const STALE_RUNNING_MS = 30 * 60_000;
@@ -465,6 +466,21 @@ function settleStale<T extends { status: string; updatedAt: string }>(session: T
   return session.status === 'running' && Date.now() - Date.parse(session.updatedAt) > STALE_RUNNING_MS ? { ...session, status: 'idle' } : session;
 }
 
+/** `movedToolLine`'s line (flow-moves.ts) for a tool moved in from a workflow: "Also your job: <tool> (<what it does>), moved in from a workflow that ran it: …". */
+const MOVED_TOOL_LINE = /^Also your job: (\S+) \(.*\), moved in from a workflow that ran it: use it when a message asks for that\.$/;
+
+/** The instructions without the moved-tool lines of tools the config no longer has: withdrawing the tool takes its "Also your job" line with it. */
+export function withoutWithdrawnToolLines(instructions: string, tools: ReadonlyArray<object>): string {
+  if (!instructions.includes('Also your job: ')) return instructions;
+  const names = new Set(tools.map((t) => (t as { name?: string }).name));
+  const lines = instructions.split('\n');
+  const kept = lines.filter((line) => {
+    const m = MOVED_TOOL_LINE.exec(line.trim());
+    return !m || names.has(m[1]!);
+  });
+  return kept.length === lines.length ? instructions : kept.join('\n').trimEnd();
+}
+
 class AgentStore {
   /** Channel poll state: agent-channels.json, or its `config_files` row in queue mode (../config-store.ts). */
   private readonly channels = new ConfigFile<Record<string, JsonObject>>('agent-channels.json', { dir: () => store.dir });
@@ -526,7 +542,8 @@ class AgentStore {
     if (!agent) return undefined;
     // The optional parts come from the new config only, so a cleared model, persona, guardrails or plugin list stays cleared.
     const { model: _model, persona: _persona, guardrails: _guardrails, router: _router, cache: _cache, access: _access, plugins: _plugins, ...rest } = agent;
-    return this.write({ ...rest, ...normalizeConfig({ ...configOf(agent), ...config }), updatedAt: new Date().toISOString() });
+    const next = normalizeConfig({ ...configOf(agent), ...config });
+    return this.write({ ...rest, ...next, instructions: withoutWithdrawnToolLines(next.instructions, next.tools), updatedAt: new Date().toISOString() });
   }
 
   publish(id: string): Agent | undefined {
@@ -535,7 +552,9 @@ class AgentStore {
     const version = (agent.published?.version ?? agent.history[0]?.version ?? 0) + 1;
     const published = { version, publishedAt: new Date().toISOString(), config: configOf(agent) };
     const history = [published, ...agent.history].slice(0, MAX_HISTORY);
-    return this.write({ ...agent, published, history, updatedAt: published.publishedAt });
+    const saved = this.write({ ...agent, published, history, updatedAt: published.publishedAt });
+    recordAgentVersion(saved); // AG21: kept past the 20 in history while a workflow version may pin it
+    return saved;
   }
 
   /** Put an earlier version's config back into the draft. Nothing is published: the person (or the eval gate) does that. */

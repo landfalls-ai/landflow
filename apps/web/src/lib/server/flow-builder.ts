@@ -6,6 +6,7 @@
  */
 import type { ConnectionType, NodeItem, NodeTypeInfo, PropertyDescriptor } from '@/lib/shared/types';
 import { describeAgents, withAgentId, type AgentBrief } from '@/lib/shared/agent-brief';
+import { reuseSentence } from '@/lib/shared/tenant-catalog'; // AG19:
 import { describeTeams, withTeamId, type TeamBrief } from '@/lib/shared/agent-teams';
 import { registry } from './plugins/registry';
 import { collectionShape } from '@/lib/shared/assistant-ops';
@@ -51,6 +52,8 @@ export interface FlowDraft {
   plan?: BuildPlan;
   /** SB13: every model call of the draft in order, with its size (never its text). */
   stages?: BuildStage[];
+  /** AG19: one sentence per Run an Agent step that reuses an agent the caller has ("Reuses “Alert triager”: …"): the summary's assumptions. */
+  reuses?: string[];
   /** SB15: the build summary the route adds after the guards (steps in words, what was assumed, what is left, what no node can do). */
   summary?: DraftSummary; // SB15:
 }
@@ -117,7 +120,7 @@ Rules:
 - Parameters: only the parameter names listed for that node. Reference fields of the current item with expressions such as "{{ $json.title }}". Field parameters (like "field") take a plain field name such as "text", not an expression.
 - Nodes that write a result object into "outputField" (see the parameter notes, e.g. "receives {score, label}") nest it: compare "{{ $json.sentiment.label }}" or "{{ $json.sentiment.score }}", never the whole object.
 - connections: {"from": key, "to": key, "output": n}. "output" is the source's output index (If/Filter-like nodes: 0 = true, 1 = false). AI sub-nodes attach to an AI Agent with "type" ai_languageModel, ai_memory or ai_tool, from the sub-node to the agent. RAG: a vector store (mode retrieve-as-tool) attaches to an agent as ai_tool, or (mode retrieve) to a Question and Answer Chain as ai_retriever; embeddings attach to a vector store as ai_embedding, a data loader as ai_document, a text splitter to the loader as ai_textSplitter.
-- Agents: when a step needs an agent, first look at "Your agents" and "Published agent teams" after the catalog. If one's description, skills and tools cover the step, run it: core.messageAgent with its agentId (or core.runTeam with its teamId) and a "message" saying what to do with the item. Use core.aiAgent only for a small step that needs no specialist (classify, summarize, extract, draft a reply). Never invent an agentId or teamId.
+- Agents: when a step needs an agent, first look at "Your agents" and "Published agent teams" after the catalog. If one's description, skills and tools cover the step, reuse it: core.messageAgent with its agentId (or core.runTeam with its teamId) and a "message" saying what to do with the item, and no node that does what the agent already does (an agent that sends the email needs no Send Email step); the draft's summary says which agent and why. When no agent covers a step that needs a specialist, add a core.messageAgent with an empty agentId and the new agent's name as the node's name: the summary lists it as "needs a new agent: <name>", and the person picks an agent for it or asks Spotlight to create one (nothing designs it by itself when the draft is applied). Use core.aiAgent only for a small step that needs no specialist (classify, summarize, extract, draft a reply). Never invent an agentId or teamId.
 - testData: 2–4 realistic sample items the flow can be tested with when run manually (objects with the fields the flow reads); just 1 when the flow runs an agent or a team, since each item is a whole agent run. With a Webhook trigger, each item is what a call brings: {"body": {…}} (plus the "headers" or "query" the flow reads); with a Form trigger, the form's fields.
 
 ${PARAMETER_FORMATS}`;
@@ -144,10 +147,69 @@ function catalog(types: NodeTypeInfo[]): string {
     .join('\n');
 }
 
-/** A Run an Agent node keeps only an agent the caller has: an id the model made up is cleared, so the node asks for one. */
+/** A Run an Agent node keeps only an agent the caller has: an id the model made up, or an agent never published (it cannot run yet), is cleared, so the node asks for one. */
 export function knownAgent(parameters: Record<string, unknown>, agents: readonly AgentBrief[]): Record<string, unknown> {
   const id = typeof parameters.agentId === 'string' ? parameters.agentId : '';
-  return !id || id.includes('{{') || agents.some((a) => a.id === id) ? parameters : { ...parameters, agentId: '' };
+  return !id || id.includes('{{') || agents.some((a) => a.id === id && a.published !== false) ? parameters : { ...parameters, agentId: '' };
+}
+
+/** AG19: what the draft's Run an Agent steps say about their agents: one reuse sentence each for an agent the caller has, one `left` line for a step that needs a new agent. */
+export function agentReading(nodes: ReadonlyArray<{ type: string; name: string; parameters?: Record<string, unknown> }>, agents: readonly AgentBrief[]): { reuses: string[]; left: DraftLeft[] } {
+  const reuses: string[] = [];
+  const left: DraftLeft[] = [];
+  for (const n of nodes) {
+    if (n.type !== 'core.messageAgent') continue;
+    const id = typeof n.parameters?.agentId === 'string' ? n.parameters.agentId : '';
+    const agent = id ? agents.find((a) => a.id === id) : undefined;
+    if (agent) reuses.push(reuseSentence(agent.name, (agent.description ?? agent.role ?? '').split(/(?<=[.!?])\s/)[0] ?? ''));
+    else if (!id) left.push({ node: n.name, field: 'agentId', kind: 'empty', text: `“${n.name}”: needs a new agent: ${n.name} (pick one, or ask Spotlight to create it)` });
+  }
+  return { reuses, left };
+}
+
+/**
+ * AG19: a Run an Agent step bound to an agent that has a Send Email tool (`send_email`: `messaging.emailSend`) sends the mail
+ * itself, so a Send Email step right after it is dropped (the later steps hang on the agent instead) and the summary says
+ * why. The model still adds such a step now and then. The rule is narrow on purpose; the step is dropped only when all hold:
+ * the agent has a Send Email tool that does not ask first (a workflow run refuses one that asks, so the step would be the
+ * only mail); the agent is the step's only main input; the step has no wired sub-nodes; it sets no CC, BCC or attachments;
+ * and its To is empty, or a literal equal (trimmed, any case) to the tool's fixed To. Any expression, any other address, a
+ * tool that takes the address from the model (unless the step's To is empty), and every other node type: the step stays.
+ */
+export function dropRepeatedAgentWork<N extends { key: string; type: string; name: string; parameters?: Record<string, unknown> }>(
+  nodes: N[],
+  edges: Array<[string, string, number, ConnectionType]>,
+  agents: readonly AgentBrief[],
+): { nodes: N[]; edges: Array<[string, string, number, ConnectionType]>; notes: string[]; dropped: string[] } {
+  let keptNodes = nodes;
+  let keptEdges = edges;
+  const notes: string[] = [];
+  const dropped: string[] = [];
+  const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  for (const n of nodes) {
+    if (n.type !== 'core.messageAgent') continue;
+    const id = typeof n.parameters?.agentId === 'string' ? n.parameters.agentId : '';
+    const agent = id ? agents.find((a) => a.id === id) : undefined;
+    const tools = (agent?.nodeTools ?? []).filter((t) => t.type === 'messaging.emailSend');
+    if (!agent || !tools.length || tools.some((t) => t.requireApproval)) continue;
+    for (const [from, to, output, type] of keptEdges) {
+      if (from !== n.key || type !== 'main') continue;
+      const next = keptNodes.find((m) => m.key === to);
+      if (!next || next.type !== 'messaging.emailSend') continue;
+      const options = (next.parameters?.options ?? {}) as Record<string, unknown>;
+      if (text(options.ccEmail) || text(options.bccEmail) || (Array.isArray(options.attachments) ? options.attachments.length : text(options.attachments))) continue;
+      const toEmail = text(next.parameters?.toEmail);
+      if (toEmail && !tools.some((t) => t.fixed?.toEmail && t.fixed.toEmail.trim().toLowerCase() === toEmail.toLowerCase())) continue;
+      if (keptEdges.some((e) => e[1] === next.key && (e[3] !== 'main' || e[0] !== n.key))) continue; // another input, or wired sub-nodes
+      if (keptEdges.some((e) => e[0] === next.key && e[3] !== 'main')) continue;
+      const after = keptEdges.filter((e) => e[0] === next.key && e[3] === 'main');
+      keptNodes = keptNodes.filter((m) => m.key !== next.key);
+      keptEdges = [...keptEdges.filter((e) => e[0] !== next.key && e[1] !== next.key), ...after.map(([, target, , t]): [string, string, number, ConnectionType] => [n.key, target, output, t])];
+      notes.push(`“${agent.name}” sends the email itself, so the flow has no “${next.name}” step after it`);
+      dropped.push(next.name);
+    }
+  }
+  return { nodes: keptNodes, edges: keptEdges, notes, dropped };
 }
 
 /**
@@ -544,6 +606,10 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
   if (options.plan) {
     const plan = options.plan;
     const built = await buildFromPlan(plan, prompt, { kit: { emptyParts, jsonOf, knownAgent, pinsOnTrigger, adapterTimedOut, AGENT_TYPES, PARAMETER_FORMATS }, model, types, agents, teams, timeoutMs: builderTimeoutMs(), started: options.started ?? Date.now() });
+    const own = dropRepeatedAgentWork(built.nodes, built.edges, agents); // AG19: an agent that does a step itself
+    built.nodes = own.nodes;
+    built.edges = own.edges;
+    built.dropped = [...built.dropped, ...own.dropped];
     const staged = { nodes: built.nodes, edges: built.edges, dropped: built.dropped, left: built.left, trigger: built.trigger };
     const stagedLeft = mergeLeft(
       built.left,
@@ -553,7 +619,8 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
     );
     const at = pinTarget(staged, byType);
     const items = (cleanTestItems(at ? built.testItems[at.key] : undefined, at, built.nodes) ?? sampleItems(at, built.nodes))?.slice(0, built.nodes.some((n) => AGENT_TYPES.has(n.type)) ? 1 : undefined);
-    return { name: plan.name.slice(0, 80), nodes: built.nodes, edges: built.edges, pinData: at && items ? { [at.key]: items } : undefined, model, durationMs: Date.now() - built.started, dropped: built.dropped, left: stagedLeft, calls: built.calls, plan, stages: built.stages };
+    const reading = agentReading(built.nodes, agents); // AG19:
+    return { name: plan.name.slice(0, 80), nodes: built.nodes, edges: built.edges, pinData: at && items ? { [at.key]: items } : undefined, model, durationMs: Date.now() - built.started, dropped: built.dropped, left: mergeLeft(stagedLeft, reading.left), ...(reading.reuses.length + own.notes.length && { reuses: [...reading.reuses, ...own.notes] }) /* AG19: */, calls: built.calls, plan, stages: built.stages };
   }
   const teamsNote = byType.has('core.runTeam') && teams.length ? `\n\nPublished agent teams (core.runTeam: put the team's teamId in teamId, never its name):\n${describeTeams([...teams])}` : '';
   const started = Date.now();
@@ -586,7 +653,9 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
       // The first draft stands: a failed send-back is no reason to lose it.
     }
   }
-  const { nodes, edges, dropped } = draft;
+  const own = dropRepeatedAgentWork(draft.nodes, draft.edges, agents); // AG19: an agent that does a step itself
+  const { nodes, edges } = own;
+  const dropped = [...draft.dropped, ...own.dropped];
   const left = mergeLeft(
     draft.left,
     emptyParts(draft, byType)
@@ -596,5 +665,6 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
   const target = pinTarget(draft, byType);
   const testItems = (cleanTestItems(asItems(reply.testData), target, nodes) ?? sampleItems(target, nodes))?.slice(0, nodes.some((n) => AGENT_TYPES.has(n.type)) ? 1 : undefined);
   const pinData = target && testItems ? { [target.key]: testItems } : undefined;
-  return { name: (reply.name ?? 'Generated workflow').slice(0, 80), nodes, edges, pinData, model, durationMs: Date.now() - started, dropped, left, calls, stages }; // SB13: stages
+  const reading = agentReading(nodes, agents); // AG19:
+  return { name: (reply.name ?? 'Generated workflow').slice(0, 80), nodes, edges, pinData, model, durationMs: Date.now() - started, dropped, left: mergeLeft(left, reading.left), ...(reading.reuses.length + own.notes.length && { reuses: [...reading.reuses, ...own.notes] }), calls, stages }; // SB13: stages AG19: reuses
 }

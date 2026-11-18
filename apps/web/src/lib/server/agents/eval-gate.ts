@@ -60,6 +60,24 @@ export function addCase(agentId: string, input: { input: string; expected?: stri
   return testCase;
 }
 
+/**
+ * Replace some of an agent's cases with new ones in one transaction: every id to remove must be the agent's, and the result must
+ * fit the cap; on any failure nothing changes. Returns the agent's cases after.
+ */
+export function replaceCases(agentId: string, removeIds: string[], add: Array<{ input: string; expected?: string }>): AgentEvalCase[] {
+  // A replace that adds nothing would leave the agent with fewer cases, perhaps none (the publish gate skips an agent with no cases).
+  if (removeIds.length && !add.length) throw new EvalGateError('A replace must add at least one case; delete a case on its own to remove it', 400);
+  return db().transaction(() => {
+    const have = new Set(listCases(agentId).map((c) => c.id));
+    const missing = removeIds.filter((id) => !have.has(id));
+    if (missing.length) throw new EvalGateError('A test case to replace is no longer there', 409);
+    if (have.size - new Set(removeIds).size + add.length > MAX_EVAL_CASES) throw new EvalGateError(`An agent keeps at most ${MAX_EVAL_CASES} test cases`);
+    for (const id of new Set(removeIds)) deleteCase(agentId, id);
+    for (const c of add) addCase(agentId, c);
+    return listCases(agentId);
+  });
+}
+
 export function deleteCase(agentId: string, id: string): boolean {
   const found = db().get<{ id: string }>('SELECT id FROM agent_eval_cases WHERE id = ? AND agent_id = ?', id, agentId);
   if (found) db().delete('agent_eval_cases', { id });

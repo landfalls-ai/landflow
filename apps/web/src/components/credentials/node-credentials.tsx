@@ -11,6 +11,7 @@ import type { CredentialRefs } from '../editor/param-form';
 import { Button } from '../ui/button';
 import { Select } from '../ui/inputs';
 import { useCredentialScope } from '../projects/use-projects';
+import { useAgentScope } from './agent-scope';
 import { CredentialDialog, CredentialTypeIcon } from './credential-dialog';
 import { autoPickStep, credentialInputs, qualifiedCredentialType, useCredentials } from './use-credentials';
 
@@ -37,9 +38,11 @@ export function NodeCredentials({
   publishPending?: boolean;
 }) {
   const { credentials: all, types } = useCredentials();
-  const { scope, failed, reload } = useCredentialScope(workflowId);
+  // On an agent's page the agent's project limits the choice, as the workflow's does in the editor.
+  const agentId = useAgentScope();
+  const { scope, failed, reload } = useCredentialScope(workflowId, agentId);
   // With a workflow, the choice waits for its project's credentials: before they are known nothing may be picked on the person's behalf.
-  const { candidates: credentials, scoped, scopeKnown } = useMemo(() => credentialInputs({ all, scope, workflowId }), [all, scope, workflowId]);
+  const { candidates: credentials, scoped, scopeKnown } = useMemo(() => credentialInputs({ all, scope, workflowId: workflowId ?? agentId }), [all, scope, workflowId, agentId]);
   const root = useRef<HTMLDivElement>(null);
   const [retrying, setRetrying] = useState(false);
   const [dialog, setDialog] = useState<{ requirement: string; type: string; id?: string } | null>(null);
@@ -116,7 +119,7 @@ export function NodeCredentials({
             )}
             {unusable && (
               <p className="mt-1 flex items-center gap-1 text-[12px] text-warn">
-                <TriangleAlert className="size-3" /> “{ref.name}” isn’t shared with this workflow’s project — choose another, or ask its owner to share it.
+                <TriangleAlert className="size-3" /> “{ref.name}” isn’t shared with {workflowId ? 'this workflow’s' : 'this agent’s'} project — choose another, or ask its owner to share it.
               </p>
             )}
             {ref && !missing && publishPending && (
@@ -133,7 +136,7 @@ export function NodeCredentials({
       <div role="status" aria-live="polite">
         {scoped && failed && (
           <p className="flex flex-wrap items-center gap-1 text-[12px] text-warn">
-            <TriangleAlert className="size-3" /> Couldn’t check which credentials this workflow’s project may use, so every credential is listed and none is picked automatically.
+            <TriangleAlert className="size-3" /> Couldn’t check which credentials {workflowId ? 'this workflow’s' : 'this agent’s'} project may use, so every credential is listed and none is picked automatically.
             <button
               type="button"
               className="underline disabled:opacity-60"

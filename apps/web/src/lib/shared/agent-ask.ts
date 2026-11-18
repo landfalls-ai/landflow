@@ -283,6 +283,8 @@ function jobOf(message: string): string {
 }
 
 /** AG02: words a name never starts with or keeps: articles, pronouns, question words, fillers. */
+/** Wave ag4 carryover: words that start a clause of their own inside the description ("an alert someone pastes"). */
+const CLAUSE_SUBJECT = new Set(['someone', 'somebody', 'anyone', 'anybody', 'people', 'they', 'we', 'you', 'i', 'he', 'she']);
 const NAME_STOP = new Set(['a', 'an', 'the', 'our', 'its', 'my', 'your', 'their', 'his', 'her', 'me', 'us', 'we', 'you', 'it', 'them', 'this', 'that', 'these', 'those', 'what', 'which', 'who', 'whether', 'if', 'is', 'are', 'be', 'been', 'any', 'all', 'each', 'every', 'some', 'new', 'open', 'incoming', 'customer', 'support', 'against', 'about', 'into', 'by', 'of', 'at', 'it', 'everything', 'anything', 'and', 'or', 'to', 'for', 'from', 'with', 'in', 'on', 'then', 'tool', 'tools', 'integration', 'access', 'as']);
 /** AG02: plural nouns that stay plural in a name ("Sales data analyst"). */
 const KEEP_PLURAL = /^(?:sales|news|analytics|metrics|logs|data|status|series)$/;
@@ -353,7 +355,10 @@ export function fallbackName(description: string, tools: string[] = [], catalog:
     return `${cap(app)}${noun && noun.toLowerCase() !== app.toLowerCase() ? ` ${noun.toLowerCase()}` : ''} agent`.slice(0, 40);
   }
   if (tools.length >= 3 && plugins.size >= 2) return 'Utility helper';
-  const words = description.replace(/[.!?]+$/, '').toLowerCase().split(/\s+/).slice(1).map((w) => w.replace(/[^a-z0-9-]/g, '')).filter((w) => w && !NAME_STOP.has(w)).slice(0, 2);
+  const all = description.replace(/[.!?]+$/, '').toLowerCase().split(/\s+/).slice(1).map((w) => w.replace(/[^a-z0-9-]/g, ''));
+  // Wave ag4 carryover: "Reads an alert someone pastes, …" names the alert, not "Alert someone": a clause's own subject ends the name.
+  const cut = all.findIndex((w) => CLAUSE_SUBJECT.has(w));
+  const words = (cut >= 0 ? all.slice(0, cut) : all).filter((w) => w && !NAME_STOP.has(w)).slice(0, 2);
   return words.length ? `${cap(words.join(' '))} agent`.slice(0, 40) : 'New agent';
 }
 

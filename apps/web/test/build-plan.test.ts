@@ -139,6 +139,16 @@ describe('the plan call', () => {
     expect(largestPrompt(stages as never)).toBeLessThan(6000);
   });
 
+  it('wave ag4 carryover: tells the planner a reused agent’s own send is no step of its own, asks first or not', async () => {
+    queue = [reply(GOOD)];
+    const agents = [{ id: 'ag_s1', name: 'Alert triager', description: 'Triages an alert and emails on-call', version: 1, skills: [], tools: ['normalize_alert', 'send_email'], asksFirst: ['send_email'] }];
+    await planFlow('When an alert comes in on our webhook, triage it and email on-call about it.', { model: 'qwen3-coder:30b', types: availableTypes(), agents, stages: [] });
+    const first = sent(0);
+    expect(first).toContain('send_email (asks first)');
+    expect(first).toContain('no Send Email after an agent that sends the email');
+    expect(first).toContain('never add a step to get around that approval');
+  });
+
   it('sends a plan with two triggers and an unknown type back once, in words', async () => {
     queue = [
       reply({ ...GOOD, steps: [{ key: 's1', type: 'core.manualTrigger', name: 'Start', does: 'Start' }, { key: 's2', type: 'core.schedule', name: 'Weekdays', does: 'Run on weekdays', from: 's1' }, { key: 's3', type: 'linear.getIssues', name: 'Get', does: 'Read issues', from: 's2' }] }),

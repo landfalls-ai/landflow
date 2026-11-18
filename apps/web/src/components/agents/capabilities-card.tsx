@@ -209,7 +209,8 @@ export function credentialsAfterChange(
   return kept;
 }
 
-function NodeToolDialog({
+// AG16: exported so a canvas bubble's Change opens the agent page's own dialog.
+export function NodeToolDialog({
   tool,
   info,
   onSave,
@@ -370,7 +371,8 @@ async function createAndOpen(kind: 'workflow' | 'agent') {
   }
 }
 
-function WorkflowToolDialog({ tool, onSave, onClose }: { tool?: WorkflowToolConfig; onSave: (tool: WorkflowToolConfig) => void; onClose: () => void }) {
+// AG16: exported (see NodeToolDialog).
+export function WorkflowToolDialog({ tool, onSave, onClose }: { tool?: WorkflowToolConfig; onSave: (tool: WorkflowToolConfig) => void; onClose: () => void }) {
   const [workflows, setWorkflows] = useState<WorkflowOption[]>();
   const [error, setError] = useState<string>();
   const [value, setValue] = useState<WorkflowToolConfig | undefined>(tool);
@@ -511,7 +513,8 @@ function WorkflowToolDialog({ tool, onSave, onClose }: { tool?: WorkflowToolConf
 // Sub-agents
 // ---------------------------------------------------------------------------
 
-function SubAgentDialog({
+// AG16: exported (see NodeToolDialog).
+export function SubAgentDialog({
   tool,
   selfId,
   taken,

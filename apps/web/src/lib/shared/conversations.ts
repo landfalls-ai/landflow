@@ -55,6 +55,13 @@ export const agentCardPartSchema = z.object({
   ask: short(4000).optional(),
   base: z.object({ agentId: short(200), name: short(200) }).optional(),
   config: z.record(z.string(), z.unknown()).optional(),
+  // AG19 review fix: what the design says besides the config survives a reload (the reuse row, the attached line, the model's why, what it read).
+  reuse: z.object({ agentId: short(200), name: short(200), why: short(500), published: z.boolean(), gaps: z.array(short(300)).max(10) }).optional(),
+  attached: z.object({ collection: short(200), documents: z.number().optional(), search: short(100) }).optional(),
+  modelWhy: z.enum(['asked', 'default', 'unavailable']).optional(),
+  modelNote: short(500).optional(),
+  catalog: z.array(z.object({ tool: short(200), count: z.number().optional() })).max(20).optional(),
+  knowledgeSetup: z.record(z.string(), z.unknown()).optional(),
 });
 export const agentRowPartSchema = z.object({
   nodeId: short(200).optional(),

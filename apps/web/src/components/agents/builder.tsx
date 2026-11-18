@@ -33,6 +33,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
+import { usedByLine, type AgentVersionUse } from '@/lib/shared/agent-versions'; // AG21:
 import { diffConfigs, type Agent, type AgentConfig, type KagentStatus } from '@/lib/shared/agents';
 import { Chip } from '../ui/badge';
 import { Button } from '../ui/button';
@@ -68,6 +69,7 @@ import { AGENT_CHANGED, announceSaved } from '@/lib/client/agent-change'; // AG0
 import { BackLink } from '../shell/page-header';
 import { ExportPluginDialog } from './export-plugin-dialog';
 import { AvailabilityDialog } from './availability-dialog';
+import { AgentScopeProvider } from '../credentials/agent-scope';
 import { canMakeAvailable, ownershipOfSummary } from './project-names';
 import {
   abilityRows,
@@ -407,6 +409,37 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
   };
 
   // AG05: `skipEval` is only ever the person's own click on "Publish anyway" in the held notice.
+  // AG21: which workflow versions pin each published version of this agent ("v2 · used by Alert intake v4 (production)").
+  const [uses, setUses] = useState<AgentVersionUse[]>([]);
+  const liveVersion = agent?.published?.version;
+  const loadUses = useCallback(async () => {
+    const answer = await api<{ versions: AgentVersionUse[] }>(`/api/agents/${agentId}/versions`, { background: true }).catch(() => undefined);
+    if (answer) setUses(answer.versions);
+    return answer?.versions;
+  }, [agentId]);
+  useEffect(() => {
+    void loadUses();
+  }, [loadUses, liveVersion]);
+  /** After a publish: the production workflows that still run an older version of this agent, each a link to its editor. */
+  const toastOlderPins = async () => {
+    const versions = await loadUses();
+    const latest = Math.max(0, ...(versions ?? []).map((v) => v.version));
+    const stale = (versions ?? []).filter((v) => v.version < latest).flatMap((v) => v.usedBy.filter((u) => u.production).map((u) => ({ ...u, pinned: v.version })));
+    if (!stale.length) return;
+    toast.info(`${stale.length === 1 ? 'A production workflow runs' : `${stale.length} production workflows run`} an older version`, {
+      description: (
+        <span className="flex flex-col gap-0.5">
+          {stale.map((u) => (
+            <Link key={`${u.workflowId}:${u.workflowVersion}`} href={`/workflows/${u.workflowId}`} className="text-ac hover:underline">
+              {u.name} v{u.workflowVersion} runs v{u.pinned}: test and update
+            </Link>
+          ))}
+        </span>
+      ),
+      duration: 12_000,
+    });
+  };
+
   const publish = async (skipEval = false) => {
     setPublishing(true);
     setGate({ state: 'publishing' });
@@ -423,6 +456,7 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
       if (kagent && 'error' in kagent) toast.warning(`Published v${next.published?.version ?? ''}, but kagent still has v${next.kagent?.version ?? '?'}: ${kagent.error}`);
       else toast.success(`Published v${next.published?.version ?? ''}${kagent ? ' and written to kagent' : ''}`);
       void useAgentData.getState().loadAgents();
+      void toastOlderPins(); // AG21: production workflows keep the version they were published with: say which
     } catch (e) {
       // The eval gate held the publish: the verdict stays on the page (a notice) until the next publish.
       const verdict = e instanceof ApiError && e.status === 409 ? (e.body as { gate?: { verdict?: { average?: number; reason?: string } } } | undefined)?.gate?.verdict : undefined;
@@ -562,6 +596,7 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
   const nextVersion = (published?.version ?? agent.history[0]?.version ?? 0) + 1;
 
   return (
+    <AgentScopeProvider value={agentId}>
     <div className="flex h-screen min-h-0">
       <div className="min-w-0 flex-1 overflow-y-auto">
         <header className="sticky top-0 z-20 flex h-[52px] shrink-0 items-center gap-2 border-b border-hair bg-bg px-6 max-md:px-4">
@@ -667,6 +702,7 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
                 {(close) => (
                   <>
                     <MenuLabel>{published ? `Live v${published.version} · ${timeAgo(published.publishedAt)}` : 'Not published'}</MenuLabel>
+                    {published && uses.find((u) => u.version === published.version)?.usedBy.length ? <div className="px-2.5 pb-1 text-[11px] text-t3">{usedByLine(uses.find((u) => u.version === published.version)!)}</div> : null}
                     {!published && <div className="px-2.5 pb-1.5 text-[12px] text-t3">Schedules, channels and workflows use the published version.</div>}
                     <MenuItem
                       disabled={!changed || publishing}
@@ -713,6 +749,7 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
                                   </button>
                                 </div>
                                 {changes.length > 0 && <div className="truncate text-[11px] text-t3">Changed: {changes.join(', ')}</div>}
+                                {uses.find((u) => u.version === v.version)?.usedBy.length ? <div className="text-[11px] text-t3 [overflow-wrap:anywhere]">{usedByLine(uses.find((u) => u.version === v.version)!)}</div> : null}
                               </div>
                             );
                           })}
@@ -1050,5 +1087,6 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
         </Dialog>
       )}
     </div>
+    </AgentScopeProvider>
   );
 }

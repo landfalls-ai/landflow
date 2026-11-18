@@ -19,29 +19,79 @@ export interface AgentBrief {
   skills: string[];
   /** What it can do: tool names, knowledge bases, MCP servers, the agents it asks. */
   tools: string[];
+  // AG18: what else Spotlight reads of an agent (all optional: a brief from before has none of them).
+  /** `provider/model` it runs on; absent: the host's default. */
+  model?: string;
+  /** The collections (or plugin knowledge bases) it searches. */
+  knowledge?: string[];
+  /** The tools (by the name in `tools`) that ask a person first. */
+  asksFirst?: string[];
+  /** False for an agent never published (a draft only: a Run an Agent node cannot run it yet). */
+  published?: boolean;
+  /** How many workflows run it. */
+  usedBy?: number;
+  /** Each node tool with what decides whether a flow step would repeat it: its type, whether it asks first, and its destination (fixed value, or free when empty / `$fromAI`). */
+  nodeTools?: AgentNodeTool[];
 }
+
+export interface AgentNodeTool {
+  type: string;
+  name: string;
+  requireApproval?: boolean;
+  /** The destination parameters (to / channel / url…) that hold a fixed value, by name. */
+  fixed?: Record<string, string>;
+  /** The destination parameters the model fills (`$fromAI`) or leaves empty. */
+  free?: string[];
+}
+
+/** The destination parameter of the one send node a flow step may repeat (`dropRepeatedAgentWork`): Send Email's To. Nothing else is ever dropped. */
+export const SENDER_DESTINATIONS: Record<string, string[]> = { 'messaging.emailSend': ['toEmail'] };
 
 const clip = (value: string | undefined, max: number) => {
   const text = value?.replace(/\s+/g, ' ').trim();
   return text ? (text.length > max ? `${text.slice(0, max - 1)}…` : text) : undefined;
 };
 
-/** A published agent as Spotlight reads it; undefined for one never published (a flow can't run it yet). */
-export function agentBrief(agent: Agent, nameOf: (id: string) => string | undefined = () => undefined): AgentBrief | undefined {
+/**
+ * A published agent as Spotlight reads it; undefined for one never published (a flow can't run it yet), unless `drafts`
+ * (AG18): then its draft is read, with `published: false` and version 0.
+ */
+export function agentBrief(agent: Agent, nameOf: (id: string) => string | undefined = () => undefined, options: { drafts?: boolean; usedBy?: number } = {}): AgentBrief | undefined {
   const { published } = agent;
-  if (!published) return undefined;
-  const config = published.config;
+  if (!published && !options.drafts) return undefined;
+  const config = published ? published.config : agent;
+  const toolName = (t: Agent['tools'][number]) => (t.type === 'agent' ? `asks ${nameOf(t.agentId) ?? 'another agent'}` : t.type === 'knowledge' && t.source !== 'node' ? t.collection : (t as { name: string }).name);
+  const shown = config.tools.slice(0, 12);
+  const asksFirst = shown.filter((t) => t.requireApproval).map(toolName);
+  const knowledge = config.tools.flatMap((t) => (t.type === 'knowledge' ? [toolName(t)] : []));
   const description = clip(config.description, 200) ?? clip(config.persona?.mission, 200);
   const role = clip(config.persona?.role, 80);
+  const nodeTools = config.tools.flatMap((t): AgentNodeTool[] => {
+    if (t.type !== 'node') return [];
+    const fixed: Record<string, string> = {};
+    const free: string[] = [];
+    for (const key of SENDER_DESTINATIONS[t.nodeType] ?? []) {
+      const value = (t.parameters as Record<string, unknown> | undefined)?.[key];
+      if (typeof value === 'string' && value.trim() && !value.includes('$fromAI')) fixed[key] = value.trim();
+      else free.push(key);
+    }
+    return [{ type: t.nodeType, name: (t as { name: string }).name, ...(t.requireApproval && { requireApproval: true }), ...(Object.keys(fixed).length && { fixed }), ...(free.length && { free }) }];
+  });
   return {
     id: agent.id,
     name: config.name,
     ...(description && { description }),
     ...(role && { role }),
     ...(config.team && { team: config.team }),
-    version: published.version,
+    version: published?.version ?? 0,
     skills: config.skills.slice(0, 8).map((s) => (s.whenToUse ? `${s.name} (${clip(s.whenToUse, 80)})` : s.name)),
-    tools: config.tools.slice(0, 12).map((t) => (t.type === 'agent' ? `asks ${nameOf(t.agentId) ?? 'another agent'}` : t.name)),
+    tools: shown.map((t) => (t.type === 'agent' ? `asks ${nameOf(t.agentId) ?? 'another agent'}` : t.name)),
+    ...(config.model?.model && { model: `${config.model.provider}/${config.model.model}` }), // AG18:
+    ...(knowledge.length && { knowledge }),
+    ...(asksFirst.length && { asksFirst }),
+    ...(!published && { published: false }),
+    ...(options.usedBy && { usedBy: options.usedBy }),
+    ...(nodeTools.length && { nodeTools }),
   };
 }
 
@@ -50,10 +100,12 @@ export function describeAgents(agents: readonly AgentBrief[]): string {
   return agents
     .map((a) => {
       const parts = [
-        `- “${a.name}” (agentId ${a.id}, v${a.version}${a.team ? `, team ${a.team}` : ''})${a.description ? `: ${a.description}` : ''}`,
+        `- “${a.name}” (agentId ${a.id}, ${a.published === false ? 'not published' : `v${a.version}`}${a.team ? `, team ${a.team}` : ''})${a.description ? `: ${a.description}` : ''}`,
         a.role && `Role: ${a.role}.`,
         a.skills.length && `Skills: ${a.skills.join('; ')}.`,
-        a.tools.length && `Tools: ${a.tools.join(', ')}.`,
+        a.tools.length && `Tools: ${a.tools.map((t) => (a.asksFirst?.includes(t) ? `${t} (asks first)` : t)).join(', ')}.`, // AG18:
+        a.model && `Model: ${a.model.split('/').pop()}.`,
+        a.knowledge?.length && `Knowledge: ${a.knowledge.join(', ')}.`,
       ];
       return parts.filter(Boolean).join(' ');
     })
@@ -71,6 +123,6 @@ export function withAgentId<T>(parameters: T, agents: readonly AgentBrief[]): T 
   const p = parameters as Record<string, unknown>;
   const written = typeof p.agentId === 'string' ? p.agentId.trim() : '';
   if (!written || written.includes('{{') || agents.some((a) => a.id === written)) return parameters;
-  const named = agents.filter((a) => agentKey(a.name) === agentKey(written));
+  const named = agents.filter((a) => a.published !== false && agentKey(a.name) === agentKey(written)); // AG18: a draft-only agent is never bound
   return named.length === 1 ? ({ ...p, agentId: named[0].id } as T) : parameters;
 }

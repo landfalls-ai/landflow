@@ -9,7 +9,9 @@ import { MentionChips } from '../../ui/mention-picker';
 import { useMentionPicker } from '@/lib/client/use-mention-picker';
 import { scopeLabel, scopeOf, type SpotlightScope } from '@/lib/shared/spotlight-scope'; // SB07:
 import { mentionQueryAt, type MentionHit } from '@/lib/shared/mentions';
-import { completeBubbles, idleBubbles, liveMentions, TEST_BUBBLE, type Bubble, type Mention, type SpotlightContext } from '@/lib/shared/spotlight';
+import { writesOutside } from '@/lib/shared/run-check';
+import { startTypedSession } from './typed-session';
+import { completeBubbles, idleBubbles, liveMentions, runAndFixAsk, runStepAsk, TEST_BUBBLE, type Bubble, type Mention, type SpotlightContext } from '@/lib/shared/spotlight';
 import { useBuildFlow } from '../ai-builder';
 import { afterReply, typedSession } from '../autonomous';
 import { answeredQuestion } from './answered-question';
@@ -19,7 +21,7 @@ import { suggestionKey, useAssistant, useSuggestions, useWorking, type ChatItem,
 import { useEditor } from '../store';
 import { dictationSupported, useDictation } from '../use-dictation';
 import { testUntilItRuns } from '../test-session';
-import { lastOutcomeOf, lastRunOf, openNeedOf } from '../timeline';
+import { lastOutcomeOf, lastRunOf, composerBusy, openNeedOf, sessionIsWaiting } from '../timeline';
 
 
 export const INPUT_ID = 'spotlight-input';
@@ -116,7 +118,9 @@ const FIX_ANSWER = 'fix-answer';
 /** The input at the bottom of the panel, with its bubbles above it. */
 export function Composer() {
   const hasItems = useAssistant((s) => s.items.length > 0);
-  const pending = useAssistant((s) => s.pending || Boolean(s.testing));
+  // The session waits on its own card (Apply, Pick it, Publish): the person is the one working, so the box is free and a typed message is a normal ask.
+  const waiting = useAssistant((s) => sessionIsWaiting({ testing: Boolean(s.testing), pending: s.pending }, s.items, s.testingId));
+  const pending = useAssistant((s) => composerBusy({ testing: Boolean(s.testing), pending: s.pending }, s.items, s.testingId));
   const drafting = useAssistant((s) => s.drafting);
   const working = useWorking();
   const empty = useEditor((s) => s.nodes.length === 0);
@@ -241,6 +245,24 @@ export function Composer() {
       await draftWholeFlow(message, build);
       return;
     }
+    // Wave ag4 carryover: "Run this step …" with one step selected that writes nothing outside runs that step (and what it needs), as its ▷ does.
+    {
+      const selected = useEditor.getState().nodes.filter((n) => n.selected);
+      if (runStepAsk(message) && selected.length === 1 && !writesOutside({ type: selected[0].data.wf.type, parameters: selected[0].data.wf.parameters ?? {} })) {
+        if (useEditor.getState().running) return;
+        useAssistant.getState().append([{ id: nanoid(8), role: 'user', text: message }, { id: nanoid(8), role: 'assistant', done: { model: '', durationMs: 0, steps: 0 }, parts: [{ kind: 'text', text: `Running “${selected[0].data.wf.name}” and the steps it needs: its output opens below.` }] }]);
+        useEditor.getState().run?.({ kind: 'node', nodeId: selected[0].id, scope: 'only' });
+        return;
+      }
+    }
+    // Wave ag4 carryover: "Run it now and fix it if it fails." is the Test and fix session (it asks before a run that writes outside), as the bubble is.
+    if (runAndFixAsk(message) && !waiting) {
+      if (useAssistant.getState().pending || useAssistant.getState().testing) return;
+      useAssistant.getState().append([{ id: nanoid(8), role: 'user', text: message }]);
+      void testUntilItRuns(useEditor.getState().description?.trim() || undefined);
+      return;
+    }
+    if (startTypedSession(message)) return; // Re-check 3: a bare run, or output that looks made up, is the session's
     const under = cardQuestionFor(message); // AG04: the chat's answer to it stays under the card
     const since = useAssistant.getState().items.length;
     await useAssistant.getState().send(message, {

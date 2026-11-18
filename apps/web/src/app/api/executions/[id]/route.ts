@@ -1,3 +1,4 @@
+import { runVersions } from '@/lib/server/agents/versions'; // AG21:
 import { executionFeedback } from '@/lib/server/chat-feedback';
 import { error, handler, json } from '@/lib/server/http';
 import { cancelExecution, cancelQueuedExecution, cancelWaitingExecution, liveExecution, liveProgress } from '@/lib/server/runner';
@@ -20,7 +21,9 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
   const chatFeedback = executionFeedback(id);
   // What the running nodes last reported (a remote agent's steps), for a page opened mid-run.
   const progress = execution.status === 'running' ? liveProgress(id) : {};
-  return json({ execution: { ...execution, ...(chatFeedback && { chatFeedback }) }, ...(link && { traceUrl: link }), ...(Object.keys(progress).length && { progress }) });
+  // AG21: the workflow version and the agent versions this run used.
+  const versions = runVersions(id, execution);
+  return json({ execution: { ...execution, ...(chatFeedback && { chatFeedback }), ...(versions && { versions }) }, ...(link && { traceUrl: link }), ...(Object.keys(progress).length && { progress }) });
 });
 
 /** DELETE cancels a running, waiting or queued execution, or removes a finished one from history. */

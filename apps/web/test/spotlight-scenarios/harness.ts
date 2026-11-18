@@ -21,6 +21,7 @@ import { corePlugin } from '@/lib/server/nodes';
 import { registry } from '@/lib/server/plugins/registry';
 import { registryLookup } from '@/lib/server/assistant/ops';
 import { agentStore } from '@/lib/server/agents/store';
+import { store } from '@/lib/server/store'; // AG20:
 import { listCases } from '@/lib/server/agents/eval-gate'; // SB17:
 import { guardrailWords } from '@/lib/shared/agents'; // SB17:
 import { agentAsk, agentChangeAsk, askCatalog, fallbackName } from '@/lib/shared/agent-ask'; // SB16: AG02: fallbackName; AG04: agentChangeAsk
@@ -30,6 +31,9 @@ import { filesDir } from '@/lib/server/nodes/files'; // AG13:
 import { SqliteVectorStore } from '@/lib/server/rag/stores'; // AG13:
 import { builderModel } from '@/lib/server/assistant/agent-resources'; // AG02:
 import { starterFlow, starterSample } from '@/lib/shared/agent-card'; // SB16:
+import { reuseSentence } from '@/lib/shared/tenant-catalog'; // AG19:
+import { indexFolder } from '@/lib/server/agents/knowledge'; // AG19:
+import { KEYWORD_EMBEDDINGS } from '@/lib/server/assistant/knowledge-setup'; // AG19:
 import { handler } from '@/lib/server/http';
 import { startFakeModels, readSse, type FakeModels } from '../fake-ai-services';
 import { estimatedTokens } from '@/lib/shared/build-plan'; // SB13:
@@ -357,6 +361,7 @@ interface Collected {
   draftCases: number[]; // SB17: the cases each draft came with
   asked: Array<{ question: string; choices: string[] }>; // SB11:
   offers: NonNullable<Outcome['offers']>; // SB12:
+  agentFix?: { agentId: string; agent: string; change: string; fix: { executionId: string; step: string; tool?: string; cause: string; attempt: number } }; // AG20:
 }
 
 function collect(events: Array<{ event: string; data: any }>): Collected { // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -380,6 +385,7 @@ function collect(events: Array<{ event: string; data: any }>): Collected { // es
         out.draftCases.push(Array.isArray(data.cases) ? data.cases.length : 0); // SB17:
         break;
       case 'credential': out.offers.push({ node: data.node, credentialTypes: data.credentialTypes }); break; // SB12:
+      case 'agent-fix': out.agentFix = { agentId: data.agentId, agent: data.agent, change: data.change, fix: data.fix }; break; // AG20:
       case 'done':
         out.done = data;
         break;
@@ -545,6 +551,15 @@ async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, fi
   const rounds = scenario.start?.sessionRuns ?? [];
   const roundOf = (all: typeof rounds, i: number) => all[Math.min(Math.max(i, 0), Math.max(all.length - 1, 0))] ?? {};
   let round = 0;
+  // AG20: the session's runs, for the scorecard (`Outcome.runs`): and whether a run that writes outside had the person's yes first.
+  const ran: NonNullable<Outcome['runs']> = [];
+  const { destinationsOf } = await import('@/lib/shared/run-check');
+  const asksBeforeRun = (id: string, wf: Workflow): boolean | undefined => {
+    const sends = destinationsOf(wf.nodes.filter((n) => !n.disabled).map((n) => ({ name: n.name, type: n.type, parameters: n.parameters }))).map((d) => d.destination);
+    if (!sends.length) return undefined;
+    const allowed = sendsAllowed.get(id);
+    return sends.every((d) => allowed?.has(d) || allowed?.has(d.replace(/^https?:\/\//, '')));
+  };
 
   // The editor's run: scripted rounds (unit) or the product's runner on the canvas, in this process (live).
   useEditor.setState({
@@ -578,12 +593,39 @@ async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, fi
             return [n.id, [run]];
           }),
         );
-        useEditor.setState({ running: false, statuses, runs, runStatus: failed ? 'error' : 'success' });
+        // AG20: the run's record is in the store, so `get_run_log` reads it as it reads a real one: a scripted error "HTTP 400: <body>" is the node's HTTP code and body.
+        const executionId = `ex_${nanoid(8)}`;
+        const wf = useEditor.getState().toWorkflow();
+        const failedNode = nodes.find((n) => thisRound[n.data.wf.name]?.error);
+        for (const n of nodes) {
+          const r = thisRound[n.data.wf.name];
+          const http = r?.error ? /^(HTTP \d{3})\b[:\s]*([\s\S]*)$/.exec(r.error) : null;
+          if (r?.error) (runs[n.id][0] as NodeRun).error = http ? { message: http[1], ...(http[2] && { description: http[2] }) } : { message: r.error };
+        }
+        store.saveExecution({
+          executionId,
+          workflowId: useEditor.getState().workflowId || 'wf_scenario',
+          workflowName: wf.name,
+          mode: 'manual',
+          status: failed ? 'error' : 'success',
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+          durationMs: 5,
+          runData: runs as never,
+          executionOrder: nodes.map((n) => n.id),
+          nodeNames: Object.fromEntries(nodes.map((n) => [n.id, n.data.wf.name])),
+          workflow: wf,
+          ...(failedNode && { error: { message: thisRound[failedNode.data.wf.name].error as string, nodeId: failedNode.id, nodeName: failedNode.data.wf.name } }),
+        } as never);
+        ran.push({ status: failed ? 'error' : 'success', ...(failedNode && { node: failedNode.data.wf.name, error: thisRound[failedNode.data.wf.name].error as string }), asked: asksBeforeRun(workflowId, wf) });
+        useEditor.setState({ running: false, executionId, statuses, runs, runStatus: failed ? 'error' : 'success' });
         return;
       }
       const { runWorkflow } = await import('@/lib/server/runner');
       const record = await runWorkflow({ workflow: useEditor.getState().toWorkflow(), mode: 'manual' });
-      useEditor.setState({ running: false, statuses: statusesOf(record.runData), runs: record.runData, runStatus: record.status as never });
+      const failing = Object.entries(record.runData).find(([, r]) => r.at(-1)?.status === 'error');
+      ran.push({ status: record.status === 'success' ? 'success' : 'error', ...(failing && { node: useEditor.getState().nodes.find((n) => n.id === failing[0])?.data.wf.name ?? failing[0], error: failing[1].at(-1)?.error?.message ?? '' }), asked: asksBeforeRun(workflowId, useEditor.getState().toWorkflow()) }); // AG20:
+      useEditor.setState({ running: false, executionId: record.executionId, statuses: statusesOf(record.runData), runs: record.runData, runStatus: record.status as never });
     }) as never,
   });
 
@@ -604,6 +646,7 @@ async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, fi
           role: 'assistant',
           ...(result.error ? { error: result.error } : { done: { model: 'spotlight-scenarios', durationMs: 0, steps: result.done?.steps ?? 1 } }),
           ...(sendOptions.testId && { testId: sendOptions.testId }),
+          ...(result.agentFix && { agentFix: { type: 'agent-fix' as const, ...result.agentFix } }), // AG20:
           parts: [
             ...(result.text ? [{ kind: 'text' as const, text: result.text }] : []),
             ...result.proposals.map((p) => ({ kind: 'proposal' as const, proposal: { id: nanoid(6), ...p } })),
@@ -631,7 +674,17 @@ async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, fi
   const needs = useAssistant
     .getState()
     .items.flatMap((item) => (item.role === 'assistant' ? item.parts.flatMap((p) => (p.kind === 'needs' ? [p.need.what as string] : [])) : []));
-  return { before, after: useEditor.getState().toWorkflow(), needs, replies };
+  // AG20: the fixes Spotlight proposed between runs: a flow change (applied when its card was) or an agent's (a card nobody clicks here).
+  const fixes: NonNullable<Outcome['fixes']> = useAssistant.getState().items.flatMap((item) =>
+    item.role !== 'assistant'
+      ? []
+      : [
+          ...item.parts.flatMap((p) => (p.kind === 'proposal' ? [{ target: 'flow' as const, summary: p.proposal.summary, applied: p.proposal.state === 'applied' }] : [])),
+          ...(item.agentFix ? [{ target: 'agent' as const, summary: item.agentFix.change, agent: item.agentFix.agent, applied: false }] : []),
+        ],
+  );
+  const said = useAssistant.getState().items.flatMap((item) => (item.role === 'assistant' ? item.parts.flatMap((p) => (p.kind === 'outcome' ? [p.outcome.text] : p.kind === 'text' && item.agentFix ? [p.text] : [])) : []));
+  return { before, after: useEditor.getState().toWorkflow(), needs, replies, ran, fixes, said };
 }
 
 // ---------------------------------------------------------------------------
@@ -639,6 +692,37 @@ async function sessionOf(scenario: Scenario, form: Form, options: RunOptions, fi
 // ---------------------------------------------------------------------------
 
 /** Run `scenario` once. Never throws for a product failure: that is the Outcome's `error`. */
+/**
+ * AG19: `start.agents` and `start.knowledgeBases`: the tenant before the ask. Each agent is saved and published (unless `published:
+ * false`); a knowledge base is a keyword-searched one on its `owner` agent, indexed from the fixture folder copied into the files
+ * directory. A host that held agents from an earlier scenario starts clean of the ones this owner seeds (by name).
+ */
+async function seedTenant(start: Start | undefined): Promise<void> {
+  if (!start?.agents?.length) return;
+  for (const a of start.agents) {
+    const name = String(a.config.name ?? '');
+    for (const old of agentStore.list().filter((x) => x.name === name)) agentStore.delete(old.id);
+  }
+  for (const a of start.agents) {
+    const name = String(a.config.name ?? '');
+    const bases = (start.knowledgeBases ?? []).filter((k) => k.owner === name);
+    const tools = [...((a.config.tools as AgentConfig['tools'] | undefined) ?? [])];
+    for (const k of bases) {
+      cpSync(join(import.meta.dirname, 'fixtures', k.folder), join(filesDir(), k.folder), { recursive: true });
+      tools.push({ id: `tl_${k.collection}`, type: 'knowledge', name: `search_${k.collection}`, description: `Search the ${k.collection} documents`, store: 'sqlite', collection: k.collection, embeddings: KEYWORD_EMBEDDINGS, searchMode: 'keyword', indexedFrom: k.folder } as AgentConfig['tools'][number]);
+    }
+    const agent = agentStore.create({ ...(a.config as Partial<AgentConfig>), tools });
+    for (const k of bases) {
+      const kb = agent.tools.find((t) => t.type === 'knowledge' && 'collection' in t && t.collection === k.collection);
+      if (kb && kb.type === 'knowledge' && 'collection' in kb) await indexFolder(kb as never, k.folder);
+    }
+    if (a.published !== false) agentStore.publish(agent.id);
+  }
+}
+
+/** AG19: the Run an Agent / Run a Team nodes of a canvas, with the agent each runs. */
+const placedOf = (wf: Workflow | undefined): NonNullable<Outcome['placed']> => (wf?.nodes ?? []).filter((n) => n.type === 'core.messageAgent' || n.type === 'core.runTeam').map((n) => ({ node: n.name, type: n.type, agentId: String(n.parameters?.agentId ?? n.parameters?.teamId ?? '') }));
+
 export async function runScenario(scenario: Scenario, form: Form, options: RunOptions = {}): Promise<Outcome> {
   prepare();
   // `start.autonomy` decides what is applied (`applyAsTheEditor`, the session's own rule) and `start.approvedDestinations`
@@ -664,6 +748,10 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
   // (an agent an earlier AG13 scenario made, with its knowledge base, is gone: each ask starts from a host with none)
   if (scenario.owner === 'AG13') for (const a of agentStore.list()) if (a.tools.some((t) => t.type === 'knowledge')) agentStore.delete(a.id);
   if (scenario.owner === 'AG13') cpSync(join(import.meta.dirname, 'fixtures', 'runbooks'), join(filesDir(), 'runbooks'), { recursive: true });
+  // AG19: the tenant the scenario starts with, and how many agents there were before the ask.
+  await seedTenant(scenario.start);
+  const seeded = new Set(agentStore.list().map((a) => a.id));
+  if (scenario.start?.agents) outcome.agentCount = { before: agentStore.list().length, after: agentStore.list().length };
   toolInputs = [];
   outcome.hostModel = builderModel(); // AG02:
   const previousOllama = process.env.OLLAMA_URL;
@@ -730,11 +818,22 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
       Object.assign(outcome, { text: result.text, tools: result.tools, proposals: result.proposals, asked: result.asked, offers: result.offers, ...(result.error && { error: result.error }) }); // SB11: asked; SB12: offers
       withDone(result);
       outcome.after = applyAsTheEditor(canvas, result.proposals, scenario.start?.autonomy);
+      if (scenario.start?.agents) {
+        // AG19: a reply `Reuses “<name>”: <why>.` over an agent that existed before, placed in the flow.
+        outcome.placed = placedOf(outcome.after);
+        const said = /Reuses “([^”]+)”(?::\s*(.+?))?\.?\s*$/m.exec(result.text);
+        const agent = said && agentStore.list().find((a) => seeded.has(a.id) && a.name.toLowerCase() === said[1].toLowerCase());
+        if (said && agent) outcome.reused = { agentId: agent.id, name: agent.name, why: said[2] ?? '' };
+      }
       if (scenario.via === 'session') {
         const session = await sessionOf(scenario, form, options, result, canvas, outcome.after, scripted);
         outcome.before = session.before;
         outcome.after = session.after;
         outcome.needs = session.needs;
+        outcome.runs = session.ran; // AG20:
+        outcome.tools.push(...session.replies.slice(1).flatMap((r) => r.tools)); // AG20: the session's own tool calls (get_run_log, propose_agent_fix)
+        if (session.said.length) outcome.text = `${outcome.text} ${session.said.join(' ')}`.trim(); // AG20: how the session ended
+        outcome.fixes = session.fixes; // AG20:
         outcome.modelCalls += session.replies.slice(1).reduce((n, r) => n + r.calls, 0);
         outcome.proposals.push(...session.replies.slice(1).flatMap((r) => r.proposals));
         // SB10: what a session applied is the canvas in the store; a card the guard refused or that waits for Apply changed nothing.
@@ -783,16 +882,28 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
         const designed = await import('@/app/api/agents/design/route');
         const spec = { name: ask.name ?? fallbackName(ask.description, ask.tools, catalog) /* AG02: */, description: ask.description, instructions: '', ask: scenario.ask /* AG02: */, ...(ask.tools.length && { tools: ask.tools }), ...(ask.knowledge && { knowledge: ask.knowledge }), ...(ask.knowledgeFolder && { knowledgeFolder: ask.knowledgeFolder }) /* AG13: */, ...((scenario.start?.model ?? model) && { model: scenario.start?.model ?? model }), preview: true };
         const response = await designed.POST(post('/api/agents/design', spec));
-        const body = (await response.json()) as { config?: Partial<AgentConfig>; cases?: Array<{ input: string; expected?: string }>; notAdded?: Array<{ name: string }>; models?: string[]; knowledge?: { folder?: string; files?: string[]; search?: 'vector' | 'keyword'; embeddings?: string; problem?: string }; error?: string };
+        const body = (await response.json()) as { config?: Partial<AgentConfig>; cases?: Array<{ input: string; expected?: string }>; notAdded?: Array<{ name: string }>; models?: string[]; knowledge?: { folder?: string; files?: string[]; search?: 'vector' | 'keyword'; embeddings?: string; problem?: string }; reuse?: { agentId: string; name: string; why: string; published: boolean }; attached?: { collection: string; documents?: number; search: string }; modelWhy?: string; modelNote?: string; error?: string };
         outcome.modelCalls = fake ? fake.requests.filter((r) => r.path === '/api/chat').length : 1;
         if (!response.ok || !body.config) outcome.error = body.error ?? `design ${response.status}`;
         else {
           const starter = !names.length;
           outcome.card = { starter, needs: ((body as { needs?: Array<{ text: string }> }).needs ?? []).map((n) => n.text) /* AG08: */, ...(body.config.model && { model: `${body.config.model.provider}/${body.config.model.model}` }), ...(body.models && { models: body.models }), notAdded: (body.notAdded ?? []).map((n) => n.name) /* AG02: */, ...(body.knowledge && { knowledge: body.knowledge }) /* AG13: */ };
           outcome.text = `Designed ${body.config.name ?? spec.name}`;
-          const imported = await (await import('@/app/api/agents/import/route')).POST(post('/api/agents/import', { config: body.config }));
-          const made = (await imported.json()) as { agent?: AgentConfig & { id: string }; error?: string };
-          if (!imported.ok || !made.agent) outcome.error = made.error ?? `import ${imported.status}`;
+          if (body.modelNote) outcome.text += `. ${body.modelNote}`; // AG19: the reply says which model, and why not the asked one
+          const reusedHere = Boolean(body.reuse && scenario.start?.agents);
+          if (body.reuse && reusedHere) {
+            // AG19: the card's Use: a Run an Agent step bound to the agent that already does the job (the starter flow on an empty canvas); no agent is made.
+            const { agentId, name, why, published } = body.reuse;
+            outcome.reused = { agentId, name, why };
+            outcome.text = `${reuseSentence(name, why)}${published ? '' : ` It is not published yet: publish “${name}” before the flow runs.`}`;
+            outcome.after = starter ? draftToWorkflow(starterFlow({ id: agentId, name }, starterSample({ name, cases: [] }))) : canvas;
+            outcome.placed = placedOf(outcome.after);
+          }
+          const imported = reusedHere ? undefined : await (await import('@/app/api/agents/import/route')).POST(post('/api/agents/import', { config: body.config }));
+          const made = imported ? ((await imported.json()) as { agent?: AgentConfig & { id: string }; error?: string }) : {};
+          if (!imported) {
+            // AG19: a reuse made no agent.
+          } else if (!imported.ok || !made.agent) outcome.error = (made as { error?: string }).error ?? `import ${imported.status}`;
           else {
             const gate = await import('@/app/api/agents/[id]/eval-gate/route');
             for (const c of body.cases ?? []) await gate.POST(post(`/api/agents/${made.agent.id}/eval-gate`, c), { params: Promise.resolve({ id: made.agent.id }) });
@@ -805,6 +916,7 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
               outcome.agents[outcome.agents.length - 1].knowledgeDocs = [{ collection: kb.collection, sources: [...new Set(rows.map((r) => String(r.metadata.source ?? '')).filter(Boolean))].sort() }];
             }
             outcome.after = starter ? draftToWorkflow(starterFlow({ id: made.agent.id, name: made.agent.name }, starterSample({ name: made.agent.name, cases: body.cases ?? [] }))) : canvas;
+            if (scenario.start?.agents) outcome.placed = placedOf(outcome.after); // AG19:
           }
         }
       }
@@ -831,6 +943,7 @@ export async function runScenario(scenario: Scenario, form: Form, options: RunOp
     if (previousBlock === undefined) delete process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE;
     else process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE = previousBlock;
   }
+  if (outcome.agentCount) outcome.agentCount.after = agentStore.list().length; // AG19:
   if (toolInputs.length) outcome.toolInputs = toolInputs; // AG02:
   outcome.ms = Date.now() - started;
   outcome.refused = form === 'live' ? refusedNow().slice(refusedBefore) : [];

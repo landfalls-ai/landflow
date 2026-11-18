@@ -41,7 +41,7 @@ export function routePolicy(method: string, path: string): RoutePolicy {
 
   // Starting runs.
   // Listening for a test event runs the editor's workflow too (lib/server/test-webhooks.ts).
-  if (/^\/api\/workflows\/[^/]+\/(run|execute|listen)$/.test(path)) return { scope: 'run' };
+  if (/^\/api\/workflows\/[^/]+\/(run|execute|listen|test-update)$/.test(path)) return { scope: 'run' };
   if (/^\/api\/executions\/[^/]+\/(retry|rerun|debug)$/.test(path)) return { scope: 'run' };
   if (/^\/api\/agents\/[^/]+\/chat$/.test(path)) return { scope: 'run' };
 

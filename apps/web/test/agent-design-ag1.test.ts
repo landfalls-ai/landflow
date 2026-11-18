@@ -133,6 +133,8 @@ describe('the ask: read whole, the address kept (finding 4)', () => {
     expect(names).toEqual(['Alert triager', 'Sales data analyst', 'Grafana alerts agent', 'Utility helper']);
     expect(agentAsk('Create an agent that triages an alert')?.name).toBe('Alert triager'); // not "An triager"
     expect(fallbackName('Me grafana agent that watches alerts')).not.toMatch(/^Me\b|,/);
+    // Wave ag4 carryover (asks.md B): a clause's own subject ends the name.
+    expect(fallbackName('Reads an alert someone pastes, pulls out the IPs and domains in it.')).toBe('Alert agent');
   });
 });
 

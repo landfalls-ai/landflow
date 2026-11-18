@@ -16,6 +16,10 @@ export interface ChangeDesign {
   needs?: Array<{ text: string }>;
   missing?: Array<{ capability: string }>;
   designed?: boolean;
+  /** Cases that replace the agent's own when the change gives it a data tool (`Tests: N replaced` on the card). */
+  cases?: Array<{ input: string; expected?: string }>;
+  /** The agent's cases those replace, by id with their input (the design named them; Apply swaps them in one call). */
+  replaceCases?: Array<{ id: string; input: string }>;
   /** Why the model made no design when it failed (a usage limit in the provider's words). */
   failure?: string;
   /** ag1-int: the tools the change named that the agent did not get, and why. */
@@ -23,7 +27,7 @@ export interface ChangeDesign {
 }
 
 /** The change as a proposal: the config with the change made, and the lines that differ from the base. */
-export function designChange(input: { name: string; description?: string; base: { agentId: string } | { config: Record<string, unknown> }; change: string; model?: string }, signal?: AbortSignal): Promise<ChangeDesign> {
+export function designChange(input: { name: string; description?: string; base: { agentId: string } | { config: Record<string, unknown> }; change: string; model?: string; typedAsk?: string }, signal?: AbortSignal): Promise<ChangeDesign> {
   const { model, ...rest } = input;
   return api<ChangeDesign>('/api/agents/design', { method: 'POST', json: { description: '', instructions: '', ...rest, ...(model && { model }), preview: true }, signal }).then((design) => {
     // A design that ran and matched the base has `designed: true` and no changes ("No change"); one the model never proposed is a failure, not "already has it".
@@ -41,16 +45,54 @@ export async function readDraft(agentId: string): Promise<Record<string, unknown
   }
 }
 
-/** Apply: the config becomes the agent's draft (`PUT /api/agents/:id`: never a publish), then the draft runs once on `sample`. */
-export async function saveChange(agentId: string, config: Record<string, unknown>, sample: string): Promise<AgentSmoke> {
+/** The cases a swap could not replace, and why (shown on the card; never swallowed). */
+const STILL_THERE = 'The old tests are still there; Publish checks against them.';
+export const CASES_CHANGED = `The tests changed since this was designed; ask again. ${STILL_THERE}`;
+
+type CaseRow = { id: string; input: string; expected?: string };
+
+/**
+ * Apply: the config becomes the agent's draft (`PUT /api/agents/:id`: never a publish), the cases the change replaced are swapped in
+ * (one all-or-nothing call, after the draft is saved, never undone), then the draft runs once on `sample`. A swap that cannot be
+ * done is `casesNote` for the card: a stale id (409) is worked out again from the agent's cases now, matched by input text, and
+ * tried once more.
+ */
+export async function saveChangeWithCases(agentId: string, config: Record<string, unknown>, sample: string, cases: Array<{ input: string; expected?: string }> = [], replaceCases: Array<{ id: string; input: string }> = []): Promise<{ smoke: AgentSmoke; casesNote?: string }> {
   await api(`/api/agents/${agentId}`, { method: 'PUT', json: config });
   announceChange(agentId); // the agent's page shows the saved draft while the test runs
+  let casesNote: string | undefined;
+  if (cases.length && replaceCases.length) {
+    const swap = (remove: string[]) => api(`/api/agents/${agentId}/eval-gate`, { method: 'PATCH', json: { remove, add: cases } });
+    try {
+      await swap(replaceCases.map((c) => c.id));
+    } catch (first) {
+      if (first instanceof ApiError && first.status === 409) {
+        try {
+          const now = (await api<{ cases?: CaseRow[] }>(`/api/agents/${agentId}/eval-gate`)).cases ?? [];
+          const inputs = new Set(replaceCases.map((c) => c.input.trim()));
+          await swap(now.filter((c) => inputs.has(c.input.trim())).map((c) => c.id));
+        } catch (second) {
+          casesNote = second instanceof ApiError && second.status === 409 ? CASES_CHANGED : `The tests could not be replaced: ${(second as Error).message}. ${STILL_THERE}`;
+        }
+      } else casesNote = `The tests could not be replaced: ${(first as Error).message}. ${STILL_THERE}`;
+    }
+  }
+  const smoke = await smokeOf(agentId, sample);
+  return { smoke, ...(casesNote && { casesNote }) };
+}
+
+const smokeOf = async (agentId: string, sample: string): Promise<AgentSmoke> => {
   try {
     const { smoke } = await api<{ smoke: AgentSmoke }>(`/api/agents/${agentId}/smoke-test`, { method: 'POST', json: { message: sample.slice(0, 4000) } });
     return smoke;
   } catch (e) {
     return { state: 'failed', reason: (e as Error).message };
   }
+};
+
+/** Apply without cases to swap (an edit from the agent's page): the smoke result alone. */
+export async function saveChange(agentId: string, config: Record<string, unknown>, sample: string): Promise<AgentSmoke> {
+  return (await saveChangeWithCases(agentId, config, sample)).smoke;
 }
 
 /** Publish after a pass: the eval gate runs the agent's cases; a hold is the answer (never skipped), not an error. */

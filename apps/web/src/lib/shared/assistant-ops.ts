@@ -9,6 +9,7 @@
  */
 import { nanoid } from 'nanoid';
 import { changeParameter, defaultParameters, defaultVersionOf, indexedPorts } from '@landflow/protocol';
+import { ASSUMED_BUBBLES, BUBBLE, bubbleFootprint } from './agent-bubbles'; // AG16
 import { delegatesOf, replaceWithTeam, turnIntoTeamBlocker } from './turn-into-team';
 import type { ConnectionType, NodeDescriptor, NodeRun, PropertyDescriptor, Workflow, WorkflowConnection, WorkflowNode } from './types';
 
@@ -46,6 +47,12 @@ export type AssistantOp =
    * team when the change is applied; the node's team is filled in then.
    */
   | { op: 'turnIntoTeam'; node: string }
+  /**
+   * AG17: change the agent a Run an Agent node runs (its model, tools, knowledge, instructions), never the node: nothing in the graph
+   * changes. Spotlight's agent change card shows it and a person applies it (components/editor/spotlight/agent-ask.ts `changeAgentCard`).
+   * `agentId` is resolved from the node when the op applies.
+   */
+  | { op: 'changeAgent'; node?: string; agentId?: string; /** A Run a Team node's team: the card changes its lead. */ teamId?: string; change: string }
   /** A node's run settings (retries, on error, timeout), not its parameters. */
   | { op: 'setNodeSettings'; node: string; settings: NodeSettingsPatch }
   /** The workflow's settings: its error workflow, timeout, automatic retries. */
@@ -62,6 +69,11 @@ export interface NewAgentSpec {
   tools?: string[];
   /** SB05: the documents it answers from, for the architect to give it a knowledge base: cut to 200. */
   knowledge?: string;
+  /** AG19: hints from the tenant (the architect keeps each when it fits, and says why when it does not): a model, an existing knowledge base, a folder the person named, node types found in the plugins. */
+  agentModel?: string;
+  knowledgeBase?: string;
+  knowledgeFolder?: string;
+  toolNodes?: Array<{ nodeType: string; operation?: string }>;
 }
 
 /** The node type that runs an agent as a step. */
@@ -74,7 +86,19 @@ export function newAgentSpec(o: Record<string, unknown> | undefined): NewAgentSp
   // SB05: tools and knowledge, when the model said any.
   const tools = Array.isArray(o?.tools) ? o.tools.flatMap((t) => text(t)?.slice(0, 80) ?? []).slice(0, 8) : [];
   const knowledge = text(o?.knowledge)?.slice(0, 200);
-  return { name, description: text(o?.description)?.slice(0, 500) ?? '', instructions: text(o?.instructions)?.slice(0, 4000) ?? '', ...(tools.length && { tools }), ...(knowledge && { knowledge }) };
+  // AG19: the tenant hints (`model`, `knowledgeBase`, `knowledgeFolder`, `toolNodes`), cut to size.
+  const agentModel = text(o?.model)?.slice(0, 100);
+  const knowledgeBase = text(o?.knowledgeBase)?.slice(0, 200);
+  const knowledgeFolder = text(o?.knowledgeFolder)?.slice(0, 200);
+  const toolNodes = Array.isArray(o?.toolNodes)
+    ? o.toolNodes.flatMap((t) => {
+        const r = t && typeof t === 'object' ? (t as Record<string, unknown>) : typeof t === 'string' ? { nodeType: t } : undefined;
+        const nodeType = text(r?.nodeType)?.slice(0, 120);
+        const operation = text(r?.operation)?.slice(0, 80);
+        return nodeType ? [{ nodeType, ...(operation && { operation }) }] : [];
+      }).slice(0, 8)
+    : [];
+  return { name, description: text(o?.description)?.slice(0, 500) ?? '', instructions: text(o?.instructions)?.slice(0, 4000) ?? '', ...(tools.length && { tools }), ...(knowledge && { knowledge }), ...(agentModel && { agentModel }), ...(knowledgeBase && { knowledgeBase }), ...(knowledgeFolder && { knowledgeFolder }), ...(toolNodes.length && { toolNodes }) /* AG19: */ };
 }
 
 /** The node settings an op may change. */
@@ -232,6 +256,13 @@ function parseOp(o: Record<string, unknown> | undefined): AssistantOp | undefine
     }
     case 'turnIntoTeam':
       return node ? { op: 'turnIntoTeam', node } : undefined;
+    case 'changeAgent': {
+      // AG17: the change in the person's words (1–2000 characters) and the node or the agent it is for.
+      const change = text(o.change)?.trim();
+      const agentId = text(o.agentId);
+      if (!change || change.length > 2000 || (!node && !agentId)) return undefined;
+      return { op: 'changeAgent', ...(node && { node }), ...(agentId && { agentId }), change };
+    }
     case 'newAgent': {
       // A new agent and the Run an Agent node that runs it: an addNode the editor finishes by saving the agent.
       const spec = newAgentSpec(record(o.agent) ?? o);
@@ -387,10 +418,25 @@ function planConnection(
 
   const fits = (from: NodeDescriptor, to: NodeDescriptor) =>
     to.inputs.some((p) => p.type === type) && (from.supplies === type || from.outputs.some((p) => p.type === type) || (type === 'ai_tool' && Boolean(from.usableAsTool)));
-  if (fits(sd, td)) return { type, source, target, sourceIndex: 0, targetIndex: 0 };
-  // Models often wire the agent to its sub-node; the edge runs sub-node → agent.
-  if (fits(td, sd)) return { type, source: target, target: source, sourceIndex: 0, targetIndex: 0 };
-  return `“${source.name}” can’t be attached to “${target.name}” as ${type}`;
+  const planned: PlannedConnection | undefined = fits(sd, td)
+    ? { type, source, target, sourceIndex: 0, targetIndex: 0 }
+    : // Models often wire the agent to its sub-node; the edge runs sub-node → agent.
+      fits(td, sd)
+      ? { type, source: target, target: source, sourceIndex: 0, targetIndex: 0 }
+      : undefined;
+  if (!planned) return `“${source.name}” can’t be attached to “${target.name}” as ${type}`;
+  // AG17: a Run an Agent / Run a Team node runs a saved agent: its model, memory and tools are the agent's, so wiring them here is refused.
+  const bound = boundAgentRef(planned.target);
+  if (bound) return `“${planned.target.name}” runs the agent “${bound}”: its model, memory and tools are the agent’s. Change the agent instead (changeAgent).`;
+  return planned;
+}
+
+/** AG17: the plain agent (or team) id a Run an Agent / Run a Team node is bound to; undefined for an expression, an empty id or any other node. */
+export function boundAgentRef(node: Pick<WorkflowNode, 'type' | 'parameters'>): string | undefined {
+  const plain = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '' && !v.trim().startsWith('=') && !v.includes('{{');
+  if (node.type === 'core.messageAgent' && plain(node.parameters?.agentId)) return node.parameters.agentId.trim();
+  if (node.type === 'core.runTeam' && plain(node.parameters?.teamId)) return node.parameters.teamId.trim();
+  return undefined;
 }
 
 /** Add a planned connection; a port with maxConnections drops its oldest edge, as in the editor. */
@@ -417,10 +463,38 @@ function addConnection(workflow: Workflow, lookup: DescriptorLookup, plan: Plann
 const overlaps = (workflow: Workflow, x: number, y: number, self: string) =>
   workflow.nodes.some((n) => n.id !== self && Math.abs(n.position[0] - x) < 100 && Math.abs(n.position[1] - y) < 90);
 
-/** The first spot from (x, y) that no other node covers, stepping down (or right, for sub-nodes). */
+/**
+ * AG16: the box a node bound to a saved agent (a Run an Agent node with a plain `agentId`, a Run a Team node with a plain `teamId`)
+ * keeps clear for its bubbles. Placement here is pure and has no agent data, so it assumes `ASSUMED_BUBBLES` of them.
+ */
+function bubbleBox(n: WorkflowNode): { x0: number; x1: number; y0: number; y1: number } | undefined {
+  const plain = (v: unknown) => typeof v === 'string' && v.trim() !== '' && !v.trim().startsWith('=') && !v.includes('{{');
+  const bound = (n.type === 'core.messageAgent' && plain(n.parameters?.agentId)) || (n.type === 'core.runTeam' && plain(n.parameters?.teamId));
+  if (!bound) return undefined;
+  const fp = bubbleFootprint(240, ASSUMED_BUBBLES);
+  return { x0: n.position[0] + fp.left, x1: n.position[0] + fp.right, y0: n.position[1] + BUBBLE.below, y1: n.position[1] + fp.bottom };
+}
+
+/** A spot a node of the usual size (88 px) at (x, y) would take inside a bound node's bubble box, as that box; else undefined. */
+const inBubbles = (workflow: Workflow, x: number, y: number, self: string) =>
+  workflow.nodes
+    .filter((n) => n.id !== self)
+    .map(bubbleBox)
+    .find((b) => b && x < b.x1 && x + 88 > b.x0 && y < b.y1 && y + 88 > b.y0);
+
+/** The first spot from (x, y) that no other node covers, stepping down (or right, for sub-nodes); never inside a bound node's bubbles (right of them, + 40, for a spot stepping down). */
 function freeSpot(workflow: Workflow, x: number, y: number, self: string, step: [number, number] = [0, ROW]): [number, number] {
   let [px, py] = [x, y];
-  for (let i = 0; i < 12 && overlaps(workflow, px, py, self); i++) [px, py] = [px + step[0], py + step[1]];
+  for (let i = 0; i < 12; i++) {
+    const box = inBubbles(workflow, px, py, self);
+    if (box) {
+      if (step[1]) px = box.x1 + 40;
+      else [px, py] = [px, box.y1 + 24];
+      continue;
+    }
+    if (!overlaps(workflow, px, py, self)) break;
+    [px, py] = [px + step[0], py + step[1]];
+  }
   return [px, py];
 }
 
@@ -752,6 +826,29 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
         // The team gets its id when the editor saves it; until then the node stands for it.
         wf = replaceWithTeam(wf, node.id, delegatesOf(wf, node.id).map((n) => n.id), { id: '', name: `${node.name} team` });
         applied.push({ op: 'turnIntoTeam', node: handle(node) });
+        break;
+      }
+
+      case 'changeAgent': {
+        // AG17: nothing in the graph changes; the op names the agent for Spotlight's change card.
+        const node = op.node ? find(op.node) : undefined;
+        if (op.node && !node) {
+          dropped.push(`change the agent of “${op.node}”: no such node`);
+          break;
+        }
+        const plain = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '' && !v.trim().startsWith('=') && !v.includes('{{');
+        const agentId = op.agentId ?? (node?.type === RUN_AGENT_TYPE && plain(node.parameters?.agentId) ? node.parameters.agentId.trim() : undefined);
+        // A Run a Team node stands for its lead: the card reads the team and picks the lead (changeAgentCard).
+        const teamId = !agentId && node?.type === 'core.runTeam' && plain(node.parameters?.teamId) ? node.parameters.teamId.trim() : undefined;
+        if (teamId) {
+          applied.push({ op: 'changeAgent', node: handle(node!), teamId, change: op.change });
+          break;
+        }
+        if (!agentId) {
+          dropped.push(node ? `change the agent of “${node.name}”: it has no agent chosen yet` : 'change the agent: no agent given');
+          break;
+        }
+        applied.push({ op: 'changeAgent', ...(node && { node: handle(node) }), agentId, change: op.change });
         break;
       }
 
@@ -1153,6 +1250,8 @@ export function describeOps(ops: AssistantOp[], lookup?: DescriptorLookup): Diff
         return { sign: '✎', text: `“${name(op.node)}” → “${op.name}”` };
       case 'turnIntoTeam':
         return { sign: '~', text: `“${name(op.node)}” and the agents under it become a team (one Run a Team node)` };
+      case 'changeAgent':
+        return { sign: '~', text: `Change ${op.node ? name(op.node) : (op.agentId ?? 'the agent')}: ${op.change}` }; // AG17:
       case 'setNodeSettings':
         return { sign: '~', text: `“${name(op.node)}” settings: ${Object.entries(op.settings).map(([key, value]) => `${key} = ${preview(value)}`).join(', ')}` };
       case 'setWorkflowSettings':
@@ -1335,6 +1434,8 @@ export function opsTitle(ops: AssistantOp[]): string {
         return `Renamed “${op.node}” to “${op.name}”`;
       case 'turnIntoTeam':
         return `Turned “${op.node}” into a team`;
+      case 'changeAgent':
+        return `Change ${op.node ?? op.agentId ?? 'the agent'}: ${op.change}`; // AG17:
       case 'setWorkflowSettings':
         return 'Changed the workflow settings';
     }

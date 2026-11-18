@@ -165,7 +165,9 @@ export function stepsOf(items: ChatItem[], options: { live?: boolean; drafting?:
     }
     if (!runs.length) {
       const proposals = item.parts.flatMap((p) => (p.kind === 'proposal' ? [p.proposal] : []));
-      for (const proposal of proposals) steps.push({ id: key(proposal.id), kind: 'fix', icon: 'fix', text: `${proposal.state === 'applied' ? (item.testId ? 'Fixed' : 'Done') : proposal.state === 'dismissed' ? 'Not applied' : proposal.state === 'undone' ? 'Undone' : 'Proposed'} · ${opsTitle(proposal.ops)}` });
+      const read = logRead(item); // AG20: the log read comes before the fix it led to
+      if (read) steps.push({ id: key('log'), kind: 'note', icon: 'note', text: read.label });
+      for (const proposal of proposals) steps.push({ id: key(proposal.id), kind: 'fix', icon: 'fix', text: `${proposal.state === 'applied' ? (item.testId ? 'Fixed' : 'Done') : proposal.state === 'dismissed' ? 'Not applied' : proposal.state === 'undone' ? 'Undone' : 'Proposed'} · ${opsTitle(proposal.ops)}${read?.cause ? ` · ${read.cause}` : ''}` });
       const ended = item.parts.find((p) => p.kind === 'outcome');
       if (ended?.kind === 'outcome') steps.push({ id: key('outcome'), kind: 'outcome', icon: 'note', text: `Stopped · ${ended.outcome.text}`, ...(ended.outcome.node && { nodeName: ended.outcome.node }) });
       const need = item.parts.find((p) => p.kind === 'needs');
@@ -185,12 +187,27 @@ export function stepsOf(items: ChatItem[], options: { live?: boolean; drafting?:
   return { ask: asked?.role === 'user' ? asked.text : undefined, steps };
 }
 
+/**
+ * AG20: a session's fix reply read the run's log (a `get_run_log` step): the row that says so, and the cause in one clause
+ * (the model's first sentence, which the fix rule says is the cause) to show under "Fixed". Undefined for any other reply.
+ */
+export function logRead(item: ChatItem): { label: string; cause?: string } | undefined {
+  if (item.role !== 'assistant' || !item.testId) return undefined;
+  const step = item.steps?.find((s) => /^Read the run log/.test(s.label));
+  if (!step) return undefined;
+  const text = item.parts.find((p) => p.kind === 'text');
+  const cause = text?.kind === 'text' ? firstSentence(text.text).replace(/\s+/g, ' ') : undefined;
+  return { label: step.label, ...(cause && cause.length <= 160 && { cause }) };
+}
+
 export interface PanelState {
   drafting: boolean;
   testing: boolean;
   pending: boolean;
   /** A session waits for the person's Apply (or Dismiss) on a fix: no work is going on. */
   waitingForApply?: boolean;
+  /** The wait is on an agent's change card (Apply, Pick it or Publish). */
+  waitingForAgent?: boolean;
   /** The node a fix is being asked for. */
   fixingName?: string;
   /** Agents being designed right now. */
@@ -207,7 +224,22 @@ export interface PanelState {
 
 /** Whether the running session waits for the person's Apply: a card of a reply it asked for is open. Another open card (an autonomous change held for a click) is not its wait. */
 export function sessionWaitsForApply(items: ChatItem[], testingId: string | undefined): boolean {
-  return Boolean(testingId) && items.some((item) => item.role === 'assistant' && item.testId === testingId && item.parts.some((p) => p.kind === 'proposal' && !p.proposal.state));
+  return Boolean(testingId) && items.some((item) => item.role === 'assistant' && item.testId === testingId && item.parts.some((p) => p.kind === 'proposal' && !p.proposal.state)) || agentFixWaits(items, testingId);
+}
+
+/**
+ * The session waits on an agent fix card of its own: it awaits Apply, a credential's Pick it, or Publish. The person is working, so
+ * the panel reads "Waiting for you" with no spinner.
+ */
+export function agentFixWaits(items: ChatItem[], testingId: string | undefined): boolean {
+  return Boolean(testingId) && items.some((item) => item.role === 'assistant' && item.testId === testingId && item.parts.some((p) => {
+    if (p.kind !== 'agentCard' || !p.card.fix) return false;
+    const c = p.card;
+    if (c.state === 'designed') return true;
+    if (c.state !== 'created') return false;
+    const picking = c.smoke?.state === 'untested' && Boolean(c.smoke.reason?.startsWith('needs a credential'));
+    return picking || (c.smoke?.state === 'passed' && c.publish === undefined);
+  }));
 }
 
 /**
@@ -218,10 +250,19 @@ export function sessionIsWaiting(state: { testing: boolean; pending: boolean }, 
   return state.testing && !state.pending && sessionWaitsForApply(items, testingId);
 }
 
+/** The header's Stop: while a test session runs, including while it waits on a card of its own (the person's way out of a wait); the composer has its own while a reply streams. */
+export const headerStopShown = ({ collapsed, live, testing }: { collapsed: boolean; live: boolean; testing: boolean }): boolean => (collapsed ? live || testing : testing && !live);
+
+/** Whether the composer is busy (its Stop, no sending): a reply streams or a session works; a session that waits on a card of its own leaves the box free. */
+export function composerBusy(state: { testing: boolean; pending: boolean }, items: ChatItem[], testingId: string | undefined): boolean {
+  return state.pending || (state.testing && !sessionIsWaiting(state, items, testingId));
+}
+
 /** The panel's header: what Spotlight is doing, or how the last session ended. */
 export function titleOf(state: PanelState): string {
   if (state.drafting) return 'Drafting the flow';
   if (state.designing) return `Designing “${state.designing}”`;
+  if (state.testing && state.waitingForAgent) return 'Waiting for you';
   if (state.testing && state.waitingForApply) return 'Needs you: apply the fix?';
   if (state.testing) return state.fixingName ? `Fixing “${state.fixingName}”` : 'Testing the flow';
   if (state.pending) return 'Working on it';
