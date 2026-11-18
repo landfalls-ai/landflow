@@ -81,12 +81,12 @@ function fit<T>(list: T[], budget: number, wrap: (items: T[]) => unknown = (item
 const str = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
 
 /** Answers one tenant tool; `ok: false` is a failure to show (an agent that is not there). */
-export async function tenantTool(name: string, args: Record<string, unknown>, ctx: TenantToolContext = {}): Promise<{ text: string; label: string; ok: boolean }> {
+export async function tenantTool(name: string, args: Record<string, unknown>, ctx: TenantToolContext = {}): Promise<{ text: string; label: string; ok: boolean; count?: number }> {
   const { actor, projectId } = ctx;
   switch (name as TenantToolName) {
     case 'list_agents': {
       const list = catalogAgents(actor, { query: str(args.query) || undefined, projectId });
-      return { text: list.length ? fit(list, BUDGET.list_agents) : 'There are no agents yet.', label: `Looked at ${plural(list.length, 'agent')}`, ok: true };
+      return { text: list.length ? fit(list, BUDGET.list_agents) : 'There are no agents yet.', label: `Looked at ${plural(list.length, 'agent')}`, ok: true, count: list.length };
     }
     case 'get_agent': {
       const asked = str(args.id) || str(args.name);
@@ -102,19 +102,19 @@ export async function tenantTool(name: string, args: Record<string, unknown>, ct
       const types = Array.isArray(args.types) ? args.types.filter((t): t is string => typeof t === 'string') : undefined;
       const list = catalogToolNodes(actor, { query: query || undefined, types, projectId });
       const label = query ? `Found ${plural(list.length, 'tool node')} for “${short(query, 40)}”` : `Looked at ${plural(list.length, 'tool node')}`;
-      return { text: list.length ? fit(list, BUDGET.list_tool_nodes) : `No node an agent can use matches “${query}”. Try other words; if nothing fits, that part isn't available here.`, label, ok: true };
+      return { text: list.length ? fit(list, BUDGET.list_tool_nodes) : `No node an agent can use matches “${query}”. Try other words; if nothing fits, that part isn't available here.`, label, ok: true, count: list.length };
     }
     case 'list_knowledge_bases': {
       const listing = await catalogKnowledge(actor, projectId);
-      return { text: fit(listing.bases, BUDGET.list_knowledge_bases, (bases) => ({ ...listing, bases })), label: `Looked at ${plural(listing.bases.length, 'knowledge base')}`, ok: true };
+      return { text: fit(listing.bases, BUDGET.list_knowledge_bases, (bases) => ({ ...listing, bases })), label: `Looked at ${plural(listing.bases.length, 'knowledge base')}`, ok: true, count: listing.bases.length };
     }
     case 'list_models': {
       const list = await catalogModels(actor);
-      return { text: fit(list, BUDGET.list_models), label: `Looked at ${plural(list.length, 'model')}`, ok: true };
+      return { text: fit(list, BUDGET.list_models), label: `Looked at ${plural(list.length, 'model')}`, ok: true, count: list.length };
     }
     case 'list_credentials': {
       const list = catalogCredentials(actor, projectId);
-      return { text: list.length ? fit(list, BUDGET.list_credentials) : 'The person has no credentials yet.', label: `Looked at ${plural(list.length, 'credential')}`, ok: true };
+      return { text: list.length ? fit(list, BUDGET.list_credentials) : 'The person has no credentials yet.', label: `Looked at ${plural(list.length, 'credential')}`, ok: true, count: list.length };
     }
     case 'read_agent_practices':
       return { text: short(AGENT_PRACTICES, BUDGET.read_agent_practices), label: 'Read the agent best practices', ok: true };

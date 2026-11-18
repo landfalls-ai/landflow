@@ -12,11 +12,12 @@ import { api } from '@/lib/client/api';
 import { agentAsk, agentChangeAsk, askCatalog, fallbackName, knowledgeFolderOf, folderClauseAsksQuestions, knowledgeOf, readsTokens, sourceFolderOf, type AgentAsk, type AskCatalogEntry } from '@/lib/shared/agent-ask';
 import { starterFlow, starterSample, type AgentCard, type AgentCardTool, type AgentKnowledgeSetup, type AgentNotAdded } from '@/lib/shared/agent-card';
 import { rootOf, type AgentTeamConfig } from '@/lib/shared/agent-teams'; // AG17: a team node's lead
+import { reuseSentence } from '@/lib/shared/tenant-catalog'; // AG19:
 import { agentChanges } from '@/lib/shared/agent-changes'; // AG04:
 import { announceChange, announceSaved, designChange, publishChange, saveChange, testDraft } from '@/lib/client/agent-change'; // AG04: AG09: testDraft; ag3 carryover: announceSaved
 import { pickedModel } from '../spotlight-model'; // AG04:
 import { followsPractices, guardrailWords, type AgentConfig } from '@/lib/shared/agents';
-import { AGENT_CHANGE_ASKED, draft as draftCall, useAssistant, type ChatItem } from '../assistant'; // AG17: the event
+import { AGENT_CHANGE_ASKED, applyChanges, draft as draftCall, useAssistant, type ChatItem } from '../assistant'; // AG17: the event; AG19: applyChanges
 import { useAutonomous } from '../autonomous';
 import { designPreview, smokeTestAgent, takeBackAgents } from '../new-agent';
 import { writesOutside } from '@/lib/shared/run-check';
@@ -27,7 +28,7 @@ import type { Reply } from './reply';
 type ToolConfig = AgentConfig['tools'][number];
 
 /** One tool of the agent's config as the card shows it. */
-function cardTool(tool: ToolConfig): AgentCardTool {
+export function cardTool(tool: ToolConfig): AgentCardTool { // AG19: exported: the card draws a reused agent's tools the same way
   const node = tool.type === 'node' ? tool : undefined;
   const operation = typeof node?.parameters?.operation === 'string' ? node.parameters.operation : undefined;
   const requireApproval = Boolean(tool.requireApproval);
@@ -37,7 +38,7 @@ function cardTool(tool: ToolConfig): AgentCardTool {
 }
 
 /** The card from what the design route answered (`POST /api/agents/design` with `preview`). */
-export function cardFromPreview(preview: Awaited<ReturnType<typeof designPreview>> & { notAdded?: AgentNotAdded[]; models?: string[] /* AG02: */; knowledge?: Omit<AgentKnowledgeSetup, 'state'> /* AG13: */ }, ask: AgentAsk, starter: boolean, message?: string /* AG02: the person's whole ask */): AgentCard {
+export function cardFromPreview(preview: Awaited<ReturnType<typeof designPreview>> & { notAdded?: AgentNotAdded[]; models?: string[] /* AG02: */; knowledge?: Omit<AgentKnowledgeSetup, 'state'> /* AG13: */; reuse?: AgentCard['reuse']; attached?: AgentCard['attached']; modelWhy?: AgentCard['modelWhy']; modelNote?: string; catalog?: AgentCard['catalog'] /* AG19: */ }, ask: AgentAsk, starter: boolean, message?: string /* AG02: the person's whole ask */): AgentCard {
   const config = (preview.config ?? {}) as Partial<AgentConfig>;
   const tools = config.tools ?? [];
   const knowledge = tools.find((t) => t.type === 'knowledge');
@@ -62,6 +63,12 @@ export function cardFromPreview(preview: Awaited<ReturnType<typeof designPreview
     ...(preview.notAdded?.length && { notAdded: preview.notAdded }), // AG02:
     ...(preview.models?.length && { models: preview.models }), // AG02:
     ...(preview.knowledge && { knowledgeSetup: preview.knowledge }), // AG13: what it will index, from where, how it is searched
+    // AG19: an agent that already does the job, an existing knowledge base attached as it is, why this model, and what the design read of the tenant.
+    ...(preview.reuse && { reuse: preview.reuse }),
+    ...(preview.attached && { attached: preview.attached }),
+    ...(preview.modelWhy && { modelWhy: preview.modelWhy }),
+    ...(preview.modelNote && { modelNote: preview.modelNote }),
+    ...(preview.catalog?.length && { catalog: preview.catalog }),
   };
 }
 
@@ -121,11 +128,12 @@ export async function designAgentCard(message: string, ask: AgentAsk, options: {
     patchReply(reply.id, {
       parts: [
         // ag1-int: a fallback design (the architect's call failed or proposed nothing) says so; the card's Left row says why.
-        { kind: 'text', text: `${preview.designed === false ? `Made “${card.name}” from your words only: the Agent architect did not design it, so it has no tools yet.` : `Designed “${card.name}”.`} ${alone ? 'Creating it now.' : `Review it, then create it${options.starter ? ' with a flow that runs it' : ''}.`}` },
+        { kind: 'text', text: `${preview.designed === false ? `Made “${card.name}” from your words only: the Agent architect did not design it, so it has no tools yet.` : `Designed “${card.name}”.`} ${card.reuse ? (card.reuse.gaps.length ? (alone ? `“${card.reuse.name}” is the closest but lacks ${card.reuse.gaps.join(', ')}: creating a new one.` : `“${card.reuse.name}” is the closest but lacks ${card.reuse.gaps.join(', ')}: use it, or create a new one.`) : alone ? `“${card.reuse.name}” already does this: using it.` : `“${card.reuse.name}” already does this: use it, or create a new one anyway.`) /* AG19: */ : alone ? 'Creating it now.' : `Review it, then create it${options.starter ? ' with a flow that runs it' : ''}.`}` },
         { kind: 'agentCard', card },
       ],
     });
-    if (alone) queueMicrotask(() => void createFromCard(reply.id, card));
+    // AG19: a brand-new draft in autonomous mode uses the agent that already does the whole job (no gaps); Create is never the default when one does. One that lacks something the ask needs is the closest, not a reuse: the card shows its gaps and Create builds the new one.
+    if (alone) queueMicrotask(() => (card.reuse && !card.reuse.gaps.length ? void useExistingAgent(reply.id, card) : void createFromCard(reply.id, card)));
   } catch (e) {
     if (abort.signal.aborted) patchReply(reply.id, { parts: [{ kind: 'text', text: 'Stopped: no agent was designed.' }] });
     else patchReply(reply.id, { parts: [{ kind: 'text', text: 'No agent was designed.' }], error: `Couldn’t design the agent: ${(e as Error).message}` });
@@ -136,6 +144,36 @@ export async function designAgentCard(message: string, ask: AgentAsk, options: {
 }
 
 const creating = new Set<string>();
+
+/**
+ * AG19: Use <name>: the card's reuse row (docs/assistant.md "Agents and teams"). A Run an Agent step bound to the agent that
+ * already does the job: on an empty canvas the starter flow with that agent, else after the selected step (or the last one);
+ * no agent is made. The card goes and the reply says `reuseSentence`; a draft-only agent is placed too and the reply says it
+ * must be published first.
+ */
+export function useExistingAgent(itemId: string, card: AgentCard): boolean {
+  const reuse = card.reuse;
+  if (!reuse) return false;
+  const state = useEditor.getState();
+  const notes: string[] = [];
+  if (!state.nodes.length) {
+    if (card.workflowId && state.workflowId !== card.workflowId) return false;
+    const flow = starterFlow({ id: reuse.agentId, name: reuse.name }, starterSample({ name: reuse.name, cases: [] }));
+    if (/^untitled/i.test(state.name) || !state.name) state.setMeta({ name: flow.name });
+    if (!state.description?.trim()) state.setMeta({ description: card.description });
+    state.applyTemplate({ id: 'agent-starter', title: flow.name, description: card.description, icon: 'lucide:bot', color: 'var(--viz-7)', nodes: flow.nodes, edges: flow.edges as never, pinData: flow.pinData as never });
+    const blocked = flow.nodes.filter((t) => !useEditor.getState().nodeTypes[t.type]).map((t) => t.name);
+    if (blocked.length) notes.push(`This workflow does not allow ${blocked.join(' and ')}, so the flow is incomplete.`);
+  } else {
+    const leaves = state.nodes.filter((n) => !state.edges.some((e) => e.source === n.id && e.data?.connectionType === 'main') && n.data.wf.type !== 'core.stickyNote');
+    const after = state.nodes.find((n) => n.selected) ?? leaves.sort((a, b) => a.position.x - b.position.x).at(-1);
+    const ok = applyChanges([{ ops: [{ op: 'addNode', type: 'core.messageAgent', name: reuse.name.slice(0, 60), parameters: { agentId: reuse.agentId, toolApprovals: 'askInChat' }, ...(after && { after: after.data.wf.name }) }], kind: 'proposal' }], `Run ${reuse.name}`, { quiet: true });
+    if (!ok) return false;
+  }
+  const said = `${reuseSentence(reuse.name, reuse.why)}${reuse.published ? '' : ` It is not published yet: publish “${reuse.name}” before the flow runs.`}${notes.length ? ` ${notes.join(' ')}` : ''}`;
+  useAssistant.getState().updateParts(itemId, (parts) => parts.filter((p) => p.kind !== 'agentCard').map((p) => (p.kind === 'text' && /^Designed “/.test(p.text) ? { ...p, text: said } : p)));
+  return true;
+}
 
 /**
  * Create: the agent as a draft (the import route), a test case each for the eval gate, and, with the starter flow, the

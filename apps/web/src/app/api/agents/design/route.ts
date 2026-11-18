@@ -8,6 +8,7 @@
  * (Spotlight's agent card shows it; Create then imports the config).
  * AG02: both answers add `notAdded` (the tools the ask named that the agent did not get, with why) and `models` (the `provider/model` names a
  * card's Model select offers, the builder model first); the body's `ask` is the person's whole message.
+ * AG19: the preview answer adds `reuse` (an existing agent that already does the job), `attached` (an existing knowledge base searched as it is), `modelWhy`, `modelNote` and `catalog` (what the design read of the tenant); the body accepts `agentModel`, `knowledgeBase` and `toolNodes` (Spotlight's hints).
  * AG04: with `preview: true`, `base` (`{ agentId }` of an agent the caller can edit, or `{ config }` of a pending card) and `change`
  * (what to change, in words) the answer is the changed config and `changes` (what differs from the base, one line each); nothing
  * is saved. `base` without `change` (or the reverse) or without `preview` is 400; an agent the caller cannot edit is 404.
@@ -17,6 +18,8 @@ import { randomFace } from '@/lib/shared/faces';
 import { agentResources } from '@/lib/server/assistant/agent-resources';
 import { designAgent } from '@/lib/server/assistant/architect';
 import { withKnowledgeSetup } from '@/lib/server/assistant/knowledge-setup'; // AG13:
+import { listKnowledgeDocuments } from '@/lib/server/agents/knowledge'; // AG19:
+import type { VectorKnowledgeBaseConfig } from '@/lib/shared/agents'; // AG19:
 import { resolveSpotlightModel } from '@/lib/server/assistant/models-list'; // SB19:
 import { allowedTypes } from '@/lib/server/assistant/scope';
 import { addCase } from '@/lib/server/agents/eval-gate'; // SB17:
@@ -53,6 +56,10 @@ const Body = z.object({
   // AG04: a change to an agent that exists (`agentId`) or to a pending card (`config`): both or neither, and only as a preview.
   base: z.union([z.object({ agentId: z.string().min(1).max(200) }), z.object({ config: z.record(z.string(), z.unknown()) })]).optional(),
   change: z.string().trim().min(1).max(4000).optional(),
+  // AG19: Spotlight's hints (`newAgent`): a model from list_models (`provider/model`), an existing knowledge base's collection, the node types it found.
+  agentModel: z.string().trim().max(100).optional(),
+  knowledgeBase: z.string().trim().max(200).optional(),
+  toolNodes: z.array(z.object({ nodeType: z.string().trim().min(1).max(120), operation: z.string().trim().max(80).optional() })).max(8).optional(),
 });
 
 export const POST = handler(async (request: Request) => {
@@ -84,13 +91,21 @@ export const POST = handler(async (request: Request) => {
   const setup = await withKnowledgeSetup(design, { ...(parsed.data.knowledgeFolder && { folder: parsed.data.knowledgeFolder }), ...(parsed.data.knowledge && { knowledge: parsed.data.knowledge }), spotlight: true, ...(parsed.data.knowledgeAsked && { sourceAsked: true }), revise: Boolean(baseConfig), resources });
   design.config = setup.config;
   design.needs = setup.needs;
+  // AG19: an existing knowledge base the agent searches as it is: nothing indexed again; its documents are counted for the card.
+  let attached: { collection: string; documents?: number; search: string } | undefined;
+  if (!baseConfig && setup.knowledge?.existing && !setup.knowledge.folder && setup.knowledge.collection) {
+    const tool = design.config.tools?.find((t): t is VectorKnowledgeBaseConfig => t.type === 'knowledge' && 'collection' in t && t.collection === setup.knowledge!.collection);
+    const documents = tool && tool.store === 'sqlite' ? await listKnowledgeDocuments(tool).then((d) => d.documents.length).catch(() => undefined) : undefined;
+    attached = { collection: setup.knowledge.collection, ...(documents !== undefined && { documents }), search: setup.knowledge.search === 'keyword' ? 'keyword' : (setup.knowledge.embeddings ?? 'vector') };
+  }
+  const reasoned = design.extras && !baseConfig ? { ...(design.extras.reuse && { reuse: design.extras.reuse }), ...(attached && { attached }), ...(design.extras.modelWhy && { modelWhy: design.extras.modelWhy }), ...(design.extras.modelNote && { modelNote: design.extras.modelNote }), ...(design.extras.catalog.length && { catalog: design.extras.catalog }) } : {}; // AG19:
   const models = resources.models.map((m) => `${m.provider}/${m.model}`); // AG02: the card's Model select, the builder model first
   const config = baseConfig ? design.config : { avatar: { kind: 'face' as const, face: randomFace(parsed.data.name) }, ...design.config }; // AG04: a change keeps the base's own look
   if (parsed.data.preview) {
     // SB16: the card's preview: a face to show, nothing saved; SB17's brief's cases come with it.
     // AG04: a change also says what it changes from the base; nothing is saved.
     if (baseConfig) return json({ config, changes: agentChanges(baseConfig, config as Record<string, unknown>), needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: [], notAdded: design.notAdded, models /* AG02: */, ...(setup.knowledge && { knowledge: setup.knowledge }) /* AG13: */, ...(design.failure && { failure: design.failure }) });
-    return json({ config, needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: design.cases ?? [], notAdded: design.notAdded, models /* AG02: */, ...(setup.knowledge && { knowledge: setup.knowledge }) /* AG13: */ });
+    return json({ config, needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: design.cases ?? [], notAdded: design.notAdded, models /* AG02: */, ...(setup.knowledge && { knowledge: setup.knowledge }) /* AG13: */, ...reasoned /* AG19: */ });
   }
   const agent = createInProject(request, 'agent', () => agentStore.create(config), (a) => a.id);
   // SB17: the brief's test cases are saved on the new agent (the eval gate runs them on its first publish); one that fails is a line for the person, not a 500.

@@ -758,6 +758,8 @@ MCP agent writes (`create_agent`, `update_agent`, `test_agent`, `publish_agent`)
 
 Seen in AG18's live pass (production profile, Claude): a create-an-agent ask in Spotlight designs the agent with one tool-less model call (`designAgent`'s first attempt), so the tenant tools are not called on that path and its timeline shows only *Designing the agent…*; the editor chat, where the model has the tenant tools, does call them (*Looked at 1 agent*, *Looked at 0 knowledge bases*; the phone's reply shows no steps). On an empty workflow a question goes to the build plan, not the chat. The sales-database ask got no SQLite tool on its card although `list_tool_nodes` (MCP) finds it with the credential *Sales DB*. **Pick it** on the card did nothing in that pass. Not fixed in AG18 (the design path and the card are AG19's); the Agent architect's prompt now tells the model to read the company before its first proposal.
 
+- **A Run an Agent step with no agent is not designed after Apply (wave ag4, AG19):** the flow builder lists it as "needs a new agent: <name>" and the person picks an agent for it or asks Spotlight to create one; Spotlight does not design the agent by itself for an unbound step (the brief asked for it, as `newAgent` does).
+
 ## Agent versions in workflows (ag4, AG21)
 
 - Team membership is not versioned: a pinned team keeps its lead's version, but the members come from the team's published config.
