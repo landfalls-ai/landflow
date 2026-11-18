@@ -254,7 +254,7 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   cause needs): the card lists every tool it adds and the person applies it. The Left rows are worked out after the merge.
   A new tool of the same type with another **operation** turns a kept tool that still has no credential (an earlier *insert*
   SQLite made a read-only query tool): the new operation, query and asks-first state replace the old ones, so the card shows what
-  Apply stores. A tool added to read data is read: SQLite gets **Execute Query**, and an Execute Query whose SQL is empty, written
+  Apply stores. A tool the model leaves on the node default becomes the node's read (SQLite Select), and an Execute Query the model chose, whose SQL is empty, written
   per call or one `SELECT` is a read that asks nothing first (`readsByQuery` in `run-check.ts`); SQL that changes data asks first.
   **Pick it** shows on a change card after Apply too, and wherever a Left row says *pick a … credential*; its smoke result also
   reaches the applied build and change cards' status line (a change card still waiting for Apply is left alone).

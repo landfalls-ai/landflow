@@ -26,7 +26,7 @@ const design = (parameters: Record<string, unknown> | undefined, request: string
 const tool = (config: { tools?: unknown[] }) => config.tools![0] as NodeToolConfig;
 
 describe('a SQLite tool added to read data', () => {
-  it.each([[undefined], [{ operation: 'executeQuery' }], [{ operation: 'executeQuery', query: 'SELECT total FROM sales' }]])('is executeQuery and asks nothing first (%j)', (given) => {
+  it.each([[{ operation: 'executeQuery' }], [{ operation: 'executeQuery', query: 'SELECT total FROM sales' }]])('a read the model chose as executeQuery stays executeQuery and asks nothing first (%j)', (given) => {
     const { config } = design(given, 'Give the digest access to the sales database so it reads the numbers.');
     expect(tool(config).parameters.operation).toBe('executeQuery');
     expect(tool(config).requireApproval).toBeFalsy();
@@ -35,6 +35,14 @@ describe('a SQLite tool added to read data', () => {
     const { config } = design({ operation: 'insert', table: 'sales' }, 'Let the digest insert a row into SQLite.');
     expect(tool(config).parameters.operation).toBe('insert');
     expect(tool(config).requireApproval).toBe(true);
+  });
+});
+
+describe('a tool left on the node default', () => {
+  it('becomes the node’s Select read with no approval', () => {
+    const { config } = design(undefined, 'Give the digest access to the sales database so it reads the numbers.');
+    expect(tool(config).parameters.operation).toBe('select');
+    expect(tool(config).requireApproval).toBeFalsy();
   });
 });
 

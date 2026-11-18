@@ -477,8 +477,6 @@ function readDefaults(info: NodeTypeInfo, parameters: Record<string, unknown>, r
     return words.some((w) => w.length > 3 && asked.includes(w));
   });
   const next = { ...parameters, ...(resource && { resource: resource.value }) };
-  // A node that runs a query (SQLite's Execute Query) reads any table with it; its Select needs a table the request may not name.
-  if (info.descriptor.properties.some((p) => p.name === 'query') && operationsOf(info, next).some((o) => o.value === 'executeQuery')) return { ...next, operation: 'executeQuery' };
   const read = operationsOf(info, next).find((o) => o.idempotent === true);
   return read ? { ...next, operation: read.value } : parameters;
 }
