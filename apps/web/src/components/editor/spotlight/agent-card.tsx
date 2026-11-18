@@ -62,12 +62,15 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
   const tested = smoke ? `${smokeLine(smoke)}${smoke.state === 'passed' && smoke.reason ? ` · ${smoke.reason}` : ''}` : 'Created as a draft';
   const createdLine = publish?.state === 'publishing' ? publishLine(publish) : `${tested}${publish && publish.state !== 'published' ? ` · ${publishLine(publish)}` : row?.state === 'published' ? ' · published' : ''}`;
   const needsCredential = smoke?.state === 'untested' && Boolean(smoke.reason?.startsWith('needs a credential'));
-  // AG19: the agent as bubbles (the person: "Bubbles there too"): the proposed agent's, or, while a reuse is offered, the reused agent's (read as the Agents page keeps it).
+  // AG19: the agent as bubbles (the person: "Bubbles there too"): the proposed agent's, or, while a reuse that fits whole is offered, the reused agent's (read as the Agents page keeps it).
   const [openId, setOpenId] = useState<string>();
   const reusing = Boolean(card.reuse && card.state === 'designed' && !card.base);
-  const reused = useAgentDraft(reusing ? card.reuse!.agentId : undefined);
+  // Wave ag4 carryover (live pass, asks.md B): a reuse that lacks something (an IOC tool, the model asked for) is only the
+  // closest: the diagram draws the proposed agent, the reuse row above it still offers the closest; a full fit draws it.
+  const drawReused = reusing && !card.reuse!.gaps?.length;
+  const reused = useAgentDraft(drawReused ? card.reuse!.agentId : undefined);
   const bubbles = useMemo(() => {
-    if (reusing) {
+    if (drawReused) {
       if (!reused) return [];
       const m = reused.model as { provider?: string; model?: string } | undefined;
       const tools = ((reused.tools as Array<Parameters<typeof cardTool>[0]> | undefined) ?? []).filter((t) => t.type !== 'knowledge').map(cardTool);
@@ -75,18 +78,18 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
       return cardBubbles({ ...(m?.model && { model: m.provider ? `${m.provider}/${m.model}` : m.model }), tools, ...(kb && { knowledge: kb.collection || kb.name }), config: reused });
     }
     return cardBubbles(card);
-  }, [reusing, reused, card]);
-  const diagramName = reusing ? card.reuse!.name : card.name;
+  }, [drawReused, reused, card]);
+  const diagramName = drawReused ? card.reuse!.name : card.name;
   const open = bubbles.find((b) => b.id === openId);
   // A reused agent's bubble detail reads the reused agent, never the proposed design.
   const detailCard = useMemo<AgentCardData>(() => {
-    if (!reusing || !reused) return card;
+    if (!drawReused || !reused) return card;
     const m = reused.model as { provider?: string; model?: string } | undefined;
     const rt = (reused.tools as Array<Parameters<typeof cardTool>[0] & { collection?: string }> | undefined) ?? [];
     const kb = rt.find((t) => t.type === 'knowledge');
     const { modelWhy: _w, modelNote: _n, attached: _a, knowledgeSetup: _k, knowledge: _kn, model: _m, ...rest } = card;
     return { ...rest, tools: rt.filter((t) => t.type !== 'knowledge').map(cardTool), ...(m?.model && { model: m.provider ? `${m.provider}/${m.model}` : m.model }), ...(kb && { knowledge: kb.collection || ('name' in kb ? kb.name : undefined) }) } as AgentCardData;
-  }, [reusing, reused, card]);
+  }, [drawReused, reused, card]);
   return (
     <div data-testid="agent-card" className={cn('animate-fade-up rounded-xl border bg-sf p-2.5 transition-colors duration-200 motion-reduce:transition-none', created ? 'border-gnbd' : 'border-acbd')}>
       <div className="flex items-start gap-2">

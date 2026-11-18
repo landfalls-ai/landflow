@@ -160,6 +160,16 @@ const click = async (selector: string) => { await act(async () => { (container.q
     expect(detail).not.toContain('haiku');
   });
 
+  it('wave ag4 carryover: a closest agent that lacks something keeps its reuse row, and the diagram is the proposed agent', async () => {
+    const closest = { agentId: 'ag_s2', name: 'Runbooks answerer', why: 'answers from the runbooks', published: true, gaps: ['IOC extraction', 'a Haiku model'] };
+    await show(cardFromPreview(preview({ reuse: closest }), ASK, true));
+    await settle();
+    expect(container.querySelector('[data-testid="agent-reuse"]')!.textContent).toContain('Runbooks answerer');
+    const label = container.querySelector('[data-testid="bubble-diagram"]')!.getAttribute('aria-label')!;
+    expect(label).not.toContain('Runbooks answerer');
+    expect(bubbles().some((b) => b.startsWith('tool:'))).toBe(true);
+  });
+
   it('after Create on asks.md B’s card: no folder route call, and the imported knowledge tool is the existing base', async () => {
     const calls: Array<{ url: string; body?: string }> = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: { body?: string }) => {
