@@ -66,9 +66,9 @@ function graphOf(workflowId: string, version?: number | 'draft'): Workflow | und
 
 /**
  * For each trigger of the version that starts without a person, each Run an Agent step whose agent version (its pin, else the
- * published one, else the draft) has a tool that asks first: `{ tool, agent, node, trigger, line }`. `undefined`: no such workflow or version.
+ * published one, else the draft; `latest` names agents read at their latest published version, as an update offer would re-pin them) has a tool that asks first: `{ tool, agent, node, trigger, line }`. `undefined`: no such workflow or version.
  */
-export function unattendedApprovals(workflowId: string, version?: number | 'draft'): UnattendedApproval[] | undefined {
+export function unattendedApprovals(workflowId: string, version?: number | 'draft', latest: readonly string[] = []): UnattendedApproval[] | undefined {
   const graph = graphOf(workflowId, version);
   if (!graph) return undefined;
   const triggers = [...new Set(graph.nodes.filter((n) => !n.disabled).flatMap((n) => unattendedTrigger(n.type) ?? []))];
@@ -80,7 +80,7 @@ export function unattendedApprovals(workflowId: string, version?: number | 'draf
     const agent = agentStore.get(String(node.parameters?.agentId ?? ''));
     if (!agent) continue;
     const pin = node.parameters?.[PIN_PARAM];
-    const config = (typeof pin === 'number' ? agentVersionConfig(agent.id, pin) : undefined) ?? (agent.published ? agent.published.config : configOf(agent));
+    const config = (typeof pin === 'number' && !latest.includes(agent.id) ? agentVersionConfig(agent.id, pin) : undefined) ?? (agent.published ? agent.published.config : configOf(agent));
     for (const tool of config.tools) {
       if (!tool.requireApproval) continue;
       const name = 'name' in tool && typeof tool.name === 'string' ? tool.name : tool.type;

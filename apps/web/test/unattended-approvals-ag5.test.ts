@@ -117,6 +117,22 @@ describe('GET /api/workflows/:id/unattended-approvals', () => {
     agentStore.publish(triager.id);
   });
 
+  it('an update offer is answered for the agents at their latest published version, not the old pins', async () => {
+    const agent = agentStore.create({ name: 'Updater', instructions: 'Go.', model, tools: [READ] });
+    agentStore.publish(agent.id); // v1: nothing asks first
+    const wf = flow('core.webhook', agent.id, { path: 'ag23u-update' });
+    await publish(wf);
+    expect((await ask(wf.id)).body).toEqual([]);
+    agentStore.saveDraft(agent.id, { tools: [SEND, READ] });
+    agentStore.publish(agent.id); // v2 asks first
+    expect((await ask(wf.id)).body).toEqual([]); // production still runs v1
+    expect((await ask(wf.id, `?update=${agent.id}`)).body).toEqual([expect.objectContaining({ tool: 'Send Email', trigger: 'webhook' })]);
+    // The reverse: an update that drops the tool no longer warns.
+    agentStore.saveDraft(agent.id, { tools: [READ] });
+    agentStore.publish(agent.id);
+    expect((await ask(wf.id, `?update=${agent.id}`)).body).toEqual([]);
+  });
+
   it('answers by access: an unknown workflow or version is 404, someone without access gets 404, no sign-in is refused; no secret is in the answer', async () => {
     const wf = flow('core.webhook', triager.id, { path: 'ag23u-access' });
     expect((await ask('wf_nothing')).status).toBe(404);
@@ -159,6 +175,15 @@ describe('the publish card and the menu say it', () => {
     await vi.waitFor(() => expect(host.querySelector('[data-testid="unattended-lines"]')).not.toBeNull());
     expect(host.querySelector('[data-testid="unattended-lines"]')!.textContent).toBe(unattendedLine('Send Email', 'webhook'));
     expect(host.querySelectorAll('[data-testid="unattended-lines"] > div')).toHaveLength(1);
+  });
+
+  it('the publish card of an update offer asks for the agents being updated', async () => {
+    const urls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => (urls.push(String(url)), new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } }))));
+    const offer = { workflowId: 'wf1', kind: 'update' as const, nextVersion: 3, pins: [{ nodeId: 'n1', agentId: 'a1', agentName: 'Triager', version: 2 }], updates: [{ agentId: 'a1', agentName: 'Triager' }] };
+    await act(async () => root.render(createElement(PublishCardView, { itemId: 'i2', offer: offer as never })));
+    await vi.waitFor(() => expect(urls.some((u) => u.includes('/unattended-approvals'))).toBe(true));
+    expect(urls.find((u) => u.includes('/unattended-approvals'))).toContain('update=a1');
   });
 
   it('the menu’s component shows nothing when no tool asks first', async () => {

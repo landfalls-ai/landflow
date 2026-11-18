@@ -240,12 +240,29 @@ describe('destinations nobody gave (lesson 21)', () => {
       expect(given, type).toEqual([]);
       expect(spotlightVerdict(callDestinations(type, call), given), type).toBe('leave');
     }
-    // A number the agent fixed is given; the same number from the person's words gives the write with no address, too.
+    // A number the agent fixed is given.
     const fixedNumber = agentDestinations({ tools: [tool('messaging.whatsappSend', { recipientPhoneNumber: '+15550000111' })] });
     expect(spotlightVerdict(callDestinations('messaging.whatsappSend', { recipientPhoneNumber: '+15550000111' }), fixedNumber)).toBe('approve');
     expect(spotlightVerdict(callDestinations('messaging.whatsappSend', { recipientPhoneNumber: '+15550000999' }), fixedNumber)).toBe('leave');
     const standIn = callDestinations('databases.postgres', { operation: 'executeQuery', query: 'DROP TABLE customers' });
     expect(spotlightVerdict(standIn, standIn)).toBe('approve'); // named in the person's body destinations
+  });
+
+  it('a flow node of the same type and operation does not give a write that names no address (SQL, a webhook send)', async () => {
+    const { callDestinations, flowDestinations, spotlightVerdict } = await import('@/lib/server/agents/spotlight-approvals');
+    const wf = { nodes: [node('Q', 'databases.postgres', { operation: 'executeQuery', query: 'SELECT 1' }), node('D', 'messaging.discordSend', { operation: 'send', webhookUrl: 'https://discord.test/hook', text: 'hi' })] };
+    const given = flowDestinations(wf);
+    expect(given).not.toContain('databases.postgres executeQuery');
+    for (const [type, call] of [['databases.postgres', { operation: 'executeQuery', query: 'DROP TABLE customers' }], ['messaging.discordSend', { operation: 'send', webhookUrl: 'https://other.test/hook', text: 'x' }]] as const) {
+      expect(spotlightVerdict(callDestinations(type, call), given), type).toBe('leave');
+    }
+    // A flow's own sending node still gives its concrete address, and an HTTP step its host.
+    const mailFlow = flowDestinations({ nodes: [node('M', 'messaging.emailSend', { toEmail: 'ops@landflow.test', subject: 's', text: 't' }), node('H', 'core.httpRequest', { method: 'POST', url: 'https://api.landflow.test/x' })] });
+    expect(mailFlow).toContain('ops@landflow.test');
+    expect(spotlightVerdict(['ops@landflow.test'], mailFlow)).toBe('approve');
+    // Only the person's body destinations can name a stand-in-only call.
+    const standIn = callDestinations('databases.postgres', { operation: 'executeQuery', query: 'DROP TABLE customers' });
+    expect(spotlightVerdict(standIn, [...given, ...standIn])).toBe('approve');
   });
 
   it('an asks-first workflow tool is left for the person, not run', async () => {

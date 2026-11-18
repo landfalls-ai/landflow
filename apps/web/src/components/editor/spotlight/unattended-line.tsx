@@ -10,17 +10,19 @@ import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import type { UnattendedApproval } from '@/lib/shared/unattended';
 
-export function UnattendedLines({ workflowId, version, className }: { workflowId: string; version?: number | 'draft'; className?: string }) {
+export function UnattendedLines({ workflowId, version, update, className }: { workflowId: string; version?: number | 'draft'; update?: string[]; className?: string }) {
   const [lines, setLines] = useState<UnattendedApproval[]>([]);
+  const updateKey = update?.join(',') ?? '';
   useEffect(() => {
     let live = true;
-    api<UnattendedApproval[]>(`/api/workflows/${encodeURIComponent(workflowId)}/unattended-approvals${version === undefined ? '' : `?version=${version}`}`, { background: true })
+    const query = [version === undefined ? '' : `version=${version}`, updateKey ? `update=${encodeURIComponent(updateKey)}` : ''].filter(Boolean).join('&');
+    api<UnattendedApproval[]>(`/api/workflows/${encodeURIComponent(workflowId)}/unattended-approvals${query ? `?${query}` : ''}`, { background: true })
       .then((answer) => live && setLines(Array.isArray(answer) ? answer : []))
       .catch(() => live && setLines([]));
     return () => {
       live = false;
     };
-  }, [workflowId, version]);
+  }, [workflowId, version, updateKey]);
   if (!lines.length) return null;
   return (
     <div data-testid="unattended-lines" className={cn('flex flex-col gap-1 text-[11px] leading-snug text-t3', className)}>

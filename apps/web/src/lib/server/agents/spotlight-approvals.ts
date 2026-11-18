@@ -98,14 +98,16 @@ export function agentDestinations(config: Pick<AgentConfig, 'tools'>): string[] 
   return given;
 }
 
-/** The destinations the flow's own sending steps fix (`destinationsOf` on the run's graph, and their addresses). */
+/** The destinations the flow's own sending steps fix (their concrete addresses and HTTP hosts; never the `<type> <operation>` stand-in). */
 export function flowDestinations(workflow: Pick<Workflow, 'nodes'>): string[] {
   const given: string[] = [];
   for (const node of workflow.nodes) {
     if (node.disabled) continue;
     const step = { name: node.name ?? node.id, type: node.type, parameters: (node.parameters ?? {}) as Record<string, unknown> };
     if (!writesOutside(step)) continue; // a read (an HTTP GET, a Slack lookup) gives nothing
-    given.push(...callDestinations(step.type, step.parameters), ...destinationsOf([step]).map((d) => d.destination));
+    // Concrete addresses only: a call that can only be named `<type> <operation>` is given by the person's destinations, never by the flow.
+    given.push(...callDestinations(step.type, step.parameters, { fallback: false }));
+    if (step.type === 'core.httpRequest') given.push(...destinationsOf([step]).map((d) => d.destination));
   }
   return given.filter((d) => d !== NOT_GIVEN && !isUnreadHost(d));
 }

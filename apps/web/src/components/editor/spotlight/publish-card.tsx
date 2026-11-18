@@ -91,7 +91,7 @@ export function PublishCardView({ itemId, offer, card }: { itemId: string; offer
         ))}
         {!runs.length && <div>It runs no saved agent, so there are no versions to pin.</div>}
       </div>
-      {!done && <UnattendedLines workflowId={offer.workflowId} version={offer.kind === 'draft' ? 'draft' : undefined} className="mt-1.5" />}{/* AG23: */}
+      {!done && <UnattendedLines workflowId={offer.workflowId} version={offer.kind === 'draft' ? 'draft' : undefined} update={offer.kind === 'update' ? (offer.updates ?? []).map((u) => u.agentId) : undefined} className="mt-1.5" />}{/* AG23: */}
       {blocks?.length && !done ? <BlockNotice className="mt-2" blocks={blocks} busy={busy} onChoose={(how) => void publish(itemId, offer, how)} /> : null}
       {state.phase === 'tested' && (
         <div data-testid="publish-test" className={cn('mt-2 rounded-lg border px-2 py-1.5 text-[12px] leading-snug', state.result === 'passed' ? 'border-gnbd bg-gndim text-t1' : state.result === 'waiting' ? 'border-warnbd bg-warndim text-t1' : 'border-rdbd bg-rddim text-t1')}>
