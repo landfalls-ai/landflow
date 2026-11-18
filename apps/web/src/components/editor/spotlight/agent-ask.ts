@@ -488,7 +488,13 @@ export async function changeAgentCard(change: { agentId?: string; teamId?: strin
 }
 
 // AG17: an applied changeAgent op (assistant.ts) asks for the agent's change card.
-if (typeof window !== 'undefined') window.addEventListener(AGENT_CHANGE_ASKED, (e) => void changeAgentCard((e as CustomEvent<{ agentId?: string; teamId?: string; change: string; nodeId?: string }>).detail));
+// One listener only: under dev HMR this module reloads, and a second listener would open a second card.
+const g = globalThis as { __landflowAgentChangeListener?: EventListener };
+if (typeof window !== 'undefined') {
+  if (g.__landflowAgentChangeListener) window.removeEventListener(AGENT_CHANGE_ASKED, g.__landflowAgentChangeListener);
+  g.__landflowAgentChangeListener = (e) => void changeAgentCard((e as CustomEvent<{ agentId?: string; teamId?: string; change: string; nodeId?: string }>).detail);
+  window.addEventListener(AGENT_CHANGE_ASKED, g.__landflowAgentChangeListener);
+}
 
 /** AG09: Test again: the smoke test on the draft as it is now (a credential may have been picked since); nothing is saved or published. */
 export async function testAgentChange(itemId: string, card: AgentCard): Promise<void> {

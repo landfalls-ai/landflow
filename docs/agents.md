@@ -671,7 +671,7 @@ request: the run goes on when the last one is decided). The Platform analyst's o
 
   **A Run an Agent node follows its agent** (AG17, wave ag4). The three ports above are for flows saved before wave ag4: since then
   the agent's model, memory, tools and knowledge are the agent's own, the **bubbles** under the node, and a model, memory or tool a
-  flow wired into a Run an Agent node (or a Run a Team node, into its lead) is **moved into the agent's draft**, all of it, now:
+  flow wired into a Run an Agent node is **moved into the agent's draft**, all of it, now (a Run a Team node's wiring stays in the flow until `run-team.ts` has the same overlay; see [limitations](limitations.md)):
   - **When**: the editor on open (a tab that holds the edit lock and loads a flow that still wires sub-nodes posts
     [`POST /api/workflows/:id/agent-moves`](reference/api.md) with the `updatedAt` it loaded, as the person, then loads the flow again),
     and the host's start pass (a leader-only service, 3 s after start, over every saved flow with wired sub-nodes in a bound node, each as

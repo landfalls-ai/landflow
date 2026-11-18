@@ -203,7 +203,7 @@ export function AgentMovesNotice({ workflowId }: { workflowId: string }) {
 
   if (!open) {
     return (
-      <div className="pointer-events-none absolute right-14 top-3 z-20 max-md:right-16 max-md:top-2">
+      <div className="pointer-events-none absolute right-14 top-3 z-20 max-md:right-3 max-md:top-16">
         <button
           type="button"
           onClick={() => {
