@@ -712,7 +712,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         }
         // SB07: a change outside the scope goes back once, then is left out and listed.
         // Wave ag4 carryover (live pass E3): a changeAgent on a step in scope is in scope (spotlight-scope.ts is a contract copy).
-        const outside = askScope ? outsideScope(validated.ops, askScope, working, request).filter((o) => !agentChangeInScope(validated.ops[o.index], askScope, working.nodes)) : [];
+        const outside = askScope ? outsideScope(validated.ops, askScope, working, request).filter((o) => !agentChangeInScope(validated.ops[o.index], askScope, working.nodes, request)) : [];
         if (askScope && outside.length) {
           const label = scopeLabel(askScope, working.nodes);
           if (!scopeSent) {
@@ -1114,13 +1114,22 @@ const executionIdIn = (messages: ChatInput['messages']): string | undefined => {
   return undefined;
 };
 
+const AGENT_TOPIC = /\b(?:agent|database|db|sqlite|postgres(?:ql)?|mysql|tool|knowledge|access to)\b/i;
+
 /**
  * Wave ag4 carryover (the live pass's E3): "Wire a Sentiment tool into this step." with a Run an Agent step selected is a
  * change to that step's agent (`changeAgent`), so it is in the request's scope when it names a step in scope, or names
  * none and one step is in scope; another step's agent is not, and an insert's anchor never is (it adds a step).
  */
-export function agentChangeInScope(op: { op: string; node?: unknown } | undefined, scope: { kind: string; nodes: readonly string[] }, nodes: ReadonlyArray<{ id: string; name: string }>): boolean {
+export function agentChangeInScope(op: { op: string; node?: unknown } | undefined, scope: { kind: string; nodes: readonly string[] }, nodes: ReadonlyArray<{ id: string; name: string; type?: string }>, request = ''): boolean {
   if (!op || op.op !== 'changeAgent' || scope.kind === 'insert') return false;
+  // Final live run: an ask that names an agent, a database or a tool ("Give the digest access to the sales database") is about the
+  // flow's agent when the flow has exactly one Run an Agent step, whichever step is selected.
+  const agentSteps = nodes.filter((n) => n.type === 'core.messageAgent');
+  if (agentSteps.length === 1 && AGENT_TOPIC.test(request)) {
+    const only = agentSteps[0];
+    if (op.node === undefined || op.node === '' || String(op.node) === only.name || String(op.node) === only.id || String(op.node).toLowerCase() === only.name.toLowerCase()) return true;
+  }
   if (op.node === undefined || op.node === '') return scope.nodes.length === 1;
   const ref = String(op.node);
   const node = nodes.find((n) => n.name === ref || n.id === ref) ?? nodes.find((n) => n.name.toLowerCase() === ref.toLowerCase());

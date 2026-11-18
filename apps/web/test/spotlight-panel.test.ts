@@ -15,7 +15,7 @@ vi.mock('@/components/editor/assistant', async (original) => ({
 const { fixedNodes, historyOf, ownRun, spotlightOwnsRun, useAssistant } = await import('@/components/editor/assistant');
 const { useEditor } = await import('@/components/editor/store');
 const { afterReply, useAutonomous } = await import('@/components/editor/autonomous');
-const { agentStep, draftPhase, draftStatus, lastRunOf, sessionIsWaiting, sessionWaitsForApply, stepsOf, titleOf } = await import('@/components/editor/timeline');
+const { agentFixWaits, agentStep, draftPhase, draftStatus, lastRunOf, sessionIsWaiting, sessionWaitsForApply, stepsOf, titleOf } = await import('@/components/editor/timeline');
 type ChatItem = import('@/components/editor/assistant').ChatItem;
 
 const session: ChatItem[] = [
@@ -66,6 +66,16 @@ describe('the timeline', () => {
     expect(sessionIsWaiting({ testing: true, pending: true }, [card] as never, 't1')).toBe(false);
     expect(sessionIsWaiting({ testing: true, pending: false }, [card] as never, 't1')).toBe(true);
     expect(sessionIsWaiting({ testing: false, pending: false }, [card] as never, 't1')).toBe(false);
+  });
+
+  it('an agent fix card the session waits on is a wait: Waiting for you, no spinner, until Publish is done', () => {
+    const card = (c: object) => [{ id: 'k1', role: 'assistant' as const, testId: 't1', parts: [{ kind: 'agentCard' as const, card: { fix: { attempt: 1 }, ...c } }] }] as never;
+    expect(sessionIsWaiting({ testing: true, pending: false }, card({ state: 'designed' }), 't1')).toBe(true);
+    expect(agentFixWaits(card({ state: 'created', smoke: { state: 'untested', reason: 'needs a credential: pick one' } }), 't1')).toBe(true);
+    expect(agentFixWaits(card({ state: 'created', smoke: { state: 'passed' } }), 't1')).toBe(true);
+    expect(agentFixWaits(card({ state: 'created', smoke: { state: 'passed' }, publish: { state: 'published' } }), 't1')).toBe(false);
+    expect(agentFixWaits(card({ state: 'creating', smoke: { state: 'testing' } }), 't1')).toBe(false);
+    expect(titleOf({ drafting: false, testing: true, pending: false, hasItems: true, waitingForApply: true, waitingForAgent: true })).toBe('Waiting for you');
   });
 
   it('says what Spotlight is doing in the header', () => {

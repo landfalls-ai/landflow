@@ -176,13 +176,16 @@ export function useAutonomousExplainer(): { note: boolean; close: () => void } {
 
 /** The note itself. `className` places it: pinned to the phone's bottom edge, or in the panel's flow on a desktop. */
 export function AutonomousExplainer({ onClose, className }: { onClose: () => void; className?: string }) {
+  // The "(now)" marks the mode in effect (`autonomyOf`: the switch, and a brand-new draft), not the mode the note happens to list first.
+  const workflowId = useEditor((st) => st.workflowId);
+  const autonomous = useAutonomyFacts(() => (workflowId ? autonomyOf(workflowId) : 'asks-first') === 'auto');
   return (
     <div role="dialog" aria-label="Asks first or Autonomous" className={cn('animate-fade-up space-y-1.5 rounded-xl border border-hair bg-sf p-3 text-[12px] leading-snug text-t2 shadow-pop', className)}>
       <p>
-        <span className="font-semibold text-t1">Autonomous</span> (now): Spotlight applies its changes, then tests and fixes the flow by itself. Every change has Undo.
+        <span className="font-semibold text-t1">Autonomous</span>{autonomous && ' (now)'}: Spotlight applies its changes, then tests and fixes the flow by itself. Every change has Undo.
       </p>
       <p>
-        <span className="font-semibold text-t1">Asks first</span>: it waits for your Apply before changing anything.
+        <span className="font-semibold text-t1">Asks first</span>{!autonomous && ' (now)'}: it waits for your Apply before changing anything.
       </p>
       <Button size="sm" variant="primary" onClick={onClose}>
         Got it

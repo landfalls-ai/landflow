@@ -206,6 +206,8 @@ export interface PanelState {
   pending: boolean;
   /** A session waits for the person's Apply (or Dismiss) on a fix: no work is going on. */
   waitingForApply?: boolean;
+  /** The wait is on an agent's change card (Apply, Pick it or Publish). */
+  waitingForAgent?: boolean;
   /** The node a fix is being asked for. */
   fixingName?: string;
   /** Agents being designed right now. */
@@ -222,7 +224,22 @@ export interface PanelState {
 
 /** Whether the running session waits for the person's Apply: a card of a reply it asked for is open. Another open card (an autonomous change held for a click) is not its wait. */
 export function sessionWaitsForApply(items: ChatItem[], testingId: string | undefined): boolean {
-  return Boolean(testingId) && items.some((item) => item.role === 'assistant' && item.testId === testingId && item.parts.some((p) => p.kind === 'proposal' && !p.proposal.state));
+  return Boolean(testingId) && items.some((item) => item.role === 'assistant' && item.testId === testingId && item.parts.some((p) => p.kind === 'proposal' && !p.proposal.state)) || agentFixWaits(items, testingId);
+}
+
+/**
+ * The session waits on an agent fix card of its own: it awaits Apply, a credential's Pick it, or Publish. The person is working, so
+ * the panel reads "Waiting for you" with no spinner.
+ */
+export function agentFixWaits(items: ChatItem[], testingId: string | undefined): boolean {
+  return Boolean(testingId) && items.some((item) => item.role === 'assistant' && item.testId === testingId && item.parts.some((p) => {
+    if (p.kind !== 'agentCard' || !p.card.fix) return false;
+    const c = p.card;
+    if (c.state === 'designed') return true;
+    if (c.state !== 'created') return false;
+    const picking = c.smoke?.state === 'untested' && Boolean(c.smoke.reason?.startsWith('needs a credential'));
+    return picking || (c.smoke?.state === 'passed' && c.publish === undefined);
+  }));
 }
 
 /**
@@ -237,6 +254,7 @@ export function sessionIsWaiting(state: { testing: boolean; pending: boolean }, 
 export function titleOf(state: PanelState): string {
   if (state.drafting) return 'Drafting the flow';
   if (state.designing) return `Designing “${state.designing}”`;
+  if (state.testing && state.waitingForAgent) return 'Waiting for you';
   if (state.testing && state.waitingForApply) return 'Needs you: apply the fix?';
   if (state.testing) return state.fixingName ? `Fixing “${state.fixingName}”` : 'Testing the flow';
   if (state.pending) return 'Working on it';

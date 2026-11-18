@@ -228,6 +228,20 @@ describe('the chat', () => {
   });
 });
 
+describe('final live run: a change to the flow’s one agent while another step is selected', () => {
+  it('is in scope when the ask names an agent, a database or a tool and the flow has exactly one Run an Agent step', async () => {
+    const { agentChangeInScope } = await import('@/lib/server/assistant/chat');
+    const nodes = [{ id: 'post', name: 'Post to Reports', type: 'core.httpRequest' }, { id: 'digest', name: 'Digest', type: 'core.messageAgent' }];
+    const selected = { kind: 'selected' as const, nodes: ['post'] };
+    const ask = 'Give the digest access to the sales database.';
+    expect(agentChangeInScope({ op: 'changeAgent', node: 'Digest' }, selected, nodes, ask)).toBe(true);
+    expect(agentChangeInScope({ op: 'changeAgent' }, selected, nodes, ask)).toBe(true);
+    expect(agentChangeInScope({ op: 'changeAgent', node: 'Digest' }, selected, nodes, 'Make it shorter.')).toBe(false);
+    expect(agentChangeInScope({ op: 'changeAgent', node: 'Digest' }, selected, [...nodes, { id: 'two', name: 'Second', type: 'core.messageAgent' }], ask)).toBe(false);
+    expect(agentChangeInScope({ op: 'changeAgent', node: 'Digest' }, { kind: 'insert', nodes: ['post'] }, nodes, ask)).toBe(false);
+  });
+});
+
 describe('wave ag4 carryover (E3): a change to the selected step’s agent', () => {
   it('is in scope for that step (or none named with one in scope), not for another step’s agent or an insert', async () => {
     const { agentChangeInScope } = await import('@/lib/server/assistant/chat');
