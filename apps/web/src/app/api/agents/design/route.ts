@@ -26,6 +26,7 @@ import { addCase } from '@/lib/server/agents/eval-gate'; // SB17:
 import { agentUsedBy, removeAgent } from '@/lib/server/agents/remove'; // SB18:
 import { agentStore, configOf } from '@/lib/server/agents/store';
 import { agentChanges } from '@/lib/shared/agent-changes'; // AG04:
+import { tidyChangedTools } from '@/lib/server/agents/change-tools';
 import type { AgentConfig } from '@/lib/shared/agents'; // AG04:
 import { isUsageCapError } from '@/lib/server/ai-usage';
 import { error, handler, json, parseBody } from '@/lib/server/http';
@@ -56,6 +57,8 @@ const Body = z.object({
   // AG04: a change to an agent that exists (`agentId`) or to a pending card (`config`): both or neither, and only as a preview.
   base: z.union([z.object({ agentId: z.string().min(1).max(200) }), z.object({ config: z.record(z.string(), z.unknown()) })]).optional(),
   change: z.string().trim().min(1).max(4000).optional(),
+  // Re-check 3: the cause of a fix (the session's agent fix): only what the cause needs is added.
+  cause: z.string().trim().max(300).optional(),
   // AG19: Spotlight's hints (`newAgent`): a model from list_models (`provider/model`), an existing knowledge base's collection, the node types it found.
   agentModel: z.string().trim().max(100).optional(),
   knowledgeBase: z.string().trim().max(200).optional(),
@@ -100,6 +103,7 @@ export const POST = handler(async (request: Request) => {
   }
   const reasoned = design.extras && !baseConfig ? { ...(design.extras.reuse && { reuse: design.extras.reuse }), ...(attached && { attached }), ...(design.extras.modelWhy && { modelWhy: design.extras.modelWhy }), ...(design.extras.modelNote && { modelNote: design.extras.modelNote }), ...(design.extras.catalog.length && { catalog: design.extras.catalog }) } : {}; // AG19:
   const models = resources.models.map((m) => `${m.provider}/${m.model}`); // AG02: the card's Model select, the builder model first
+  if (baseConfig && design.config) design.config = tidyChangedTools(baseConfig as { tools?: unknown }, design.config as { tools?: unknown }, { text: `${parsed.data.change ?? ''} ${parsed.data.ask ?? ''} ${parsed.data.cause ?? ''}`, fix: Boolean(parsed.data.cause) }) as typeof design.config;
   const config = baseConfig ? design.config : { avatar: { kind: 'face' as const, face: randomFace(parsed.data.name) }, ...design.config }; // AG04: a change keeps the base's own look
   if (parsed.data.preview) {
     // SB16: the card's preview: a face to show, nothing saved; SB17's brief's cases come with it.

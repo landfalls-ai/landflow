@@ -244,6 +244,12 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   none (wave ag3's live pass found the change said "No change" instead).
   The card's **Left** row then drops "fill in From Email" (any "fill in" or "set" line whose field the agent's draft now
   holds), as it drops a credential line once the slot is set.
+- **A change adds only what it needs, and never a duplicate (ag4 re-check 3).** Before the card, the design route
+  (`lib/server/agents/change-tools.ts`) keeps the agent's own tool when a change would add a second of the same node type
+  (no *SQLite 2*): the existing tool is filled in with the credential or parameters it lacked, unless the ask says it
+  wants another. A fix (the session's agent fix sends its cause) drops a new tool the change and the cause never name
+  (the HTTP Request tool that came along with SQLite). **Pick it** shows on a change card after Apply too, and wherever a
+  Left row says *pick a … credential*; its smoke result also reaches the build and change cards' status line.
 - **Credentials follow the agent's project.** Every credential picker that edits an agent (the agent page's model and tool
   dialogs, and Spotlight's **Pick it**) lists only what the agent's home project may use (`GET /api/credentials?agentId=`)
   and **Create** makes the credential in that project; nothing is picked on its own until that list has loaded, and when

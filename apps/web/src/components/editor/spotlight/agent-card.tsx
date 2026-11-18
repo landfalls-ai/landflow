@@ -77,7 +77,9 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
   const publish = row ? row.publish : card.publish;
   const tested = smoke ? `${smokeLine(smoke)}${smoke.state === 'passed' && smoke.reason ? ` · ${smoke.reason}` : ''}` : 'Created as a draft';
   const createdLine = publish?.state === 'publishing' ? publishLine(publish) : `${tested}${publish && publish.state !== 'published' ? ` · ${publishLine(publish)}` : row?.state === 'published' ? ' · published' : ''}`;
-  const needsCredential = smoke?.state === 'untested' && Boolean(smoke.reason?.startsWith('needs a credential'));
+  // Pick it shows wherever the card says a credential is left: the smoke test's "needs a credential", or a Left row "pick a … credential" (also on a change card after Apply).
+  const pickAgentId = card.agentId ?? (created ? card.base?.agentId : undefined);
+  const needsCredential = (smoke?.state === 'untested' && Boolean(smoke.reason?.startsWith('needs a credential'))) || (created && left.some((l) => /pick an? .+? credential/i.test(l)));
   // AG19: the agent as bubbles (the person: "Bubbles there too"): the proposed agent's, or, while a reuse that fits whole is offered, the reused agent's (read as the Agents page keeps it).
   const [openId, setOpenId] = useState<string>();
   const reusing = Boolean(card.reuse && card.state === 'designed' && !card.base);
@@ -280,6 +282,16 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
                   Publish
                 </Button>
               )}
+              {pickAgentId && needsCredential && (
+                <button type="button" aria-expanded={picking} onClick={() => setPicking((p) => !p)} className="flex min-h-7 items-center text-[12px] font-semibold text-ac hover:underline max-md:min-h-11">
+                  Pick it
+                </button>
+              )}
+              {picking && pickAgentId && needsCredential && (
+                <div className="basis-full">
+                  <AgentCredentialPicker agentId={pickAgentId} onDone={() => setPicking(false)} />
+                </div>
+              )}
               {/* AG09: the smoke test again on the draft as it is (a credential picked since); nothing is saved. */}
               {card.smoke?.state !== 'testing' && (
                 <Button size="sm" variant="ghost" onClick={() => void testAgentChange(itemId, card)} className="max-md:h-11 max-md:px-4">
@@ -313,7 +325,7 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
                 See the cases
               </a>
             )}
-            {card.agentId && needsCredential && (
+            {pickAgentId && needsCredential && (
               <button type="button" aria-expanded={picking} onClick={() => setPicking((p) => !p)} className="flex min-h-7 items-center text-[12px] font-semibold text-ac hover:underline max-md:min-h-11">
                 Pick it
               </button>
@@ -323,9 +335,9 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
                 Open <ExternalLink className="size-3" />
               </a>
             )}
-            {picking && card.agentId && needsCredential && (
+            {picking && pickAgentId && needsCredential && (
               <div className="basis-full">
-                <AgentCredentialPicker agentId={card.agentId} onDone={() => setPicking(false)} />
+                <AgentCredentialPicker agentId={pickAgentId} onDone={() => setPicking(false)} />
               </div>
             )}
           </>

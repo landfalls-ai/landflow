@@ -75,6 +75,24 @@ describe('Pick it, in place', () => {
     expect(gets.filter((u) => !/agentId=ag_q/.test(u))).toEqual([]);
   });
 
+  it('the smoke result of a pick reaches the build card and the change card in the conversation too (re-check 3, status line)', async () => {
+    const stale = { state: 'untested', reason: 'needs a credential: SQLite' };
+    useAssistant.getState().reset();
+    useAssistant.getState().append([
+      { id: 'b1', role: 'assistant', parts: [{ kind: 'agentCard', card: { ...card, smoke: stale } as never }] },
+      { id: 'b2', role: 'assistant', parts: [{ kind: 'agentCard', card: { ...card, agentId: undefined, base: { agentId: 'ag_q', name: 'Question answerer' }, smoke: stale } as never }] },
+    ] as never);
+    await act(async () => root.render(createElement(AgentCardView, { itemId: 'b1', card: card as never })));
+    await settle();
+    await act(async () => button(/^Pick it$/)!.click());
+    await settle();
+    await act(async () => (container.querySelector('input[type="radio"]') as HTMLInputElement).click());
+    await act(async () => button(/Use it/)!.click());
+    await settle();
+    const smokes = useAssistant.getState().items.flatMap((i) => (i.role === 'assistant' ? i.parts.flatMap((p) => (p.kind === 'agentCard' ? [p.card.smoke?.state] : [])) : []));
+    expect(smokes).toEqual(['passed', 'passed']);
+  });
+
   it('a failed filter says so with Retry instead of an empty list, and Retry lists them', async () => {
     failScope = true;
     await act(async () => root.render(createElement(AgentCardView, { itemId: 'i1', card: card as never })));
@@ -102,6 +120,16 @@ describe('Pick it, in place', () => {
     useAssistant.setState({ agents: [] } as never);
   });
 
+
+  it('a change card after Apply shows Pick it for a Left row that says pick a credential (re-check 3)', async () => {
+    const change = { ...card, state: 'created', base: { agentId: 'ag_q', name: 'Question answerer' }, needs: ['sqlite: pick a sqlite credential'], changes: ['Adds sqlite'], smoke: { state: 'passed' } };
+    await act(async () => root.render(createElement(AgentCardView, { itemId: 'i2', card: change as never })));
+    await settle();
+    expect(container.textContent).toMatch(/Left/);
+    await act(async () => button(/^Pick it$/)!.click());
+    await settle();
+    expect([...container.querySelectorAll('[data-testid="credential-picker"] label')].map((l) => l.textContent)).toEqual(['Sales DB']);
+  });
 
   it('Create one opens the credential dialog', async () => {
     await act(async () => root.render(createElement(AgentCardView, { itemId: 'i1', card: card as never })));
