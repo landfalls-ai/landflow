@@ -125,6 +125,8 @@ export interface CredentialSummary {
   updatedBy?: string;
   /** Workflows with a node that references this credential. */
   usedBy: Array<{ workflowId: string; workflowName: string }>;
+  /** Agents whose tools, model or channels use it (added by `GET /api/credentials`, for the agents the caller sees). */
+  usedByAgents?: Array<{ agentId: string; agentName: string }>;
   /** At most `limit` calls per `intervalSeconds` across every node and run that uses it (lib/server/credentials/vault.ts). */
   rateLimit?: CredentialRateLimitSetting;
   /** OAuth2 credentials: whether they are connected, as whom, and until when (lib/shared/oauth2.ts). */

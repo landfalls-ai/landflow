@@ -76,3 +76,37 @@ describe('a change that makes a kept tool read-only', () => {
     }
   });
 });
+
+describe('a change that only gives access', () => {
+  const run = async (change: string, kept: Record<string, unknown>) => {
+    const fake = await startFakeModels({
+      reply: (_p, body) => Array.isArray((body as { messages?: unknown })?.messages)
+        ? { text: '', toolCalls: [{ id: 'c1', name: 'propose_design', arguments: { summary: 'x', role: 'Digest', instructions: STEPS, description: 'Reads sales.', model: 'ollama/qwen3-coder:30b', nodeTools: 'databases.sqlite' } }] }
+        : { text: '', toolCalls: [] },
+    });
+    const previous = process.env.OLLAMA_URL;
+    process.env.OLLAMA_URL = fake.origin;
+    try {
+      const config = base();
+      (config.tools![0] as never as { parameters: object; requireApproval?: boolean }).parameters = kept;
+      delete (config.tools![0] as { requireApproval?: boolean }).requireApproval;
+      // The caller's description names a write at SQLite (as a live agent's can), so the design proposes a write tool.
+      return (await (await post({ name: 'Sales digest', description: 'Posts the summary and saves rows in SQLite.', preview: true, base: { config }, change })).json()) as { config: AgentConfig; changes: string[] };
+    } finally {
+      if (previous === undefined) delete process.env.OLLAMA_URL;
+      else process.env.OLLAMA_URL = previous;
+      await fake.close();
+    }
+  };
+  it('keeps the read tool a read: select does not become insert, and nothing asks first', async () => {
+    const body = await run('Give the summary agent access to the sales database', { operation: 'select', table: 'sales' });
+    expect(body.config.tools).toHaveLength(1);
+    expect(body.config.tools[0]).toMatchObject({ id: 'tl_1', parameters: { operation: 'select' } });
+    expect((body.config.tools[0] as { requireApproval?: boolean }).requireApproval).toBeFalsy();
+    expect(body.changes.join(' ')).not.toMatch(/insert|asks first/i);
+  });
+  it('an explicit write verb may turn it into a write that asks first', async () => {
+    const body = await run('Let the digest insert rows into the sales database', { operation: 'select', table: 'sales' });
+    expect(body.config.tools.some((t) => 'parameters' in t && (t.parameters as { operation?: string }).operation === 'insert')).toBe(true);
+  });
+});

@@ -87,7 +87,10 @@ describe('a read tool with no approval', () => {
     script.push(reply('hi'));
     await go(agent(select), 'deny');
     const spec = seen[0].tools.find((t) => t.name === 'sqlite')!;
-    expect(Object.keys((spec.inputSchema as { properties: object }).properties)).not.toContain('operation');
+    const offered = Object.keys((spec.inputSchema as { properties: object }).properties);
+    expect(offered).not.toContain('operation');
+    // A Select with no table stored is not a dead end: the call names the table (the schema offers it), and a write is still held.
+    expect(offered).toEqual(expect.arrayContaining(['table', 'query']));
   });
   it('reaches a SQLite file through a read-only connection', () => {
     expect(readOnlyCreds({ sqlite: { path: '/x.db', createIfMissing: true } })).toEqual({ sqlite: { path: '/x.db', createIfMissing: false, readOnly: true } });

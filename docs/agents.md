@@ -261,6 +261,12 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   and replaces the agent's eval cases, which tested text-only answers, with two it can answer through the tool (*what were last
   month's sales by region*, read through the tool). The card says *Tests: 2 replaced*; Apply deletes the old cases and adds the new
   ones. Nothing is removed when no line contradicts the tool.
+- **An empty Table on a Select tool (final run 2).** A tool a design leaves on Select keeps it (the safer, simpler choice: Select cannot
+  run arbitrary SQL, and Execute Query for free reads would need the SELECT check on every call and change how existing designs
+  read). Its `table` stays empty: the tool's input schema offers `table` and `query`, so the call names the table, and `operation` is pinned.
+  The Table is not a Left row. A change that only gives access never turns a read tool into a write (select does not become insert, and
+  it does not start asking first): the write needs an explicit verb in the ask (*insert*, *add rows*, *write to*, *update*, *delete*,
+  *save to*); otherwise the card says the agent already has read access and nothing changes.
 - **What a read is, and the run-time hold.** On SQLite (`readsByQuery` in `run-check.ts`; Postgres and MySQL Execute Query are always
   writes) a read is the plugin's Select, or an Execute Query that is one statement after the comments are gone, starts with `SELECT`
   and has no `INTO`, `FOR UPDATE`, `load_extension`, `nextval` or `dblink`. `WITH`, `PRAGMA`, `EXPLAIN`, an empty, per-call (`$fromAI`)

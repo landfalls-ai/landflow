@@ -1752,6 +1752,9 @@ function withSenderGiven(tool: AgentToolConfig, change: string, types: NodeTypeI
  * privilege holds for the tools the change does not name), a new tool stays only when the change names it, and the name, model,
  * practices, look and team stay unless the change names them.
  */
+/** A change that says to write: insert, add rows, write to, update, delete, save to. */
+const EXPLICIT_WRITE = /\b(?:insert(?:s|ed|ing)?|add(?:s|ing)?\s+(?:new\s+)?(?:rows?|records?)|writ(?:e|es|ing)\s+(?:\w+\s+)?(?:to|into)|updat(?:e|es|ing)|delet(?:e|es|ing)|sav(?:e|es|ing)\s+(?:\w+\s+)?to)\b/i;
+
 function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: string, types: NodeTypeInfo[] = []): void {
   const kept = (base.tools ?? []).filter((t) => !removed(change, t)).map((t) => withSenderGiven(t, change, types)); // ag3 carryover:
   const have = new Set(kept.map(toolKey));
@@ -1761,6 +1764,11 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
   for (const tool of draft.config.tools ?? []) {
     // "Make sqlite read-only": the design's tool of the same type and name as a kept one, with another operation, changes that tool in place (its id, its credential), never a second tool beside it.
     const place = tool.type === 'node' && tool.parameters?.operation !== undefined ? kept.findIndex((t) => t.type === 'node' && t.nodeType === tool.nodeType && String(t.name ?? '').toLowerCase() === String(tool.name ?? '').toLowerCase() && t.parameters?.operation !== undefined && t.parameters.operation !== tool.parameters?.operation) : -1;
+    // A read tool turns into a write, or a write tool is added beside it, only when the ask itself says so (insert, add rows, write to, update, delete, save to): "give it access" never does.
+    if (tool.type === 'node' && !EXPLICIT_WRITE.test(change) && writesOutside({ type: tool.nodeType, parameters: tool.parameters ?? {} }) && kept.some((t) => t.type === 'node' && t.nodeType === tool.nodeType && !writesOutside({ type: t.nodeType, parameters: t.parameters ?? {} }))) {
+      draft.dropped.push(`${tool.name || tool.nodeType}: the agent already has read access; the change doesn’t ask to write, so nothing changes`);
+      continue;
+    }
     if (place >= 0 && tool.type === 'node' && kept[place].type === 'node') {
       const own = kept[place] as NodeToolConfig;
       const { requireApproval: _drop, ...rest } = own;
