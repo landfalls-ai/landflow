@@ -94,6 +94,12 @@ export function boundAgentOf(node: Pick<WorkflowNode, 'type' | 'parameters'>, te
   return undefined;
 }
 
+/**
+ * The agent whose draft a node's wiring moves into: only a Run an Agent node's. A Run a Team node's wiring stays in the flow and still runs
+ * with the lead (run-team.ts has no R11 overlay for moved items yet, so moving it would drop it from runs until the lead is published).
+ */
+const movableAgentOf = (node: Pick<WorkflowNode, 'type' | 'parameters'>): string | undefined => (node.type === 'core.messageAgent' && plainId(node.parameters?.agentId) ? node.parameters.agentId.trim() : undefined);
+
 const stable = (value: unknown): string => JSON.stringify(value, (_k, v: unknown) => (v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))) : v));
 const snake = (name: string): string => name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'tool';
 const sameModel = (a?: AgentModel, b?: AgentModel): boolean => Boolean(a && b) && a!.provider === b!.provider && a!.model === b!.model && (a!.baseUrl ?? '') === (b!.baseUrl ?? '') && (a!.credential?.id ?? '') === (b!.credential?.id ?? '');
@@ -174,7 +180,7 @@ export function planMoves(workflow: Workflow, lookup: MoveLookup, options: PlanO
   const used = new Set<string>();
 
   for (const node of workflow.nodes) {
-    const agentId = boundAgentOf(node, lookup.teamLead);
+    const agentId = movableAgentOf(node);
     const agent = agentId ? lookup.agent(agentId) : undefined;
     if (!agentId || !agent) continue;
     const edges = workflow.connections.filter((c) => c.target === node.id && SUB_TYPES[c.type]);
@@ -580,10 +586,9 @@ export async function startPass(db: Database = database()): Promise<number> {
   let moved = 0;
   try {
     const lookupFor = (actor: Actor) => liveLookup(actor);
-    const probe = lookupFor({ id: '', role: 'owner' });
-    const flows = store.listWorkflows().filter((w) => hasWiredOverrides(w) && w.nodes.some((n) => boundAgentOf(n, probe.teamLead)));
+    const flows = store.listWorkflows().filter((w) => hasWiredOverrides(w) && w.nodes.some((n) => movableAgentOf(n)));
     // Grouped by agent, so the order of flows never matters (a model two flows disagree on is kept in both, whoever goes first).
-    const keyOf = (w: Workflow) => w.nodes.map((n) => boundAgentOf(n, probe.teamLead)).find(Boolean) ?? '';
+    const keyOf = (w: Workflow) => w.nodes.map((n) => movableAgentOf(n)).find(Boolean) ?? '';
     flows.sort((a, b) => keyOf(a).localeCompare(keyOf(b)) || a.id.localeCompare(b.id));
     let complete = true;
     for (const flow of flows) {

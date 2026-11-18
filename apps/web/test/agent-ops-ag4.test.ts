@@ -76,6 +76,18 @@ describe('the op (parse, apply, describe)', () => {
     expect(applyOps(wf, [{ op: 'changeAgent', node: 'Nope', change: 'x' }], lookup()).dropped[0]).toMatch(/no such node/);
     expect(applyOps(wf, [{ op: 'changeAgent', node: 'Dynamic', change: 'x' }], lookup()).dropped[0]).toMatch(/no agent chosen/);
   });
+
+  it('a Run a Team node stands for its lead: the op carries the team id, and a parameter ask on a bound node is a change, not a new node', () => {
+    const wf = { ...flow(), nodes: [...flow().nodes, node('tm', 'Support team', 'core.runTeam', { teamId: 'tm_support', message: 'hi' })] };
+    const result = applyOps(wf, [{ op: 'changeAgent', node: 'Support team', change: 'use Haiku for the lead' }], lookup());
+    expect(result.dropped).toEqual([]);
+    expect(result.applied).toEqual([{ op: 'changeAgent', node: 'Support team', teamId: 'tm_support', change: 'use Haiku for the lead' }]);
+    expect(result.workflow).toEqual(wf);
+    // "set Send Email's From Email to …" on a bound node's tool: the op path is changeAgent, the graph gains no node.
+    const ask = applyOps(wf, [{ op: 'changeAgent', node: 'Alert triager', change: 'set Send Email’s From Email to ops@example.com' }], lookup());
+    expect(ask.workflow.nodes.length).toBe(wf.nodes.length);
+    expect(ask.applied[0]).toMatchObject({ op: 'changeAgent', agentId: 'ag_triage' });
+  });
 });
 
 describe('new wiring into a bound node is refused', () => {
@@ -249,6 +261,8 @@ describe('the open path', () => {
       await mount();
       expect(container.querySelector('[data-testid="agent-moves-notice"]')).toBeNull();
       expect(container.querySelector('[data-testid="agent-moves-pill"]')).toBeTruthy();
+      // The pill sits left of the canvas toolbar's column (right-3, 36px wide), so Add node stays clickable.
+      expect((container.querySelector('[data-testid="agent-moves-pill"]')!.parentElement as HTMLElement).className).toMatch(/\bright-14\b/);
     });
   });
 });

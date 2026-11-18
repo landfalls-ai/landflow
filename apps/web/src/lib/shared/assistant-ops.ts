@@ -51,7 +51,7 @@ export type AssistantOp =
    * changes. Spotlight's agent change card shows it and a person applies it (components/editor/spotlight/agent-ask.ts `changeAgentCard`).
    * `agentId` is resolved from the node when the op applies.
    */
-  | { op: 'changeAgent'; node?: string; agentId?: string; change: string }
+  | { op: 'changeAgent'; node?: string; agentId?: string; /** A Run a Team node's team: the card changes its lead. */ teamId?: string; change: string }
   /** A node's run settings (retries, on error, timeout), not its parameters. */
   | { op: 'setNodeSettings'; node: string; settings: NodeSettingsPatch }
   /** The workflow's settings: its error workflow, timeout, automatic retries. */
@@ -792,6 +792,12 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
         }
         const plain = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '' && !v.trim().startsWith('=') && !v.includes('{{');
         const agentId = op.agentId ?? (node?.type === RUN_AGENT_TYPE && plain(node.parameters?.agentId) ? node.parameters.agentId.trim() : undefined);
+        // A Run a Team node stands for its lead: the card reads the team and picks the lead (changeAgentCard).
+        const teamId = !agentId && node?.type === 'core.runTeam' && plain(node.parameters?.teamId) ? node.parameters.teamId.trim() : undefined;
+        if (teamId) {
+          applied.push({ op: 'changeAgent', node: handle(node!), teamId, change: op.change });
+          break;
+        }
         if (!agentId) {
           dropped.push(node ? `change the agent of “${node.name}”: it has no agent chosen yet` : 'change the agent: no agent given');
           break;

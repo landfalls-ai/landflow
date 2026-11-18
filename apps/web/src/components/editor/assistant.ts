@@ -78,7 +78,9 @@ export const undos = new Map<string, () => void>();
 
 /** AG17: a `changeAgent` op that applied: the agent to change and what to change, in the person's words (Spotlight's change card for that agent). */
 export interface AgentChange {
-  agentId: string;
+  agentId?: string;
+  /** A Run a Team node's team: the card changes its lead. */
+  teamId?: string;
   change: string;
   nodeId?: string;
 }
@@ -124,9 +126,9 @@ export function applyChanges(
         }
         continue;
       }
-      if (op.op === 'changeAgent' && op.agentId) {
+      if (op.op === 'changeAgent' && (op.agentId || op.teamId)) {
         const node = op.node ? result.workflow.nodes.find((n) => n.name === op.node || n.id === op.node) : undefined;
-        agentChanges.push({ agentId: op.agentId, change: op.change, ...(node && { nodeId: node.id }) });
+        agentChanges.push({ ...(op.agentId && { agentId: op.agentId }), ...(op.teamId && { teamId: op.teamId }), change: op.change, ...(node && { nodeId: node.id }) });
         continue;
       }
       if (op.op !== 'turnIntoTeam') continue;

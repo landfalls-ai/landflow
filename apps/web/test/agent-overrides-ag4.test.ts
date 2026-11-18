@@ -359,14 +359,15 @@ describe('access, conflicts and protection (R7, R8)', () => {
     expect(store.getWorkflow(flow.id)!.nodes.some((n) => n.id === 'n-slug')).toBe(true);
   });
 
-  it('a Run a Team node’s wiring goes to the lead’s draft; an expression id and an AI Agent node are untouched', async () => {
+  it('a Run a Team node’s wiring stays in the flow (run-team.ts has no overlay yet); an expression id and an AI Agent node are untouched', async () => {
     const lead = makeAgent('Lead');
     const team = agentTeamStore.create({ name: 'Crew', goal: 'g', members: [{ id: 'm_lead', kind: 'agent', agentId: lead.id, title: 'Lead' }] });
     agentTeamStore.publish(team.id);
     const teamFlow = saveFlow(lead.id, (f) => ({ ...f, nodes: f.nodes.map((n) => (n.id === 'n-agent' ? { ...n, type: 'core.runTeam', parameters: { teamId: team.id, message: 'x' } } : n)) }));
     const r = (await post(teamFlow.id, { updatedAt: teamFlow.updatedAt })).body as AgentMoveResult;
-    expect(r.moved[0]).toMatchObject({ name: 'Slugify', agentId: lead.id });
-    expect(draftTools(lead.id).some((t) => t.type === 'node')).toBe(true);
+    expect(r.moved).toEqual([]);
+    expect(store.getWorkflow(teamFlow.id)!.nodes.some((n) => n.id === 'n-slug')).toBe(true);
+    expect(draftTools(lead.id)).toHaveLength(0);
 
     const other = makeAgent('Other');
     const expr = saveFlow(other.id, (f) => ({ ...f, nodes: f.nodes.map((n) => (n.id === 'n-agent' ? { ...n, parameters: { agentId: '={{ $json.agent }}' } } : n)) }));

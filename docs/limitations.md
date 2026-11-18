@@ -58,7 +58,8 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - A memory node wired into a Run an Agent node never moves into the agent: it stays in the flow and its history is the flow's.
 - The move changes the agent's **draft** only: until a person publishes the agent, then the workflow, production keeps the old wiring and the agent version it was published with.
 - An API or MCP write that wires a sub-node into a bound node is saved as it is and moved on the next editor open or host start; only the editor and Spotlight refuse new wiring.
-- A Run a Team node's sub-nodes move into the lead's draft only; its notice text is unchanged (run-team.ts).
+- A Run a Team node's wired model and tools stay in its flow and still run with the lead: they do not move into the lead's draft, because run-team.ts has no overlay for moved items (R11) yet. Spotlight changes the lead with `changeAgent` on the node, which opens the lead's change card.
+- A move's record rows (with the sub-node snapshot) stay in `agent_flow_moves` when the workflow is deleted.
 - A kept model is changed for every flow only by a person's *Use <model> for <agent> everywhere*.
 - A protected environment keeps every item and says so; nothing moves until a person does it there.
 

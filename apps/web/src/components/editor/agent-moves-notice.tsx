@@ -203,7 +203,7 @@ export function AgentMovesNotice({ workflowId }: { workflowId: string }) {
 
   if (!open) {
     return (
-      <div className="pointer-events-none absolute right-3 top-3 z-20 max-md:top-2">
+      <div className="pointer-events-none absolute right-14 top-3 z-20 max-md:right-16 max-md:top-2">
         <button
           type="button"
           onClick={() => {
@@ -215,7 +215,7 @@ export function AgentMovesNotice({ workflowId }: { workflowId: string }) {
           title="What moved from this flow into its agents"
         >
           <ArrowRightLeft className="size-3.5 text-ac" />
-          Moved into agents · {count || moves.length}
+          {count ? `Moved into agents · ${count}` : `This flow only · ${moves.length}`}
         </button>
       </div>
     );
@@ -226,7 +226,7 @@ export function AgentMovesNotice({ workflowId }: { workflowId: string }) {
       role="region"
       aria-label="Moved into agents"
       data-testid="agent-moves-notice"
-      className="pointer-events-auto absolute right-3 top-3 z-20 flex max-h-[60vh] w-[340px] max-w-[calc(100%-1.5rem)] animate-fade-up flex-col rounded-2xl border border-hair bg-sf/95 shadow-pop backdrop-blur max-md:inset-x-2 max-md:bottom-16 max-md:top-auto max-md:w-auto max-md:max-w-none max-md:max-h-[40vh]"
+      className="pointer-events-auto absolute right-14 top-3 z-20 flex max-h-[60vh] w-[340px] max-w-[calc(100%-4.5rem)] animate-fade-up flex-col rounded-2xl border border-hair bg-sf/95 shadow-pop backdrop-blur max-md:inset-x-2 max-md:bottom-16 max-md:top-auto max-md:w-auto max-md:max-w-none max-md:max-h-[40vh]"
     >
       <header className="flex items-center gap-2 border-b border-hair px-3 py-2">
         <ArrowRightLeft className="size-3.5 text-ac" />
@@ -240,7 +240,7 @@ export function AgentMovesNotice({ workflowId }: { workflowId: string }) {
           <MoveRecord moves={moves} onRetry={(m) => void again(m, false)} onResolve={(m) => void again(m, true)} />
         ) : (
           <>
-            <p className="text-t3">A model, memory or tool wired into a Run an Agent node is now the agent’s: its model, memory, tools and knowledge are the bubbles under the node. What can’t move stays here and runs in this flow only.</p>
+            <p className="text-t3">A model or tool wired into a Run an Agent node is now the agent’s: its model, memory, tools and knowledge are the bubbles under the node. What can’t move stays here and runs in this flow only.</p>
             <ul className="space-y-1.5 text-t1">
               {lines.map((line) => (
                 <li key={line} className="leading-snug">
