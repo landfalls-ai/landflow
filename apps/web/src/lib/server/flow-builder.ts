@@ -5,7 +5,7 @@
  * manual trigger is added when the model forgot one.
  */
 import type { ConnectionType, NodeItem, NodeTypeInfo, PropertyDescriptor } from '@/lib/shared/types';
-import { describeAgents, withAgentId, type AgentBrief } from '@/lib/shared/agent-brief';
+import { callsAnAgent, describeAgents, withAgentId, type AgentBrief } from '@/lib/shared/agent-brief';
 import { reuseSentence } from '@/lib/shared/tenant-catalog'; // AG19:
 import { describeTeams, withTeamId, type TeamBrief } from '@/lib/shared/agent-teams';
 import { registry } from './plugins/registry';
@@ -109,6 +109,7 @@ export const PARAMETER_FORMATS = `Parameter formats:
 - core.aggregate, one item with a list of each field's values: {"aggregate":"aggregateIndividualFields","fieldsToAggregate":{"fieldToAggregate":[{"fieldToAggregate":"title"}]}} puts out {"title":["…","…"]}.
 - core.schedule at a time of day ("every morning at 9"): {"unit":"rules","rule":{"interval":[{"field":"days","daysInterval":1,"triggerAtHour":9,"triggerAtMinute":0}]}}. Weekdays at 9: {"unit":"rules","rule":{"interval":[{"field":"cronExpression","expression":"0 9 * * 1-5"}]}}. "unit":"hours" with "every" counts from when the workflow is activated, not from a time of day.`;
 
+// AG25: the Agents rule below sends a step the ask calls an agent, or a specialist's step, to core.messageAgent (savedAgentSteps backs it up after the model).
 const SYSTEM = `You design workflows for Landflow, an n8n-like automation tool. Reply with JSON only, matching the schema.
 
 A workflow is a set of nodes joined by connections, left to right. Items (JSON objects) flow along connections: each node gets the items of the node before it, processes each item and passes items on.
@@ -120,7 +121,7 @@ Rules:
 - Parameters: only the parameter names listed for that node. Reference fields of the current item with expressions such as "{{ $json.title }}". Field parameters (like "field") take a plain field name such as "text", not an expression.
 - Nodes that write a result object into "outputField" (see the parameter notes, e.g. "receives {score, label}") nest it: compare "{{ $json.sentiment.label }}" or "{{ $json.sentiment.score }}", never the whole object.
 - connections: {"from": key, "to": key, "output": n}. "output" is the source's output index (If/Filter-like nodes: 0 = true, 1 = false). AI sub-nodes attach to an AI Agent with "type" ai_languageModel, ai_memory or ai_tool, from the sub-node to the agent. RAG: a vector store (mode retrieve-as-tool) attaches to an agent as ai_tool, or (mode retrieve) to a Question and Answer Chain as ai_retriever; embeddings attach to a vector store as ai_embedding, a data loader as ai_document, a text splitter to the loader as ai_textSplitter.
-- Agents: when a step needs an agent, first look at "Your agents" and "Published agent teams" after the catalog. If one's description, skills and tools cover the step, reuse it: core.messageAgent with its agentId (or core.runTeam with its teamId) and a "message" saying what to do with the item, and no node that does what the agent already does (an agent that sends the email needs no Send Email step); the draft's summary says which agent and why. When no agent covers a step that needs a specialist, add a core.messageAgent with an empty agentId and the new agent's name as the node's name: the summary lists it as "needs a new agent: <name>", and the person picks an agent for it or asks Spotlight to create one (nothing designs it by itself when the draft is applied). Use core.aiAgent only for a small step that needs no specialist (classify, summarize, extract, draft a reply). Never invent an agentId or teamId.
+- Agents: when a step needs an agent, first look at "Your agents" and "Published agent teams" after the catalog. If one's description, skills and tools cover the step, reuse it: core.messageAgent with its agentId (or core.runTeam with its teamId) and a "message" saying what to do with the item, and no node that does what the agent already does (an agent that sends the email needs no Send Email step); the draft's summary says which agent and why. When no agent covers a step that needs a specialist, add a core.messageAgent with an empty agentId and the new agent's name as the node's name: the summary lists it as "needs a new agent: <name>", and Spotlight designs that agent after the draft is applied (or shows it for the person to create). A step is a Run an Agent step (core.messageAgent), never core.aiAgent, when the request says "agent" (an agent, my agent, the sales agent, have an agent …) or the step is a specialist's (it needs data, tools, knowledge or judgement over the person's systems). Use core.aiAgent only for a small step that needs no specialist (classify, summarize, extract) and that the request did not call an agent; it always has its Chat Model attached (ai_languageModel). Never invent an agentId or teamId.
 - testData: 2–4 realistic sample items the flow can be tested with when run manually (objects with the fields the flow reads); just 1 when the flow runs an agent or a team, since each item is a whole agent run. With a Webhook trigger, each item is what a call brings: {"body": {…}} (plus the "headers" or "query" the flow reads); with a Form trigger, the form's fields.
 
 ${PARAMETER_FORMATS}`;
@@ -210,6 +211,86 @@ export function dropRepeatedAgentWork<N extends { key: string; type: string; nam
     }
   }
   return { nodes: keptNodes, edges: keptEdges, notes, dropped };
+}
+
+/** AG25: the Chat Model node the host's builder model (`LANDFLOW_BUILDER_MODEL`) is: `anthropic/x` the Anthropic node, `openai/x` the OpenAI one, a bare name or `ollama/x` Ollama's; undefined when that node is not available. */
+export function builderChatModel(byType: ReadonlyMap<string, unknown>): { type: string; name: string; parameters: Record<string, unknown> } | undefined {
+  const name = (process.env.LANDFLOW_BUILDER_MODEL?.trim() || DEFAULT_MODEL).trim();
+  const prefix = /^([a-z]+)\//.exec(name)?.[1];
+  const bare = prefix ? name.slice(prefix.length + 1) : name;
+  const own = prefix === 'anthropic' ? 'core.anthropicChatModel' : prefix === 'openai' ? 'core.openAiChatModel' : 'core.ollamaChatModel';
+  const type = byType.has(own) ? own : byType.has('core.ollamaChatModel') ? 'core.ollamaChatModel' : undefined;
+  if (!type) return undefined;
+  return { type, name: type === 'core.anthropicChatModel' ? 'Anthropic Chat Model' : type === 'core.openAiChatModel' ? 'OpenAI Chat Model' : 'Ollama Chat Model', parameters: type === own ? { model: bare } : {} };
+}
+
+/** AG25: what the AI Agent step wrote in `output` a Run an Agent step writes in `reply`: the steps after the converted one (until another AI Agent) read `reply`. */
+function readReply<N extends { key: string; type: string; name: string; parameters?: Record<string, unknown> }>(nodes: N[], edges: Array<[string, string, number, ConnectionType]>, was: { key: string; name: string }): N[] {
+  const after = new Set<string>();
+  const queue = [was.key];
+  while (queue.length) {
+    const at = queue.shift()!;
+    for (const [from, to, , type] of edges) {
+      if (from !== at || type !== 'main' || after.has(to)) continue;
+      after.add(to);
+      if (nodes.find((m) => m.key === to)?.type !== 'core.aiAgent') queue.push(to);
+    }
+  }
+  const quoted = was.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const swap = (value: unknown): unknown =>
+    typeof value === 'string' ? value.replace(/\$json\.output\b/g, '$json.reply').replace(new RegExp(`(\\$\\(\\s*(?:\\\\?["'])${quoted}(?:\\\\?["'])\\s*\\)\\.(?:item|first\\(\\)|last\\(\\))\\.json)\\.output\\b`, 'g'), '$1.reply')
+    : Array.isArray(value) ? value.map(swap)
+    : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, swap(v)]))
+    : value;
+  return nodes.map((m) => (after.has(m.key) && m.parameters ? { ...m, parameters: swap(m.parameters) as Record<string, unknown> } : m));
+}
+
+/**
+ * AG25: the first flow ask uses a saved agent. After the model answers:
+ * (a) a `core.aiAgent` step the ask called an agent ("have an agent write …") becomes a `core.messageAgent` step with the same
+ *     name and an empty agentId (Spotlight designs the saved agent after Apply); its message is the AI Agent's prompt, and the
+ *     Chat Model, memory and tool sub-nodes wired to it go (the tools it had are named in the summary line, for the new agent);
+ * (b) a `core.aiAgent` that stays (a small step the ask did not call an agent) always has a Chat Model wired: the host's
+ *     builder model's node, added and connected when the model gave none.
+ * Pure: nodes and edges in, nodes, edges and the summary `notes` out.
+ */
+export function savedAgentSteps<N extends { key: string; type: string; name: string; parameters?: Record<string, unknown> }>(
+  nodes: N[],
+  edges: Array<[string, string, number, ConnectionType]>,
+  ask: string,
+  byType: ReadonlyMap<string, NodeTypeInfo>,
+): { nodes: N[]; edges: Array<[string, string, number, ConnectionType]>; notes: string[] } {
+  const notes: string[] = [];
+  const called = callsAnAgent(ask);
+  let keptNodes = [...nodes];
+  let keptEdges = [...edges];
+  const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  for (const n of nodes) {
+    if (n.type !== 'core.aiAgent') continue;
+    const wired = keptEdges.filter((e) => e[1] === n.key && e[3] !== 'main');
+    if (called && byType.has('core.messageAgent')) {
+      const subs = new Set(wired.map((e) => e[0]));
+      const tools = wired.filter((e) => e[3] === 'ai_tool').map((e) => keptNodes.find((m) => m.key === e[0])?.name).filter((v): v is string => Boolean(v));
+      const prompt = text(n.parameters?.prompt);
+      const message = prompt && !/^\{\{\s*\$json\.chatInput\s*\}\}$/.test(prompt) ? prompt : '';
+      // A sub-node another step shares stays; one only this step used goes with it.
+      const goes = [...subs].filter((k) => !keptEdges.some((e) => e[0] === k && e[1] !== n.key));
+      keptNodes = keptNodes.map((m): N => (m.key === n.key ? { ...m, type: 'core.messageAgent', parameters: { agentId: '', ...(message && { message }) } } : m)).filter((m) => !goes.includes(m.key));
+      keptEdges = keptEdges.filter((e) => !(e[1] === n.key && e[3] !== 'main') && !goes.includes(e[0]) && !goes.includes(e[1]));
+      keptNodes = readReply(keptNodes, keptEdges, n);
+      notes.push(`“${n.name}” is a Run an Agent step, not an inline AI Agent: you asked for an agent, so it is a saved agent${tools.length ? ` (tools it had: ${tools.join(', ')})` : ''}`);
+      continue;
+    }
+    if (wired.some((e) => e[3] === 'ai_languageModel')) continue;
+    const model = builderChatModel(byType);
+    if (!model) continue;
+    let key = `${n.key}_model`;
+    while (keptNodes.some((m) => m.key === key)) key += '_';
+    keptNodes.push({ key, type: model.type, name: model.name, x: 0, y: 0, parameters: model.parameters } as unknown as N);
+    keptEdges.push([key, n.key, 0, 'ai_languageModel']);
+    notes.push(`“${n.name}” runs on the ${model.name} (the builder model)`);
+  }
+  return { nodes: keptNodes, edges: keptEdges, notes };
 }
 
 /**
@@ -606,9 +687,13 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
   if (options.plan) {
     const plan = options.plan;
     const built = await buildFromPlan(plan, prompt, { kit: { emptyParts, jsonOf, knownAgent, pinsOnTrigger, adapterTimedOut, AGENT_TYPES, PARAMETER_FORMATS }, model, types, agents, teams, timeoutMs: builderTimeoutMs(), started: options.started ?? Date.now() });
+    const saved = savedAgentSteps(built.nodes, built.edges, prompt, byType); // AG25: a saved agent, or an AI Agent with its model
+    built.nodes = saved.nodes;
+    built.edges = saved.edges;
     const own = dropRepeatedAgentWork(built.nodes, built.edges, agents); // AG19: an agent that does a step itself
     built.nodes = own.nodes;
     built.edges = own.edges;
+    own.notes.unshift(...saved.notes); // AG25:
     built.dropped = [...built.dropped, ...own.dropped];
     const staged = { nodes: built.nodes, edges: built.edges, dropped: built.dropped, left: built.left, trigger: built.trigger };
     const stagedLeft = mergeLeft(
@@ -653,12 +738,14 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
       // The first draft stands: a failed send-back is no reason to lose it.
     }
   }
-  const own = dropRepeatedAgentWork(draft.nodes, draft.edges, agents); // AG19: an agent that does a step itself
+  const saved = savedAgentSteps(draft.nodes, draft.edges, prompt, byType); // AG25: a saved agent, or an AI Agent with its model
+  const own = dropRepeatedAgentWork(saved.nodes, saved.edges, agents); // AG19: an agent that does a step itself
+  own.notes.unshift(...saved.notes); // AG25:
   const { nodes, edges } = own;
   const dropped = [...draft.dropped, ...own.dropped];
   const left = mergeLeft(
     draft.left,
-    emptyParts(draft, byType)
+    emptyParts({ ...draft, nodes, edges }, byType) // AG25: the draft after the saved-agent guard
       .filter((p) => p.kind === 'empty')
       .map((p): DraftLeft => ({ node: p.node, field: p.field, kind: 'empty', text: p.left })),
   );
