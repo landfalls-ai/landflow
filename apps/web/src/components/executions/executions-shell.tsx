@@ -84,7 +84,13 @@ function ExecutionCard({ execution, workflowId, selected, now, index, isNew }: {
     >
       <div className="flex items-center gap-2">
         <span className="truncate text-[13px] font-semibold tabular-nums text-t1">{formatStamp(execution.startedAt)}</span>
-        <ExecutionMarks execution={execution} className="ml-auto" />
+        {execution.versionNumber !== undefined && (
+          // AG21: the workflow version the run used (the agent versions are in the run's header)
+          <span data-testid="run-version" className={cn('ml-auto rounded-full border px-1.5 text-[11px] leading-4', execution.versionPublished ? 'border-acbd text-ac' : 'border-hair text-t3')} title={execution.versionPublished ? 'The published version when the run started' : 'A draft, not the published version'}>
+            v{execution.versionNumber}
+          </span>
+        )}
+        <ExecutionMarks execution={execution} className={execution.versionNumber === undefined ? 'ml-auto' : undefined} />
       </div>
       <div className={cn('mt-0.5 flex items-center gap-1.5 text-[12px]', RUN_STATE[state].text)}>
         <RunStateIcon state={state} className="size-3" />

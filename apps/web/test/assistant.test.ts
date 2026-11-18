@@ -437,7 +437,7 @@ describe('builder chat', () => {
 
     // The system prompt carries the workflow and the selected node; tool results go back to the model.
     expect(calls[0].system).toContain('The user has “Code” selected');
-    expect(calls[0].tools.map((t) => t.name)).toEqual(['search_nodes', 'get_node_docs', 'get_workflow', 'get_run_data', 'propose_changes', 'ask_user']); // SB11:
+    expect(calls[0].tools.map((t) => t.name)).toEqual(['list_agent_updates', 'propose_publish', 'propose_agent_update' /* AG21: */, 'search_nodes', 'get_node_docs', 'get_workflow', 'get_run_data', 'propose_changes', 'ask_user']); // SB11:
     const results = calls[1].messages.at(-1) as { role: 'tool'; results: Array<{ name: string; content: string }> };
     expect(results.results[0].content).toContain('core.removeDuplicates');
     expect(results.results[1].content).toContain('Parameters:');

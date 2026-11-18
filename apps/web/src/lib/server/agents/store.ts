@@ -38,6 +38,7 @@ import { database, type Database } from '../db';
 import { singleton } from '../singleton';
 import { store } from '../store';
 import type { Cursor } from '../pagination';
+import { recordAgentVersion } from './version-rows'; // AG21:
 
 /** A `running` session no process has saved for this long is idle again (its process died; files mode resets them at boot). */
 const STALE_RUNNING_MS = 30 * 60_000;
@@ -535,7 +536,9 @@ class AgentStore {
     const version = (agent.published?.version ?? agent.history[0]?.version ?? 0) + 1;
     const published = { version, publishedAt: new Date().toISOString(), config: configOf(agent) };
     const history = [published, ...agent.history].slice(0, MAX_HISTORY);
-    return this.write({ ...agent, published, history, updatedAt: published.publishedAt });
+    const saved = this.write({ ...agent, published, history, updatedAt: published.publishedAt });
+    recordAgentVersion(saved); // AG21: kept past the 20 in history while a workflow version may pin it
+    return saved;
   }
 
   /** Put an earlier version's config back into the draft. Nothing is published: the person (or the eval gate) does that. */

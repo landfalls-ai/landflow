@@ -25,7 +25,7 @@ import { getUser, listUsers, userNames, type UserRecord } from '../auth/users';
 import { database } from '../db';
 import { parse } from '../db/rows';
 import { onPublicationChanged, publishedVersionId } from '../publications';
-import { publicationStatus, publishDraft, PublishError, publishVersion, unpublishWorkflow } from '../publish';
+import { publicationStatus, publishDraft, PublishError, publishUpdate, publishVersion, unpublishWorkflow } from '../publish';
 import { releaseScheduleAfterApproval } from '../publish-schedule-store';
 import { singleton } from '../singleton';
 import { store } from '../store';
@@ -329,6 +329,11 @@ export interface PublishAsk {
   by?: string;
   /** A scheduled publish (../publish-schedule.ts): the request approves the schedule; it goes live at `at` (ISO). */
   schedule?: { id: string; at: string };
+  /** AG21: what to do about agents whose draft differs from their published version (lib/server/publish.ts `PublishOptions`). */
+  agents?: 'publish-first' | 'as-published';
+  /** AG21: publish a new version from the production graph with these agents moved to their published versions. */
+  update?: { agents: string[]; testedExecutionId?: string };
+  signal?: AbortSignal;
 }
 
 /** Record a publish request (four-eyes on). Throws ApprovalError when there is nothing to ask for. */
@@ -405,8 +410,12 @@ export async function publishOrRequest(ask: PublishAsk): Promise<PublishOutcome>
   const kind: PublishRequestKind = ask.action === 'unpublish' ? 'unpublish' : 'publish';
   if (!fourEyesApplies(kind, ask.workflowId)) {
     if (ask.action === 'unpublish') return unpublishWorkflow(ask.workflowId, ask.by, ask.note);
-    return ask.versionId ? publishVersion(ask.workflowId, ask.versionId, ask.by, ask.note) : publishDraft(ask.workflowId, ask.by, ask.note);
+    // AG21: the agents option, and the update path (a new version from the production graph).
+    if (ask.update) return publishUpdate(ask.workflowId, ask.update.agents, ask.by, ask.update.testedExecutionId);
+    const options = { ...(ask.agents && { agents: ask.agents }), ...(ask.signal && { signal: ask.signal }) };
+    return ask.versionId ? publishVersion(ask.workflowId, ask.versionId, ask.by, ask.note, options) : publishDraft(ask.workflowId, ask.by, ask.note, options);
   }
+  if (ask.update) throw new ApprovalError('Four-eyes publishing is on: an agent update is published as a request for the draft instead', 409); // AG21:
   // Nothing to ask for: the version is live already, or there is nothing to unpublish.
   const workflow = store.getWorkflow(ask.workflowId);
   const live = publishedVersionId(ask.workflowId);

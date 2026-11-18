@@ -748,6 +748,19 @@ with **Changed:**, the fields that differ from the version before (name, model, 
 limits and so on; the look is left out). **Restore** copies a version into the draft and publishes nothing, so you
 can read it, test it and publish it as a new version. `POST /api/agents/:id/restore { version }`.
 
+### Versions and the workflows that pin them
+
+Every agent version is also kept in the `agent_versions` table (migration 2906), so a version older than the 20 in the
+history still exists while a workflow version pins it. A workflow version pins the agent versions it was published
+with (`workflow_version_pins`); production runs them until a republish, and each run records the versions it used
+(`execution_agent_versions`). The builder's **Live v3** and each History row say "Used by workflow Alerts v4 (live),
+v3" (`GET /api/agents/:id/versions`, `.../versions/:version/connections`), and publishing an agent that live
+workflows pin says they keep the older version until they are republished. An agent a workflow pins cannot be
+deleted without stopping those workflow versions (*… no longer exists*). A backfill at boot (meta key
+`agents.versions.backfilled`) pins what production runs today and changes nothing on a second call. Test-then-publish
+for a workflow is in [the editor](features/editor.md) and Spotlight (`list_agent_updates`, `propose_publish`,
+`propose_agent_update`; the card is [assistant.md](assistant.md#publishing-agent-updates)).
+
 ## Layers
 
 **Abilities** is a list of rows, one per layer around the agent's model: **Model**, **Capabilities**, **Triggers**,

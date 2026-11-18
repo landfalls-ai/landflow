@@ -53,6 +53,7 @@ import { hostBinaryClient, storeBinary } from '../binary/access';
 import { DEFAULT_KEPT_TOOL_IMAGES, hydrateToolImages, imageSizeLabel, storeToolImages, type ToolImageMode } from '../nodes/tool-images';
 import { HttpError } from '../errors';
 import { store } from '../store';
+import { agentVersionRow } from './version-rows'; // AG21:
 
 const MAX_RESULT_CHARS = 16_000;
 const MAX_USER_TURNS_IN_CONTEXT = 30;
@@ -123,7 +124,8 @@ const now = () => new Date().toISOString();
 /** The config a session runs on: the draft, or the published version it started with. */
 export function configFor(agent: Agent, version: AgentSession['version']): AgentConfig {
   if (version === 'draft') return configOf(agent);
-  return agent.history.find((v) => v.version === version)?.config ?? agent.published?.config ?? configOf(agent);
+  // AG21: a version older than the 20 kept in `history` still runs, from the versions table.
+  return agent.history.find((v) => v.version === version)?.config ?? (typeof version === 'number' ? agentVersionRow(agent.id, version) : undefined) ?? agent.published?.config ?? configOf(agent);
 }
 
 export function newSession(

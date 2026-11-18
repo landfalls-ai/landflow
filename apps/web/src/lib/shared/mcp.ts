@@ -204,6 +204,7 @@ export const TOOL_SCOPES = {
   list_workflows: 'workflows:read',
   get_workflow: 'workflows:read',
   validate_workflow: 'workflows:read',
+  list_agent_updates: 'workflows:read', // AG21
   list_node_types: 'workflows:read',
   search_node_types: 'workflows:read',
   get_node_type: 'workflows:read',

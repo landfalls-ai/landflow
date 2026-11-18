@@ -582,3 +582,15 @@ left" is `draft.left` having items (not applicable when the draft lacks nothing)
 | `apps/web/test/spotlight.test.ts` | the bubbles |
 | `apps/web/test/spotlight-panel.test.ts` | the panel: timeline, header, never folding by itself, agent rows, fix bubbles, Spotlight's own runs |
 | `apps/web/test/run-check.test.ts` | what passes a test run, and hollow steps |
+
+
+## Publishing agent updates
+
+Spotlight in the editor has three tools (AG21). `list_agent_updates` reads which agents a workflow's nodes bind have a
+newer published version than the pin, or a draft; `propose_publish` offers the workflow's publish with the agents it
+needs; `propose_agent_update` offers test-then-publish of a newer agent version. Each ends in a **publish card**
+(`PublishCardView`): **Test** (runs the production graph with the new pins; the card polls while it waits),
+**Publish v<next>** (enabled after a passing test) and the block notice when the server refuses (409
+`agent_changes_unpublished`, *Publish <agent> first*). Nothing is published until Publish is clicked. The MCP tool
+`list_agent_updates` (scope `workflows:read`) reads the same list. Routes: `GET /api/workflows/:id/agent-updates`,
+`POST /api/workflows/:id/test-update` ([the API](reference/api.md)).

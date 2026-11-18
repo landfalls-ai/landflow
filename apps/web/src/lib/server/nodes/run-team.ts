@@ -6,6 +6,7 @@
  */
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '@landflow/sdk';
 import type { AgentMemory, AgentTool, LanguageModel } from '@landflow/engine';
+import { isEditorRun, PINS_PARAM } from '../../shared/agent-versions'; // AG21:
 import { chartOrder, type TeamMember } from '../../shared/agent-teams';
 import type { AgentStreamEvent } from '../../shared/agents';
 import { joinActivity, PACKAGE_POLICY, teamProgressFolder, type TeamActivity } from '../../shared/team-progress';
@@ -202,6 +203,7 @@ export const runTeamNode = defineNode({
     // Loaded lazily: the agents runtime imports the runner, which needs the registry this plugin is part of.
     const { agentTeamStore } = await import('../agent-teams/store');
     const { runTeam } = await import('../agent-teams/runtime');
+    const { agentVersionExists, fallbackPin, recordRunAgent } = await import('../agents/versions'); // AG21:
     const connection = ctx.getInputConnectionData;
     const [model] = connection ? await connection<LanguageModel>('ai_languageModel') : [];
     const [memory] = connection ? await connection<AgentMemory>('ai_memory') : [];
@@ -236,12 +238,33 @@ export const runTeamNode = defineNode({
             itemIndex: i,
           });
         const node = ctx.getNode();
+        // AG21: the agents run at the versions the workflow version pinned (production), or their drafts (the editor's test), else as published.
+        const pins = ctx.getNodeParameter<unknown>(PINS_PARAM, i, undefined);
+        const editor = isEditorRun(ctx.getMode(), Boolean(ctx.putExecutionToWait));
+        const agentIds = config.members.flatMap((m) => (m.kind === 'agent' ? [m.agentId] : []));
+        const agentVersions: Record<string, number | 'draft'> = {};
+        if (pins && typeof pins === 'object') {
+          for (const [agentId, version] of Object.entries(pins as Record<string, unknown>)) {
+            if (typeof version !== 'number') continue;
+            if (!agentVersionExists(agentId, version)) throw new NodeOperationError(`“${agentStore.get(agentId)?.name ?? agentId}” v${version}, which this version of the workflow runs, no longer exists: publish the workflow again`, { itemIndex: i });
+            agentVersions[agentId] = version;
+          }
+        } else if (editor) {
+          for (const agentId of agentIds) agentVersions[agentId] = 'draft';
+        } else {
+          // A resumed or retried production run reads a snapshot without pins: what it recorded, else its version's.
+          for (const agentId of agentIds) {
+            const version = fallbackPin(ctx.getExecutionId(), ctx.getNode().id, agentId);
+            if (version !== undefined) agentVersions[agentId] = version;
+          }
+        }
         const execution = {
           workflowId: ctx.getWorkflowId() ?? 'unknown',
           executionId: ctx.getExecutionId(),
           nodeId: node.id,
           ...(node.name && { nodeName: node.name }),
         };
+        for (const [agentId, version] of Object.entries(agentVersions)) recordRunAgent(execution.executionId, { nodeId: node.id, agentId, version, source: version === 'draft' ? 'draft' : 'pinned' });
         send?.({ type: 'begin', itemIndex: i });
         // Who works on what, for the canvases (lib/shared/team-progress.ts): the lead's stream, folded. What the run did
         // (turns, moments) goes on the output too, so a finished node shows it.
@@ -273,6 +296,7 @@ export const runTeamNode = defineNode({
           userId: `workflow:${ctx.getWorkflowId() ?? 'unknown'}`,
           execution,
           signal: ctx.signal,
+          ...(Object.keys(agentVersions).length && { agentVersions }), // AG21:
           toolImages: { keep: Number(ctx.getNodeParameter('toolImagesKept', i, 2)) },
           ...((model || tools.length) && {
             flow: { ...(model && { model }), ...(tools.length && { tools }) },

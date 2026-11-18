@@ -25,6 +25,8 @@ import { saveCheckpoint } from './checkpoints';
 import { assistantModel, errorText, modelLabel } from './model';
 import { withParseRetry } from './parse-retry'; // SB05:
 import { authHeaderProblems, cronProblems, expressionMisses, retryProblems } from './change-checks'; // SB09:
+import { publishOfferLine, type PublishOffer } from '../../shared/agent-versions'; // AG21:
+import { draftOffer, listAgentUpdates, updateOffer } from './publish-tools'; // AG21:
 import { ASK_CHOICES_MAX, ASK_CHOICES_MIN, ASK_CHOICE_MAX_CHARS, ASK_USER_TOOL, requestAcrossAsk, type AskEvent, type CredentialOfferEvent } from '../../shared/spotlight-wire'; // SB11: (CredentialOfferEvent: SB12; requestAcrossAsk: SB09 × SB11)
 import { claimsAChange } from './guards'; // SB12:
 import { withAskedTools } from '@/lib/shared/agent-ask'; // SB16:
@@ -88,7 +90,8 @@ export type ChatEvent =
   | AskEvent // SB11:
   | { type: 'done'; model: string; durationMs: number; steps: number; usage: { inputTokens: number; outputTokens: number }; costUsd?: number; local: boolean }
   | { type: 'error'; message: string; kind: ChatErrorKind; checkpoint?: string; step?: number }
-  | CredentialOfferEvent; // SB12:
+  | CredentialOfferEvent // SB12:
+  | { type: 'publishOffer'; offer: PublishOffer }; // AG21: a card to publish the draft, or to test and publish an agent update
 
 /** What a chat keeps to be continued after an error: the messages with the tool results so far, and what the guards remember. */
 export interface ChatState {
@@ -175,6 +178,23 @@ const OP_SCHEMA = {
 };
 
 export const TOOLS: ToolSpec[] = [
+  // AG21: publishing and the agent versions production runs.
+  {
+    name: 'list_agent_updates',
+    description:
+      'Read which agents have a newer published version than the one this workflow runs in production (or, with agentId, which production workflows run an older version of that agent). A production workflow keeps the agent version it was published with until it is published again: to move it, test first, then offer the update with propose_agent_update. Never publish by yourself.',
+    inputSchema: { type: 'object', properties: { agentId: { type: 'string', description: 'An agent id: the workflows that pin an older version of it. Omit for this workflow.' } } },
+  },
+  {
+    name: 'propose_publish',
+    description: 'Show the person a card to publish this workflow\'s draft (what it will run, and what stops it). Offer it only when they ask to publish the flow or put it live, never on your own. Nothing is published until they press Publish on the card.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'propose_agent_update',
+    description: 'Show the person a card that tests this workflow\'s production graph with newer published versions of these agents and then publishes it. Use after list_agent_updates, when they ask to move the flow to the new version. Nothing is published until they press Test, then Publish, on the card.',
+    inputSchema: { type: 'object', properties: { agentIds: { type: 'array', items: { type: 'string' } } }, required: ['agentIds'] },
+  },
   {
     name: 'search_nodes',
     description: 'Search the node catalog by keywords (e.g. "google sheets", "dedupe", "send message"). Returns type ids, names and descriptions.',
@@ -520,6 +540,28 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
     };
     const args = call.input ?? {};
     switch (call.name) {
+      // AG21: the publish tools. They read and offer; the card's buttons publish.
+      case 'list_agent_updates': {
+        const agentId = typeof args.agentId === 'string' && args.agentId ? args.agentId : undefined;
+        const answer = listAgentUpdates(agentId ? { agentId } : { workflowId: input.workflow.id });
+        detail = `${answer.updates.length} ${answer.updates.length === 1 ? 'update' : 'updates'}`;
+        return result(answer.updates.length ? JSON.stringify(answer.updates) : 'No newer agent versions: production runs the latest published ones.', 'Checked for newer agent versions');
+      }
+      case 'propose_publish': {
+        const offer = draftOffer(input.workflow.id);
+        if (!offer) return result('This workflow is not saved yet, so there is nothing to publish.', 'Could not offer to publish', false);
+        onEvent({ type: 'publishOffer', offer });
+        detail = publishOfferLine(offer);
+        return result(`Showed a publish card (${publishOfferLine(offer)}${offer.blocks?.length ? `; an agent draft differs: ${offer.blocks.map((b) => b.name).join(', ')}` : ''}). Nothing is published until the person presses Publish on it: say so, in one sentence.`, 'Offered to publish');
+      }
+      case 'propose_agent_update': {
+        const ids = Array.isArray(args.agentIds) ? args.agentIds.filter((a): a is string => typeof a === 'string') : [];
+        const offer = updateOffer(input.workflow.id, ids);
+        if (typeof offer === 'string') return result(offer, 'Nothing to update', false);
+        onEvent({ type: 'publishOffer', offer });
+        detail = publishOfferLine(offer);
+        return result(`Showed an update card (${publishOfferLine(offer)}). The person tests it on the card and then publishes it: nothing is published without their click. Say so, in one sentence.`, 'Offered to test and update');
+      }
       case 'search_nodes': {
         const query = String(args.query ?? '');
         const hits = searchNodes(query, types);

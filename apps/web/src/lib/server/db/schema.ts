@@ -1915,6 +1915,17 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS ai_spend_flags_day ON ai_spend_flags (day)`,
     ],
   },
+  // AG21: a workflow version pins its agents' versions; every run records both (docs/features/editor.md#publishing-pins-the-agents)
+  {
+    version: 2906,
+    name: 'agent_versions_and_pins',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS agent_versions (agent_id TEXT NOT NULL, version BIGINT NOT NULL, published_at TEXT NOT NULL, published_by TEXT, config TEXT NOT NULL, PRIMARY KEY (agent_id, version))`,
+      `CREATE TABLE IF NOT EXISTS workflow_version_pins (version_id TEXT NOT NULL, node_id TEXT NOT NULL, agent_id TEXT NOT NULL, agent_version BIGINT NOT NULL, pinned_at TEXT NOT NULL, PRIMARY KEY (version_id, node_id, agent_id))`,
+      `CREATE INDEX IF NOT EXISTS workflow_version_pins_agent ON workflow_version_pins (agent_id, agent_version)`,
+      `CREATE TABLE IF NOT EXISTS execution_agent_versions (execution_id TEXT NOT NULL, node_id TEXT NOT NULL, agent_id TEXT NOT NULL, agent_version BIGINT, draft BIGINT NOT NULL DEFAULT 0, source TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (execution_id, node_id, agent_id))`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -1927,6 +1938,9 @@ export const TABLES = {
   execution_checkpoints: ['execution_id'],
   poll_state: ['key'],
   workflow_versions: ['id'],
+  agent_versions: ['agent_id', 'version'], // AG21:
+  workflow_version_pins: ['version_id', 'node_id', 'agent_id'], // AG21:
+  execution_agent_versions: ['execution_id', 'node_id', 'agent_id'], // AG21:
   folders: ['id'],
   settings: ['key'],
   variables: ['key'],

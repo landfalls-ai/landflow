@@ -17,6 +17,7 @@ import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta, ShortReply } from '..
 import { MAX_FIXES, approveDestinations, productionNote, publishToProduction, testUntilItRuns, undoApplied } from '../test-session'; // SB03:
 import { agentStep, runRow } from '../timeline';
 import { AgentCardView } from './agent-card'; // SB16:
+import { PublishCardView } from './publish-card'; // AG21:
 import { reviseAgentCard } from './agent-ask'; // AG04:
 import { CredentialPicker } from './credential-picker';
 import { PlanCard } from './plan-card'; // SB13:
@@ -515,6 +516,9 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
         ) : part.kind === 'summary' ? (
           // SB15:
           <BuildSummaryCard key={i} summary={part.summary} workflowName={part.workflowName} onOpen={openNodeNamed} />
+        ) : part.kind === 'publishOffer' ? (
+          // AG21: publish the draft, or test and publish an agent update
+          <PublishCardView key={i} itemId={item.id} offer={part.offer} card={part.card} />
         ) : part.kind === 'agentCard' ? (
           // SB16:
           <AgentCardView key={i} itemId={item.id} card={part.card} busy={spotlightBusy} earlier={Boolean(item.earlier)} />

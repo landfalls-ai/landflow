@@ -377,13 +377,15 @@ describe('agent nodes', () => {
   it('"Message an Agent" needs a published agent and returns its reply', async () => {
     const agent = makeAgent({ name: 'Replier' });
     const unpublished = await run(messageAgentNode, { agentId: agent.id, message: 'hi', conversation: 'new' });
-    expect(unpublished.error?.message).toBe('Publish “Replier” first');
+    // AG21: these runs are manual (the editor's): an agent never published runs its draft (the script is empty, so it fails after it started);
+    // "Publish first" is for production runs (test/agent-versions-ag4.test.ts).
+    expect(unpublished.error?.message).toBe('Replier failed: scripted/scripted-1: The script ran out of turns');
 
     agentStore.publish(agent.id);
     script.push(reply('Hello from the agent.'));
     const ok = await run(messageAgentNode, { agentId: agent.id, message: 'hi', conversation: 'new' });
-    expect(ok.json()[0]).toMatchObject({ reply: 'Hello from the agent.', agentId: agent.id, version: 1, endReason: 'completed' });
-    expect(agentStore.getSession(ok.json()[0].sessionId as string)).toMatchObject({ source: 'workflow', version: 1, execution: { workflowId: 'wf_test', executionId: 'ex_test', nodeId: 'n1' } });
+    expect(ok.json()[0]).toMatchObject({ reply: 'Hello from the agent.', agentId: agent.id, version: 'draft', endReason: 'completed' });
+    expect(agentStore.getSession(ok.json()[0].sessionId as string)).toMatchObject({ source: 'workflow', version: 'draft', execution: { workflowId: 'wf_test', executionId: 'ex_test', nodeId: 'n1' } });
   });
 });
 

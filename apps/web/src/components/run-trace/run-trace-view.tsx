@@ -5,6 +5,7 @@
  * time slider to replay a longer run with a team, and the detail of a tapped row.
  * Phone first: one column; `/runs/:id` shows it full screen, the execution page embeds it.
  */
+import { RunVersionsLine } from './run-versions'; // AG21:
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Hourglass, Pause, Play, TriangleAlert } from 'lucide-react';
@@ -512,6 +513,7 @@ function TraceBody({
       <div className="flex flex-col gap-1.5">
         <h2 className="break-words text-[16px] font-semibold leading-tight text-t1">{model.run?.name ?? 'Run'}</h2>
         <Head model={model} now={now} replay={replay} />
+        <RunVersionsLine executionId={executionId} />{/* AG21: */}
       </div>
 
       {cardAbove && <RunTimelineCard model={model} onStory={() => setTab('story')} />}

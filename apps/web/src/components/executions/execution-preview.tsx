@@ -40,6 +40,7 @@ import { useLiveEvents } from '@/lib/client/live';
 import { progressLine, type NodeProgress } from '@/lib/client/node-progress';
 import type { RunEntry } from '@/lib/client/run-data';
 import type { DebugCommand, ExecutionRecord } from '@/lib/shared/types';
+import { runVersionsLine, type RunVersions } from '@/lib/shared/agent-versions'; // AG21:
 import { LogsPanel, type LogsNode, type LogsPending, type LogsSelection } from '../run/logs-panel';
 import { RUN_STATE, RunStateIcon, formatStamp, runStateOf, statusText, useNow, type RunState } from '../run/run-status';
 import { Button } from '../ui/button';
@@ -511,6 +512,10 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
       </>
     ) : null;
 
+  // AG21: "workflow v4 · Alert triager v2", when the run used an agent (the server records both versions).
+  const runVersions = (record as ExecutionRecord & { versions?: RunVersions }).versions;
+  const versionsLine = runVersions?.agents.length ? runVersionsLine(runVersions) : undefined;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* ------------------------------------------------------------ header */}
@@ -531,6 +536,12 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                   title={record.versionPublished ? 'The published version when the run started (draft and publish)' : 'A draft: not the published version when the run started'}
                 >
                   Ran version {record.versionNumber} ({record.versionPublished ? 'published' : 'draft'})
+                </span>
+              )}
+              {versionsLine && (
+                // AG21: both versions of the run: the workflow's and each agent's ("workflow v4 · Alert triager v2")
+                <span data-testid="run-versions" className="flex items-center gap-1 rounded-full border border-hair px-2 text-[12px] text-t2" title="The workflow version and the agent versions this run used">
+                  {versionsLine}
                 </span>
               )}
               {record.mcp && (
@@ -677,6 +688,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
                           Ran version {record.versionNumber} ({record.versionPublished ? 'published' : 'draft'})
                         </p>
                       )}
+                      {versionsLine && <p className="px-3 py-1.5 text-[12px] text-t2 md:hidden">{versionsLine}</p>}
                       {record.mcp && (
                         <p className="px-3 py-1.5 text-[12px] text-t2 md:hidden">
                           MCP tool <span className="font-mono">{record.mcp.tool}</span>, called by <span className="font-mono">{record.mcp.caller}</span>

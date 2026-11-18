@@ -743,3 +743,10 @@ own sections are [call attribution](#call-attribution-wave-11) and [the gateway'
 The band on a Run an Agent node (AG12) shows the agent's own model, memory, tools and knowledge bases. It does not show an A2A Agent node's remote agent, a Run a Team node's members other than its lead, the agent's skills, or what a tool call reached (that is on the Run Trace). It is read-only: changes happen on the agent's page. Wiring read from the editor shows before a save, but the project's settings and the agent's own data are read from the saved workflow and agent, so a workflow never saved shows the agent without its project's settings. The band is capped at two tool rows so it never covers the sub-nodes placed 200 px below a node. A saved agent now reaches every open tab (BroadcastChannel), so a Spotlight Apply in the editor tab reloads, and drops unsaved edits in, an agent page open in another tab. The *Project knowledge* row opens the agent's Capabilities, where that row is not shown.
 
 Once a team node has run, its summary, budgets and ribbon make the tile taller than the idle one (which ends near 140 px), so sub-nodes placed at +200 (saved flows, templates) can sit on its slot labels. Tidy up fixes it; folding the summary into one line is a possible follow-up.
+
+## Agent versions in workflows (ag4, AG21)
+
+- Team membership is not versioned: a pinned team keeps its lead's version, but the members come from the team's published config.
+- Delegated sub-agents (an agent calling another) run the published version, not a pin.
+- Deleting an agent stops the workflow versions that pin it (the node says it no longer exists).
+- The executions list shows the workflow version only; the per-agent versions are on the run's header.

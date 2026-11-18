@@ -13,6 +13,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Workflow, WorkflowConnection, WorkflowNode } from '@landflow/engine';
 import type { VersionDiff, WorkflowVersion, WorkflowVersionSummary } from '../shared/types';
+import { singleton } from './singleton'; // AG21:
 import { database } from './db';
 import { parse, versionRow } from './db/rows';
 import { publishedVersionId } from './publications';
@@ -44,7 +45,8 @@ function stableStringify(value: unknown): string {
  */
 export function versionHash(workflow: Workflow): string {
   const material = {
-    nodes: workflow.nodes ?? [],
+    // AG21: the pins a production copy carries on its agent nodes are not part of the graph.
+    nodes: (workflow.nodes ?? []).map(withoutPins),
     connections: workflow.connections ?? [],
     settings: workflow.settings ?? {},
     stickyNotes: workflow.stickyNotes ?? [],
@@ -52,6 +54,23 @@ export function versionHash(workflow: Workflow): string {
   };
   return createHash('sha256').update(stableStringify(material)).digest('hex');
 }
+
+/**
+ * AG21: the internal parameters a production copy carries on its agent nodes (the pins; `PIN_PARAM` and `PINS_PARAM` of
+ * lib/shared/agent-versions.ts, spelled here so this module, which http.ts reaches, stays small; a test keeps them equal).
+ */
+export const PIN_KEYS = ['agentVersion', 'agentVersions'] as const;
+
+/** AG21: a node without the internal agent pins. */
+function withoutPins<T extends { parameters?: Record<string, unknown> }>(node: T): T {
+  const parameters = node.parameters;
+  if (!parameters || !PIN_KEYS.some((key) => key in parameters)) return node;
+  const rest = Object.fromEntries(Object.entries(parameters).filter(([key]) => !(PIN_KEYS as readonly string[]).includes(key)));
+  return { ...node, parameters: rest };
+}
+
+/** AG21: how `productionWorkflow` puts each agent node's pin on the production copy; set by lib/server/agents/versions.ts when it loads (boot loads it before any trigger runs). */
+export const productionPins = singleton('production-pins', () => ({ apply: undefined as undefined | ((workflow: Workflow, versionId: string) => Workflow) }));
 
 /** A node without its position and id: what "changed" compares. */
 function nodeContent(node: WorkflowNode): string {
@@ -143,6 +162,7 @@ export function versionFor(workflow: Workflow): WorkflowVersionSummary | undefin
     if (!ID.test(workflow.id)) return undefined;
     const hash = versionHash(workflow);
     const published = publishedVersionId(workflow.id);
+    // AG21: the newest of equal hashes (a re-pin records the same graph again).
     const row =
       (published && database().get<{ summary: string }>('SELECT summary FROM workflow_versions WHERE id = ? AND hash = ?', published, hash)) ||
       database().get<{ summary: string }>('SELECT summary FROM workflow_versions WHERE workflow_id = ? AND hash = ? ORDER BY number DESC LIMIT 1', workflow.id, hash);
@@ -184,13 +204,14 @@ function isReferenced(workflowId: string, versionId: string): boolean {
  * `options.author`: who saved it (see versionAuthor); undefined records nobody.
  * Never throws: a save must not fail because of its history.
  */
-export function recordVersion(workflow: Workflow, options: { autosave?: { by: string }; author?: string } = {}): WorkflowVersionSummary | undefined {
+export function recordVersion(workflow: Workflow, options: { autosave?: { by: string }; author?: string; force?: boolean; summary?: string } = {}): WorkflowVersionSummary | undefined {
   try {
     if (!ID.test(workflow.id)) return undefined;
     const db = database();
     const newest = readIndex(workflow.id)[0];
     const hash = versionHash(workflow);
-    if (newest?.hash === hash) return undefined;
+    // AG21: `force` records the same graph again (a re-pin, an agent update): one version is one graph and one set of agent versions.
+    if (newest?.hash === hash && !options.force) return undefined;
     const createdAt = workflow.updatedAt ?? new Date().toISOString();
     const auto = options.autosave;
     const replaces =
@@ -213,7 +234,7 @@ export function recordVersion(workflow: Workflow, options: { autosave?: { by: st
       name: workflow.name,
       nodeCount: workflow.nodes.length,
       hash,
-      summary: summarizeDiff(diff, !base),
+      summary: options.summary ?? summarizeDiff(diff, !base), // AG21: summary
       diff,
       ...(auto && { autosave: auto }),
     };

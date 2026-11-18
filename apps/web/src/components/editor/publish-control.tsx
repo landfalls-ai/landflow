@@ -11,11 +11,13 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { create } from 'zustand';
-import { AlertTriangle, CalendarClock, ChevronDown, CircleOff, Rocket, Webhook } from 'lucide-react';
+import { AlertTriangle, CalendarClock, ChevronDown, CircleOff, Rocket, Sparkles, Webhook } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { api } from '@/lib/client/api';
+import { api, ApiError } from '@/lib/client/api';
+import { AGENT_CHANGED, AGENT_SAVED } from '@/lib/client/agent-change'; // AG21:
 import { timeAgo } from '@/lib/client/format';
+import { availableLine, type AgentPin, type AgentUpdate, type PinBlock, type PublishOffer } from '@/lib/shared/agent-versions'; // AG21:
 import type { PublicationStatus, PublishResult } from '@/lib/shared/publish';
 import type { PublishRequestView } from '@/lib/shared/governance';
 import { PublishRequestCard, usePublishRequests } from '../governance/publish-requests';
@@ -25,6 +27,7 @@ import { MenuItem, MenuLabel, MenuSeparator, Popover } from '../ui/popover';
 import { publishLabel } from './chrome';
 import { useEditLock } from './edit-lock';
 import { ScheduleForm, ScheduleRows, useSchedules } from './publish-schedules';
+import { prefillSpotlight, useAssistant } from './assistant'; // AG21:
 import { useEditor } from './store';
 
 interface PublicationStore {
@@ -63,8 +66,21 @@ export const usePublication = create<PublicationStore>((set, get) => ({
   },
 }));
 
+/** AG21: what to do about agents whose draft differs from their published version; the update path with the test run that passed. */
+export interface PublishAgentOptions {
+  agents?: 'publish-first' | 'as-published';
+  update?: { agents: string[] };
+  testedExecutionId?: string;
+}
+
+/** AG21: the publish a 409 `agent_changes_unpublished` refused: the agents and what changed in each. */
+export function blocksOf(error: unknown): PinBlock[] | undefined {
+  const body = error instanceof ApiError && error.status === 409 ? (error.body as { code?: string; agents?: PinBlock[] } | undefined) : undefined;
+  return body?.code === 'agent_changes_unpublished' ? body.agents : undefined;
+}
+
 /** Publish a version (default: the saved draft); the version history uses it for rollbacks. */
-export async function publishVersion(workflowId: string, options: { versionId?: string; note?: string } = {}): Promise<PublishAnswer> {
+export async function publishVersion(workflowId: string, options: { versionId?: string; note?: string } & PublishAgentOptions = {}): Promise<PublishAnswer> {
   const result = await api<PublishAnswer>(`/api/workflows/${workflowId}/publish`, { method: 'POST', json: options });
   if (result.approvalRequired) usePublication.setState((s) => ({ requests: s.requests + 1 }));
   else usePublication.getState().apply(workflowId, result);
@@ -74,6 +90,68 @@ export async function publishVersion(workflowId: string, options: { versionId?: 
 /** The toast for a request that waits for approval. */
 export function toastApprovalRequested(result: PublishAnswer) {
   toast.info('Sent for approval', { description: `${result.request?.diff?.summary ? `${result.request.diff.summary}. ` : ''}Someone else has to approve it before it goes live.` });
+}
+
+/** AG21: the production version's pins and the agents with a newer published version, reloaded after each publication change. */
+export function useAgentVersions(workflowId: string, publication?: PublicationStatus['published']) {
+  const [pins, setPins] = useState<AgentPin[]>([]);
+  const [updates, setUpdates] = useState<AgentUpdate[]>([]);
+  const [offer, setOffer] = useState<PublishOffer>();
+  const versionId = publication?.versionId;
+  const reload = useCallback(async () => {
+    if (!versionId) {
+      setPins([]);
+      setUpdates([]);
+      setOffer(undefined);
+      return;
+    }
+    const [p, u] = await Promise.all([
+      api<{ pins: AgentPin[] }>(`/api/workflows/${workflowId}/versions/${versionId}/pins`, { background: true }).catch(() => undefined),
+      api<{ updates: AgentUpdate[]; offer?: PublishOffer }>(`/api/workflows/${workflowId}/agent-updates`, { background: true }).catch(() => undefined),
+    ]);
+    setPins(p?.pins ?? []);
+    setUpdates(u?.updates ?? []);
+    setOffer(u?.offer);
+  }, [workflowId, versionId]);
+  useEffect(() => {
+    void reload();
+    // A change to an agent (its page, Spotlight, another tab) can publish a newer version: look again.
+    const onAgent = () => void reload();
+    window.addEventListener(AGENT_CHANGED, onAgent);
+    window.addEventListener(AGENT_SAVED, onAgent);
+    return () => {
+      window.removeEventListener(AGENT_CHANGED, onAgent);
+      window.removeEventListener(AGENT_SAVED, onAgent);
+    };
+  }, [reload]);
+  return { pins, updates, offer, reload };
+}
+
+/** AG21: a publish the server refused because an agent's draft differs: the agents with their changes, and the two ways on. */
+export function BlockNotice({ blocks, busy, onChoose, className }: { blocks: PinBlock[]; busy?: boolean; onChoose: (how: 'publish-first' | 'as-published') => void; className?: string }) {
+  const first = blocks.length === 1 ? blocks[0]! : undefined;
+  const label = first ? first.name : `${blocks.length} agents`;
+  const never = blocks.some((b) => b.published === undefined);
+  return (
+    <div data-testid="publish-block" className={cn('flex flex-col gap-1.5 rounded-lg border border-warnbd bg-warndim px-2.5 py-2 text-[12px] leading-snug', className)}>
+      <div className="font-medium text-t1">Production would not run what you tested</div>
+      {blocks.map((b) => (
+        <div key={b.agentId} className="text-t2">
+          <span className="text-t1">{b.name}</span>
+          {b.published !== undefined ? ` v${b.published} is published; the draft changed: ` : ' was never published: '}
+          {b.changes.join(', ')}
+        </div>
+      ))}
+      <Button variant="primary" size="sm" loading={busy} onClick={() => onChoose('publish-first')}>
+        <Rocket className="size-3.5" /> Publish {label} first
+      </Button>
+      {!never && (
+        <Button variant="ghost" size="sm" disabled={busy} onClick={() => onChoose('as-published')} title="Not what the editor tested">
+          Publish with {first ? `${first.name} v${first.published}` : 'the published versions'} as published
+        </Button>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -87,6 +165,7 @@ export function PublishButton({
   changes,
   awaiting,
   failing,
+  update,
   open,
   disabled,
   title,
@@ -97,6 +176,8 @@ export function PublishButton({
   changes: boolean;
   awaiting?: boolean;
   failing?: boolean;
+  /** AG21: an agent this workflow runs has a newer published version than production runs. */
+  update?: boolean;
   open?: boolean;
   disabled?: boolean;
   title?: string;
@@ -113,6 +194,8 @@ export function PublishButton({
       )}
       {publishLabel({ published, versionNumber })}
       {published && changes && <span className="sr-only">, with unpublished changes</span>}
+      {update && <span data-testid="publish-update-dot" aria-hidden className="size-1.5 rounded-full bg-ac" />}
+      {update && <span className="sr-only">, an agent has a newer version</span>}
       {awaiting && <span className="rounded-md border border-warnbd bg-warndim px-1 text-[10.5px] font-semibold leading-4 text-warn max-md:hidden">Awaiting approval</span>}
       <ChevronDown className="size-3 opacity-70" />
     </Button>
@@ -125,6 +208,7 @@ export function PublishControl({ workflowId, onSave }: { workflowId: string; onS
   const readOnly = useEditLock((s) => s.readOnly);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState<'publish' | 'unpublish'>();
+  const [blocked, setBlocked] = useState<PinBlock[]>(); // AG21: agents whose draft differs: the publish was refused
   const requestsChanged = usePublication((s) => s.requests);
   const { list: requests, reload: reloadRequests } = usePublishRequests({ workflowId });
   const pending = requests?.requests ?? [];
@@ -140,27 +224,33 @@ export function PublishControl({ workflowId, onSave }: { workflowId: string; onS
   }, [workflowId, dirty]);
 
   const published = status?.published;
+  const { pins, updates, offer, reload: reloadVersions } = useAgentVersions(workflowId, published); // AG21:
   const changes = Boolean(published && (dirty || status?.unpublishedChanges));
   const failing = status?.appWebhooks.filter((hook) => hook.error) ?? [];
 
   const publish = useCallback(
-    async (close: () => void) => {
+    async (close: () => void, agents?: 'publish-first' | 'as-published') => {
       setBusy('publish');
       try {
         // Unsaved edits are saved first: what is published is always a saved version.
         if (useEditor.getState().dirty && !(await onSave())) return;
-        const result = await publishVersion(workflowId, { ...(note.trim() && { note: note.trim() }) });
+        const result = await publishVersion(workflowId, { ...(note.trim() && { note: note.trim() }), ...(agents && { agents }) });
         setNote('');
+        setBlocked(undefined);
         close();
+        void reloadVersions();
         if (result.approvalRequired) return toastApprovalRequested(result);
         toast.success(`Published version ${result.published?.versionNumber ?? ''}`.trim(), { description: 'Production triggers run this version now' });
       } catch (e) {
-        toast.error(`Publish failed: ${(e as Error).message}`);
+        // AG21: an agent whose draft differs refuses the publish: the menu says which and offers the two ways on.
+        const stopping = blocksOf(e);
+        if (stopping) setBlocked(stopping);
+        else toast.error(`Publish failed: ${(e as Error).message}`);
       } finally {
         setBusy(undefined);
       }
     },
-    [workflowId, note, onSave],
+    [workflowId, note, onSave, reloadVersions],
   );
 
   const unpublish = useCallback(
@@ -186,6 +276,7 @@ export function PublishControl({ workflowId, onSave }: { workflowId: string; onS
   );
 
   const lines = [
+    ...updates.map(availableLine), // AG21:
     !published ? 'Production triggers are off until you publish' : changes ? `Version ${published.versionNumber ?? '?'} is live; the draft differs from it` : `Published ${timeAgo(published.publishedAt)}${published.publishedByName ? ` by ${published.publishedByName}` : ''}`,
     pending.length > 0 && `${pending.length} publish request${pending.length === 1 ? '' : 's'} waiting for approval`,
     ...failing.map((hook) => `${hook.nodeName}: ${hook.error}`),
@@ -201,6 +292,7 @@ export function PublishControl({ workflowId, onSave }: { workflowId: string; onS
             changes={changes}
             awaiting={pending.length > 0}
             failing={failing.length > 0}
+            update={updates.length > 0}
             open={open}
             disabled={readOnly}
             title={lines.join('\n')}
@@ -220,6 +312,49 @@ export function PublishControl({ workflowId, onSave }: { workflowId: string; onS
                 {changes && <div className="text-warn">The draft has changes that are not live yet.</div>}
               </div>
             )}
+            {/* AG21: the agent versions production runs, and the ones that are newer. */}
+            {published && (pins.length > 0 || updates.length > 0) && (
+              <div data-testid="publish-agents" className="flex flex-col gap-1 px-2.5 pb-1.5">
+                {[...new Map(pins.map((p) => [p.agentId, p])).values()].map((p) => (
+                  <div key={p.agentId} className="text-[12px] text-t2">
+                    Runs {p.agentName ?? p.agentId} v{p.version}
+                  </div>
+                ))}
+                {updates.map((u) => (
+                  <div key={u.agentId} className="text-[12px] text-ac">
+                    {availableLine(u)}
+                  </div>
+                ))}
+                {updates.length > 0 && (
+                  <div className="flex flex-col gap-1 pt-0.5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        close();
+                        prefillSpotlight(`${updates.map((u) => `${u.agentName} has a new version`).join(' and ')}. Test this flow with it and put it live if it works.`);
+                      }}
+                    >
+                      <Sparkles className="size-3.5" /> Ask Spotlight to test and update
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={!offer}
+                      onClick={() => {
+                        if (!offer) return;
+                        close();
+                        useAssistant.getState().setCollapsed(false);
+                        useAssistant.getState().append([{ id: `publish${Date.now().toString(36)}`, role: 'assistant', parts: [{ kind: 'text', text: availableLine(updates[0]!) }, { kind: 'publishOffer', offer }] }]);
+                      }}
+                    >
+                      Test and update
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+            {blocked && <BlockNotice blocks={blocked} busy={busy === 'publish'} onChoose={(how) => void publish(close, how)} className="mx-2.5 mb-1.5" />}
             <div className="flex flex-col gap-2 px-2.5 pb-2 pt-1">
               <Textarea
                 value={note}
