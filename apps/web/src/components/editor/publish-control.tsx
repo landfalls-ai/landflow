@@ -28,6 +28,7 @@ import { publishLabel } from './chrome';
 import { useEditLock } from './edit-lock';
 import { ScheduleForm, ScheduleRows, useSchedules } from './publish-schedules';
 import { prefillSpotlight, useAssistant } from './assistant'; // AG21:
+import { UnattendedLines } from './spotlight/unattended-line'; // AG23:
 import { useEditor } from './store';
 
 interface PublicationStore {
@@ -364,6 +365,7 @@ export function PublishControl({ workflowId, onSave }: { workflowId: string; onS
                 )}
               </div>
             )}
+            <UnattendedLines workflowId={workflowId} version="draft" className="mx-2.5 mb-1.5" />{/* AG23: */}
             {blocked && <BlockNotice blocks={blocked} busy={busy === 'publish'} onChoose={(how) => void publish(close, how)} className="mx-2.5 mb-1.5" />}
             <div className="flex flex-col gap-2 px-2.5 pb-2 pt-1">
               <Textarea

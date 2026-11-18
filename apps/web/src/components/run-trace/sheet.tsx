@@ -188,6 +188,8 @@ function SpanSheet({
         {span.state && <Badge tone="muted">{span.state}</Badge>}
         {(span.kind === 'delegate' || span.kind === 'handoff') && <ResultChip span={span} />}
         <Badge tone="muted">{span.kind}</Badge>
+        {/* AG23: who decided the call's approval (Approved by Spotlight (autonomous fix session) / Approved by you / Denied by you). */}
+        {typeof span.attrs.approvedBy === 'string' && <Badge tone={/^(Left|Denied)/.test(span.attrs.approvedBy) ? 'warning' : 'success'}>{span.attrs.approvedBy}</Badge>}
         {/* A person changed what the tool would do before approving it (the approval card's Edit). */}
         {span.attrs.edited === true && (
           <Badge tone="warning" title={typeof span.attrs.editedBy === 'string' ? `Edited by ${span.attrs.editedBy}` : undefined}>

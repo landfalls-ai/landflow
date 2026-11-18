@@ -68,6 +68,7 @@ import { store } from '../store';
 import { variables } from '../variables';
 import { knowledgeTool } from './knowledge';
 import { agentStore } from './store';
+import { callDestinations } from './spotlight-approvals'; // AG23:
 
 export const WORKFLOW_TRIGGER = 'core.workflowTrigger';
 
@@ -146,6 +147,8 @@ export interface BuiltTool extends ToolSpec {
    * reason to hold it for a person, decided per call on the effective parameters. Undefined when the call may run.
    */
   holdReason?(input: Record<string, unknown>, ctx: ToolContext): Promise<string | undefined>;
+  /** AG23: where this call would go (what Spotlight checks before it approves a call that asks first): per call, on the parameters it would run with. Absent: the tool names no destination. */
+  destinationsOf?(input: Record<string, unknown>, ctx: ToolContext): Promise<string[]>;
   /** After a pause (ToolOutcome.pause): send the person's decision and carry on. */
   resume?(state: Record<string, unknown>, approved: boolean, ctx: ToolContext, answer?: string): Promise<ToolOutcome>;
   /** A remote agent: stop the task it works on (A2A CancelTask), so a person can redirect it (agent-teams/pause.ts). */
@@ -567,6 +570,11 @@ function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
         return `“${config.name}” is a read-only tool, and this call asked for ${what}.`;
       },
     }),
+    // AG23:
+    async destinationsOf(given: Record<string, unknown>, ctx: ToolContext) {
+      const { parameters } = await effectiveOf(given, ctx);
+      return callDestinations(config.nodeType, { ...parameters, ...(typeof given.operation === 'string' && { operation: given.operation }), ...(typeof given.method === 'string' && { method: given.method }) });
+    },
     async invoke(given, ctx) {
       const { parameters, items } = await effectiveOf(given, ctx);
       const creds = { ...credentials.resolveFor({ type: config.nodeType, credentials: config.credentials, parameters: config.parameters }, descriptor) };

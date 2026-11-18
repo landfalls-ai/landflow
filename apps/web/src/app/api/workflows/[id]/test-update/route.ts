@@ -17,7 +17,7 @@ type Ctx = { params: Promise<{ id: string }> };
 export const POST = handler(async (request: Request, { params }: Ctx) => {
   const { id } = await params;
   if (!store.getWorkflow(id) || !canResource(routeActor(), 'workflow', id, 'run')) return error('Workflow not found', 404);
-  const body = await parseBody(request, z.object({ agents: z.array(z.string().min(1).max(200)).min(1).max(50) }));
+  const body = await parseBody(request, z.object({ agents: z.array(z.string().min(1).max(200)).min(1).max(50), approvals: z.undefined() /* AG23: Spotlight's approvals are for an editor test run only */ }));
   if (!body.ok) return body.response;
   return json(await testUpdate(id, body.data.agents, currentActorId(), request.signal));
 });

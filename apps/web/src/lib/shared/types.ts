@@ -260,6 +260,8 @@ export interface ExecutionRecord extends Omit<ExecutionResult, 'status' | 'wait'
   buffered?: { kind: 'debounce' | 'batch'; count: number };
   /** An MCP tool call on a plugin's MCP endpoint (lib/server/mcp/plugin-servers.ts): who called which tool. */
   mcp?: ExecutionMcpInfo;
+  /** AG23: an autonomous fix session's editor run: Run an Agent steps let Spotlight approve tool calls to given destinations (lib/server/agents/spotlight-approvals.ts). */
+  spotlightApprovals?: { userId: string; sessionId: string; destinations: string[] };
 }
 
 /** The MCP tool call behind an execution with mode `mcp` on a per-plugin endpoint (docs/transports.md). */

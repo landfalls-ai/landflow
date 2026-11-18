@@ -4,6 +4,7 @@
  */
 import type { AgentMessage } from '@landflow/engine';
 import type { ToolTarget } from './tool-target'; // AG14:
+import type { ApprovalBy } from './fix-autonomy'; // AG23:
 import type { GuardrailsConfig, Replacement } from '../server/guardrails';
 import type { AgentAccess } from './agent-access';
 import type { AgentCache } from './agent-cache';
@@ -737,6 +738,9 @@ export type TimelineEntry =
       remote?: RemoteRun;
       /** awaiting_approval: what the person is asked (a remote agent's pause names the calls it waits on). */
       approval?: { message: string };
+      /** AG23: who decided the call's approval, and the line the Run Trace says (`approvedByLine`). */
+      by?: ApprovalBy;
+      decidedLine?: string;
       at: string;
     }
   /** An input or output guardrail that blocked or sanitized the text (nothing is shown when the text passed). */

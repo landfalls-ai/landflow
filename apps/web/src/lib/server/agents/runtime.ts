@@ -44,6 +44,8 @@ import { sawPersona } from '../../shared/what-it-saw-sections';
 import { agentStore, configOf } from './store';
 import type { MemberPause } from '../agent-teams/pause';
 import type { ToolTarget } from '../../shared/tool-target';
+import { approvedByLine } from '../../shared/fix-autonomy'; // AG23:
+import { spotlightVerdict, type SpotlightApprovals } from './spotlight-approvals'; // AG23:
 import { buildToolset, binaryScopeFor, targetOfCall, dedupe, nodeKnowledgeTool, type BuiltTool, type ToolCaller, type ToolContext } from './tools';
 import { knowledgeTool } from './knowledge';
 import { agentNotAllowedMessage, projectAgentRules } from '../project-context/project-settings';
@@ -67,7 +69,9 @@ export interface RunRequest {
   /** Delegation limit of the whole tree: set by the agent the user talks to, inherited by sub-agents. */
   maxDepth?: number;
   /** `deny`: tools that need approval fail instead of pausing (sub-agents, workflow nodes, schedules). */
-  approvals?: 'ask' | 'deny';
+  approvals?: 'ask' | 'deny' | 'spotlight'; // AG23: 'spotlight' (with `spotlight`): a call that asks first is decided as Spotlight in a fix session's test run
+  /** AG23: who decides as Spotlight, the destinations already given, and whether a call it leaves can wait for the person. Only with approvals 'spotlight'. */
+  spotlight?: SpotlightApprovals;
   signal?: AbortSignal;
   onEvent?: (event: AgentStreamEvent) => void;
   /** Who is calling, for the project block (docs/agents.md#which-project-a-run-is-in); absent: the session says. Not `caller`, which is whose tools run. */
@@ -322,6 +326,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
   };
   // A session a Run an Agent node started also writes its entries into that run's journal (lib/server/journal).
   const journalEntry = agentSessionJournal(session, { id: agent.id, name: request.team?.title ?? agent.name }, { under: request.team?.under, inline: Boolean(request.team?.under) });
+  const decidedBy = new Map<string, import('../../shared/fix-autonomy').ApprovalBy>(); // AG23: calls Spotlight approved in this run
   const upsert = (entry: TimelineEntry) => {
     const index = session.timeline.findIndex((e) => e.id === entry.id);
     if (index >= 0) session.timeline[index] = entry;
@@ -549,7 +554,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       runId: `ar_${nanoid(10)}`,
       signal: request.signal,
       delegate: (target, task) => delegate(target, task),
-      approvals: request.approvals ?? 'ask',
+      approvals: request.approvals === 'spotlight' ? 'deny' : (request.approvals ?? 'ask'), // AG23: a remote pause is auto-rejected under spotlight too
       caller,
     };
 
@@ -698,10 +703,23 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         const tool = byName.get(call.name);
         // A tool set up as a read whose call is not one (another operation, SQL that changes data) is held like a write: decided per call on the parameters it would run with.
         const heldFor = tool && !tool.requireApproval && tool.holdReason ? await tool.holdReason(call.input, ctx).catch(() => 'The call’s parameters could not be checked.') : undefined;
+        // AG23: in a fix session's test run Spotlight decides a call that asks first: it runs when every destination was given, else it is left for the person.
+        const verdict = tool && (tool.requireApproval || heldFor) && request.approvals === 'spotlight' && request.spotlight
+          ? spotlightVerdict(tool.destinationsOf ? await tool.destinationsOf(call.input, ctx).catch(() => ['{{ … }}']) : ['{{ … }}'], request.spotlight.given)
+          : undefined;
         if (!tool) immediate.push({ id: call.id, name: call.name, content: `Unknown tool "${call.name}". Available: ${[...byName.keys()].join(', ')}`, isError: true });
         else if (denied.has(call.name)) {
           const message = `The user just rejected ${call.name}. Do not call it again now: reply to the user and wait for their instructions.`;
           upsert(toolEntry(call, tool, { status: 'denied', error: 'Denied by a person (retry refused)' }));
+          immediate.push({ id: call.id, name: call.name, content: message, isError: true });
+        } else if (verdict === 'approve' && request.spotlight) {
+          // AG23: the decision is recorded on the call; the Run Trace says who approved.
+          decidedBy.set(call.id, request.spotlight.by);
+          runnable.push(call);
+        } else if (verdict === 'leave' && request.spotlight && !request.spotlight.canWait) {
+          const line = approvedByLine(request.spotlight.by, false);
+          const message = `${heldFor ?? `"${tool!.label}"`}${heldFor ? ' It' : ''} reaches a destination nobody gave, so it did not run (${line}). Don't retry it; explain what you would have done.`;
+          upsert(toolEntry(call, tool!, { status: 'denied', error: line, by: request.spotlight.by, decidedLine: line }));
           immediate.push({ id: call.id, name: call.name, content: message, isError: true });
         } else if ((tool.requireApproval || heldFor) && (request.approvals ?? 'ask') === 'deny') {
           const message = `${heldFor ?? `"${tool.label}"`}${heldFor ? ' It' : ''} needs a person's approval, which isn't available in this kind of run. Don't retry it; explain what you would have done.`;
@@ -749,6 +767,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       input: call.input,
       status: 'running',
       at: existing?.at ?? now(),
+      ...(decidedBy.get(call.id) && { by: decidedBy.get(call.id), decidedLine: approvedByLine(decidedBy.get(call.id)!, true) }), // AG23:
       ...patch,
     };
   }
@@ -803,6 +822,9 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       if (!tool.resume) return { id: call.callId, name: call.tool, content: `The tool "${call.tool}" can no longer answer the agent that paused.`, isError: true };
       return execute(asCall, tool, ctx, { state: call.remote.state, approved: call.decision === 'approved', ...(call.answer !== undefined && { answer: call.answer }) });
     }
+    // AG23: a person who decided is named in the Run Trace ("Approved by you").
+    const person = call.decidedBy ? ({ kind: 'person', userId: call.decidedBy } as const) : undefined;
+    if (person && call.decision === 'approved') decidedBy.set(call.callId, person);
     if (call.decision === 'approved') {
       const result = await execute(asCall, tool, ctx);
       // A person's edit that added a field the tool does not take: said, not silently dropped.
@@ -814,7 +836,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       }
       return result;
     }
-    upsert(toolEntry(asCall, tool, { status: 'denied', error: 'Denied by a person' }));
+    upsert(toolEntry(asCall, tool, { status: 'denied', error: 'Denied by a person', ...(person && { by: person, decidedLine: approvedByLine(person, false) }) })); // AG23:
     return {
       id: call.callId,
       name: call.tool,

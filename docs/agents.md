@@ -787,7 +787,31 @@ request: the run goes on when the last one is decided). The Platform analyst's o
   (default *Refuse*, so a saved flow runs as before): then, in a run started from the editor's Chat only, the
   execution waits with the approval card in the chat, and Approve or Reject resumes the same agent session (a second
   approval waits again). In the chat's step list the waiting call reads *Waiting for approval*, then *Done* after Approve and *Denied* after Reject (it never reads *Failed*; the hosted chat page says the same). The hosted chat page, webhooks, schedules and manual runs still refuse, and so does a node
-  with a chat model or tools connected to it. Each run is an agent session from the
+  with a chat model or tools connected to it.
+
+  **Spotlight approves its own test runs** (AG23, wave ag5). The person's decision of 2026-11-18: *"We can let Spotlight approve
+  automatically when he's fixing. It doesn't have to wait for permission in autonomous mode."* In an Autonomous test-and-fix
+  session the editor's run carries `approvals: 'spotlight'` (with the session's id and the destinations the person gave; only an
+  editor test run of the draft by a signed-in person may carry it, never a trigger, a rerun, an API key or the test-update run).
+  A Run an Agent step in that run lets Spotlight decide each call that asks first (or a held read): the call runs at once when
+  every destination it reaches was already **given** (the agent's saved fixed To / CC / BCC, URL, channel or recipient number, read from the
+  agent config the run uses; the flow's own sending nodes; the person's words), and the Run Trace reads *Approved by Spotlight
+  (autonomous fix session)*. Any other call is not run: where the run can wait (the editor, no model or tools wired on the node)
+  it waits for the person as in the editor's chat and the session says *Needs you*; where it can't, it is refused as *Left for you
+  by Spotlight: a destination nobody gave*. An expression or an address that can't be read is never given, a write that names no address
+  (a SQL change, an app call) is given only when the person's words name it, an asks-first workflow tool is always left for the
+  person (the sub-workflow runs with the model's input and can send anywhere), and an address the model chose is sent as it chose
+  it, never rewritten. After a person approves a call that waited, the session resumes in the editor's ask mode: Spotlight no longer
+  decides the later calls of that session, each waits for the person. A sub-agent's call, a remote A2A agent's pause, the smoke test and the eval
+  gate keep refusing. Without the field every run is as before. A person's own decision reads *Approved by you* / *Denied by you*.
+
+  **Production approvals** (AG23). Every trigger except the manual and the evaluation one starts a run nobody
+  watches (webhook, schedule, channel, app trigger, hosted chat, form, usage event, suggestion decision, detector, cap raise, error
+  workflow, called workflow, MCP call), so a tool that asks first is still refused there (a Spotlight fix session's decision is about *fixing*; where a
+  production run's approvals should go, an approval inbox, approval at publish, or refusing, is the person's decision and is
+  not built). It is said before it bites: `GET /api/workflows/:id/unattended-approvals` lists each such tool with its trigger,
+  and the publish card and the Publish menu show *In production nobody approves “Send Email”: a webhook run refuses it. Tell me
+  where production approvals should go, or keep it refusing.* Each run is an agent session from the
   workflow. The node is `usableAsTool`, so an AI Agent node can delegate to an agent. It runs
   the agent on Landflow's runtime, also when the agent is deployed to kagent; to call it there,
   use the **A2A Agent** node ([a2a.md](a2a.md)).
