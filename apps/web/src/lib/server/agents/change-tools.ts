@@ -1,58 +1,84 @@
 /**
- * Re-check 3: what a designed CHANGE to an agent may do with tools, after the architect answered and before the card shows it.
- *  - A tool whose node type the agent already has is not added again ("SQLite 2"): the existing tool is kept and filled in (a
- *    credential slot or a parameter it lacked), unless the ask says it wants another one.
- *  - A fix (a cause is given) adds only what the cause needs: a new tool the change and the cause never name is dropped
- *    (the HTTP Request tool that came with the SQLite one).
+ * Re-check 3/4: what a designed CHANGE to an agent may do with tools, after the architect answered and before the card shows it.
+ *  - A tool whose node type the agent kept is not added again ("SQLite 2"): the kept tool is filled in (a credential slot or a
+ *    parameter it lacked), unless the ask wants another, or the new tool brings a credential that differs from the kept one's
+ *    (then it is its own tool: "add a SQLite tool for the archive DB"). A tool the design dropped never comes back: the design
+ *    is the person's change ("switch the SQLite tool to the Sales DB credential" drops one and adds one).
+ *  - A fix (a cause is given) adds only what the cause needs: a new tool the change and the cause never name is dropped, but only
+ *    when another new tool IS named (a fix never ends as an empty "No change" card), and the card says what was dropped.
  * Pure: the route calls it with the base config and the designed one.
  */
-type Tool = Record<string, unknown> & { id?: string; type?: string; nodeType?: string; name?: string; parameters?: Record<string, unknown>; credentials?: Record<string, unknown> };
+type Slot = Record<string, { id?: string } | undefined>;
+type Tool = Record<string, unknown> & { id?: string; type?: string; nodeType?: string; name?: string; collection?: string; parameters?: Record<string, unknown>; credentials?: Slot };
 
-const compact = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
-const WANTS_ANOTHER = /\b(?:another|a second|second|two|extra|additional|one more|both|separate)\b/i;
+const WANTS_ANOTHER = /\b(?:another|a second|second|extra|additional|one more|separate)\b/i;
+const GENERIC = new Set(['tool', 'tools', 'node', 'core', 'api', 'request', 'data', 'the', 'and', 'for', 'with']);
 
-/** Whether the text names the tool: its name, its node type's own name, or the operation words, ignoring case, spaces and underscores. */
-function named(tool: Tool, text: string): boolean {
-  const haystack = compact(text);
-  const own = [tool.name, tool.nodeType?.split('.').at(-1)].filter((x): x is string => typeof x === 'string' && compact(x).length >= 3);
-  return own.some((n) => haystack.includes(compact(n)));
+const stem = (w: string) => (w.length > 3 && w.endsWith('s') ? w.slice(0, -1) : w);
+const wordsOf = (s: string) =>
+  s
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 3 && !GENERIC.has(w))
+    .map(stem);
+
+/** Whether the ask names the tool: a word of its name, its node type (the last segment, the plugin prefix) or display title, its credential's name or a knowledge tool's collection. */
+function named(tool: Tool, text: string, titleOf?: (nodeType: string) => string | undefined): boolean {
+  const said = new Set(wordsOf(text));
+  const own = [
+    tool.name,
+    tool.nodeType?.split('.').at(-1),
+    tool.nodeType?.split('.')[0],
+    tool.nodeType && titleOf?.(tool.nodeType),
+    tool.collection,
+    ...Object.values(tool.credentials ?? {}).map((c) => (c as { name?: string } | undefined)?.name),
+  ].filter((x): x is string => typeof x === 'string');
+  return own.some((n) => wordsOf(n).some((w) => said.has(w)));
 }
 
 const empty = (v: unknown) => v === undefined || v === null || v === '' || (typeof v === 'object' && v !== null && !Array.isArray(v) && Object.keys(v).length === 0);
 
-export function tidyChangedTools<C extends { tools?: unknown }>(base: C, designed: C, ask: { text: string; fix?: boolean }): C {
+/** Two tools bring different credentials: some slot is filled on both with different ids. */
+const credentialsConflict = (a: Tool, b: Tool) => Object.entries(b.credentials ?? {}).some(([slot, ref]) => ref?.id && a.credentials?.[slot]?.id && a.credentials[slot]!.id !== ref.id);
+
+export function tidyChangedTools<C extends { tools?: unknown }>(base: C, designed: C, ask: { text: string; fix?: boolean; titleOf?: (nodeType: string) => string | undefined }): { config: C; dropped: string[]; removed: string[] } {
   const baseTools = (Array.isArray(base.tools) ? base.tools : []) as Tool[];
   const designedTools = (Array.isArray(designed.tools) ? designed.tools : []) as Tool[];
   const baseIds = new Set(baseTools.map((t) => t.id));
-  const merged = new Map<string, Tool>();
-  const out: Tool[] = [];
+  const isNode = (t: Tool) => t.type === 'node' && Boolean(t.nodeType);
+  // A tool the design kept: its base id, or a base tool's type and name under a new id (a design may give its own tools new ids).
+  const listed = new Set(designedTools.map((t) => t.id));
+  const keptBase = (t: Tool) => (t.id !== undefined && baseIds.has(t.id)) || (isNode(t) && baseTools.some((b) => !listed.has(b.id) && isNode(b) && b.nodeType === t.nodeType && b.name === t.name));
+  const current = new Map<Tool, Tool>(); // a designed tool → what it becomes (a kept tool, filled in)
+  const gone = new Set<Tool>();
+  const added: Tool[] = [];
+  const keptTools = designedTools.filter(keptBase);
   for (const tool of designedTools) {
-    if (tool.id && baseIds.has(tool.id)) {
-      out.push(tool);
+    if (keptBase(tool)) continue;
+    const twin = isNode(tool) && !WANTS_ANOTHER.test(ask.text) ? keptTools.find((t) => isNode(t) && t.nodeType === tool.nodeType && !credentialsConflict(current.get(t) ?? t, tool)) : undefined;
+    if (twin) {
+      const target = current.get(twin) ?? twin;
+      const credentials = { ...(tool.credentials ?? {}), ...(target.credentials ?? {}) };
+      const parameters = { ...Object.fromEntries(Object.entries(tool.parameters ?? {}).filter(([k]) => empty(target.parameters?.[k]))), ...Object.fromEntries(Object.entries(target.parameters ?? {}).filter(([, v]) => !empty(v))) };
+      const filled: Tool = { ...target, parameters };
+      if (empty(credentials)) delete filled.credentials;
+      else filled.credentials = credentials;
+      current.set(twin, filled);
+      gone.add(tool);
       continue;
     }
-    // A new tool.
-    const sameType = (t: Tool) => t.type === 'node' && t.nodeType === tool.nodeType;
-    // The one it has: by name first (a design may give its own tools new ids), else any of that node type.
-    const twin = tool.type === 'node' && tool.nodeType ? (baseTools.find((t) => sameType(t) && t.name === tool.name) ?? out.find((t) => sameType(t) && baseIds.has(t.id)) ?? baseTools.find(sameType)) : undefined;
-    if (twin && !WANTS_ANOTHER.test(ask.text)) {
-      // Reuse the one it has: fill what it lacked from the one that was about to be added.
-      const target = merged.get(twin.id ?? '') ?? out.find((t) => t.id === twin.id) ?? twin;
-      const filled: Tool = {
-        ...target,
-        credentials: { ...(tool.credentials ?? {}), ...(target.credentials ?? {}) },
-        parameters: { ...Object.fromEntries(Object.entries(tool.parameters ?? {}).filter(([k]) => empty(target.parameters?.[k]))), ...Object.fromEntries(Object.entries(target.parameters ?? {}).filter(([, v]) => !empty(v))) },
-      };
-      if (empty(filled.credentials)) delete filled.credentials;
-      const at = out.findIndex((t) => t.id === twin.id);
-      if (at >= 0) out[at] = filled;
-      else out.push(filled);
-      merged.set(twin.id ?? '', filled);
-      continue;
-    }
-    if (ask.fix && !named(tool, ask.text)) continue;
-    out.push(tool);
+    added.push(tool);
   }
-  // Base tools the design dropped stay dropped (the change asked for it); only additions are tidied.
-  return { ...designed, tools: out };
+  const dropped: string[] = [];
+  // A fix adds only what its cause needs, when the cause names at least one of the new tools.
+  if (ask.fix && added.some((t) => named(t, ask.text, ask.titleOf))) {
+    for (const t of added) {
+      if (named(t, ask.text, ask.titleOf)) continue;
+      gone.add(t);
+      dropped.push(String(t.name ?? t.nodeType ?? 'a tool'));
+    }
+  }
+  const removed = [...gone].map((t) => String(t.name ?? t.nodeType ?? '')).filter(Boolean);
+  return { config: { ...designed, tools: designedTools.filter((t) => !gone.has(t)).map((t) => current.get(t) ?? t) }, dropped, removed };
 }

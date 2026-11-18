@@ -20,7 +20,7 @@ import { isProtectedEnvironment } from '../environments/settings';
 import { redeployIfDeployed } from '../kagent/deploy';
 import { canResource, creationProject, type Actor } from '../projects/access';
 import { createIn } from '../projects/http';
-import { homeProjectId } from '../projects/store';
+import { defaultProjectId, homeProjectId } from '../projects/store';
 import { isTenantTool, TENANT_TOOLS, tenantTool } from '../assistant/tenant-tools';
 import type { McpScope } from './project-servers';
 
@@ -90,7 +90,7 @@ export function registerAgentTools(server: McpServer, ctx: AgentToolsContext) {
       // Fresh ids, as the import route does, so a config copied from another agent shares no schedule or channel state.
       const reid = <T extends { id: string }>(items: T[] | undefined, prefix: string) => items?.map((item) => ({ ...item, id: `${prefix}_${nanoid(8)}` }));
       const home = scope ? (actor ? creationProject(actor, scope.projectId) : scope.projectId) : actor ? creationProject(actor) : undefined;
-      if (refusedForNewAgent(home, cfg).length) return failure(REFUSED_CREDENTIAL_MESSAGE);
+      if (refusedForNewAgent(home ?? defaultProjectId(), cfg).length) return failure(REFUSED_CREDENTIAL_MESSAGE);
       const agent = createIn(
         home,
         'agent',

@@ -10,7 +10,8 @@ import { useMentionPicker } from '@/lib/client/use-mention-picker';
 import { scopeLabel, scopeOf, type SpotlightScope } from '@/lib/shared/spotlight-scope'; // SB07:
 import { mentionQueryAt, type MentionHit } from '@/lib/shared/mentions';
 import { writesOutside } from '@/lib/shared/run-check';
-import { completeBubbles, idleBubbles, liveMentions, runAndFixAsk, runAsk, runStepAsk, wrongOutputAsk, TEST_BUBBLE, type Bubble, type Mention, type SpotlightContext } from '@/lib/shared/spotlight';
+import { startTypedSession } from './typed-session';
+import { completeBubbles, idleBubbles, liveMentions, runAndFixAsk, runStepAsk, TEST_BUBBLE, type Bubble, type Mention, type SpotlightContext } from '@/lib/shared/spotlight';
 import { useBuildFlow } from '../ai-builder';
 import { afterReply, typedSession } from '../autonomous';
 import { answeredQuestion } from './answered-question';
@@ -259,14 +260,7 @@ export function Composer() {
       void testUntilItRuns(useEditor.getState().description?.trim() || undefined);
       return;
     }
-    // Re-check 3: a bare run ("Run it now") with a trigger to start from is the session's run; "the numbers look made up" is the session with the log, judged against that sentence.
-    const startable = useEditor.getState().nodes.some((n) => useEditor.getState().nodeTypes[n.data.wf.type]?.descriptor.kind === 'trigger');
-    if ((runAsk(message) && startable) || (wrongOutputAsk(message) && useEditor.getState().nodes.length)) {
-      if (useAssistant.getState().pending || useAssistant.getState().testing) return;
-      useAssistant.getState().append([{ id: nanoid(8), role: 'user', text: message }]);
-      void testUntilItRuns(wrongOutputAsk(message) ? message : useEditor.getState().description?.trim() || undefined);
-      return;
-    }
+    if (startTypedSession(message)) return; // Re-check 3: a bare run, or output that looks made up, is the session's
     const under = cardQuestionFor(message); // AG04: the chat's answer to it stays under the card
     const since = useAssistant.getState().items.length;
     await useAssistant.getState().send(message, {

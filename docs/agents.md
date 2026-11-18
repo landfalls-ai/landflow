@@ -244,12 +244,16 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   none (wave ag3's live pass found the change said "No change" instead).
   The card's **Left** row then drops "fill in From Email" (any "fill in" or "set" line whose field the agent's draft now
   holds), as it drops a credential line once the slot is set.
-- **A change adds only what it needs, and never a duplicate (ag4 re-check 3).** Before the card, the design route
-  (`lib/server/agents/change-tools.ts`) keeps the agent's own tool when a change would add a second of the same node type
-  (no *SQLite 2*): the existing tool is filled in with the credential or parameters it lacked, unless the ask says it
-  wants another. A fix (the session's agent fix sends its cause) drops a new tool the change and the cause never name
-  (the HTTP Request tool that came along with SQLite). **Pick it** shows on a change card after Apply too, and wherever a
-  Left row says *pick a … credential*; its smoke result also reaches the build and change cards' status line.
+- **A change adds only what it needs, never a duplicate, and never undoes itself (ag4 re-check 3/4).** Before the card, the design
+  route (`lib/server/agents/change-tools.ts`) keeps the tool the design kept when a change would add a second of the same node
+  type (no *SQLite 2*): the kept tool is filled in with the credential or parameters it lacked, unless the ask says *another* or
+  *a second*, or the new tool brings a credential that differs from the kept one's (then it is its own tool: *add a SQLite tool
+  for the archive DB*). A tool the design dropped never comes back (*switch the SQLite tool to the Sales DB credential*). A fix
+  (the session's agent fix sends its cause) drops a new tool the change and the cause never name (a word of its name, node
+  type, plugin, display title, credential or knowledge collection), only when another new tool is named, and the card's *Not
+  added* says what was dropped; the Left rows are worked out after, so none names a dropped tool. **Pick it** shows on a change
+  card after Apply too, and wherever a Left row says *pick a … credential*; its smoke result also reaches the applied build and
+  change cards' status line (a change card still waiting for Apply is left alone).
 - **Credentials follow the agent's project.** Every credential picker that edits an agent (the agent page's model and tool
   dialogs, and Spotlight's **Pick it**) lists only what the agent's home project may use (`GET /api/credentials?agentId=`)
   and **Create** makes the credential in that project; nothing is picked on its own until that list has loaded, and when

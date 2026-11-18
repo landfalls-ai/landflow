@@ -103,7 +103,14 @@ export const POST = handler(async (request: Request) => {
   }
   const reasoned = design.extras && !baseConfig ? { ...(design.extras.reuse && { reuse: design.extras.reuse }), ...(attached && { attached }), ...(design.extras.modelWhy && { modelWhy: design.extras.modelWhy }), ...(design.extras.modelNote && { modelNote: design.extras.modelNote }), ...(design.extras.catalog.length && { catalog: design.extras.catalog }) } : {}; // AG19:
   const models = resources.models.map((m) => `${m.provider}/${m.model}`); // AG02: the card's Model select, the builder model first
-  if (baseConfig && design.config) design.config = tidyChangedTools(baseConfig as { tools?: unknown }, design.config as { tools?: unknown }, { text: `${parsed.data.change ?? ''} ${parsed.data.ask ?? ''} ${parsed.data.cause ?? ''}`, fix: Boolean(parsed.data.cause) }) as typeof design.config;
+  if (baseConfig && design.config) {
+    // Re-check 3/4: the tools of a change are tidied first, and the needs (the Left rows) are worked out after, so none names a tool that is gone.
+    const types = allowedTypes(undefined, actor);
+    const tidy = tidyChangedTools(baseConfig as { tools?: unknown }, design.config as { tools?: unknown }, { text: `${parsed.data.change ?? ''} ${parsed.data.ask ?? ''} ${parsed.data.cause ?? ''}`, fix: Boolean(parsed.data.cause), titleOf: (nodeType) => types.find((t) => t.type === nodeType)?.descriptor.displayName });
+    design.config = tidy.config as typeof design.config;
+    if (tidy.removed.length) design.needs = design.needs.filter((n) => !tidy.removed.includes(String(n.tool)) && !tidy.removed.some((r) => n.text.startsWith(`${r}:`)));
+    if (tidy.dropped.length) design.dropped = [...design.dropped, ...tidy.dropped.map((n) => `the tool “${n}”: this fix doesn’t need it`)];
+  }
   const config = baseConfig ? design.config : { avatar: { kind: 'face' as const, face: randomFace(parsed.data.name) }, ...design.config }; // AG04: a change keeps the base's own look
   if (parsed.data.preview) {
     // SB16: the card's preview: a face to show, nothing saved; SB17's brief's cases come with it.

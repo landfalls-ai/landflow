@@ -190,6 +190,17 @@ describe('the writes', () => {
     expect(refused.raw).toMatch(/can’t use/);
   });
 
+  it('create_agent with no actor (a single-user host) accepts a credential of the default project and refuses one homed elsewhere', async () => {
+    const { call } = await connect(undefined);
+    const pg = { host: '127.0.0.1', port: 5432, database: 'd', user: 'u', password: 'p', ssl: 'disable' };
+    const mine = credentials.create({ name: 'Default project cred', type: 'core.postgres', data: pg });
+    const other = credentials.create({ name: 'Other project cred', type: 'core.postgres', data: pg });
+    setHomeProject('credential', other.id, 'prj_noactor_elsewhere');
+    const tool = (credential: string) => ({ id: 't1', type: 'node', nodeType: 'core.postgres', credentials: { postgres: { id: credential, name: 'x' } } });
+    expect((await call('create_agent', { config: { ...CONFIG, name: 'No actor ok', tools: [tool(mine.id)] } })).failed).toBe(false);
+    expect((await call('create_agent', { config: { ...CONFIG, name: 'No actor refused', tools: [tool(other.id)] } })).failed).toBe(true);
+  });
+
   it('publish_agent runs the eval gate: a pass publishes, a hold answers the verdict and publishes nothing; there is no skipEval', async () => {
     const { client, call } = await connect(TEST_OWNER);
     const id = (await call('create_agent', { config: { ...CONFIG, name: 'Gated' } })).data.id as string;

@@ -725,7 +725,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       // Re-check 3: a round that answers "no" and names no change, with a Run an Agent step in the flow, asks once more, as "Try again" did: the
       // agent may state facts it has no tool or knowledge to give, and the log says so. The same round then reaches the agent fix card.
       const noChange = (r: ChatItem | undefined) => r?.role === 'assistant' && !r.agentFix && !r.parts.some((p) => p.kind === 'proposal') && missingPartOf(r) !== undefined;
-      if (noChange(reply) && useEditor.getState().nodes.some((n) => n.data.wf.type === 'core.messageAgent' && !n.data.wf.disabled) && fixes < MAX_FIXES) {
+      if (!failed && goal && noChange(reply) && useEditor.getState().nodes.some((n) => n.data.wf.type === 'core.messageAgent' && !n.data.wf.disabled) && fixes < MAX_FIXES) {
         const again = `Test run ${round} ${executionId ? `(execution ${executionId}) ` : ''}did not do what I asked for: “${goal ?? ''}”. ${AGENT_FACTS_RULE}${before}`;
         useAssistant.setState({ fixing: nodeId });
         await useAssistant.getState().send(again, { auto: true, fresh: true, session: 'fix', autonomy, withoutSelection: true, testId, ...(nodeId && { nodeId }) });

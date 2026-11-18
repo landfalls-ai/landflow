@@ -81,6 +81,7 @@ describe('Pick it, in place', () => {
     useAssistant.getState().append([
       { id: 'b1', role: 'assistant', parts: [{ kind: 'agentCard', card: { ...card, smoke: stale } as never }] },
       { id: 'b2', role: 'assistant', parts: [{ kind: 'agentCard', card: { ...card, agentId: undefined, base: { agentId: 'ag_q', name: 'Question answerer' }, smoke: stale } as never }] },
+      { id: 'b3', role: 'assistant', parts: [{ kind: 'agentCard', card: { ...card, state: 'designed', agentId: undefined, base: { agentId: 'ag_q', name: 'Question answerer' }, smoke: undefined } as never }] },
     ] as never);
     await act(async () => root.render(createElement(AgentCardView, { itemId: 'b1', card: card as never })));
     await settle();
@@ -90,7 +91,7 @@ describe('Pick it, in place', () => {
     await act(async () => button(/Use it/)!.click());
     await settle();
     const smokes = useAssistant.getState().items.flatMap((i) => (i.role === 'assistant' ? i.parts.flatMap((p) => (p.kind === 'agentCard' ? [p.card.smoke?.state] : [])) : []));
-    expect(smokes).toEqual(['passed', 'passed']);
+    expect(smokes).toEqual(['passed', 'passed', undefined]); // the change card still waiting for Apply is left alone
   });
 
   it('a failed filter says so with Retry instead of an empty list, and Retry lists them', async () => {

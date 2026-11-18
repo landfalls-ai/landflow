@@ -105,9 +105,11 @@ export function runAsk(text: string): boolean {
  */
 export function wrongOutputAsk(text: string): boolean {
   const t = text.trim().toLowerCase();
-  if (!t || t.length > 240 || t.endsWith('?')) return false;
-  if (/\b(?:add|change|set|remove|delete|replace|create|wire|publish|send|post|email|rename)\b/.test(t)) return false;
-  return /\b(?:made[\s-]?up|invented|fake|fabricated|hallucinat\w*|not real|aren.t real|isn.t real)\b/.test(t) || /\b(?:look|looks|seem|seems|are|is|was|were)\s+(?:wrong|incorrect|off|bogus)\b/.test(t);
+  if (!t || t.length > 240) return false;
+  // A question (a mark, or a question word anywhere) and an ask that changes something stay the chat's.
+  if (/\?/.test(t) || /\b(?:why|how|what|which|where|when|explain|should)\b/.test(t)) return false;
+  if (/\b(?:add|chang\w*|set|remov\w*|delet\w*|replac\w*|creat\w*|wir\w*|publish\w*|send\w*|post\w*|email\w*|renam\w*|turn\w*|make|making|use|using|updat\w*|switch\w*|enabl\w*|disabl\w*|mov\w*|edit\w*)\b/.test(t)) return false;
+  return /\b(?:made[\s-]?up|invented|fake|fabricated|hallucinat\w*|not real|aren.t real|isn.t real)\b/.test(t) || /\b(?:look|looks|seem|seems|are|is|was|were)\s+(?:wrong|incorrect|bogus)\b/.test(t);
 }
 
 const ask = (id: string, label: string, send = true): Bubble => ({ id, label, kind: 'ask', text: label, caret: label.length, send });

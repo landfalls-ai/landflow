@@ -39,11 +39,11 @@ export function toolNeedingCredential(draft: Record<string, unknown> | undefined
   return undefined;
 }
 
-/** The smoke test's answer after a pick: the agent's rows and cards say it, so "needs a credential" goes. */
+/** The smoke test's answer after a pick: the agent's rows and the cards that are applied (created) say it, so "needs a credential" goes; a change card still waiting for Apply says nothing of it. */
 export function showSmoke(agentId: string, smoke: AgentSmoke) {
   useAssistant.setState((s) => ({ agents: s.agents.map((a) => (a.agentId === agentId ? { ...a, smoke } : a)) }));
   for (const item of useAssistant.getState().items) {
-    useAssistant.getState().updateParts(item.id, (parts) => parts.map((p) => (p.kind === 'agentCard' && (p.card.agentId === agentId || p.card.base?.agentId === agentId) ? { ...p, card: { ...p.card, smoke } } : p)));
+    useAssistant.getState().updateParts(item.id, (parts) => parts.map((p) => (p.kind === 'agentCard' && p.card.state === 'created' && (p.card.agentId === agentId || p.card.base?.agentId === agentId) ? { ...p, card: { ...p.card, smoke } } : p)));
   }
 }
 
