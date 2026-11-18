@@ -865,6 +865,17 @@ describe('6. Spotlight never wires into a bound node, and the scenario files run
     expect(reply.proposals.at(-1)!.ops).toEqual([expect.objectContaining({ op: 'changeAgent', node: 'Utility helper', change: 'Add a sentiment tool.' })]);
   });
 
+  it('the same changeAgent proposed twice is “Nothing changes”; another change, or another agent, is proposed', async () => {
+    const s4 = utility('Utility helper twice');
+    const wf = saveFlow({ id: 'wf_twice', name: 'Twice', nodes: [node('Start', 'core.manualTrigger'), node('Agent', 'core.messageAgent', { agentId: s4.id, message: 'hi' }, 'Utility helper')], connections: [edge('Start', 'Agent')] });
+    const change = (text: string) => ({ calls: [{ name: 'propose_changes', input: { summary: 'Change the agent', ops: [{ op: 'changeAgent', node: 'Utility helper', change: text }] } }] });
+    const reply = await chat(wf, 'Make it use a sentiment tool.', [change('Add a sentiment tool.'), change('  add a sentiment tool.'), change('Also hash the slug.'), { text: 'Two changes to the agent.' }]);
+    const results = reply.toolResults.filter((r) => r.name === 'propose_changes').map((r) => r.content);
+    expect(results[1]).toMatch(/^Nothing changes/);
+    expect(results[2]).not.toMatch(/^Nothing changes/);
+    expect(reply.proposals.flatMap((p) => p.ops).map((o) => (o as { change?: string }).change)).toEqual(['Add a sentiment tool.', 'Also hash the slug.']);
+  });
+
   it('OP_SCHEMA’s changeAgent fields are what parseOps reads (node, agentId, change; no moveWired in either)', () => {
     const schema = (TOOLS.find((t) => t.name === 'propose_changes')!.inputSchema as { properties: { ops: { items: { properties: Record<string, unknown> } } } }).properties.ops.items.properties;
     for (const field of ['node', 'agentId', 'change']) expect(Object.keys(schema)).toContain(field);
