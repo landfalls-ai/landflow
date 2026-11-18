@@ -11,7 +11,7 @@ import { z } from 'zod';
 import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import { hasPrompt } from '../../shared/persona';
 import { adoptRun, checkPublish } from '../agents/eval-gate';
-import { REFUSED_CREDENTIAL_MESSAGE, refusedCredentials } from '../agents/credential-scope';
+import { REFUSED_CREDENTIAL_MESSAGE, refusedCredentials, refusedForNewAgent } from '../agents/credential-scope';
 import { agentConfigSchema, asConfig } from '../agents/http';
 import { smokeTest, SmokeTestError } from '../agents/smoke-test';
 import { agentStore, configOf } from '../agents/store';
@@ -89,8 +89,10 @@ export function registerAgentTools(server: McpServer, ctx: AgentToolsContext) {
       const cfg = asConfig(config);
       // Fresh ids, as the import route does, so a config copied from another agent shares no schedule or channel state.
       const reid = <T extends { id: string }>(items: T[] | undefined, prefix: string) => items?.map((item) => ({ ...item, id: `${prefix}_${nanoid(8)}` }));
+      const home = scope ? (actor ? creationProject(actor, scope.projectId) : scope.projectId) : actor ? creationProject(actor) : undefined;
+      if (refusedForNewAgent(home, cfg).length) return failure(REFUSED_CREDENTIAL_MESSAGE);
       const agent = createIn(
-        scope ? (actor ? creationProject(actor, scope.projectId) : scope.projectId) : actor ? creationProject(actor) : undefined,
+        home,
         'agent',
         () =>
           agentStore.create({

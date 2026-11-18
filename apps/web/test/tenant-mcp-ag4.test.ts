@@ -180,6 +180,16 @@ describe('the writes', () => {
     expect((await call('update_agent', { id, config: withTool(other2.id, 'Renamed') })).failed).toBe(true);
   });
 
+  it('create_agent refuses a credential outside the project the agent is created in', async () => {
+    const { call } = await connect(TEST_OWNER);
+    const elsewhere = credentials.create({ name: 'Elsewhere', type: 'core.postgres', data: { host: '127.0.0.1', port: 5432, database: 'd', user: 'u', password: 'p', ssl: 'disable' } });
+    setHomeProject('credential', elsewhere.id, 'prj_create_elsewhere');
+    const config = { ...CONFIG, name: 'Born scoped', tools: [{ id: 't1', type: 'node', nodeType: 'core.postgres', credentials: { postgres: { id: elsewhere.id, name: 'x' } } }] };
+    const refused = await call('create_agent', { config });
+    expect(refused.failed).toBe(true);
+    expect(refused.raw).toMatch(/can’t use/);
+  });
+
   it('publish_agent runs the eval gate: a pass publishes, a hold answers the verdict and publishes nothing; there is no skipEval', async () => {
     const { client, call } = await connect(TEST_OWNER);
     const id = (await call('create_agent', { config: { ...CONFIG, name: 'Gated' } })).data.id as string;

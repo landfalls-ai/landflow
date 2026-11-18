@@ -32,4 +32,12 @@ export function refusedCredentials(agentId: string, incoming: unknown): string[]
   return added.filter((id) => !usable.has(id));
 }
 
+/** For a NEW agent every reference is new: the ids in `incoming` that the project it is created in may not use. */
+export function refusedForNewAgent(projectId: string | undefined, incoming: unknown): string[] {
+  const ids = [...credentialIdsIn(incoming)];
+  if (!ids.length) return [];
+  const usable = usableCredentialIds(projectId, ids);
+  return ids.filter((id) => !usable.has(id));
+}
+
 export const REFUSED_CREDENTIAL_MESSAGE = 'A credential this agent’s project can’t use is picked: share it with the project, or pick one the project owns';
