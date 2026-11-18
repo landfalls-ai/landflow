@@ -24,6 +24,7 @@ const { registry } = await import('@/lib/server/plugins/registry');
 registry.registerBuiltin(corePlugin);
 const { agentStore } = await import('@/lib/server/agents/store');
 const { store } = await import('@/lib/server/store');
+const { agentTeamStore } = await import('@/lib/server/agent-teams/store');
 const route = await import('@/app/api/agents/[id]/connections/route');
 const auth = await import('@/lib/server/auth');
 await auth.createOwner({ email: 'o@ag16.test', name: 'Owner', password: 'password-123' });
@@ -77,6 +78,14 @@ describe('usedBy', () => {
       hidden.delete('wf_ag16_private');
     }
     expect((await ask(a.id)).usedBy?.map((u) => u.workflowId).sort()).toEqual(['wf_ag16_open', 'wf_ag16_private']);
+  });
+
+  it('a Run a Team node counts for the team’s lead', async () => {
+    const lead = agentStore.create({ ...base, name: 'Team lead', tools: [] } as never);
+    const team = agentTeamStore.create({ name: 'Solo', goal: 'Do it', members: [{ id: 'm_lead', title: 'Lead', kind: 'agent', agentId: lead.id }] } as never);
+    agentTeamStore.publish(team.id);
+    wf('wf_ag16_team', 'Team flow', [{ id: 'n1', type: 'core.runTeam', name: 'Team', position: [0, 0], parameters: { teamId: team.id } }]);
+    expect((await ask(lead.id)).usedBy).toEqual([{ workflowId: 'wf_ag16_team', name: 'Team flow' }]);
   });
 
   it('is empty when no workflow runs the agent', async () => {

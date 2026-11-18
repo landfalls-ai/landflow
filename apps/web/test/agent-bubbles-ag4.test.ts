@@ -32,6 +32,7 @@ const data = await import('@/lib/client/agent-bubble-data');
 const { bubbleGraph, AgentChip, isBubbleId } = await import('@/components/canvas/agent-bubbles');
 const edit = await import('@/lib/client/agent-edit');
 const { announceSaved } = await import('@/lib/client/agent-change');
+const { useEditor } = await import('@/components/editor/store');
 
 const conn = (kind: string, name: string, extra: Record<string, unknown> = {}) => ({ kind, name, from: 'agent', ...extra });
 const published = [conn('model', 'claude-sonnet-5-5', { detail: 'Anthropic' }), conn('tool', 'Fetch Alerts', { toolId: 't_http', nodeType: 'core.httpRequest' }), conn('tool', 'Send Email', { toolId: 't_mail', asksFirst: true })];
@@ -154,6 +155,17 @@ describe('the six-bubble canvas (the S1 agent and its runbooks knowledge base)',
     expect([...nodes, ...edges].every((e) => isBubbleId(e.id))).toBe(true);
     expect(isBubbleId('n1')).toBe(false);
     expect(nodes.every((n) => n.draggable === false && n.deletable === false && n.selectable === false && n.connectable === false)).toBe(true);
+  });
+  it('the store holds no bubble: select-all, copy and toWorkflow see only the flow’s nodes', () => {
+    const { nodes } = bubbleGraph([parent], { n1: data.bubblesFromAnswer(answer({ connections: six })) });
+    expect(nodes.length).toBeGreaterThan(0);
+    const flow = { id: 'wf_b', name: 'B', nodes: [{ id: 'n1', name: 'n1', type: 'core.messageAgent', typeVersion: 1, position: [0, 0] as [number, number], parameters: { agentId: 'ag_one' } }], connections: [] };
+    useEditor.getState().load(flow as never, []);
+    useEditor.getState().selectAll?.();
+    const st = useEditor.getState();
+    expect(st.nodes.every((n) => !isBubbleId(n.id))).toBe(true);
+    expect(st.edges.every((e) => !isBubbleId(e.id))).toBe(true);
+    expect(st.toWorkflow().nodes.map((n) => n.id)).toEqual(['n1']);
   });
 });
 

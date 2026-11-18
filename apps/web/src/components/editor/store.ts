@@ -957,7 +957,14 @@ export const useEditor = create<EditorState>((set, get) => {
     // AG16: nothing sits on a bound node's bubbles (its footprint): what overlaps goes right of it (a next step) or below it.
     const laidOut = nodes.map((n) => (positions[n.id] ? { ...n, position: positions[n.id], measured: { width: widthOf(n), height: n.measured?.height ?? NODE_TILE } } : n));
     const clear = clearOfBubbles(bubbleBoxes(laidOut, edges, nodeTypes, new Set(subIds)));
+    // A node moved off the bubbles takes its wired sub-nodes along (they were centred under it by the pass above).
+    const before = { ...positions };
     for (const [id, at] of Object.entries(clear)) positions[id] = at;
+    for (const e of subEdges) {
+      const to = clear[e.target];
+      const was = before[e.target];
+      if (to && was && positions[e.source] && !clear[e.source]) positions[e.source] = { x: positions[e.source].x + to.x - was.x, y: positions[e.source].y + to.y - was.y };
+    }
     set((s) => {
       const nodes = s.nodes.map((n) => (positions[n.id] ? { ...n, position: positions[n.id] } : n));
       return { nodes, groups: s.groups.length ? refitFrames(s.groups, nodes) : s.groups, dirty: true };

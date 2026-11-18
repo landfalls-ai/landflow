@@ -111,6 +111,27 @@ describe('Tidy up', () => {
   });
 });
 
+describe('Tidy up after a column shift', () => {
+  it.each([1, 6])('a later AI Agent stays centred over its wired model (%i bubbles)', (extra) => {
+    const sub = (id: string) => ({ id: `${id}-ai`, type: 'ai_tool' as const, source: id, sourceIndex: 0, target: 'ai', targetIndex: 0 });
+    const tools = Array.from({ length: extra }, (_v, i) => node(`t${i}`, 0, 0));
+    const flow: Workflow = {
+      id: 'wf_s', name: 'S',
+      nodes: [node('start', 0, 0), bound('agent', 0, 0), node('other', 0, 0), node('n1', 0, 0), node('n2', 0, 0), node('ai', 0, 0, { type: 'core.aiAgent' }), ...tools],
+      connections: [main('start', 'agent'), main('start', 'other'), main('agent', 'n1'), main('other', 'n2'), main('n2', 'ai'), ...tools.map((t) => sub(t.id))],
+    };
+    useEditor.getState().load(flow, []);
+    useEditor.setState({ nodeTypes: coreTypes() as never });
+    useEditor.getState().tidyUp();
+    const at = (id: string) => useEditor.getState().nodes.find((n) => n.id === id)!.position;
+    const w = 240;
+    const centres = tools.map((t) => at(t.id).x + 32);
+    const mid = (Math.min(...centres) + Math.max(...centres)) / 2;
+    const aiMid = at('ai').x + (useEditor.getState().nodes.find((n) => n.id === 'ai')!.measured?.width ?? w) / 2;
+    expect(Math.abs(mid - aiMid)).toBeLessThan(2);
+  });
+});
+
 describe('built-in templates', () => {
   const plain = (v: unknown) => typeof v === 'string' && v.trim() !== '' && !v.trim().startsWith('=') && !v.includes('{{');
   const withAgents = BUILTIN_TEMPLATES.filter((t) => t.workflow.nodes.some((n) => (n.type === 'core.messageAgent' && plain(n.parameters.agentId)) || (n.type === 'core.runTeam' && plain(n.parameters.teamId))));
