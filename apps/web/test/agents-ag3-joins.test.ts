@@ -767,8 +767,9 @@ const CONTRACTS = process.env.LANDFLOW_BACKBONE_CONTRACTS ?? '';
 describe.skipIf(!CONTRACTS || !existsSync(join(CONTRACTS, 'ag3')))('7. the ag3 contract copies are byte-identical', () => {
   const runbooks = existsSync(join(CONTRACTS, 'ag3', 'runbooks')) ? readdirSync(join(CONTRACTS, 'ag3', 'runbooks')).filter((f) => f.endsWith('.md')) : [];
   it.each([
-    ['src/lib/shared/agent-card.ts', 'ag3/agent-card.ts'],
-    ['test/spotlight-scenarios/scenario.ts', 'ag3/spotlight-scenario.ts'],
+    // Wave ag4 replaced these two contracts (contracts/ag4, checked in agents-ag4-joins.test.ts).
+    ['src/lib/shared/agent-card.ts', 'ag4/agent-card.ts'],
+    ['test/spotlight-scenarios/scenario.ts', 'ag4/spotlight-scenario.ts'],
     ['src/lib/shared/tool-target.ts', 'ag3/tool-target.ts'],
     ...runbooks.map((f) => [`test/spotlight-scenarios/fixtures/runbooks/${f}`, `ag3/runbooks/${f}`]),
   ])('%s = contracts/%s', (copy, contract) => {
