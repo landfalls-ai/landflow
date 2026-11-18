@@ -583,7 +583,10 @@ async function showAgentFix(event: AgentFixEvent, attempt: number, signal: Abort
     const kept = own ? keptTools(event.agentId, own.fixes) : [];
     const base = own ? await readDraft(event.agentId) : undefined; // AG22: the tools it had, to tell what the change adds
     const design = await designChange({ name: event.agent, description: '', base: { agentId: event.agentId }, change: event.change, typedAsk, ...(kept.length && { keep: { tools: kept, reason: KEEP_REASON } }), ...pickedModel() }, signal);
-    const undone = own && agentUndoneBy(event.agentId, design.config, own.fixes); // AG22: never undo the session's own tool
+    // AG22: never undo the session's own tool. ag5 carryover (join 1): the design route puts a kept tool back (`keep`, AG24) and says so in
+    // `dropped`, so a design that tried to remove one never shows it missing: that line counts as the undo, and the design is dropped.
+    const restored = own ? ((design as { dropped?: string[] }).dropped ?? []).flatMap((line) => /^Kept “(.+)”: this session added it$/.exec(line)?.[1] ?? []) : [];
+    const undone = own && (agentUndoneBy(event.agentId, design.config, own.fixes) ?? (restored.length ? own.fixes.find((f) => f.kind === 'agent' && f.agentId === event.agentId && f.toolsAdded?.some((t) => restored.includes(t))) : undefined));
     if (undone) return { undone };
     const fix = { ...event.fix, attempt };
     const card: AgentCard = { ...cardOf(design.config as Partial<AgentConfig>, event.agent, design.needs, design.missing), base: { agentId: event.agentId, name: event.agent }, changes: design.changes, cases: design.cases ?? [], ...(design.replaceCases?.length && { replaceCases: design.replaceCases }), askedChange: event.change, typedAsk, fix };
