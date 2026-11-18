@@ -207,7 +207,7 @@ export const messageAgentNode = defineNode({
         name: 'notice',
         displayName:
           // AG17:
-          'Runs the agent: its model, memory, tools and knowledge are the bubbles under this node. A model, memory or tool wired here is moved into the agent’s draft when the flow is opened (or at the host’s start); what can’t move stays and runs in this flow only. Tools that require approval are refused in workflow runs (nobody is there to approve them), unless Tool Approvals asks in the editor’s chat and you run the flow from its Chat (then the run waits for your Approve; with a model or tools wired here or moved here and not published yet it still refuses).',
+          'Runs the agent: its model, memory, tools and knowledge are the bubbles under this node. A model, memory or tool wired here is moved into the agent’s draft when the flow is opened (or at the host’s start); what can’t move stays and runs in this flow only. Tools that require approval are refused in workflow runs (nobody is there to approve them), unless Tool Approvals asks in the editor’s chat and you run the flow from its Chat (then the run waits for your Approve; with a model or tools still wired here it refuses). Runs in the editor use the agent’s draft, which already holds what moved; a published workflow runs the agent’s published version, so what moved keeps running here until you publish the agent.',
         type: 'notice',
       },
     ],
@@ -266,7 +266,8 @@ export const messageAgentNode = defineNode({
         const execution = { workflowId: ctx.getWorkflowId() ?? 'unknown', executionId: ctx.getExecutionId(), nodeId: node.id, ...(node.name && { nodeName: node.name }) };
         // AG10: only the editor's chat can ask; the hosted chat page, webhooks, schedules and manual runs refuse as before.
         // A model or tools connected here do not go through a decision, so with them the node refuses too.
-        const pending = await moved(agent);
+        // Only a run on the published config takes the overlay: an editor run on the draft (which already holds what moved) or a pinned version runs what it says, so askInChat, the router and the cache behave as they will after publish.
+        const pending = source === 'published' ? await moved(agent) : undefined;
         const askInChat = ctx.getNodeParameter<string>('toolApprovals', i, 'refuse') === 'askInChat' && ctx.getMode() === 'chat' && Boolean(ctx.putExecutionToWait) && !model && !tools.length && !pending;
         const onEvent = send && streamer(send, i, { id: agent.id, name: agent.name, ...(agent.avatar && { face: agent.avatar as unknown as JsonObject }) });
         let result: Awaited<ReturnType<typeof runAgent>>;

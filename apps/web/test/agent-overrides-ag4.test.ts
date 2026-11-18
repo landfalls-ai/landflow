@@ -430,6 +430,19 @@ describe('it keeps running until the agent is republished (R11)', () => {
     expect(side.models.at(-1)).toBe('anthropic/claude-haiku-5-5');
   });
 
+  it('an editor run (manual mode: the draft) takes no overlay, a production run on the published config does', async () => {
+    const runtime = await import('@/lib/server/agents/runtime');
+    const agent = makeAgent();
+    const flow = saveFlow(agent.id);
+    await post(flow.id, { updatedAt: flow.updatedAt });
+    const moved = store.getWorkflow(flow.id)!;
+    const spy = vi.spyOn(runtime, 'runAgent');
+    expect((await run(moved)).status).toBe('success');
+    expect(spy.mock.calls.at(-1)![0].moved, 'a manual run on the draft').toBeUndefined();
+    expect((await runWorkflow({ workflow: moved, mode: 'production', startNodeId: 'n-trigger', triggerItems: [{ json: {} }] })).status).toBe('success');
+    expect(spy.mock.calls.at(-1)![0].moved?.tools, 'a run on the published config').toHaveLength(1);
+  });
+
   it('no overlay on a pinned node (a production copy), on a graph that still wires the sub-node, or when the config already has the tool', async () => {
     const agent = makeAgent();
     const flow = saveFlow(agent.id);
@@ -464,5 +477,7 @@ describe('readable later (R9)', () => {
     const notice = node.description.properties.find((p) => p.name === 'notice')!.displayName;
     expect(notice).toMatch(/bubbles under this node/);
     expect(notice).toMatch(/runs in this flow only/);
+    expect(notice).toMatch(/Runs in the editor use the agent’s draft/);
+    expect(notice).not.toMatch(/moved here and not published yet it still refuses/);
   });
 });
