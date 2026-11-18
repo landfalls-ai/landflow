@@ -576,7 +576,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
       }
       // AG20: the run the session's message names, as the logs panel and the Run Trace show it.
       case 'get_run_log': {
-        const executionId = input.messages.findLast((m) => m.role === 'user' && /\bexecution ([\w-]{6,})/.test(m.content))?.content.match(/\bexecution ([\w-]{6,})/)?.[1];
+        const executionId = executionIdIn(input.messages);
         const logWorkflowId = input.workflow.id && input.workflow.id !== 'draft' ? input.workflow.id : undefined;
         if (!logWorkflowId && !executionId) return result('This workflow is not saved yet, so there is no run log to read.', 'No run log: not saved', false);
         const log = await runLog(input.actor, { ...(logWorkflowId && { workflowId: logWorkflowId }), ...(executionId && { executionId }) });
@@ -595,7 +595,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         const change = shorten(String(args.change ?? '').trim(), 1500);
         const cause = shorten(String(args.cause ?? '').trim().replace(/\s+/g, ' '), 140);
         if (!agentId || !change || !cause) return result(`Nothing proposed: ${!agentId ? `“${step}” is not a Run an Agent step with an agent chosen` : 'give the cause and the change'}.`, 'Agent fix rejected', false);
-        const executionId = input.messages.findLast((m) => m.role === 'user' && /\bexecution ([\w-]{6,})/.test(m.content))?.content.match(/\bexecution ([\w-]{6,})/)?.[1] ?? '';
+        const executionId = executionIdIn(input.messages) ?? '';
         const name = brief?.name ?? named;
         detail = name;
         onEvent({ type: 'agent-fix', agentId, agent: name, change, fix: { executionId, step: node?.name ?? step, ...(args.tool ? { tool: shorten(String(args.tool), 60) } : {}), cause, attempt: 1 } });
@@ -1023,3 +1023,14 @@ export async function tagMentions(actor: Actor, refs: readonly SentMention[], ca
   const sections = [...(resolved.block ? resolved.block.slice(BLOCK_OPEN.length + 1, resolved.block.length - BLOCK_CLOSE.length - 1).split('\n') : []), ...extra.flatMap((e) => e.split('\n'))];
   return { block: sections.length ? [BLOCK_OPEN, ...sections, BLOCK_CLOSE].join('\n') : '', reads, elapsedMs: Date.now() - started };
 }
+
+/** AG20: the execution id the session's last message names ("execution ex_…"), if any. */
+const executionIdIn = (messages: ChatInput['messages']): string | undefined => {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== 'user') continue;
+    const id = m.content.match(/\bexecution ([\w-]{6,})/)?.[1];
+    if (id) return id;
+  }
+  return undefined;
+};
