@@ -826,9 +826,10 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     /** The session ends without a pass: a card with why and what to do next. */
     const stop = (text: string, node?: string) =>
       say([{ kind: 'outcome', outcome: { text, ...(node && { node }), ...(goal && { goal }), fixes: lastApplied.flatMap((a) => a.proposals.map((proposal) => ({ item: a.item, proposal }))), edits: useEditor.getState().edits } satisfies Outcome }]);
-    /** AG22: a pass the review accepted: asks first offers the publish; an autonomous session publishes the agents it changed, then the workflow. */
+    /** AG22: a pass the review accepted: asks first offers the publish; an autonomous session that applied a fix publishes the agents it changed, then the workflow.
+     *  A session that fixed nothing offers the publish card: an untouched draft (the person's own hand edits too) is never published without a click. */
     const passed = async () => {
-      if (autonomy !== 'auto' || build) return void say([{ kind: 'action', action: 'publish' }]);
+      if (autonomy !== 'auto' || build || (!ownFixes.length && !changedAgents.length)) return void say([{ kind: 'action', action: 'publish' }]);
       await publishAtEnd({ signal, testId, changedAgents });
     };
     // Runs count on through the conversation.

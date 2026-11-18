@@ -202,7 +202,7 @@ const { ApiError } = await import('@/lib/client/api');
 const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
 const { agentStore } = await import('@/lib/server/agents/store');
-const { addCase, listCases, listEvalRuns } = await import('@/lib/server/agents/eval-gate');
+const { addCase, adoptedRunOf, listCases } = await import('@/lib/server/agents/eval-gate');
 const { store } = await import('@/lib/server/store');
 const { credentials } = await import('@/lib/server/credentials/vault');
 const { enableTestAuth, TEST_OWNER } = await import('@/lib/server/auth/test-bypass');
@@ -499,7 +499,8 @@ describe('1. the autonomous fix session finishes on a saved, published flow (AG2
     expect(draft.published?.version).toBe(2);
     const agentPublish = wire.calls.filter((c) => c.path === `/api/agents/${writer.id}/publish` && c.method === 'POST').at(-1)!;
     expect(JSON.parse(agentPublish.answer!).gate.verdict).toMatchObject({ ok: true, basis: 'threshold' });
-    expect(listEvalRuns(writer.id)[0]!.version).toBe(2);
+    // The adopted copy shares the draft run's createdAt, so assert on it directly, not on the list's order.
+    expect(adoptedRunOf(writer.id, 2)).toBeDefined();
     neverSkipsTheGate();
     // Run 3 posted the real figures; the last line is publishedLine with the new pin.
     expect(JSON.parse(receiver.attempts[2]!.body).report_text).toMatch(/North 4,150/);
@@ -577,7 +578,7 @@ describe('2. Spotlight’s approvals in a test run, and the production line (AG2
     return { agent, id };
   };
 
-  it('the session’s run lets Spotlight approve Send Email to the given address (one mail), says so, publishes and names the unattended refusal', async () => {
+  it('the session’s run lets Spotlight approve Send Email to the given address (one mail) and says so; with no fix it offers Publish (never publishes by itself), and the unattended refusal is named', async () => {
     const { agent, id } = await mailer('Oncall mailer', 'oncall@landflow.test');
     agentSide.mail = { subject: 'Summary' };
     openInEditor(id);
@@ -591,12 +592,16 @@ describe('2. Spotlight’s approvals in a test run, and the production line (AG2
     expect(steps.steps[0]!.approvedBy).toBe(approvedByLine({ kind: 'spotlight', userId: TEST_OWNER.id, sessionId: 'x' }, true));
     const session = agentStore.getSession(steps.sessionId)!;
     expect(session.timeline.find((e) => e.type === 'tool')).toMatchObject({ by: { kind: 'spotlight', userId: TEST_OWNER.id } });
-    // Published by the session; the unattended route lists Send Email for the webhook, and the session's last line says it.
-    const lines = await api<Array<{ tool: string; trigger: string; line: string }>>(`/api/workflows/${id}/unattended-approvals`);
-    expect(lines).toEqual([expect.objectContaining({ tool: 'Send Email', trigger: 'webhook' })]);
-    expect(texts()).toContain(unattendedLine('Send Email', 'webhook'));
-    expect(texts().some((l) => l.startsWith('Published: workflow v'))).toBe(true);
-    // A trigger run of the published version still refuses it: nothing sent.
+    // The session fixed nothing, so it publishes nothing by itself: the Publish card waits for the person's click (an untouched
+    // draft is never published without one). The unattended route, which the publish card reads, lists Send Email for the webhook.
+    const actions = useAssistant.getState().items.flatMap((i) => (i.role === 'assistant' ? i.parts.flatMap((p) => (p.kind === 'action' ? [p.action] : [])) : []));
+    expect(actions).toContain('publish');
+    expect(texts().some((l) => l.startsWith('Published: workflow v'))).toBe(false);
+    expect(store.getWorkflow(id)!.active ?? false).toBe(false);
+    const lines = await api<Array<{ tool: string; trigger: string; line: string }>>(`/api/workflows/${id}/unattended-approvals?version=draft`);
+    expect(lines).toEqual([expect.objectContaining({ tool: 'Send Email', trigger: 'webhook', line: unattendedLine('Send Email', 'webhook') })]);
+    // The person publishes; a trigger run of the published version still refuses it: nothing sent.
+    await api(`/api/workflows/${id}/publish`, 'POST', {});
     smtp.mails.length = 0;
     agentSide.mail = { subject: 'Summary' };
     const prod = await production(id);

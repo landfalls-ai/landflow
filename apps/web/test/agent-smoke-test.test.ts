@@ -475,7 +475,7 @@ describe('the review after a right fix names what is missing', () => {
     noteOpened(WF, 0);
     approveDestinations(WF, ['http://127.0.0.1:3399']);
     // Wave ag5 (AG22): the tests below assert the asks-first end of a pass (the Publish action waits for a click), so they run with
-    // the switch off; the switch-on twin is the last test of this block (the session publishes the flow by itself).
+    // the switch off; the switch-on twin is the last test of this block (a session that fixed nothing still leaves Publish to the click).
     useAutonomyFacts.setState({ switchOn: false });
   });
 
@@ -516,7 +516,7 @@ describe('the review after a right fix names what is missing', () => {
     expect(outcomes().at(-1)?.text).toBe('It runs, but doesn’t do all you asked yet: it never tells the desk about big orders. I have no change for it. Left: open “Notify VIP” and change it by hand, or tell me what to change.');
   });
 
-  it('switch on (wave ag5, AG22): a "Yes" review publishes the flow by itself, with no Publish action left to click', async () => {
+  it('switch on (wave ag5, AG22): a "Yes" review on a session that fixed nothing offers Publish and publishes nothing by itself', async () => {
     useAutonomyFacts.setState({ switchOn: true });
     useEditor.setState({ save: async () => true } as never);
     published.mockClear();
@@ -524,9 +524,10 @@ describe('the review after a right fix names what is missing', () => {
     replies = [{ text: 'Yes, it posts.' }];
     await testUntilItRuns(goal);
     expect((send.mock.calls[0][0] as string)).toContain(`“${goal}”`);
-    expect(actions()).toEqual([]);
-    expect(published).toHaveBeenCalledTimes(1);
-    expect(texts().some((t) => t.startsWith('Published: workflow v3'))).toBe(true);
+    // No fix was applied: the draft (the person's own edits too) is published only by a click.
+    expect(actions()).toEqual(['publish']);
+    expect(published).not.toHaveBeenCalled();
+    expect(texts().some((t) => t.startsWith('Published: workflow'))).toBe(false);
     expect(outcomes()).toEqual([]);
   });
 });
@@ -550,7 +551,7 @@ describe('an agent that is not published when the flow runs', () => {
 
   it('autonomous: "Publish … first" is not a fix round: it is tested, published on the pass, and the run goes again', async () => {
     noteOpened(WF, 0);
-    // Wave ag5 (AG22): an autonomous pass ends with the session publishing the flow, which saves it first (the editor wires `save`).
+    // Wave ag5 (AG22): an autonomous pass publishes the flow only after a fix; this session fixed nothing (publishing its own agent is not a fix).
     useEditor.setState({ save: async () => true } as never);
     published.mockClear();
     useAssistant.getState().setAgent('g', { name: 'Answerer', state: 'draft', agentId });
@@ -563,7 +564,8 @@ describe('an agent that is not published when the flow runs', () => {
     // The one call to the assistant is the review of the passing run, never a fix of the failed one.
     expect(send.mock.calls.map((c) => (c[1] as { session?: string }).session)).toEqual(['review']);
     expect(outcomes()).toEqual([]);
-    expect(published).toHaveBeenCalledTimes(1); // wave ag5: then the workflow is published by the session
+    expect(published).not.toHaveBeenCalled(); // wave ag5: no fix, so the workflow's publish stays the person's click
+    expect(actions()).toEqual(['publish']);
   });
 
   it('autonomous: an untested agent whose step now has an item is tested before the first run', async () => {
