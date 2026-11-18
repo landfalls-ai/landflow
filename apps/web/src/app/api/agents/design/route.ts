@@ -11,12 +11,12 @@
  * AG19: the preview answer adds `reuse` (an existing agent that already does the job), `attached` (an existing knowledge base searched as it is), `modelWhy`, `modelNote` and `catalog` (what the design read of the tenant); the body accepts `agentModel`, `knowledgeBase` and `toolNodes` (Spotlight's hints).
  * AG04: with `preview: true`, `base` (`{ agentId }` of an agent the caller can edit, or `{ config }` of a pending card) and `change`
  * (what to change, in words) the answer is the changed config and `changes` (what differs from the base, one line each); nothing
- * is saved. `base` without `change` (or the reverse) or without `preview` is 400; an agent the caller cannot edit is 404.
+ * is saved. AG24: `keep` ({ tools, reason }, at most 20 names) names tools a fix session added: a change never removes one, and a `dropped` line says it was kept. `base` without `change` (or the reverse) or without `preview` is 400; an agent the caller cannot edit is 404.
  */
 import { z } from 'zod';
 import { randomFace } from '@/lib/shared/faces';
 import { agentResources } from '@/lib/server/assistant/agent-resources';
-import { designAgent } from '@/lib/server/assistant/architect';
+import { casesAgain, designAgent } from '@/lib/server/assistant/architect';
 import { withKnowledgeSetup } from '@/lib/server/assistant/knowledge-setup'; // AG13:
 import { listKnowledgeDocuments } from '@/lib/server/agents/knowledge'; // AG19:
 import type { VectorKnowledgeBaseConfig } from '@/lib/shared/agents'; // AG19:
@@ -26,7 +26,8 @@ import { addCase, listCases } from '@/lib/server/agents/eval-gate'; // SB17:
 import { agentUsedBy, removeAgent } from '@/lib/server/agents/remove'; // SB18:
 import { agentStore, configOf } from '@/lib/server/agents/store';
 import { agentChanges } from '@/lib/shared/agent-changes'; // AG04:
-import { tidyChangedTools } from '@/lib/server/agents/change-tools';
+import { checkCases, isDataAgent, sourceTitles } from '@/lib/server/agents/case-rules'; // AG24:
+import { putKeptBack, tidyChangedTools } from '@/lib/server/agents/change-tools';
 import { expectsOnlyDenial, lookupCases, reconcileLookup } from '@/lib/server/agents/change-lookup';
 import type { AgentConfig } from '@/lib/shared/agents'; // AG04:
 import { isUsageCapError } from '@/lib/server/ai-usage';
@@ -62,8 +63,26 @@ const Body = z.object({
   // AG19: Spotlight's hints (`newAgent`): a model from list_models (`provider/model`), an existing knowledge base's collection, the node types it found.
   agentModel: z.string().trim().max(100).optional(),
   knowledgeBase: z.string().trim().max(200).optional(),
+  // AG24: the tools a fix session added: a change never removes one (`DesignKeep`, lib/shared/fix-autonomy.ts); only with `base`.
+  keep: z.object({ tools: z.array(z.string().trim().min(1).max(80)).max(20), reason: z.string().trim().max(300).default('') }).optional(),
   toolNodes: z.array(z.object({ nodeType: z.string().trim().min(1).max(120), operation: z.string().trim().max(80).optional() })).max(8).optional(),
 });
+
+/**
+ * AG24: the cases of a design after the rules (`checkCases`): a data agent's case asks for what its tool holds without stating it, a
+ * removed case is not written again, a knowledge agent's case names only documents its knowledge base holds. When fewer than two
+ * are left, the case writer is asked once more with what was dropped and why; what that gives goes through the same rules.
+ */
+async function ruledCases(cases: Array<{ input: string; expected?: string }>, context: { config: AgentConfig | Partial<AgentConfig>; name: string; description: string; removedInputs?: string[]; existingInputs?: string[]; model: string | undefined; actor: ReturnType<typeof routeActor>; signal: AbortSignal }): Promise<Array<{ input: string; expected?: string }>> {
+  const config = context.config as Partial<AgentConfig>;
+  const titles = await sourceTitles(config, async (tool) => (tool.type === 'knowledge' && !('source' in tool && tool.source === 'node') && tool.store === 'sqlite' ? (await listKnowledgeDocuments(tool)).documents.map((d) => d.fileName) : Promise.reject(new Error('not readable'))));
+  const rules = { config, ...(context.removedInputs && { removedInputs: [...context.removedInputs, ...(context.existingInputs ?? [])] }), ...(titles && { titles }) };
+  const first = checkCases(cases, rules);
+  if (!first.dropped.length || first.kept.length >= 2) return first.kept;
+  const more = await casesAgain({ model: context.model, actor: context.actor, signal: context.signal }, { name: context.name, description: context.description, config, reasons: first.dropped.map((d) => d.reason), avoid: [...(context.removedInputs ?? []), ...first.dropped.map((d) => d.input)], ...(titles && { titles }) });
+  const again = checkCases(more, { ...rules, removedInputs: [...(rules.removedInputs ?? []), ...first.dropped.map((d) => d.input)] });
+  return [...first.kept, ...again.kept].filter((c, i, all) => all.findIndex((o) => o.input.toLowerCase() === c.input.toLowerCase()) === i).slice(0, 5);
+}
 
 const shortInput = (input: string) => `“${input.length > 70 ? `${input.slice(0, 69)}…` : input}”`;
 
@@ -105,12 +124,24 @@ export const POST = handler(async (request: Request) => {
     const documents = tool && tool.store === 'sqlite' ? await listKnowledgeDocuments(tool).then((d) => d.documents.length).catch(() => undefined) : undefined;
     attached = { collection: setup.knowledge.collection, ...(documents !== undefined && { documents }), search: setup.knowledge.search === 'keyword' ? 'keyword' : (setup.knowledge.embeddings ?? 'vector') };
   }
+  // AG24: a new design's cases follow the same rules (a data agent's cases never state what its tool holds; a knowledge agent's name only what its folder holds).
+  if (!baseConfig && design.cases?.length && design.config) design.cases = await ruledCases(design.cases, { config: design.config, name: parsed.data.name, description: String(design.config.description ?? parsed.data.description), model: picked.model, actor, signal: request.signal });
   const reasoned = design.extras && !baseConfig ? { ...(design.extras.reuse && { reuse: design.extras.reuse }), ...(attached && { attached }), ...(design.extras.modelWhy && { modelWhy: design.extras.modelWhy }), ...(design.extras.modelNote && { modelNote: design.extras.modelNote }), ...(design.extras.catalog.length && { catalog: design.extras.catalog }) } : {}; // AG19:
   const models = resources.models.map((m) => `${m.provider}/${m.model}`); // AG02: the card's Model select, the builder model first
   if (baseConfig && design.config) {
     // Re-check 3/4/5: a new tool joins an incomplete one of its type or stands as its own; the needs (the Left rows) are worked out after, so none names a merged tool.
     const tidy = tidyChangedTools(baseConfig as { tools?: unknown }, design.config as { tools?: unknown });
     design.config = tidy.config as typeof design.config;
+    // AG24: what the session added stays, whatever the change's words or the design did (a tool put back is said).
+    const keep = parsed.data.keep;
+    if (keep?.tools.length) {
+      const put = putKeptBack(baseConfig as { tools?: unknown }, design.config as { tools?: unknown }, keep);
+      design.config = put.config as typeof design.config;
+      for (const name of put.restored) {
+        const line = `Kept “${name}”: this session added it`;
+        if (!design.dropped.includes(line)) design.dropped.push(line);
+      }
+    }
     if (tidy.removed.length) design.needs = design.needs.filter((n) => !tidy.removed.includes(String(n.tool)) && !tidy.removed.some((r) => n.text.startsWith(`${r}:`)));
   }
   // The cases a change makes wrong are replaced, by id: the ones the design names (it was given the cases with their ids), and, when a
@@ -130,6 +161,8 @@ export const POST = handler(async (request: Request) => {
       if (replaceCases.length) {
         const written = named.length ? (design.cases ?? []).filter((c) => c.expected).slice(0, 3).map((c) => ({ input: c.input, expected: c.expected as string })) : [];
         newCases = written.length ? written : lookup.removed ? lookupCases(lookup.tools, (design.config.tools ?? []).some((t) => t.type === 'node')) : [];
+        // AG24: the rules for a data agent's cases, and never a removed case again; fewer than two left: the case writer once more.
+        if (newCases.length) newCases = (await ruledCases(newCases, { config: design.config, name: String(design.config.name ?? ''), description: String(design.config.description ?? ''), removedInputs: replaceCases.map((c) => c.input), existingInputs: existingCases.filter((c) => !replaceCases.some((r) => r.id === c.id)).map((c) => c.input), model: picked.model, actor, signal: request.signal })) as typeof newCases;
         // Nothing to put in their place: Apply would only remove cases (and an agent with none skips the publish gate), so none is replaced; the card says which may now be wrong.
         if (!newCases.length) {
           maybeWrong = named_;
