@@ -27,7 +27,7 @@ import { agentUsedBy, removeAgent } from '@/lib/server/agents/remove'; // SB18:
 import { agentStore, configOf } from '@/lib/server/agents/store';
 import { agentChanges } from '@/lib/shared/agent-changes'; // AG04:
 import { tidyChangedTools } from '@/lib/server/agents/change-tools';
-import { reconcileLookup } from '@/lib/server/agents/change-lookup';
+import { assertsNoLookup, lookupCases, reconcileLookup } from '@/lib/server/agents/change-lookup';
 import type { AgentConfig } from '@/lib/shared/agents'; // AG04:
 import { isUsageCapError } from '@/lib/server/ai-usage';
 import { error, handler, json, parseBody } from '@/lib/server/http';
@@ -53,6 +53,7 @@ const Body = z.object({
   model: z.string().max(100).optional(),
   // AG02: the person's whole message: the architect reads it, not only the short description.
   ask: z.string().trim().min(1).max(4000).optional(),
+  typedAsk: z.string().trim().max(4000).optional(),
   // SB16: answer the design without saving an agent (Spotlight's agent card).
   preview: z.boolean().optional(),
   // AG04: a change to an agent that exists (`agentId`) or to a pending card (`config`): both or neither, and only as a preview.
@@ -108,18 +109,23 @@ export const POST = handler(async (request: Request) => {
     design.config = tidy.config as typeof design.config;
     if (tidy.removed.length) design.needs = design.needs.filter((n) => !tidy.removed.includes(String(n.tool)) && !tidy.removed.some((r) => n.text.startsWith(`${r}:`)));
   }
-  // A data or knowledge tool the change adds: the lines that say the agent looks nothing up go, and the cases that tested that are replaced.
+  // A data or knowledge tool the change adds: a sentence that only denies lookups goes, and the cases that asserted it are replaced (by id).
   let lookup: ReturnType<typeof reconcileLookup> | undefined;
+  let replaceCaseIds: string[] = [];
+  let newCases: Array<{ input: string; expected: string }> = [];
   if (baseConfig && design.config) {
     lookup = reconcileLookup(baseConfig as never, design.config as never);
     design.config = lookup.config as typeof design.config;
+    if (lookup.removed && base && 'agentId' in base) {
+      replaceCaseIds = listCases(base.agentId).filter((c) => assertsNoLookup(`${c.input} ${c.expected ?? ''}`)).map((c) => c.id);
+      newCases = replaceCaseIds.length ? lookupCases(lookup.tools, (design.config.tools ?? []).some((t) => t.type === 'node')) : [];
+    }
   }
-  const replaced = lookup?.cases.length && base && 'agentId' in base ? listCases(base.agentId).length : 0;
   const config = baseConfig ? design.config : { avatar: { kind: 'face' as const, face: randomFace(parsed.data.name) }, ...design.config }; // AG04: a change keeps the base's own look
   if (parsed.data.preview) {
     // SB16: the card's preview: a face to show, nothing saved; SB17's brief's cases come with it.
     // AG04: a change also says what it changes from the base; nothing is saved.
-    if (baseConfig) return json({ config, changes: [...agentChanges(baseConfig, config as Record<string, unknown>), ...(lookup?.lines ?? []), ...(lookup?.cases.length ? [`Tests: ${replaced ? `${replaced} replaced` : `${lookup.cases.length} added`}`] : [])], needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: lookup?.cases ?? [], notAdded: design.notAdded, models /* AG02: */, ...(setup.knowledge && { knowledge: setup.knowledge }) /* AG13: */, ...(design.failure && { failure: design.failure }) });
+    if (baseConfig) return json({ config, changes: [...agentChanges(baseConfig, config as Record<string, unknown>), ...(lookup?.lines ?? []), ...(replaceCaseIds.length ? [`Tests: ${replaceCaseIds.length} replaced`] : [])], needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: newCases, ...(replaceCaseIds.length && { replaceCaseIds }), notAdded: design.notAdded, models /* AG02: */, ...(setup.knowledge && { knowledge: setup.knowledge }) /* AG13: */, ...(design.failure && { failure: design.failure }) });
     return json({ config, needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: design.cases ?? [], notAdded: design.notAdded, models /* AG02: */, ...(setup.knowledge && { knowledge: setup.knowledge }) /* AG13: */, ...reasoned /* AG19: */ });
   }
   const agent = createInProject(request, 'agent', () => agentStore.create(config), (a) => a.id);

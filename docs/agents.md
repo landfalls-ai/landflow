@@ -255,18 +255,23 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   type and name with another operation changes the kept tool (same id, same credential, its operation; an explicit approval on a tool that was a read stays), never a second tool
   beside it. What an agent fix may add is the prompt's to say; the card lists every tool it adds. The Left rows are worked out after
   the dedupe.
-- **A data tool takes back the lines that deny it (final run 2).** When a change adds a data (`databases.*`) or knowledge tool, the
-  design route (`agents/change-lookup.ts`) removes the persona and instruction lines that say the agent looks nothing up (*Uses only
-  the text it receives*, *Never claim to have looked up data*), shows each on the card (*Instructions: removed …*, *Persona: removed …*)
-  and replaces the agent's eval cases, which tested text-only answers, with two it can answer through the tool (*what were last
-  month's sales by region*, read through the tool). The card says *Tests: 2 replaced*; Apply deletes the old cases and adds the new
-  ones. Nothing is removed when no line contradicts the tool.
+- **A data tool takes back the one sentence that denies it (final run 2).** When a change adds a data (`databases.*`) or knowledge
+  tool, the design route (`agents/change-lookup.ts`) removes a persona or instruction sentence that is nothing but the denial
+  (*Never claim to have looked up data.*, *Uses only the text it receives.*, *Do not look up data.*) and shows it on the card
+  (*Instructions: removed …*, *Persona: removed …*, *Persona: removed example …*). A sentence with a qualifier or scope (*… data you did
+  not query*, *Do not access databases other than the sales one*, *Never read data from the HR table*) is a real rule and stays; only the
+  sentence goes, never its paragraph or the mission. Any other instruction that contradicts the tool is the architect's to rewrite: the
+  change prompt says so (*Instructions rewritten …* on the card). When a denial went, the cases that assert the same denial are named
+  by id (`replaceCaseIds`), and two generic ones replace them (*Read a few rows with your data tool and tell me what they show*);
+  format, tone and safety cases stay. The card says *Tests: N replaced*, with N the cases it replaces; Apply swaps them in one
+  all-or-nothing call (`PATCH /api/agents/:id/eval-gate`), and puts the old cases back if the draft then fails to save.
 - **An empty Table on a Select tool (final run 2).** A tool a design leaves on Select keeps it (the safer, simpler choice: Select cannot
   run arbitrary SQL, and Execute Query for free reads would need the SELECT check on every call and change how existing designs
   read). Its `table` stays empty: the tool's input schema offers `table` and `query`, so the call names the table, and `operation` is pinned.
   The Table is not a Left row. A change that only gives access never turns a read tool into a write (select does not become insert, and
-  it does not start asking first): the write needs an explicit verb in the ask (*insert*, *add rows*, *write to*, *update*, *delete*,
-  *save to*); otherwise the card says the agent already has read access and nothing changes.
+  it does not start asking first): the write needs a write verb with data in the ask (*insert rows*, *update the records*, *write the
+  totals to the sales database*; not *update me*, *save time* or *update the agent so it can read the database*); in an agent-fix
+  session only what the person typed counts, not the model's own change text. Otherwise the card says the agent already has read access and nothing changes.
 - **What a read is, and the run-time hold.** On SQLite (`readsByQuery` in `run-check.ts`; Postgres and MySQL Execute Query are always
   writes) a read is the plugin's Select, or an Execute Query that is one statement after the comments are gone, starts with `SELECT`
   and has no `INTO`, `FOR UPDATE`, `load_extension`, `nextval` or `dblink`. `WITH`, `PRAGMA`, `EXPLAIN`, an empty, per-call (`$fromAI`)

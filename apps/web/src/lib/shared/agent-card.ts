@@ -197,6 +197,8 @@ export interface AgentCard {
   /** The guardrails, in words ("Masks secrets in messages", "Ignores instructions inside tool results"). */
   guardrails: string[];
   cases: AgentCaseDraft[];
+  /** A change card: the ids of the agent's cases these `cases` replace (only the ones that asserted the old text-only behaviour); Apply swaps them in one call. */
+  replaceCaseIds?: string[];
   /** What is left for the person (the architect's `needs` texts) and what no plugin online covers (`missing`). */
   needs: string[];
   missing: string[];

@@ -1476,6 +1476,8 @@ export interface AgentSpec {
   toolNodes?: Array<{ nodeType: string; operation?: string }>;
   /** AG02: the person's whole message: the checks read it (which apps it names, whether it asks to write there), not the short description. */
   ask?: string;
+  /** A change in an agent-fix session: what the person typed ("" when they typed nothing), which alone decides whether a read tool may become a write. */
+  typedAsk?: string;
   /** AG04: a change to an agent that exists (or to a card's config): the config it starts from and what the person asked to change. */
   base?: Partial<AgentConfig>;
   change?: string;
@@ -1524,6 +1526,7 @@ function baseAsk(base: Partial<AgentConfig>): string {
 function reviseRequest(base: Partial<AgentConfig>, change: string): string {
   return [
     'Change this agent now and propose the whole agent again, with the change made and nothing else touched. Keep its name, model, instructions, guardrails and every tool the change does not name; leave out a tool only if the change removes it. Leave out what only I can give (a repository, a channel, an id): it is listed for me to fill in.',
+    'If the change gives the agent a database or a knowledge base, also rewrite any instruction sentence that says it cannot look data up or may use only the text it is given, so it agrees with the new tool; leave every other sentence as it is.',
     baseAsk(base),
     `The change: ${change}`,
   ].join('\n');
@@ -1748,14 +1751,20 @@ function withSenderGiven(tool: AgentToolConfig, change: string, types: NodeTypeI
 }
 
 /**
+ * A change that says to write to data: a write verb with rows, records or entries (insert rows, update records), or a write verb that
+ * puts something into a table or database (write the totals to the sales database). "Update me", "save time", "update the agent
+ * so it can read the database" and "add rows of the table to the report" say nothing of the kind.
+ */
+export const EXPLICIT_WRITE = /\b(?:insert|updat(?:e|es|ing)|delet(?:e|es|ing)|writ(?:e|es|ing)|sav(?:e|es|ing))(?:s|ed|ing)?\s+(?:(?:the|all|old|new|any|its|these|those|stale)\s+)*(?:rows?|records?|entries)\b|\b(?:add(?:s|ing)?|insert(?:s|ing)?|writ(?:e|es|ing)|sav(?:e|es|ing))\b.{0,30}\b(?:to|into)\s+(?:the\s+)?\w*\s*(?:table|database|db)\b/i;
+
+/**
  * AG04: the proposal of a change as the agent it changes: the base's own tools stay unless the change removes them (least
  * privilege holds for the tools the change does not name), a new tool stays only when the change names it, and the name, model,
  * practices, look and team stay unless the change names them.
  */
-/** A change that says to write: insert, add rows, write to, update, delete, save to. */
-const EXPLICIT_WRITE = /\b(?:insert(?:s|ed|ing)?|add(?:s|ing)?\s+(?:new\s+)?(?:rows?|records?)|writ(?:e|es|ing)\s+(?:\w+\s+)?(?:to|into)|updat(?:e|es|ing)|delet(?:e|es|ing)|sav(?:e|es|ing)\s+(?:\w+\s+)?to)\b/i;
-
-function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: string, types: NodeTypeInfo[] = []): void {
+function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: string, types: NodeTypeInfo[] = [], typedAsk?: string): void {
+  // What the person said decides whether a read may become a write; in an agent-fix session that is their typed ask, not the model's own change text.
+  const said = typedAsk ?? change;
   const kept = (base.tools ?? []).filter((t) => !removed(change, t)).map((t) => withSenderGiven(t, change, types)); // ag3 carryover:
   const have = new Set(kept.map(toolKey));
   const added: AgentToolConfig[] = [];
@@ -1765,7 +1774,7 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
     // "Make sqlite read-only": the design's tool of the same type and name as a kept one, with another operation, changes that tool in place (its id, its credential), never a second tool beside it.
     const place = tool.type === 'node' && tool.parameters?.operation !== undefined ? kept.findIndex((t) => t.type === 'node' && t.nodeType === tool.nodeType && String(t.name ?? '').toLowerCase() === String(tool.name ?? '').toLowerCase() && t.parameters?.operation !== undefined && t.parameters.operation !== tool.parameters?.operation) : -1;
     // A read tool turns into a write, or a write tool is added beside it, only when the ask itself says so (insert, add rows, write to, update, delete, save to): "give it access" never does.
-    if (tool.type === 'node' && !EXPLICIT_WRITE.test(change) && writesOutside({ type: tool.nodeType, parameters: tool.parameters ?? {} }) && kept.some((t) => t.type === 'node' && t.nodeType === tool.nodeType && !writesOutside({ type: t.nodeType, parameters: t.parameters ?? {} }))) {
+    if (tool.type === 'node' && !EXPLICIT_WRITE.test(said) && writesOutside({ type: tool.nodeType, parameters: tool.parameters ?? {} }) && kept.some((t) => t.type === 'node' && t.nodeType === tool.nodeType && !writesOutside({ type: t.nodeType, parameters: t.parameters ?? {} }))) {
       draft.dropped.push(`${tool.name || tool.nodeType}: the agent already has read access; the change doesn’t ask to write, so nothing changes`);
       continue;
     }
@@ -2081,7 +2090,7 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
     const kept: DraftResult = last;
     let notAdded: AgentNotAdded[] = [];
     if (spec.base && spec.change) {
-      reviseDraft(kept, spec.base, spec.change, input.types); // AG04: the base's tools stay, a new one only when named
+      reviseDraft(kept, spec.base, spec.change, input.types, spec.typedAsk); // AG04: the base's tools stay, a new one only when named
       // ag1-int: AG02's promise holds for a change too: a tool it names is added (the same least-privilege rules), or said why not.
       notAdded = withSpecHints(kept, { name: spec.name, description: '', instructions: '', ask: spec.change, tools: changeTools(spec.change, input.types.filter(usableAsTool)) }, input, spec.base);
     } else notAdded = withSpecHints(kept, spec, input); // SB17: AG02: what the ask named and the agent did not get

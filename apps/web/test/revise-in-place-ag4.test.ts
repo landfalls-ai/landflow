@@ -78,7 +78,7 @@ describe('a change that makes a kept tool read-only', () => {
 });
 
 describe('a change that only gives access', () => {
-  const run = async (change: string, kept: Record<string, unknown>) => {
+  const run = async (change: string, kept: Record<string, unknown>, extra: Record<string, unknown> = {}) => {
     const fake = await startFakeModels({
       reply: (_p, body) => Array.isArray((body as { messages?: unknown })?.messages)
         ? { text: '', toolCalls: [{ id: 'c1', name: 'propose_design', arguments: { summary: 'x', role: 'Digest', instructions: STEPS, description: 'Reads sales.', model: 'ollama/qwen3-coder:30b', nodeTools: 'databases.sqlite' } }] }
@@ -91,7 +91,7 @@ describe('a change that only gives access', () => {
       (config.tools![0] as never as { parameters: object; requireApproval?: boolean }).parameters = kept;
       delete (config.tools![0] as { requireApproval?: boolean }).requireApproval;
       // The caller's description names a write at SQLite (as a live agent's can), so the design proposes a write tool.
-      return (await (await post({ name: 'Sales digest', description: 'Posts the summary and saves rows in SQLite.', preview: true, base: { config }, change })).json()) as { config: AgentConfig; changes: string[] };
+      return (await (await post({ name: 'Sales digest', description: 'Posts the summary and saves rows in SQLite.', preview: true, base: { config }, change, ...extra })).json()) as { config: AgentConfig; changes: string[] };
     } finally {
       if (previous === undefined) delete process.env.OLLAMA_URL;
       else process.env.OLLAMA_URL = previous;
@@ -108,5 +108,13 @@ describe('a change that only gives access', () => {
   it('an explicit write verb may turn it into a write that asks first', async () => {
     const body = await run('Let the digest insert rows into the sales database', { operation: 'select', table: 'sales' });
     expect(body.config.tools.some((t) => 'parameters' in t && (t.parameters as { operation?: string }).operation === 'insert')).toBe(true);
+  });
+  it('in an agent-fix session only the person’s typed ask counts, not the model’s own change text', async () => {
+    const fixText = 'Let the digest insert rows into the sales database';
+    const body = await run(fixText, { operation: 'select', table: 'sales' }, { typedAsk: '' });
+    expect(body.config.tools).toHaveLength(1);
+    expect(body.config.tools[0]).toMatchObject({ id: 'tl_1', parameters: { operation: 'select' } });
+    const typed = await run(fixText, { operation: 'select', table: 'sales' }, { typedAsk: 'Please insert rows into the sales table' });
+    expect(typed.config.tools.some((t) => 'parameters' in t && (t.parameters as { operation?: string }).operation === 'insert')).toBe(true);
   });
 });

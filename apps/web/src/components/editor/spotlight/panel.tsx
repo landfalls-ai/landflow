@@ -16,7 +16,7 @@ import { api, ApiError } from '@/lib/client/api';
 import type { ConversationItem, ConversationRecord } from '@/lib/shared/conversations';
 import { useEditor } from '../store';
 import { isPhone } from '@/lib/client/use-phone';
-import { agentFixWaits, draftPhase, draftStatus, lastOutcomeOf, lastRunOf, openNeedOf, sessionIsWaiting, stepsOf, stoppedAtOf, titleOf } from '../timeline';
+import { agentFixWaits, headerStopShown, draftPhase, draftStatus, lastOutcomeOf, lastRunOf, openNeedOf, sessionIsWaiting, stepsOf, stoppedAtOf, titleOf } from '../timeline';
 import { Composer, focusSpotlight } from './composer';
 import { AsksFirstNote, AutonomousExplainer, AutonomousSwitch, useAutonomousExplainer } from './proposal';
 import { Timeline } from './timeline-view';
@@ -442,7 +442,7 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
             <AutonomousSwitch compact={live || testing} />
           </div>
           {/* The composer has its own Stop while a reply streams; this one is for a test run, or when the panel is folded. */}
-          {(collapsed ? live || testing : testing && !live && !sessionWaits) && (
+          {headerStopShown({ collapsed, live, testing }) && (
             <button title="Stop" aria-label="Stop" onClick={stop} className="grid size-7 place-items-center rounded-full text-t3 hover:bg-rddim hover:text-rd disabled:opacity-40 max-md:size-11">
               <Square className="size-3" fill="currentColor" />
             </button>

@@ -1,16 +1,31 @@
 /**
- * Final live run 2: a change that gives an agent a data or knowledge tool must not leave the agent saying it cannot look anything up.
- * "Uses only the text it receives" and "Never claim to have looked up data" stay in the persona and the steps after an agent fix adds
- * SQLite, so the next review asked to take the tool out again, and the eval cases still tested text-only answers (the Publish gate
- * held at 2.0 / 5). This removes those lines and, when it did, replaces the cases that test the old behaviour with ones the tool can answer.
- * Pure: the design route calls it with the base and the designed config.
+ * Final live run 2 (reviewed): a change that gives an agent a data or knowledge tool must not leave a line that says, with nothing
+ * else in it, that the agent looks nothing up ("Never claim to have looked up data.", "Uses only the text it receives."). Only a
+ * sentence that is nothing but that denial goes; one with a qualifier or scope ("… data you did not query", "Do not access databases
+ * other than the sales one", "Never read data from the HR table") is a real rule and stays, and so does every other sentence of its
+ * paragraph or of the mission. Everything else that contradicts the tool is the architect's to rewrite (its prompt says so).
+ * The eval cases that assert the same denial are named by id, so Apply replaces only those. Pure: the design route calls it.
  */
 type Tool = { id?: string; type?: string; nodeType?: string; name?: string };
 type Persona = { mission?: string; whatIDo?: string[]; always?: string[]; never?: string[]; examples?: Array<{ user: string; assistant: string }> } & Record<string, unknown>;
 type Config = { tools?: unknown; instructions?: string; persona?: Persona } & Record<string, unknown>;
 
-/** A line that says the agent has no data to read. */
-export const NO_LOOKUP = /\b(?:uses? only the text (?:it|you) (?:receives?|are given|is given|get)|only (?:uses? )?the text (?:it|you) (?:receives?|are given|get)|never claims? to have (?:looked up|checked|queried|read)|(?:do(?:es)? not|don['’]t|doesn['’]t|never|cannot|can['’]t) (?:look up|lookup|query|access|read|fetch) (?:any )?(?:data|databases?|figures|numbers|records)|no (?:access to|lookups? of) (?:data|databases?))\b/i;
+/** A sentence that is only the denial: the whole sentence, no qualifier. */
+const DENIALS = [
+  /^never claims? to have (?:looked up|checked|queried) (?:any )?data$/i,
+  /^(?:it )?uses? only the text (?:it receives|it is given|you (?:are given|receive))$/i,
+  /^(?:do not|don['’]t|never) (?:look up|query|access) (?:any )?data$/i,
+  /^(?:it )?(?:has|have) no access to (?:any )?data$/i,
+  /^(?:it )?(?:cannot|can['’]t|can not) look (?:anything|data) up$/i,
+];
+const LEAD = /^\s*(?:\d+[.)]|[-*•])\s*/;
+export const isDenial = (sentence: string): boolean => {
+  const bare = sentence.replace(LEAD, '').trim().replace(/[.!]+$/, '').trim();
+  return DENIALS.some((d) => d.test(bare));
+};
+
+/** True when a case's text asserts the same denial (a case that tests text-only behaviour). */
+export const assertsNoLookup = (text: string): boolean => /\b(?:only|just) (?:the )?text\b|\bwithout (?:looking up|any lookups?|querying)\b|\b(?:does not|doesn['’]t|never|must not) (?:look up|claim to have looked up|query)\b|\bno (?:lookups?|data access)\b/i.test(text);
 
 const isData = (t: Tool) => t.type === 'knowledge' || (t.type === 'node' && /^databases\./.test(t.nodeType ?? ''));
 
@@ -22,56 +37,85 @@ export function addedDataTools(base: Config, designed: Config): Tool[] {
 
 export interface LookupChange {
   config: Config;
-  /** Card lines: "Instructions: removed “…”", "Persona: removed “…”". */
+  /** Card lines: "Instructions: removed “…”", "Persona: removed “…”", "Persona: removed example “…”". */
   lines: string[];
-  /** Cases an agent answerable with its new tool; empty when nothing contradicted the tool. */
-  cases: Array<{ input: string; expected: string }>;
+  /** The tool names, for new cases. */
+  tools: string[];
+  /** Whether any denial was removed (new cases are offered only then). */
+  removed: boolean;
 }
 
 const quote = (line: string) => `“${line.length > 70 ? `${line.slice(0, 69)}…` : line}”`;
+const sentencesOf = (text: string) => text.split(/(?<=[.!?])\s+/);
+
+/** `text` without its denial sentences: a line that is only one goes; in a longer line just that sentence goes, the rest and its spacing stay. */
+function withoutDenials(text: string, say: (sentence: string) => void): string {
+  const out: string[] = [];
+  for (const line of text.split('\n')) {
+    const lead = LEAD.exec(line)?.[0] ?? '';
+    const parts = line.slice(lead.length).split(/(?<=[.!?])(\s+)/); // sentence, gap, sentence, gap…
+    let kept = '';
+    let changed = false;
+    for (let i = 0; i < parts.length; i += 2) {
+      if (isDenial(parts[i])) {
+        say(parts[i].trim());
+        changed = true;
+        continue;
+      }
+      kept += (kept ? (parts[i - 1] ?? ' ') : '') + parts[i];
+    }
+    if (!changed) out.push(line);
+    else if (kept.trim()) out.push(lead + kept.trim());
+  }
+  return out.join('\n');
+}
 
 export function reconcileLookup(base: Config, designed: Config): LookupChange {
   const added = addedDataTools(base, designed);
-  if (!added.length) return { config: designed, lines: [], cases: [] };
+  const nothing = { config: designed, lines: [] as string[], tools: [] as string[], removed: false };
+  if (!added.length) return nothing;
   const lines: string[] = [];
-  const keep = (list: string[] | undefined, where: string) => {
-    if (!list) return list;
-    const kept = list.filter((line) => {
-      if (!NO_LOOKUP.test(line)) return true;
-      lines.push(`${where}: removed ${quote(line)}`);
-      return false;
-    });
-    return kept;
-  };
   const persona = designed.persona ? { ...designed.persona } : undefined;
   if (persona) {
     for (const key of ['always', 'never', 'whatIDo'] as const) {
-      const next = keep(persona[key], 'Persona');
-      if (next) persona[key] = next;
-      if (persona[key] && !persona[key]!.length) delete persona[key];
+      const list = persona[key];
+      if (!list) continue;
+      const kept = list.filter((line) => {
+        if (!isDenial(line)) return true;
+        lines.push(`Persona: removed ${quote(line)}`);
+        return false;
+      });
+      if (kept.length) persona[key] = kept;
+      else delete persona[key];
     }
-    if (persona.mission && NO_LOOKUP.test(persona.mission)) {
-      lines.push(`Persona: removed ${quote(persona.mission)}`);
-      delete persona.mission;
+    if (persona.mission) {
+      const next = withoutDenials(persona.mission, (s) => lines.push(`Persona: removed ${quote(s)}`));
+      if (next.trim()) persona.mission = next;
+      else delete persona.mission;
     }
-    if (persona.examples) persona.examples = persona.examples.filter((e) => !NO_LOOKUP.test(`${e.user} ${e.assistant}`));
+    if (persona.examples) {
+      persona.examples = persona.examples.filter((e) => {
+        if (!assertsNoLookup(`${e.user} ${e.assistant}`) && !isDenial(e.assistant)) return true;
+        lines.push(`Persona: removed example ${quote(e.user)}`);
+        return false;
+      });
+    }
   }
-  const instructions = designed.instructions === undefined ? undefined : designed.instructions.split('\n').filter((line) => {
-    if (!NO_LOOKUP.test(line)) return true;
-    lines.push(`Instructions: removed ${quote(line.trim())}`);
-    return false;
-  }).join('\n');
-  if (!lines.length) return { config: designed, lines, cases: [] };
-  const names = added.map((t) => t.name).filter(Boolean).join(' and ') || 'its tool';
-  const data = added.some((t) => t.type === 'node');
-  const cases = data
+  const instructions = designed.instructions === undefined ? undefined : withoutDenials(designed.instructions, (s) => lines.push(`Instructions: removed ${quote(s)}`));
+  if (!lines.length) return nothing;
+  return { config: { ...designed, ...(persona && { persona }), ...(instructions !== undefined && { instructions }) }, lines, tools: added.map((t) => t.name).filter((n): n is string => Boolean(n)), removed: true };
+}
+
+/** The cases that replace the ones that asserted the denial: generic, answerable with the tool. */
+export function lookupCases(tools: string[], data: boolean): Array<{ input: string; expected: string }> {
+  const names = tools.join(' and ') || 'its tool';
+  return data
     ? [
-        { input: 'What were last month’s sales by region? Read the figures with your data tool.', expected: `Calls ${names}, then reports the figures it returned by region; it does not make up numbers.` },
-        { input: 'Look the latest numbers up and tell me what you found.', expected: `Uses ${names} to read the data and reports the figures it found, saying where they came from.` },
+        { input: 'Read a few rows with your data tool and tell me what they show.', expected: `Uses ${names}, reports what it returned and where it came from, and says so when nothing is found.` },
+        { input: 'Look up the data you need for this and report what you found.', expected: `Uses ${names} to read the data and reports it without making anything up.` },
       ]
     : [
-        { input: 'What does your knowledge base say about its main topic?', expected: `Searches ${names} and answers from what it found, saying so when it finds nothing.` },
-        { input: 'Find the passage that answers this and quote it: what does it cover?', expected: `Uses ${names} to search, then quotes or summarises the passage it found.` },
+        { input: 'Search your knowledge base and tell me what it says about its main topic.', expected: `Searches ${names}, answers from what it found and says so when it finds nothing.` },
+        { input: 'Find the passage that answers this and quote it.', expected: `Uses ${names} to search, then quotes or summarises the passage it found.` },
       ];
-  return { config: { ...designed, ...(persona && { persona }), ...(instructions !== undefined && { instructions }) }, lines, cases };
 }

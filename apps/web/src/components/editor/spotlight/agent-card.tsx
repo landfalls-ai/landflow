@@ -298,6 +298,12 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
                   Test again
                 </Button>
               )}
+              {/* A waiting session's way out: the card goes, the session ends as "You kept the agent as it was." (the draft stays as saved). */}
+              {card.publish?.state !== 'published' && card.smoke?.state !== 'testing' && (
+                <Button size="sm" variant="ghost" onClick={() => dismissCard(itemId)} className="max-md:h-11 max-md:px-4">
+                  Not now
+                </Button>
+              )}
               <a href={`/agents/${card.base.agentId}`} target="_blank" rel="noopener" className="flex min-h-7 items-center gap-0.5 text-[12px] font-semibold text-ac hover:underline max-md:min-h-11">
                 Open <ExternalLink className="size-3" />
               </a>

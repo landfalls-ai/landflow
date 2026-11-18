@@ -496,11 +496,11 @@ function cardOf(config: Partial<AgentConfig>, name: string, needs: Array<{ text:
 }
 
 /** The agent change card of an `agent-fix`, as the AG04 change card with the failed run's `fix` on it (never applied by itself: a saved agent is not a brand-new draft). */
-async function showAgentFix(event: AgentFixEvent, attempt: number, signal: AbortSignal, testId: string): Promise<string | undefined> {
+async function showAgentFix(event: AgentFixEvent, attempt: number, signal: AbortSignal, testId: string, typedAsk = ''): Promise<string | undefined> {
   try {
-    const design = await designChange({ name: event.agent, description: '', base: { agentId: event.agentId }, change: event.change, ...pickedModel() }, signal);
+    const design = await designChange({ name: event.agent, description: '', base: { agentId: event.agentId }, change: event.change, typedAsk, ...pickedModel() }, signal);
     const fix = { ...event.fix, attempt };
-    const card: AgentCard = { ...cardOf(design.config as Partial<AgentConfig>, event.agent, design.needs, design.missing), base: { agentId: event.agentId, name: event.agent }, changes: design.changes, cases: design.cases ?? [], fix };
+    const card: AgentCard = { ...cardOf(design.config as Partial<AgentConfig>, event.agent, design.needs, design.missing), base: { agentId: event.agentId, name: event.agent }, changes: design.changes, cases: design.cases ?? [], ...(design.replaceCaseIds?.length && { replaceCaseIds: design.replaceCaseIds }), fix };
     const id = nanoid(8);
     useAssistant.getState().append([{ id, role: 'assistant', testId, parts: [{ kind: 'text', text: fixLine(event.agent, fix) }, { kind: 'agentCard', card }] }]);
     return id;
@@ -741,7 +741,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
           stop(failed ? `Still failing${result.node ? ` at “${result.node}”` : ''} after ${MAX_FIXES} fixes. Left: ${leftFor(result.node)}` : `It runs, but doesn’t do all you asked yet, and I am out of fixes. Left: ${leftForAgent(result.node)}`, result.node);
           return;
         }
-        const cardItem = await showAgentFix(reply.agentFix, fixes + 1, signal, testId);
+        const cardItem = await showAgentFix(reply.agentFix, fixes + 1, signal, testId, goal ?? '');
         if (signal.aborted) return;
         if (!cardItem) {
           stop(`I couldn’t work out a change to “${reply.agentFix.agent}”.`, result.node);

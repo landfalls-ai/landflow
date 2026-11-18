@@ -479,7 +479,7 @@ export async function applyAgentChange(itemId: string, card: AgentCard): Promise
   patchCard(itemId, { state: 'creating', error: undefined });
   try {
     patchCard(itemId, { smoke: { state: 'testing' } });
-    const smoke = await saveChange(agentId, card.config, starterSample({ name: card.name, cases: card.cases }), card.cases);
+    const smoke = await saveChange(agentId, card.config, starterSample({ name: card.name, cases: card.cases }), card.cases, card.replaceCaseIds);
     patchCard(itemId, { state: 'created', agentId, smoke });
   } catch (e) {
     patchCard(itemId, { state: 'failed', error: (e as Error).message, smoke: undefined });
@@ -514,7 +514,7 @@ export async function changeAgentCard(change: { agentId?: string; teamId?: strin
     const design = (await designChange({ name: agent.name, description: agent.description ?? '', base: { agentId }, change: change.change, ...pickedModel() }, abort.signal)) as Awaited<ReturnType<typeof designChange>> & { knowledge?: Omit<AgentKnowledgeSetup, 'state'> };
     const notAdded = design.notAdded ?? [];
     const fresh = cardFromPreview({ config: design.config, needs: design.needs ?? [], missing: design.missing ?? [], designed: design.designed ?? true, cases: design.cases ?? [], notAdded, ...(design.knowledge && { knowledge: design.knowledge }) } as unknown as Parameters<typeof cardFromPreview>[0], { description: agent.description ?? '', placed: false, tools: [] }, false);
-    const card: AgentCard = { ...fresh, state: 'designed', base: { agentId: agentId, name: agent.name }, changes: design.changes, cases: design.cases ?? [] };
+    const card: AgentCard = { ...fresh, state: 'designed', base: { agentId: agentId, name: agent.name }, changes: design.changes, cases: design.cases ?? [], ...(design.replaceCaseIds?.length && { replaceCaseIds: design.replaceCaseIds }) };
     patchReply(reply.id, { parts: [{ kind: 'text', text: reviseReply(agent.name, design.changes, notAdded, true) }, { kind: 'agentCard', card }] });
   } catch (e) {
     if (abort.signal.aborted) patchReply(reply.id, { parts: [{ kind: 'text', text: 'Stopped: nothing was changed.' }] });

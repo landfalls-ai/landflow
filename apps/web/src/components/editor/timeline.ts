@@ -250,6 +250,9 @@ export function sessionIsWaiting(state: { testing: boolean; pending: boolean }, 
   return state.testing && !state.pending && sessionWaitsForApply(items, testingId);
 }
 
+/** The header's Stop: while a test session runs, including while it waits on a card of its own (the person's way out of a wait); the composer has its own while a reply streams. */
+export const headerStopShown = ({ collapsed, live, testing }: { collapsed: boolean; live: boolean; testing: boolean }): boolean => (collapsed ? live || testing : testing && !live);
+
 /** Whether the composer is busy (its Stop, no sending): a reply streams or a session works; a session that waits on a card of its own leaves the box free. */
 export function composerBusy(state: { testing: boolean; pending: boolean }, items: ChatItem[], testingId: string | undefined): boolean {
   return state.pending || (state.testing && !sessionIsWaiting(state, items, testingId));
