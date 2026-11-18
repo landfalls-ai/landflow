@@ -4,6 +4,7 @@
  * new AI Agent, or Spotlight says a dedicated agent is needed and proposes one.
  */
 import type { Agent } from './agents';
+import type { ConnectionType } from './types';
 
 export interface AgentBrief {
   id: string;
@@ -148,3 +149,51 @@ export function withAgentId<T>(parameters: T, agents: readonly AgentBrief[]): T 
   const named = agents.filter((a) => a.published !== false && agentKey(a.name) === agentKey(written)); // AG18: a draft-only agent is never bound
   return named.length === 1 ? ({ ...p, agentId: named[0].id } as T) : parameters;
 }
+
+/**
+ * AG19: a Run an Agent step bound to an agent that has a Send Email tool (`send_email`: `messaging.emailSend`) sends the mail
+ * itself, so a Send Email step right after it is dropped (the later steps hang on the agent instead) and the summary says
+ * why. The model still adds such a step now and then. The rule is narrow on purpose; the step is dropped only when all hold:
+ * the agent has a Send Email tool that does not ask first (a workflow run refuses one that asks, so the step would be the
+ * only mail); the agent is the step's only main input; the step has no wired sub-nodes; it sets no CC, BCC or attachments;
+ * and its To is empty, or a literal equal (trimmed, any case) to the tool's fixed To. Any expression, any other address, a
+ * tool that takes the address from the model (unless the step's To is empty), and every other node type: the step stays.
+ */
+export function dropRepeatedAgentWork<N extends { key: string; type: string; name: string; parameters?: Record<string, unknown> }>(
+  nodes: N[],
+  edges: Array<[string, string, number, ConnectionType]>,
+  agents: readonly AgentBrief[],
+): { nodes: N[]; edges: Array<[string, string, number, ConnectionType]>; notes: string[]; dropped: string[]; /** The dropped step's key and the name of the agent that does its work. */ by: Array<{ key: string; name: string; agent: string }> } {
+  let keptNodes = nodes;
+  let keptEdges = edges;
+  const notes: string[] = [];
+  const dropped: string[] = [];
+  const by: Array<{ key: string; name: string; agent: string }> = [];
+  const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  for (const n of nodes) {
+    if (n.type !== 'core.messageAgent') continue;
+    const id = typeof n.parameters?.agentId === 'string' ? n.parameters.agentId : '';
+    const agent = id ? agents.find((a) => a.id === id) : undefined;
+    const tools = (agent?.nodeTools ?? []).filter((t) => t.type === 'messaging.emailSend');
+    if (!agent || !tools.length || tools.some((t) => t.requireApproval)) continue;
+    for (const [from, to, output, type] of keptEdges) {
+      if (from !== n.key || type !== 'main') continue;
+      const next = keptNodes.find((m) => m.key === to);
+      if (!next || next.type !== 'messaging.emailSend') continue;
+      const options = (next.parameters?.options ?? {}) as Record<string, unknown>;
+      if (text(options.ccEmail) || text(options.bccEmail) || (Array.isArray(options.attachments) ? options.attachments.length : text(options.attachments))) continue;
+      const toEmail = text(next.parameters?.toEmail);
+      if (toEmail && !tools.some((t) => t.fixed?.toEmail && t.fixed.toEmail.trim().toLowerCase() === toEmail.toLowerCase())) continue;
+      if (keptEdges.some((e) => e[1] === next.key && (e[3] !== 'main' || e[0] !== n.key))) continue; // another input, or wired sub-nodes
+      if (keptEdges.some((e) => e[0] === next.key && e[3] !== 'main')) continue;
+      const after = keptEdges.filter((e) => e[0] === next.key && e[3] === 'main');
+      keptNodes = keptNodes.filter((m) => m.key !== next.key);
+      keptEdges = [...keptEdges.filter((e) => e[0] !== next.key && e[1] !== next.key), ...after.map(([, target, , t]): [string, string, number, ConnectionType] => [n.key, target, output, t])];
+      notes.push(`“${agent.name}” sends the email itself, so the flow has no “${next.name}” step after it`);
+      dropped.push(next.name);
+      by.push({ key: next.key, name: next.name, agent: agent.name });
+    }
+  }
+  return { nodes: keptNodes, edges: keptEdges, notes, dropped, by };
+}
+

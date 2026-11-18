@@ -83,19 +83,49 @@ export interface ChangeGraph {
 }
 
 /**
+ * The removals an autonomous fix session may make without a click (the person's decision of 2026-11-18): a step the session
+ * itself added (`own`, node ids) and a step that plainly duplicates what the bound agent does (`duplicates`: node id to the
+ * agent's name, from `dropRepeatedAgentWork`). Anything else, a step the person built included, still waits.
+ */
+export interface RemovalsAllowed {
+  own?: ReadonlySet<string>;
+  duplicates?: ReadonlyMap<string, string>;
+}
+
+/** The ids of the steps these ops remove that `allowed` lets go without a click. */
+function allowedGone(ops: readonly ChangeOp[], before: ChangeGraph, allowed: RemovalsAllowed | undefined): Map<string, string> {
+  const gone = new Map<string, string>();
+  if (!allowed) return gone;
+  for (const op of ops) {
+    if (op.op !== 'removeNode') continue;
+    const node = op.node ? before.nodes.find((n) => n.name === op.node || n.id === op.node) : undefined;
+    if (!node) continue;
+    if (allowed.own?.has(node.id)) gone.set(node.id, `Removed “${node.name}”: this session added it`);
+    else if (allowed.duplicates?.has(node.id)) gone.set(node.id, `Removed “${node.name}”: “${allowed.duplicates.get(node.id)}” does it itself`);
+  }
+  return gone;
+}
+
+/** The timeline's line for each removal that went through without a click, with its reason. */
+export function removedWithoutClick(ops: readonly ChangeOp[], before: ChangeGraph, allowed: RemovalsAllowed | undefined): string[] {
+  return [...allowedGone(ops, before, allowed).values()];
+}
+
+/**
  * Why a change needs the person's click even where Spotlight may act alone: it removes an existing step, turns one off
  * (a step the goal does not name is no less the person's), or it disconnects one so that it is left without any main
- * input (and the same change does not connect it again). Empty
- * when nothing needs a click. Each reason is a short clause for the card: "removes “Notify VIP”".
+ * input (and the same change does not connect it again). Empty when nothing needs a click. Each reason is a short clause for
+ * the card: "removes “Notify VIP”". `allowed` (an autonomous fix session only) lets two removals through: see `RemovalsAllowed`.
  */
-export function needsAClick(ops: readonly ChangeOp[], before: ChangeGraph): string[] {
+export function needsAClick(ops: readonly ChangeOp[], before: ChangeGraph, allowed?: RemovalsAllowed): string[] {
   const find = (ref: string | undefined) => (ref ? before.nodes.find((n) => n.name === ref || n.id === ref) : undefined);
   const isMain = (type: string | undefined) => (type ?? 'main') === 'main';
+  const gone = allowedGone(ops, before, allowed);
   const reasons: string[] = [];
   for (const op of ops) {
     if (op.op === 'removeNode') {
       const node = find(op.node);
-      if (node) reasons.push(`removes “${node.name}”`);
+      if (node && !gone.has(node.id)) reasons.push(`removes “${node.name}”`);
     } else if (op.op === 'setNodeSettings' && (op.settings as { disabled?: boolean } | undefined)?.disabled === true) {
       const node = find(op.node);
       if (node) reasons.push(`turns off “${node.name}”`);
@@ -103,6 +133,7 @@ export function needsAClick(ops: readonly ChangeOp[], before: ChangeGraph): stri
       const source = find(op.from);
       const target = find(op.to);
       if (!source || !target) continue;
+      if (gone.has(target.id) || allowed?.own?.has(target.id)) continue; // a step that is going, or the session's own
       const others = before.connections.filter((c) => c.target === target.id && isMain(c.type) && c.source !== source.id);
       const reconnected = ops.some((o) => o.op === 'connect' && isMain(o.type) && find(o.to)?.id === target.id);
       if (!others.length && !reconnected) reasons.push(`leaves “${target.name}” without its input`);

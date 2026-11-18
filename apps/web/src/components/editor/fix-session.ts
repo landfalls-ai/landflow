@@ -6,6 +6,7 @@
  */
 import type { AssistantOp } from '@/lib/shared/assistant-ops';
 import { fixAutonomyFor, keptOwnFixLine, normalDestination, type FixAutonomy, type SessionFix } from '@/lib/shared/fix-autonomy';
+import { dropRepeatedAgentWork, type AgentBrief } from '@/lib/shared/agent-brief';
 import { useAutonomyFacts } from './spotlight-autonomy';
 
 /** What a test-and-fix session takes when nothing names it: the switch alone (decision of 2026-11-18); never `autonomyOf`. */
@@ -38,9 +39,10 @@ export function fixesOf(ops: readonly AssistantOp[], nodes: ReadonlyArray<{ id: 
 }
 
 /** The fix of this session a proposal's ops would undo: a parameter set back to its old value, or a step the session added removed. */
-export function undoneBy(ops: readonly AssistantOp[], fixes: readonly OwnFix[]): OwnFix | undefined {
+export function undoneBy(ops: readonly AssistantOp[], fixes: readonly OwnFix[], options: { ownRemovalOk?: boolean } = {}): OwnFix | undefined {
   for (const op of ops) {
     if (op.op === 'removeNode') {
+      if (options.ownRemovalOk) continue; // the person's decision of 2026-11-18: an autonomous session may remove a step it added itself
       const added = fixes.find((f) => f.kind === 'flow' && f.parameter === undefined && f.node === op.node);
       if (added) return added;
     } else if (op.op === 'setParameters') {
@@ -115,4 +117,18 @@ export function heldLine(agent: string, held: { average?: number; basis?: string
   const asks = /below the ([\d.]+)/.exec(held.reason ?? '')?.[1];
   const basis = held.basis === 'threshold' ? ' (judged on its new cases)' : held.basis === 'same-cases' ? ' (judged on the cases both runs share)' : '';
   return `The eval gate held “${agent}”: ${score.toFixed(1)} / 5${asks ? `, below the ${asks} it asks for` : held.reason ? `: ${held.reason}` : ''}${basis}.`;
+}
+
+/**
+ * The steps of a flow that plainly duplicate what the Run an Agent step before them does (the person's decision of 2026-11-18:
+ * an autonomous fix session removes them without a click): node id to the agent's name. It is `dropRepeatedAgentWork`'s own rule
+ * (a Send Email after an agent whose Send Email tool does not ask first, to the same or no address), never a looser copy.
+ */
+export function duplicatedSteps(
+  workflow: { nodes: ReadonlyArray<{ id: string; type: string; name: string; parameters?: Record<string, unknown> }>; connections: ReadonlyArray<{ source: string; target: string; type: 'main' | string; sourceIndex?: number }> },
+  briefs: readonly AgentBrief[],
+): Map<string, string> {
+  const nodes = workflow.nodes.map((n) => ({ key: n.id, type: n.type, name: n.name, parameters: n.parameters }));
+  const edges = workflow.connections.map((c): [string, string, number, never] => [c.source, c.target, c.sourceIndex ?? 0, c.type as never]);
+  return new Map(dropRepeatedAgentWork(nodes, edges, briefs).by.map((d) => [d.key, d.agent]));
 }

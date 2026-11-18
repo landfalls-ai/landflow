@@ -22,12 +22,13 @@ import type { AgentFixEvent } from '@/lib/shared/agent-fix'; // AG20:
 import { designChange, heldOf, readDraft, type ChangeDesign } from '@/lib/client/agent-change'; // AG20: AG22: heldOf, readDraft
 import { api } from '@/lib/client/api'; // AG22:
 import { normalDestination, publishedLine, SPOTLIGHT_APPROVALS, unattendedLine, type SpotlightRunApprovals } from '@/lib/shared/fix-autonomy'; // AG22:
-import { agentReplyText, agentUndoneBy, destinationsInText, droppedLine, fixAutonomyNow, fixesOf, heldLine, heldRequest, KEEP_REASON, keptTools, leftForNextRound, sameFixTwice, toolsAdded, undoneBy, type OwnFix } from './fix-session'; // AG22:
+import { agentReplyText, agentUndoneBy, destinationsInText, droppedLine, fixAutonomyNow, fixesOf, heldLine, heldRequest, KEEP_REASON, keptTools, leftForNextRound, duplicatedSteps, sameFixTwice, toolsAdded, undoneBy, type OwnFix } from './fix-session'; // AG22:
 import { followsPractices, guardrailWords, type AgentConfig } from '@/lib/shared/agents'; // AG20:
 import { useBubbleData } from '@/lib/client/agent-bubble-data'; // ag4 review: the agent's name in what is left
 import { pickedModel } from './spotlight-model'; // AG20:
 import { publishVersion, toastApprovalRequested } from './publish-control';
-import { autonomyOf, needsAClick, notePublished, type Autonomy } from './spotlight-autonomy'; // SB03:
+import { autonomyOf, needsAClick, notePublished, removedWithoutClick, type Autonomy, type RemovalsAllowed } from './spotlight-autonomy'; // SB03:
+import { agentBrief, type AgentBrief } from '@/lib/shared/agent-brief'; // wave ag5 fix pass: removals
 import { useEditor } from './store';
 import { testTriggerFor, useTestListener } from './test-listener';
 
@@ -457,6 +458,7 @@ interface Paused {
   ownFixes: OwnFix[]; // AG22: what this session fixed, which no later round undoes
   given: string[]; // AG22: the destinations given to this session
   changedAgents: ChangedAgent[]; // AG22:
+  ownNodes: string[]; // wave ag5 fix pass: the node ids this session's applied proposals created
 }
 /** AG22: an agent the session changed, and whether its change is published. */
 interface ChangedAgent {
@@ -795,6 +797,12 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     /** AG22: what this session fixed (no later round undoes it), the agents it changed and the destinations given to it. */
     const ownFixes: OwnFix[] = resumed?.ownFixes ?? [];
     const changedAgents: ChangedAgent[] = resumed?.changedAgents ?? [];
+    /** Wave ag5 fix pass: the steps this session added (an autonomous session removes or replaces them without a click). */
+    const ownNodes = new Set<string>(resumed?.ownNodes ?? []);
+    const noteAdded = (before: ReadonlyArray<{ id: string }>) => {
+      const had = new Set(before.map((n) => n.id));
+      for (const n of useEditor.getState().nodes) if (!had.has(n.id)) ownNodes.add(n.id);
+    };
     const given: string[] = resumed?.given ?? (autonomy === 'auto' ? givenDestinations(wfId, goal) : []);
     if (!resumed && given.length) approveDestinations(wfId, given); // AG22: a destination the flow already sent to, or the ask names, needs no "Run it now?"
 
@@ -812,7 +820,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     const lastApplied: Array<{ item: string; proposals: string[] }> = resumed?.lastApplied ?? [];
     /** SB18: a row waits for the person: the session's state is kept for the click that goes on. */
     const waitFor = (need: Need) => {
-      paused.set(wfId, { fixes, startNodes, tried, lastApplied, lastFailure, lastFix, reviewedAt, ran, autonomy, publishAgents, ownFixes, given, changedAgents });
+      paused.set(wfId, { fixes, startNodes, tried, lastApplied, lastFailure, lastFix, reviewedAt, ran, autonomy, publishAgents, ownFixes, given, changedAgents, ownNodes: [...ownNodes] });
       ask(need);
     };
     /** SB18: agents whose "Publish … first" was already handled once this session. */
@@ -1038,7 +1046,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       // AG22: a proposal that would undo this session's own fix (a parameter set back, a step it added removed) is dropped before it is shown; it costs no round.
       const nodesBefore = useEditor.getState().nodes.map((n) => ({ id: n.id, name: n.data.wf.name, parameters: n.data.wf.parameters }));
       const proposals = reply.parts.flatMap((p) => (p.kind === 'proposal' && !p.proposal.state ? [p.proposal] : [])).filter((proposal) => {
-        const undone = undoneBy(proposal.ops, ownFixes);
+        const undone = undoneBy(proposal.ops, ownFixes, { ownRemovalOk: autonomy === 'auto' });
         if (!undone) return true;
         useAssistant.getState().setProposalState(reply.id, proposal.id, 'dismissed');
         say([{ kind: 'text', text: droppedLine(undone) }], testId);
@@ -1050,6 +1058,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       if (failed && appliedEarly.length) {
         lastApplied.push({ item: reply.id, proposals: appliedEarly.map((p) => p.id) });
         for (const p of appliedEarly) ownFixes.push(...fixesOf(p.ops, useEditor.getState().nodes.map((n) => ({ id: n.id, name: n.data.wf.name, parameters: n.data.wf.parameters })))); // AG22:
+        noteAdded(nodesBefore);
         for (const proposal of appliedEarly) useAssistant.getState().noteFix(fixedNodes(proposal.ops, nodeId), opsTitle(proposal.ops));
         tried.push(...appliedEarly.map((p) => p.summary));
         lastFix = 'flow';
@@ -1095,7 +1104,9 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       }
       // SB03 (D1): asks-first, and a change that removes a step even under auto, waits for the person's Apply.
       const graph = { nodes: useEditor.getState().nodes.map((n) => ({ id: n.id, name: n.data.wf.name })), connections: useEditor.getState().edges.map((e) => ({ source: e.source, target: e.target, type: e.data?.connectionType })) };
-      const reasons = autonomy === 'auto' ? needsAClick(proposals.flatMap((p) => p.ops), graph) : [];
+      // The person's decision of 2026-11-18: an autonomous session removes a step it added, or one the bound agent plainly does itself, without a click.
+      const allowed: RemovalsAllowed | undefined = autonomy === 'auto' ? { own: ownNodes, duplicates: await repeatedByAgents() } : undefined;
+      const reasons = autonomy === 'auto' ? needsAClick(proposals.flatMap((p) => p.ops), graph, allowed) : [];
       if (autonomy === 'asks-first' || reasons.length) {
         if (reasons.length) {
           const note = `Waits for you: ${reasons.join(', ')}`;
@@ -1118,6 +1129,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
           return;
         }
         lastApplied.push({ item: reply.id, proposals: taken.map((p) => p.id) });
+        noteAdded(nodesBefore);
         for (const p of taken) ownFixes.push(...fixesOf(p.ops, nodesBefore)); // AG22:
         for (const proposal of taken) useAssistant.getState().noteFix(fixedNodes(proposal.ops, nodeId), opsTitle(proposal.ops));
         tried.push(...taken.map((p) => p.summary));
@@ -1125,6 +1137,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         fixes++;
         continue;
       }
+      const removalLines = removedWithoutClick(proposals.flatMap((p) => p.ops), graph, allowed);
       const label = proposals.length === 1 ? `Spotlight applied “${proposals[0].summary}”` : `Spotlight applied ${proposals.length} fixes`;
       let skipped = 0;
       const applied = applyChanges(proposals.map((p) => ({ ops: p.ops, kind: 'proposal' as const })), label, {
@@ -1141,6 +1154,8 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         return;
       }
       lastApplied.push({ item: reply.id, proposals: proposals.map((p) => p.id) });
+      noteAdded(nodesBefore);
+      if (removalLines.length) say([{ kind: 'text', text: `${removalLines.join('. ')}.` }], testId); // each removal named with its reason
       for (const p of proposals) ownFixes.push(...fixesOf(p.ops, nodesBefore)); // AG22:
       for (const proposal of proposals) {
         useAssistant.getState().setProposalState(reply.id, proposal.id, 'applied', skipped);
@@ -1159,6 +1174,15 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     // Over: the conversation comes back from the side with the outcome.
     if (useAssistant.getState().testing === abort) useAssistant.setState({ testing: undefined, testingId: undefined, fixing: undefined });
   }
+}
+
+/** The steps of the canvas that plainly duplicate what the bound agent does (node id to the agent's name): the agents are read as the run uses them, published. */
+async function repeatedByAgents(): Promise<Map<string, string>> {
+  const workflow = useEditor.getState().toWorkflow();
+  const ids = [...new Set(workflow.nodes.flatMap((n) => (n.type === 'core.messageAgent' && typeof n.parameters?.agentId === 'string' && n.parameters.agentId ? [n.parameters.agentId] : [])))];
+  if (!ids.length) return new Map();
+  const briefs = (await Promise.all(ids.map((id) => api<{ agent: Parameters<typeof agentBrief>[0] }>(`/api/agents/${id}`, { background: true }).then((r) => (r.agent ? agentBrief(r.agent) : undefined)).catch(() => undefined)))).filter((b): b is AgentBrief => Boolean(b));
+  return duplicatedSteps({ nodes: workflow.nodes.map((n) => ({ id: n.id, type: n.type, name: n.name, parameters: n.parameters as Record<string, unknown> })), connections: workflow.connections }, briefs);
 }
 
 /** What publishing does for this workflow: a trigger that starts it on its own runs the new version; a manual one never does. */
