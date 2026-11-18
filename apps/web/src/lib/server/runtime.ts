@@ -227,6 +227,8 @@ export const SERVICES: ServiceSpec[] = [
   { name: 'node plugins', roles: MAIN, start: () => marketplace.startNodePlugins() },
   // App webhook triggers: check the hooks of published workflows once plugins had a moment to announce; retry failures.
   { name: 'app webhooks', roles: MAIN, leader: true, delayMs: 3_000, start: () => appWebhooks.start(), stop: () => appWebhooks.stop() },
+  // AG17: a Run an Agent node follows its agent: the wiring flows kept of their own moves into the agents' drafts, once plugins announced.
+  { name: 'agent flow moves', roles: MAIN, leader: true, delayMs: 3_000, start: () => void import('./agents/flow-moves').then((m) => m.startPass()) },
   // Email Trigger (IMAP) with Listen: IDLE keeps a connection per published trigger and polls on new mail.
   { name: 'IMAP IDLE', roles: MAIN, leader: true, delayMs: 3_000, start: () => imapIdle.start(), stop: () => imapIdle.stop() },
   // A worker takes jobs only now: plugins and brokers are up, so what it picks up can run.

@@ -11,11 +11,12 @@ import { nanoid } from 'nanoid';
 import { api } from '@/lib/client/api';
 import { agentAsk, agentChangeAsk, askCatalog, fallbackName, knowledgeFolderOf, folderClauseAsksQuestions, knowledgeOf, readsTokens, sourceFolderOf, type AgentAsk, type AskCatalogEntry } from '@/lib/shared/agent-ask';
 import { starterFlow, starterSample, type AgentCard, type AgentCardTool, type AgentKnowledgeSetup, type AgentNotAdded } from '@/lib/shared/agent-card';
+import { rootOf, type AgentTeamConfig } from '@/lib/shared/agent-teams'; // AG17: a team node's lead
 import { agentChanges } from '@/lib/shared/agent-changes'; // AG04:
 import { announceChange, announceSaved, designChange, publishChange, saveChange, testDraft } from '@/lib/client/agent-change'; // AG04: AG09: testDraft; ag3 carryover: announceSaved
 import { pickedModel } from '../spotlight-model'; // AG04:
 import { followsPractices, guardrailWords, type AgentConfig } from '@/lib/shared/agents';
-import { draft as draftCall, useAssistant, type ChatItem } from '../assistant';
+import { AGENT_CHANGE_ASKED, draft as draftCall, useAssistant, type ChatItem } from '../assistant'; // AG17: the event
 import { useAutonomous } from '../autonomous';
 import { designPreview, smokeTestAgent, takeBackAgents } from '../new-agent';
 import { writesOutside } from '@/lib/shared/run-check';
@@ -447,6 +448,52 @@ export async function applyAgentChange(itemId: string, card: AgentCard): Promise
   } finally {
     applying.delete(itemId);
   }
+}
+
+/**
+ * AG17: Spotlight's changeAgent op: the change card for an agent a flow runs (the AG04 card, reused). The change is designed from the
+ * person's words against the saved agent; Apply puts the draft (`applyAgentChange`: the PUT and the smoke test) and Publish is the
+ * gate's (`publishAgentChange`). A saved agent is never a brand-new draft: Apply is always the person's click, also in autonomous mode.
+ */
+export async function changeAgentCard(change: { agentId?: string; teamId?: string; change: string; nodeId?: string }): Promise<void> {
+  const reply: ChatItem = { id: nanoid(8), role: 'assistant', parts: [{ kind: 'text', text: 'Changing the agent…' }] };
+  useAssistant.getState().append([reply]);
+  const rowId = `card:${reply.id}`;
+  useAssistant.getState().setAgent(rowId, { name: 'the agent', state: 'designing' });
+  draftCall.request?.abort();
+  const abort = (draftCall.request = new AbortController());
+  try {
+    // A Run a Team node: the agent is the team's lead.
+    let agentId = change.agentId ?? '';
+    if (!agentId && change.teamId) {
+      const { team } = await api<{ team: { draft?: AgentTeamConfig; published?: AgentTeamConfig } }>(`/api/agent-teams/${encodeURIComponent(change.teamId)}`);
+      const lead = rootOf((team.published ?? team.draft) as AgentTeamConfig);
+      agentId = lead?.kind === 'agent' ? lead.agentId : '';
+      if (!agentId) throw new Error('the team has no lead agent');
+    }
+    const { agent } = await api<{ agent: { name: string; description?: string } }>(`/api/agents/${agentId}`);
+    useAssistant.getState().setAgent(rowId, { name: agent.name, state: 'designing' });
+    const design = (await designChange({ name: agent.name, description: agent.description ?? '', base: { agentId }, change: change.change, ...pickedModel() }, abort.signal)) as Awaited<ReturnType<typeof designChange>> & { knowledge?: Omit<AgentKnowledgeSetup, 'state'> };
+    const notAdded = design.notAdded ?? [];
+    const fresh = cardFromPreview({ config: design.config, needs: design.needs ?? [], missing: design.missing ?? [], designed: design.designed ?? true, cases: [], notAdded, ...(design.knowledge && { knowledge: design.knowledge }) } as unknown as Parameters<typeof cardFromPreview>[0], { description: agent.description ?? '', placed: false, tools: [] }, false);
+    const card: AgentCard = { ...fresh, state: 'designed', base: { agentId: agentId, name: agent.name }, changes: design.changes, cases: [] };
+    patchReply(reply.id, { parts: [{ kind: 'text', text: reviseReply(agent.name, design.changes, notAdded, true) }, { kind: 'agentCard', card }] });
+  } catch (e) {
+    if (abort.signal.aborted) patchReply(reply.id, { parts: [{ kind: 'text', text: 'Stopped: nothing was changed.' }] });
+    else patchReply(reply.id, { parts: [{ kind: 'text', text: 'Nothing was changed.' }], error: `Couldn’t change the agent: ${(e as Error).message}` });
+  } finally {
+    if (draftCall.request === abort) draftCall.request = undefined;
+    useAssistant.setState((st) => ({ agents: st.agents.filter((a) => a.nodeId !== rowId) }));
+  }
+}
+
+// AG17: an applied changeAgent op (assistant.ts) asks for the agent's change card.
+// One listener only: under dev HMR this module reloads, and a second listener would open a second card.
+const g = globalThis as { __landflowAgentChangeListener?: EventListener };
+if (typeof window !== 'undefined') {
+  if (g.__landflowAgentChangeListener) window.removeEventListener(AGENT_CHANGE_ASKED, g.__landflowAgentChangeListener);
+  g.__landflowAgentChangeListener = (e) => void changeAgentCard((e as CustomEvent<{ agentId?: string; teamId?: string; change: string; nodeId?: string }>).detail);
+  window.addEventListener(AGENT_CHANGE_ASKED, g.__landflowAgentChangeListener);
 }
 
 /** AG09: Test again: the smoke test on the draft as it is now (a credential may have been picked since); nothing is saved or published. */

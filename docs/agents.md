@@ -669,6 +669,51 @@ request: the run goes on when the last one is decided). The Platform analyst's o
     it. Without one, *Continue by key* keeps one agent session per key (for example
     `{{ $json.sessionId }}`).
 
+  **A Run an Agent node follows its agent** (AG17, wave ag4). The three ports above are for flows saved before wave ag4: since then
+  the agent's model, memory, tools and knowledge are the agent's own, the **bubbles** under the node, and a model, memory or tool a
+  flow wired into a Run an Agent node is **moved into the agent's draft**, all of it, now (a Run a Team node's wiring stays in the flow until `run-team.ts` has the same overlay; see [limitations](limitations.md)):
+  - **When**: the editor on open (a tab that holds the edit lock and loads a flow that still wires sub-nodes posts
+    [`POST /api/workflows/:id/agent-moves`](reference/api.md) with the `updatedAt` it loaded, as the person, then loads the flow again),
+    and the host's start pass (a leader-only service, 3 s after start, over every saved flow with wired sub-nodes in a bound node, each as
+    the workflow's creator or else the instance owner; `meta` `agents.flowOverrides.migrated` marks its first complete pass, and later starts
+    sweep only what is left: an import, a restored version, an API write). Both run the same idempotent function, `moveFlowOverrides`
+    (`lib/server/agents/flow-moves.ts`); a second run over the same data writes no draft, saves no workflow and adds no row.
+  - **What moves**: a chat model node becomes the agent's model (the provider from the node type, the model, the credential reference) when
+    it equals the draft's, or when the draft's model is still the published one and every saved flow that wires a model into this agent
+    wires this same one (the note says when it will run in the agent's other workflows). A tool node (an action node an agent can call,
+    its plugin online) becomes a node tool: its type, parameters as they are, credential references, a snake_case name from the node's
+    name (a clash becomes `name_2`, said), and `requireApproval` as it ran, false: a tool that writes outside says it no longer asks a
+    person first. A vector store in *Retrieve Documents (As Tool)* mode becomes a knowledge tool on the same store, collection and
+    embeddings, and the embeddings sub-node wired only into it leaves with it. The same tool already in the agent is `same`: the
+    sub-node is removed and the agent unchanged. Nothing is published: the destination is the agent's **draft**.
+  - **What stays, and says why** (*this flow only*, in the notice and the record): a **memory node** never moves (an agent remembers
+    this conversation or across sessions; the flow keeps its own history); a model another flow disagrees on, or that the draft already
+    changes (*Use <model> for <agent> everywhere* is the person's choice); a tool whose credential differs from the agent's (names
+    only), or one the agent's owner may not use; a node type the host does not know or whose plugin is offline (*Try again*, and the next
+    open or start moves it); a node an agent cannot hold; an agent the person cannot change; a protected environment. A kept item keeps
+    working in that flow exactly as before.
+  - **One step per flow**: every affected agent draft is written, then the workflow is saved without the moved sub-nodes (a new version
+    as any save, under the `workflow_conflict` rule); if the save fails every draft is put back and the items stay (*saved meanwhile*).
+  - **The record**: one row per workflow and sub-node in `agent_flow_moves` (outcome, the agent and its tool, why, who (`migration` or the
+    person), when, the workflow version before, and a snapshot of the sub-node and its edges: credentials by reference, never a secret),
+    read by `GET /api/workflows/:id/agent-moves` and `GET /api/agents/:id/moves`, each moved item with its `state` against the agent now:
+    `pending` (in the draft, not published), `live` (published) or `withdrawn` (a person took it out of the draft).
+  - **Said, never silent**: the editor shows a side card the first time a person opens the flow after a move (each item and its agent, each
+    kept item and why, and each agent's unpublished changes with **Publish** (the smoke test on the draft, then the eval gate: never
+    skipped) and **Open <agent>**); closed, it stays as a pill ("Moved into agents · 2") that reopens the whole record, with **Try again** and
+    **Use for <agent> everywhere** on the items that allow it.
+  - **It keeps running until republished**: a move changes only the saved workflow and the agent's draft, never a workflow version, a
+    publication or a pin, so **production keeps running its published workflow version** (its own wiring and the agent version it was
+    published with) until a person publishes the workflow again; republishing needs the agent's draft published first. A run of the saved
+    graph on the agent's published config (a never-published workflow called as a sub-workflow, or any editor run before the versions wave)
+    adds the items moved from that node and still pending, as it ran them before (`pendingFor`: only when the node carries no pin, the
+    running graph no longer wires the sub-node and the config lacks the item). A moved tool counts as a wired one for **Tool Approvals**:
+    it is refused, not waited for.
+  - **New wiring is refused**: a drag that would wire a model, memory or tool into a bound node shows a toast, and Spotlight's ops refuse
+    it ("change the agent instead"): Spotlight's `changeAgent` op shows the agent's change card ([assistant.md](assistant.md#agents-and-teams)).
+    The server's save is unchanged: an API or MCP write that wires one is saved and moved on the next open or start. The AI Agent node and
+    its sub-nodes are unchanged. Tests: `test/agent-overrides-ag4.test.ts`, `test/agent-ops-ag4.test.ts`.
+
   **What the node shows** (AG12, wave ag3): under its name, a dashed **band** says what the agent is connected to,
   read-only, in three columns straight above the Chat Model, Memory and Tool slots: the model (the provider's logo and
   the name, *project default* when the agent has none and the project gives one), memory (*Remembers across sessions* or

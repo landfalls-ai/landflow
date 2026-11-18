@@ -17,6 +17,7 @@
  */
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type EdgeChange, type Node, type NodeChange } from '@xyflow/react';
 import { nanoid } from 'nanoid';
+import { toast } from 'sonner'; // AG17:
 import { create } from 'zustand';
 import { defaultParameters, defaultVersionOf, portParameters, withPropertyDefaults } from '@landflow/protocol';
 import type { NodeProgress } from '@/lib/client/node-progress';
@@ -40,6 +41,7 @@ import type {
 import { STICKY_DEFAULT_CONTENT, STICKY_DEFAULT_SIZE } from '../canvas/sticky-note';
 import { preparePaste, remapReferences, selectionOrigin, serializeSelection, type ClipboardData } from './clipboard';
 import { GROUP_NAME_MAX, NODE_TILE, NODE_WIDE_TILE, ancestorsOf, clearSpot, descendantGroupIds, descendantNodeIds, nodeBox, normalizeGroups } from '@/lib/shared/groups';
+import { boundAgentRef } from '@/lib/shared/assistant-ops'; // AG17:
 import { autoBind, bindSlot, compositeLookup, compositeOfNode, instantiateComposite, unbindSlot, type CompositeFix, type CompositeTypeInfo } from '@/lib/shared/composites';
 import {
   adoptFrames,
@@ -664,6 +666,14 @@ export const useEditor = create<EditorState>((set, get) => {
     const source = parseHandle(connection.sourceHandle);
     const target = parseHandle(connection.targetHandle);
     if (source.type !== target.type) return;
+    // AG17: a Run an Agent / Run a Team node runs a saved agent: its model, memory and tools are the agent's, so a drag that would wire one in is refused.
+    if (['ai_languageModel', 'ai_memory', 'ai_tool'].includes(target.type)) {
+      const bound = get().nodes.find((n) => n.id === connection.target);
+      if (bound && boundAgentRef(bound.data.wf)) {
+        toast.message(`${bound.data.wf.name}’s model, memory and tools are the agent’s: use + under the slot to change the agent`);
+        return;
+      }
+    }
     record();
     set((s) => {
       // Respect maxConnections on the target port.

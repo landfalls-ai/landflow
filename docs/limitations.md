@@ -53,6 +53,16 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **Log redaction** ([observability.md](observability.md#3-logs)): the host's logger scrubs secret-shaped values (Bearer tokens (the word `Bearer` with that case; an all-letter token shorter than 24 characters is left, so prose such as "Bearer authentication" is not mangled), `lf_` keys, `sk-`, GitHub and Slack keys, URL passwords, PEM private keys) and the credential values a node was handed; a secret in free text of another shape, or a credential value shorter than twelve characters (the vault does not remember short ones, so a weak password such as `postgres` is not scrubbed), is not found. Value patterns apply to log lines only: span attributes and exception events exported over OTLP are redacted by key name. OAuth access tokens handed to a node are scrubbed from its output too, so a workflow that passes one downstream through node output gets `[redacted]`. A multi-line credential that is not a PEM block is remembered whole, not line by line. The plugin SDKs keep their own rules (key names and the current request's credential values). A `traceparent` on a read response may name a trace the sampler dropped.
 - **By design**: a Respond to Webhook reply built from a secret is not redacted: redaction covers what is kept, and the reply is sent, not kept ([External secrets](features/secrets-and-environments.md)).
 
+## A Run an Agent node follows its agent (wave ag4, AG17)
+
+- A memory node wired into a Run an Agent node never moves into the agent: it stays in the flow and its history is the flow's.
+- The move changes the agent's **draft** only: until a person publishes the agent, then the workflow, production keeps the old wiring and the agent version it was published with.
+- An API or MCP write that wires a sub-node into a bound node is saved as it is and moved on the next editor open or host start; only the editor and Spotlight refuse new wiring.
+- A Run a Team node's wired model and tools stay in its flow and still run with the lead: they do not move into the lead's draft, because run-team.ts has no overlay for moved items (R11) yet. Spotlight changes the lead with `changeAgent` on the node, which opens the lead's change card.
+- A move's record rows (with the sub-node snapshot) stay in `agent_flow_moves` when the workflow is deleted.
+- A kept model is changed for every flow only by a person's *Use <model> for <agent> everywhere*.
+- A protected environment keeps every item and says so; nothing moves until a person does it there.
+
 ## Call attribution (wave 11)
 
 - The new `ai_usage` columns (node, span, purpose, iteration, caller, duration, stop reason) show on no screen until wave 12.

@@ -76,10 +76,25 @@ export const draft: { request?: AbortController } = {};
 /** Undo for a change Spotlight applied by itself, by proposal id: its row's Undo button (a phone has no ⌘Z). */
 export const undos = new Map<string, () => void>();
 
+/** AG17: a `changeAgent` op that applied: the agent to change and what to change, in the person's words (Spotlight's change card for that agent). */
+export interface AgentChange {
+  agentId?: string;
+  /** A Run a Team node's team: the card changes its lead. */
+  teamId?: string;
+  change: string;
+  nodeId?: string;
+}
+
+/** The window event an applied changeAgent op raises (`detail`: an AgentChange); Spotlight's card (spotlight/agent-ask.ts) listens, so this module imports nothing of it. */
+export const AGENT_CHANGE_ASKED = 'landflow:agent-change-asked';
+const handOver = (change: AgentChange) => {
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(AGENT_CHANGE_ASKED, { detail: change }));
+};
+
 export function applyChanges(
   changes: Array<{ ops: AssistantOp[]; kind: ChangeKind; nodeType?: string }>,
   label: string,
-  options: { publishAgents?: boolean; quiet?: boolean; onApplied?: (applied: { undo: () => void; skipped: string[] }) => void } = {},
+  options: { publishAgents?: boolean; quiet?: boolean; onApplied?: (applied: { undo: () => void; skipped: string[]; agentChanges?: AgentChange[] }) => void } = {},
 ): boolean {
   const state = useEditor.getState();
   const lookup = editorLookup();
@@ -92,6 +107,8 @@ export function applyChanges(
   const teams: Array<{ nodeId: string; config: AgentTeamConfig }> = [];
   /** Agents to save once the graph is swapped: Spotlight's newAgent ops, each with the Run an Agent node it added. */
   const agents: Array<{ nodeId: string; spec: NewAgentSpec; place: AgentPlace }> = [];
+  /** AG17: Spotlight's changeAgent ops: nothing changes in the graph; the agent's change card is the next step. */
+  const agentChanges: AgentChange[] = [];
   for (const change of changes) {
     const before = workflow;
     const result = applyOps(workflow, change.ops, lookup);
@@ -107,6 +124,11 @@ export function applyChanges(
           const before = nameOf(main.find((c) => c.source === node.id)?.target ?? '');
           agents.push({ nodeId: node.id, spec: op.newAgent, place: { workflow: result.workflow.name, ...(after && { after }), ...(before && { before }) } });
         }
+        continue;
+      }
+      if (op.op === 'changeAgent' && (op.agentId || op.teamId)) {
+        const node = op.node ? result.workflow.nodes.find((n) => n.name === op.node || n.id === op.node) : undefined;
+        agentChanges.push({ ...(op.agentId && { agentId: op.agentId }), ...(op.teamId && { teamId: op.teamId }), change: op.change, ...(node && { nodeId: node.id }) });
         continue;
       }
       if (op.op !== 'turnIntoTeam') continue;
@@ -126,6 +148,12 @@ export function applyChanges(
     toast.error('Couldn’t apply the change', { description: dropped[0] ?? 'Nothing to change.' });
     return false;
   }
+  // AG17: only changeAgent ops: the graph stays as it is; Spotlight shows each agent's change card.
+  if (agentChanges.length && agentChanges.length === count) {
+    for (const change of agentChanges) handOver(change);
+    options.onApplied?.({ undo: () => {}, skipped: dropped, agentChanges });
+    return true;
+  }
   // Select what changed: the last node added, else the node edited.
   const focusId = added.at(-1) ?? edited;
   // Spotlight's own applies leave the selection alone: selecting would hide its chip and put the node in the composer.
@@ -142,7 +170,8 @@ export function applyChanges(
     : undoGraph;
   for (const { nodeId, config } of teams) void saveTeamFor(nodeId, config);
   for (const { nodeId, spec, place } of agents) void saveAgentFor(nodeId, spec, place, { publish: options.publishAgents });
-  options.onApplied?.({ undo, skipped: dropped });
+  for (const change of agentChanges) handOver(change); // AG17:
+  options.onApplied?.({ undo, skipped: dropped, ...(agentChanges.length && { agentChanges }) });
   // Spotlight's own applies (autonomous mode, a test-and-fix session) are rows in its timeline, each with Undo.
   if (options.quiet) return true;
   const skipped = dropped.length ? `Skipped ${dropped.length}: ${dropped[0]}` : undefined;
