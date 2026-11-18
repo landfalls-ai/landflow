@@ -66,7 +66,7 @@ describe('tool scopes', () => {
     expect(toolAllowed(['brain:write'], 'my_briefing')).toBe(true);
     expect(toolAllowed(['admin'], 'run_node')).toBe(true);
     expect(toolAllowed(['workflows:read'], 'unknown_tool')).toBe(false);
-    expect(Object.keys(TOOL_SCOPES).length).toBe(32);
+    expect(Object.keys(TOOL_SCOPES).length).toBe(44); // AG18: +11, AG21: +1, AG20: +1
   });
 });
 
@@ -85,7 +85,7 @@ describe('an API key over MCP', () => {
 
   it('workflows:read lists the read tools and no brain tool', async () => {
     const client = await connect(alice, ['workflows:read']);
-    expect(await toolNames(client)).toEqual(['get_node_type', 'get_workflow', 'list_agent_updates', 'list_node_types', 'list_workflows', 'search_node_types', 'validate_workflow']);
+    expect(await toolNames(client)).toEqual(['get_agent' /* AG18 */, 'get_node_type', 'get_workflow', 'list_agent_updates' /* AG21 */, 'list_agents', 'list_credentials', 'list_knowledge_bases', 'list_models' /* AG18 */, 'list_node_types', 'list_tool_nodes' /* AG18 */, 'list_workflows', 'read_agent_practices' /* AG18 */, 'search_node_types', 'validate_workflow']);
     expect((await client.listPrompts()).prompts).toEqual([]);
   });
 

@@ -611,6 +611,7 @@ describe('Instance MCP server', () => {
         'get_execution',
         'get_node_type',
         'get_plugin_logs',
+        'get_run_log', // AG20
         'get_run_trace',
         'get_workflow',
         'list_agent_updates', // AG21

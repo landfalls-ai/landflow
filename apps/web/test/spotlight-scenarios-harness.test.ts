@@ -158,7 +158,7 @@ describe('the harness drives the product', () => {
     // The turns were consumed once, in order, across the first ask and every session message.
     expect(seen.map((s) => s.turn)).toEqual([0, 1, 2, 3, 4].slice(0, seen.length));
     expect(seen[0].last).toContain('make C run');
-    const fix = seen.find((s) => s.last.includes('Test run 1 failed'));
+    const fix = seen.find((s) => /Test run 1 \(execution ex_[^)]+\) failed/.test(s.last)); // AG20: a fix round names the run's execution
     expect(fix?.turn).toBe(2);
     expect(seen.at(-1)?.last).toContain('Test run 2 had no errors');
     // The failed run's digest reached the fix request, as the editor's `runs` do: the failed node's context holds its
