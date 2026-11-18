@@ -363,6 +363,17 @@ describe('a tool bubble reads as the node it is, never the agent’s tool id', (
     conn('tool', 'jwt_decode', { toolId: 't5', nodeType: 'textToolkit.jwtDecode', nodeTitle: 'JWT Decode' }),
   ];
 
+  it('two tools of one node type read differently: the tool’s own name is added to the title, once the title is not unique', () => {
+    const two = [
+      conn('tool', 'email_oncall', { toolId: 'm1', nodeType: 'messaging.emailSend', nodeTitle: 'Send Email' }),
+      conn('tool', 'email_finance', { toolId: 'm2', nodeType: 'messaging.emailSend', nodeTitle: 'Send Email' }),
+      conn('tool', 'hash', { toolId: 'm3', nodeType: 'textToolkit.hash', nodeTitle: 'Hash' }),
+    ];
+    const labels = data.bubblesFromAnswer(answer({ connections: two })).filter((b) => b.slot === 'tool').map((b) => b.label);
+    expect(labels).toEqual(['Send Email · email_oncall', 'Send Email · email_finance', 'Hash']);
+    expect(new Set(labels).size).toBe(labels.length);
+  });
+
   it('the label is the node type’s display name; the tool id is only in the hover title', async () => {
     const bubbles = data.bubblesFromAnswer(answer({ connections: tools }));
     expect(bubbles.filter((b) => b.slot === 'tool').map((b) => b.label)).toEqual(['Extract IOCs', 'Hash', 'UUID', 'Slugify', 'JWT Decode']);

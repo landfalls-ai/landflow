@@ -278,7 +278,13 @@ export function bubbleOrder(a: Bubble, b: Bubble): number {
 export function bubblesOf(published: readonly BubbleSource[], draft?: readonly BubbleSource[]): Bubble[] {
   const key = (c: BubbleSource) => (c.kind === 'model' ? 'model' : c.kind === 'memory' ? 'memory' : `tool:${c.toolId ?? c.name}`);
   const sig = (c: BubbleSource) => JSON.stringify([c.name, c.detail ?? '', c.nodeType ?? '', Boolean(c.asksFirst), c.credential ?? '', c.documents ?? null]);
+  // Two tools of one node type on an agent (two Send Email tools) would read the same: the tool's own name tells them apart.
+  const titles = new Map<string, number>();
+  for (const c of [...published, ...(draft ?? [])]) if (c.kind === 'tool' && c.nodeTitle) titles.set(`${c.toolId ?? c.name}|${c.nodeTitle}`, 1);
+  const perTitle = new Map<string, number>();
+  for (const k of titles.keys()) perTitle.set(k.slice(k.indexOf('|') + 1), (perTitle.get(k.slice(k.indexOf('|') + 1)) ?? 0) + 1);
   const toBubble = (c: BubbleSource, pending?: Bubble['pending']): Bubble => {
+    const shared = c.kind === 'tool' && Boolean(c.nodeTitle) && (perTitle.get(c.nodeTitle!) ?? 0) > 1;
     const slot: BubbleSlot = c.kind === 'model' ? 'model' : c.kind === 'memory' ? 'memory' : 'tool';
     const sub = c.asksFirst ? 'asks first' : c.kind === 'knowledge' && typeof c.documents === 'number' ? `${c.documents} document${c.documents === 1 ? '' : 's'}` : c.detail;
     return {
@@ -286,8 +292,8 @@ export function bubblesOf(published: readonly BubbleSource[], draft?: readonly B
       slot,
       kind: c.kind,
       // A tool bubble reads as the node it is ("Extract IOCs", "Hash", "UUID"); the agent's own tool id goes in the hover title.
-      label: slot === 'tool' && c.kind === 'tool' && c.nodeTitle ? c.nodeTitle : c.name,
-      ...(slot === 'tool' && c.kind === 'tool' && c.nodeTitle && c.nodeTitle !== c.name && { callName: c.name }),
+      label: slot === 'tool' && c.kind === 'tool' && c.nodeTitle ? (shared && c.nodeTitle !== c.name ? `${c.nodeTitle} · ${c.name}` : c.nodeTitle) : c.name,
+      ...(slot === 'tool' && c.kind === 'tool' && c.nodeTitle && c.nodeTitle !== c.name && !shared && { callName: c.name }),
       ...(sub && { sub }),
       ...(c.icon && { icon: c.icon }),
       ...(c.nodeType && { nodeType: c.nodeType }),
