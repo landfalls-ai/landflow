@@ -61,6 +61,20 @@ const quote = (name: string) => `“${name}”`;
 /** The bubble that starts a test-and-fix session instead of asking something. */
 export const TEST_BUBBLE = 'test';
 
+/**
+ * Wave ag4 carryover (the live pass's asks.md C): a typed ask to run the whole flow and fix what fails ("Run it now and fix
+ * it if it fails.", "Test it and fix what fails") is the Test and fix session, as the bubble is: the chat has no run tool,
+ * and answered "I can't run the workflow from here". A step run ("Run this step …") or an ask that also changes something
+ * ("… and add a filter") stays the chat's.
+ */
+export function runAndFixAsk(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (!t || t.length > 120) return false;
+  if (/(?:step|node)/.test(t)) return false;
+  if (/(?:add|change|set|remove|delete|replace|make|create|wire|publish|send|post|email)/.test(t)) return false;
+  return /^(?:please\s+|now\s+)?(?:run|test|try)\b/.test(t) && /\bfix\b/.test(t);
+}
+
 const ask = (id: string, label: string, send = true): Bubble => ({ id, label, kind: 'ask', text: label, caret: label.length, send });
 
 /** Where the flow ends: the right-most node with nothing connected out (an agent's tools connect to the agent). */

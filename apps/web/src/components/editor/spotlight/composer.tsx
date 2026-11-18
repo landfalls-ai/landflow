@@ -9,7 +9,7 @@ import { MentionChips } from '../../ui/mention-picker';
 import { useMentionPicker } from '@/lib/client/use-mention-picker';
 import { scopeLabel, scopeOf, type SpotlightScope } from '@/lib/shared/spotlight-scope'; // SB07:
 import { mentionQueryAt, type MentionHit } from '@/lib/shared/mentions';
-import { completeBubbles, idleBubbles, liveMentions, TEST_BUBBLE, type Bubble, type Mention, type SpotlightContext } from '@/lib/shared/spotlight';
+import { completeBubbles, idleBubbles, liveMentions, runAndFixAsk, TEST_BUBBLE, type Bubble, type Mention, type SpotlightContext } from '@/lib/shared/spotlight';
 import { useBuildFlow } from '../ai-builder';
 import { afterReply, typedSession } from '../autonomous';
 import { answeredQuestion } from './answered-question';
@@ -239,6 +239,13 @@ export function Composer() {
     if (!useEditor.getState().nodes.length && !agentCardQuestion(message) /* AG04: a question under an agent card is the chat's, not a flow to draft */) {
       // An empty canvas: the builder drafts the whole flow in one go, with test data on the trigger.
       await draftWholeFlow(message, build);
+      return;
+    }
+    // Wave ag4 carryover: "Run it now and fix it if it fails." is the Test and fix session (it asks before a run that writes outside), as the bubble is.
+    if (runAndFixAsk(message)) {
+      if (useAssistant.getState().pending || useAssistant.getState().testing) return;
+      useAssistant.getState().append([{ id: nanoid(8), role: 'user', text: message }]);
+      void testUntilItRuns(useEditor.getState().description?.trim() || undefined);
       return;
     }
     const under = cardQuestionFor(message); // AG04: the chat's answer to it stays under the card
