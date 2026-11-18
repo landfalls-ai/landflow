@@ -284,7 +284,8 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
   const now = useNow(live);
   const canvasWorkflow = record?.workflow ?? currentWorkflow;
   // AG16: a run's `versions` (AG21's answer) say which agent version each bound node ran; the canvas draws those bubbles read-only.
-  const runVersions = (record as { versions?: { agents?: Array<{ nodeId: string; version: number | 'draft' }> } } | undefined)?.versions;
+  // AG21: the same answer gives the header's "workflow v4 · Alert triager v2" line below.
+  const runVersions = (record as (ExecutionRecord & { versions?: RunVersions }) | undefined)?.versions;
   const runAgentVersions = useMemo(() => {
     const out: Record<string, number | 'draft'> = {};
     for (const a of runVersions?.agents ?? []) if (!(a.nodeId in out)) out[a.nodeId] = a.version;
@@ -519,8 +520,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
       </>
     ) : null;
 
-  // AG21: "workflow v4 · Alert triager v2", when the run used an agent (the server records both versions).
-  const runVersions = (record as ExecutionRecord & { versions?: RunVersions }).versions;
+  // AG21: "workflow v4 · Alert triager v2", when the run used an agent (the server records both versions; `runVersions` above).
   const versionsLine = runVersions?.agents.length ? runVersionsLine(runVersions) : undefined;
 
   return (
