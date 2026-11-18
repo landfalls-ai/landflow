@@ -17,7 +17,7 @@ const { default: scenarios } = await import('./spotlight-scenarios/sb-ag19');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { registry } = await import('@/lib/server/plugins/registry');
 const { TEST_OWNER } = await import('@/lib/server/auth/test-bypass');
-const { draftFrom, fromDesign, modelWhyOf, catalogAgents, designBrief } = await import('@/lib/server/assistant/architect');
+const { draftFrom, fromDesign, modelWhyOf, catalogAgents, designBrief, ARCHITECT_SYSTEM } = await import('@/lib/server/assistant/architect');
 const { TOOLS } = await import('@/lib/server/assistant/chat');
 const { buildFlow, agentReading } = await import('@/lib/server/flow-builder');
 
@@ -75,6 +75,17 @@ describe('the chat reuses an agent and says why', () => {
 // ---------------------------------------------------------------------------
 // The design: reuse, plugins found by what the job needs, an existing base, the model's why
 // ---------------------------------------------------------------------------
+
+describe('the Agent architect prompt', () => {
+  it('has one research-first rule, which names the tenant tools and never says search_nodes first', () => {
+    const rules = ARCHITECT_SYSTEM.split('\n').filter((l) => /^- (Research|Read the company)/.test(l));
+    expect(rules).toHaveLength(1);
+    for (const tool of ['list_agents', 'list_tool_nodes', 'list_knowledge_bases', 'list_models', 'list_credentials', 'read_agent_practices']) expect(rules[0]).toContain(tool);
+    expect(ARCHITECT_SYSTEM).not.toMatch(/then search_nodes for each/);
+    expect(ARCHITECT_SYSTEM).not.toContain('Read the company before');
+    expect(ARCHITECT_SYSTEM.match(/list_agents first/g) ?? []).toHaveLength(0);
+  });
+});
 
 describe('the design route', () => {
   let fake: FakeModels;
