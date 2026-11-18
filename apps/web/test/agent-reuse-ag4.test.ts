@@ -19,7 +19,7 @@ const { registry } = await import('@/lib/server/plugins/registry');
 const { TEST_OWNER } = await import('@/lib/server/auth/test-bypass');
 const { draftFrom, fromDesign, modelWhyOf, catalogAgents, designBrief, ARCHITECT_SYSTEM } = await import('@/lib/server/assistant/architect');
 const { TOOLS } = await import('@/lib/server/assistant/chat');
-const { buildFlow, agentReading } = await import('@/lib/server/flow-builder');
+const { buildFlow, agentReading, dropRepeatedAgentWork } = await import('@/lib/server/flow-builder');
 
 const scenario = (id: string) => scenarios.find((s) => s.id === id)!;
 
@@ -255,6 +255,54 @@ describe('the design route', () => {
       if (prev === undefined) delete process.env.OLLAMA_URL;
       else process.env.OLLAMA_URL = prev;
     }
+  });
+
+  it('asks.md A, a second sender: a Send Email step after an agent that has send_email is dropped, and the summary says why', async () => {
+    const s1 = agentStore.list().find((a) => a.name === 'Alert triager')!;
+    const fake = await startFakeModels({
+      reply: () => ({
+        text: JSON.stringify({
+          name: 'Triage',
+          nodes: [
+            { key: 'start', type: 'core.manualTrigger', name: 'Start' },
+            { key: 'a', type: 'core.messageAgent', name: 'Alert triager', parameters: { agentId: s1.id, message: 'Triage {{ $json.alert }}' } },
+            { key: 'mail', type: 'messaging.emailSend', name: 'Email On-Call', parameters: { to: 'oncall@example.com', subject: 'Alert', body: '{{ $json.reply }}' } },
+          ],
+          connections: [{ from: 'start', to: 'a' }, { from: 'a', to: 'mail' }],
+          testData: [{ alert: 'x' }],
+        }),
+        toolCalls: [],
+      }),
+    });
+    const prev = process.env.OLLAMA_URL;
+    process.env.OLLAMA_URL = fake.origin;
+    try {
+      const route = await import('@/app/api/ai/build/route');
+      const response = await route.POST(new Request('http://localhost/api/ai/build', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'triage each alert with my triage agent and email on-call', staged: false }) }));
+      const body = (await response.json()) as { draft?: { nodes: Array<{ type: string }>; edges: unknown[]; summary?: { assumptions: string[] } }; error?: string };
+      expect(response.status, body.error).toBe(200);
+      expect(body.draft!.nodes.map((n) => n.type)).toEqual(['core.manualTrigger', 'core.messageAgent']);
+      expect(body.draft!.edges).toHaveLength(1);
+      expect(body.draft!.summary!.assumptions.join('\n')).toContain('“Alert triager” sends the email itself');
+    } finally {
+      await fake.close();
+      if (prev === undefined) delete process.env.OLLAMA_URL;
+      else process.env.OLLAMA_URL = prev;
+    }
+  });
+
+  it('dropRepeatedAgentWork keeps what the agent has no tool for, and hangs later steps on the agent', () => {
+    const brief = { id: 'a1', name: 'Alert triager', version: 1, skills: [], tools: ['send_email'], toolNodes: ['messaging.emailSend'] };
+    const nodes = [
+      { key: 'a', type: 'core.messageAgent', name: 'Alert triager', parameters: { agentId: 'a1' } },
+      { key: 'mail', type: 'messaging.emailSend', name: 'Email On-Call', parameters: {} },
+      { key: 'log', type: 'core.set', name: 'Log', parameters: {} },
+    ];
+    const out = dropRepeatedAgentWork(nodes, [['a', 'mail', 0, 'main'], ['mail', 'log', 0, 'main']], [brief]);
+    expect(out.nodes.map((n) => n.key)).toEqual(['a', 'log']);
+    expect(out.edges).toEqual([['a', 'log', 0, 'main']]);
+    expect(dropRepeatedAgentWork(nodes, [['a', 'log', 0, 'main']], [brief]).notes).toEqual([]);
+    expect(dropRepeatedAgentWork(nodes, [['a', 'mail', 0, 'main']], [{ ...brief, toolNodes: [] }]).nodes).toHaveLength(3);
   });
 
   it('the builder prompt no longer promises that Spotlight designs a new agent after Apply', () => {

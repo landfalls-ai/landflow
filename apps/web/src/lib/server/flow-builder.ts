@@ -168,6 +168,39 @@ export function agentReading(nodes: ReadonlyArray<{ type: string; name: string; 
 }
 
 /**
+ * AG19: a Run an Agent step bound to an agent that has a node tool (send_email: `messaging.emailSend`) sends or does it
+ * itself, so a step of that type right after it is dropped (the later steps hang on the agent instead) and the summary
+ * says why. The model still adds such a step now and then, whatever the prompt says.
+ */
+export function dropRepeatedAgentWork<N extends { key: string; type: string; name: string; parameters?: Record<string, unknown> }>(
+  nodes: N[],
+  edges: Array<[string, string, number, ConnectionType]>,
+  agents: readonly AgentBrief[],
+): { nodes: N[]; edges: Array<[string, string, number, ConnectionType]>; notes: string[]; dropped: string[] } {
+  let keptNodes = nodes;
+  let keptEdges = edges;
+  const notes: string[] = [];
+  const dropped: string[] = [];
+  for (const n of nodes) {
+    if (n.type !== 'core.messageAgent') continue;
+    const id = typeof n.parameters?.agentId === 'string' ? n.parameters.agentId : '';
+    const agent = id ? agents.find((a) => a.id === id) : undefined;
+    if (!agent?.toolNodes?.length) continue;
+    for (const [from, to, output, type] of keptEdges) {
+      if (from !== n.key || type !== 'main') continue;
+      const next = keptNodes.find((m) => m.key === to);
+      if (!next || !agent.toolNodes.includes(next.type)) continue;
+      const after = keptEdges.filter((e) => e[0] === next.key && e[3] === 'main');
+      keptNodes = keptNodes.filter((m) => m.key !== next.key);
+      keptEdges = [...keptEdges.filter((e) => e[0] !== next.key && e[1] !== next.key), ...after.map(([, target, , t]): [string, string, number, ConnectionType] => [n.key, target, output, t])];
+      notes.push(`“${agent.name}” ${/email/i.test(next.type) ? 'sends the email' : `does “${next.name}”`} itself, so the flow has no “${next.name}” step after it`);
+      dropped.push(next.name);
+    }
+  }
+  return { nodes: keptNodes, edges: keptEdges, notes, dropped };
+}
+
+/**
  * Triggers the draft's test items are pinned on. A Webhook or Form trigger with pinned data runs from it when tested, so
  * Spotlight's Test and fix (autonomous by default) runs the draft at once instead of waiting for a test event.
  */
@@ -561,6 +594,10 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
   if (options.plan) {
     const plan = options.plan;
     const built = await buildFromPlan(plan, prompt, { kit: { emptyParts, jsonOf, knownAgent, pinsOnTrigger, adapterTimedOut, AGENT_TYPES, PARAMETER_FORMATS }, model, types, agents, teams, timeoutMs: builderTimeoutMs(), started: options.started ?? Date.now() });
+    const own = dropRepeatedAgentWork(built.nodes, built.edges, agents); // AG19: an agent that does a step itself
+    built.nodes = own.nodes;
+    built.edges = own.edges;
+    built.dropped = [...built.dropped, ...own.dropped];
     const staged = { nodes: built.nodes, edges: built.edges, dropped: built.dropped, left: built.left, trigger: built.trigger };
     const stagedLeft = mergeLeft(
       built.left,
@@ -571,7 +608,7 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
     const at = pinTarget(staged, byType);
     const items = (cleanTestItems(at ? built.testItems[at.key] : undefined, at, built.nodes) ?? sampleItems(at, built.nodes))?.slice(0, built.nodes.some((n) => AGENT_TYPES.has(n.type)) ? 1 : undefined);
     const reading = agentReading(built.nodes, agents); // AG19:
-    return { name: plan.name.slice(0, 80), nodes: built.nodes, edges: built.edges, pinData: at && items ? { [at.key]: items } : undefined, model, durationMs: Date.now() - built.started, dropped: built.dropped, left: mergeLeft(stagedLeft, reading.left), ...(reading.reuses.length && { reuses: reading.reuses }) /* AG19: */, calls: built.calls, plan, stages: built.stages };
+    return { name: plan.name.slice(0, 80), nodes: built.nodes, edges: built.edges, pinData: at && items ? { [at.key]: items } : undefined, model, durationMs: Date.now() - built.started, dropped: built.dropped, left: mergeLeft(stagedLeft, reading.left), ...(reading.reuses.length + own.notes.length && { reuses: [...reading.reuses, ...own.notes] }) /* AG19: */, calls: built.calls, plan, stages: built.stages };
   }
   const teamsNote = byType.has('core.runTeam') && teams.length ? `\n\nPublished agent teams (core.runTeam: put the team's teamId in teamId, never its name):\n${describeTeams([...teams])}` : '';
   const started = Date.now();
@@ -604,7 +641,9 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
       // The first draft stands: a failed send-back is no reason to lose it.
     }
   }
-  const { nodes, edges, dropped } = draft;
+  const own = dropRepeatedAgentWork(draft.nodes, draft.edges, agents); // AG19: an agent that does a step itself
+  const { nodes, edges } = own;
+  const dropped = [...draft.dropped, ...own.dropped];
   const left = mergeLeft(
     draft.left,
     emptyParts(draft, byType)
@@ -615,5 +654,5 @@ export async function buildFlow(prompt: string, model = DEFAULT_MODEL, teams: re
   const testItems = (cleanTestItems(asItems(reply.testData), target, nodes) ?? sampleItems(target, nodes))?.slice(0, nodes.some((n) => AGENT_TYPES.has(n.type)) ? 1 : undefined);
   const pinData = target && testItems ? { [target.key]: testItems } : undefined;
   const reading = agentReading(nodes, agents); // AG19:
-  return { name: (reply.name ?? 'Generated workflow').slice(0, 80), nodes, edges, pinData, model, durationMs: Date.now() - started, dropped, left: mergeLeft(left, reading.left), ...(reading.reuses.length && { reuses: reading.reuses }), calls, stages }; // SB13: stages AG19: reuses
+  return { name: (reply.name ?? 'Generated workflow').slice(0, 80), nodes, edges, pinData, model, durationMs: Date.now() - started, dropped, left: mergeLeft(left, reading.left), ...(reading.reuses.length + own.notes.length && { reuses: [...reading.reuses, ...own.notes] }), calls, stages }; // SB13: stages AG19: reuses
 }

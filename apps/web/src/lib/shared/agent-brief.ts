@@ -30,6 +30,8 @@ export interface AgentBrief {
   published?: boolean;
   /** How many workflows run it. */
   usedBy?: number;
+  /** The node types of its node tools (`messaging.emailSend`): a flow step of the same type after it would do twice what the agent does itself. */
+  toolNodes?: string[];
 }
 
 const clip = (value: string | undefined, max: number) => {
@@ -51,6 +53,7 @@ export function agentBrief(agent: Agent, nameOf: (id: string) => string | undefi
   const knowledge = config.tools.flatMap((t) => (t.type === 'knowledge' ? [toolName(t)] : []));
   const description = clip(config.description, 200) ?? clip(config.persona?.mission, 200);
   const role = clip(config.persona?.role, 80);
+  const toolNodes = [...new Set(config.tools.flatMap((t) => (t.type === 'node' ? [t.nodeType] : [])))];
   return {
     id: agent.id,
     name: config.name,
@@ -65,6 +68,7 @@ export function agentBrief(agent: Agent, nameOf: (id: string) => string | undefi
     ...(asksFirst.length && { asksFirst }),
     ...(!published && { published: false }),
     ...(options.usedBy && { usedBy: options.usedBy }),
+    ...(toolNodes.length && { toolNodes }),
   };
 }
 
