@@ -20,6 +20,7 @@ import { SMOKE_SAMPLE } from '@/lib/client/agent-edit';
 import { agentLink, boundAgentOf, bubblesFromAnswer, useBubbleAnswer, useBubbleAnswers, useFlowMoves, type BubbleAnswer, type BubbleRequest } from '@/lib/client/agent-bubble-data';
 import { BUBBLE, bubblePositions, pendingLine, SLOT_HANDLE, type AgentMove, type Bubble, type LocalOverride } from '@/lib/shared/agent-bubbles';
 import { cn } from '@/lib/utils';
+import { occupiedOf } from '../editor/bubble-clearance';
 import { Popover } from '../ui/popover';
 import { BubbleActions, BubbleMenu, type BubbleAction } from './bubble-menu';
 import { BubbleView } from './bubble-view';
@@ -142,13 +143,7 @@ export function useBubbleLayer(
       const answer = answers[node.id];
       if (!answer) return;
       bubblesByNode[node.id] = bubblesFromAnswer(answer, moves, node.id);
-      const left = node.position.x;
-      const occupied = edges
-        .filter((e) => e.target === node.id && e.data?.connectionType !== 'main')
-        .flatMap((e) => {
-          const sub = byId.get(e.source);
-          return sub ? [{ x: sub.position.x - left, width: sub.measured?.width ?? 64 }] : [];
-        });
+      const occupied = occupiedOf(node, edges, byId); // the same ranges the layout keeps clear (editor/bubble-clearance.ts)
       parents.push({
         id: node.id,
         position: node.position,

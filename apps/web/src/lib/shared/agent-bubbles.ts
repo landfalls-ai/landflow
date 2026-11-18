@@ -308,29 +308,40 @@ export function bubblesOf(published: readonly BubbleSource[], draft?: readonly B
 
 /**
  * Where the bubbles go, relative to the parent tile's top-left: a row centred under the tile (wrapping after
- * `BUBBLE.perRow`), shifted right past any `occupied` x range (a legacy wired sub-node's) so nothing overlaps.
- * Returns each bubble's top-left.
+ * `BUBBLE.perRow`), shifted right past any `occupied` x range (a legacy wired sub-node's) so nothing overlaps: one bubble gap
+ * (`BUBBLE.pitch - BUBBLE.size`, so a kept sub-node's label never sits on the first bubble's) from every range, however many
+ * there are (the shift repeats until no range is touched). Returns each bubble's top-left.
  */
 export function bubblePositions(parentWidth: number, count: number, occupied: ReadonlyArray<{ x: number; width: number }> = []): Array<{ x: number; y: number }> {
   const out: Array<{ x: number; y: number }> = [];
   const rows = Math.ceil(count / BUBBLE.perRow);
+  const gap = BUBBLE.pitch - BUBBLE.size;
   let shift = 0;
   for (let r = 0; r < rows; r++) {
     const inRow = Math.min(BUBBLE.perRow, count - r * BUBBLE.perRow);
     const rowWidth = (inRow - 1) * BUBBLE.pitch + BUBBLE.size;
-    let left = parentWidth / 2 - rowWidth / 2 + shift;
-    // Past every occupied range this row would touch (a 24 px gap), once; later rows keep the same shift.
-    for (const o of occupied) if (left < o.x + o.width + 24 && left + rowWidth > o.x - 24) shift = Math.max(shift, o.x + o.width + 24 - (parentWidth / 2 - rowWidth / 2));
-    left = parentWidth / 2 - rowWidth / 2 + shift;
+    const base = parentWidth / 2 - rowWidth / 2;
+    // Past every occupied range this row would touch; later rows keep the same shift.
+    for (let again = true; again; ) {
+      again = false;
+      const left = base + shift;
+      for (const o of occupied) {
+        if (left < o.x + o.width + gap && left + rowWidth > o.x - gap) {
+          shift = o.x + o.width + gap - base;
+          again = true;
+        }
+      }
+    }
+    const left = base + shift;
     for (let i = 0; i < inRow; i++) out.push({ x: left + i * BUBBLE.pitch, y: BUBBLE.below + r * BUBBLE.rowGap });
   }
   return out;
 }
 
-/** The box a bound node keeps clear for its bubbles (relative to its top-left), for Tidy up and Spotlight's placement. */
-export function bubbleFootprint(parentWidth: number, count: number): { left: number; right: number; bottom: number } {
+/** The box a bound node keeps clear for its bubbles (relative to its top-left), for Tidy up and Spotlight's placement; `occupied` as `bubblePositions` takes it. */
+export function bubbleFootprint(parentWidth: number, count: number, occupied: ReadonlyArray<{ x: number; width: number }> = []): { left: number; right: number; bottom: number } {
   if (count <= 0) return { left: 0, right: parentWidth, bottom: 0 };
-  const positions = bubblePositions(parentWidth, count);
+  const positions = bubblePositions(parentWidth, count, occupied);
   const left = Math.min(0, ...positions.map((p) => p.x));
   const right = Math.max(parentWidth, ...positions.map((p) => p.x + BUBBLE.size));
   const bottom = Math.max(...positions.map((p) => p.y)) + BUBBLE.size + BUBBLE.labelHeight;

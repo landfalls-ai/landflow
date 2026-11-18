@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { Workflow } from '@landflow/engine';
 import { ASSUMED_BUBBLES, BUBBLE, bubbleFootprint, bubblePositions } from '@/lib/shared/agent-bubbles';
-import { clearOfBubbles, footprintBox, type ClearBox } from '@/components/editor/bubble-clearance';
+import { clearOfBubbles, footprintBox, occupiedOf, type ClearBox } from '@/components/editor/bubble-clearance';
 
 vi.mock('@/components/canvas/sticky-note', () => ({ STICKY_DEFAULT_CONTENT: '## Note', STICKY_DEFAULT_SIZE: { width: 260, height: 180 } }));
 Object.assign(process.env, { LANDFLOW_DATA_DIR: mkdtempSync(join(tmpdir(), 'landflow-layout-ag4-')), LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '' });
@@ -34,6 +34,18 @@ describe('the bubbles row', () => {
   it('a wired sub-node is passed on the right', () => {
     const [first] = bubblePositions(240, 3, [{ x: 60, width: 88 }]);
     expect(first.x).toBeGreaterThanOrEqual(60 + 88 + 24);
+  });
+
+  it('two kept sub-nodes: the row clears both, one bubble gap from each (a single pass would land on the second)', () => {
+    const gap = BUBBLE.pitch - BUBBLE.size;
+    const kept = [{ x: 60, width: 64 }, { x: 60 + 64 + 60, width: 64 }];
+    const spots = bubblePositions(240, 3, kept);
+    const rowLeft = spots[0].x;
+    for (const o of kept) expect(rowLeft >= o.x + o.width + gap || rowLeft + 2 * BUBBLE.pitch + BUBBLE.size <= o.x - gap).toBe(true);
+    expect(rowLeft).toBeGreaterThanOrEqual(kept[1].x + kept[1].width + gap);
+    // The footprint counts the shift, so the layout keeps clear what is drawn.
+    expect(bubbleFootprint(240, 3, kept).right).toBe(rowLeft + 2 * BUBBLE.pitch + BUBBLE.size);
+    expect(bubbleFootprint(240, 3).right).toBeLessThan(bubbleFootprint(240, 3, kept).right);
   });
 
   it('the footprint spans every bubble and their labels', () => {
@@ -61,13 +73,21 @@ describe('clearOfBubbles', () => {
     expect(clearOfBubbles([box('trigger', 0, 0), agent, box('if', 280 + 337, 0)])).toEqual({});
   });
 
+  it('a node moved below the bubbles takes its downstream main chain with it', () => {
+    const agent = box('agent', 0, 0, 5);
+    const fp = footprintBox(agent)!;
+    const under = { ...box('under', -100, BUBBLE.below + 10), downstream: new Set(['then', 'last']) };
+    const out = clearOfBubbles([agent, under, box('then', -100, BUBBLE.below + 150), box('last', -100, BUBBLE.below + 300)]);
+    const d = fp.y1 + 24 - (BUBBLE.below + 10);
+    expect([out.under.y, out.then.y, out.last.y]).toEqual([BUBBLE.below + 10 + d, BUBBLE.below + 150 + d, BUBBLE.below + 300 + d]);
+  });
+
   it('a next step that moves right takes every later column with it, so the column gap stays', () => {
     const agent = { ...box('agent', 0, 0, 6), width: 240 };
     const fp = footprintBox(agent)!;
     const out = clearOfBubbles([agent, box('a', 200, BUBBLE.below - 40), box('b', 480, 0), box('c', 760, 100)]);
     const d = fp.x1 + 40 - 200;
     expect([out.a.x, out.b.x, out.c.x]).toEqual([200 + d, 480 + d, 760 + d]);
-    expect(out.b.y).toBeUndefined;
     expect(out.agent).toBeUndefined();
   });
 
@@ -112,7 +132,7 @@ describe('Tidy up', () => {
 });
 
 describe('Tidy up after a column shift', () => {
-  it.each([1, 6])('a later AI Agent stays centred over its wired model (%i bubbles)', (extra) => {
+  it.each([1, 6])('a later AI Agent stays centred over its wired sub-nodes (%i tools wired into it)', (extra) => {
     const sub = (id: string) => ({ id: `${id}-ai`, type: 'ai_tool' as const, source: id, sourceIndex: 0, target: 'ai', targetIndex: 0 });
     const tools = Array.from({ length: extra }, (_v, i) => node(`t${i}`, 0, 0));
     const flow: Workflow = {
@@ -129,6 +149,46 @@ describe('Tidy up after a column shift', () => {
     const mid = (Math.min(...centres) + Math.max(...centres)) / 2;
     const aiMid = at('ai').x + (useEditor.getState().nodes.find((n) => n.id === 'ai')!.measured?.width ?? w) / 2;
     expect(Math.abs(mid - aiMid)).toBeLessThan(2);
+  });
+});
+
+describe('Tidy up keeps clear what bubbleGraph draws (a kept sub-node shifts the row)', () => {
+  it('a bound node with a kept memory, then an AI Agent with wired sub-nodes: nothing sits on a drawn bubble, and no two labels overlap', () => {
+    const sub = (id: string, target: string, type: 'ai_tool' | 'ai_memory' | 'ai_languageModel') => ({ id: `${id}-${target}`, type, source: id, sourceIndex: 0, target, targetIndex: 0 });
+    const flow: Workflow = {
+      id: 'wf_clear',
+      name: 'Clear',
+      nodes: [node('start', 0, 0), bound('agent', 0, 0), node('mem', 0, 0), node('n1', 0, 0), node('other', 0, 0), node('n2', 0, 0), node('ai', 0, 0, { type: 'core.aiAgent' }), node('m', 0, 0), node('t1', 0, 0), node('t2', 0, 0), node('t3', 0, 0)],
+      connections: [main('start', 'agent'), main('agent', 'n1'), main('start', 'other'), main('other', 'n2'), main('n2', 'ai'), sub('mem', 'agent', 'ai_memory'), sub('m', 'ai', 'ai_languageModel'), sub('t1', 'ai', 'ai_tool'), sub('t2', 'ai', 'ai_tool'), sub('t3', 'ai', 'ai_tool')],
+    };
+    useEditor.getState().load(flow, []);
+    useEditor.setState({ nodeTypes: coreTypes() as never });
+    useEditor.getState().tidyUp();
+    const { nodes, edges } = useEditor.getState();
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const agent = byId.get('agent')!;
+    const occupied = occupiedOf(agent, edges, byId);
+    expect(occupied).toHaveLength(1); // the kept memory
+    const bubbles = Array.from({ length: ASSUMED_BUBBLES }, (_v, i) => ({ id: i === 0 ? 'model' : `b${i}`, kind: i === 0 ? 'model' : 'tool', slot: i === 0 ? 'model' : 'tool', label: `Bubble ${i}` }));
+    const { nodes: drawn } = bubbleGraph([{ id: 'agent', position: agent.position, width: 240, agentName: 'A', request: { agentId: 'ag_one' }, occupied }], { agent: bubbles as never });
+    // Bubble boxes (64 wide, its label below) against every other node's box (88 or 240 wide, a sub-node 64).
+    const sizeOf = (id: string) => (id === 'agent' || id === 'ai' ? { w: 240, h: 88 } : ['mem', 'm', 't1', 't2', 't3'].includes(id) ? { w: 64, h: 64 } : { w: 88, h: 88 });
+    const hits = (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+    const bubbleBox = (b: { position: { x: number; y: number } }) => ({ x: b.position.x, y: b.position.y, w: BUBBLE.size, h: BUBBLE.size + BUBBLE.labelHeight });
+    for (const n of nodes) {
+      const s = sizeOf(n.id);
+      for (const b of drawn) expect(hits({ x: n.position.x, y: n.position.y, ...s }, bubbleBox(b)), `${n.id} on ${b.id}`).toBe(false);
+    }
+    // Labels: a label is as wide as the pitch, centred on its circle; the kept sub-node's must not touch the first bubble's.
+    const label = (cx: number, y: number) => ({ x: cx - BUBBLE.pitch / 2, y, w: BUBBLE.pitch, h: BUBBLE.size + BUBBLE.labelHeight });
+    const mem = byId.get('mem')!;
+    const first = drawn[0];
+    expect(hits(label(mem.position.x + 32, mem.position.y), label(first.position.x + BUBBLE.size / 2, first.position.y)), 'the kept memory’s label on the model bubble’s').toBe(false);
+    for (let i = 1; i < drawn.length; i++) expect(hits(label(drawn[i - 1].position.x + 32, drawn[i - 1].position.y), label(drawn[i].position.x + 32, drawn[i].position.y))).toBe(false);
+    // The later AI Agent's own wired sub-nodes are the AI Agent's, not on a bubble (checked above), and Tidy up's own clearance has nothing left to move.
+    const state = useEditor.getState();
+    const boxes: ClearBox[] = state.nodes.map((n) => ({ id: n.id, x: n.position.x, y: n.position.y, width: sizeOf(n.id).w, height: sizeOf(n.id).h, bubbles: n.id === 'agent' ? ASSUMED_BUBBLES : 0, occupied: n.id === 'agent' ? occupied : [], subNodes: new Set(state.edges.filter((e) => e.target === n.id && e.data?.connectionType !== 'main').map((e) => e.source)) }));
+    expect(clearOfBubbles(boxes)).toEqual({});
   });
 });
 

@@ -41,7 +41,7 @@ import type {
 import { STICKY_DEFAULT_CONTENT, STICKY_DEFAULT_SIZE } from '../canvas/sticky-note';
 import { preparePaste, remapReferences, selectionOrigin, serializeSelection, type ClipboardData } from './clipboard';
 import { boundCountOf } from '@/lib/client/agent-bubble-data'; // AG16
-import { clearOfBubbles, type ClearBox } from './bubble-clearance'; // AG16
+import { clearOfBubbles, occupiedOf, type ClearBox } from './bubble-clearance'; // AG16
 import { GROUP_NAME_MAX, NODE_TILE, NODE_WIDE_TILE, ancestorsOf, clearSpot, descendantGroupIds, descendantNodeIds, nodeBox, normalizeGroups } from '@/lib/shared/groups';
 import { boundAgentRef } from '@/lib/shared/assistant-ops'; // AG17:
 import { autoBind, bindSlot, compositeLookup, compositeOfNode, instantiateComposite, unbindSlot, type CompositeFix, type CompositeTypeInfo } from '@/lib/shared/composites';
@@ -73,6 +73,21 @@ export const SUBNODE_CLEARANCE = 64;
 
 /** AG16: the bound nodes' boxes for the layout (each node's size, its bubbles' count and the real sub-nodes wired into it). */
 function bubbleBoxes(nodes: readonly FlowNode[], edges: readonly FlowEdge[], types: Record<string, NodeTypeInfo>, skip?: ReadonlySet<string>): ClearBox[] {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const next = new Map<string, string[]>();
+  for (const e of edges) if (e.data?.connectionType === 'main') next.set(e.source, [...(next.get(e.source) ?? []), e.target]);
+  /** Every node after `id` on the main chain. */
+  const downstream = (id: string) => {
+    const seen = new Set<string>();
+    const todo = [...(next.get(id) ?? [])];
+    while (todo.length) {
+      const at = todo.pop()!;
+      if (seen.has(at) || at === id) continue;
+      seen.add(at);
+      todo.push(...(next.get(at) ?? []));
+    }
+    return seen;
+  };
   return nodes
     .filter((n) => !skip?.has(n.id))
     .map((n) => ({
@@ -83,6 +98,8 @@ function bubbleBoxes(nodes: readonly FlowNode[], edges: readonly FlowEdge[], typ
       height: n.measured?.height ?? NODE_TILE,
       bubbles: boundCountOf(n.data.wf, n.id),
       subNodes: new Set(edges.filter((e) => e.target === n.id && e.data?.connectionType !== 'main').map((e) => e.source)),
+      occupied: occupiedOf(n, edges, byId), // the kept wired sub-nodes the drawn bubble row is shifted past
+      downstream: downstream(n.id),
     }));
 }
 

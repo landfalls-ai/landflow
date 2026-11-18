@@ -15,6 +15,10 @@ export interface ClearBox {
   bubbles?: number;
   /** Real wired sub-nodes of this node: they sit under it by design and are not moved off its box. */
   subNodes?: ReadonlySet<string>;
+  /** The x ranges, relative to this node's left, of those sub-nodes: the bubble row is shifted past them (`bubbleGraph` draws it so). */
+  occupied?: ReadonlyArray<{ x: number; width: number }>;
+  /** The nodes after this one on the main chain, all the way down: they go with it when it moves below the bubbles. */
+  downstream?: ReadonlySet<string>;
 }
 
 const GAP_X = 40;
@@ -26,7 +30,7 @@ const GAP_Y = 24;
  */
 export function footprintBox(b: ClearBox): { x0: number; x1: number; y0: number; y1: number } | undefined {
   if (!b.bubbles) return undefined;
-  const fp = bubbleFootprint(b.width, b.bubbles);
+  const fp = bubbleFootprint(b.width, b.bubbles, b.occupied);
   // A tall tile (a team's roster) pushes the bubbles down with it (agent-bubbles.tsx `bubbleGraph`).
   const extra = Math.max(0, b.height + 64 - 200);
   return { x0: b.x + fp.left, x1: b.x + fp.right, y0: b.y + BUBBLE.below + extra, y1: b.y + fp.bottom + extra };
@@ -59,8 +63,13 @@ export function clearOfBubbles(boxes: readonly ClearBox[], movable?: ReadonlySet
             moved[m.id] = { x: m.x, y: m.y };
           }
         } else {
-          n.y = box.y1 + GAP_Y;
-          moved[n.id] = { x: n.x, y: n.y };
+          // Below the bubbles, and its downstream main chain with it (the chain's lines never run back up).
+          const d = box.y1 + GAP_Y - n.y;
+          for (const m of [n, ...[...(n.downstream ?? [])].flatMap((id) => at.get(id) ?? [])]) {
+            if (m.id === p.id || p.subNodes?.has(m.id) || (m !== n && movable && !movable.has(m.id))) continue;
+            m.y += d;
+            moved[m.id] = { x: m.x, y: m.y };
+          }
         }
         changed = true;
       }
@@ -68,4 +77,18 @@ export function clearOfBubbles(boxes: readonly ClearBox[], movable?: ReadonlySet
     if (!changed) break;
   }
   return moved;
+}
+
+/** The x ranges, relative to `node`'s left, of the real sub-nodes still wired into it (what `bubbleGraph` shifts its row past). */
+export function occupiedOf(
+  node: { id: string; position: { x: number } },
+  edges: ReadonlyArray<{ source: string; target: string; data?: { connectionType?: string } }>,
+  byId: ReadonlyMap<string, { position: { x: number }; measured?: { width?: number } }>,
+): Array<{ x: number; width: number }> {
+  return edges
+    .filter((e) => e.target === node.id && e.data?.connectionType !== 'main')
+    .flatMap((e) => {
+      const sub = byId.get(e.source);
+      return sub ? [{ x: sub.position.x - node.position.x, width: sub.measured?.width ?? 64 }] : [];
+    });
 }
