@@ -580,7 +580,7 @@ function cardOf(config: Partial<AgentConfig>, name: string, needs: Array<{ text:
  * applied (the session applies it right after), the design carries `keep` (the tools this session added) and a design that
  * removes one of them is dropped: `{ undone }`, nothing shown.
  */
-async function showAgentFix(event: AgentFixEvent, attempt: number, signal: AbortSignal, testId: string, typedAsk = '', own?: { fixes: readonly OwnFix[]; auto: boolean }): Promise<string | { undone: OwnFix } | undefined> {
+async function showAgentFix(event: AgentFixEvent, attempt: number, signal: AbortSignal, testId: string, typedAsk = '', own?: { fixes: readonly OwnFix[]; auto: boolean }): Promise<string | { undone: OwnFix } | { noChange: true } | undefined> {
   try {
     const kept = own ? keptTools(event.agentId, own.fixes) : [];
     const base = own ? await readDraft(event.agentId) : undefined; // AG22: the tools it had, to tell what the change adds
@@ -590,6 +590,8 @@ async function showAgentFix(event: AgentFixEvent, attempt: number, signal: Abort
     const restored = own ? ((design as { dropped?: string[] }).dropped ?? []).flatMap((line) => /^Kept “(.+)”: this session added it$/.exec(line)?.[1] ?? []) : [];
     const undone = own && (agentUndoneBy(event.agentId, design.config, own.fixes) ?? (restored.length ? own.fixes.find((f) => f.kind === 'agent' && f.agentId === event.agentId && f.toolsAdded?.some((t) => restored.includes(t))) : undefined));
     if (undone) return { undone };
+    // Wave ag5 fix pass: a design that changes nothing publishes nothing: an autonomous session stops here, before any card or empty agent version.
+    if (own?.auto && design.changes.length === 0) return { noChange: true };
     const fix = { ...event.fix, attempt };
     const card: AgentCard = { ...cardOf(design.config as Partial<AgentConfig>, event.agent, design.needs, design.missing), base: { agentId: event.agentId, name: event.agent }, changes: design.changes, cases: design.cases ?? [], ...(design.replaceCases?.length && { replaceCases: design.replaceCases }), askedChange: event.change, typedAsk, fix };
     if (own?.auto) card.state = 'creating'; // AG22: applied by the session, not waiting for a click
@@ -674,6 +676,7 @@ async function autoAgentFix(ctx: { event: AgentFixEvent; signal: AbortSignal; te
     const shown = await showAgentFix({ ...event, change }, attempt, signal, testId, goal, { fixes: ownFixes, auto: true });
     if (signal.aborted) return { kind: 'stop', used, text: '' };
     if (!shown) return { kind: 'stop', used, text: `I couldn’t work out a change to “${event.agent}”.` };
+    if (typeof shown === 'object' && 'noChange' in shown) return { kind: 'stop', used, text: `The design for “${event.agent}” changes nothing, so I changed and published nothing. Left: open the agent and change it, or tell me what it should do instead.` };
     if (typeof shown === 'object') {
       say([{ kind: 'text', text: droppedLine(shown.undone) }], testId);
       return { kind: 'dropped', used };
@@ -1020,12 +1023,12 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         }
         const cardItem = await showAgentFix(reply.agentFix, fixes + 1, signal, testId, goal ?? '', { fixes: ownFixes, auto: false });
         if (signal.aborted) return;
-        if (cardItem && typeof cardItem === 'object') {
+        if (cardItem && typeof cardItem === 'object' && 'undone' in cardItem) {
           say([{ kind: 'text', text: droppedLine(cardItem.undone) }], testId);
           stop(`It runs, but doesn’t do all you asked yet, and the only change left would undo my own earlier fix. Left: ${leftForAgent(result.node, missingPartOf(reply))}`, result.node);
           return;
         }
-        if (!cardItem) {
+        if (!cardItem || typeof cardItem === 'object') {
           stop(`I couldn’t work out a change to “${reply.agentFix.agent}”.`, result.node);
           return;
         }

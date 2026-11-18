@@ -238,6 +238,20 @@ describe('an autonomous fix session on a saved, published flow (switch on)', () 
     expect(needs()).toEqual([]);
   });
 
+  it('a design that changes nothing publishes nothing: no PUT, no smoke test, no agent publish, and the session says so', async () => {
+    open();
+    agentRoutes({ 'POST /api/agents/design': () => ({ config: { name: 'Question answerer', instructions: 'Same', tools: [] }, changes: [], designed: true }) });
+    runs = [{ 'Ask analyst': { items: 1 }, Post: { items: 1 } }];
+    replies = [{ text: 'No, the agent has no database tool.', agentFix: lack }];
+    await testUntilItRuns('Post the sales by region to the receiver');
+    expect(calls()).not.toContain('PUT /api/agents/ag_q');
+    expect(calls()).not.toContain('POST /api/agents/ag_q/publish');
+    expect(calls().some((c) => c.endsWith('/smoke-test'))).toBe(false);
+    expect(cards()).toEqual([]);
+    expect(outcomes()[0].text).toContain('changes nothing, so I changed and published nothing');
+    expect(published).not.toHaveBeenCalled();
+  });
+
   it('with the switch off every step waits and the run carries no approvals; the header asks to apply the fix', async () => {
     open();
     useAutonomyFacts.setState({ switchOn: false });
