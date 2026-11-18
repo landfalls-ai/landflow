@@ -74,6 +74,7 @@ describe('agent eval gate', () => {
     expect(await checkPublish(agent.id)).toMatchObject({ skipped: true, verdict: { ok: true } });
 
     addCase(agent.id, { input: 'What is 6 x 7?', expected: '42' });
+    addCase(agent.id, { input: 'What is 7 x 7?', expected: '49' }); // AG24: a drop is compared on the cases both versions ran: two or more
     judgeScore = 5;
     const first = await checkPublish(agent.id);
     expect(first.verdict).toMatchObject({ ok: true, average: 5 });

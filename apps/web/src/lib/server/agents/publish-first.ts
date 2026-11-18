@@ -28,7 +28,7 @@ export async function publishAgentChecked(agentId: string, options: { signal?: A
     if (smoke.state !== 'passed') return { ok: false, status: 409, message: `“${current.name}” did not pass its smoke test${smoke.reason ? `: ${smoke.reason}` : ''}`, details: { agentId, smoke } };
     const checked = JSON.stringify(configOf(current));
     const gate = await checkPublish(agentId, options);
-    if (!gate.verdict.ok) return { ok: false, status: 409, message: `The eval gate held “${current.name}”`, details: { agentId, gate } };
+    if (!gate.verdict.ok) return { ok: false, status: 409, message: `The eval gate held “${current.name}”: ${gate.verdict.reason ?? `it averages ${gate.verdict.average.toFixed(1)} / 5`}`, details: { agentId, gate: { verdict: gate.verdict, lowCases: gate.lowCases ?? [] } } }; // AG24: the score and the held run's lowest cases
     const now = agentStore.get(agentId);
     if (!now || JSON.stringify(configOf(now)) !== checked) return { ok: false, status: 409, message: `“${current.name}” changed while it was being checked: publish again`, details: { agentId } };
     const agent = agentStore.publish(agentId)!;

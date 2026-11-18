@@ -1076,12 +1076,47 @@ deleted afterwards, so they never show in Sessions or reach online grading) and 
 model, else the agent's own.
 
 **Publish** runs the same check when the agent has cases. The publish is held (409, with the verdict and the run) when
-the draft averages under 3 / 5, or more than 0.5 under the published version's last average. The builder says why and
+the draft averages under 3 / 5, or more than 0.5 under the published version's last average **on the cases both versions
+ran** (AG24, wave ag5). The gate compares like with like: the draft's results are matched by case id with the run the
+published version adopted (`adoptedRunOf`, the newest run saved for that version). With two or more shared cases the means
+on those cases alone are compared (`basis: 'same-cases'`, `shared: n`: *On the 3 cases both versions ran, the draft averages
+3.6 / 5, 0.7 below the published version's 4.3.*) and the whole draft must also clear 3 / 5. With fewer than two shared (a
+change replaced the cases, or the adopted run has no ids, as one adopted before ag5) the draft is judged against the 3.0
+alone (`basis: 'threshold'`: *The draft averages 2.7 / 5 on its new cases, below the 3.0 it asks for.*), and so is an agent
+with no published version. `GATE_MAX_DROP` (0.5) and `GATE_MIN_AVERAGE` (3) are as they were. **A held verdict always
+carries its score**: the verdict (`average`, `basis`, `shared`, `reason`) and the held run's lowest cases (at most three:
+input clipped to 160 characters, score, the judge's reasoning clipped to 200; no reply text) come back in the agent
+publish route's 409 (`gate`), in the workflow publish's held answer (`agent_publish_held`, `gate`; its message reads *The
+eval gate held “X”: <reason>*), and on Spotlight's publish card, which renders the verdict line (*Held by the eval gate: 2.7 / 5
+(judged on its own cases against 3.0). …*) on the first attempt and every later one, never the bare message; the card still
+offers no way round a held gate. The builder says why and
 offers **Publish anyway** (`{ "skipEval": true }`, only ever the person's own click on this page). A publish that passes saves its run as the new version's baseline;
 a first publish is held only by the 3 / 5 floor. An agent without cases publishes as before. An agent the Agent architect
 designed has its 3 to 5 cases from the start ([the brief](#agent-architect)), so its first publish runs the gate.
 
 **A tool that asks first, and the cases** (AG15, wave ag3). The gate denies approvals, as it must: a test never sends mail. An agent that ends in an approval-gated tool (Send Email) therefore answers "here is the summary; I will send it once you approve", and a case that expects "emails a summary to oncall@landflow.test" would score it as a failure. So the Agent architect's cases for an agent with such a tool expect the ask: its prompt for the cases names the tools that ask first, and Spotlight's design rewrites any case whose expected answer says that tool's effect happened ("Emails a short summary to oncall@landflow.test") to "Drafts a short summary for oncall@landflow.test and asks for approval before sending it" (`asksFirstCases`, `lib/server/assistant/architect.ts`). The input is never changed and addresses, names and ids are kept exactly; a case with no such claim is left as it is, and a case a person wrote or edited is never rewritten. The gate's runs, its judge's calls and the smoke test's count as **agent tests** in Insights → AI (`surface` `agent-test`); a workflow's Run an Agent call stays under workflow and agent runs. A case that negates the effect ("sends no email") or only names an email ("names the phishing email's sender") is left alone. A negation counts only in its own clause (since wave ag3's live pass): in "Normalises it, no IOCs, sev1 with reason, emails oncall@landflow.test." the send's clause becomes "drafts the email for oncall@landflow.test and asks for approval before sending it" and the other clauses stay as written. The judge's calls carry the agent's id, so they count toward its daily and monthly caps and its per-agent spend. The chat route also serves continuations of sessions started by a schedule or a channel, which are labelled agent-test too; calls resumed after Approve open no such scope.
+
+**Cases that make a data agent use its tool, and cases from its own sources** (AG24, wave ag5). For an agent with a data or
+knowledge tool (a database node, a knowledge base, an MCP server) a case asks for what the tool holds without stating it:
+the live run's replacement cases put *North £120k, South £80k, West £95k* in the question, so they tested copying, not the
+tool. The case prompts say so, and the design route checks after the model wrote them (`checkCases`,
+`lib/server/agents/case-rules.ts`): a case drops when a figure (a currency amount, a percentage, or a number of two or more
+digits; a plain year is a date, not a figure) is in both its input and its expected answer, or its expected answer gives
+amounts nobody knows (it should say the agent *answers with the figures from the sales database*); a new case whose input
+equals a removed case's (case, quotes and punctuation folded) or an existing one's is dropped; a knowledge agent's case names
+only documents its knowledge base holds (the file names the base lists, read as the card's *N documents* is): a case about a
+runbook the folder lacks is dropped. When fewer than two cases are left the case writer is asked once more with what was dropped
+and why (`casesAgain`, counted in the architect's scope); still fewer, the change card says the old cases *may now be wrong*
+rather than leaving the agent with none. The same rules run on a new agent's cases.
+
+**A change that keeps what the session added** (AG24, wave ag5). The design route takes `keep: { tools, reason }` (at most 20
+names; `DesignKeep` in `lib/shared/fix-autonomy.ts`): a kept tool (named by its name, node type or the last part of it, case
+and punctuation folded) is never removed because the change's words read as removing it, never merged away by the duplicate
+check, and the preview never says *Removes the tool <it>*; if the design dropped it, it is put back and a `dropped` line says
+*Kept “SQLite”: this session added it*. Without `keep` nothing changes. Revised instructions also read as sentences: a clause
+is cut only outside brackets and backticks, and every rewritten line is checked (balanced brackets and backticks, a numbered
+step that starts with a word, no doubled number, no sentence cut mid-clause); a line that fails takes the model's own line,
+else the base's, else is left out with a `dropped` note, and the steps are numbered again (`wholeSentences`).
 
 A case's text keeps its own quotes (`Hash "password"`); only a pair that wraps the whole input or answer is taken off (`unwrapQuotes`, since wave ag3's live pass, where a case read `Hash "password`).
 
@@ -1098,7 +1133,7 @@ test. Spotlight never sends `skipEval`.
 
 **Smoke test.** Beside the gate, `POST /api/agents/:id/smoke-test { message }` runs the draft once on one message (a throwaway `test` session titled *Smoke test*, approvals denied, deleted after, so it never shows in Sessions) and answers `{ smoke: { state: 'passed' | 'failed' | 'untested', reply?, reason?, ms, tools? } }`. Honest rules (AG05, wave ag1): *untested* with *needs a credential: <tool>* (the first such tool, *and N more*) before anything runs, with no model call, when a node tool's visible required credential slot is unset (the slots the node panel shows for its parameters: an auth method not chosen does not count). After the run, `tools` lists each tool call (`success`, `error` with the error's first sentence, `empty` when the output is nothing or only empty fields, `denied` for a call that needed approval: approvals are always denied here and nothing is sent). *passed* needs a reply and no `error` call and not every call `empty`; else *failed* with the first cause (*Get Alerts failed: …*, *Get Alerts returned nothing to work with*, or *The run ended with an error: …*, *No reply*, *It stopped at its step limit*). A `denied` write no longer fails the test by itself (it did in SB18): it is named in `reason` (*Send Email needs approval: not sent*) and the rest decides; a reason names a tool as a person reads it (the architect's `send_email` is *Send Email*), while `tools` keeps the config's names; a run that ends with no reply because it waited for approval still fails. 400 without a model. Spotlight uses it before it publishes an agent it made ([assistant.md](assistant.md#agents-and-teams)). It is one item with no judge, not the gate: a pass says the agent answers, the gate says it answers well.
 
-Test: `test/agent-gate-ag3.test.ts`. Routes: `GET/POST/PUT/DELETE /api/agents/:id/eval-gate` (cases and runs; `PUT { version? }` runs the draft or a
+Tests: `test/agent-gate-ag3.test.ts`, `test/gate-same-cases-ag5.test.ts`, `test/agent-change-quality-ag5.test.ts`. Routes: `GET/POST/PUT/DELETE /api/agents/:id/eval-gate` (cases and runs; `PUT { version? }` runs the draft or a
 published version). Cases (at most 50 per agent) and the last 30 runs live in `agent_eval_cases` and
 `agent_eval_runs` (migration 2042); deleting the agent removes them.
 

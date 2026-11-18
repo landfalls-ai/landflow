@@ -66,7 +66,7 @@ export function EvalGateCard({ agentId }: { agentId: string }) {
     <Section
       icon={<ShieldCheck className="size-4" />}
       title="Eval gate"
-      description={`Questions this agent must keep answering well. Publishing runs them on the draft and holds it if it averages under ${GATE_MIN_AVERAGE} / 5 or ${GATE_MAX_DROP} below the published version.`}
+      description={`Questions this agent must keep answering well. Publishing runs them on the draft and holds it if it averages under ${GATE_MIN_AVERAGE} / 5 or ${GATE_MAX_DROP} below the published version on the cases both ran (when a change replaced the cases, it is judged against ${GATE_MIN_AVERAGE} alone).`}
     >
       {!cases && <div className="h-[80px] rounded-[10px] border border-hair bg-wl animate-pulse-soft" />}
       {cases && (
