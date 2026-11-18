@@ -353,3 +353,35 @@ describe('a published or older workflow version (V10)', () => {
     expect(container.querySelector('[data-testid="agent-chip"]')?.textContent).toBe('Alert triager draft');
   });
 });
+
+describe('a tool bubble reads as the node it is, never the agent’s tool id', () => {
+  const tools = [
+    conn('tool', 'extract_iocs', { toolId: 't1', nodeType: 'triage.extractIocs', nodeTitle: 'Extract IOCs' }),
+    conn('tool', 'hash', { toolId: 't2', nodeType: 'textToolkit.hash', nodeTitle: 'Hash' }),
+    conn('tool', 'uuid', { toolId: 't3', nodeType: 'textToolkit.uuid', nodeTitle: 'UUID' }),
+    conn('tool', 'slugify', { toolId: 't4', nodeType: 'textToolkit.slugify', nodeTitle: 'Slugify' }),
+    conn('tool', 'jwt_decode', { toolId: 't5', nodeType: 'textToolkit.jwtDecode', nodeTitle: 'JWT Decode' }),
+  ];
+
+  it('the label is the node type’s display name; the tool id is only in the hover title', async () => {
+    const bubbles = data.bubblesFromAnswer(answer({ connections: tools }));
+    expect(bubbles.filter((b) => b.slot === 'tool').map((b) => b.label)).toEqual(['Extract IOCs', 'Hash', 'UUID', 'Slugify', 'JWT Decode']);
+    expect(bubbles.find((b) => b.id === 'tool:t1')!.callName).toBe('extract_iocs');
+    const { bubbleTitle } = await import('@/lib/shared/agent-bubbles');
+    expect(bubbleTitle('Tool desk', bubbles.find((b) => b.id === 'tool:t1')!)).toContain('Extract IOCs (extract_iocs)');
+    // The canvas's bubble and Spotlight's diagram draw the same words, and neither draws “Extract Iocs” or a bare “hash”.
+    const { BubbleDiagram } = await import('@/components/canvas/bubble-view');
+    await act(async () => root.render(createElement(BubbleDiagram, { agentName: 'Tool desk', bubbles })));
+    const text = container.textContent!;
+    for (const label of ['Extract IOCs', 'Hash', 'UUID', 'Slugify', 'JWT Decode']) expect(text).toContain(label);
+    expect(text).not.toContain('Extract Iocs');
+    expect(text).not.toMatch(/\bhash\b|\buuid\b|\bslugify\b/);
+    expect(container.querySelector('[data-bubble="tool:t1"]')!.getAttribute('title')).toContain('extract_iocs');
+  });
+
+  it('a tool whose node is not known keeps the agent’s own name (nothing to read it as)', () => {
+    const [b] = data.bubblesFromAnswer(answer({ connections: [conn('tool', 'Fetch Alerts', { toolId: 'tx', nodeType: 'core.httpRequest' })] })).filter((x) => x.slot === 'tool');
+    expect(b.label).toBe('Fetch Alerts');
+    expect(b.callName).toBeUndefined();
+  });
+});

@@ -10,6 +10,7 @@ import { Check, ChevronDown, ExternalLink, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { attachedLine, knowledgeLine, publishLine, reuseLine, smokeLine, type AgentCard as AgentCardData } from '@/lib/shared/agent-card'; // AG04: publishLine AG19: attachedLine, reuseLine
 import { cardBubbles, type Bubble } from '@/lib/shared/agent-bubbles'; // AG19:
+import { useEditor } from '../store'; // the node titles the bubbles read
 import { BubbleDiagram } from '../../canvas/bubble-view'; // AG19: the card draws the agent as bubbles, one look with the canvas
 import type { AgentConfig } from '@/lib/shared/agents';
 import { AgentAvatar } from '../../agents/avatar';
@@ -69,16 +70,19 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
   // closest: the diagram draws the proposed agent, the reuse row above it still offers the closest; a full fit draws it.
   const drawReused = reusing && !card.reuse!.gaps?.length;
   const reused = useAgentDraft(drawReused ? card.reuse!.agentId : undefined);
+  // A tool bubble reads as the node it is ("Extract IOCs"), never the agent's tool id: the titles are the editor's node catalog's.
+  const nodeTypes = useEditor((s) => s.nodeTypes);
+  const titled = <T extends { type?: string }>(tools: T[]): Array<T & { title?: string }> => tools.map((t) => ({ ...t, ...(t.type && nodeTypes[t.type] && { title: nodeTypes[t.type].descriptor.displayName }) }));
   const bubbles = useMemo(() => {
     if (drawReused) {
       if (!reused) return [];
       const m = reused.model as { provider?: string; model?: string } | undefined;
-      const tools = ((reused.tools as Array<Parameters<typeof cardTool>[0]> | undefined) ?? []).filter((t) => t.type !== 'knowledge').map(cardTool);
+      const tools = titled(((reused.tools as Array<Parameters<typeof cardTool>[0]> | undefined) ?? []).filter((t) => t.type !== 'knowledge').map(cardTool));
       const kb = ((reused.tools as Array<{ type: string; collection?: string; name?: string }> | undefined) ?? []).find((t) => t.type === 'knowledge');
       return cardBubbles({ ...(m?.model && { model: m.provider ? `${m.provider}/${m.model}` : m.model }), tools, ...(kb && { knowledge: kb.collection || kb.name }), config: reused });
     }
-    return cardBubbles(card);
-  }, [drawReused, reused, card]);
+    return cardBubbles({ ...card, tools: titled(card.tools) });
+  }, [drawReused, reused, card, nodeTypes]); // eslint-disable-line react-hooks/exhaustive-deps
   const diagramName = drawReused ? card.reuse!.name : card.name;
   const open = bubbles.find((b) => b.id === openId);
   // A reused agent's bubble detail reads the reused agent, never the proposed design.

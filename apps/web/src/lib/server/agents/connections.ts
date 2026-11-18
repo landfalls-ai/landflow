@@ -10,6 +10,7 @@ import { isNodeKnowledge, KNOWLEDGE_NODE_PRESETS } from '../../shared/agents';
 import { brandIcon, brandOfProvider } from '../../shared/brand-icons';
 import { mergeConnections, type ActorConnection } from '../../shared/run-trace';
 import { PACKAGE_POLICY } from '../../shared/team-progress';
+import { registry } from '../plugins/registry';
 import { agentStore } from './store';
 import { listKnowledgeDocuments } from './knowledge';
 // AG12: the vault's names (never data), and what a project's settings change for a run.
@@ -47,7 +48,8 @@ function toolShape(tool: AgentToolConfig): ActorConnection {
     case 'node': {
       const p = tool.parameters ?? {};
       const what = [p.resource, p.operation].filter((v): v is string => typeof v === 'string' && Boolean(v) && !v.includes('{{')).join(' · ');
-      return { kind: 'tool', name: tool.name, ...(what && { detail: what }), nodeType: tool.nodeType, from: 'agent' };
+      const nodeTitle = registry.nodeTypes().find((t) => t.type === tool.nodeType)?.descriptor.displayName;
+      return { kind: 'tool', name: tool.name, ...(what && { detail: what }), nodeType: tool.nodeType, ...(nodeTitle && { nodeTitle }), from: 'agent' };
     }
     case 'workflow':
       return { kind: 'tool', name: tool.name, detail: 'a workflow', icon: 'lucide:workflow', from: 'agent' };

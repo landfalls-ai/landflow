@@ -61,6 +61,8 @@ export interface BubbleSource {
   detail?: string;
   icon?: string;
   nodeType?: string;
+  /** The node type's display name ("Extract IOCs", "Hash"): a tool bubble's label; `name` (the agent's tool id) goes in the hover title only. */
+  nodeTitle?: string;
   toolId?: string;
   asksFirst?: boolean;
   credential?: string;
@@ -75,8 +77,10 @@ export interface Bubble {
   id: string;
   slot: BubbleSlot;
   kind: string;
-  /** The big line under the circle: the model's name, "This conversation", the tool's call name, the collection. */
+  /** The big line under the circle: the model's name, "This conversation", the tool node's title ("Extract IOCs"; the call name when the node is unknown), the collection. */
   label: string;
+  /** The agent's own name for the tool (`extract_iocs`) when the label is the node's title: only the hover title says it. */
+  callName?: string;
   /** The small line: the provider ("Anthropic"), "Memory", the plugin or app ("Triage"), "4 documents", "asks first". */
   sub?: string;
   icon?: string;
@@ -216,7 +220,7 @@ export function moveNoticeLines(moves: readonly AgentMove[], agents: ReadonlyArr
  */
 export function cardBubbles(card: {
   model?: string;
-  tools: ReadonlyArray<{ name: string; type?: string; writes: boolean; requireApproval: boolean }>;
+  tools: ReadonlyArray<{ name: string; type?: string; /** The node type's display name. */ title?: string; writes: boolean; requireApproval: boolean }>;
   knowledge?: string;
   knowledgeSetup?: { collection: string; fileCount?: number; files?: readonly string[]; state?: string; indexed?: { documents: number } };
   attached?: { collection: string; documents?: number };
@@ -229,7 +233,7 @@ export function cardBubbles(card: {
   }
   const memory = card.config.memory as { crossSession?: boolean } | undefined;
   src.push({ kind: 'memory', name: memory?.crossSession ? 'Across sessions' : 'This conversation', detail: 'Memory' });
-  for (const t of card.tools) src.push({ kind: 'tool', name: t.name, ...(t.type && { nodeType: t.type }), ...(t.requireApproval && { asksFirst: true }), ...(t.writes && !t.requireApproval && { detail: 'writes' }) });
+  for (const t of card.tools) src.push({ kind: 'tool', name: t.name, ...(t.type && { nodeType: t.type }), ...(t.title && { nodeTitle: t.title }), ...(t.requireApproval && { asksFirst: true }), ...(t.writes && !t.requireApproval && { detail: 'writes' }) });
   const kb = card.attached ?? (card.knowledgeSetup && { collection: card.knowledgeSetup.collection, documents: card.knowledgeSetup.indexed?.documents ?? card.knowledgeSetup.fileCount }) ?? (card.knowledge ? { collection: card.knowledge } : undefined);
   if (kb) src.push({ kind: 'knowledge', name: kb.collection, ...(typeof kb.documents === 'number' && { documents: kb.documents }) });
   return bubblesOf(src);
@@ -281,7 +285,9 @@ export function bubblesOf(published: readonly BubbleSource[], draft?: readonly B
       id: key(c),
       slot,
       kind: c.kind,
-      label: c.name,
+      // A tool bubble reads as the node it is ("Extract IOCs", "Hash", "UUID"); the agent's own tool id goes in the hover title.
+      label: slot === 'tool' && c.kind === 'tool' && c.nodeTitle ? c.nodeTitle : c.name,
+      ...(slot === 'tool' && c.kind === 'tool' && c.nodeTitle && c.nodeTitle !== c.name && { callName: c.name }),
       ...(sub && { sub }),
       ...(c.icon && { icon: c.icon }),
       ...(c.nodeType && { nodeType: c.nodeType }),
@@ -368,7 +374,9 @@ export function bubbleTitle(agentName: string, b: Bubble): string {
     b.withheld,
     b.fromProject && 'the project’s default',
   ].filter(Boolean);
-  return `${b.label}: ${what}${marks.length ? ` (${marks.join('; ')})` : ''}`;
+  // A tool bubble reads the node's title; the agent's own tool id is only here.
+  const named = b.callName ? `${b.label} (${b.callName})` : b.label;
+  return `${named}: ${what}${marks.length ? ` (${marks.join('; ')})` : ''}`;
 }
 
 /** The node's mark when the agent's draft differs from what runs: the chip's text ("2 changes not published"). */

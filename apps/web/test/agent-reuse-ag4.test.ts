@@ -87,6 +87,19 @@ describe('the Agent architect prompt', () => {
   });
 });
 
+describe('the canvas reads a node tool as the node', () => {
+  it('agentConnections names a node tool’s display name (Extract IOCs), the call name stays the tool’s name', async () => {
+    const { agentConnections } = await import('@/lib/server/agents/connections');
+    const made = agentStore.create({ name: 'IOC reader', model: { provider: 'ollama', model: 'm' }, tools: [{ id: 'tl_1', type: 'node', name: 'extract_iocs', description: 'x', nodeType: 'triage.extractIocs', parameters: {} }] } as never);
+    try {
+      const tool = agentConnections(agentStore.get(made.id)!).find((c) => c.kind === 'tool')!;
+      expect(tool).toMatchObject({ name: 'extract_iocs', nodeType: 'triage.extractIocs', nodeTitle: 'Extract IOCs' });
+    } finally {
+      agentStore.delete(made.id);
+    }
+  });
+});
+
 describe('gap phrases', () => {
   it('say the node’s title, never a tool id (extract_iocs → Extract IOCs)', () => {
     const types = registry.nodeTypes();

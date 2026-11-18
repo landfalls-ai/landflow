@@ -119,6 +119,19 @@ const click = async (selector: string) => { await act(async () => { (container.q
     expect(container.querySelector('[data-testid="agent-looked-at"]')!.textContent).toBe('Looked at: list_agents 3, list_tool_nodes 14');
   });
 
+  it('a tool bubble reads as the node’s title (Extract IOCs), the tool id only in its hover title', async () => {
+    useEditor.setState({ nodeTypes: Object.fromEntries(registry.nodeTypes().map((t) => [t.type, t])) as never });
+    try {
+      await show(cardFromPreview(preview(), ASK, true));
+      const tool = container.querySelector('[data-bubble="tool:extract_iocs"]')!;
+      expect(tool.textContent).toContain('Extract IOCs');
+      expect(container.querySelector('[data-testid="bubble-diagram"]')!.textContent).not.toContain('extract_iocs');
+      expect(tool.getAttribute('title')).toContain('Extract IOCs (extract_iocs)');
+    } finally {
+      useEditor.setState({ nodeTypes: {} as never });
+    }
+  });
+
   it('a card with no reuse offers Create agent, not Use', async () => {
     await show(cardFromPreview(preview(), ASK, true));
     expect(container.textContent).toContain('Create agent and flow');
