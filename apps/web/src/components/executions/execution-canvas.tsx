@@ -22,6 +22,7 @@ import { edgeCountsOf, statusesOf, summarizeGroupRun, withWaiting, type GroupRun
 import { GROUP_COLLAPSED_SIZE, GROUP_HANDLES, collapsedBoxes, depthOf, descendantGroupIds, descendantNodeIds, routeEdges } from '@/lib/shared/groups';
 import type { NodeRun, NodeTypeInfo, Workflow, WorkflowNode } from '@/lib/shared/types';
 import { EdgeLine } from '../canvas/edge-line';
+import { AgentChip, BubbleEdgeView, BubbleNode, useBoundAgent, useBubbleLayer } from '../canvas/agent-bubbles'; // AG16: a version view's bubbles
 import { edgePath, useLane } from '../canvas/edge-path';
 import { activityOfRuns, type TeamActivity, type TeamProgress } from '@/lib/shared/team-progress';
 import { useNodeFace, useShownParameters } from '../agents/faces';
@@ -194,6 +195,9 @@ interface CanvasState {
   groupRuns: Record<string, GroupRunSummary>;
   /** Collapse or expand a group in this view only. */
   toggleGroup(id: string, collapsed: boolean): void;
+  /** AG16: the agent version each bound node drew (a workflow version's pins, a run's versions), by node id; absent: the plain node. */
+  agentVersions?: Record<string, number | 'draft'>;
+  workflowId?: string;
 }
 
 const CanvasContext = createContext<CanvasState | null>(null);
@@ -209,6 +213,8 @@ const ExecNodeView = memo(function ExecNodeView({ id, data }: NodeProps<ExecNode
   // A team node becomes the member at work while it runs, and shows what it did after (team-live.tsx).
   const teamId = wf.type === 'core.runTeam' && typeof wf.parameters.teamId === 'string' && wf.parameters.teamId ? wf.parameters.teamId : undefined;
   const live = teamId && ctx.running ? ctx.teams[id] : undefined;
+  const bound = useBoundAgent(wf);
+  const pinned = ctx.agentVersions?.[id];
   const team = useTeamTile(teamId, live, teamId && !live ? ctx.activities[id] : undefined, {
     ...(ctx.executionId && { executionId: ctx.executionId }),
     ...(teamId && !ctx.running && teamQuestionOf(ctx.wait, id) && { waiting: teamQuestionOf(ctx.wait, id) }),
@@ -229,6 +235,8 @@ const ExecNodeView = memo(function ExecNodeView({ id, data }: NodeProps<ExecNode
         face={face}
         live={team.tile}
       />
+      {/* AG16: the agent version this node drew, read-only (no Publish, no menu). */}
+      {bound && pinned !== undefined && <AgentChip agentId={bound} nodeId={id} workflowId={ctx.workflowId} lead={false} version={pinned} raised={Boolean(teamId)} />}
       {teamId ? (
         // The team above its node, as in the editor; while it runs, who works now and on what.
         // Above the duration a finished node shows over its corner.
@@ -297,8 +305,8 @@ const ExecProxyEdgeView = memo(function ExecProxyEdgeView({ id, sourceX, sourceY
   );
 });
 
-const nodeTypesMap = { exec: ExecNodeView, sticky: ExecStickyView, frame: ExecFrameView };
-const edgeTypesMap = { exec: ExecEdgeView, execProxy: ExecProxyEdgeView };
+const nodeTypesMap = { exec: ExecNodeView, sticky: ExecStickyView, frame: ExecFrameView, agentBubble: BubbleNode }; // AG16: agentBubble
+const edgeTypesMap = { exec: ExecEdgeView, execProxy: ExecProxyEdgeView, bubble: BubbleEdgeView }; // AG16: bubble
 
 export interface ExecutionCanvasProps {
   workflow: Workflow;
@@ -320,10 +328,16 @@ export interface ExecutionCanvasProps {
   selectedNodeId?: string;
   onNodeClick?: (nodeId: string) => void;
   className?: string;
+  /**
+   * AG16: the agent version each bound node ran or was published with (a workflow version's pins, a run's `versions`), by node id.
+   * Those nodes draw their agent's bubbles at that version, read-only, and a chip "<name> v1" ("<name> draft"). Absent: no bubbles.
+   */
+  agentVersions?: Record<string, number | 'draft'>;
 }
 
 const NO_CAPTIONS: Record<string, string> = {};
 const NO_TEAMS: Record<string, TeamProgress> = {};
+const NO_VERSIONS: Record<string, number | 'draft'> = {};
 
 const FIT = { padding: 0.22, maxZoom: 1.05 };
 
@@ -342,7 +356,7 @@ function RefitOnGrow({ moved }: { moved: RefObject<boolean> }) {
   return null;
 }
 
-function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId, wait, running = false, captions = NO_CAPTIONS, teams = NO_TEAMS, executionId, selectedNodeId, onNodeClick, className }: ExecutionCanvasProps) {
+function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId, wait, running = false, captions = NO_CAPTIONS, teams = NO_TEAMS, executionId, selectedNodeId, onNodeClick, className, agentVersions }: ExecutionCanvasProps) {
   // Groups expanded or collapsed in this view (by id); the rest show as saved. Reset for another workflow.
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
   useEffect(() => setOverrides({}), [workflow.id]);
@@ -407,15 +421,21 @@ function Canvas({ workflow, nodeTypes, runData, activeNodeIds = [], pausedNodeId
       selectedNodeId,
       groupRuns: Object.fromEntries(groups.map((g) => [g.id, summarizeGroupRun(descendantNodeIds(groups, g.id), statuses)])),
       toggleGroup,
+      ...(agentVersions && { agentVersions, workflowId: workflow.id }),
     };
-  }, [flow, workflow, groups, nodeTypes, runData, activeNodeIds, pausedNodeId, wait, running, captions, teams, executionId, selectedNodeId, toggleGroup]);
+  }, [agentVersions, flow, workflow, groups, nodeTypes, runData, activeNodeIds, pausedNodeId, wait, running, captions, teams, executionId, selectedNodeId, toggleGroup]);
+
+  // AG16: the bubbles of the nodes a version is known for, read-only, merged after the saved nodes (never in `nodes`).
+  const bubbles = useBubbleLayer(nodes as never, edges as never, { workflowId: workflow.id, versions: agentVersions ?? NO_VERSIONS, readOnly: true });
+  const drawnNodes = useMemo(() => (bubbles.nodes.length ? [...nodes, ...bubbles.nodes] : nodes), [nodes, bubbles.nodes]);
+  const drawnEdges = useMemo(() => (bubbles.edges.length ? [...edges, ...bubbles.edges] : edges), [edges, bubbles.edges]);
 
   return (
     <CanvasContext.Provider value={state}>
       <div className={cn('canvas-readonly relative size-full', className)}>
         <ReactFlow
-          nodes={nodes}
-          edges={edges}
+          nodes={drawnNodes as never}
+          edges={drawnEdges as never}
           onNodesChange={onNodesChange}
           nodeTypes={nodeTypesMap}
           edgeTypes={edgeTypesMap}

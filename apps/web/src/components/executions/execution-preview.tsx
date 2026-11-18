@@ -283,6 +283,13 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
 
   const now = useNow(live);
   const canvasWorkflow = record?.workflow ?? currentWorkflow;
+  // AG16: a run's `versions` (AG21's answer) say which agent version each bound node ran; the canvas draws those bubbles read-only.
+  const runVersions = (record as { versions?: { agents?: Array<{ nodeId: string; version: number | 'draft' }> } } | undefined)?.versions;
+  const runAgentVersions = useMemo(() => {
+    const out: Record<string, number | 'draft'> = {};
+    for (const a of runVersions?.agents ?? []) if (!(a.nodeId in out)) out[a.nodeId] = a.version;
+    return Object.keys(out).length ? out : undefined;
+  }, [runVersions]);
   const nodes = useMemo(() => {
     const map: Record<string, LogsNode> = {};
     for (const n of canvasWorkflow?.nodes ?? []) map[n.id] = { name: n.name, type: n.type };
@@ -893,6 +900,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
               teams={teams}
               executionId={executionId}
               onNodeClick={selectNode}
+              agentVersions={runAgentVersions}
             />
           ) : (
             <div className="canvas-readonly grid size-full place-items-center bg-[repeating-linear-gradient(-45deg,transparent_0_14px,var(--acdim)_14px_28px)] text-[13px] text-t3">

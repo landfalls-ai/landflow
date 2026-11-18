@@ -57,7 +57,9 @@ import { GroupNodeView, GroupProxyEdgeView } from './group-node';
 import { boxPorts, loadComposites, useCompositeReports } from './composites';
 import { canvasGraph, type GroupProxyEdge } from './groups';
 import { ImportReportDialog, showImportReport } from './import-report';
-import { NodeCreator } from './node-creator';
+import { BubbleEdgeView, BubbleNode, isBubbleId, useBubbleLayer } from '../canvas/agent-bubbles'; // AG16
+import { AGENT_DRAG, NodeCreator } from './node-creator';
+import { placeAgentNode } from './place-agent'; // AG16
 import { NodePanel } from './node-panel';
 import { StepList } from './step-list';
 import { EditorLogs } from './editor-logs';
@@ -76,8 +78,8 @@ import { pinFromRun } from './pin-from-run';
 import { useFollowWaiting } from './waiting';
 import { builderFolds, columnRule, dropShell, isMac, keyAction, setSpotlightState, useSpotlightState } from '../spotlight/context';
 
-const nodeTypesMap = { lf: FlowNodeView, sticky: StickyNodeView, frame: GroupNodeView, ghost: GhostNodeView };
-const edgeTypesMap = { lf: FlowEdgeView, groupProxy: GroupProxyEdgeView, ghost: GhostEdgeView };
+const nodeTypesMap = { lf: FlowNodeView, sticky: StickyNodeView, frame: GroupNodeView, ghost: GhostNodeView, agentBubble: BubbleNode }; // AG16: agentBubble
+const edgeTypesMap = { lf: FlowEdgeView, groupProxy: GroupProxyEdgeView, ghost: GhostEdgeView, bubble: BubbleEdgeView }; // AG16: bubble
 
 /** What an edit changes in the store: the autosave timer restarts when any of these does. */
 const AUTOSAVE_WATCHED = ['nodes', 'edges', 'stickies', 'groups', 'name', 'description', 'tags', 'settings', 'pinData'] as const;
@@ -208,13 +210,26 @@ function Canvas({ onSave }: { onSave: () => void }) {
   const built = useMemo<{ nodes: CanvasNode[]; edges: (FlowEdge | GroupProxyEdge)[] }>(() => canvasGraph(groups, stickies, flowNodes, flowEdges, ports), [groups, stickies, flowNodes, flowEdges, ports]);
   // The nodes and connections a change being built adds, as dashed ghosts (./building.tsx). Not in the store.
   const ghosts = useGhosts();
-  const nodes = useMemo(() => (ghosts.nodes.length ? [...built.nodes, ...(ghosts.nodes as unknown as CanvasNode[])] : built.nodes), [built.nodes, ghosts.nodes]);
-  const edges = useMemo(() => (ghosts.edges.length ? [...built.edges, ...(ghosts.edges as unknown as FlowEdge[])] : built.edges), [built.edges, ghosts.edges]);
+  // AG16: a bound node's agent as bubbles under its slots: derived like the ghosts, never in the store, the saved workflow, undo or copy.
+  const workflowId = useEditor((s) => s.workflowId);
+  const bubbles = useBubbleLayer(built.nodes as never, flowEdges, { workflowId: workflowId || undefined });
+  const nodes = useMemo(
+    () => (ghosts.nodes.length || bubbles.nodes.length ? [...built.nodes, ...(ghosts.nodes as unknown as CanvasNode[]), ...(bubbles.nodes as unknown as CanvasNode[])] : built.nodes),
+    [built.nodes, ghosts.nodes, bubbles.nodes],
+  );
+  const edges = useMemo(
+    () => (ghosts.edges.length || bubbles.edges.length ? [...built.edges, ...(ghosts.edges as unknown as FlowEdge[]), ...(bubbles.edges as unknown as FlowEdge[])] : built.edges),
+    [built.edges, ghosts.edges, bubbles.edges],
+  );
+  // The store never hears of a bubble or the line to one: no select, move, remove or undo entry.
+  const { onNodesChange: storeNodesChange, onEdgesChange: storeEdgesChange } = useEditor.getState();
+  const onNodesChange = useCallback((changes: Parameters<typeof storeNodesChange>[0]) => storeNodesChange(changes.filter((c) => !('id' in c && isBubbleId(c.id)))), [storeNodesChange]);
+  const onEdgesChange = useCallback((changes: Parameters<typeof storeEdgesChange>[0]) => storeEdgesChange(changes.filter((c) => !('id' in c && isBubbleId(c.id)))), [storeEdgesChange]);
   const ghostKey = ghosts.nodes.map((n) => n.id).join(',');
   const ghostIds = useMemo(() => (ghostKey ? ghostKey.split(',') : []), [ghostKey]);
   // Read-only (someone else holds the edit lock) swaps the store's editing actions, so re-read them.
   const readOnly = useEditLock((s) => s.readOnly);
-  const { onNodesChange, onEdgesChange, onConnect, openNode, openPalette } = useEditor.getState();
+  const { onConnect, openNode, openPalette } = useEditor.getState();
   const { screenToFlowPosition, fitView } = useReactFlow();
   const fitted = useRef(false);
   // The person panned or zoomed during the run on the canvas: leave the view where they put it.
@@ -232,6 +247,14 @@ function Canvas({ onSave }: { onSave: () => void }) {
       setTimeout(() => fitView({ padding: 0.25, duration: 400, maxZoom: 1.1 }), 50);
     }
   }, [nodes.length, fitView]);
+  // AG16: a fitted flow shows its bubbles: once, when they first arrive (they are read after the nodes), unless the person already moved the view.
+  const refitted = useRef(false);
+  const bubbleCount = bubbles.nodes.length;
+  useEffect(() => {
+    if (!bubbleCount || refitted.current || !fitted.current || moved.current) return;
+    refitted.current = true;
+    setTimeout(() => !moved.current && fitView({ padding: 0.25, duration: 400, maxZoom: 1.1 }), 120);
+  }, [bubbleCount, fitView]);
 
   /** Where pasted and new notes go: the pointer when it is over the canvas, else the middle of the view. */
   const dropPoint = useCallback(
@@ -370,10 +393,11 @@ function Canvas({ onSave }: { onSave: () => void }) {
       edgeTypes={edgeTypesMap}
       onNodesChange={onNodesChange}
       // Changes to the lines drawn for collapsed groups name no stored edge, so the store skips them.
-      onEdgesChange={onEdgesChange as OnEdgesChange<FlowEdge | GroupProxyEdge>}
+      onEdgesChange={onEdgesChange as unknown as OnEdgesChange<FlowEdge | GroupProxyEdge>}
       onNodeContextMenu={(e, node) => {
         e.preventDefault();
-        if (readOnly) return;
+        // AG16: a bubble is not a node of the flow: no selection, no node menu.
+        if (readOnly || isBubbleId(node.id)) return;
         selectForMenu(node.id);
         useCanvasMenu.getState().open({ x: e.clientX, y: e.clientY, flow: screenToFlowPosition({ x: e.clientX, y: e.clientY }) });
       }}
@@ -384,6 +408,24 @@ function Canvas({ onSave }: { onSave: () => void }) {
       onPaneContextMenu={(e) => {
         e.preventDefault();
         if (!readOnly) useCanvasMenu.getState().open({ x: e.clientX, y: e.clientY, flow: screenToFlowPosition({ x: e.clientX, y: e.clientY }) });
+      }}
+      // AG16: an agent dragged from Your agents in the node creator is placed where it is dropped, bound to it.
+      onDragOver={(e) => {
+        if (!readOnly && e.dataTransfer.types.includes(AGENT_DRAG)) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }
+      }}
+      onDrop={(e) => {
+        const raw = e.dataTransfer.getData(AGENT_DRAG);
+        if (!raw || readOnly) return;
+        e.preventDefault();
+        try {
+          const agent = JSON.parse(raw) as { id?: string; name?: string };
+          if (agent.id && agent.name) placeAgentNode({ id: agent.id, name: agent.name }, screenToFlowPosition({ x: e.clientX, y: e.clientY }));
+        } catch {
+          /* not ours */
+        }
       }}
       onConnect={onConnect}
       onConnectEnd={onConnectEnd}
@@ -417,7 +459,7 @@ function Canvas({ onSave }: { onSave: () => void }) {
           className="!bottom-3 !right-3 max-md:!hidden"
           pannable
           zoomable
-          nodeColor={(node) => (node.type === 'sticky' ? 'var(--acbd)' : node.type === 'frame' ? 'color-mix(in oklab, var(--t3) 14%, transparent)' : 'var(--bd)')}
+          nodeColor={(node) => (node.type === 'agentBubble' ? 'var(--hair)' : node.type === 'sticky' ? 'var(--acbd)' : node.type === 'frame' ? 'color-mix(in oklab, var(--t3) 14%, transparent)' : 'var(--bd)')}
         />
       )}
     </ReactFlow>

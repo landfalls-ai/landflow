@@ -1,5 +1,5 @@
 'use client';
-import { memo, useEffect } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { NodeToolbar, Position, type NodeProps } from '@xyflow/react';
 import { useShallow } from 'zustand/react/shallow';
 import { CircleDot, Copy, Hand, Loader2, MoreHorizontal, Play, Power, Settings2, SkipForward, Trash2, UsersRound, Wrench, X } from 'lucide-react';
@@ -9,8 +9,13 @@ import { MenuItem, Popover } from '../ui/popover';
 import type { ExecutionEvent } from '@/lib/shared/types';
 import { progressDetail, progressLine } from '@/lib/client/node-progress';
 import { decideToolApprovals } from '@/lib/client/run-trace';
-import { useNodeFace, useShownParameters, useTeamLeads } from '../agents/faces';
-import { AgentBand, useAgentConnections } from '../canvas/agent-band'; // AG12
+import { useNodeFace, useShownParameters } from '../agents/faces';
+import { AgentChip, localOf, useBoundAgent } from '../canvas/agent-bubbles'; // AG16
+import { useFlowMoves } from '@/lib/client/agent-bubble-data'; // AG16
+import { MOVES_CHANGED, type LocalOverride } from '@/lib/shared/agent-bubbles'; // AG16
+import { api } from '@/lib/client/api'; // AG16
+import type { Workflow } from '@/lib/shared/types'; // AG16
+import { toast } from 'sonner'; // AG16
 import { isCompact, NodeTile, ranFor } from '../canvas/node-tile';
 import { useAssistant } from './assistant';
 import { openNeedOf } from './timeline';
@@ -157,22 +162,14 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
       if (resumed) useEditor.getState().finishRun();
     }
   };
-  // AG12: what the agent (a team's lead) is connected to, under the node's name; the wired Chat Model, Memory and tools come from the canvas, so wiring shows before a save.
-  const wired = useEditor(
-    useShallow((s) => {
-      const subs = s.edges.filter((e) => e.target === id && e.data?.connectionType !== 'main');
-      const nameOf = (type: string) => {
-        const edge = subs.find((e) => e.data?.connectionType === type);
-        return edge ? s.nodes.find((n) => n.id === edge.source)?.data.wf.name : undefined;
-      };
-      return { model: nameOf('ai_languageModel'), memory: nameOf('ai_memory'), tools: subs.filter((e) => e.data?.connectionType === 'ai_tool').length };
-    }),
-  );
+  // AG16: the agent this node runs (a team's lead): its bubbles hang under the node (canvas/agent-bubbles.tsx), nothing of it is written in the card.
   const workflowId = useEditor((s) => s.workflowId);
-  const leads = useTeamLeads(wf.type === 'core.runTeam' ? [wf] : undefined);
-  const bandAgent = wf.type === 'core.messageAgent' && typeof wf.parameters.agentId === 'string' && wf.parameters.agentId && !wf.parameters.agentId.includes('{{') ? wf.parameters.agentId : wf.type === 'core.runTeam' ? leads[String(wf.parameters.teamId)] : undefined;
-  const bandData = useAgentConnections(bandAgent, workflowId || undefined, id);
-  const team = useTeamTile(teamId, live, teamId && !live && !running ? activityOfRuns(runs) : undefined, { ...(executionId && { executionId }), ...(asked && { waiting: asked }), ...(asked?.approval && { onDecide: decideInEditor }), newTab: true, idleRoster: bandAgent && bandData ? 'compact' : true });
+  const bound = useBoundAgent(wf);
+  const team = useTeamTile(teamId, live, teamId && !live && !running ? activityOfRuns(runs) : undefined, { ...(executionId && { executionId }), ...(asked && { waiting: asked }), ...(asked?.approval && { onDecide: decideInEditor }), newTab: true, idleRoster: true });
+  // AG16: a sub-node still wired into a bound node (AG17 kept it: it could not move) says it is this flow only, and why.
+  const wiredInto = useEditor((s) => s.edges.some((e) => e.source === id && e.data?.connectionType !== 'main'));
+  const moves = useFlowMoves(wiredInto ? workflowId || undefined : undefined);
+  const local = localOf(moves, id);
   const compact = isCompact(info?.descriptor, wf.parameters, asTool);
   // Only a selected node shows its toolbar; its actions are read when it renders (they follow disabled, breakpoint, running).
   const actions = selected ? nodeActions(id) : undefined;
@@ -197,8 +194,10 @@ export const FlowNodeView = memo(function FlowNodeView({ id, data, selected }: N
       face={face}
       live={team.tile}
       slotNames={wf.type === 'core.runTeam' ? LEAD_SLOTS : undefined}
-      band={bandAgent && bandData ? <AgentBand agentId={bandAgent} data={bandData} wired={{ ...(wired.model && { model: wired.model }), ...(wired.memory && { memory: wired.memory }), tools: wired.tools }} lead={wf.type === 'core.runTeam'} /> : undefined}
     >
+      {/* AG16: the one chip of the agent this node runs (what is not published, Publish; a team's lead). Nothing of the agent is written in the card. */}
+      {bound && <AgentChip agentId={bound} nodeId={id} workflowId={workflowId || undefined} lead={wf.type === 'core.runTeam'} raised={selected || Boolean(progress) || Boolean(teamId && !team.roster)} />}
+      {local && <LocalTag local={local} />}
       {teamId && !team.roster ? (
         // Above the duration a finished node shows over its corner, and above the Waiting or Paused pill over its top.
         <NodeToolbar isVisible={!selected && !fixing} position={Position.Top} offset={(compact ? 12 : 14) + (ranFor(status) || status?.state === 'waiting' || status?.state === 'paused' ? 16 : 0)}>
@@ -301,6 +300,45 @@ function FixNote({ nodeId, text, at }: { nodeId: string; text: string; at: numbe
       <button type="button" aria-label="Dismiss" title="Dismiss" onClick={() => useAssistant.getState().dismissFix(nodeId)} className="-my-1 grid size-7 shrink-0 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1 max-md:size-9">
         <X className="size-3.5" />
       </button>
+    </div>
+  );
+}
+
+/** AG16: "this flow only": a sub-node AG17 could not move into the agent stays wired, keeps working here, and says why, with the buttons its record allows. */
+function LocalTag({ local }: { local: LocalOverride & { agentName?: string } }) {
+  const [busy, setBusy] = useState(false);
+  const post = async (body: Record<string, unknown>) => {
+    const state = useEditor.getState();
+    const workflowId = state.workflowId;
+    setBusy(true);
+    try {
+      await api(`/api/workflows/${workflowId}/agent-moves`, { method: 'POST', json: { ...(state.baseUpdatedAt && { updatedAt: state.baseUpdatedAt }), ...body } });
+      // The flow lost the sub-node it moved: load it again, then the bubbles and the record.
+      const { workflow } = await api<{ workflow: Workflow }>(`/api/workflows/${workflowId}`);
+      state.load(workflow, Object.values(state.nodeTypes));
+      window.dispatchEvent(new CustomEvent(MOVES_CHANGED, { detail: { workflowId } }));
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="nodrag nopan absolute left-1/2 top-full z-10 mt-[66px] flex w-[190px] -translate-x-1/2 flex-col items-center gap-1 text-center" data-testid="local-tag">
+      <span title={local.why} className="rounded-full border border-dashed border-warnbd bg-sf px-2 py-px text-[10.5px] font-semibold text-warn">
+        this flow only
+      </span>
+      <span className="line-clamp-3 text-[10.5px] leading-tight text-t3">{local.why}</span>
+      {local.retry && (
+        <button type="button" disabled={busy} onClick={() => void post({ subNodeIds: [local.nodeId] })} className="rounded-full border border-hair bg-sf px-2 py-0.5 text-[10.5px] font-semibold text-t1 hover:bg-acdim disabled:opacity-60 max-md:min-h-9">
+          Try again
+        </button>
+      )}
+      {local.resolvable && (
+        <button type="button" disabled={busy} onClick={() => void post({ resolve: { [local.nodeId]: local.resolvable } })} className="rounded-full border border-hair bg-sf px-2 py-0.5 text-[10.5px] font-semibold text-t1 hover:bg-acdim disabled:opacity-60 max-md:min-h-9">
+          Use for {local.agentName ?? 'the agent'} everywhere
+        </button>
+      )}
     </div>
   );
 }

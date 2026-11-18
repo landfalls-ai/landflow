@@ -9,6 +9,7 @@
  */
 import { nanoid } from 'nanoid';
 import { changeParameter, defaultParameters, defaultVersionOf, indexedPorts } from '@landflow/protocol';
+import { ASSUMED_BUBBLES, BUBBLE, bubbleFootprint } from './agent-bubbles'; // AG16
 import { delegatesOf, replaceWithTeam, turnIntoTeamBlocker } from './turn-into-team';
 import type { ConnectionType, NodeDescriptor, NodeRun, PropertyDescriptor, Workflow, WorkflowConnection, WorkflowNode } from './types';
 
@@ -462,10 +463,38 @@ function addConnection(workflow: Workflow, lookup: DescriptorLookup, plan: Plann
 const overlaps = (workflow: Workflow, x: number, y: number, self: string) =>
   workflow.nodes.some((n) => n.id !== self && Math.abs(n.position[0] - x) < 100 && Math.abs(n.position[1] - y) < 90);
 
-/** The first spot from (x, y) that no other node covers, stepping down (or right, for sub-nodes). */
+/**
+ * AG16: the box a node bound to a saved agent (a Run an Agent node with a plain `agentId`, a Run a Team node with a plain `teamId`)
+ * keeps clear for its bubbles. Placement here is pure and has no agent data, so it assumes `ASSUMED_BUBBLES` of them.
+ */
+function bubbleBox(n: WorkflowNode): { x0: number; x1: number; y0: number; y1: number } | undefined {
+  const plain = (v: unknown) => typeof v === 'string' && v.trim() !== '' && !v.trim().startsWith('=') && !v.includes('{{');
+  const bound = (n.type === 'core.messageAgent' && plain(n.parameters?.agentId)) || (n.type === 'core.runTeam' && plain(n.parameters?.teamId));
+  if (!bound) return undefined;
+  const fp = bubbleFootprint(240, ASSUMED_BUBBLES);
+  return { x0: n.position[0] + fp.left, x1: n.position[0] + fp.right, y0: n.position[1] + BUBBLE.below, y1: n.position[1] + fp.bottom };
+}
+
+/** A spot a node of the usual size (88 px) at (x, y) would take inside a bound node's bubble box, as that box; else undefined. */
+const inBubbles = (workflow: Workflow, x: number, y: number, self: string) =>
+  workflow.nodes
+    .filter((n) => n.id !== self)
+    .map(bubbleBox)
+    .find((b) => b && x < b.x1 && x + 88 > b.x0 && y < b.y1 && y + 88 > b.y0);
+
+/** The first spot from (x, y) that no other node covers, stepping down (or right, for sub-nodes); never inside a bound node's bubbles (right of them, + 40, for a spot stepping down). */
 function freeSpot(workflow: Workflow, x: number, y: number, self: string, step: [number, number] = [0, ROW]): [number, number] {
   let [px, py] = [x, y];
-  for (let i = 0; i < 12 && overlaps(workflow, px, py, self); i++) [px, py] = [px + step[0], py + step[1]];
+  for (let i = 0; i < 12; i++) {
+    const box = inBubbles(workflow, px, py, self);
+    if (box) {
+      if (step[1]) px = box.x1 + 40;
+      else [px, py] = [px, box.y1 + 24];
+      continue;
+    }
+    if (!overlaps(workflow, px, py, self)) break;
+    [px, py] = [px + step[0], py + step[1]];
+  }
   return [px, py];
 }
 
