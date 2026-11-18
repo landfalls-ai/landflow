@@ -120,6 +120,20 @@ export function ChangeDiff({ before, ops, open = true, id, settled }: { before?:
   if (!diff) return null;
   const { steps, untouched, workflow } = diff;
   const count = steps.length + (workflow?.length ? 1 : 0);
+  // A changeAgent changes the agent, never the graph: the card says so instead of "No step changes" (Apply opens the agent's change card).
+  const agentOps = (ops as AssistantOp[] | AssistantOp[][]).flat().filter((o): o is Extract<AssistantOp, { op: 'changeAgent' }> => o.op === 'changeAgent');
+  if (count === 0 && agentOps.length) {
+    return (
+      <div data-testid="agent-change-line" className="rounded-lg border border-hair bg-sf px-2 py-1.5 text-[12px] leading-snug text-t2">
+        {agentOps.map((o, i) => (
+          <div key={i}>
+            Changes the agent{o.node ? ` of “${o.node}”` : ''}: <span className="text-t1">{o.change}</span>
+          </div>
+        ))}
+        <div className="text-t3">The steps stay as they are; Apply shows the agent’s change card.</div>
+      </div>
+    );
+  }
   return (
     <div className="rounded-lg border border-hair bg-sf px-2 py-1.5 font-mono text-[11px] leading-snug">
       <button type="button" aria-expanded={on} onClick={() => setOn((o) => !o)} className="flex w-full items-center gap-1 text-left text-t2 max-md:min-h-11">
