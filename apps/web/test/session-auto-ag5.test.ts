@@ -252,6 +252,18 @@ describe('an autonomous fix session on a saved, published flow (switch on)', () 
     expect(published).not.toHaveBeenCalled();
   });
 
+  it('the design request names the cause and the person’s ask as `namedBy`, never the model’s change text', async () => {
+    open();
+    agentRoutes();
+    runs = [{ 'Ask analyst': { items: 1 }, Post: { items: 1 } }, { 'Ask analyst': { items: 1 }, Post: { items: 1 } }];
+    replies = [{ text: 'No, the agent has no database tool.', agentFix: lack }, { text: 'Yes.' }];
+    await testUntilItRuns('Post the sales by region to the receiver');
+    const body = apiCalls.find((c) => c.path === '/api/agents/design')!.json as { namedBy: string; change: string };
+    expect(body.namedBy).toBe('the agent has no database tool\nPost the sales by region to the receiver');
+    expect(body.namedBy).not.toContain(lack.change);
+    expect(body.change).toBe(lack.change);
+  });
+
   it('the run carries at most the run schema’s limits: 50 destinations of at most 2000 characters', async () => {
     open();
     runs = [{ 'Ask analyst': { items: 1 }, Post: { items: 1 } }];

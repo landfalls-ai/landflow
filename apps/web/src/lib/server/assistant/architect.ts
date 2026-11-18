@@ -2218,24 +2218,39 @@ export function designFailure(caught: unknown): string {
   return text ? `the model call failed: ${text.length > 160 ? `${text.slice(0, 159)}…` : text}` : 'the model call failed';
 }
 
+/** Verbs a display name starts with ("Change Case", "Read Rows"): words of a request that never name a tool by themselves. */
+const NAME_VERBS = new Set('change read write send create update delete search get make convert format run execute query fetch list add remove set'.split(' '));
+
 /**
- * Wave ag5 fix pass: whether the session's cause or the person's ask (`text`) names this tool: its own words (`names`), or its app
- * (plugin, display name or one of its keywords of 5+ letters, in any form: "database" names SQLite). The fix design's rule for a tool
- * it was not asked for: the live G2 fix added a Change Case tool that asks first, which nobody named.
+ * Wave ag5 fix pass 2: whether `text` names this tool, in whole words: its call name, its display name as a phrase, its plugin, a
+ * keyword of its app (5+ letters, "database" names SQLite), or a word of its display name that is not a verb and has 5+ letters
+ * ("Sales Read" by "the sales"). One verb of a longer name never does: "Change “X” so these cases pass" does not name Change Case.
  */
-function namedByCause(text: string, tool: AgentToolConfig, types: NodeTypeInfo[]): boolean {
-  const lower = text.toLowerCase();
-  const squashed = lower.replace(/[^a-z0-9]+/g, '');
+export function namesTool(text: string, tool: AgentToolConfig, types: NodeTypeInfo[]): boolean {
+  const words = text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map((w) => w.replace(/(?:e?s)$/, ''));
+  const joined = ` ${words.join(' ')} `;
+  const phrase = (name: string) => {
+    const parts = name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map((w) => w.replace(/(?:e?s)$/, ''));
+    return parts.length > 0 && joined.includes(` ${parts.join(' ')} `);
+  };
   const info = tool.type === 'node' ? types.find((x) => x.type === tool.nodeType) : undefined;
-  // The whole name, not one of its words ("Change Case" is not named by "change it so …").
-  const wholeNames = [('name' in tool && tool.name) || '', info?.descriptor.displayName ?? ''].map((n) => n.toLowerCase().replace(/[^a-z0-9]+/g, '')).filter((n) => n.length >= 3);
-  if (wholeNames.some((n) => squashed.includes(n))) return true;
+  if (phrase(('name' in tool && tool.name) || '') || (info && phrase(info.descriptor.displayName))) return true;
   if (!info) return false;
-  // Every word of its display name, in any form ("Sales Read" by "reads the sales"): one word of a longer name is not enough.
-  const nameWords = info.descriptor.displayName.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
-  if (nameWords.length && nameWords.every((w) => lower.includes(w.replace(/s$/, '')))) return true;
-  const terms = [info.pluginId, info.descriptor.displayName, ...(info.descriptor.keywords ?? []).filter((k) => k.length >= 5)].map((t) => t?.toLowerCase().trim()).filter((t): t is string => Boolean(t) && t.length >= 4);
-  return terms.some((t) => new RegExp(`(?<![a-z0-9])${escapeRegExp(t.replace(/(?:e?s)$/, ''))}`).test(lower));
+  const single = [info.pluginId, ...(info.descriptor.keywords ?? []).filter((k) => k.length >= 5), ...info.descriptor.displayName.split(/[^A-Za-z0-9]+/).filter((w) => w.length >= 5 && !NAME_VERBS.has(w.toLowerCase()))];
+  return single.some((t) => (t ? phrase(t) : false));
+}
+
+/** Whether a node tool only reads: it does not ask first and its call changes nothing outside (the same heuristic the design's least-privilege rules use). */
+const readOnlyTool = (tool: AgentToolConfig) => tool.type === 'node' && !tool.requireApproval && !writesOutside({ type: tool.nodeType, parameters: tool.parameters ?? {} });
+
+/**
+ * The fix design's rule for a tool it was not asked for (the live G2 fix added a Change Case tool that asks first): a tool the
+ * change adds must be named by the session's cause or the person's ask (`namedBy`). The model's own change text may name a tool
+ * only when it is a read, which keeps the SQLite select fix; a tool that asks first or writes always needs the cause or the ask.
+ */
+export function requested(tool: AgentToolConfig, spec: { namedBy: string; change: string }, types: NodeTypeInfo[]): boolean {
+  if (namesTool(spec.namedBy, tool, types)) return true;
+  return readOnlyTool(tool) && namesTool(spec.change, tool, types);
 }
 
 /**
@@ -2299,7 +2314,7 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
       // Wave ag5 fix pass: in an agent-fix design a tool the session's cause and the person's ask do not name is not added: it is listed in `notAdded`.
       if (spec.namedBy !== undefined) {
         const had = new Set((spec.base.tools ?? []).map(toolKey));
-        const unrequested = (kept.config.tools ?? []).filter((t) => !had.has(toolKey(t)) && !namedByCause(spec.namedBy!, t, input.types));
+        const unrequested = (kept.config.tools ?? []).filter((t) => !had.has(toolKey(t)) && !requested(t, { namedBy: spec.namedBy!, change: spec.change! }, input.types));
         if (unrequested.length) {
           const tools = (kept.config.tools ?? []).filter((t) => !unrequested.includes(t));
           const finalSteps = stepsToolsOf(tools, input.types);

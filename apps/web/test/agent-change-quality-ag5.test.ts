@@ -34,7 +34,8 @@ beforeAll(() => {
   registry.registerBuiltin({ info: { id: 'databases', name: 'Databases', version: '1', description: 'x' }, nodes: [{ description, execute: async () => [[]] }] } as unknown as IPlugin);
 });
 
-const { nameOnlyOwnTools, readsAsSentence, wholeSentences } = await import('@/lib/server/assistant/architect');
+const architectApi = await import('@/lib/server/assistant/architect');
+const { nameOnlyOwnTools, readsAsSentence, wholeSentences } = architectApi;
 const { checkCases, figuresOf } = await import('@/lib/server/agents/case-rules');
 const post = (body: unknown) => import('@/app/api/agents/design/route').then(({ POST }) => POST(new Request('http://localhost/api/agents/design', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })));
 
@@ -146,31 +147,63 @@ describe('the live change text, with a comma inside brackets (fix pass, item 2)'
   });
 });
 
-describe('an agent fix adds only a tool the cause or the person’s ask names (fix pass, item 6)', () => {
-  const CHANGE = 'Give it the SQLite tool so it reads the figures';
+describe('an agent fix adds only a tool the cause or the person’s ask names (fix pass 2, item 3)', () => {
   type NotAdded = { notAdded: Array<{ name: string; reason: string }> };
-  const design = async (namedBy: string | undefined) => {
+  const design = async (change: string, namedBy: string | undefined) => {
     const { agent } = await writer([]);
-    return (await (await withModel({ design: { instructions: STEPS, nodeTools: 'databases.sqlite' } }, () => post({ name: 'Short writer', preview: true, base: { agentId: agent.id }, change: CHANGE, ...(namedBy !== undefined && { namedBy }) }))).json()) as Body & NotAdded;
+    return (await (await withModel({ design: { instructions: STEPS, nodeTools: 'databases.sqlite' } }, () => post({ name: 'Short writer', preview: true, base: { agentId: agent.id }, change, ...(namedBy !== undefined && { namedBy }) }))).json()) as Body & NotAdded;
   };
   const hasSqlite = (body: Body) => body.config.tools.some((t) => 'nodeType' in t && t.nodeType === 'databases.sqlite');
 
-  it('a tool neither the cause nor the ask names is dropped and listed in notAdded, with no step that calls it', async () => {
-    const body = await design('The summary has made-up figures.\nThe numbers look made up. Test it and fix it.');
+  it('a tool the design adds that neither the cause, the ask nor (for a read) the change text names is dropped and listed in notAdded, with no step that calls it', async () => {
+    const body = await design('Make it read the figures', 'The summary has made-up figures.\nThe numbers look made up. Test it and fix it.');
     expect(hasSqlite(body)).toBe(false);
-    expect(body.notAdded).toEqual([expect.objectContaining({ name: expect.stringMatching(/sqlite/i), reason: expect.stringMatching(/names it/) })]);
     expect(body.config.instructions ?? '').not.toMatch(/sqlite/i);
   });
 
-  it('a tool the cause names (by its app or a word for it) is added as before', async () => {
-    expect(hasSqlite(await design('the agent has no database tool'))).toBe(true);
-    expect(hasSqlite(await design('It needs the SQLite tool to read the sales.'))).toBe(true);
+  it('the live G case: the change text alone names the SQLite read (no approval, no write): it stays', async () => {
+    expect(hasSqlite(await design('Give it the SQLite tool so it reads the figures', 'it has no data, so its figures are made up\nThe numbers look made up. Test it and fix it.'))).toBe(true);
   });
 
-  it('a design with no namedBy (every other change) is unchanged', async () => {
-    const body = await design(undefined);
-    expect(hasSqlite(body)).toBe(true);
-    expect(body.notAdded.some((n) => /names it/.test(n.reason))).toBe(false);
+  it('a tool the cause or the ask names is added as before; a design with no namedBy is unchanged', async () => {
+    const change = 'Give it the SQLite tool so it reads the figures';
+    expect(hasSqlite(await design(change, 'the agent has no database tool'))).toBe(true);
+    expect(hasSqlite(await design(change, 'Use the SQLite tool to read the sales.'))).toBe(true);
+    const plain = await design(change, undefined);
+    expect(hasSqlite(plain)).toBe(true);
+  });
+
+  describe('requested (the rule itself)', () => {
+    const info = (type: string, displayName: string, keywords: string[] = [], pluginId = type.split('.')[0]) => ({ type, pluginId, pluginName: pluginId, descriptor: { displayName, keywords, properties: [] } }) as never;
+    const types = [info('databases.sqlite', 'SQLite', ['sqlite', 'database']), info('text.changeCase', 'Change Case', ['case', 'upper', 'lower'], 'text')];
+    const node = (nodeType: string, name: string, extra: Record<string, unknown> = {}) => ({ id: 't', type: 'node', name, description: 'd', nodeType, parameters: {}, ...extra }) as never;
+    const { requested, namesTool } = architectApi;
+    // What the client sends: the cause and the typed ask; the model's own text is `change`.
+    const heldRetry = 'The eval gate held “Short writer”. Change “Short writer” so these cases pass without removing what it already does: a case with the input “Summarise” scored low.';
+    const namedBy = 'it has no data, so its figures are made up\nThe numbers look made up. Test it and fix it.';
+
+    it('the live G2 case: a Change Case tool that asks first is dropped, whatever the change text says', () => {
+      const changeCase = node('text.changeCase', 'change_case', { requireApproval: true });
+      expect(requested(changeCase, { namedBy, change: heldRetry }, types)).toBe(false);
+      expect(requested(changeCase, { namedBy, change: 'Change it so the region names are upper case' }, types)).toBe(false);
+      expect(requested(node('text.changeCase', 'change_case'), { namedBy, change: heldRetry }, types)).toBe(false); // even a read: “Change” and “cases” are not its name
+    });
+
+    it('the live G case: a SQLite select named by the change text alone stays; one that writes or asks first needs the cause or the ask', () => {
+      const select = node('databases.sqlite', 'sqlite', { parameters: { operation: 'select' } });
+      expect(requested(select, { namedBy, change: 'Give it the SQLite tool so it reads the figures' }, types)).toBe(true);
+      const insert = node('databases.sqlite', 'sqlite', { parameters: { operation: 'insert' }, requireApproval: true });
+      expect(requested(insert, { namedBy, change: 'Give it the SQLite tool so it saves the figures' }, types)).toBe(false);
+      expect(requested(insert, { namedBy: 'it needs a database to save the figures', change: 'x' }, types)).toBe(true);
+    });
+
+    it('matches whole words', () => {
+      const sqlite = node('databases.sqlite', 'sqlite');
+      expect(namesTool('a sqliteish thing and databasesque words', sqlite, types)).toBe(false);
+      expect(namesTool('the SQLite tool', sqlite, types)).toBe(true);
+      expect(namesTool('change it so these cases pass', node('text.changeCase', 'change_case'), types)).toBe(false);
+      expect(namesTool('use the Change Case tool', node('text.changeCase', 'change_case'), types)).toBe(true);
+    });
   });
 });
 
