@@ -46,4 +46,30 @@ describe('fixRemovals', () => {
     expect(fixRemovals([{ op: 'setNodeSettings', node: 'notify', settings: { disabled: true } }], wf(), lookup, allowed).reasons).toEqual(['turns off “Notify”']);
     expect(fixRemovals([{ op: 'disconnect', from: 'send email', to: 'NOTIFY' }], wf(), lookup, allowed).reasons).toEqual(['leaves “Notify” without its input']);
   });
+
+  it('a disconnect is judged from the result: a rename before it does not hide the lost input', () => {
+    const ops: AssistantOp[] = [{ op: 'renameNode', node: 'Notify', name: 'Zed' }, { op: 'disconnect', from: 'Send Email', to: 'Zed' }];
+    expect(fixRemovals(ops, wf(), lookup, own).reasons).toEqual(['leaves “Zed” without its input']);
+  });
+
+  it('removing the session’s own Helper, the only input of the person’s Notify, waits', () => {
+    const w = wf();
+    w.connections = [{ id: 'e1', type: 'main', source: 'a', sourceIndex: 0, target: 'h', targetIndex: 0 }, { id: 'e3', type: 'main', source: 'h', sourceIndex: 0, target: 'q', targetIndex: 0 }];
+    const out = fixRemovals([{ op: 'removeNode', node: 'Helper' }], w, lookup, own);
+    expect(out.reasons).toEqual(['leaves “Notify” without its input']);
+  });
+
+  it('disconnecting and reconnecting the session’s own Helper does not wait', () => {
+    const w = wf();
+    w.connections = [{ id: 'e1', type: 'main', source: 'a', sourceIndex: 0, target: 'h', targetIndex: 0 }];
+    const ops: AssistantOp[] = [{ op: 'disconnect', from: 'Start', to: 'Helper' }, { op: 'connect', from: 'Start', to: 'Helper' }];
+    expect(fixRemovals(ops, w, lookup, own).reasons).toEqual([]);
+  });
+
+  it('proposals apply in turn: one adds a “Send Email”, the next removes that name, and the person’s step still waits', () => {
+    const p1: AssistantOp[] = [{ op: 'addNode', ref: 'Send Email', type: 'core.code' } as AssistantOp];
+    const p2: AssistantOp[] = [{ op: 'removeNode', node: 'Send Email' }];
+    const out = fixRemovals([p1, p2], wf(), lookup, own);
+    expect(out.reasons.join()).toContain('removes “Send Email”');
+  });
 });

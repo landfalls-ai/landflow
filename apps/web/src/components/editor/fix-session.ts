@@ -167,8 +167,11 @@ export interface RemovalsAllowed {
  * session's own nor a duplicate, a step newly turned off, and a step an explicit `disconnect` leaves without any main input (the
  * session's own steps excepted). `lines` are the removals that go through without one, each with its reason.
  */
-export function fixRemovals(ops: readonly AssistantOp[], workflow: Workflow, lookup: DescriptorLookup, allowed: RemovalsAllowed | undefined): { reasons: string[]; lines: string[] } {
-  const after = applyOps(workflow, [...ops], lookup).workflow;
+export function fixRemovals(proposals: readonly AssistantOp[] | readonly (readonly AssistantOp[])[], workflow: Workflow, lookup: DescriptorLookup, allowed: RemovalsAllowed | undefined): { reasons: string[]; lines: string[] } {
+  // Each proposal applies in turn, the way applyChanges does, so a name one proposal adds and the next removes is judged on the result.
+  const groups: (readonly AssistantOp[])[] = proposals.length > 0 && Array.isArray(proposals[0]) ? (proposals as (readonly AssistantOp[])[]) : [proposals as readonly AssistantOp[]];
+  let after = workflow;
+  for (const group of groups) after = applyOps(after, [...group], lookup).workflow;
   const reasons: string[] = [];
   const lines: string[] = [];
   const nowIds = new Set(after.nodes.map((n) => n.id));
@@ -183,18 +186,14 @@ export function fixRemovals(ops: readonly AssistantOp[], workflow: Workflow, loo
     if (was && node.disabled === true && was.disabled !== true) reasons.push(`turns off “${node.name}”`);
   }
   const mainIn = (wf: Workflow, id: string) => wf.connections.filter((c) => c.target === id && (c.type ?? 'main') === 'main').length;
-  const disconnectTargets = new Set(
-    ops.flatMap((op) => {
-      if (op.op !== 'disconnect' || (op.type ?? 'main') !== 'main') return [];
-      const ref = op.to.toLowerCase();
-      const target = workflow.nodes.find((n) => n.name === op.to || n.id === op.to) ?? workflow.nodes.find((n) => n.name.toLowerCase() === ref);
-      return target ? [target.id] : [];
-    }),
-  );
-  for (const id of disconnectTargets) {
-    const node = after.nodes.find((n) => n.id === id);
-    if (!node || allowed?.own?.has(id)) continue;
-    if (mainIn(workflow, id) > 0 && mainIn(after, id) === 0) reasons.push(`leaves “${node.name}” without its input`);
+  for (const node of after.nodes) {
+    if (allowed?.own?.has(node.id)) continue;
+    if (!workflow.nodes.some((n) => n.id === node.id)) continue;
+    if (mainIn(workflow, node.id) === 0 || mainIn(after, node.id) > 0) continue;
+    // An input lost only to a step that is gone and already said (waiting, or a duplicate) is not said twice; one lost to the session's own step is.
+    const lostTo = workflow.connections.filter((c) => c.target === node.id && (c.type ?? 'main') === 'main').map((c) => c.source);
+    if (lostTo.every((src) => !nowIds.has(src) && !allowed?.own?.has(src))) continue;
+    reasons.push(`leaves “${node.name}” without its input`);
   }
   return { reasons: [...new Set(reasons)], lines };
 }

@@ -1112,7 +1112,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       // SB03 (D1): asks-first, and a change that removes a step even under auto, waits for the person's Apply.
       // The person's decision of 2026-11-18: an autonomous session removes a step it added, or one the bound agent plainly does itself, without a click.
       const allowed: RemovalsAllowed | undefined = autonomy === 'auto' ? { own: ownNodes, duplicates: await repeatedByAgents() } : undefined;
-      const removals = autonomy === 'auto' ? fixRemovals(proposals.flatMap((p) => p.ops), useEditor.getState().toWorkflow(), editorLookup(), allowed) : undefined;
+      const removals = autonomy === 'auto' ? fixRemovals(proposals.map((p) => p.ops), useEditor.getState().toWorkflow(), editorLookup(), allowed) : undefined;
       const reasons = removals?.reasons ?? [];
       if (autonomy === 'asks-first' || reasons.length) {
         if (reasons.length) {
