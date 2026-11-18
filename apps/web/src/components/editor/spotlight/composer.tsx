@@ -21,7 +21,7 @@ import { suggestionKey, useAssistant, useSuggestions, useWorking, type ChatItem,
 import { useEditor } from '../store';
 import { dictationSupported, useDictation } from '../use-dictation';
 import { testUntilItRuns } from '../test-session';
-import { lastOutcomeOf, lastRunOf, openNeedOf } from '../timeline';
+import { lastOutcomeOf, lastRunOf, composerBusy, openNeedOf, sessionIsWaiting } from '../timeline';
 
 
 export const INPUT_ID = 'spotlight-input';
@@ -118,7 +118,9 @@ const FIX_ANSWER = 'fix-answer';
 /** The input at the bottom of the panel, with its bubbles above it. */
 export function Composer() {
   const hasItems = useAssistant((s) => s.items.length > 0);
-  const pending = useAssistant((s) => s.pending || Boolean(s.testing));
+  // The session waits on its own card (Apply, Pick it, Publish): the person is the one working, so the box is free and a typed message is a normal ask.
+  const waiting = useAssistant((s) => sessionIsWaiting({ testing: Boolean(s.testing), pending: s.pending }, s.items, s.testingId));
+  const pending = useAssistant((s) => composerBusy({ testing: Boolean(s.testing), pending: s.pending }, s.items, s.testingId));
   const drafting = useAssistant((s) => s.drafting);
   const working = useWorking();
   const empty = useEditor((s) => s.nodes.length === 0);
@@ -254,7 +256,7 @@ export function Composer() {
       }
     }
     // Wave ag4 carryover: "Run it now and fix it if it fails." is the Test and fix session (it asks before a run that writes outside), as the bubble is.
-    if (runAndFixAsk(message)) {
+    if (runAndFixAsk(message) && !waiting) {
       if (useAssistant.getState().pending || useAssistant.getState().testing) return;
       useAssistant.getState().append([{ id: nanoid(8), role: 'user', text: message }]);
       void testUntilItRuns(useEditor.getState().description?.trim() || undefined);

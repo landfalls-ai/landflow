@@ -250,6 +250,11 @@ export function sessionIsWaiting(state: { testing: boolean; pending: boolean }, 
   return state.testing && !state.pending && sessionWaitsForApply(items, testingId);
 }
 
+/** Whether the composer is busy (its Stop, no sending): a reply streams or a session works; a session that waits on a card of its own leaves the box free. */
+export function composerBusy(state: { testing: boolean; pending: boolean }, items: ChatItem[], testingId: string | undefined): boolean {
+  return state.pending || (state.testing && !sessionIsWaiting(state, items, testingId));
+}
+
 /** The panel's header: what Spotlight is doing, or how the last session ended. */
 export function titleOf(state: PanelState): string {
   if (state.drafting) return 'Drafting the flow';

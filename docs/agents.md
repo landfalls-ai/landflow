@@ -255,6 +255,12 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   type and name with another operation changes the kept tool (same id, same credential, its operation; an explicit approval on a tool that was a read stays), never a second tool
   beside it. What an agent fix may add is the prompt's to say; the card lists every tool it adds. The Left rows are worked out after
   the dedupe.
+- **A data tool takes back the lines that deny it (final run 2).** When a change adds a data (`databases.*`) or knowledge tool, the
+  design route (`agents/change-lookup.ts`) removes the persona and instruction lines that say the agent looks nothing up (*Uses only
+  the text it receives*, *Never claim to have looked up data*), shows each on the card (*Instructions: removed …*, *Persona: removed …*)
+  and replaces the agent's eval cases, which tested text-only answers, with two it can answer through the tool (*what were last
+  month's sales by region*, read through the tool). The card says *Tests: 2 replaced*; Apply deletes the old cases and adds the new
+  ones. Nothing is removed when no line contradicts the tool.
 - **What a read is, and the run-time hold.** On SQLite (`readsByQuery` in `run-check.ts`; Postgres and MySQL Execute Query are always
   writes) a read is the plugin's Select, or an Execute Query that is one statement after the comments are gone, starts with `SELECT`
   and has no `INTO`, `FOR UPDATE`, `load_extension`, `nextval` or `dblink`. `WITH`, `PRAGMA`, `EXPLAIN`, an empty, per-call (`$fromAI`)

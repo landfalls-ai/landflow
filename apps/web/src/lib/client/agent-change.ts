@@ -16,6 +16,8 @@ export interface ChangeDesign {
   needs?: Array<{ text: string }>;
   missing?: Array<{ capability: string }>;
   designed?: boolean;
+  /** Cases that replace the agent's own when the change gives it a data tool (`Tests: N replaced` on the card). */
+  cases?: Array<{ input: string; expected?: string }>;
   /** Why the model made no design when it failed (a usage limit in the provider's words). */
   failure?: string;
   /** ag1-int: the tools the change named that the agent did not get, and why. */
@@ -42,8 +44,14 @@ export async function readDraft(agentId: string): Promise<Record<string, unknown
 }
 
 /** Apply: the config becomes the agent's draft (`PUT /api/agents/:id`: never a publish), then the draft runs once on `sample`. */
-export async function saveChange(agentId: string, config: Record<string, unknown>, sample: string): Promise<AgentSmoke> {
+export async function saveChange(agentId: string, config: Record<string, unknown>, sample: string, cases: Array<{ input: string; expected?: string }> = []): Promise<AgentSmoke> {
   await api(`/api/agents/${agentId}`, { method: 'PUT', json: config });
+  // A change that gives the agent a data tool brings cases it can answer: they replace the ones that tested the old behaviour (the card said "Tests: N replaced").
+  if (cases.length) {
+    const known = await api<{ cases?: Array<{ id: string }> }>(`/api/agents/${agentId}/eval-gate`).catch(() => undefined);
+    for (const old of known?.cases ?? []) await api(`/api/agents/${agentId}/eval-gate`, { method: 'DELETE', json: { caseId: old.id } });
+    for (const c of cases) await api(`/api/agents/${agentId}/eval-gate`, { method: 'POST', json: { input: c.input, ...(c.expected && { expected: c.expected }) } });
+  }
   announceChange(agentId); // the agent's page shows the saved draft while the test runs
   try {
     const { smoke } = await api<{ smoke: AgentSmoke }>(`/api/agents/${agentId}/smoke-test`, { method: 'POST', json: { message: sample.slice(0, 4000) } });

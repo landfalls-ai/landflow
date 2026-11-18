@@ -11,6 +11,7 @@ vi.mock('@/components/canvas/sticky-note', () => ({ STICKY_DEFAULT_CONTENT: '## 
 const { useEditor } = await import('@/components/editor/store');
 const { useAssistant } = await import('@/components/editor/assistant');
 const { startTypedSession } = await import('@/components/editor/spotlight/typed-session');
+const { composerBusy } = await import('@/components/editor/timeline');
 const { autonomyOf, noteOpened, useAutonomyFacts } = await import('@/components/editor/spotlight-autonomy');
 
 const node = (id: string, name: string, type: string) => ({ id, name, type, typeVersion: 1, position: [0, 0] as [number, number], parameters: {} });
@@ -40,5 +41,24 @@ describe('the composer’s typed sessions', () => {
     expect(session).toHaveBeenCalledTimes(1);
     for (const ask of ['Why are the numbers wrong?', 'The retry is off, turn it on', 'Run this step']) expect(startTypedSession(ask), ask).toBe(false);
     expect(session).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('a session that waits on its own card', () => {
+  const card = (c: object) => [{ id: 'k', role: 'assistant' as const, testId: 't1', parts: [{ kind: 'agentCard' as const, card: { fix: { attempt: 1 }, ...c } }] }] as never;
+  it('leaves the composer free, and a typed wrong-output ask is a normal ask, not a second session', () => {
+    const items = card({ state: 'designed' });
+    expect(composerBusy({ testing: true, pending: false }, items, 't1')).toBe(false);
+    expect(composerBusy({ testing: true, pending: true }, items, 't1')).toBe(true); // a reply streams
+    expect(composerBusy({ testing: true, pending: false }, card({ state: 'creating', smoke: { state: 'testing' } }), 't1')).toBe(true); // it works
+    useAssistant.setState({ testing: new AbortController(), testingId: 't1', items });
+    expect(startTypedSession('The numbers in the summary look made up. Test it and fix it.')).toBe(false);
+    expect(session).not.toHaveBeenCalled();
+    expect(useAssistant.getState().testing).toBeTruthy(); // the session stays waiting
+  });
+  it('a session that works, with no card of its own open, still swallows the ask', () => {
+    useAssistant.setState({ testing: new AbortController(), testingId: 't1', items: [] });
+    expect(startTypedSession('Run it now')).toBe(true);
+    expect(session).not.toHaveBeenCalled();
   });
 });

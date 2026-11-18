@@ -500,7 +500,7 @@ async function showAgentFix(event: AgentFixEvent, attempt: number, signal: Abort
   try {
     const design = await designChange({ name: event.agent, description: '', base: { agentId: event.agentId }, change: event.change, ...pickedModel() }, signal);
     const fix = { ...event.fix, attempt };
-    const card: AgentCard = { ...cardOf(design.config as Partial<AgentConfig>, event.agent, design.needs, design.missing), base: { agentId: event.agentId, name: event.agent }, changes: design.changes, fix };
+    const card: AgentCard = { ...cardOf(design.config as Partial<AgentConfig>, event.agent, design.needs, design.missing), base: { agentId: event.agentId, name: event.agent }, changes: design.changes, cases: design.cases ?? [], fix };
     const id = nanoid(8);
     useAssistant.getState().append([{ id, role: 'assistant', testId, parts: [{ kind: 'text', text: fixLine(event.agent, fix) }, { kind: 'agentCard', card }] }]);
     return id;

@@ -165,7 +165,7 @@ export function AgentChangePanel({ agentId, name, onClose, conversation, heading
         patch(turn.id, { state: 'ready', snapshot: moved.snapshot, design: { ...turn.design, changes: moved.changes }, notice: 'The draft changed since this was designed. Here is what applying it does now; nothing was saved.' });
         return;
       }
-      const smoke = await saveChange(agentId, turn.design.config, `Hello ${name}, what can you do?`);
+      const smoke = await saveChange(agentId, turn.design.config, `Hello ${name}, what can you do?`, turn.design.cases);
       patch(turn.id, { state: 'saved', smoke });
     } catch (e) {
       patch(turn.id, { state: 'failed', error: (e as Error).message });

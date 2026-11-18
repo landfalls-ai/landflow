@@ -442,7 +442,7 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
             <AutonomousSwitch compact={live || testing} />
           </div>
           {/* The composer has its own Stop while a reply streams; this one is for a test run, or when the panel is folded. */}
-          {(collapsed ? live || testing : testing && !live) && (
+          {(collapsed ? live || testing : testing && !live && !sessionWaits) && (
             <button title="Stop" aria-label="Stop" onClick={stop} className="grid size-7 place-items-center rounded-full text-t3 hover:bg-rddim hover:text-rd disabled:opacity-40 max-md:size-11">
               <Square className="size-3" fill="currentColor" />
             </button>

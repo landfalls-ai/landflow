@@ -22,11 +22,12 @@ import { listKnowledgeDocuments } from '@/lib/server/agents/knowledge'; // AG19:
 import type { VectorKnowledgeBaseConfig } from '@/lib/shared/agents'; // AG19:
 import { resolveSpotlightModel } from '@/lib/server/assistant/models-list'; // SB19:
 import { allowedTypes } from '@/lib/server/assistant/scope';
-import { addCase } from '@/lib/server/agents/eval-gate'; // SB17:
+import { addCase, listCases } from '@/lib/server/agents/eval-gate'; // SB17:
 import { agentUsedBy, removeAgent } from '@/lib/server/agents/remove'; // SB18:
 import { agentStore, configOf } from '@/lib/server/agents/store';
 import { agentChanges } from '@/lib/shared/agent-changes'; // AG04:
 import { tidyChangedTools } from '@/lib/server/agents/change-tools';
+import { reconcileLookup } from '@/lib/server/agents/change-lookup';
 import type { AgentConfig } from '@/lib/shared/agents'; // AG04:
 import { isUsageCapError } from '@/lib/server/ai-usage';
 import { error, handler, json, parseBody } from '@/lib/server/http';
@@ -107,11 +108,18 @@ export const POST = handler(async (request: Request) => {
     design.config = tidy.config as typeof design.config;
     if (tidy.removed.length) design.needs = design.needs.filter((n) => !tidy.removed.includes(String(n.tool)) && !tidy.removed.some((r) => n.text.startsWith(`${r}:`)));
   }
+  // A data or knowledge tool the change adds: the lines that say the agent looks nothing up go, and the cases that tested that are replaced.
+  let lookup: ReturnType<typeof reconcileLookup> | undefined;
+  if (baseConfig && design.config) {
+    lookup = reconcileLookup(baseConfig as never, design.config as never);
+    design.config = lookup.config as typeof design.config;
+  }
+  const replaced = lookup?.cases.length && base && 'agentId' in base ? listCases(base.agentId).length : 0;
   const config = baseConfig ? design.config : { avatar: { kind: 'face' as const, face: randomFace(parsed.data.name) }, ...design.config }; // AG04: a change keeps the base's own look
   if (parsed.data.preview) {
     // SB16: the card's preview: a face to show, nothing saved; SB17's brief's cases come with it.
     // AG04: a change also says what it changes from the base; nothing is saved.
-    if (baseConfig) return json({ config, changes: agentChanges(baseConfig, config as Record<string, unknown>), needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: [], notAdded: design.notAdded, models /* AG02: */, ...(setup.knowledge && { knowledge: setup.knowledge }) /* AG13: */, ...(design.failure && { failure: design.failure }) });
+    if (baseConfig) return json({ config, changes: [...agentChanges(baseConfig, config as Record<string, unknown>), ...(lookup?.lines ?? []), ...(lookup?.cases.length ? [`Tests: ${replaced ? `${replaced} replaced` : `${lookup.cases.length} added`}`] : [])], needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: lookup?.cases ?? [], notAdded: design.notAdded, models /* AG02: */, ...(setup.knowledge && { knowledge: setup.knowledge }) /* AG13: */, ...(design.failure && { failure: design.failure }) });
     return json({ config, needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: design.cases ?? [], notAdded: design.notAdded, models /* AG02: */, ...(setup.knowledge && { knowledge: setup.knowledge }) /* AG13: */, ...reasoned /* AG19: */ });
   }
   const agent = createInProject(request, 'agent', () => agentStore.create(config), (a) => a.id);
