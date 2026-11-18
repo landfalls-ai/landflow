@@ -1772,11 +1772,30 @@ const STEPS_HEAD = /^\s*(?:#{1,4}\s*)?steps\s*:/i;
 const AFTER_STEPS = /^\s*(?:#{1,4}\s*)?(?:output|hand[ -]?over(?:\s+when)?)\s*:/i;
 const NUMBERED = /^(\s*)\d+([.)]\s)/;
 
+/** A clause that reads after "When", built from what the tool says it is for (its description's first sentence, without a lead-in such as "Use this to" or "When you need to"). */
+function descriptionClause(tool: AgentToolConfig): string {
+  const first = ('description' in tool && tool.description ? tool.description : '').replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s/)[0].replace(/[\s.!?]+$/, '').replace(/`/g, '');
+  const task = first.replace(/^(?:use|call)\s+(?:this|it)\s+(?:when|to|for|if)\s+/i, '').replace(/^(?:use\s+when|when|if)\s+(?:you\s+|the\s+agent\s+)?(?:need\s+to\s+|needs?\s+to\s+)?/i, '').trim();
+  if (task) {
+    let cut = task.length > 90 ? `${task.slice(0, 90).replace(/\s+\S*$/, '')}…` : task;
+    // A cut never leaves a bracket open: the clause stops before the unmatched opener.
+    const open: number[] = [];
+    for (let i = 0; i < cut.length; i++) {
+      if ('([{'.includes(cut[i])) open.push(i);
+      else if (')]}'.includes(cut[i])) open.pop();
+    }
+    if (open.length) cut = `${cut.slice(0, open[0]).trimEnd()}${task.length > 90 ? '…' : ''}`;
+    return `you need to ${cut.charAt(0).toLowerCase()}${cut.slice(1)}`;
+  }
+  return `the job needs ${'name' in tool && tool.name ? tool.name.replace(/[_-]+/g, ' ') : 'it'}`;
+}
+
 /** What the change asked, cut to one clause that reads after "When": the clause that names the tool, its leading "also"/"please" dropped, "let it X" as "it should X". */
 function changeClause(change: string, tool: AgentToolConfig): string {
   const clauses = change.split(/[.;\n]+/).map((c) => c.trim()).filter(Boolean);
   const clause = clauses.find((c) => names(c, tool)) ?? clauses[0] ?? '';
-  const piece = clause.split(/,|\s+(?:and|but|then)\s+/i).map((c) => c.trim()).find((c) => names(c, tool)) ?? clause;
+  // Never cut inside brackets or backticks ("Give it the SQLite tool (select / executeQuery, read-only) …"): `splitClauses` and then "but".
+  const piece = splitClauses(clause).flatMap((c) => c.split(/\s+but\s+/i)).map((c) => c.trim()).find((c) => names(c, tool)) ?? clause;
   const text = piece.replace(/^(?:(?:also|and|please|now|then|just)\s+)+/i, '').replace(/[\s,.:;!?]+$/, '');
   // AG09: "add Slugify as a tool" configures the agent; it is no task, so the step comes from what the tool does.
   // AG09: the shape "a tool that/to/which/for …" is read before its article is stripped.
@@ -1793,14 +1812,7 @@ function changeClause(change: string, tool: AgentToolConfig): string {
   if (configAsk) {
     const toTask = /^(?:(?:a|an|the|another)\s+)?tools?\s+to\s+(?!(?:the|this|my|our)\s+(?:agent|bot|assistant)\b|it\b)(.+)$/i.exec(bare)?.[1];
     if (toTask) return `asked to ${toTask.split(/\s+/).slice(0, 14).join(' ')}`;
-    // the first sentence of what the tool says it is for, without a lead-in such as "Use this to" or "When you need to"
-    const first = ('description' in tool && tool.description ? tool.description : '').replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s/)[0].replace(/[\s.!?]+$/, '').replace(/`/g, '');
-    const task = first.replace(/^(?:use|call)\s+(?:this|it)\s+(?:when|to|for|if)\s+/i, '').replace(/^(?:use\s+when|when|if)\s+(?:you\s+|the\s+agent\s+)?(?:need\s+to\s+|needs?\s+to\s+)?/i, '').trim();
-    if (task) {
-      const cut = task.length > 90 ? `${task.slice(0, 90).replace(/\s+\S*$/, '')}…` : task;
-      return `you need to ${cut.charAt(0).toLowerCase()}${cut.slice(1)}`;
-    }
-    return `the job needs ${'name' in tool && tool.name ? tool.name.replace(/[_-]+/g, ' ') : 'it'}`;
+    return descriptionClause(tool);
   }
   const said = /^(?:let|have|make)\s+(?:it|the agent)\s+/i.test(text) ? text.replace(/^(?:let|have|make)\s+(?:it|the agent)\s+/i, 'it should ') : `asked to ${text}`;
   const words = said.split(/\s+/).slice(0, 16).join(' ');
@@ -1817,7 +1829,13 @@ function withToolSteps(text: string, added: Array<{ tool: AgentToolConfig; line?
   const others = lines.filter((l) => !TOOLS_LINE.test(l)).join('\n');
   const missing = added.filter(({ tool: t }) => 'name' in t && t.name && !new RegExp(`(?<![A-Za-z0-9_])${escapeRe(t.name)}(?![A-Za-z0-9_])`, 'i').test(others));
   if (!missing.length) return text;
-  const steps = missing.map(({ tool: t, line }) => line ?? `0. When ${changeClause(change, t)}, call ${'name' in t ? t.name : ''}${'requireApproval' in t && t.requireApproval ? ' (it asks the person first)' : ''}.`);
+  const call = (t: AgentToolConfig) => `${'name' in t ? t.name : ''}${'requireApproval' in t && t.requireApproval ? ' (it asks the person first)' : ''}`;
+  const steps = missing.map(({ tool: t, line }) => {
+    if (line) return line;
+    const built = `0. When ${changeClause(change, t)}, call ${call(t)}.`;
+    // A step cut mid-bracket, or one that repeats the ask's own "Give it …", falls back to a step built from the tool's description.
+    return readsAsSentence(built) && !/^\d+\.\s*When asked to (?:add|attach|include|install|enable|connect|use|give)\b/i.test(built) ? built : `0. When ${descriptionClause(t)}, call ${call(t)}.`;
+  });
   const toolsAt = lines.findIndex((l, i) => i >= start && i < end && TOOLS_LINE.test(l));
   let at = toolsAt;
   if (at < 0) {
@@ -1908,6 +1926,7 @@ export const EXPLICIT_WRITE = /\b(?:insert|updat(?:e|es|ing)|delet(?:e|es|ing)|w
 function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: string, types: NodeTypeInfo[] = [], typedAsk?: string, keep?: AgentSpec['keep'] /* AG24: */): void {
   // What the person said decides whether a read may become a write; in an agent-fix session that is their typed ask, not the model's own change text.
   const said = typedAsk ?? change;
+  const proposedInstructions = draft.config.instructions ?? base.instructions ?? ''; // the model's own text, before any rewrite here
   // AG24: a tool the session added is never removed by the change's words, nor dropped by the design: it stays, and a line says why.
   const keeps = (t: AgentToolConfig) => isKeptTool(keep, t as unknown as Record<string, unknown>);
   for (const t of base.tools ?? []) {
@@ -1952,16 +1971,26 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
     ...base,
     name: renamed ?? madeAgain(base, [...kept, ...added], types) /* AG09: */ ?? base.name ?? draft.config.name,
     description: draft.config.description || base.description || '',
-    instructions: reviseInstructions(draft.config.instructions ?? base.instructions ?? '', base.instructions ?? '', [...kept, ...added], { tools: added, change } /* AG09: */),
+    instructions: reviseInstructions(proposedInstructions, base.instructions ?? '', [...kept, ...added], { tools: added, change } /* AG09: */),
     tools: [...kept, ...added],
   };
+  // AG24 (fix pass): a tool the session added keeps a step that calls it: the base's own step for it, else one built from the tool.
+  for (const t of kept.filter(keeps)) {
+    const name = 'name' in t ? t.name : undefined;
+    if (!name) continue;
+    const named = (line: string) => new RegExp(`(?<![A-Za-z0-9_])${escapeRe(name)}(?![A-Za-z0-9_])`, 'i').test(line);
+    const text = config.instructions ?? '';
+    if (text.split('\n').some((l) => !TOOLS_LINE.test(l) && named(l))) continue;
+    const own = (base.instructions ?? '').split('\n').find((l) => /^\s*\d+[.)]\s/.test(l) && !TOOLS_LINE.test(l) && named(l) && readsAsSentence(l));
+    config.instructions = withToolSteps(text, [{ tool: t, ...(own && { line: own }) }], change);
+  }
   // The steps name only the tools the agent ends up with: a tool the change removed leaves no step that calls it.
   // AG07: the call names of the final tools, and as foreign the call names of the base's tools that are gone (a revise's removed tool leaves no step).
   const finalSteps = stepsToolsOf(config.tools ?? [], types);
   const gone = stepsToolsOf(base.tools ?? [], types).list.map((t) => t.name).filter((n) => !finalSteps.list.some((t) => t.name === n));
   const reconciled = nameOnlyOwnTools(config.instructions ?? '', finalSteps.list, { ...finalSteps.options, foreign: gone });
   // AG24: every line of the rewritten text must read as a sentence (the model's own line, else the base's, else out).
-  const whole = wholeSentences(reconciled.text, config.instructions ?? '', base.instructions ?? '', gone);
+  const whole = wholeSentences(reconciled.text, proposedInstructions, base.instructions ?? '', gone); // the model's proposal, so a line `withToolSteps` or `reviseToolsLine` wrote is checked too
   config.instructions = whole.text;
   reconciled.dropped.push(...whole.dropped);
   // The base's own tools kept here are not "never asked for": the design's rule for a tool the change does not name does not apply to them.

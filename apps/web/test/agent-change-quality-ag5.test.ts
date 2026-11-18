@@ -120,6 +120,32 @@ describe('revised instructions read as sentences (item 3)', () => {
   });
 });
 
+describe('the live change text, with a comma inside brackets (fix pass, item 2)', () => {
+  const LIVE = 'Give it the SQLite tool (select / executeQuery, read-only) on the Sales DB credential so it reads the figures';
+
+  it('the tool step the design writes for it is a whole sentence: balanced brackets, no “When asked to Give it”', async () => {
+    const { agent } = await writer([]);
+    const body = (await (await withModel({ design: { instructions: STEPS, nodeTools: 'databases.sqlite' } }, () => post({ name: 'Short writer', preview: true, base: { agentId: agent.id }, change: LIVE }))).json()) as Body;
+    const instructions = body.config.instructions ?? '';
+    expect(body.config.tools.some((t) => 'nodeType' in t && t.nodeType === 'databases.sqlite')).toBe(true);
+    expect(instructions).not.toMatch(/When asked to Give it/i);
+    for (const line of instructions.split('\n')) {
+      expect(readsAsSentence(line), line).toBe(true);
+      expect((line.match(/\(/g) ?? []).length, line).toBe((line.match(/\)/g) ?? []).length);
+    }
+    expect(instructions).toMatch(/sqlite/i);
+  });
+
+  it('a line the proposal itself carried is checked too: wholeSentences judges the proposal, not the text it was rewritten from', () => {
+    const garbled = 'Steps:\n1. Write the summary.\n2. When asked to Give it the SQLite tool (select / executeQuery, call sqlite (it asks the person first).';
+    const fixed = wholeSentences(garbled, 'Steps:\n1. Write the summary.', '');
+    expect(fixed.text).not.toMatch(/When asked to Give it/);
+    expect(fixed.dropped.join(' ')).toMatch(/did not read as a sentence/);
+    // Before the fix `reviseDraft` passed the rewritten text itself as `proposed`, so this line counted as given and stayed.
+    expect(wholeSentences(garbled, garbled, '').text).toContain('When asked to Give it');
+  });
+});
+
 describe('cases that make a data agent use its tool (item 4)', () => {
   const FIGURES = 'The North region sold £120k, the South £80k and the West £95k last month. What is the total? => The total is £295k: North £120k, South £80k, West £95k.';
 
@@ -178,6 +204,9 @@ describe('the design never removes what the session added (keep, item 2)', () =>
     expect(body.config.tools.map((t) => ('name' in t ? t.name : ''))).toEqual(['sqlite']);
     expect(body.changes.some((c) => /Removes the tool/.test(c))).toBe(false);
     expect(body.dropped).toContain('Kept “sqlite”: this session added it');
+    // Fix pass: the kept tool keeps its step too, so the agent still calls it.
+    const steps = (body.config.instructions ?? '').split('\n').filter((l) => /^\d+\./.test(l));
+    expect(steps.some((l) => /sqlite/i.test(l)), body.config.instructions).toBe(true);
   });
 
   it('keep names the tool by node type or in another case too', async () => {
