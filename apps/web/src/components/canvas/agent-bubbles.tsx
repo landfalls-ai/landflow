@@ -121,15 +121,16 @@ const NO_EDGES: BubbleFlowEdge[] = [];
 export function useBubbleLayer(
   nodes: ReadonlyArray<NodeLike & { position: { x: number; y: number }; measured?: { width?: number; height?: number }; hidden?: boolean }>,
   edges: ReadonlyArray<{ source: string; target: string; data?: { connectionType?: string } }>,
-  options: { workflowId?: string; versions?: Readonly<Record<string, number>>; readOnly?: boolean } = {},
+  options: { workflowId?: string; versions?: Readonly<Record<string, number | 'draft'>>; readOnly?: boolean } = {},
 ): { nodes: BubbleFlowNode[]; edges: BubbleFlowEdge[] } {
-  const lf = nodes.filter((n) => n.type === 'lf' && n.data?.wf);
+  // A version view (`versions` given) draws only the nodes it knows a version for; the rest stay as the base draws them.
+  const lf = nodes.filter((n) => (n.type === 'lf' || n.type === 'exec') && n.data?.wf && (!options.versions || n.id in options.versions));
   const leads = useTeamLeads(lf.flatMap((n) => (n.data!.wf!.type === 'core.runTeam' ? [n.data!.wf!] : [])));
   const bound = lf.flatMap((n) => {
     const agentId = boundAgentOf(n.data!.wf, leads);
     return agentId ? [{ node: n, agentId }] : [];
   });
-  const requests = bound.map(({ node, agentId }) => ({ agentId, nodeId: node.id, ...(options.workflowId && { workflowId: options.workflowId }), ...(options.versions?.[node.id] !== undefined && { version: options.versions[node.id] }) }));
+  const requests = bound.map(({ node, agentId }) => ({ agentId, nodeId: node.id, ...(options.workflowId && { workflowId: options.workflowId }), ...(typeof options.versions?.[node.id] === 'number' && { version: options.versions[node.id] as number }) }));
   const answers = useBubbleAnswers(requests);
   const moves = useFlowMoves(options.versions ? undefined : options.workflowId);
   return useMemo(() => {
@@ -216,7 +217,24 @@ type PublishState = { state: 'idle' } | { state: 'testing' } | { state: 'publish
  * ("2 changes not published", "Not published") with **Publish**, and for a team's lead "Lead · <name>". Publish runs the draft's
  * smoke test, then the gate (`publishChange`: a hold is an answer, never skipped, no "Publish anyway").
  */
-export function AgentChip({ agentId, nodeId, workflowId, lead, raised }: { agentId: string; nodeId: string; workflowId?: string; lead?: boolean; raised?: boolean }) {
+export function AgentChip(props: { agentId: string; nodeId: string; workflowId?: string; lead?: boolean; raised?: boolean; version?: number | 'draft' }) {
+  return props.version === undefined ? <DraftChip {...props} /> : <VersionChip {...props} version={props.version} />;
+}
+
+/** A version view's chip: which agent version this workflow version or run drew ("Alert triager v1", "Alert triager draft"). Read-only: no Publish. */
+function VersionChip({ agentId, nodeId, workflowId, version, raised }: { agentId: string; nodeId: string; workflowId?: string; version: number | 'draft'; raised?: boolean }) {
+  const answer = useBubbleAnswer({ agentId, nodeId, ...(workflowId && { workflowId }), ...(typeof version === 'number' && { version }) });
+  if (!answer) return null;
+  return (
+    <div data-testid="agent-chip" data-version={version} className={cn('nodrag nopan absolute right-0 flex max-w-[300px] flex-col items-end gap-1', raised ? '-top-[68px]' : '-top-8')}>
+      <div className="flex items-center rounded-full border border-hair bg-sf px-2.5 py-0.5 text-[11px] font-semibold leading-4 text-t1 shadow-sm">
+        <span className="truncate">{answer.agent.name} {version === 'draft' ? 'draft' : `v${version}`}</span>
+      </div>
+    </div>
+  );
+}
+
+function DraftChip({ agentId, nodeId, workflowId, lead, raised }: { agentId: string; nodeId: string; workflowId?: string; lead?: boolean; raised?: boolean }) {
   const answer = useBubbleAnswer({ agentId, nodeId, ...(workflowId && { workflowId }) });
   const moves = useFlowMoves(workflowId);
   const [publish, setPublish] = useState<PublishState>({ state: 'idle' });

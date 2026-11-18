@@ -4,7 +4,7 @@
  * (components/agents/capabilities-card.tsx, knowledge-dialog.tsx), loaded only when used (the canvas does not carry them). Save puts
  * the tool back into the agent's DRAFT (never the flow; live after Publish), after the used-by confirm when several workflows run it.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { readDraft } from '@/lib/client/agent-change';
 import { changeAgentTool } from '@/lib/client/agent-edit';
@@ -47,7 +47,11 @@ export default function BubbleToolDialogs({ agentId, agentName, toolId, words, o
 }
 
 function OnThePage({ agentId, toolId, onDone }: { agentId: string; toolId: string; onDone: () => void }) {
+  // A ref, so React StrictMode's second mount does not open a second tab.
+  const opened = useRef(false);
   useEffect(() => {
+    if (opened.current) return;
+    opened.current = true;
     window.open(`/agents/${encodeURIComponent(agentId)}?tab=abilities&open=capabilities&tool=${encodeURIComponent(toolId)}`, '_blank', 'noopener');
     onDone();
     // eslint-disable-next-line react-hooks/exhaustive-deps

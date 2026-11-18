@@ -9,7 +9,7 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { ReactFlowProvider } from '@xyflow/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BUBBLE, SLOT_HANDLE, cardLeaks, pendingLine } from '@/lib/shared/agent-bubbles';
+import { BUBBLE, SLOT_HANDLE, bubblePositions, cardLeaks, pendingLine } from '@/lib/shared/agent-bubbles';
 import type { AgentMove } from '@/lib/shared/agent-bubbles';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -27,8 +27,9 @@ vi.mock('@/lib/client/api', async (original) => ({
   }),
 }));
 
+const { ApiError } = await import('@/lib/client/api');
 const data = await import('@/lib/client/agent-bubble-data');
-const { bubbleGraph, AgentChip } = await import('@/components/canvas/agent-bubbles');
+const { bubbleGraph, AgentChip, isBubbleId } = await import('@/components/canvas/agent-bubbles');
 const edit = await import('@/lib/client/agent-edit');
 const { announceSaved } = await import('@/lib/client/agent-change');
 
@@ -105,6 +106,57 @@ describe('the canvas layer', () => {
   });
 });
 
+describe('the six-bubble canvas (the S1 agent and its runbooks knowledge base)', () => {
+  const six = [
+    conn('model', 'claude-sonnet-5-5', { detail: 'Anthropic' }),
+    conn('tool', 'Fetch Alerts', { toolId: 't_http', nodeType: 'core.httpRequest' }),
+    conn('tool', 'Send Email', { toolId: 't_mail', asksFirst: true, credential: 'Mailpit SMTP' }),
+    conn('tool', 'SQLite', { toolId: 't_sql' }),
+    conn('knowledge', 'runbooks', { toolId: 't_kb', documents: 4 }),
+  ];
+  const parent = { id: 'n1', position: { x: 100, y: 50 }, width: 240, agentName: 'Alert triager', request: REQ };
+
+  it('draws six bubbles on six dashed edges, each into its slot handle, the knowledge base on the tool slot', () => {
+    const bubbles = data.bubblesFromAnswer(answer({ connections: six }));
+    expect(bubbles).toHaveLength(6);
+    const { nodes, edges } = bubbleGraph([parent], { n1: bubbles });
+    expect(nodes).toHaveLength(6);
+    expect(edges).toHaveLength(6);
+    const handle = (label: string) => edges.find((e) => e.source === nodes.find((n) => n.data.bubble.label === label)!.id)!.targetHandle;
+    expect(handle('claude-sonnet-5-5')).toBe(`${SLOT_HANDLE.model}:0`);
+    expect(handle('This conversation')).toBe(`${SLOT_HANDLE.memory}:0`);
+    for (const tool of ['Fetch Alerts', 'Send Email', 'SQLite', 'runbooks']) expect(handle(tool)).toBe(`${SLOT_HANDLE.tool}:0`);
+    expect(bubbles.filter((b) => b.asksFirst).map((b) => b.label)).toEqual(['Send Email']);
+  });
+
+  it('no bubble overlaps another, and eight tools wrap to a second row', () => {
+    for (const count of [3, 6, 8, 12]) {
+      const spots = bubblePositions(240, count);
+      for (let i = 0; i < spots.length; i++)
+        for (let j = i + 1; j < spots.length; j++) {
+          const apart = spots[i].y !== spots[j].y || Math.abs(spots[i].x - spots[j].x) >= BUBBLE.size;
+          expect(apart, `${count}: ${i} and ${j}`).toBe(true);
+        }
+    }
+    const eight = bubblePositions(240, 8);
+    expect(eight.slice(0, 6).every((s) => s.y === BUBBLE.below)).toBe(true);
+    expect(eight.slice(6).every((s) => s.y === BUBBLE.below + BUBBLE.rowGap)).toBe(true);
+  });
+
+  it('a bubble clears a real sub-node still wired (the occupied range)', () => {
+    const occupied = [{ x: 0, width: 88 }];
+    const spots = bubblePositions(240, 4, occupied);
+    expect(spots.every((s) => s.x >= 88 + 24 || s.x + BUBBLE.size <= 0)).toBe(true);
+  });
+
+  it('bubbles are never the store’s: their ids are recognised, a flow node’s are not', () => {
+    const { nodes, edges } = bubbleGraph([parent], { n1: data.bubblesFromAnswer(answer({ connections: six })) });
+    expect([...nodes, ...edges].every((e) => isBubbleId(e.id))).toBe(true);
+    expect(isBubbleId('n1')).toBe(false);
+    expect(nodes.every((n) => n.draggable === false && n.deletable === false && n.selectable === false && n.connectable === false)).toBe(true);
+  });
+});
+
 describe('edits change the draft, never the flow', () => {
   const draft = { id: 'ag_1', name: 'Alert triager', updatedAt: 'now', model: { provider: 'anthropic', model: 'm' }, tools: [{ id: 't_http', type: 'node', name: 'fetch_alerts' }] };
   beforeEach(() => {
@@ -154,6 +206,24 @@ describe('the chip', () => {
     expect(JSON.stringify(wire.calls.map((c) => c.json))).not.toContain('skipEval');
   });
 
+  it('a gate hold shows its verdict, links to the agent and keeps the mark; nothing skips the gate', async () => {
+    wire.answers['GET /api/agents/ag_1/connections?workflowId=wf_1&nodeId=n1'] = () => answer({ agent: { id: 'ag_1', name: 'Alert triager', published: true, draftDiffers: true }, draft: [...published, conn('tool', 'Lookup', { toolId: 'new' })] });
+    wire.answers['GET /api/workflows/wf_1/agent-moves'] = () => ({ moves: [] });
+    wire.answers['POST /api/agents/ag_1/smoke-test'] = () => ({ smoke: { state: 'passed' } });
+    wire.answers['POST /api/agents/ag_1/publish'] = () => {
+      throw new ApiError('held', 409, { gate: { verdict: { average: 2.8, reason: 'The send case failed' } } });
+    };
+    await mount();
+    await settle();
+    await act(async () => [...container.querySelectorAll('button')].find((b) => /Publish/.test(b.textContent ?? ''))!.click());
+    await settle();
+    expect(container.textContent).toContain('Held by the eval gate (2.8)');
+    expect(container.textContent).toContain('The send case failed');
+    expect(container.querySelector('a[href="/agents/ag_1"]')).not.toBeNull();
+    expect(container.textContent).toContain('1 change not published');
+    expect(JSON.stringify(wire.calls.map((c) => c.json))).not.toContain('skipEval');
+  });
+
   it('a change made elsewhere is read again', async () => {
     let n = 0;
     wire.answers['GET /api/agents/ag_1/connections?workflowId=wf_1&nodeId=n1'] = () => answer({ agent: { id: 'ag_1', name: 'Alert triager', published: true, draftDiffers: n++ > 0 } });
@@ -178,5 +248,96 @@ describe('a pinned version', () => {
     await settle();
     expect(container.querySelector('[data-v]')?.getAttribute('data-v')).toBe('2');
     expect(wire.calls.map((c) => c.path)).toEqual(['/api/agents/ag_1/versions/2/connections']);
+  });
+});
+
+describe('a published or older workflow version (V10)', () => {
+  const flow = (agentId: string) =>
+    ({
+      id: 'wf_1',
+      name: 'Triage',
+      nodes: [{ id: 'n1', type: 'core.messageAgent', typeVersion: 1, name: 'Run an Agent', position: [0, 0], parameters: { agentId } }],
+      connections: [],
+    }) as never;
+  const v1 = [conn('model', 'claude-sonnet-5-5', { detail: 'Anthropic' }), conn('tool', 'Fetch Alerts', { toolId: 't_http', nodeType: 'core.httpRequest' })];
+  const draftTools = [...v1, conn('tool', 'Lookup Draft Only', { toolId: 't_new' })];
+  const stub = () => {
+    wire.answers['GET /api/workflows/wf_1/versions/v_1/pins'] = () => ({ pins: [{ nodeId: 'n1', agentId: 'ag_1', version: 1 }] });
+    wire.answers['GET /api/agents/ag_1/versions/1/connections'] = () => answer({ version: 1, connections: v1 });
+    wire.answers['GET /api/agents/ag_1/connections?workflowId=wf_1&nodeId=n1'] = () => answer({ agent: { id: 'ag_1', name: 'Alert triager', published: true, draftDiffers: true }, connections: v1, draft: draftTools });
+    wire.answers['GET /api/workflows/wf_1/agent-moves'] = () => ({ moves: [] });
+  };
+  const mount = async (versions: Record<string, number | 'draft'> | undefined) => {
+    const { ExecutionCanvas: Canvas } = await import('@/components/executions/execution-canvas');
+    await act(async () => root.render(createElement('div', { style: { width: 800, height: 600 } }, createElement(Canvas, { workflow: flow('ag_1'), nodeTypes: {}, runData: {}, agentVersions: versions }))));
+    await settle();
+    await settle();
+  };
+
+  it('reads the pins, asks for the pinned version’s connections, draws its tools, and chips "<name> v1" with no +, menu or Publish', async () => {
+    stub();
+    const { usePinnedVersions } = data;
+    const probe = () => {
+      const pins = usePinnedVersions('wf_1', 'v_1');
+      return createElement('span', { 'data-pins': JSON.stringify(pins ?? null) });
+    };
+    await act(async () => root.render(createElement(probe)));
+    await settle();
+    expect(container.querySelector('[data-pins]')?.getAttribute('data-pins')).toBe('{"n1":1}');
+    await act(async () => root.render(createElement('span')));
+    await mount({ n1: 1 });
+    const paths = wire.calls.map((c) => c.path);
+    expect(paths).toContain('/api/agents/ag_1/versions/1/connections');
+    expect(paths.some((p) => p.startsWith('/api/agents/ag_1/connections'))).toBe(false);
+    const text = container.textContent ?? '';
+    expect(text).toContain('Fetch Alerts');
+    expect(text).not.toContain('Lookup Draft Only');
+    expect(container.querySelector('[data-testid="agent-chip"]')?.textContent).toBe('Alert triager v1');
+    expect(text).not.toContain('Publish');
+    // The rendered Run an Agent tile holds nothing of what the bubbles hold.
+    const card = container.querySelector('[data-id="n1"]')?.textContent ?? '';
+    expect(card.length).toBeGreaterThan(0);
+    expect(data.bubblesFromAnswer(answer({ version: 1, connections: v1 })).length).toBeGreaterThan(0);
+    expect(cardLeaks(card, data.bubblesFromAnswer(answer({ version: 1, connections: v1 })))).toEqual([]);
+    // model, memory (always) and the one tool: no node of the draft's extra tool, and nothing that adds.
+    expect(container.querySelectorAll('[data-bubble-node]')).toHaveLength(3);
+    expect(container.querySelector('[aria-label*="Add to"], [title*="Add to"]')).toBeNull();
+  });
+
+  it('the editor’s canvas of the same workflow draws the draft, editable', async () => {
+    stub();
+    const { useBubbleLayer } = await import('@/components/canvas/agent-bubbles');
+    let drawn: string[] = [];
+    const probe = () => {
+      const nodes = [{ id: 'n1', type: 'lf', position: { x: 0, y: 0 }, data: { wf: { type: 'core.messageAgent', parameters: { agentId: 'ag_1' } } } }];
+      const layer = useBubbleLayer(nodes, [], { workflowId: 'wf_1' });
+      drawn = layer.nodes.map((n) => `${n.data.bubble.label}|${n.data.readOnly ?? false}`);
+      return createElement('span');
+    };
+    await act(async () => root.render(createElement(probe)));
+    await settle();
+    expect(wire.calls.some((c) => c.path === '/api/agents/ag_1/connections?workflowId=wf_1&nodeId=n1')).toBe(true);
+    expect(drawn).toContain('Lookup Draft Only|false');
+    expect(wire.calls.some((c) => c.path.includes('/versions/'))).toBe(false);
+  });
+
+  it('a 404 from the pins route draws the plain node: no chip, no bubbles', async () => {
+    wire.answers['GET /api/workflows/wf_1/versions/v_1/pins'] = () => {
+      throw new Error('404');
+    };
+    const probe = () => createElement('span', { 'data-pins': JSON.stringify(data.usePinnedVersions('wf_1', 'v_1') ?? null) });
+    await act(async () => root.render(createElement(probe)));
+    await settle();
+    expect(container.querySelector('[data-pins]')?.getAttribute('data-pins')).toBe('null');
+    await act(async () => root.render(createElement('span')));
+    await mount(undefined);
+    expect(container.querySelector('[data-testid="agent-chip"]')).toBeNull();
+    expect(container.querySelector('[data-bubble-node]')).toBeNull();
+  });
+
+  it('a run of the draft says "<name> draft"', async () => {
+    stub();
+    await mount({ n1: 'draft' });
+    expect(container.querySelector('[data-testid="agent-chip"]')?.textContent).toBe('Alert triager draft');
   });
 });

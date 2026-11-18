@@ -394,7 +394,8 @@ function Canvas({ onSave }: { onSave: () => void }) {
       onEdgesChange={onEdgesChange as unknown as OnEdgesChange<FlowEdge | GroupProxyEdge>}
       onNodeContextMenu={(e, node) => {
         e.preventDefault();
-        if (readOnly) return;
+        // AG16: a bubble is not a node of the flow: no selection, no node menu.
+        if (readOnly || isBubbleId(node.id)) return;
         selectForMenu(node.id);
         useCanvasMenu.getState().open({ x: e.clientX, y: e.clientY, flow: screenToFlowPosition({ x: e.clientX, y: e.clientY }) });
       }}

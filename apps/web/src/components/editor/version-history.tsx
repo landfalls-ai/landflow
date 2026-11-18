@@ -24,6 +24,7 @@ import { SectionLabel } from '../ui/inputs';
 import { publishVersion, toastApprovalRequested } from './publish-control';
 import { ScheduleForm, ScheduleRows, useSchedules } from './publish-schedules';
 import { useEditor } from './store';
+import { usePinnedVersions } from '@/lib/client/agent-bubble-data'; // AG16
 import { usePhone } from '@/lib/client/use-phone';
 import { useDialogFocus } from '../ui/use-dialog-focus';
 
@@ -162,6 +163,8 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
 
   const newestId = versions?.[0]?.id;
   const preview = useMemo(() => version?.workflow, [version]);
+  // AG16: the agent version each bound node of this workflow version was published with (a 404 draws the plain nodes).
+  const pinned = usePinnedVersions(workflowId, version?.id);
   if (!open) return null;
   const isCurrent = version?.id === newestId && !dirty;
 
@@ -316,7 +319,7 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
           )}
           <div className="relative min-h-0 flex-1">
             {preview ? (
-              <ExecutionCanvas key={version?.id} workflow={preview} nodeTypes={nodeTypes} runData={NO_RUN_DATA} />
+              <ExecutionCanvas key={version?.id} workflow={preview} nodeTypes={nodeTypes} runData={NO_RUN_DATA} agentVersions={pinned} />
             ) : (
               <div className="canvas-readonly grid size-full place-items-center bg-[repeating-linear-gradient(-45deg,transparent_0_14px,var(--acdim)_14px_28px)]">
                 {selectedId && <Loader2 className="size-5 animate-spin text-t3" />}

@@ -6,7 +6,7 @@
  * this tab's `AGENT_CHANGED` / `AGENT_SAVED`, another tab's BroadcastChannel message (agent-change.ts turns it into the same
  * window event), and `MOVES_CHANGED`. Nothing here is saved or sent: reads only.
  */
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { api, ApiError } from '@/lib/client/api';
 import { AGENT_CHANGED, AGENT_SAVED } from '@/lib/client/agent-change';
@@ -143,6 +143,32 @@ export function useFlowMoves(workflowId: string | undefined): AgentMove[] {
 }
 const EMPTY: AgentMove[] = [];
 
+/**
+ * The agent version each bound node of a workflow version drew when it was published (AG21's `GET /api/workflows/:id/versions/
+ * :versionId/pins`), by node id. A 404 (a version with no pins, or a host without the route) is no map: the preview draws as the
+ * base does, with no chip. A team node's first pin is its lead's.
+ */
+export function usePinnedVersions(workflowId: string | undefined, versionId: string | undefined): Record<string, number> | undefined {
+  const [pins, setPins] = useState<{ key: string; map?: Record<string, number> }>();
+  const key = workflowId && versionId ? `${workflowId}|${versionId}` : '';
+  useEffect(() => {
+    if (!key) return;
+    let live = true;
+    api<{ pins: Array<{ nodeId: string; version: number }> }>(`/api/workflows/${encodeURIComponent(workflowId!)}/versions/${encodeURIComponent(versionId!)}/pins`, { background: true }).then(
+      (r) => {
+        const map: Record<string, number> = {};
+        for (const p of r.pins ?? []) if (!(p.nodeId in map)) map[p.nodeId] = p.version;
+        if (live) setPins({ key, ...(Object.keys(map).length && { map }) });
+      },
+      () => live && setPins({ key }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [key, workflowId, versionId]);
+  return pins?.key === key ? pins.map : undefined;
+}
+
 const BUBBLE_KINDS = new Set(['model', 'memory', 'tool', 'knowledge', 'agent']);
 
 /** What the bubbles draw from one list of connections: the agent's own (not the flow's wired sub-nodes, not its runtime), memory always present. */
@@ -201,7 +227,6 @@ export function boundAgentOf(wf: { type: string; parameters?: Record<string, unk
   if (wf.type === 'core.runTeam') return typeof p.teamId === 'string' ? leads[p.teamId] : undefined;
   return undefined;
 }
-
 
 /** How many bubbles a bound node draws, for the layout (Tidy up, placing a node): the agent's when read, else the assumed count; none for a node that is not bound. */
 export function boundCountOf(wf: { type: string; parameters?: Record<string, unknown> }, nodeId: string): number {

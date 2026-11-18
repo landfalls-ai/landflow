@@ -9,7 +9,7 @@
  */
 import { nanoid } from 'nanoid';
 import { changeParameter, defaultParameters, defaultVersionOf, indexedPorts } from '@landflow/protocol';
-import { ASSUMED_BUBBLES, bubbleFootprint } from './agent-bubbles'; // AG16
+import { ASSUMED_BUBBLES, BUBBLE, bubbleFootprint } from './agent-bubbles'; // AG16
 import { delegatesOf, replaceWithTeam, turnIntoTeamBlocker } from './turn-into-team';
 import type { ConnectionType, NodeDescriptor, NodeRun, PropertyDescriptor, Workflow, WorkflowConnection, WorkflowNode } from './types';
 
@@ -427,7 +427,7 @@ function bubbleBox(n: WorkflowNode): { x0: number; x1: number; y0: number; y1: n
   const bound = (n.type === 'core.messageAgent' && plain(n.parameters?.agentId)) || (n.type === 'core.runTeam' && plain(n.parameters?.teamId));
   if (!bound) return undefined;
   const fp = bubbleFootprint(240, ASSUMED_BUBBLES);
-  return { x0: n.position[0] + fp.left, x1: n.position[0] + fp.right, y0: n.position[1], y1: n.position[1] + fp.bottom };
+  return { x0: n.position[0] + fp.left, x1: n.position[0] + fp.right, y0: n.position[1] + BUBBLE.below, y1: n.position[1] + fp.bottom };
 }
 
 /** A spot a node of the usual size (88 px) at (x, y) would take inside a bound node's bubble box, as that box; else undefined. */

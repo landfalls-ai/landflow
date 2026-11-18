@@ -356,7 +356,7 @@ always run with scripted models. Their last block compares the contract copies i
 `test/spotlight-scenarios/fixtures/runbooks/`) byte for byte with the program's contracts folder, and runs only when
 `LANDFLOW_BACKBONE_CONTRACTS` names that folder (it holds `ag3/`; the older joins' checks point at `ag3` too, since wave
 ag3 replaced their two contracts). Wave ag3's package tests are `agent-gate-ag3`, `tool-proof-ag3`, `tool-proof-ui-ag3`,
-`agent-knowledge-ag3`, `agent-connections-ag3` and `agent-node-band-ag3` (`apps/web/test/`), and
+`agent-knowledge-ag3` and `agent-connections-ag3` (`apps/web/test/`; `agent-node-band-ag3` went with the band), and wave ag4's AG16 tests `agent-bubbles-ag4`, `agent-layout-ag4` and `agent-connections-draft-ag4`, and
 `packages/sdk/test/stream-target.test.ts`.
 
 `cluster-runtime.test.ts` always runs: a main and workers through the runner on the in-process coordinator.

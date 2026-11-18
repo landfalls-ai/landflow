@@ -7,7 +7,7 @@
  * one workflow runs the agent the edit asks first ("Alert triager runs in 2 workflows: this changes both"). A version view
  * (`readOnly`) offers only the agent's page.
  */
-import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ExternalLink, KeyRound, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ConfirmChange, toastEdit, usedByWords } from './bubble-confirm';
@@ -135,16 +135,18 @@ export function BubbleActions({
   );
 }
 
-/** Run an edit once, say what it did, then finish. */
+/**
+ * Run an edit once, say what it did, then finish. Guarded by a ref, not by the effect's cleanup: React StrictMode (`pnpm dev`)
+ * mounts, unmounts and mounts again, and an edit that spends a model run must not happen twice.
+ */
 function useOnce(run: () => Promise<void>, onDone: () => void) {
+  const started = useRef(false);
   useEffect(() => {
-    let live = true;
+    if (started.current) return;
+    started.current = true;
     void run()
       .catch((e: Error) => toast.error(e.message))
-      .finally(() => live && onDone());
-    return () => {
-      live = false;
-    };
+      .finally(onDone);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }

@@ -3,7 +3,7 @@
  * Tidy up and a placed node never put another node on its bubbles. Pure, so the layout is testable without a canvas. A node that
  * overlaps a box goes right of it (+ 40) when it comes after the bound node (a next step), and below it otherwise.
  */
-import { bubbleFootprint } from '@/lib/shared/agent-bubbles';
+import { BUBBLE, bubbleFootprint } from '@/lib/shared/agent-bubbles';
 
 export interface ClearBox {
   id: string;
@@ -20,13 +20,16 @@ export interface ClearBox {
 const GAP_X = 40;
 const GAP_Y = 24;
 
-/** The box a bound node keeps clear, in canvas coordinates. */
+/**
+ * The box a bound node keeps clear, in canvas coordinates: from the bubble row's top (the node's own row, its slot labels and +
+ * buttons are the node's, not the bubbles') down to the row's bottom. A node beside the bound node in its own row is never in it.
+ */
 export function footprintBox(b: ClearBox): { x0: number; x1: number; y0: number; y1: number } | undefined {
   if (!b.bubbles) return undefined;
   const fp = bubbleFootprint(b.width, b.bubbles);
   // A tall tile (a team's roster) pushes the bubbles down with it (agent-bubbles.tsx `bubbleGraph`).
   const extra = Math.max(0, b.height + 64 - 200);
-  return { x0: b.x + fp.left, x1: b.x + fp.right, y0: b.y, y1: b.y + fp.bottom + extra };
+  return { x0: b.x + fp.left, x1: b.x + fp.right, y0: b.y + BUBBLE.below + extra, y1: b.y + fp.bottom + extra };
 }
 
 /**
@@ -46,9 +49,19 @@ export function clearOfBubbles(boxes: readonly ClearBox[], movable?: ReadonlySet
         const overlaps = n.x < box.x1 && n.x + n.width > box.x0 && n.y < box.y1 && n.y + n.height > box.y0;
         if (!overlaps) continue;
         // After the bound node (its centre past the bound node's right edge): a next step, to the right; else below.
-        if (n.x + n.width / 2 > p.x + p.width) n.x = box.x1 + GAP_X;
-        else n.y = box.y1 + GAP_Y;
-        moved[n.id] = { x: n.x, y: n.y };
+        if (n.x + n.width / 2 > p.x + p.width) {
+          // A next step goes right of the bubbles, and every later column goes with it (the column gap stays).
+          const from = n.x;
+          const d = box.x1 + GAP_X - n.x;
+          for (const m of at.values()) {
+            if (m.id === p.id || m.x < from || p.subNodes?.has(m.id) || (movable && !movable.has(m.id))) continue;
+            m.x += d;
+            moved[m.id] = { x: m.x, y: m.y };
+          }
+        } else {
+          n.y = box.y1 + GAP_Y;
+          moved[n.id] = { x: n.x, y: n.y };
+        }
         changed = true;
       }
     }
