@@ -281,15 +281,17 @@ describe('the design route', () => {
   });
 
   it('asks.md A, a second sender: a Send Email step after an agent that has send_email is dropped, and the summary says why', async () => {
-    const s1 = agentStore.list().find((a) => a.name === 'Alert triager')!;
+    // A mailer whose send_email goes to a fixed address and does not ask first (the seed S1's asks first, so its step stays: see below).
+    const s1 = agentStore.create({ name: 'Alert mailer ag4', description: 'Emails alerts to on-call.', instructions: 'Email the alert.', model: { provider: 'ollama', model: 'm' }, tools: [{ id: 'tl_mail', type: 'node', name: 'send_email', description: 'Send an email', nodeType: 'messaging.emailSend', parameters: { toEmail: 'oncall@example.com' }, requireApproval: false }] } as never);
+    agentStore.publish(s1.id);
     const fake = await startFakeModels({
       reply: () => ({
         text: JSON.stringify({
           name: 'Triage',
           nodes: [
             { key: 'start', type: 'core.manualTrigger', name: 'Start' },
-            { key: 'a', type: 'core.messageAgent', name: 'Alert triager', parameters: { agentId: s1.id, message: 'Triage {{ $json.alert }}' } },
-            { key: 'mail', type: 'messaging.emailSend', name: 'Email On-Call', parameters: { to: 'oncall@example.com', subject: 'Alert', body: '{{ $json.reply }}' } },
+            { key: 'a', type: 'core.messageAgent', name: 'Alert mailer ag4', parameters: { agentId: s1.id, message: 'Triage {{ $json.alert }}' } },
+            { key: 'mail', type: 'messaging.emailSend', name: 'Email On-Call', parameters: { toEmail: 'oncall@example.com', subject: 'Alert', body: '{{ $json.reply }}' } },
           ],
           connections: [{ from: 'start', to: 'a' }, { from: 'a', to: 'mail' }],
           testData: [{ alert: 'x' }],
@@ -306,8 +308,9 @@ describe('the design route', () => {
       expect(response.status, body.error).toBe(200);
       expect(body.draft!.nodes.map((n) => n.type)).toEqual(['core.manualTrigger', 'core.messageAgent']);
       expect(body.draft!.edges).toHaveLength(1);
-      expect(body.draft!.summary!.assumptions.join('\n')).toContain('“Alert triager” sends the email itself');
+      expect(body.draft!.summary!.assumptions.join('\n')).toContain('“Alert mailer ag4” sends the email itself');
     } finally {
+      agentStore.delete(s1.id);
       await fake.close();
       if (prev === undefined) delete process.env.OLLAMA_URL;
       else process.env.OLLAMA_URL = prev;
@@ -315,7 +318,7 @@ describe('the design route', () => {
   });
 
   it('dropRepeatedAgentWork keeps what the agent has no tool for, and hangs later steps on the agent', () => {
-    const brief = { id: 'a1', name: 'Alert triager', version: 1, skills: [], tools: ['send_email'], toolNodes: ['messaging.emailSend'] };
+    const brief = { id: 'a1', name: 'Alert triager', version: 1, skills: [], tools: ['send_email'], toolNodes: ['messaging.emailSend'], nodeTools: [{ type: 'messaging.emailSend', name: 'send_email', free: ['toEmail'] }] };
     const nodes = [
       { key: 'a', type: 'core.messageAgent', name: 'Alert triager', parameters: { agentId: 'a1' } },
       { key: 'mail', type: 'messaging.emailSend', name: 'Email On-Call', parameters: {} },
@@ -325,7 +328,40 @@ describe('the design route', () => {
     expect(out.nodes.map((n) => n.key)).toEqual(['a', 'log']);
     expect(out.edges).toEqual([['a', 'log', 0, 'main']]);
     expect(dropRepeatedAgentWork(nodes, [['a', 'log', 0, 'main']], [brief]).notes).toEqual([]);
-    expect(dropRepeatedAgentWork(nodes, [['a', 'mail', 0, 'main']], [{ ...brief, toolNodes: [] }]).nodes).toHaveLength(3);
+    expect(dropRepeatedAgentWork(nodes, [['a', 'mail', 0, 'main']], [{ ...brief, toolNodes: [], nodeTools: [] }]).nodes).toHaveLength(3);
+  });
+
+  describe('dropRepeatedAgentWork keeps every step the person may have asked for', () => {
+    const agentNode = { key: 'a', type: 'core.messageAgent', name: 'Alert triager', parameters: { agentId: 'a1' } };
+    const mail = (parameters: Record<string, unknown> = {}) => ({ key: 'mail', type: 'messaging.emailSend', name: 'Email finance', parameters });
+    const fixedTool = { type: 'messaging.emailSend', name: 'send_email', fixed: { toEmail: 'oncall@example.com' } };
+    const brief = (nodeTools: unknown[]) => ({ id: 'a1', name: 'Alert triager', version: 1, skills: [], tools: ['send_email'], toolNodes: ['messaging.emailSend'], nodeTools }) as never;
+    const run = (nodes: unknown[], edges: Array<[string, string, number, 'main' | 'ai_tool']>, b: unknown) => dropRepeatedAgentWork(nodes as never[], edges as never, [b as never]);
+    const main: Array<[string, string, number, 'main']> = [['a', 'mail', 0, 'main']];
+
+    it('drops a step with no destination, an expression, or the tool’s own address', () => {
+      expect(run([agentNode, mail()], main, brief([fixedTool])).dropped).toEqual(['Email finance']);
+      expect(run([agentNode, mail({ toEmail: '{{ $json.owner }}' })], main, brief([fixedTool])).dropped).toHaveLength(1);
+      expect(run([agentNode, mail({ toEmail: 'Oncall@example.com' })], main, brief([fixedTool])).dropped).toHaveLength(1);
+    });
+    it('keeps a step that mails someone else than the tool’s fixed address', () => {
+      const out = run([agentNode, mail({ toEmail: 'finance@example.com' })], main, brief([fixedTool]));
+      expect(out.nodes).toHaveLength(2);
+      expect(out.notes).toEqual([]);
+    });
+    it('keeps the step when the agent’s tool asks first (a workflow run refuses it, so the step is the only mail)', () => {
+      expect(run([agentNode, mail()], main, brief([{ ...fixedTool, requireApproval: true }])).nodes).toHaveLength(2);
+    });
+    it('keeps an HTTP Request or Code step after an agent that has such a tool (generic types are never dropped)', () => {
+      const http = { key: 'h', type: 'core.httpRequest', name: 'Call API', parameters: { url: 'https://x.example' } };
+      const tool = { type: 'core.httpRequest', name: 'fetch', free: [] };
+      const out = run([agentNode, http], [['a', 'h', 0, 'main']], { ...(brief([tool]) as object), toolNodes: ['core.httpRequest'] });
+      expect(out.nodes).toHaveLength(2);
+    });
+    it('keeps a step that has another main input or wired sub-nodes', () => {
+      expect(run([agentNode, { key: 'b', type: 'core.set', name: 'B', parameters: {} }, mail()], [['a', 'mail', 0, 'main'], ['b', 'mail', 0, 'main']], brief([fixedTool])).nodes).toHaveLength(3);
+      expect(run([agentNode, { key: 'm', type: 'core.simpleMemory', name: 'M', parameters: {} }, mail()], [['a', 'mail', 0, 'main'], ['m', 'mail', 0, 'ai_tool']], brief([fixedTool])).nodes).toHaveLength(3);
+    });
   });
 
   it('the builder prompt no longer promises that Spotlight designs a new agent after Apply', () => {

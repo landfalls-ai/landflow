@@ -5,7 +5,7 @@
  * manual trigger is added when the model forgot one.
  */
 import type { ConnectionType, NodeItem, NodeTypeInfo, PropertyDescriptor } from '@/lib/shared/types';
-import { describeAgents, withAgentId, type AgentBrief } from '@/lib/shared/agent-brief';
+import { describeAgents, SENDER_DESTINATIONS, withAgentId, type AgentBrief } from '@/lib/shared/agent-brief';
 import { reuseSentence } from '@/lib/shared/tenant-catalog'; // AG19:
 import { describeTeams, withTeamId, type TeamBrief } from '@/lib/shared/agent-teams';
 import { registry } from './plugins/registry';
@@ -168,9 +168,12 @@ export function agentReading(nodes: ReadonlyArray<{ type: string; name: string; 
 }
 
 /**
- * AG19: a Run an Agent step bound to an agent that has a node tool (send_email: `messaging.emailSend`) sends or does it
- * itself, so a step of that type right after it is dropped (the later steps hang on the agent instead) and the summary
- * says why. The model still adds such a step now and then, whatever the prompt says.
+ * AG19: a Run an Agent step bound to an agent that has a send tool (send_email: `messaging.emailSend`) sends it itself, so
+ * a step of that type right after it is dropped (the later steps hang on the agent instead) and the summary says why. The
+ * model still adds such a step now and then. Dropped only when all hold: the type is a sender (`SENDER_DESTINATIONS`); the
+ * agent's tool does not ask first (a workflow run refuses a tool that asks, so the step is the only send); the step's
+ * destination is empty, an expression, or the tool's fixed one (or the tool takes it from the model); the agent is the
+ * step's only main input; the step has no wired sub-nodes. Anything else the person asked for stays.
  */
 export function dropRepeatedAgentWork<N extends { key: string; type: string; name: string; parameters?: Record<string, unknown> }>(
   nodes: N[],
@@ -181,15 +184,29 @@ export function dropRepeatedAgentWork<N extends { key: string; type: string; nam
   let keptEdges = edges;
   const notes: string[] = [];
   const dropped: string[] = [];
+  const same = (a: unknown, b: string) => typeof a === 'string' && a.trim().toLowerCase() === b.toLowerCase();
   for (const n of nodes) {
     if (n.type !== 'core.messageAgent') continue;
     const id = typeof n.parameters?.agentId === 'string' ? n.parameters.agentId : '';
     const agent = id ? agents.find((a) => a.id === id) : undefined;
-    if (!agent?.toolNodes?.length) continue;
+    if (!agent?.nodeTools?.length) continue;
     for (const [from, to, output, type] of keptEdges) {
       if (from !== n.key || type !== 'main') continue;
       const next = keptNodes.find((m) => m.key === to);
-      if (!next || !agent.toolNodes.includes(next.type)) continue;
+      const keys = next ? SENDER_DESTINATIONS[next.type] : undefined;
+      if (!next || !keys) continue;
+      const tools = agent.nodeTools.filter((t) => t.type === next.type);
+      if (!tools.length || tools.some((t) => t.requireApproval)) continue;
+      const destinationOk = tools.some((t) =>
+        keys.every((key) => {
+          const value = next.parameters?.[key];
+          const empty = value === undefined || value === null || (typeof value === 'string' && (!value.trim() || value.includes('{{') || value.trim().startsWith('=')));
+          return empty || t.free?.includes(key) || same(value, t.fixed?.[key] ?? '\u0000');
+        }),
+      );
+      if (!destinationOk) continue;
+      if (keptEdges.some((e) => e[1] === next.key && (e[3] !== 'main' || e[0] !== n.key))) continue; // another input, or wired sub-nodes
+      if (keptEdges.some((e) => e[0] === next.key && e[3] !== 'main')) continue;
       const after = keptEdges.filter((e) => e[0] === next.key && e[3] === 'main');
       keptNodes = keptNodes.filter((m) => m.key !== next.key);
       keptEdges = [...keptEdges.filter((e) => e[0] !== next.key && e[1] !== next.key), ...after.map(([, target, , t]): [string, string, number, ConnectionType] => [n.key, target, output, t])];

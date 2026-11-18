@@ -32,7 +32,26 @@ export interface AgentBrief {
   usedBy?: number;
   /** The node types of its node tools (`messaging.emailSend`): a flow step of the same type after it would do twice what the agent does itself. */
   toolNodes?: string[];
+  /** Each node tool with what decides whether a flow step would repeat it: its type, whether it asks first, and its destination (fixed value, or free when empty / `$fromAI`). */
+  nodeTools?: AgentNodeTool[];
 }
+
+export interface AgentNodeTool {
+  type: string;
+  name: string;
+  requireApproval?: boolean;
+  /** The destination parameters (to / channel / url…) that hold a fixed value, by name. */
+  fixed?: Record<string, string>;
+  /** The destination parameters the model fills (`$fromAI`) or leaves empty. */
+  free?: string[];
+}
+
+/** The destination parameters of the send nodes a flow step may repeat (the only types `dropRepeatedAgentWork` ever drops). */
+export const SENDER_DESTINATIONS: Record<string, string[]> = {
+  'messaging.emailSend': ['toEmail'],
+  'messaging.slack': ['channel'],
+  'messaging.telegram': ['chatId'],
+};
 
 const clip = (value: string | undefined, max: number) => {
   const text = value?.replace(/\s+/g, ' ').trim();
@@ -54,6 +73,17 @@ export function agentBrief(agent: Agent, nameOf: (id: string) => string | undefi
   const description = clip(config.description, 200) ?? clip(config.persona?.mission, 200);
   const role = clip(config.persona?.role, 80);
   const toolNodes = [...new Set(config.tools.flatMap((t) => (t.type === 'node' ? [t.nodeType] : [])))];
+  const nodeTools = config.tools.flatMap((t): AgentNodeTool[] => {
+    if (t.type !== 'node') return [];
+    const fixed: Record<string, string> = {};
+    const free: string[] = [];
+    for (const key of SENDER_DESTINATIONS[t.nodeType] ?? []) {
+      const value = (t.parameters as Record<string, unknown> | undefined)?.[key];
+      if (typeof value === 'string' && value.trim() && !value.includes('$fromAI')) fixed[key] = value.trim();
+      else free.push(key);
+    }
+    return [{ type: t.nodeType, name: (t as { name: string }).name, ...(t.requireApproval && { requireApproval: true }), ...(Object.keys(fixed).length && { fixed }), ...(free.length && { free }) }];
+  });
   return {
     id: agent.id,
     name: config.name,
@@ -69,6 +99,7 @@ export function agentBrief(agent: Agent, nameOf: (id: string) => string | undefi
     ...(!published && { published: false }),
     ...(options.usedBy && { usedBy: options.usedBy }),
     ...(toolNodes.length && { toolNodes }),
+    ...(nodeTools.length && { nodeTools }),
   };
 }
 
