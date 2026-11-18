@@ -696,7 +696,7 @@ request: the run goes on when the last one is decided). The Platform analyst's o
     working in that flow exactly as before.
   - **One step per flow**: every affected agent draft is written, then the workflow is saved without the moved sub-nodes (a new version
     as any save, under the `workflow_conflict` rule); if the save fails every draft is put back and the items stay (*saved meanwhile*).
-  - **The instructions**: a tool moved in adds one line to the draft's instructions (*Also your job: slugify (…), moved in from a workflow that ran it: use it when a message asks for that.*), so an agent whose instructions list its jobs and hand over the rest uses the tool as the flow did (the ag4 carryover, live pass E1, where the utility helper answered *Slugifying text is outside what I handle*).
+  - **The instructions**: a tool moved in adds one line to the draft's instructions (*Also your job: slugify (…), moved in from a workflow that ran it: use it when a message asks for that.*; taking the tool out of the draft takes the line with it), so an agent whose instructions list its jobs and hand over the rest uses the tool as the flow did (the ag4 carryover, live pass E1, where the utility helper answered *Slugifying text is outside what I handle*).
   - **The record**: one row per workflow and sub-node in `agent_flow_moves` (outcome, the agent and its tool, why, who (`migration` or the
     person), when, the workflow version before, and a snapshot of the sub-node and its edges: credentials by reference, never a secret),
     read by `GET /api/workflows/:id/agent-moves` and `GET /api/agents/:id/moves`, each moved item with its `state` against the agent now:
@@ -704,14 +704,16 @@ request: the run goes on when the last one is decided). The Platform analyst's o
   - **Said, never silent**: the editor shows a side card the first time a person opens the flow after a move (each item and its agent, each
     kept item and why, and each agent's unpublished changes with **Publish** (the smoke test on the draft, then the eval gate: never
     skipped) and **Open <agent>**); closed, it stays as a pill ("Moved into agents · 2") that reopens the whole record, with **Try again** and
-    **Use for <agent> everywhere** on the items that allow it.
+    **Use for <agent> everywhere** on the items that allow it. On a phone the pill is an icon and a count at the top, left of the canvas toolbar, so it covers no toolbar button.
   - **It keeps running until republished**: a move changes only the saved workflow and the agent's draft, never a workflow version, a
     publication or a pin, so **production keeps running its published workflow version** (its own wiring and the agent version it was
     published with) until a person publishes the workflow again; republishing needs the agent's draft published first. A run of the saved
     graph on the agent's published config (a never-published workflow called as a sub-workflow, or any editor run before the versions wave)
     adds the items moved from that node and still pending, as it ran them before (`pendingFor`: only when the node carries no pin, the
-    running graph no longer wires the sub-node and the config lacks the item). A moved tool counts as a wired one for **Tool Approvals**:
-    it is refused, not waited for. **Test and update** (an agent published alone, "Alert triager v2 is available") tests and publishes the
+    running graph no longer wires the sub-node and the config lacks the item). The overlay is only for a run on the *published* config:
+    an editor run (a manual run, which uses the agent's draft that already holds what moved) and a pinned run take none, so the editor's
+    tests keep Tool Approvals' ask in the chat, the router and the cache the way production will after publish. A moved tool counts as a wired one for **Tool Approvals** in a run that
+    takes the overlay: it is refused, not waited for. **Test and update** (an agent published alone, "Alert triager v2 is available") tests and publishes the
     production graph without the sub-nodes moved from that node into that agent when the new pin owns them: published at or after the
     move, or holding the moved tool (or model) itself. So the run offers a moved tool once (never `slugify` beside `slugify_2`), a wired
     chat model no longer wins over the version's own, and the new workflow version matches the saved flow; an item the new version

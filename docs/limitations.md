@@ -768,6 +768,8 @@ Seen in AG18's live pass (production profile, Claude): a create-an-agent ask in 
 - The executions list shows the workflow version only; the per-agent versions are on the run's header.
 - A scheduled publish (`at`) and a Git sync publish carry no `agents` choice, so an agent draft that differs refuses them (publish the agent first); with four-eyes on, `agents: 'as-published'` is refused too (`publish-first` settles the agents before the request is made).
 - A test-update run is recorded like a production run of that version, so its line reads "workflow v4 · Alert triager v3" without saying it was a test.
+- Manual-mode runs (`POST /api/workflows/:id/execute`, evaluation runs and MCP manual runs, not only the editor's Run) run each agent's **draft**, as the editor does; only a published workflow runs the pinned version. With four-eyes on, a plain publish of an unchanged workflow still re-pins and so makes an approval request.
+- A scheduled publish of a workflow whose agent the start pass moved wiring into fails with 409 `agent_changes_unpublished` until that agent is published ([agents.md](agents.md#from-workflows)): publish the agent from its page (the smoke test and the gate run), then publish the workflow again.
 
 ## Spotlight fixes from the run's log (wave ag4, AG20)
 

@@ -257,7 +257,7 @@ wire.impl = async (path, init) => {
   return result.body;
 };
 
-/** What the joins hand on, in file order: every answer a person or Spotlight read (join 7 greps them all). */
+/** What the joins hand on, in file order: every answer a person or Spotlight read (join 10 greps them all). */
 const seen = { answers: [] as string[], tenant: [] as string[], runLogs: [] as string[], mcp: [] as string[] };
 
 let types: NodeTypeInfo[];
@@ -590,7 +590,7 @@ describe('3. run, read the log, fix (AG20 × AG18 × AG19)', () => {
     expect(ok).toHaveLength(1);
     expect(JSON.parse(ok[0]!.body)).toEqual({ report_text: 'North 4,150' });
     expect(fixed.nodes.find((n) => n.name === 'Post report')!.parameters.url).toBe(RECEIVER_URL);
-    // The made-up header token was sent each time (join 7: never shown).
+    // The made-up header token was sent each time (join 10: never shown).
     expect(receiver.attempts.every((a) => a.token === HEADER_TOKEN)).toBe(true);
   });
 
@@ -634,7 +634,7 @@ describe('3. run, read the log, fix (AG20 × AG18 × AG19)', () => {
   });
 });
 
-describe('3b. a run that passed with an agent that lacks a tool is fixed from the log (AG20 × AG18 × AG19)', () => {
+describe('4. a run that passed with an agent that lacks a tool is fixed from the log (AG20 × AG18 × AG19)', () => {
   it('review session: get_run_log says the agent has no tools, propose_agent_fix is offered and answers an agent change, no flow change', async () => {
     const agent = agentStore.create({ name: 'Question answerer', description: 'Answers sales questions', instructions: 'Answer sales questions from the database.', model: { provider: 'anthropic', model: 'claude-sonnet-5-5' } } as never);
     agentStore.publish(agent.id);
@@ -668,7 +668,7 @@ describe('3b. a run that passed with an agent that lacks a tool is fixed from th
 // 4. The bubbles follow a change made through Spotlight
 // ---------------------------------------------------------------------------
 
-describe('4. the bubbles follow a change made through Spotlight (AG16 × AG19)', () => {
+describe('5. the bubbles follow a change made through Spotlight (AG16 × AG19)', () => {
   it('asks.md D on S1’s page attaches the existing runbooks; both workflows’ bubbles show it added and not published; Publish clears the marks', async () => {
     const s1 = await seedTriager('Alert triager D');
     const one = starter(s1, 'wf_d_one');
@@ -729,7 +729,7 @@ const utility = (name: string) => {
   return agentStore.publish(agent.id)!;
 };
 
-describe('5. old wiring moves into the agent, all of it, now; nothing lost (AG17 × AG16 × ag3’s runtime)', () => {
+describe('6. old wiring moves into the agent, all of it, now; nothing lost (AG17 × AG16 × ag3’s runtime)', () => {
   it('the start pass moves Slugify once (B’s is the same), renames C’s, moves C’s model, keeps the memory, writes six rows and nothing the second time; runs keep working before and after Publish', async () => {
     const s4 = utility('Utility helper');
     const a = legacy(s4.id, 'legacy_a');
@@ -847,7 +847,7 @@ describe('5. old wiring moves into the agent, all of it, now; nothing lost (AG17
 // 6. Spotlight never wires into a bound node; the scenario files run
 // ---------------------------------------------------------------------------
 
-describe('6. Spotlight never wires into a bound node, and the scenario files run (AG17 × AG19 × AG20)', () => {
+describe('7. Spotlight never wires into a bound node, and the scenario files run (AG17 × AG19 × AG20)', () => {
   it('a proposed ai_tool into a bound node is left out with the sentence; the next proposal is changeAgent', async () => {
     const s4 = utility('Utility helper wiring');
     const wf = saveFlow({ id: 'wf_wiring', name: 'Wiring', nodes: [node('Start', 'core.manualTrigger'), node('Agent', 'core.messageAgent', { agentId: s4.id, message: 'hi' }, 'Utility helper')], connections: [edge('Start', 'Agent')] });
@@ -899,7 +899,7 @@ describe('6. Spotlight never wires into a bound node, and the scenario files run
 // 9. Production keeps the agent version it was published with
 // ---------------------------------------------------------------------------
 
-describe('9. production keeps the agent version it was published with; every run says both (AG21 × AG16 × AG19)', () => {
+describe('8. production keeps the agent version it was published with; every run says both (AG21 × AG16 × AG19)', () => {
   it('Spotlight’s publish card pins S1 v1; S1 v2 does not move production; the draft does not touch it; test then publish the update; the version’s bubbles; a draft that differs blocks; the upgrade changes nothing', async () => {
     const s1 = await seedTriager('Alert triager F');
     const wf = starter(s1, 'wf_f', 'core.webhook');
@@ -1004,7 +1004,7 @@ describe('9. production keeps the agent version it was published with; every run
 // 10. The moves compose with the pins
 // ---------------------------------------------------------------------------
 
-describe('10. the moves compose with the pins (AG17 × AG21)', () => {
+describe('9. the moves compose with the pins (AG17 × AG21)', () => {
   it('a flow published before ag4 keeps its wired Slugify in production (pinned, no overlay); the editor runs the draft; an unpinned run of the saved graph gets the overlay; publishing needs S4 first, then pins v2', async () => {
     const s4 = utility('Utility helper pins');
     // A published before ag4: the backfill pins it at S4 v1 (its production copy still wires Slugify).
@@ -1135,7 +1135,7 @@ describe('10. the moves compose with the pins (AG17 × AG21)', () => {
 // 7. No secret anywhere
 // ---------------------------------------------------------------------------
 
-describe('7. no secret anywhere (AG18 × AG20 × AG16 × AG17)', () => {
+describe('10. no secret anywhere (AG18 × AG20 × AG16 × AG17)', () => {
   it('every tenant tool answer (in process and MCP), run log, connections, moves answer and move record holds none of the made-up secrets', async () => {
     const door = await mcp();
     for (const name of ['list_agents', 'list_tool_nodes', 'list_knowledge_bases', 'list_credentials']) {
