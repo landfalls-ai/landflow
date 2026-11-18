@@ -10,6 +10,7 @@ import { Check, ChevronDown, ExternalLink, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { attachedLine, knowledgeLine, publishLine, reuseLine, smokeLine, type AgentCard as AgentCardData } from '@/lib/shared/agent-card'; // AG04: publishLine AG19: attachedLine, reuseLine
 import { cardBubbles, type Bubble } from '@/lib/shared/agent-bubbles'; // AG19:
+import { AgentCredentialPicker } from './agent-credential-picker'; // Pick it, in place
 import { useEditor } from '../store'; // the node titles the bubbles read
 import { BubbleDiagram } from '../../canvas/bubble-view'; // AG19: the card draws the agent as bubbles, one look with the canvas
 import type { AgentConfig } from '@/lib/shared/agents';
@@ -60,6 +61,7 @@ function bubbleDetail(card: AgentCardData, b: Bubble, left: string[], ofReused =
 
 export function AgentCardView({ itemId, card, busy = false, earlier = false }: { itemId: string; card: AgentCardData; busy?: boolean; earlier?: boolean }) {
   const [allCases, setAllCases] = useState(false);
+  const [picking, setPicking] = useState(false); // Pick it: the credential picker in place
   const config = card.config as Partial<AgentConfig>;
   const created = card.state === 'created';
   const creating = card.state === 'creating';
@@ -312,14 +314,19 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
               </a>
             )}
             {card.agentId && needsCredential && (
-              <a href={`/agents/${card.agentId}?tab=abilities`} target="_blank" rel="noopener" className="flex min-h-7 items-center text-[12px] font-semibold text-ac hover:underline max-md:min-h-11">
+              <button type="button" aria-expanded={picking} onClick={() => setPicking((p) => !p)} className="flex min-h-7 items-center text-[12px] font-semibold text-ac hover:underline max-md:min-h-11">
                 Pick it
-              </a>
+              </button>
             )}
             {card.agentId && (
               <a href={`/agents/${card.agentId}`} target="_blank" rel="noopener" className="flex min-h-7 items-center gap-0.5 text-[12px] font-semibold text-ac hover:underline max-md:min-h-11">
                 Open <ExternalLink className="size-3" />
               </a>
+            )}
+            {picking && card.agentId && needsCredential && (
+              <div className="basis-full">
+                <AgentCredentialPicker agentId={card.agentId} onDone={() => setPicking(false)} />
+              </div>
             )}
           </>
         ) : (

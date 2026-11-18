@@ -17,6 +17,7 @@ import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta, ShortReply } from '..
 import { MAX_FIXES, approveDestinations, productionNote, publishToProduction, testUntilItRuns, undoApplied } from '../test-session'; // SB03:
 import { agentStep, logRead, runRow } from '../timeline';
 import { AgentCardView } from './agent-card'; // SB16:
+import { AgentCredentialPicker } from './agent-credential-picker'; // Pick it, in place
 import { PublishCardView } from './publish-card'; // AG21:
 import { reviseAgentCard } from './agent-ask'; // AG04:
 import { CredentialPicker } from './credential-picker';
@@ -240,6 +241,7 @@ export function AgentRow({ agent }: { agent: AgentProgress }) {
   const step = agentStep(agent);
   const busy = useAssistant((s) => s.pending || Boolean(s.testing));
   const [working, setWorking] = useState(false);
+  const [picking, setPicking] = useState(false); // Pick it: the credential picker in place
   // SB18: Publish only after a pass; Test again after a failure; Test when no item reached the step yet.
   const act = !agent.agentId || agent.taken || busy || agent.state === 'publishing'
     ? undefined
@@ -253,7 +255,7 @@ export function AgentRow({ agent }: { agent: AgentProgress }) {
           ? { label: 'Test', run: () => smokeTestAgent(agent.nodeId, { publish: autonomyOf(useEditor.getState().workflowId) === 'auto' }) }
           : undefined;
   return (
-    <div className="flex animate-in items-start gap-1.5 text-[12.5px] leading-snug">
+    <div className="flex animate-in flex-wrap items-start gap-1.5 text-[12.5px] leading-snug">
       {agent.state === 'designing' || agent.state === 'testing' || agent.state === 'publishing' ? <Loader2 className="mt-px size-3.5 shrink-0 animate-spin text-viz-7" /> : agent.state === 'failed' ? <CircleX className="mt-px size-3.5 shrink-0 text-rd" /> : <Bot className="mt-px size-3.5 shrink-0 text-viz-7" />}
       {/* AG05: the held verdict in the warning colour with its cases; a missing credential with where to pick it. */}
       <span className={cn('min-w-0 flex-1 [overflow-wrap:anywhere]', agent.publish?.state === 'held' || agent.publish?.state === 'failed' ? 'text-warn' : 'text-t2')}>{step.text}</span>
@@ -263,9 +265,9 @@ export function AgentRow({ agent }: { agent: AgentProgress }) {
         </a>
       )}
       {agent.agentId && !agent.taken && agent.smoke?.state === 'untested' && agent.smoke.reason?.startsWith('needs a credential') && (
-        <a href={`/agents/${agent.agentId}?tab=abilities`} target="_blank" rel="noopener" className="shrink-0 text-[11.5px] font-semibold text-ac hover:underline max-md:flex max-md:min-h-11 max-md:items-center">
+        <button type="button" aria-expanded={picking} onClick={() => setPicking((p) => !p)} className="shrink-0 text-[11.5px] font-semibold text-ac hover:underline max-md:flex max-md:min-h-11 max-md:items-center">
           Pick it
-        </a>
+        </button>
       )}
       {act && (
         <button
@@ -285,6 +287,7 @@ export function AgentRow({ agent }: { agent: AgentProgress }) {
           Open <ExternalLink className="size-3" />
         </a>
       )}
+      {picking && agent.agentId && <div className="basis-full pl-5"><AgentCredentialPicker agentId={agent.agentId} onDone={() => setPicking(false)} /></div>}
     </div>
   );
 }
