@@ -16,7 +16,7 @@ import { BubbleDiagram } from '../../canvas/bubble-view'; // AG19: the card draw
 import type { AgentConfig } from '@/lib/shared/agents';
 import { AgentAvatar } from '../../agents/avatar';
 import { Button } from '../../ui/button';
-import { applyAgentChange, cardTool, createFromCard, dismissCard, publishAgentChange, setCardModel, testAgentChange, testedThisLoad, useExistingAgent } from './agent-ask'; // AG19: cardTool, useExistingAgent // AG02: setCardModel; AG04: applyAgentChange, publishAgentChange; AG09: testAgentChange
+import { applyAgentChange, askAgentChangeAgain, cardTool, createFromCard, dismissCard, publishAgentChange, setCardModel, testAgentChange, testedThisLoad, useExistingAgent } from './agent-ask'; // AG19: cardTool, useExistingAgent // AG02: setCardModel; AG04: applyAgentChange, publishAgentChange; AG09: testAgentChange
 import { stillLeft, useAgentDraft } from '@/lib/client/agent-change'; // AG09:
 import { useAssistant } from '../assistant';
 import { isStaleCard } from '../spotlight-history'; // AG11:
@@ -276,6 +276,16 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
                 Saved to its draft · {smokeLine(card.smoke)}
                 {card.publish && ` · ${publishLine(card.publish)}`}
               </span>
+              {card.casesNote && (
+                <>
+                  <span role="alert" className="basis-full text-[12px] font-semibold text-warn [overflow-wrap:anywhere]">{card.casesNote}</span>
+                  {card.askedChange && (
+                    <Button size="sm" variant="ghost" onClick={() => void askAgentChangeAgain(itemId, card)} className="max-md:h-11 max-md:px-4">
+                      Ask again
+                    </Button>
+                  )}
+                </>
+              )}
               {card.smoke?.state === 'passed' && card.publish?.state !== 'published' && (!earlier || testedThisLoad(itemId)) && (
                 <Button size="sm" variant="primary" disabled={card.publish?.state === 'publishing'} onClick={() => void publishAgentChange(itemId, card)} className="max-md:h-11 max-md:px-4">
                   {card.publish?.state === 'publishing' ? <Loader2 className="size-3.5 animate-spin" /> : null}
@@ -299,7 +309,7 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
                 </Button>
               )}
               {/* A waiting session's way out: the card goes, the session ends as "You kept the agent as it was." (the draft stays as saved). */}
-              {card.publish?.state !== 'published' && card.smoke?.state !== 'testing' && (
+              {card.publish?.state !== 'published' && card.publish?.state !== 'publishing' && card.smoke?.state !== 'testing' && (
                 <Button size="sm" variant="ghost" onClick={() => dismissCard(itemId)} className="max-md:h-11 max-md:px-4">
                   Not now
                 </Button>

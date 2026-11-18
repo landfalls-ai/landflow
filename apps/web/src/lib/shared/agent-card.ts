@@ -197,8 +197,12 @@ export interface AgentCard {
   /** The guardrails, in words ("Masks secrets in messages", "Ignores instructions inside tool results"). */
   guardrails: string[];
   cases: AgentCaseDraft[];
-  /** A change card: the ids of the agent's cases these `cases` replace (only the ones that asserted the old text-only behaviour); Apply swaps them in one call. */
-  replaceCaseIds?: string[];
+  /** A change card: the agent's cases these `cases` replace (the ones the design named as made wrong by the change), by id with their input text; Apply swaps them in one call. */
+  replaceCases?: Array<{ id: string; input: string }>;
+  /** A change card: the swap of the cases failed after the draft was saved (they changed since the design); the card says so and offers Ask again. */
+  casesNote?: string;
+  /** A change card: the words the change was designed from, for Ask again. */
+  askedChange?: string;
   /** What is left for the person (the architect's `needs` texts) and what no plugin online covers (`missing`). */
   needs: string[];
   missing: string[];

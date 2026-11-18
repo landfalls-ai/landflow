@@ -122,6 +122,8 @@ const TOOL_SCHEMA = {
 const BRIEF_PARTS =
   'Four parts, each starting a line: "Input:" (what each message or item brings), "Steps:" (numbered, naming its tools), "Output:" (what it answers, how long), "Hand over when:" (what it does not decide alone)';
 // AG08: the cases are the inputs themselves, written out.
+// A change to an agent that has test cases: the ones the change makes wrong are named by id.
+const CONTRADICTED_ASK = 'Only when changing an agent that has test cases (listed with their ids): the ids of the cases this change makes wrong (the case says the agent must do the opposite of what the change makes it do); empty when none. Name no case that still holds. Write 1 to 2 new cases in `cases` to replace them.';
 const CASES_ASK = '3 to 5 test cases, one plain line each: what a person would actually send it, written out (the alert, the question, the text itself; never a description of it or a placeholder) => what a right answer says';
 
 const TOOLS: ToolSpec[] = [
@@ -167,6 +169,7 @@ const TOOLS: ToolSpec[] = [
         never: { type: 'array', items: { type: 'string' } },
         instructions: { type: 'string', description: BRIEF_PARTS }, // SB17:
         cases: { type: 'array', items: { type: 'string' }, description: CASES_ASK }, // SB17:
+        contradictedCases: { type: 'array', items: { type: 'string' }, description: CONTRADICTED_ASK },
         model: { type: 'string', description: 'The chat model it runs on, as list_models gives it ("ollama/qwen3-coder:30b"): the first one unless the job needs another' },
         // AG19: an agent that already does the job, and an existing knowledge base it searches as it is.
         reuse: {
@@ -224,6 +227,7 @@ const DESIGN_TOOL: ToolSpec = {
       description: { type: 'string', description: 'One sentence: what it does' },
       instructions: { type: 'string', description: BRIEF_PARTS }, // SB17:
       cases: { type: 'string', description: `${CASES_ASK}; one line per case` }, // SB17:
+      contradictedCases: { type: 'string', description: `${CONTRADICTED_ASK} Comma-separated ids.` },
       whatIDo: { type: 'string', description: 'Up to 3 short lines for its team card, one per line' },
       tones: { type: 'string', description: '2–3 words, comma-separated: Precise, Direct, Thorough…' },
       model: { type: 'string', description: 'One of the models listed ("ollama/qwen3-coder:30b")' },
@@ -291,6 +295,7 @@ export function fromDesign(args: Record<string, unknown>): Record<string, unknow
     ...(plain(args.description) && { description: plain(args.description) }),
     instructions: plain(args.instructions),
     ...(plain(args.cases) && { cases: list(args.cases, /\n/) }), // SB17:
+    ...(plain(args.contradictedCases) && { contradictedCases: list(args.contradictedCases, /[,\n]/).filter((id) => !none.test(id)) }),
     whatIDo: list(args.whatIDo, /\n/),
     tones: list(args.tones, /,/),
     ...(plain(args.model) && { model: plain(args.model) }),
@@ -796,6 +801,8 @@ export interface DesignExtras {
   reuse?: AgentReuse;
   modelWhy?: NonNullable<AgentCard['modelWhy']>;
   modelNote?: string;
+  /** A change: the ids of the agent's test cases the design says the change makes wrong (the route keeps only ids the agent has). */
+  contradicted?: string[];
 }
 
 /** A gap in plain words: a tool id the model wrote ("no extract_iocs tool") is the node's title ("no Extract IOCs tool"). */
@@ -1369,7 +1376,8 @@ async function architect(input: ArchitectInput, scope: UsageScope): Promise<void
           cases = more.length > proposed.length ? more : proposed;
         }
         if (cases.length < 3 && !input.noCases /* AG04: */) needs.push({ tool: 'test cases', kind: 'parameter', text: 'Add test cases on the Evaluations tab' });
-        input.onDesign?.(extras ?? {}, [...read]); // AG19: the reuse and the model's why of this proposal, and what was read
+        const contradicted = Array.isArray(args.contradictedCases) ? (args.contradictedCases as unknown[]).flatMap((id) => (typeof id === 'string' && id.trim() ? [id.trim()] : [])) : [];
+        input.onDesign?.({ ...(extras ?? {}), ...(contradicted.length > 0 ? { contradicted } : {}) }, [...read]); // AG19: the reuse and the model's why of this proposal, and what was read
         onEvent({ type: 'draft', id: `dr_${nanoid(8)}`, summary, config, needs, dropped, missing, cases });
         const notes = [dropped.length ? `Left out: ${dropped.join('; ')}.` : '', missing.length ? `Noted as missing (the user sees it): ${missing.map((m) => m.capability).join('; ')}.` : '', needs.length ? `The user still has to: ${needs.map((n) => n.text).join('; ')}.` : ''].filter(Boolean).join(' ');
         return result(`Shown to the user beside the chat with a Create button (${config.tools?.length ?? 0} tools). ${notes} Don't repeat the draft or say it was created.`, `Proposed “${shorten(config.name ?? 'agent', 40)}” with ${config.tools?.length ?? 0} tools`);
@@ -1481,6 +1489,8 @@ export interface AgentSpec {
   /** AG04: a change to an agent that exists (or to a card's config): the config it starts from and what the person asked to change. */
   base?: Partial<AgentConfig>;
   change?: string;
+  /** A change to an agent that exists: its test cases, so the design can name the ones the change makes wrong. */
+  cases?: Array<{ id: string; input: string; expected?: string }>;
 }
 
 /** The person's own words for an agent (no fixed sentences): the text the least-privilege rules read. */
@@ -1491,7 +1501,7 @@ export function designWords(spec: AgentSpec): string {
 
 /** The request the architect gets for Spotlight's newAgent: design it now, model, tools and knowledge included. */
 export function designRequest(spec: AgentSpec): string {
-  if (spec.base && spec.change) return reviseRequest(spec.base, spec.change); // AG04:
+  if (spec.base && spec.change) return reviseRequest(spec.base, spec.change, spec.cases); // AG04:
   const where = [spec.workflow && `in the workflow “${spec.workflow}”`, spec.after && `after the step “${spec.after}”`, spec.before && `before “${spec.before}”`].filter(Boolean).join(', ');
   return [
     // SB17: design from what is written; what only the person can give is left out (it is listed for them), never invented.
@@ -1523,13 +1533,14 @@ function baseAsk(base: Partial<AgentConfig>): string {
 }
 
 /** AG04: the request for a change: the agent as it is, then the change, with every tool proposed again. */
-function reviseRequest(base: Partial<AgentConfig>, change: string): string {
+function reviseRequest(base: Partial<AgentConfig>, change: string, cases: AgentSpec['cases'] = []): string {
   return [
     'Change this agent now and propose the whole agent again, with the change made and nothing else touched. Keep its name, model, instructions, guardrails and every tool the change does not name; leave out a tool only if the change removes it. Leave out what only I can give (a repository, a channel, an id): it is listed for me to fill in.',
     'If the change gives the agent a database or a knowledge base, also rewrite any instruction sentence that says it cannot look data up or may use only the text it is given, so it agrees with the new tool; leave every other sentence as it is.',
     baseAsk(base),
+    cases.length ? `Its test cases (id: input => what a right answer says):\n${cases.slice(0, 20).map((c) => `${c.id}: ${c.input.slice(0, 200)}${c.expected ? ` => ${c.expected.slice(0, 200)}` : ''}`).join('\n')}\nIf the change makes a case wrong, name its id in contradictedCases and write 1 to 2 new cases in cases; name no case that still holds.` : '',
     `The change: ${change}`,
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 }
 
 const REMOVES = /\b(?:remove|delete|drop|stop using|get rid of|take away|disable)\b/gi;
@@ -1755,7 +1766,7 @@ function withSenderGiven(tool: AgentToolConfig, change: string, types: NodeTypeI
  * puts something into a table or database (write the totals to the sales database). "Update me", "save time", "update the agent
  * so it can read the database" and "add rows of the table to the report" say nothing of the kind.
  */
-export const EXPLICIT_WRITE = /\b(?:insert|updat(?:e|es|ing)|delet(?:e|es|ing)|writ(?:e|es|ing)|sav(?:e|es|ing))(?:s|ed|ing)?\s+(?:(?:the|all|old|new|any|its|these|those|stale)\s+)*(?:rows?|records?|entries)\b|\b(?:add(?:s|ing)?|insert(?:s|ing)?|writ(?:e|es|ing)|sav(?:e|es|ing))\b.{0,30}\b(?:to|into)\s+(?:the\s+)?\w*\s*(?:table|database|db)\b/i;
+export const EXPLICIT_WRITE = /\b(?:insert|updat(?:e|es|ing)|delet(?:e|es|ing)|writ(?:e|es|ing)|sav(?:e|es|ing))(?:s|ed|ing)?\s+(?:(?:the|all|old|new|any|its|these|those|stale)\s+)*(?:rows?|records?|entries)\b|\b(?:add(?:s|ing)?|insert(?:s|ing)?|writ(?:e|es|ing)|sav(?:e|es|ing))\s+(?:the\s+)?(?:\w+\s+){0,2}(?:rows?|records?|entries|results?|totals?|data|summar(?:y|ies)|figures|counts)\s+(?:to|into)\s+(?:the\s+)?\w*\s*(?:table|database|db)\b/i;
 
 /**
  * AG04: the proposal of a change as the agent it changes: the base's own tools stay unless the change removes them (least
@@ -2043,7 +2054,7 @@ export function designFailure(caught: unknown): string {
  * what Spotlight gave, on the first model the host has, so the step still has an agent to run. A reached usage cap is
  * thrown, not swallowed.
  */
-export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, 'messages' | 'onEvent' | 'draft' | 'only' | 'request'>): Promise<DraftResult & { designed: boolean; notAdded: AgentNotAdded[] /* AG02: */; failure?: string; extras?: DesignExtras & { catalog: Array<{ tool: string; count?: number }> } /* AG19: */ }> {
+export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, 'messages' | 'onEvent' | 'draft' | 'only' | 'request'>): Promise<DraftResult & { designed: boolean; notAdded: AgentNotAdded[] /* AG02: */; failure?: string; contradicted?: string[]; extras?: DesignExtras & { catalog: Array<{ tool: string; count?: number }> } /* AG19: */ }> {
   // AG02: the agent runs on Spotlight's model (the picker's, else the builder model); the whole ask goes to the architect beside the short spec.
   const agentModel = typeof input.model === 'string' && input.model.trim() ? input.model.trim() : builderModel();
   const asked = spec.ask ? `\n\nThe person's own words, all of it (keep every address, name and id exactly as written):\n${spec.ask}` : '';
@@ -2108,7 +2119,7 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
     const before = kept.cases.length;
     kept.cases = casesWithoutMadeUpUrls(kept.cases, spec.change ? `${designWords(spec)}\n${spec.change}` : designWords(spec), kept.config);
     if (before >= 3 && kept.cases.length < 3 && !(spec.base && spec.change) && !kept.needs.some((n) => n.tool === 'test cases')) kept.needs.push({ tool: 'test cases', kind: 'parameter', text: 'Add test cases on the Evaluations tab' });
-    return { ...kept, config: { ...kept.config, name: spec.base && spec.change ? (kept.config.name ?? spec.name) /* AG04: a rename is the change's */ : spec.name, description: kept.config.description || spec.description }, designed: true, notAdded, ...(!spec.base && { extras: { ...extras, catalog: looked } }) /* AG19: */ };
+    return { ...kept, config: { ...kept.config, name: spec.base && spec.change ? (kept.config.name ?? spec.name) /* AG04: a rename is the change's */ : spec.name, description: kept.config.description || spec.description }, designed: true, notAdded, ...(!spec.base && { extras: { ...extras, catalog: looked } }) /* AG19: */, ...(spec.base && extras.contradicted && { contradicted: extras.contradicted }) };
   }
   // AG04: a change nothing proposed is no change: the base as it is.
   if (spec.base && spec.change) return { config: spec.base, needs: [], dropped: [], missing: [], cases: [], designed: false, notAdded: [], ...(failure && { failure }) };

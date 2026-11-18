@@ -27,7 +27,7 @@ import { agentUsedBy, removeAgent } from '@/lib/server/agents/remove'; // SB18:
 import { agentStore, configOf } from '@/lib/server/agents/store';
 import { agentChanges } from '@/lib/shared/agent-changes'; // AG04:
 import { tidyChangedTools } from '@/lib/server/agents/change-tools';
-import { assertsNoLookup, lookupCases, reconcileLookup } from '@/lib/server/agents/change-lookup';
+import { expectsOnlyDenial, lookupCases, reconcileLookup } from '@/lib/server/agents/change-lookup';
 import type { AgentConfig } from '@/lib/shared/agents'; // AG04:
 import { isUsageCapError } from '@/lib/server/ai-usage';
 import { error, handler, json, parseBody } from '@/lib/server/http';
@@ -65,6 +65,8 @@ const Body = z.object({
   toolNodes: z.array(z.object({ nodeType: z.string().trim().min(1).max(120), operation: z.string().trim().max(80).optional() })).max(8).optional(),
 });
 
+const shortInput = (input: string) => `“${input.length > 70 ? `${input.slice(0, 69)}…` : input}”`;
+
 export const POST = handler(async (request: Request) => {
   const parsed = await parseBody(request, Body);
   if (!parsed.ok) return parsed.response;
@@ -78,13 +80,15 @@ export const POST = handler(async (request: Request) => {
     if (!current || !canResource(routeActor(), 'agent', base.agentId, 'update')) return error('Agent not found', 404);
     baseConfig = configOf(current) as unknown as Record<string, unknown>;
   } else if (base) baseConfig = base.config;
+  // A change to a saved agent: its test cases go to the design, which names the ones the change makes wrong.
+  const existingCases = base && 'agentId' in base ? listCases(base.agentId).map((c) => ({ id: c.id, input: c.input, ...(c.expected && { expected: c.expected }) })) : [];
   const picked = await resolveSpotlightModel(parsed.data.model); // SB19:
   if ('error' in picked) return error(picked.error, 400); // SB19:
   const actor = routeActor();
   const resources = await agentResources(actor);
   let design: Awaited<ReturnType<typeof designAgent>>;
   try {
-    design = await designAgent({ ...parsed.data, base: baseConfig as Partial<AgentConfig> | undefined /* AG04: */ }, { model: picked.model, types: allowedTypes(undefined, actor), actor, resources, signal: request.signal });
+    design = await designAgent({ ...parsed.data, base: baseConfig as Partial<AgentConfig> | undefined /* AG04: */, ...(existingCases.length && { cases: existingCases }) }, { model: picked.model, types: allowedTypes(undefined, actor), actor, resources, signal: request.signal });
   } catch (caught) {
     // The caller's AI usage cap: say so, and create no agent (Spotlight shows the message on the step).
     if (isUsageCapError(caught)) return error(caught.message, 429);
@@ -109,23 +113,29 @@ export const POST = handler(async (request: Request) => {
     design.config = tidy.config as typeof design.config;
     if (tidy.removed.length) design.needs = design.needs.filter((n) => !tidy.removed.includes(String(n.tool)) && !tidy.removed.some((r) => n.text.startsWith(`${r}:`)));
   }
-  // A data or knowledge tool the change adds: a sentence that only denies lookups goes, and the cases that asserted it are replaced (by id).
+  // The cases a change makes wrong are replaced, by id: the ones the design names (it was given the cases with their ids), and, when a
+  // denial of lookups was removed, any whose expected answer is nothing but that denial. Nothing else is guessed at.
   let lookup: ReturnType<typeof reconcileLookup> | undefined;
-  let replaceCaseIds: string[] = [];
+  let replaceCases: Array<{ id: string; input: string }> = [];
   let newCases: Array<{ input: string; expected: string }> = [];
   if (baseConfig && design.config) {
     lookup = reconcileLookup(baseConfig as never, design.config as never);
     design.config = lookup.config as typeof design.config;
-    if (lookup.removed && base && 'agentId' in base) {
-      replaceCaseIds = listCases(base.agentId).filter((c) => assertsNoLookup(`${c.input} ${c.expected ?? ''}`)).map((c) => c.id);
-      newCases = replaceCaseIds.length ? lookupCases(lookup.tools, (design.config.tools ?? []).some((t) => t.type === 'node')) : [];
+    if (existingCases.length) {
+      const named = (design.contradicted ?? []).filter((id) => existingCases.some((c) => c.id === id));
+      const denied = lookup.removed ? existingCases.filter((c) => expectsOnlyDenial(c.expected)).map((c) => c.id) : [];
+      replaceCases = [...new Set([...named, ...denied])].map((id) => ({ id, input: existingCases.find((c) => c.id === id)!.input }));
+      if (replaceCases.length) {
+        const written = named.length ? (design.cases ?? []).filter((c) => c.expected).slice(0, 3).map((c) => ({ input: c.input, expected: c.expected as string })) : [];
+        newCases = written.length ? written : lookup.removed ? lookupCases(lookup.tools, (design.config.tools ?? []).some((t) => t.type === 'node')) : [];
+      }
     }
   }
   const config = baseConfig ? design.config : { avatar: { kind: 'face' as const, face: randomFace(parsed.data.name) }, ...design.config }; // AG04: a change keeps the base's own look
   if (parsed.data.preview) {
     // SB16: the card's preview: a face to show, nothing saved; SB17's brief's cases come with it.
     // AG04: a change also says what it changes from the base; nothing is saved.
-    if (baseConfig) return json({ config, changes: [...agentChanges(baseConfig, config as Record<string, unknown>), ...(lookup?.lines ?? []), ...(replaceCaseIds.length ? [`Tests: ${replaceCaseIds.length} replaced`] : [])], needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: newCases, ...(replaceCaseIds.length && { replaceCaseIds }), notAdded: design.notAdded, models /* AG02: */, ...(setup.knowledge && { knowledge: setup.knowledge }) /* AG13: */, ...(design.failure && { failure: design.failure }) });
+    if (baseConfig) return json({ config, changes: [...agentChanges(baseConfig, config as Record<string, unknown>), ...(lookup?.lines ?? []), ...replaceCases.map((c) => `Test removed: ${shortInput(c.input)}`), ...newCases.map((c) => `Test added: ${shortInput(c.input)}`)], needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: newCases, ...(replaceCases.length && { replaceCases }), notAdded: design.notAdded, models /* AG02: */, ...(setup.knowledge && { knowledge: setup.knowledge }) /* AG13: */, ...(design.failure && { failure: design.failure }) });
     return json({ config, needs: design.needs, missing: design.missing, dropped: design.dropped, designed: design.designed, cases: design.cases ?? [], notAdded: design.notAdded, models /* AG02: */, ...(setup.knowledge && { knowledge: setup.knowledge }) /* AG13: */, ...reasoned /* AG19: */ });
   }
   const agent = createInProject(request, 'agent', () => agentStore.create(config), (a) => a.id);

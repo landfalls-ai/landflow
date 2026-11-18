@@ -14,7 +14,7 @@ import { starterFlow, starterSample, type AgentCard, type AgentCardTool, type Ag
 import { rootOf, type AgentTeamConfig } from '@/lib/shared/agent-teams'; // AG17: a team node's lead
 import { reuseSentence } from '@/lib/shared/tenant-catalog'; // AG19:
 import { agentChanges } from '@/lib/shared/agent-changes'; // AG04:
-import { announceChange, announceSaved, designChange, publishChange, saveChange, testDraft } from '@/lib/client/agent-change'; // AG04: AG09: testDraft; ag3 carryover: announceSaved
+import { announceChange, announceSaved, designChange, publishChange, saveChangeWithCases, testDraft } from '@/lib/client/agent-change'; // AG04: AG09: testDraft; ag3 carryover: announceSaved
 import { pickedModel } from '../spotlight-model'; // AG04:
 import { followsPractices, guardrailWords, type AgentConfig } from '@/lib/shared/agents';
 import { AGENT_CHANGE_ASKED, applyChanges, draft as draftCall, useAssistant, type ChatItem } from '../assistant'; // AG17: the event; AG19: applyChanges
@@ -448,7 +448,7 @@ export async function reviseAgentCard(itemId: string, card: AgentCard, message: 
       patchCard(itemId, { ...next, state: 'designed', error: undefined, notAdded: rows.length ? rows : undefined, ...(card.base && { base: card.base }) });
       patchReply(reply.id, { parts: [{ kind: 'text', text: reviseReply(card.name, changes, notAdded, false) }] });
     } else {
-      const change: AgentCard = { ...next, state: 'designed', base: { agentId: existing as string, name: card.name }, cases: [] };
+      const change: AgentCard = { ...next, state: 'designed', base: { agentId: existing as string, name: card.name }, cases: design.cases ?? [], ...(design.replaceCases?.length && { replaceCases: design.replaceCases }), askedChange: message };
       patchReply(reply.id, {
         parts: [
           { kind: 'text', text: reviseReply(card.name, changes, notAdded, true) },
@@ -479,12 +479,33 @@ export async function applyAgentChange(itemId: string, card: AgentCard): Promise
   patchCard(itemId, { state: 'creating', error: undefined });
   try {
     patchCard(itemId, { smoke: { state: 'testing' } });
-    const smoke = await saveChange(agentId, card.config, starterSample({ name: card.name, cases: card.cases }), card.cases, card.replaceCaseIds);
-    patchCard(itemId, { state: 'created', agentId, smoke });
+    const { smoke, casesNote } = await saveChangeWithCases(agentId, card.config, starterSample({ name: card.name, cases: card.cases }), card.cases, card.replaceCases);
+    patchCard(itemId, { state: 'created', agentId, smoke, casesNote });
   } catch (e) {
     patchCard(itemId, { state: 'failed', error: (e as Error).message, smoke: undefined });
   } finally {
     applying.delete(itemId);
+  }
+}
+
+/**
+ * Ask again: the change card's tests moved after it was designed (`casesNote`), so the same words are designed again against the agent
+ * as it is now, and the card becomes that new proposal (its draft is as saved: the new card lists what is still different).
+ */
+export async function askAgentChangeAgain(itemId: string, card: AgentCard): Promise<void> {
+  const agentId = card.base?.agentId ?? card.agentId;
+  const change = card.askedChange;
+  if (!agentId || !change || revising.has(itemId)) return;
+  revising.add(itemId);
+  patchCard(itemId, { state: 'creating', error: undefined, casesNote: undefined });
+  try {
+    const design = await designChange({ name: card.name, description: card.description, base: { agentId }, change, ...pickedModel() });
+    const fresh = cardFromPreview({ config: design.config, needs: design.needs ?? [], missing: design.missing ?? [], designed: design.designed ?? true, cases: design.cases ?? [], notAdded: design.notAdded ?? [] } as unknown as Parameters<typeof cardFromPreview>[0], { description: card.description, placed: false, tools: [] }, false);
+    patchCard(itemId, { ...fresh, state: 'designed', base: card.base ?? { agentId, name: card.name }, changes: design.changes, cases: design.cases ?? [], replaceCases: design.replaceCases, askedChange: change, ...(card.fix && { fix: card.fix }), agentId: undefined, smoke: undefined, casesNote: undefined, error: undefined });
+  } catch (e) {
+    patchCard(itemId, { state: 'created', agentId, casesNote: `Asking again failed: ${(e as Error).message}` });
+  } finally {
+    revising.delete(itemId);
   }
 }
 
@@ -514,7 +535,7 @@ export async function changeAgentCard(change: { agentId?: string; teamId?: strin
     const design = (await designChange({ name: agent.name, description: agent.description ?? '', base: { agentId }, change: change.change, ...pickedModel() }, abort.signal)) as Awaited<ReturnType<typeof designChange>> & { knowledge?: Omit<AgentKnowledgeSetup, 'state'> };
     const notAdded = design.notAdded ?? [];
     const fresh = cardFromPreview({ config: design.config, needs: design.needs ?? [], missing: design.missing ?? [], designed: design.designed ?? true, cases: design.cases ?? [], notAdded, ...(design.knowledge && { knowledge: design.knowledge }) } as unknown as Parameters<typeof cardFromPreview>[0], { description: agent.description ?? '', placed: false, tools: [] }, false);
-    const card: AgentCard = { ...fresh, state: 'designed', base: { agentId: agentId, name: agent.name }, changes: design.changes, cases: design.cases ?? [], ...(design.replaceCaseIds?.length && { replaceCaseIds: design.replaceCaseIds }) };
+    const card: AgentCard = { ...fresh, state: 'designed', base: { agentId: agentId, name: agent.name }, changes: design.changes, cases: design.cases ?? [], ...(design.replaceCases?.length && { replaceCases: design.replaceCases }), askedChange: change.change };
     patchReply(reply.id, { parts: [{ kind: 'text', text: reviseReply(agent.name, design.changes, notAdded, true) }, { kind: 'agentCard', card }] });
   } catch (e) {
     if (abort.signal.aborted) patchReply(reply.id, { parts: [{ kind: 'text', text: 'Stopped: nothing was changed.' }] });

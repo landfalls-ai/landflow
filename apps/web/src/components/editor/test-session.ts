@@ -500,7 +500,7 @@ async function showAgentFix(event: AgentFixEvent, attempt: number, signal: Abort
   try {
     const design = await designChange({ name: event.agent, description: '', base: { agentId: event.agentId }, change: event.change, typedAsk, ...pickedModel() }, signal);
     const fix = { ...event.fix, attempt };
-    const card: AgentCard = { ...cardOf(design.config as Partial<AgentConfig>, event.agent, design.needs, design.missing), base: { agentId: event.agentId, name: event.agent }, changes: design.changes, cases: design.cases ?? [], ...(design.replaceCaseIds?.length && { replaceCaseIds: design.replaceCaseIds }), fix };
+    const card: AgentCard = { ...cardOf(design.config as Partial<AgentConfig>, event.agent, design.needs, design.missing), base: { agentId: event.agentId, name: event.agent }, changes: design.changes, cases: design.cases ?? [], ...(design.replaceCases?.length && { replaceCases: design.replaceCases }), askedChange: event.change, fix };
     const id = nanoid(8);
     useAssistant.getState().append([{ id, role: 'assistant', testId, parts: [{ kind: 'text', text: fixLine(event.agent, fix) }, { kind: 'agentCard', card }] }]);
     return id;
@@ -524,24 +524,29 @@ const cardIn = (itemId: string): AgentCard | undefined => {
  * Waits for the person on the agent's change card: Apply (saves the draft and smoke-tests it), then Publish (through the
  * gate). Undefined when the agent is published and the session can run again; else why it stops.
  */
-async function agentFixOutcome(itemId: string, signal: AbortSignal): Promise<string | undefined> {
+export async function agentFixOutcome(itemId: string, signal: AbortSignal): Promise<string | undefined> {
+  // Once Apply has saved the change, "kept it as it was" would be wrong: the draft holds the change, it is just not published.
+  let applied = false;
+  const kept = () => (applied ? 'The change is saved to the draft, not published.' : 'You kept the agent as it was.');
   const settled = () => {
     const card = cardIn(itemId);
+    if (card?.state === 'created') applied = true;
     // A test that stopped for a credential is not an answer: the card offers Pick it, and the session waits for the pick (its smoke result lands on the card).
     return !card || card.state === 'failed' || (card.state === 'created' && card.smoke?.state !== 'testing' && card.smoke !== undefined && !needsPick(card));
   };
-  if (!(await untilAssistant(settled, signal))) return signal.aborted ? undefined : 'You kept the agent as it was.';
+  if (!(await untilAssistant(settled, signal))) return signal.aborted ? undefined : kept();
   let card = cardIn(itemId);
-  if (!card) return 'You kept the agent as it was.';
+  if (!card) return kept();
   if (card.state === 'failed') return `Saving the change to “${card.name}” failed: ${card.error ?? 'unknown error'}. Left: open the agent and try again.`;
   if (card.smoke?.state !== 'passed') return `The change to “${card.name}” did not pass its test (${smokeLine(card.smoke)}). Left: open the agent and look at what it did.`;
   const published = () => {
     const now = cardIn(itemId);
+    if (now?.state === 'created') applied = true;
     return !now || (now.publish !== undefined && now.publish.state !== 'publishing');
   };
-  if (!(await untilAssistant(published, signal))) return signal.aborted ? undefined : 'You kept the agent as it was.';
+  if (!(await untilAssistant(published, signal))) return signal.aborted ? undefined : kept();
   card = cardIn(itemId);
-  if (!card) return 'You kept the agent as it was.';
+  if (!card) return kept();
   if (card.publish?.state === 'published') return undefined;
   if (card.publish?.state === 'held') return `Publishing “${card.name}” is held by its eval gate${card.publish.reason ? `: ${card.publish.reason}` : ''}. Left: open the agent, look at its cases, then publish it.`;
   return `Publishing “${card.name}” failed${card.publish?.reason ? `: ${card.publish.reason}` : ''}. Left: open the agent and publish it.`;

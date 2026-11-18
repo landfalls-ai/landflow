@@ -17,6 +17,11 @@ const DENIALS = [
   /^(?:do not|don['’]t|never) (?:look up|query|access) (?:any )?data$/i,
   /^(?:it )?(?:has|have) no access to (?:any )?data$/i,
   /^(?:it )?(?:cannot|can['’]t|can not) look (?:anything|data) up$/i,
+  // First person, as a persona example's answer is written: "I can not look anything up."
+  /^i (?:cannot|can['’]t|can not|am (?:not able|unable) to) look (?:anything|data|things|it) up$/i,
+  /^i (?:cannot|can['’]t|can not|am (?:not able|unable) to) look up (?:any )?data$/i,
+  /^i (?:do not|don['’]t) have (?:any )?access to (?:any )?data$/i,
+  /^i (?:only )?use only the text (?:i receive|i am given|you give me)$/i,
 ];
 const LEAD = /^\s*(?:\d+[.)]|[-*•])\s*/;
 export const isDenial = (sentence: string): boolean => {
@@ -24,8 +29,23 @@ export const isDenial = (sentence: string): boolean => {
   return DENIALS.some((d) => d.test(bare));
 };
 
-/** True when a case's text asserts the same denial (a case that tests text-only behaviour). */
-export const assertsNoLookup = (text: string): boolean => /\b(?:only|just) (?:the )?text\b|\bwithout (?:looking up|any lookups?|querying)\b|\b(?:does not|doesn['’]t|never|must not) (?:look up|claim to have looked up|query)\b|\bno (?:lookups?|data access)\b/i.test(text);
+/**
+ * The fallback for a case the design did not name: its expected answer is nothing but denial sentences ("Never claims to have looked
+ * up data."). It reads `expected` only, whole sentences only: a case that merely mentions text, lookups or safety is not caught.
+ */
+export const expectsOnlyDenial = (expected: string | undefined): boolean => {
+  // A sentence may join two denials ("I use only the text you give me, so I cannot look up data."): each clause must be one.
+  const clauses = (expected ?? '').split(/(?<=[.!?])\s+|\n+/).flatMap((x) => x.split(/,\s+(?:so|and)\s+|;\s+/)).map((x) => x.trim()).filter(Boolean);
+  return clauses.length > 0 && clauses.every(isDenial);
+};
+
+/** How many denial sentences or lines a config holds (instructions, persona lists, mission): a rewrite that has fewer removed some. */
+export function denialCount(config: Config): number {
+  const sentences = (text: string | undefined) => (text ?? '').split('\n').flatMap((line) => line.replace(LEAD, '').split(/(?<=[.!?])\s+/));
+  const p = config.persona;
+  const lines = [...(p?.always ?? []), ...(p?.never ?? []), ...(p?.whatIDo ?? [])];
+  return [...sentences(config.instructions), ...sentences(p?.mission), ...lines].filter(isDenial).length + (p?.examples ?? []).filter((e) => isDenial(e.assistant)).length;
+}
 
 const isData = (t: Tool) => t.type === 'knowledge' || (t.type === 'node' && /^databases\./.test(t.nodeType ?? ''));
 
@@ -95,14 +115,17 @@ export function reconcileLookup(base: Config, designed: Config): LookupChange {
     }
     if (persona.examples) {
       persona.examples = persona.examples.filter((e) => {
-        if (!assertsNoLookup(`${e.user} ${e.assistant}`) && !isDenial(e.assistant)) return true;
+        if (!expectsOnlyDenial(e.assistant)) return true;
         lines.push(`Persona: removed example ${quote(e.user)}`);
         return false;
       });
+      if (!persona.examples.length) delete persona.examples; // an empty list is no list
     }
   }
   const instructions = designed.instructions === undefined ? undefined : withoutDenials(designed.instructions, (s) => lines.push(`Instructions: removed ${quote(s)}`));
-  if (!lines.length) return nothing;
+  // The design may have rewritten the denial away itself (nothing left for this function to remove): the base had more denials than the design has.
+  const rewritten = denialCount(base) > denialCount(designed);
+  if (!lines.length) return rewritten ? { ...nothing, tools: added.map((t) => t.name).filter((n): n is string => Boolean(n)), removed: true } : nothing;
   return { config: { ...designed, ...(persona && { persona }), ...(instructions !== undefined && { instructions }) }, lines, tools: added.map((t) => t.name).filter((n): n is string => Boolean(n)), removed: true };
 }
 

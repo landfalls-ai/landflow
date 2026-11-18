@@ -261,10 +261,18 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   (*Instructions: removed …*, *Persona: removed …*, *Persona: removed example …*). A sentence with a qualifier or scope (*… data you did
   not query*, *Do not access databases other than the sales one*, *Never read data from the HR table*) is a real rule and stays; only the
   sentence goes, never its paragraph or the mission. Any other instruction that contradicts the tool is the architect's to rewrite: the
-  change prompt says so (*Instructions rewritten …* on the card). When a denial went, the cases that assert the same denial are named
-  by id (`replaceCaseIds`), and two generic ones replace them (*Read a few rows with your data tool and tell me what they show*);
-  format, tone and safety cases stay. The card says *Tests: N replaced*, with N the cases it replaces; Apply swaps them in one
-  all-or-nothing call (`PATCH /api/agents/:id/eval-gate`), and puts the old cases back if the draft then fails to save.
+  change prompt says so (*Instructions rewritten …* on the card). **Which cases are replaced is the design's call, not a regex's:** the
+  design is given the agent's cases with their ids and names the ones the change makes wrong (`contradictedCases`), with 1 to 2 cases
+  that replace them. When a denial went (removed, or rewritten away by the design), a case whose *expected answer* is nothing but a
+  denial sentence is replaced too (the strict fallback); safety, format and greeting cases stay unless the design names them. The card
+  has one line per replaced case (*Test removed: “…”*) and one per new case (*Test added: “…”*); the card's `replaceCases` carries the ids
+  and the inputs. **Apply saves the draft first, then swaps the cases** in one all-or-nothing call (`PATCH /api/agents/:id/eval-gate`),
+  with no undo. A stale id (409) is worked out again from the agent's cases now, matched by input text, and tried once more; if that
+  fails too, the card says *The tests changed since this was designed; ask again.* (any other failed swap says why) and offers **Ask
+  again**, which designs the same words again against the agent as it is. After Apply, a dismissed card ends the session with *The
+  change is saved to the draft, not published.*, and **Not now** is hidden while a publish runs. First-person denials in a persona
+  example (*I can not look anything up.*) count as denials, and an examples list left empty is dropped. A write needs a data object
+  (*write the totals to the sales database*, *insert rows*), never *add read access to the database* or *add SQLite to the db agent*.
 - **An empty Table on a Select tool (final run 2).** A tool a design leaves on Select keeps it (the safer, simpler choice: Select cannot
   run arbitrary SQL, and Execute Query for free reads would need the SELECT check on every call and change how existing designs
   read). Its `table` stays empty: the tool's input schema offers `table` and `query`, so the call names the table, and `operation` is pinned.

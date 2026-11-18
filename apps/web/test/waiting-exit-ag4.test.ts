@@ -10,6 +10,7 @@ const { cardFromPreview } = await import('@/components/editor/spotlight/agent-as
 const { AgentCardView } = await import('@/components/editor/spotlight/agent-card');
 const { useAssistant } = await import('@/components/editor/assistant');
 const { agentFixWaits, headerStopShown } = await import('@/components/editor/timeline');
+const { agentFixOutcome } = await import('@/components/editor/test-session');
 beforeAll(() => prepare());
 
 const base = (over: Record<string, unknown>) => ({
@@ -47,5 +48,32 @@ describe('a waiting session always has an exit', () => {
     act(() => exit.click());
     // The card is gone: the session reads that as "You kept the agent as it was."
     expect(useAssistant.getState().items.some((i) => i.role === 'assistant' && i.parts.some((p) => p.kind === 'agentCard'))).toBe(false);
+  });
+});
+
+describe('the card after Apply', () => {
+  it('hides Not now while a publish is in progress', () => {
+    const el = render(base({ state: 'created', smoke: { state: 'passed' }, publish: { state: 'publishing' } }));
+    expect(button(el, 'Not now')).toBeUndefined();
+  });
+  it('a swap that failed shows its note and Ask again', () => {
+    const el = render(base({ state: 'created', smoke: { state: 'passed' }, casesNote: 'The tests changed since this was designed; ask again.', askedChange: 'Give it SQLite' }));
+    expect(el.textContent).toContain('The tests changed since this was designed; ask again.');
+    expect(button(el, 'Ask again')).toBeDefined();
+  });
+  it('dismissed after Apply, the session says the change is saved to the draft, not that it was kept as it was', async () => {
+    useAssistant.getState().reset();
+    const card = base({ state: 'created', smoke: { state: 'passed' } });
+    useAssistant.getState().append([{ id: 'item1', role: 'assistant', testId: 't1', parts: [{ kind: 'agentCard', card }] } as never]);
+    const done = agentFixOutcome('item1', new AbortController().signal);
+    useAssistant.setState({ items: [] });
+    expect(await done).toBe('The change is saved to the draft, not published.');
+  });
+  it('dismissed before Apply it still says it was kept as it was', async () => {
+    useAssistant.getState().reset();
+    useAssistant.getState().append([{ id: 'item1', role: 'assistant', testId: 't1', parts: [{ kind: 'agentCard', card: base({ state: 'designed' }) }] } as never]);
+    const done = agentFixOutcome('item1', new AbortController().signal);
+    useAssistant.setState({ items: [] });
+    expect(await done).toBe('You kept the agent as it was.');
   });
 });

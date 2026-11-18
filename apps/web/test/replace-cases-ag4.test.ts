@@ -54,5 +54,12 @@ describe('EXPLICIT_WRITE', () => {
     ['add rows of the table to the report', false],
     ['Give the summary agent access to the sales database', false],
     ['update its persona and instructions', false],
+    ['Add read-only access to the database', false],
+    ['add read access to the sales database', false],
+    ['add access to the db', false],
+    ['add SQLite to the db agent', false],
+    ['write a query to the database', false],
+    ['add a link to the table', false],
+    ['add the results to the sales table', true],
   ])('“%s” → %s', (ask, expected) => expect(EXPLICIT_WRITE.test(ask)).toBe(expected));
 });
