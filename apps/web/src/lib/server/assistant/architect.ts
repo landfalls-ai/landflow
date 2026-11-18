@@ -2230,7 +2230,7 @@ const NAME_VERBS = new Set('change read write send create update delete search g
  * keyword of its app (5+ letters, "database" names SQLite), or a word of its display name that is not a verb and has 5+ letters
  * ("Sales Read" by "the sales"). One verb of a longer name never does: "Change “X” so these cases pass" does not name Change Case.
  */
-export function namesTool(text: string, tool: AgentToolConfig, types: NodeTypeInfo[]): boolean {
+export function namesTool(text: string, tool: AgentToolConfig, types: NodeTypeInfo[], identifyingOnly = false): boolean {
   const words = text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map((w) => w.replace(/(?:e?s)$/, ''));
   const joined = ` ${words.join(' ')} `;
   const phrase = (name: string) => {
@@ -2240,12 +2240,22 @@ export function namesTool(text: string, tool: AgentToolConfig, types: NodeTypeIn
   const info = tool.type === 'node' ? types.find((x) => x.type === tool.nodeType) : undefined;
   if (phrase(('name' in tool && tool.name) || '') || (info && phrase(info.descriptor.displayName))) return true;
   if (!info) return false;
-  const single = [info.pluginId, ...(info.descriptor.keywords ?? []).filter((k) => k.length >= 5), ...info.descriptor.displayName.split(/[^A-Za-z0-9]+/).filter((w) => w.length >= 5 && !NAME_VERBS.has(w.toLowerCase()))];
-  return single.some((t) => (t ? phrase(t) : false));
+  const plugin = [info.pluginId, info.pluginName].filter((n): n is string => Boolean(n));
+  const keywords = (info.descriptor.keywords ?? []).filter((k) => k.length >= 5);
+  const sameAsPlugin = (k: string) => plugin.some((n) => n.toLowerCase() === k.toLowerCase());
+  // What identifies the tool: its plugin (id or name) and a keyword that is the plugin. The common words of its app and the single words of its display name only loosely point at it.
+  if (plugin.some((t) => phrase(t)) || keywords.filter(sameAsPlugin).some((k) => phrase(k))) return true;
+  if (identifyingOnly) return false;
+  const loose = [...keywords, ...info.descriptor.displayName.split(/[^A-Za-z0-9]+/).filter((w) => w.length >= 5 && !NAME_VERBS.has(w.toLowerCase()))];
+  return loose.some((t) => phrase(t));
 }
 
-/** Whether a node tool only reads: it does not ask first and its call changes nothing outside (the same heuristic the design's least-privilege rules use). */
-const readOnlyTool = (tool: AgentToolConfig) => tool.type === 'node' && !tool.requireApproval && !writesOutside({ type: tool.nodeType, parameters: tool.parameters ?? {} });
+/** Whether a node tool only reads: it does not ask first and the design path's `toolWrites` says its call changes nothing outside. */
+const readOnlyTool = (tool: AgentToolConfig, types: NodeTypeInfo[]) => {
+  if (tool.type !== 'node' || tool.requireApproval) return false;
+  const info = types.find((x) => x.type === tool.nodeType);
+  return info ? !toolWrites(info, tool.parameters ?? {}) : !writesOutside({ type: tool.nodeType, parameters: tool.parameters ?? {} });
+};
 
 /**
  * The fix design's rule for a tool it was not asked for (the live G2 fix added a Change Case tool that asks first): a tool the
@@ -2253,8 +2263,10 @@ const readOnlyTool = (tool: AgentToolConfig) => tool.type === 'node' && !tool.re
  * only when it is a read, which keeps the SQLite select fix; a tool that asks first or writes always needs the cause or the ask.
  */
 export function requested(tool: AgentToolConfig, spec: { namedBy: string; change: string }, types: NodeTypeInfo[]): boolean {
-  if (namesTool(spec.namedBy, tool, types)) return true;
-  return readOnlyTool(tool) && namesTool(spec.change, tool, types);
+  // A tool that asks first or writes counts only by a name that identifies it; the loose names count only for a read.
+  const read = readOnlyTool(tool, types);
+  if (namesTool(spec.namedBy, tool, types, !read)) return true;
+  return read && namesTool(spec.change, tool, types);
 }
 
 /**

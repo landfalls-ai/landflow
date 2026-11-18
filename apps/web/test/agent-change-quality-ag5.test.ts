@@ -184,6 +184,12 @@ describe('an agent fix adds only a tool the cause or the person’s ask names (f
     expect(body.config.instructions ?? '').not.toMatch(/sqlite/i);
   });
 
+  it('notAdded lists a tool the design added that nothing names', async () => {
+    const body = await design('Make it insert the figures into SQLite', 'The summary has made-up figures.\nThe numbers look made up. Test it and fix it.');
+    expect(hasSqlite(body)).toBe(false);
+    expect(body.notAdded.map((n) => n.reason).join(' ')).toMatch(/neither the failure nor your ask names it/);
+  });
+
   it('the live G case: the change text alone names the SQLite read (no approval, no write): it stays', async () => {
     expect(hasSqlite(await design('Give it the SQLite tool so it reads the figures', 'it has no data, so its figures are made up\nThe numbers look made up. Test it and fix it.'))).toBe(true);
   });
@@ -217,7 +223,19 @@ describe('an agent fix adds only a tool the cause or the person’s ask names (f
       expect(requested(select, { namedBy, change: 'Give it the SQLite tool so it reads the figures' }, types)).toBe(true);
       const insert = node('databases.sqlite', 'sqlite', { parameters: { operation: 'insert' }, requireApproval: true });
       expect(requested(insert, { namedBy, change: 'Give it the SQLite tool so it saves the figures' }, types)).toBe(false);
-      expect(requested(insert, { namedBy: 'it needs a database to save the figures', change: 'x' }, types)).toBe(true);
+      expect(requested(insert, { namedBy: 'it needs a database to save the figures', change: 'x' }, types)).toBe(false); // “database” is common: it names only a read
+      expect(requested(insert, { namedBy: 'use the SQLite tool to save the figures', change: 'x' }, types)).toBe(true);
+    });
+
+    it('an asks-first Attio tool is not named by common words of its app', () => {
+      const attio = info('attio.records', 'Create Record', ['attio', 'crm', 'sales', 'message', 'request', 'email'], 'attio');
+      const t = node('attio.records', 'attio_create_record', { requireApproval: true });
+      const ts = [attio] as never[];
+      expect(requested(t, { namedBy: 'Post the sales by region to the receiver', change: 'x' }, ts as never)).toBe(false);
+      expect(requested(t, { namedBy: 'Send a message request by email', change: 'x' }, ts as never)).toBe(false);
+      expect(requested(t, { namedBy: 'Add the deal in Attio', change: 'x' }, ts as never)).toBe(true);
+      expect(namesTool('the sales numbers', t, ts as never)).toBe(true); // loosely, as a read would be named
+      expect(namesTool('the sales numbers', t, ts as never, true)).toBe(false);
     });
 
     it('matches whole words', () => {
