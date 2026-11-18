@@ -52,7 +52,8 @@ export const POST = handler(async (request: Request) => {
     const credentialNames = new Map(registry.credentialTypes().flatMap((c) => [[c.descriptor.name, c.descriptor.displayName], [c.type, c.descriptor.displayName]] as const));
     const known = [parsed.data.prompt, agents.length ? describeAgents(agents) : '', teams.length ? describeTeams([...teams]) : ''].join('\n');
     const guarded = guardDraft(draft, { prompt: parsed.data.prompt, known, byType: (type) => byType.get(type), credentialName: (name) => credentialNames.get(name) });
-    return json({ draft: { ...guarded, summary: draftSummary(guarded, (type) => byType.get(type)?.descriptor.displayName ?? type) } }); // SB15:
+    const summary = draftSummary(guarded, (type) => byType.get(type)?.descriptor.displayName ?? type); // SB15:
+    return json({ draft: { ...guarded, summary: guarded.reuses?.length ? { ...summary, assumptions: [...guarded.reuses, ...summary.assumptions] } : summary } }); // AG19: which agent a step reuses, and why, is the summary's first assumption
   } catch (e) {
     // The caller's AI cap, as the design route answers it: 429, not a 502 from the model.
     return error((e as Error).message, isUsageCapError(e) ? 429 : 502);

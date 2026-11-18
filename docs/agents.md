@@ -49,6 +49,8 @@ project when it's transferred.
 
 ### Agent architect
 
+AG19 (wave ag4): the architect also sees the agents the caller can read (with ids) and may propose `reuse` instead of a new agent; it finds plugin tools by what the job needs (a read-only tool the ask implies, such as Extract IOCs for an alert, is kept without the ask naming it), attaches an existing knowledge base as it is (`runbooks`, keyword search), and says when the model the person named is not available on the host.
+
 Instead of filling in a template, you can describe the agent to the **Agent architect**: a specialist with its own face
 that designs it with you. Open it from **New agent** → **Design it with the Agent architect**, or **Ask the Agent
 architect** on the roster. The chat is on the left; the draft it proposes stays on the right, whole: avatar, name, role,

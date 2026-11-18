@@ -62,6 +62,11 @@ export interface NewAgentSpec {
   tools?: string[];
   /** SB05: the documents it answers from, for the architect to give it a knowledge base: cut to 200. */
   knowledge?: string;
+  /** AG19: hints from the tenant (the architect keeps each when it fits, and says why when it does not): a model, an existing knowledge base, a folder the person named, node types found in the plugins. */
+  agentModel?: string;
+  knowledgeBase?: string;
+  knowledgeFolder?: string;
+  toolNodes?: Array<{ nodeType: string; operation?: string }>;
 }
 
 /** The node type that runs an agent as a step. */
@@ -74,7 +79,19 @@ export function newAgentSpec(o: Record<string, unknown> | undefined): NewAgentSp
   // SB05: tools and knowledge, when the model said any.
   const tools = Array.isArray(o?.tools) ? o.tools.flatMap((t) => text(t)?.slice(0, 80) ?? []).slice(0, 8) : [];
   const knowledge = text(o?.knowledge)?.slice(0, 200);
-  return { name, description: text(o?.description)?.slice(0, 500) ?? '', instructions: text(o?.instructions)?.slice(0, 4000) ?? '', ...(tools.length && { tools }), ...(knowledge && { knowledge }) };
+  // AG19: the tenant hints (`model`, `knowledgeBase`, `knowledgeFolder`, `toolNodes`), cut to size.
+  const agentModel = text(o?.model)?.slice(0, 100);
+  const knowledgeBase = text(o?.knowledgeBase)?.slice(0, 200);
+  const knowledgeFolder = text(o?.knowledgeFolder)?.slice(0, 200);
+  const toolNodes = Array.isArray(o?.toolNodes)
+    ? o.toolNodes.flatMap((t) => {
+        const r = t && typeof t === 'object' ? (t as Record<string, unknown>) : typeof t === 'string' ? { nodeType: t } : undefined;
+        const nodeType = text(r?.nodeType)?.slice(0, 120);
+        const operation = text(r?.operation)?.slice(0, 80);
+        return nodeType ? [{ nodeType, ...(operation && { operation }) }] : [];
+      }).slice(0, 8)
+    : [];
+  return { name, description: text(o?.description)?.slice(0, 500) ?? '', instructions: text(o?.instructions)?.slice(0, 4000) ?? '', ...(tools.length && { tools }), ...(knowledge && { knowledge }), ...(agentModel && { agentModel }), ...(knowledgeBase && { knowledgeBase }), ...(knowledgeFolder && { knowledgeFolder }), ...(toolNodes.length && { toolNodes }) /* AG19: */ };
 }
 
 /** The node settings an op may change. */
