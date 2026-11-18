@@ -241,13 +241,6 @@ export function outsideScope(
       case 'setWorkflowSettings':
         if (scope.kind !== 'selected') say(op.op);
         return;
-      // Wave ag4 carryover (the live pass's E3): "Wire a Sentiment tool into this step." with a Run an Agent step selected is
-      // a change to that step's agent: in scope when it names a step in scope (or names none and one step is in scope).
-      case 'changeAgent': {
-        const id = idOf(op.node);
-        if (anchor !== undefined || (op.node !== undefined ? !id || !inScope.has(id) : scope.nodes.length !== 1)) say(`changing the agent of “${id ? nameOf(id) : (op.node ?? '?')}”`);
-        return;
-      }
       default:
         say(op.op);
     }

@@ -709,7 +709,8 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
           );
         }
         // SB07: a change outside the scope goes back once, then is left out and listed.
-        const outside = askScope ? outsideScope(validated.ops, askScope, working, request) : [];
+        // Wave ag4 carryover (live pass E3): a changeAgent on a step in scope is in scope (spotlight-scope.ts is a contract copy).
+        const outside = askScope ? outsideScope(validated.ops, askScope, working, request).filter((o) => !agentChangeInScope(validated.ops[o.index], askScope, working.nodes)) : [];
         if (askScope && outside.length) {
           const label = scopeLabel(askScope, working.nodes);
           if (!scopeSent) {
@@ -1101,3 +1102,16 @@ const executionIdIn = (messages: ChatInput['messages']): string | undefined => {
   }
   return undefined;
 };
+
+/**
+ * Wave ag4 carryover (the live pass's E3): "Wire a Sentiment tool into this step." with a Run an Agent step selected is a
+ * change to that step's agent (`changeAgent`), so it is in the request's scope when it names a step in scope, or names
+ * none and one step is in scope; another step's agent is not, and an insert's anchor never is (it adds a step).
+ */
+export function agentChangeInScope(op: { op: string; node?: unknown } | undefined, scope: { kind: string; nodes: readonly string[] }, nodes: ReadonlyArray<{ id: string; name: string }>): boolean {
+  if (!op || op.op !== 'changeAgent' || scope.kind === 'insert') return false;
+  if (op.node === undefined || op.node === '') return scope.nodes.length === 1;
+  const ref = String(op.node);
+  const node = nodes.find((n) => n.name === ref || n.id === ref) ?? nodes.find((n) => n.name.toLowerCase() === ref.toLowerCase());
+  return node !== undefined && scope.nodes.includes(node.id);
+}

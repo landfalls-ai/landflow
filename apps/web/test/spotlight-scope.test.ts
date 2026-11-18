@@ -117,11 +117,6 @@ describe('outsideScope', () => {
     expect(out.map((o) => o.index)).toEqual([0]);
     expect(out[0].reason).toContain('outside what was asked');
   });
-  it('wave ag4 carryover (E3): a change to the selected step’s agent is in scope; another step’s agent is not', () => {
-    expect(outsideScope([{ op: 'changeAgent', node: 'Open status incident' }], selected, graph, 'Wire a Sentiment tool into this step.')).toEqual([]);
-    expect(outsideScope([{ op: 'changeAgent' }], selected, graph, 'Wire a Sentiment tool into this step.')).toEqual([]);
-    expect(outsideScope([{ op: 'changeAgent', node: 'Save to backlog' }], selected, graph, 'Wire a Sentiment tool into this step.')).toHaveLength(1);
-  });
   it('puts a rewire to a step added outside the scope outside too', () => {
     const ops = [{ op: 'addNode', ref: 'n', name: 'Extra', after: 'Save to backlog' }, { op: 'connect', from: 'n', to: 'Open status incident' }];
     expect(outsideScope(ops, { kind: 'selected', nodes: ['http'] }, graph, 'add a step').map((o) => o.index)).toEqual([0, 1]);
@@ -230,5 +225,19 @@ describe('the chat', () => {
     const send = (scope: unknown) => chatRoute.POST(new Request('http://localhost/api/assistant/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: [{ role: 'user', content: 'x' }], workflow: { name: 'W', nodes: [], connections: [] }, scope }) }));
     expect((await send({ kind: 'everything', nodes: [] })).status).toBe(400);
     expect((await send({ kind: 'only', nodes: Array.from({ length: 21 }, (_, i) => `n${i}`) })).status).toBe(400);
+  });
+});
+
+describe('wave ag4 carryover (E3): a change to the selected step’s agent', () => {
+  it('is in scope for that step (or none named with one in scope), not for another step’s agent or an insert', async () => {
+    const { agentChangeInScope } = await import('@/lib/server/assistant/chat');
+    const selected = { kind: 'selected' as const, nodes: ['http'] };
+    const out = outsideScope([{ op: 'changeAgent', node: 'Open status incident' }], selected, graph, 'Wire a Sentiment tool into this step.');
+    expect(out).toHaveLength(1); // the contract's filter alone sends it back; chat.ts keeps it
+    expect(agentChangeInScope({ op: 'changeAgent', node: 'Open status incident' }, selected, graph.nodes)).toBe(true);
+    expect(agentChangeInScope({ op: 'changeAgent' }, selected, graph.nodes)).toBe(true);
+    expect(agentChangeInScope({ op: 'changeAgent', node: 'Save to backlog' }, selected, graph.nodes)).toBe(false);
+    expect(agentChangeInScope({ op: 'changeAgent', node: 'Open status incident' }, { kind: 'insert', nodes: ['http'] }, graph.nodes)).toBe(false);
+    expect(agentChangeInScope({ op: 'setParameters', node: 'Open status incident' }, selected, graph.nodes)).toBe(false);
   });
 });
