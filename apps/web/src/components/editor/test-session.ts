@@ -14,7 +14,7 @@ import { nanoid } from 'nanoid';
 import { toast } from 'sonner';
 import { opsTitle } from '@/lib/shared/assistant-ops';
 import { checkRun, destinationsOf, writesOutside, givenKept, hollowSteps, hostOf, multipliedSteps, needsPerson, rawMarkupSteps, isUnreadHost, NO_ADDRESS, sameFailure, type CheckedRun, type RunVerdict } from '@/lib/shared/run-check';
-import { applyChanges, fixedNodes, ownRun, runDigests, undos, useAssistant, type Need, type Outcome, type ReplyPart } from './assistant';
+import { applyChanges, fixedNodes, ownRun, runDigests, undos, useAssistant, type ChatItem, type Need, type Outcome, type ReplyPart } from './assistant';
 import { nextRound } from './timeline';
 import { agentsSettled, itemReaching, smokeTestAgent } from './new-agent'; // SB18:
 import { smokeLine, fixLine, type AgentCard } from '@/lib/shared/agent-card'; // SB18: (AG20: fixLine)
@@ -462,6 +462,9 @@ function leftForAgent(node: string | undefined, part?: string): string {
   return `open ${node ? `“${node}”` : 'the step'} and change it by hand, or tell me what to change.`;
 }
 
+/** Re-check 3: the rule the retry (and the review prompt) carries: an agent that states facts with nothing that could give them invents them. */
+const AGENT_FACTS_RULE = 'An agent that states facts (numbers, records, names) with no tool or knowledge that could give them is inventing them: read the run log (get_run_log; its tool list says none) and call propose_agent_fix to connect the source the tenant has (list_tool_nodes, list_credentials), never a change to the flow or its prompt.';
+
 /** AG20: what is left for the person when the same failure comes twice. */
 const leftFor = (node: string | undefined) => `open ${node ? `“${node}”` : 'the step'} and fix it by hand, or tell me what it should do instead.`;
 
@@ -704,16 +707,28 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         ? `Test run ${round} ${executionId ? `(execution ${executionId}) ` : ''}${result.summary}.${asked} Fix it.${before}`
         : hollow.length
           ? `Test run ${round} ${executionId ? `(execution ${executionId}) ` : ''}had no errors, but ${hollow.map((h) => h.problem).join('; ')}.${asked} Read the run log (get_run_log) for what the agent said and which tools it has, then fix it.${before}`
-          : `Test run ${round} ${executionId ? `(execution ${executionId}) ` : ''}had no errors: ${result.summary}.${outputOf(result.node)} Does that do what I asked for: “${goal}”?${outputFields() /* SB18: */} Check each part of what I asked against it. If the output falls short, read the run log (get_run_log): for a Run an Agent step it shows the agent's tools, tool calls and reply, so a tool the agent lacks is read there (propose_agent_fix), not guessed. If it does, start your reply with "Yes," and say so in one sentence. If not, start your reply with "No," and name the part of what I asked that did not happen, then fix it.${before}`;
+          : `Test run ${round} ${executionId ? `(execution ${executionId}) ` : ''}had no errors: ${result.summary}.${outputOf(result.node)} Does that do what I asked for: “${goal}”?${outputFields() /* SB18: */} Check each part of what I asked against it. If the output falls short, read the run log (get_run_log): for a Run an Agent step it shows the agent's tools, tool calls and reply, so a tool the agent lacks is read there (propose_agent_fix), not guessed. ${AGENT_FACTS_RULE} If it does, start your reply with "Yes," and say so in one sentence. If not, start your reply with "No," and name the part of what I asked that did not happen, then fix it.${before}`;
       if (!failed) reviewedAt = fixes; // SB03:
       useAssistant.setState({ fixing: failed ? nodeId : undefined });
       await useAssistant.getState().send(request, { auto: true, fresh: true, session: failed ? 'fix' : 'review', autonomy, withoutSelection: true, testId, ...(nodeId && { nodeId }) });
       useAssistant.setState({ fixing: undefined });
       if (signal.aborted) return;
-      const reply = useAssistant.getState().items.at(-1);
+      let reply = useAssistant.getState().items.at(-1);
       if (reply?.role !== 'assistant' || reply.error) {
         stop(`I couldn’t work out a fix${result.node ? ` for “${result.node}”` : ''}.`, result.node);
         return;
+      }
+      // Re-check 3: a round that answers "no" and names no change, with a Run an Agent step in the flow, asks once more, as "Try again" did: the
+      // agent may state facts it has no tool or knowledge to give, and the log says so. The same round then reaches the agent fix card.
+      const noChange = (r: ChatItem | undefined) => r?.role === 'assistant' && !r.agentFix && !r.parts.some((p) => p.kind === 'proposal') && missingPartOf(r) !== undefined;
+      if (noChange(reply) && useEditor.getState().nodes.some((n) => n.data.wf.type === 'core.messageAgent' && !n.data.wf.disabled) && fixes < MAX_FIXES) {
+        const again = `Test run ${round} ${executionId ? `(execution ${executionId}) ` : ''}did not do what I asked for: “${goal ?? ''}”. ${AGENT_FACTS_RULE}${before}`;
+        useAssistant.setState({ fixing: nodeId });
+        await useAssistant.getState().send(again, { auto: true, fresh: true, session: 'fix', autonomy, withoutSelection: true, testId, ...(nodeId && { nodeId }) });
+        useAssistant.setState({ fixing: undefined });
+        if (signal.aborted) return;
+        const next = useAssistant.getState().items.at(-1);
+        if (next?.role === 'assistant' && !next.error && (next.agentFix || next.parts.some((p) => p.kind === 'proposal'))) reply = next;
       }
       // AG20: the log shows the cause inside an agent: its change card goes through Apply, the smoke test and Publish, then the run goes again.
       // AG20: a run that passed can need it too: the agent said a tool is not available, and the review reads that from the log.

@@ -87,6 +87,29 @@ export function runAndFixAsk(text: string): boolean {
   return /^(?:please\s+|now\s+)?(?:run|test|try)\b/.test(t) && /\bfix\b/.test(t);
 }
 
+/**
+ * Re-check 3 (the person's "run it, read the logs, fix it"): a bare run ask ("Run it now", "Run it", "Run the workflow") is the
+ * session's run too: the chat has no run tool and answered "I can't run the workflow from here". A step run, a run that also
+ * changes something, and a run-and-fix ask (`runAndFixAsk`) are not this.
+ */
+export function runAsk(text: string): boolean {
+  const t = text.trim().toLowerCase().replace(/[.!]+$/, '');
+  if (!t || t.length > 60 || /(?:step|node)/.test(t)) return false;
+  return /^(?:please\s+|now\s+)?(?:run|execute|start|test|try)\s+(?:it|this|that|the\s+(?:flow|workflow))(?:\s+(?:now|again|once|please))?$/.test(t);
+}
+
+/**
+ * Re-check 3: a typed ask that says the output looks wrong or made up ("The numbers … look made up. Test it and fix it.", "The
+ * report is wrong") is the Test and fix session with the log, judged against that sentence: the chat used to answer that the
+ * figures were real and reword the instructions. A question ("why…?") and an ask that changes something stay the chat's.
+ */
+export function wrongOutputAsk(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (!t || t.length > 240 || t.endsWith('?')) return false;
+  if (/\b(?:add|change|set|remove|delete|replace|create|wire|publish|send|post|email|rename)\b/.test(t)) return false;
+  return /\b(?:made[\s-]?up|invented|fake|fabricated|hallucinat\w*|not real|aren.t real|isn.t real)\b/.test(t) || /\b(?:look|looks|seem|seems|are|is|was|were)\s+(?:wrong|incorrect|off|bogus)\b/.test(t);
+}
+
 const ask = (id: string, label: string, send = true): Bubble => ({ id, label, kind: 'ask', text: label, caret: label.length, send });
 
 /** Where the flow ends: the right-most node with nothing connected out (an agent's tools connect to the agent). */

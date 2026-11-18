@@ -319,6 +319,24 @@ describe('a run that passed, with an agent that lacks a tool (AG20, live pass S3
     expect(actions()).toEqual(['publish']);
   });
 
+  it('re-check 3: a review that says no and names no change asks once more with the log rule and reaches the agent fix card in the same round', async () => {
+    openAgentFlow();
+    apiAnswers = { 'POST /api/agents/design': design, 'POST /api/agents/ag_q/smoke-test': () => ({ smoke: { state: 'passed', reply: 'ok' } }) };
+    runs = [{ 'Ask sales analyst': { items: 1 } }, { 'Ask sales analyst': { items: 1 } }];
+    replies = [{ text: 'No, the report does not show any real sales figures.' }, { text: 'It invents them: no tool.', agentFix: lacks }];
+    const session = testUntilItRuns('sales by region');
+    await waitForCard();
+    expect(sentSessions).toEqual(['review', 'fix']);
+    expect(sentRequests[1]).toContain('get_run_log');
+    expect(sentRequests[1]).toContain('propose_agent_fix');
+    expect(sentRequests[1]).toContain('inventing them');
+    const [{ itemId, card }] = cards();
+    await applyAgentChange(itemId, card);
+    await publishAgentChange(itemId, cards()[0].card);
+    await session;
+    expect(outcomes()).toEqual([]);
+  });
+
   it('a pass whose agent put out raw tool-call markup counts as a failed output: a fix session, not a pass', async () => {
     openAgentFlow();
     apiAnswers = { 'POST /api/agents/design': design, 'POST /api/agents/ag_q/smoke-test': () => ({ smoke: { state: 'passed' } }) };

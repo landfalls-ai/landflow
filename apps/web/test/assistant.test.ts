@@ -397,6 +397,15 @@ describe('after-run suggestions', () => {
 });
 
 describe('builder chat', () => {
+  it('a test-and-fix session’s prompt says that facts with no tool or knowledge behind them are invented, and to connect the source (re-check 3)', async () => {
+    const { model, calls } = scripted([{ text: 'No change.' }, { text: 'No change.' }, { text: 'No change.' }]);
+    await runChat({ messages: [{ role: 'user', content: 'Test run 1 (execution ex_1) had no errors: the numbers look made up. Fix it.' }], workflow: workflow(), model, types, session: 'fix', onEvent: () => undefined });
+    const system = calls[0].system ?? '';
+    expect(system).toContain('states facts (numbers, records, names) with no tool or knowledge that could give them is inventing them');
+    expect(system).toContain('never answer that the figures are real');
+    expect(system).toMatch(/call propose_agent_fix to connect the source the tenant has \(list_tool_nodes/);
+  });
+
   it('researches with tools, then proposes validated changes', async () => {
     const dedupe = { summary: 'Dedupe after Code', ops: JSON.stringify([{ op: 'addNode', ref: 'd', type: 'core.removeDuplicates', name: 'Dedupe', after: 'Code' }, { op: 'connect', from: 'd', to: 'Nowhere' }]) };
     const { model, calls } = scripted([
