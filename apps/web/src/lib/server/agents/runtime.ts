@@ -697,7 +697,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       for (const call of turn.toolCalls) {
         const tool = byName.get(call.name);
         // A tool set up as a read whose call is not one (another operation, SQL that changes data) is held like a write: decided per call on the parameters it would run with.
-        const heldFor = tool && !tool.requireApproval && tool.holdReason ? await tool.holdReason(call.input, ctx).catch(() => 'its parameters could not be checked, so a person decides.') : undefined;
+        const heldFor = tool && !tool.requireApproval && tool.holdReason ? await tool.holdReason(call.input, ctx).catch(() => 'The call’s parameters could not be checked.') : undefined;
         if (!tool) immediate.push({ id: call.id, name: call.name, content: `Unknown tool "${call.name}". Available: ${[...byName.keys()].join(', ')}`, isError: true });
         else if (denied.has(call.name)) {
           const message = `The user just rejected ${call.name}. Do not call it again now: reply to the user and wait for their instructions.`;

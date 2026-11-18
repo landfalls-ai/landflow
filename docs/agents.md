@@ -246,9 +246,11 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   holds), as it drops a credential line once the slot is set.
 - **A change never undoes itself, and a second tool of a type is a tool of its own (ag4 re-check 3-7).** Before the card, the design
   route (`lib/server/agents/change-tools.ts`) only dedupes: a new tool is dropped as a duplicate when it has the same node type as a
-  kept tool, brings no credential (a slot with no id is a placeholder) and has no non-empty parameter that differs from the kept
-  tool's. Nothing is ever moved onto a kept tool. Every other new tool stands as its own tool with its own **Pick it** row (*add a SQLite
-  tool for the archive DB*; *also let it call the weather API*, which brings its bearer credential). A tool the design dropped never
+  kept tool, brings no credential (a slot with no id is a placeholder), sets no non-empty parameter where the kept tool's is empty or
+  different, and carries the kept tool's name or its auto-suffix (`SQLite_2`, `SQLite 2` beside `sqlite`). Nothing is ever moved onto
+  a kept tool. Every other new tool stands as its own tool with its own **Pick it** row: *add a SQLite tool for the archive DB*
+  (`sqlite_archive`, `Archive DB`, or a table of its own), *also let it call the weather API* (a URL the kept HTTP tool lacks, or its
+  bearer credential). A tool the design dropped never
   comes back. A change to a kept tool (*make sqlite read-only*) is made in place by the architect's revise: the design's tool of the same
   type and name with another operation changes the kept tool (same id, same credential, its operation, no approval), never a second tool
   beside it. What an agent fix may add is the prompt's to say; the card lists every tool it adds. The Left rows are worked out after
@@ -259,7 +261,7 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   or non-string query are no read, so a tool built on them asks first. A tool a design leaves on the node default becomes the node's
   Select. At run time a tool set up as a read (no approval, stored parameters only read) judges **each call** on the parameters it
   would run with (`holdReason` in `agents/tools.ts`, checked by `agents/runtime.ts`): a call that names another operation or brings SQL
-  that is not one read-only SELECT is held for a person, and an unattended run refuses it with the reason in the run log. The tool's
+  that is not one read-only SELECT is held for a person, and an unattended run refuses it with the reason in the run log, and so does the kagent MCP endpoint (`kagent/mcp.ts`, which also serves the Claude Code harness): it cannot pause, so it answers *… kagent cannot pause this call*. The tool's
   input schema does not offer `operation`, and its SQLite connection is read-only (the plugin's Read Only: `mode=ro`, `_query_only=1`).
   **Pick it** shows on a change card after Apply too, and wherever a Left row says *pick a … credential*; its smoke result also
   reaches the applied build and change cards' status line (a change card still waiting for Apply is left alone).

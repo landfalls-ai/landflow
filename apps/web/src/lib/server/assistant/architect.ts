@@ -1760,11 +1760,11 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
   const ownBy = new Map<string, AgentToolConfig | undefined>(); // AG09:
   for (const tool of draft.config.tools ?? []) {
     // "Make sqlite read-only": the design's tool of the same type and name as a kept one, with another operation, changes that tool in place (its id, its credential), never a second tool beside it.
-    const place = tool.type === 'node' && tool.parameters?.operation !== undefined ? kept.findIndex((t) => t.type === 'node' && t.nodeType === tool.nodeType && t.name === tool.name && t.parameters?.operation !== undefined && t.parameters.operation !== tool.parameters?.operation) : -1;
+    const place = tool.type === 'node' && tool.parameters?.operation !== undefined ? kept.findIndex((t) => t.type === 'node' && t.nodeType === tool.nodeType && String(t.name ?? '').toLowerCase() === String(tool.name ?? '').toLowerCase() && t.parameters?.operation !== undefined && t.parameters.operation !== tool.parameters?.operation) : -1;
     if (place >= 0 && tool.type === 'node' && kept[place].type === 'node') {
       const own = kept[place] as NodeToolConfig;
       const { requireApproval: _drop, ...rest } = own;
-      const turned: NodeToolConfig = { ...rest, parameters: { ...own.parameters, ...Object.fromEntries(Object.entries(tool.parameters ?? {}).filter(([, v]) => v !== undefined && v !== '' && !(Array.isArray(v) && !v.length))) }, ...(tool.requireApproval && { requireApproval: true }) };
+      const turned: NodeToolConfig = { ...rest, parameters: { ...own.parameters, ...Object.fromEntries(Object.entries(tool.parameters ?? {}).filter(([, v]) => v !== undefined && v !== '' && !(Array.isArray(v) && !v.length))) }, ...((tool.requireApproval || (own.requireApproval && !writesOutside({ type: own.nodeType, parameters: own.parameters }))) && { requireApproval: true }) };
       kept[place] = turned;
       ownBy.set(own.name, turned);
       continue;

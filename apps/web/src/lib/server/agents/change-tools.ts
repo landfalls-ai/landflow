@@ -22,11 +22,15 @@ export function tidyChangedTools<C extends { tools?: unknown }>(base: C, designe
   const keptBase = (t: Tool) => (t.id !== undefined && baseIds.has(t.id)) || (isNode(t) && baseTools.some((b) => !listed.has(b.id) && isNode(b) && b.nodeType === t.nodeType && b.name === t.name));
   const kept = designedTools.filter(keptBase);
   const brings = (t: Tool) => Object.values(t.credentials ?? {}).some((c) => Boolean(c?.id));
-  const differs = (twin: Tool, added: Tool) => Object.entries(added.parameters ?? {}).some(([k, v]) => !empty(v) && !empty(twin.parameters?.[k]) && !same(v, twin.parameters![k]));
+  // A value the new tool sets where the kept one is empty counts as a difference (a weather URL beside an HTTP tool with no URL yet).
+  const differs = (twin: Tool, added: Tool) => Object.entries(added.parameters ?? {}).some(([k, v]) => !empty(v) && (empty(twin.parameters?.[k]) || !same(v, twin.parameters![k])));
+  // The architect names a second tool of a type `<name>_2` or `<name> 2`; any other name (sqlite_archive, Archive DB) is its own tool.
+  const stem = (name: unknown) => String(name ?? '').trim().toLowerCase().replace(/[_ ]\d+$/, '');
+  const sameName = (twin: Tool, added: Tool) => stem(twin.name) === stem(added.name);
   const gone = new Set<Tool>();
   for (const tool of designedTools) {
     if (keptBase(tool) || !isNode(tool) || brings(tool)) continue;
-    if (kept.some((t) => isNode(t) && t.nodeType === tool.nodeType && !differs(t, tool))) gone.add(tool);
+    if (kept.some((t) => isNode(t) && t.nodeType === tool.nodeType && sameName(t, tool) && !differs(t, tool))) gone.add(tool);
   }
   const removed = [...gone].map((t) => String(t.name ?? t.nodeType ?? '')).filter(Boolean);
   return { config: { ...designed, tools: designedTools.filter((t) => !gone.has(t)) }, removed };

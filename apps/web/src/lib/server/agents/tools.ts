@@ -561,9 +561,9 @@ function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
       async holdReason(given: Record<string, unknown>, ctx: ToolContext) {
         const { parameters } = await effectiveOf(given, ctx);
         // An operation the call names is judged as named, though a pinned schema would not apply it.
-        const judged = { ...parameters, ...(typeof given.operation === 'string' && { operation: given.operation }) };
+        const judged = { ...parameters, ...(typeof given.operation === 'string' && { operation: given.operation }), ...(typeof given.method === 'string' && { method: given.method.toUpperCase() }) };
         if (callReads(descriptor, config.nodeType, judged)) return undefined;
-        const what = judged.operation === 'executeQuery' ? 'SQL that is not one read-only SELECT' : `the operation “${String(judged.operation)}”`;
+        const what = judged.operation === 'executeQuery' ? 'SQL that is not one read-only SELECT' : judged.operation !== undefined ? `the operation “${String(judged.operation)}”` : judged.method !== undefined ? `the ${String(judged.method)} method` : 'a change';
         return `“${config.name}” is a read-only tool, and this call asked for ${what}.`;
       },
     }),
@@ -630,6 +630,7 @@ export function nodeKnowledgeTool(config: NodeKnowledgeBaseConfig): BuiltTool | 
     description: config.description || built.description,
     inputSchema: KNOWLEDGE_QUERY_SCHEMA,
     requireApproval: Boolean(config.requireApproval),
+    ...(built.holdReason && { holdReason: (input: Record<string, unknown>, ctx: ToolContext) => built.holdReason!({ [queryParameter]: String(input.query ?? '') }, ctx) }),
     async invoke(input, ctx) {
       const outcome = await built.invoke({ [queryParameter]: String(input.query ?? '') }, ctx);
       return { ...outcome, output: knowledgeResults(outcome.output) };

@@ -14,11 +14,11 @@ const names = (r: { config: { tools?: unknown } }) => (r.config.tools as Array<{
 
 describe('a duplicate is dropped, nothing moves', () => {
   it('the original duplicate SQLite (no credential, same params) is dropped', () => {
-    const old = sqlite('t1', 'Main', { parameters: { query: 'SELECT 1' } });
+    const old = sqlite('t1', 'sqlite', { parameters: { query: 'SELECT 1' } });
     const r = tidy([old], [old, sqlite('n2', 'SQLite_2', { parameters: { query: 'SELECT 1' } })]);
-    expect(names(r)).toEqual(['Main']);
+    expect(names(r)).toEqual(['sqlite']);
     expect(r.removed).toEqual(['SQLite_2']);
-    expect(names(tidy([sqlite('t1', 'Main')], [sqlite('t1', 'Main'), sqlite('n2', 'SQLite_2')]))).toEqual(['Main']);
+    expect(names(tidy([sqlite('t1', 'sqlite')], [sqlite('t1', 'sqlite'), sqlite('n2', 'SQLite 2')]))).toEqual(['sqlite']);
   });
   it('a new tool that brings a credential stays its own, and the kept tool is not given the credential', () => {
     const old = sqlite('t1', 'Main', { parameters: { query: 'SELECT 1' } });
@@ -27,17 +27,17 @@ describe('a duplicate is dropped, nothing moves', () => {
     expect(r.config.tools![0]).toEqual(old);
   });
   it('a placeholder credential slot (no id) is not a credential', () => {
-    const old = sqlite('t1', 'Main');
-    expect(names(tidy([old], [old, sqlite('n2', 'SQLite_2', { credentials: { sqlite: {} } })]))).toEqual(['Main']);
+    const old = sqlite('t1', 'sqlite');
+    expect(names(tidy([old], [old, sqlite('n2', 'SQLite_2', { credentials: { sqlite: {} } })]))).toEqual(['sqlite']);
   });
   it('a re-id’d kept tool (same type and name, a new id) counts as kept, so a bare twin is dropped', () => {
-    expect(names(tidy([sqlite('t1', 'Main')], [sqlite('tl_new', 'Main'), sqlite('n2', 'SQLite_2')]))).toEqual(['Main']);
+    expect(names(tidy([sqlite('t1', 'sqlite')], [sqlite('tl_new', 'sqlite'), sqlite('n2', 'SQLite_2')]))).toEqual(['sqlite']);
   });
   it('kept [insert, select] plus a new select: dropped, nothing overwritten', () => {
-    const insert = sqlite('t1', 'writer', { parameters: { operation: 'insert', table: 'sales' }, requireApproval: true });
-    const select = sqlite('t2', 'reader', { parameters: { operation: 'select', table: 'sales' } });
+    const insert = sqlite('t1', 'sqlite', { parameters: { operation: 'insert', table: 'sales' }, requireApproval: true });
+    const select = sqlite('t2', 'sqlite_2', { parameters: { operation: 'select', table: 'sales' } });
     const r = tidy([insert, select], [insert, select, sqlite('n3', 'sqlite_3', { parameters: { operation: 'select', table: 'sales' } })]);
-    expect(names(r)).toEqual(['writer', 'reader']);
+    expect(names(r)).toEqual(['sqlite', 'sqlite_2']);
     expect(r.config.tools).toEqual([insert, select]);
   });
 });
@@ -59,6 +59,23 @@ describe('every other new tool is its own tool', () => {
   it('a bare HTTP tool whose URL differs from rates stays its own', () => {
     const rates = http('t1', 'rates', { parameters: { url: 'https://rates.test' } });
     expect(names(tidy([rates], [rates, http('n2', 'http_2', { parameters: { url: 'https://weather.test' } })]))).toEqual(['rates', 'http_2']);
+  });
+});
+
+describe('a new tool that sets what a kept one leaves empty, or is named for itself, stays', () => {
+  it('a weather tool with a url stays beside an HTTP tool with an empty url (same name stem)', () => {
+    const kept = http('t1', 'http_request', { parameters: { url: '' } });
+    const r = tidy([kept], [kept, http('n2', 'http_request_2', { parameters: { url: 'https://weather.test' } })]);
+    expect(names(r)).toEqual(['http_request', 'http_request_2']);
+  });
+  it('sqlite_archive (table archive) stays beside a SQLite tool with an empty table', () => {
+    const kept = sqlite('t1', 'sqlite', { parameters: { table: '' } });
+    expect(names(tidy([kept], [kept, sqlite('n2', 'SQLite_2', { parameters: { table: 'archive' } })]))).toEqual(['sqlite', 'SQLite_2']);
+  });
+  it('the name rule: sqlite_archive and Archive DB stay, SQLite_2 and SQLite 2 are duplicates', () => {
+    const kept = sqlite('t1', 'sqlite');
+    for (const name of ['sqlite_archive', 'Archive DB']) expect(names(tidy([kept], [kept, sqlite('n2', name)])), name).toEqual(['sqlite', name]);
+    for (const name of ['SQLite_2', 'SQLite 2', 'sqlite_12']) expect(names(tidy([kept], [kept, sqlite('n2', name)])), name).toEqual(['sqlite']);
   });
 });
 

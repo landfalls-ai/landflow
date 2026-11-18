@@ -29,7 +29,7 @@ const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { newSession, runAgent } = await import('@/lib/server/agents/runtime');
-const { readOnlyCreds } = await import('@/lib/server/agents/tools');
+const { readOnlyCreds, nodeKnowledgeTool } = await import('@/lib/server/agents/tools');
 
 const ran: Array<Record<string, unknown>> = [];
 const op = (name: string, value: string, idempotent?: boolean) => ({ name, value, ...(idempotent && { idempotent }) });
@@ -91,5 +91,19 @@ describe('a read tool with no approval', () => {
   });
   it('reaches a SQLite file through a read-only connection', () => {
     expect(readOnlyCreds({ sqlite: { path: '/x.db', createIfMissing: true } })).toEqual({ sqlite: { path: '/x.db', createIfMissing: false, readOnly: true } });
+  });
+  it('names the method of an HTTP call it holds', async () => {
+    const http = agentStore.create({ name: 'Rates', instructions: 'x', model: { provider: 'ollama', model: 'm' }, tools: [{ id: 'h1', type: 'node', name: 'rates', description: 'r', nodeType: 'core.httpRequest', parameters: { url: 'http://rates.test/x', method: 'GET' } } as never] });
+    script.push(() => ({ toolCalls: [{ id: 'c1', name: 'rates', input: { method: 'DELETE' } }] }), reply('ok'));
+    await go(http, 'deny');
+    expect(lastResult()).toMatchObject({ isError: true, content: expect.stringContaining('the DELETE method') });
+    expect(JSON.stringify(lastResult())).not.toContain('undefined');
+  });
+  it('a knowledge tool judges the question mapped onto its query parameter', async () => {
+    const built = nodeKnowledgeTool({ id: 'k1', type: 'knowledge', name: 'sales', description: 's', nodeType: 'databases.sqlite', queryParameter: 'query', parameters: { operation: 'executeQuery', query: 'SELECT 1' } } as never);
+    expect('error' in built).toBe(false);
+    const ctx = { agent: { id: 'a', name: 'A' }, runId: 'r' } as never;
+    expect(await (built as { holdReason: (i: object, c: never) => Promise<string | undefined> }).holdReason({ query: 'DELETE FROM sales' }, ctx)).toMatch(/read-only tool/);
+    expect(await (built as { holdReason: (i: object, c: never) => Promise<string | undefined> }).holdReason({ query: 'SELECT 2' }, ctx)).toBeUndefined();
   });
 });

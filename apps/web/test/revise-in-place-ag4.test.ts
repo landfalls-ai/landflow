@@ -35,6 +35,27 @@ const base = (): Partial<AgentConfig> => ({
 });
 
 describe('a change that makes a kept tool read-only', () => {
+  it('matches the tool name in any case and keeps an explicit approval on a tool that was a read', async () => {
+    const fake = await startFakeModels({
+      reply: (_p, body) => Array.isArray((body as { messages?: unknown })?.messages)
+        ? { text: '', toolCalls: [{ id: 'c1', name: 'propose_design', arguments: { summary: 'x', role: 'Digest', instructions: STEPS, description: 'Reads sales.', model: 'ollama/qwen3-coder:30b', nodeTools: 'databases.sqlite' } }] }
+        : { text: '', toolCalls: [] },
+    });
+    const previous = process.env.OLLAMA_URL;
+    process.env.OLLAMA_URL = fake.origin;
+    try {
+      const config = base();
+      (config.tools![0] as never as { name: string; parameters: object }).name = 'SQLITE';
+      (config.tools![0] as never as { parameters: object }).parameters = { operation: 'executeQuery', query: 'SELECT 1' };
+      const body = (await (await post({ name: 'Sales digest', preview: true, base: { config }, change: 'Make sqlite a read-only tool for the sales database' })).json()) as { config: AgentConfig };
+      expect(body.config.tools).toHaveLength(1);
+      expect(body.config.tools[0]).toMatchObject({ id: 'tl_1', name: 'SQLITE', parameters: { operation: 'select' }, requireApproval: true });
+    } finally {
+      if (previous === undefined) delete process.env.OLLAMA_URL;
+      else process.env.OLLAMA_URL = previous;
+      await fake.close();
+    }
+  });
   it('turns that tool in place: same id and credential, a read operation, no approval, one tool', async () => {
     const fake = await startFakeModels({
       reply: (_p, body) => Array.isArray((body as { messages?: unknown })?.messages)
