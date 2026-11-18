@@ -251,6 +251,30 @@ describe('the open path', () => {
       expect(container.querySelector('[data-testid="agent-moves-notice"]')!.textContent).not.toContain('put it in production');
     });
 
+    it('the publish line goes once the workflow is published, and another flow’s move event does not ask again', async () => {
+      const { usePublication } = await import('@/components/editor/publish-control');
+      rows = [{ ...movedRow, state: 'live' } as AgentMove];
+      updates = [{ agentId: 'ag_triage', pinned: 2, latest: 3 }];
+      usePublication.setState({ workflowId: 'wf_ag17', status: { published: { versionId: 'v1' } } } as never);
+      await mount();
+      expect(container.textContent).toContain('put it in production');
+      const asked = () => (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.filter((c) => String(c[0]).endsWith('/agent-updates')).length;
+      const before = asked();
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('landflow:agent-moves-changed', { detail: { workflowId: 'wf_other' } }));
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      expect(asked()).toBe(before);
+      // Published: production now pins the latest, so the updates route no longer lists the agent.
+      updates = [];
+      await act(async () => {
+        usePublication.setState({ workflowId: 'wf_ag17', status: { published: { versionId: 'v2' } } } as never);
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      expect(container.textContent).not.toContain('put it in production');
+      usePublication.setState({ workflowId: undefined, status: undefined } as never);
+    });
+
     it('shows the lines the first time, folds to a pill when closed (the pill reopens the record), and a second open shows the pill only', async () => {
       rows = [movedRow, keptRow];
       await mount();

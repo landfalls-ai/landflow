@@ -18,6 +18,7 @@ import type { NodeTypeInfo, Workflow } from '@/lib/shared/types';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useEditLock } from './edit-lock';
+import { usePublication } from './publish-control';
 import { useEditor } from './store';
 
 const seenKey = (workflowId: string) => `landflow.agentMoves.seen.${workflowId}`;
@@ -132,6 +133,8 @@ export function AgentMovesNotice({ workflowId }: { workflowId: string }) {
     }
   }, [workflowId]);
 
+  // A publish (here or from the version history) moves the production pin: look again when the production version changes.
+  const productionVersion = usePublication((s) => (s.workflowId === workflowId ? s.status?.published?.versionId : undefined));
   useEffect(() => {
     let live = true;
     const look = () =>
@@ -139,13 +142,21 @@ export function AgentMovesNotice({ workflowId }: { workflowId: string }) {
         (r) => live && setPinnedOlder(new Set((r.updates ?? []).map((u) => u.agentId))),
         () => undefined,
       );
+    // The moves event names its workflow: another flow's move says nothing about this one's pins.
+    const lookForMine = (e: Event) => {
+      if ((e as CustomEvent<{ workflowId?: string }>).detail?.workflowId === workflowId) look();
+    };
     look();
-    for (const event of [AGENT_CHANGED, AGENT_SAVED, MOVES_CHANGED]) window.addEventListener(event, look);
+    window.addEventListener(AGENT_CHANGED, look);
+    window.addEventListener(AGENT_SAVED, look);
+    window.addEventListener(MOVES_CHANGED, lookForMine);
     return () => {
       live = false;
-      for (const event of [AGENT_CHANGED, AGENT_SAVED, MOVES_CHANGED]) window.removeEventListener(event, look);
+      window.removeEventListener(AGENT_CHANGED, look);
+      window.removeEventListener(AGENT_SAVED, look);
+      window.removeEventListener(MOVES_CHANGED, lookForMine);
     };
-  }, [workflowId]);
+  }, [workflowId, productionVersion]);
 
   // The first time a person opens the flow after a move the card opens by itself; a later open shows the pill only.
   useEffect(() => {
