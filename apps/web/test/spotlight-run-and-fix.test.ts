@@ -4,7 +4,7 @@
  * asks before a run that writes outside); a step run or an ask that also changes something stays the chat's.
  */
 import { describe, expect, it } from 'vitest';
-import { runAndFixAsk } from '@/lib/shared/spotlight';
+import { runAndFixAsk, runStepAsk } from '@/lib/shared/spotlight';
 
 describe('a typed run-and-fix ask is the Test and fix session', () => {
   it('reads the asks that run the whole flow and fix it', () => {
@@ -12,5 +12,12 @@ describe('a typed run-and-fix ask is the Test and fix session', () => {
   });
   it('leaves the chat a step run, a question, a change, and a run without a fix', () => {
     for (const ask of ['Run this step and show me what it returns.', 'Run it now', 'Why did the run fail?', 'Add a filter, then run it and fix it', 'Test the flow with the new agent version and publish it if it works', 'Wire a Sentiment tool into this step.', '']) expect(runAndFixAsk(ask), ask).toBe(false);
+  });
+});
+
+describe('a typed step run is the step’s own run (asks.md E1)', () => {
+  it('reads "Run this step …", never a change or a whole-flow run', () => {
+    for (const ask of ['Run this step and show me what it returns.', 'run the selected node', 'Test this step']) expect(runStepAsk(ask), ask).toBe(true);
+    for (const ask of ['Run it now and fix it if it fails.', 'Wire a Sentiment tool into this step.', 'Run this step and fix it', 'What does this step return?', '']) expect(runStepAsk(ask), ask).toBe(false);
   });
 });

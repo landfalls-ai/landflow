@@ -67,6 +67,18 @@ export const TEST_BUBBLE = 'test';
  * and answered "I can't run the workflow from here". A step run ("Run this step …") or an ask that also changes something
  * ("… and add a filter") stays the chat's.
  */
+/**
+ * Wave ag4 carryover (the live pass's asks.md E1): "Run this step and show me what it returns." with a step selected is
+ * the step's own run ("Run this node and what it needs"); the chat, which has no run tool, answered "I can't run steps from
+ * here". An ask that also changes something stays the chat's.
+ */
+export function runStepAsk(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (!t || t.length > 120) return false;
+  if (/\b(?:add|change|set|remove|delete|replace|make|create|wire|publish|fix)\b/.test(t)) return false;
+  return /^(?:please\s+)?(?:run|test|try|execute)\s+(?:this|the selected|that)\s+(?:step|node)\b/.test(t);
+}
+
 export function runAndFixAsk(text: string): boolean {
   const t = text.trim().toLowerCase();
   if (!t || t.length > 120) return false;

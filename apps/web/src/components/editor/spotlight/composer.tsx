@@ -9,7 +9,8 @@ import { MentionChips } from '../../ui/mention-picker';
 import { useMentionPicker } from '@/lib/client/use-mention-picker';
 import { scopeLabel, scopeOf, type SpotlightScope } from '@/lib/shared/spotlight-scope'; // SB07:
 import { mentionQueryAt, type MentionHit } from '@/lib/shared/mentions';
-import { completeBubbles, idleBubbles, liveMentions, runAndFixAsk, TEST_BUBBLE, type Bubble, type Mention, type SpotlightContext } from '@/lib/shared/spotlight';
+import { writesOutside } from '@/lib/shared/run-check';
+import { completeBubbles, idleBubbles, liveMentions, runAndFixAsk, runStepAsk, TEST_BUBBLE, type Bubble, type Mention, type SpotlightContext } from '@/lib/shared/spotlight';
 import { useBuildFlow } from '../ai-builder';
 import { afterReply, typedSession } from '../autonomous';
 import { answeredQuestion } from './answered-question';
@@ -240,6 +241,16 @@ export function Composer() {
       // An empty canvas: the builder drafts the whole flow in one go, with test data on the trigger.
       await draftWholeFlow(message, build);
       return;
+    }
+    // Wave ag4 carryover: "Run this step …" with one step selected that writes nothing outside runs that step (and what it needs), as its ▷ does.
+    {
+      const selected = useEditor.getState().nodes.filter((n) => n.selected);
+      if (runStepAsk(message) && selected.length === 1 && !writesOutside({ type: selected[0].data.wf.type, parameters: selected[0].data.wf.parameters ?? {} })) {
+        if (useEditor.getState().running) return;
+        useAssistant.getState().append([{ id: nanoid(8), role: 'user', text: message }, { id: nanoid(8), role: 'assistant', done: { model: '', durationMs: 0, steps: 0 }, parts: [{ kind: 'text', text: `Running “${selected[0].data.wf.name}” and the steps it needs: its output opens below.` }] }]);
+        useEditor.getState().run?.({ kind: 'node', nodeId: selected[0].id, scope: 'only' });
+        return;
+      }
     }
     // Wave ag4 carryover: "Run it now and fix it if it fails." is the Test and fix session (it asks before a run that writes outside), as the bubble is.
     if (runAndFixAsk(message)) {
