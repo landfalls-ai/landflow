@@ -194,6 +194,11 @@ const click = async (selector: string) => { await act(async () => { (container.q
     expect(buttons[0]!.className).toMatch(/bg-ac|primary/);
     expect(buttons[1]!.className).not.toBe(buttons[0]!.className);
     expect(row.textContent).not.toMatch(/\b[a-z]+_[a-z]+\b/);
+    // The proposed agent is what is drawn, so it is the one to change: the model select is there, and its model bubble describes the proposal, not the reused agent.
+    expect(container.querySelector('select'), 'Change model select').toBeTruthy();
+    const model = container.querySelector('[data-bubble^="model"]') as HTMLElement;
+    await act(async () => model.click());
+    expect(container.querySelector('[data-testid="bubble-detail"]')!.textContent).not.toContain('the reused agent’s model');
     // The row for a full fit is unchanged.
     expect(reuseLine({ ...closest, gaps: [] })).toBe('“Runbooks answerer” already does this: answers from the runbooks (published)');
   });

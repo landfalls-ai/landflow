@@ -140,12 +140,12 @@ export function AgentCardView({ itemId, card, busy = false, earlier = false }: {
         <div className="mt-2">
           <BubbleDiagram agentName={diagramName} bubbles={bubbles} {...(openId && { openId })} onOpen={(b) => setOpenId((id) => (id === b.id ? undefined : b.id))} />
           <p data-testid="bubble-detail" aria-live="polite" className="mt-1 min-h-4 text-[11.5px] leading-snug text-t2 [overflow-wrap:anywhere]">
-            {open ? bubbleDetail(detailCard, open, reusing ? [] : left, reusing) : ''}
+            {open ? bubbleDetail(detailCard, open, drawReused ? [] : left, drawReused) : ''}
           </p>
         </div>
       )}
       {/* AG02: a designed card's model is a select of the models this host offers (the host's builder model first); a change redraws the model bubble. */}
-      {card.state === 'designed' && !reusing && card.models && card.models.length > 1 && (
+      {card.state === 'designed' && !drawReused && card.models && card.models.length > 1 && (
         <label className="mt-1.5 flex items-center gap-2 text-[12px] text-t3">
           <span className="shrink-0">Change model</span>
           <select
