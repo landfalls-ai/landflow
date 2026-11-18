@@ -111,6 +111,8 @@ Landflow speaks the [Model Context Protocol](https://modelcontextprotocol.io) bo
   claude mcp add --transport http landflow http://localhost:3000/api/mcp --header "Authorization: Bearer <token>"
   ```
 
+- **`get_run_log`** (wave ag4, `executions:read`) answers, for an execution (or the latest of a workflow), what Spotlight reads to fix a run: each node's status, duration and error (an HTTP node's `httpCode` and the first 400 characters of the response body), up to three input and output items clipped, the plugin's log lines for that call (20 at most, newest last), and for a Run an Agent / Run a Team node the agent's tool calls in order (tool, status, error, input, output) and its reply. It reads what `explain_failure`, `get_run_trace` and the agent's session already hold, redacted the same way, and answers *not found* for a run of a workflow the caller cannot read. Spotlight's chat calls the same function in-process ([Test and fix](../assistant.md#test-and-fix)). Plugin lines come from each node run's own `logs`, not from `get_plugin_logs` (instance admins only), so any reader of the workflow can use this tool.
+
 **Connect your harness** (`/connect`, [connect-your-harness.md](../connect-your-harness.md)) makes a brain key and the setup for Claude Code, Cursor, Codex CLI, Gemini CLI, VS Code or any MCP client, and tests it with `tools/list`. Settings → MCP is four collapsed sections (Access token, Connected clients, Tools with each tool's scope, Gateway), and owners and admins have **Allow automatic sending** there.
 
 **API keys, scopes and the brain**: a Landflow API key sent as the Bearer sees and calls only the tools its scopes cover; a session, an MCP token, an identity-provider token and the instance access token keep every tool. A tool a key may not use is left out of `tools/list` and refused if called. One map holds it (`TOOL_SCOPES` in `apps/web/src/lib/shared/mcp.ts`):
@@ -120,7 +122,7 @@ Landflow speaks the [Model Context Protocol](https://modelcontextprotocol.io) bo
 | `workflows:read` | `list_workflows`, `get_workflow`, `validate_workflow`, `list_node_types`, `search_node_types`, `get_node_type`, `list_agent_updates`, and the tenant reads `list_agents`, `get_agent`, `list_tool_nodes`, `list_knowledge_bases`, `list_models`, `list_credentials`, `read_agent_practices` |
 | `workflows:write` | `create_workflow`, `update_workflow`, `create_agent`, `update_agent` |
 | `run` | `execute_workflow`, `retry_execution`, `run_node`, `test_agent`, `publish_agent` |
-| `executions:read` | `list_executions`, `get_execution`, `explain_failure`, `get_run_trace`, `get_plugin_logs` |
+| `executions:read` | `list_executions`, `get_execution`, `explain_failure`, `get_run_trace`, `get_plugin_logs`, `get_run_log` |
 | `brain:read` | `brain_search_facts`, `brain_list_suggestions`, `brain_workflow_knowledge`, `brain_usage_report`, `check_overlap`, `brain_ask`, `my_briefing`, `my_ai_spend` |
 | `brain:write` | `brain_suggest`, `record_work` (it includes `brain:read`) |
 

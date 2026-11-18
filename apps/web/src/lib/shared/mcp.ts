@@ -218,6 +218,7 @@ export const TOOL_SCOPES = {
   explain_failure: 'executions:read',
   get_run_trace: 'executions:read',
   get_plugin_logs: 'executions:read',
+  get_run_log: 'executions:read', // AG20:
   brain_search_facts: 'brain:read',
   brain_list_suggestions: 'brain:read',
   brain_workflow_knowledge: 'brain:read',

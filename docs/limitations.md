@@ -768,3 +768,13 @@ Seen in AG18's live pass (production profile, Claude): a create-an-agent ask in 
 - The executions list shows the workflow version only; the per-agent versions are on the run's header.
 - A scheduled publish (`at`) and a Git sync publish carry no `agents` choice, so an agent draft that differs refuses them (publish the agent first); with four-eyes on, `agents: 'as-published'` is refused too (`publish-first` settles the agents before the request is made).
 - A test-update run is recorded like a production run of that version, so its line reads "workflow v4 · Alert triager v3" without saying it was a test.
+
+## Spotlight fixes from the run's log (wave ag4, AG20)
+
+- An agent fix always waits for your **Apply** and **Publish**, also in autonomous mode: a saved agent is never a brand-new draft (lesson 23), so the session cannot repair an agent by itself, and a held eval gate stops it. The session's panel header does not yet say *Needs you: apply the fix?* while the agent's change card waits (it does for a flow fix).
+- The run log holds clipped items only: at most three input and output items per node, strings and nested values cut (`clip`), the response body's first 400 characters, 20 plugin lines and the agent's reply's first 400 characters. A cause past those (the 401st character of a body, the fourth item) is not seen; the logs panel and the Run Trace hold the whole.
+- "The same failure" is compared by the step, the error text with numbers and ids taken out, and the response body; a failure whose text changes every run (a timestamp in words, a random request id in a word) is not recognised as the same, so the bound of four fixes ends it.
+- A Run an Agent step's tool calls in the run log are redacted by the workflow's redactor, which catches secret-named keys and the workflow's own credential values; the values of the agent's own tool credentials are not in that set, so a tool that echoes one back in its output is not masked by name.
+- When a reply carries both an agent fix and flow proposals, the session takes the agent path and the flow proposal cards stay in the chat, unapplied; a click on one still applies it.
+- The session's fix turns do not show their own tool rows ("Read the run log") in the timeline: the timeline shows `Run n · <node> · HTTP 400`, `Fixed · <change>` and the stop line. Only a typed chat turn shows its tool rows. After a reload the session's stop line is gone and the chat's last line may be an older answer.
+- The panel header does not yet say "Needs you: apply the fix?" while the agent change card waits.

@@ -31,6 +31,8 @@ task states and OpenInference's span kinds, so an exporter can map them later. S
 `node:<nodeId>:<n>` is a node's n-th run, `<parent>/step:<id>` a remote agent's tool call. Each event carries the run's
 OTel trace id when telemetry recorded one, and a step's own span id in `attrs.otelSpanId`.
 
+Spotlight reads the same spans and node runs when it fixes a failed run: `get_run_log` (`lib/server/assistant/run-log.ts`, also an MCP tool) gives it each node's error with an HTTP node's status and response body, the plugin's log lines and a Run an Agent step's tool calls, so what a person reads here is what Spotlight read ([Test and fix](assistant.md#test-and-fix)).
+
 ### Who writes it
 
 - **The run's project and goal**: when a run starts in a project, the runner adds `attrs.project` (`{ id, name }`) and, when the run serves a goal, `attrs.goal` (`{ id, title }`) to the `run` span. The Run Trace shows them in a later wave.
