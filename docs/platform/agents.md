@@ -210,3 +210,5 @@ from outside by a flow with a Run an Agent node behind a webhook, by a channel (
 | The harness and brain mods | `apps/web/claude-plugins/landflow-harness`, `landflow-brain` |
 | UI | `apps/web/src/components/agents/`, `app/agents/` |
 | Tests | `apps/web/test/agent-*.test.ts`, `agent-teams-routes.test.ts` |
+
+To build an agent well (one job, the fewest tools, asks first on writes, four-part instructions, test cases, the model and credential rules), follow the [agent best practices](agent-best-practices.md); Spotlight and MCP clients read them with the `read_agent_practices` tool.
