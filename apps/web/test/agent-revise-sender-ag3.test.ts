@@ -72,7 +72,7 @@ beforeAll(() => {
 });
 
 describe('a change that gives the sender sets an empty From', () => {
-  it.each(['send the email from landflow@landflow.test', "set Send Email's From Email to landflow@landflow.test", 'send it from the address landflow@landflow.test'])('"%s" sets From, says so and drops the From need', async (change) => {
+  it.each(['send the email from landflow@landflow.test', "set Send Email's From Email to landflow@landflow.test", 'send it from the address landflow@landflow.test', /* ag5 carryover (live G2): the chat's change text for “Send the email from landflow@landflow.test.” */ "Set send_email's fixed fromEmail parameter to landflow@landflow.test. Keep toEmail oncall@landflow.test. Add no other tool or knowledge."])('"%s" sets From, says so and drops the From need', async (change) => {
     const run = await proposing();
     try {
       const before = (await (await post({ name: 'Alert triager', preview: true, base: { config: base() }, change: 'also make sure it emails the summary with Send Email' })).json()) as Body;

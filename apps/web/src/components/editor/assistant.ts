@@ -98,7 +98,7 @@ const handOver = (change: AgentChange) => {
 export function applyChanges(
   changes: Array<{ ops: AssistantOp[]; kind: ChangeKind; nodeType?: string }>,
   label: string,
-  options: { publishAgents?: boolean; quiet?: boolean; onApplied?: (applied: { undo: () => void; skipped: string[]; agentChanges?: AgentChange[] }) => void } = {},
+  options: { publishAgents?: boolean; quiet?: boolean; onApplied?: (applied: { undo: () => void; skipped: string[]; agentChanges?: AgentChange[]; /** Wave ag5 fix pass: the ids of the nodes these changes created (what a fix session may later remove without a click). */ added?: string[] }) => void } = {},
 ): boolean {
   // Wave ag4 carryover (the live pass's F3): another tab holds the edit lock, so this canvas is read-only and its editing
   // actions do nothing: refuse, and never mark a proposal "Applied" that changed nothing.
@@ -181,7 +181,7 @@ export function applyChanges(
   for (const { nodeId, config } of teams) void saveTeamFor(nodeId, config);
   for (const { nodeId, spec, place } of agents) void saveAgentFor(nodeId, spec, place, { publish: options.publishAgents });
   for (const change of agentChanges) handOver(change); // AG17:
-  options.onApplied?.({ undo, skipped: dropped, ...(agentChanges.length && { agentChanges }) });
+  options.onApplied?.({ undo, skipped: dropped, added: [...added], ...(agentChanges.length && { agentChanges }) });
   // Spotlight's own applies (autonomous mode, a test-and-fix session) are rows in its timeline, each with Undo.
   if (options.quiet) return true;
   const skipped = dropped.length ? `Skipped ${dropped.length}: ${dropped[0]}` : undefined;

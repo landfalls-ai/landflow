@@ -213,7 +213,7 @@ describe('SB14: a plan becomes nodes, one call per step', () => {
       'Triage agent': [reply({ prompt: 'Triage this bug' })],
       'Tell Slack': [reply({ text: '{{ $json.title }}' }), reply({ text: '{{ $json.output }}' })],
     };
-    const draft = await buildFlow('every day triage a bug with an agent and post it to Slack', undefined, [], [], { plan });
+    const draft = await buildFlow('every day triage a bug with an AI Agent and post it to Slack' /* AG25: "an agent" now makes a Run an Agent step (reads `reply`); naming the AI Agent node keeps this test on its `output` */, undefined, [], [], { plan });
     expect(callsFor('Tell Slack')).toHaveLength(2);
     expect(callsFor('Triage agent')).toHaveLength(1);
     expect(callsFor('Every day')).toHaveLength(1);

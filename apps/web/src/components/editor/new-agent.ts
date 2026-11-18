@@ -35,6 +35,16 @@ export interface Designed {
 
 const inFlight = new Set<Promise<void>>();
 
+/** AG25: a task that designs the agents of a build's unbound steps (spotlight/step-agents.ts): a test run waits for it like for any agent being designed. */
+export function holdForAgents(task: Promise<unknown>): void {
+  const held = task.then(
+    () => undefined,
+    () => undefined,
+  );
+  inFlight.add(held);
+  void held.finally(() => inFlight.delete(held));
+}
+
 /** Resolves once every agent being designed is saved (or failed): a test run before that would find no agent. */
 export async function agentsSettled(): Promise<void> {
   while (inFlight.size) await Promise.allSettled([...inFlight]);
@@ -108,6 +118,8 @@ export function itemReaching(nodeId: string): { item: Record<string, unknown>; n
   if (ran) return { item: ran.json, nodeOutputs };
   const pinned = pinData[source.id]?.[0];
   if (pinned && nodeTypes[source.data.wf.type]?.descriptor.kind === 'trigger') return { item: pinned.json, nodeOutputs };
+  // AG25: a Schedule's item is only the time it fired: a step right after it (a build's new agent) is tested on that empty item, so the publish after a pass is not left waiting for a run.
+  if (source.data.wf.type === 'core.schedule') return { item: {}, nodeOutputs };
   return undefined;
 }
 

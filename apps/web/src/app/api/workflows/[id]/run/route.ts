@@ -22,6 +22,10 @@ import { chatItem, MAX_CHAT_FILE_BYTES, MAX_CHAT_FILES } from '@/lib/server/chat
 import { DuplicateRunError, findTrigger, liveExecution, newExecutionId, planRerun, runWorkflow, type RunOptions } from '@/lib/server/runner';
 import { workflowSchema } from '@/lib/server/schemas';
 import { store } from '@/lib/server/store';
+import { flowDestinations } from '@/lib/server/agents/spotlight-approvals'; // AG23:
+import { getPublication } from '@/lib/server/publications';
+import { currentPrincipal } from '@/lib/server/auth/guard'; // AG23:
+import { SPOTLIGHT_ONLY_EDITOR, spotlightRunFields } from '@/lib/server/spotlight-run-schema'; // AG23:
 import { startTrigger, traceparentHeader, type TriggerFire } from '@/lib/server/telemetry';
 
 export const dynamic = 'force-dynamic';
@@ -59,6 +63,7 @@ const runSchema = z.object({
     .optional(),
   /** Run at most once per key (within LANDFLOW_IDEMPOTENCY_TTL_HOURS): a repeat names the first execution. */
   idempotencyKey: z.string().trim().min(1).max(MAX_KEY_LENGTH).optional(),
+  ...spotlightRunFields, // AG23:
 });
 
 export const POST = handler(async (request: Request, { params }: Ctx) => {
@@ -68,6 +73,14 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const saved = store.getWorkflow(id);
   const workflow = (body.data.workflow ? { ...saved, ...body.data.workflow, id } : saved) as Workflow | undefined;
   if (!workflow) return error('Workflow not found', 404);
+
+  // AG23: Spotlight's approvals: only an editor test run of the draft graph, by a signed-in person (never an API key, a rerun or a chat-less trigger).
+  let spotlightApprovals: RunOptions['spotlightApprovals'];
+  if (body.data.approvals) {
+    const principal = currentPrincipal();
+    if (body.data.rerun || !principal || (principal.via !== 'session' && principal.via !== 'test') || !body.data.sessionId) return error(SPOTLIGHT_ONLY_EDITOR, 400);
+    spotlightApprovals = { userId: principal.user.id, sessionId: body.data.sessionId, destinations: [...(body.data.destinations ?? []), ...(getPublication(id) ? flowDestinations(workflow) : [])] }; // AG22 and AG23 agree: a brand-new draft's own builder URLs are not given (lesson 21), a published flow's are
+  } else if (body.data.sessionId || body.data.destinations) return error(SPOTLIGHT_ONLY_EDITOR, 400);
 
   let plan: Omit<RunOptions, 'signal' | 'onEvent' | 'onStart'>;
   let trigger: TriggerFire | undefined;
@@ -100,6 +113,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
       startNodeId,
       triggerItems,
       destinationNodeId: body.data.destinationNodeId,
+      ...(spotlightApprovals && { spotlightApprovals }), // AG23:
       // Chat runs stream what AI Agent and chain nodes write (node.chunk events) to the chat panel.
       ...(mode === 'chat' && { streaming: true, executionId }),
     };

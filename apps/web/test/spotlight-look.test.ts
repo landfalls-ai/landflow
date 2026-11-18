@@ -37,6 +37,13 @@ describe('the session as a ledger', () => {
     expect(sessionFold(items, 'a', true)).toBeUndefined();
   });
 
+ it('counts an agent fix the session made as a fix too: two flow fixes and one agent fix are three', () => {
+    const items = session('a', 1, 'failed', 2);
+    items.splice(2, 0, { id: 'ac', role: 'assistant', testId: 'a', parts: [{ kind: 'agentCard', card: { name: 'Short writer', state: 'created' } as never }] } as ChatItem);
+    items.splice(3, 0, { id: 'ad', role: 'assistant', testId: 'a', parts: [{ kind: 'agentCard', card: { name: 'Other', state: 'designed' } as never }] } as ChatItem);
+    expect(foldLine(sessionFold(items, 'a', false)!)).toBe('Tested 2× · 3 fixes · stopped');
+  });
+
   it('calls a pass the review said no to stopped, in the fold and as the last outcome', () => {
     const items: ChatItem[] = [
       { id: 'u', role: 'user', text: 'Shape the headline' },

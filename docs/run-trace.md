@@ -255,6 +255,13 @@ on the result opens it (a pull request on GitHub); the rest of the row opens the
 - The lines come from `GET /api/runs/lines?ids=…` (at most 20 runs), folded on the server from each run's journal and
   cached by its last event like the run digests.
 
+### Who approved a tool call
+
+A tool call's sheet names who decided its approval (AG23, wave ag5): *Approved by Spotlight (autonomous fix session)* when
+Spotlight approved a call to a destination already given in its own test run, *Left for you by Spotlight: a destination nobody
+gave* when it left one for the person, *Approved by you* / *Denied by you* for a person's own decision. The line is the span's
+`approvedBy` attribute (from the agent session's tool entry, which keeps who decided); a run with no decision shows none.
+
 ### An approval with its evidence
 
 A run that waits for a person to approve a tool call (a team member's tool that needs approval, a

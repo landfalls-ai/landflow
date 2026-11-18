@@ -167,7 +167,7 @@ export interface PaletteRequest {
 
 /** What the toolbar, node toolbars and the node panel can ask the editor to run. */
 /** `by: 'spotlight'`: Spotlight asked for the run, so its timeline reports it, not a toast. */
-export type RunCommand = { kind: 'run'; by?: 'spotlight' } | { kind: 'debug' } | { kind: 'node'; nodeId: string; scope: 'from' | 'only' };
+export type RunCommand = { kind: 'run'; by?: 'spotlight'; approvals?: import('@/lib/shared/fix-autonomy').SpotlightRunApprovals /* AG22: an autonomous fix session's test run lets Spotlight approve its tool calls (AG23 reads it) */; items?: Array<{ json: Record<string, unknown> }> /* ag5 carryover: the trigger's last event, for a session's run of a flow whose trigger waits for a test event */ } | { kind: 'debug' } | { kind: 'node'; nodeId: string; scope: 'from' | 'only' };
 
 interface EditorState {
   workflowId: string;

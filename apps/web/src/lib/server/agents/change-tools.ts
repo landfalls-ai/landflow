@@ -35,3 +35,23 @@ export function tidyChangedTools<C extends { tools?: unknown }>(base: C, designe
   const removed = [...gone].map((t) => String(t.name ?? t.nodeType ?? '')).filter(Boolean);
   return { config: { ...designed, tools: designedTools.filter((t) => !gone.has(t)) }, removed };
 }
+
+/**
+ * AG24 (wave ag5): tools a session added and keeps (`keep` in the design body, `DesignKeep`). A kept tool is named by its name, its
+ * node type or the last part of it ("sqlite", "SQLite", "databases.sqlite"), compared without case, spaces and punctuation.
+ */
+const squashed = (v: unknown) => String(v ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+export function isKeptTool(keep: { tools: readonly string[] } | undefined, tool: Record<string, unknown>): boolean {
+  if (!keep?.tools.length) return false;
+  const have = new Set([squashed(tool.name), squashed(tool.nodeType), squashed(String(tool.nodeType ?? '').split('.').pop()), squashed(tool.id)].filter(Boolean));
+  return keep.tools.some((k) => have.has(squashed(k)));
+}
+
+/** The kept tools of `base` that `designed` no longer has (the change text read as removing one, the design dropped it, a tidy merged it) are put back; their names are answered as `restored`. */
+export function putKeptBack<C extends { tools?: unknown }>(base: C, designed: C, keep: { tools: readonly string[] } | undefined): { config: C; restored: string[] } {
+  const baseTools = (Array.isArray(base.tools) ? base.tools : []) as Tool[];
+  const designedTools = (Array.isArray(designed.tools) ? designed.tools : []) as Tool[];
+  const missing = baseTools.filter((t) => isKeptTool(keep, t) && !designedTools.some((d) => (d.id !== undefined && d.id === t.id) || (isKeptTool(keep, d) && d.nodeType === t.nodeType && squashed(d.name) === squashed(t.name))));
+  if (!missing.length) return { config: designed, restored: [] };
+  return { config: { ...designed, tools: [...designedTools, ...missing] }, restored: missing.map((t) => String(t.name ?? t.nodeType ?? '')).filter(Boolean) };
+}

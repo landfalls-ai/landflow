@@ -15,6 +15,9 @@ const DENIALS = [
   /^never claims? to have (?:looked up|checked|queried) (?:any )?data$/i,
   /^(?:it )?uses? only the text (?:it receives|it is given|you (?:are given|receive))$/i,
   /^(?:do not|don['’]t|never) (?:look up|query|access) (?:any )?data$/i,
+  // Re-review finding 2: "Use only the figures given in the message." and "Never claim to access databases or other data."
+  /^(?:it )?uses? only the (?:figures|numbers|values|data|facts) (?:(?:that (?:are|is) |it (?:is |was )?)?(?:given|provided|supplied|sent)|(?:it|you) (?:receives?|(?:are|is) given))(?: (?:in|by|with) (?:the|this|your) (?:message|text|input|request|prompt))?$/i,
+  /^(?:do not|don['’]t|never) claims? to (?:have )?(?:access(?:ed)?|querie?d?|read|look(?:ed)? up|check(?:ed)?) (?:to )?(?:any )?(?:databases?|data)(?: or (?:any )?other data)?$/i,
   /^(?:it )?(?:has|have) no access to (?:any )?data$/i,
   /^(?:it )?(?:cannot|can['’]t|can not) look (?:anything|data) up$/i,
   // First person, as a persona example's answer is written: "I can not look anything up."

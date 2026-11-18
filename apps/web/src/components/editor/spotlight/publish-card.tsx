@@ -9,13 +9,15 @@
 import { useEffect } from 'react';
 import { Check, ExternalLink, FlaskConical, Loader2, Rocket } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { api } from '@/lib/client/api';
+import { api, ApiError } from '@/lib/client/api';
 import { availableLine, publishOfferLine, runVersionsLine, type PublishOffer, type RunVersions } from '@/lib/shared/agent-versions';
+import { heldLine, type GateVerdict } from '@/lib/shared/agent-eval';
 import { Button } from '../../ui/button';
 import { useAssistant } from '../assistant';
 import { useEditor } from '../store';
 import { BlockNotice, blocksOf, publishVersion } from '../publish-control';
 import type { PublishCardState } from './publish-part';
+import { UnattendedLines } from './unattended-line'; // AG23:
 
 const sameOffer = (a: PublishOffer, b: PublishOffer) => a.workflowId === b.workflowId && a.kind === b.kind && a.nextVersion === b.nextVersion;
 
@@ -54,7 +56,10 @@ async function publish(itemId: string, offer: PublishOffer, how?: 'publish-first
     setCard(itemId, offer, { phase: 'published', versionNumber: result.published?.versionNumber });
   } catch (e) {
     const blocks = blocksOf(e);
-    setCard(itemId, offer, blocks ? { phase: 'blocked', blocks } : { phase: 'failed', error: (e as Error).message, ...(executionId && { executionId }) });
+    // AG24: a held eval gate is answered with its verdict: the score and what it was judged on show on every attempt, never the bare message.
+    const held = e instanceof ApiError && e.status === 409 ? (e.body as { code?: string; gate?: { verdict?: GateVerdict } } | undefined) : undefined;
+    const verdict = held?.code === 'agent_publish_held' ? held.gate?.verdict : undefined;
+    setCard(itemId, offer, blocks ? { phase: 'blocked', blocks } : { phase: 'failed', error: (e as Error).message, ...(executionId && { executionId }), ...(verdict && { held: verdict }) });
   }
 }
 
@@ -90,6 +95,7 @@ export function PublishCardView({ itemId, offer, card }: { itemId: string; offer
         ))}
         {!runs.length && <div>It runs no saved agent, so there are no versions to pin.</div>}
       </div>
+      {!done && <UnattendedLines workflowId={offer.workflowId} version={offer.kind === 'draft' ? 'draft' : undefined} update={offer.kind === 'update' ? (offer.updates ?? []).map((u) => u.agentId) : undefined} className="mt-1.5" />}{/* AG23: */}
       {blocks?.length && !done ? <BlockNotice className="mt-2" blocks={blocks} busy={busy} onChoose={(how) => void publish(itemId, offer, how)} /> : null}
       {state.phase === 'tested' && (
         <div data-testid="publish-test" className={cn('mt-2 rounded-lg border px-2 py-1.5 text-[12px] leading-snug', state.result === 'passed' ? 'border-gnbd bg-gndim text-t1' : state.result === 'waiting' ? 'border-warnbd bg-warndim text-t1' : 'border-rdbd bg-rddim text-t1')}>
@@ -100,7 +106,11 @@ export function PublishCardView({ itemId, offer, card }: { itemId: string; offer
           </a>
         </div>
       )}
-      {state.phase === 'failed' && <div className="mt-2 text-[12px] leading-snug text-rd [overflow-wrap:anywhere]">{state.error}</div>}
+      {state.phase === 'failed' && (
+        <div data-testid={state.held ? 'publish-held' : undefined} className="mt-2 text-[12px] leading-snug text-rd [overflow-wrap:anywhere]">
+          {state.held ? heldLine(state.held) : state.error} {/* AG24: */}
+        </div>
+      )}
       {state.phase === 'published' && <div className="mt-2 text-[12px] leading-snug text-t1">{state.line ?? `Published${state.versionNumber ? ` v${state.versionNumber}` : ''}: production runs it now.`}</div>}
       {!done && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">

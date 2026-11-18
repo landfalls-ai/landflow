@@ -14,6 +14,8 @@ import type { DraftSummary } from '@/lib/shared/draft-summary'; // SB15:
 import type { ConnectionType, NodeItem } from '@/lib/shared/types';
 import { useEditor } from './store';
 import { pickedModel } from './spotlight-model'; // SB19:
+import { designUnboundAgents } from './spotlight/step-agents'; // AG25:
+import type { NewAgentHint } from '@/lib/shared/agent-brief'; // AG25:
 import type { BuildPlan, BuildStage } from '@/lib/shared/build-plan'; // SB13:
 
 interface FlowDraft {
@@ -30,6 +32,7 @@ interface FlowDraft {
   plan?: BuildPlan; // SB13:
   stages?: BuildStage[]; // SB13:
   summary?: DraftSummary; // SB15:
+  newAgents?: Record<string, NewAgentHint>; // AG25: what a converted AI Agent step had, by the step's name
 }
 
 /** Columns by longest path from the trigger; sub-nodes under the node they attach to. */
@@ -129,6 +132,8 @@ export function useBuildFlow() {
       // What it was drafted from: Spotlight's "Test and fix" checks a run against it.
       if (!state.description?.trim()) state.setMeta({ description: prompt });
       arriveLeftToRight(before);
+      // AG25: a Run an Agent step the draft left with no agent is designed now (created by itself on a brand-new draft in autonomous mode).
+      void designUnboundAgents(useEditor.getState().nodes.filter((n) => !before.has(n.id)).map((n) => n.id), prompt, draft.newAgents);
       setTimeout(() => fitView({ padding: 0.25, duration: 600, maxZoom: 1.1 }), 60);
       return { name: draft.name, nodes: draft.nodes.length, model: draft.model, durationMs: draft.durationMs, dropped: draft.dropped.length, left: draft.left ?? [], pinned: Boolean(draft.pinData && Object.keys(draft.pinData).length), plan: draft.plan /* SB13 */, ...(draft.summary && { summary: draft.summary }) /* SB15: */ };
     } finally {

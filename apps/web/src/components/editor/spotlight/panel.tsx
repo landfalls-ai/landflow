@@ -16,7 +16,7 @@ import { api, ApiError } from '@/lib/client/api';
 import type { ConversationItem, ConversationRecord } from '@/lib/shared/conversations';
 import { useEditor } from '../store';
 import { isPhone } from '@/lib/client/use-phone';
-import { agentFixWaits, headerStopShown, draftPhase, draftStatus, lastOutcomeOf, lastRunOf, openNeedOf, sessionIsWaiting, stepsOf, stoppedAtOf, titleOf } from '../timeline';
+import { agentFixAwaitsApply, agentFixWaits, headerStopShown, draftPhase, draftStatus, lastOutcomeOf, lastRunOf, openNeedOf, sessionIsWaiting, stepsOf, stoppedAtOf, titleOf } from '../timeline';
 import { Composer, focusSpotlight } from './composer';
 import { AsksFirstNote, AutonomousExplainer, AutonomousSwitch, useAutonomousExplainer } from './proposal';
 import { Timeline } from './timeline-view';
@@ -254,6 +254,7 @@ export function SpotlightPanel({ hiddenOnPhone = false, hidden = false }: { hidd
     pending,
     ...(sessionWaits && { waitingForApply: true }),
     ...(sessionWaits && agentFixWaits(items, testingId) && { waitingForAgent: true }),
+    ...(sessionWaits && agentFixAwaitsApply(items, testingId) && { agentAwaitsApply: true }), // AG22: C1
     fixingName,
     designing,
     hasItems: items.length > 0,

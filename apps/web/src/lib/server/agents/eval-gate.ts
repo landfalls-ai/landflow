@@ -6,12 +6,14 @@
  */
 import { nanoid } from 'nanoid';
 import {
-  gateVerdict,
+  compareRuns,
+  lowCasesOf,
   MAX_EVAL_CASES,
   meanScore,
   type AgentEvalCase,
   type AgentEvalResult,
   type AgentEvalRun,
+  type GateLowCase,
   type GateVerdict,
 } from '../../shared/agent-eval';
 import { database } from '../db';
@@ -110,6 +112,12 @@ export function baselineOf(agentId: string, version: number): number | undefined
   return db().get<{ average: number }>('SELECT average FROM agent_eval_runs WHERE agent_id = ? AND version = ? ORDER BY created_at DESC LIMIT 1', agentId, String(version))?.average;
 }
 
+/** AG24: the run a publish adopted for a version (the newest run saved for it): what a draft is compared with, case by case. */
+export function adoptedRunOf(agentId: string, version: number): AgentEvalRun | undefined {
+  const row = db().get<{ data: string }>('SELECT data FROM agent_eval_runs WHERE agent_id = ? AND version = ? ORDER BY created_at DESC, id DESC LIMIT 1', agentId, String(version));
+  return row ? parse<AgentEvalRun>(row.data) : undefined;
+}
+
 /** Run every case on the draft or a published version, judge the replies and save the run. */
 export function runEval(agentId: string, version: 'draft' | number = 'draft', options: { signal?: AbortSignal } = {}): Promise<AgentEvalRun> {
   // AG15: the gate's runs and the judge's calls are the agent's tests: surface `agent-test`.
@@ -168,6 +176,8 @@ async function runEvalCases(agentId: string, version: 'draft' | number, options:
 export interface GateResult {
   verdict: GateVerdict;
   run?: AgentEvalRun;
+  /** AG24: a held verdict's lowest cases (at most three; no reply text). */
+  lowCases?: GateLowCase[];
   /** The agent has no test cases: nothing was checked. */
   skipped?: boolean;
 }
@@ -176,9 +186,11 @@ export interface GateResult {
 export async function checkPublish(agentId: string, options: { signal?: AbortSignal } = {}): Promise<GateResult> {
   if (!listCases(agentId).length) return { verdict: { ok: true, average: 0 }, skipped: true };
   const agent = agentStore.get(agentId);
-  const baseline = agent?.published ? baselineOf(agentId, agent.published.version) : undefined;
+  // AG24: the draft is compared with the published version on the cases both ran (the adopted run's case ids), else judged on the threshold.
+  const adopted = agent?.published ? adoptedRunOf(agentId, agent.published.version) : undefined;
   const run = await runEval(agentId, 'draft', options);
-  return { verdict: gateVerdict(run.average, baseline), run };
+  const verdict = compareRuns(run, adopted);
+  return { verdict, run, ...(!verdict.ok && { lowCases: lowCasesOf(run) }) };
 }
 
 /** After a publish: the run that let it through is the new version's baseline. */

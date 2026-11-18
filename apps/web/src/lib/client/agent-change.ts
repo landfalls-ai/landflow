@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react'; // AG09:
 import { api, ApiError } from '@/lib/client/api';
 import { agentChanges } from '@/lib/shared/agent-changes';
 import type { AgentNotAdded, AgentPublish, AgentSmoke } from '@/lib/shared/agent-card';
+import type { DesignKeep } from '@/lib/shared/fix-autonomy'; // AG22:
 
 /** What the design route answers for a change. */
 export interface ChangeDesign {
@@ -27,9 +28,10 @@ export interface ChangeDesign {
 }
 
 /** The change as a proposal: the config with the change made, and the lines that differ from the base. */
-export function designChange(input: { name: string; description?: string; base: { agentId: string } | { config: Record<string, unknown> }; change: string; model?: string; typedAsk?: string }, signal?: AbortSignal): Promise<ChangeDesign> {
-  const { model, ...rest } = input;
-  return api<ChangeDesign>('/api/agents/design', { method: 'POST', json: { description: '', instructions: '', ...rest, ...(model && { model }), preview: true }, signal }).then((design) => {
+export function designChange(input: { name: string; description?: string; base: { agentId: string } | { config: Record<string, unknown> }; change: string; model?: string; typedAsk?: string; namedBy?: string; keep?: DesignKeep['keep'] /* AG22: */ }, signal?: AbortSignal): Promise<ChangeDesign> {
+  const { model, keep, ...rest } = input;
+  // AG22: a session's own earlier fixes ride along (`keep`): the design route never proposes removing a kept tool.
+  return api<ChangeDesign>('/api/agents/design', { method: 'POST', json: { description: '', instructions: '', ...rest, ...(model && { model }), ...(keep?.tools.length && { keep }), preview: true }, signal }).then((design) => {
     // A design that ran and matched the base has `designed: true` and no changes ("No change"); one the model never proposed is a failure, not "already has it".
     if (design.designed === false) throw new Error(design.failure && /usage limit/.test(design.failure) ? `${design.failure.charAt(0).toUpperCase()}${design.failure.slice(1)}; nothing was changed` : 'the model proposed nothing; nothing was changed');
     return design;
@@ -95,14 +97,51 @@ export async function saveChange(agentId: string, config: Record<string, unknown
   return (await saveChangeWithCases(agentId, config, sample)).smoke;
 }
 
+/** AG22: what a held gate said (AG24's 409): the score, what it was judged on and the lowest cases with the judge's reasons. */
+export interface HeldVerdict {
+  average?: number;
+  basis?: 'same-cases' | 'threshold';
+  shared?: number;
+  reason?: string;
+  /** The held run's lowest cases (input and why they scored low), as far as the 409 lists them. */
+  lowCases: Array<{ input: string; reason?: string }>;
+}
+
+/** AG22: the last held verdict of each agent this page published (read by a session that fixes from it). */
+const heldVerdicts = new Map<string, HeldVerdict>();
+export const heldOf = (agentId: string): HeldVerdict | undefined => heldVerdicts.get(agentId);
+
+/** AG22: the verdict of a 409 `gate` (older hosts send the average and the reason only; every other field is optional). */
+export function verdictOf(gate: unknown): HeldVerdict | undefined {
+  const g = gate as { verdict?: Record<string, unknown>; lowCases?: unknown; cases?: unknown; lowest?: unknown; results?: unknown } | undefined;
+  const v = g?.verdict;
+  if (!v) return undefined;
+  const rows = [g?.lowCases, g?.lowest, g?.cases, g?.results, v.lowest, v.cases].find(Array.isArray) as Array<Record<string, unknown>> | undefined;
+  const lowCases = (rows ?? [])
+    .filter((c) => c && typeof c.input === 'string')
+    .map((c) => ({ input: String(c.input).slice(0, 400), ...(typeof (c.reasoning ?? c.reason ?? c.why) === 'string' && { reason: String(c.reasoning ?? c.reason ?? c.why).slice(0, 400) }) }))
+    .slice(0, 3);
+  return {
+    ...(typeof v.average === 'number' && { average: v.average }),
+    ...((v.basis === 'same-cases' || v.basis === 'threshold') && { basis: v.basis }),
+    ...(typeof v.shared === 'number' && { shared: v.shared }),
+    ...(typeof v.reason === 'string' && { reason: v.reason }),
+    lowCases,
+  };
+}
+
 /** Publish after a pass: the eval gate runs the agent's cases; a hold is the answer (never skipped), not an error. */
 export async function publishChange(agentId: string): Promise<AgentPublish> {
   try {
     await api(`/api/agents/${agentId}/publish`, { method: 'POST' });
+    heldVerdicts.delete(agentId);
     return { state: 'published' };
   } catch (e) {
-    const verdict = e instanceof ApiError && e.status === 409 ? (e.body as { gate?: { verdict?: { average?: number; reason?: string } } } | undefined)?.gate?.verdict : undefined;
-    if (verdict) return { state: 'held', ...(verdict.average !== undefined && { score: verdict.average }), ...(verdict.reason && { reason: verdict.reason }) };
+    const held = e instanceof ApiError && e.status === 409 ? verdictOf((e.body as { gate?: unknown } | undefined)?.gate) : undefined;
+    if (held) {
+      heldVerdicts.set(agentId, held); // AG22: the session reads it (heldOf)
+      return { state: 'held', ...(held.average !== undefined && { score: held.average }), ...(held.reason && { reason: held.reason }) };
+    }
     return { state: 'failed', reason: (e as Error).message };
   }
 }

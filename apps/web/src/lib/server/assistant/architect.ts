@@ -14,6 +14,7 @@ import { toToolName, type AgentMessage, type LanguageModel, type ToolCall, type 
 import { deriveToolSchema } from '@landflow/engine'; // AG08:
 import type { AgentConfig, AgentGuardrails, AgentModel, AgentPersona, AgentTemplate, AgentToolConfig, AnswerLength, NodeToolConfig } from '@/lib/shared/agents';
 import { DEFAULT_BRIEF_GUARDRAILS, isNodeKnowledge } from '@/lib/shared/agents';
+import { keptToolLine } from '@/lib/shared/kept-tool';
 import type { AgentCaseDraft, AgentNotAdded, AgentReuse, AgentCard } from '@/lib/shared/agent-card'; // SB17: AG02: AG19: AgentReuse, AgentCard
 import { agentLine, type CatalogAgent } from '@/lib/shared/tenant-catalog'; // AG19:
 import { catalogCredentials, catalogToolNodes } from './tenant-catalog'; // wave ag4 carryover: the brief reads the person's credentials
@@ -23,6 +24,7 @@ import { randomFace } from '@/lib/shared/faces';
 import type { NodeTypeInfo } from '@/lib/shared/types';
 import { agentStore } from '../agents/store';
 import { agentTemplates } from '../agents/templates';
+import { isKeptTool } from '../agents/change-tools'; // AG24:
 import { credentials } from '../credentials/vault';
 import { qualifyCredentialType } from '../mcp/bind';
 import { githubAllowedTools } from '../mcp/github'; // AG07:
@@ -123,8 +125,10 @@ const BRIEF_PARTS =
   'Four parts, each starting a line: "Input:" (what each message or item brings), "Steps:" (numbered, naming its tools), "Output:" (what it answers, how long), "Hand over when:" (what it does not decide alone)';
 // AG08: the cases are the inputs themselves, written out.
 // A change to an agent that has test cases: the ones the change makes wrong are named by id.
-const CONTRADICTED_ASK = 'Only when changing an agent that has test cases (listed with their ids): the ids of the cases this change makes wrong (the case says the agent must do the opposite of what the change makes it do); empty when none. Name no case that still holds. Write 1 to 2 new cases in `cases` to replace them.';
-const CASES_ASK = '3 to 5 test cases, one plain line each: what a person would actually send it, written out (the alert, the question, the text itself; never a description of it or a placeholder) => what a right answer says';
+const CONTRADICTED_ASK = 'Only when changing an agent that has test cases (listed with their ids): the ids of the cases this change makes wrong (the case says the agent must do the opposite of what the change makes it do); empty when none. Name no case that still holds. Write 1 to 2 new cases in `cases` to replace them, never the same question as a case you name.';
+// AG24: what a case looks like for an agent that reads data or documents.
+const DATA_CASES_RULE = 'For an agent with a database, a knowledge base or an MCP read tool: a case asks for what the tool holds without stating it (no figure, amount, total or quoted record in the question), and what a right answer says is that the agent reads it from the tool ("Answers with the figures from the sales database"), never the figures themselves. A knowledge agent\'s case names only documents its knowledge base holds.';
+const CASES_ASK = '3 to 5 test cases, one plain line each: what a person would actually send it, written out (the alert, the question, the text itself; never a description of it or a placeholder) => what a right answer says. For an agent that reads data or documents, a case never states what the tool holds: it asks for it, and the right answer says the agent reads it from the tool';
 
 const TOOLS: ToolSpec[] = [
   {
@@ -459,7 +463,10 @@ function operationsOf(info: NodeTypeInfo, parameters: Record<string, unknown>) {
 function isQueryRead(info: NodeTypeInfo, parameters: Record<string, unknown>): boolean {
   return readsByQuery(parameters, info.type);
 }
-function toolWrites(info: NodeTypeInfo, parameters: Record<string, unknown>): boolean {
+function toolWrites(info: NodeTypeInfo, given: Record<string, unknown>): boolean {
+  // A call with no operation runs the node's default one (SQLite's is insert).
+  const defaultOp = info.descriptor.properties.find((p) => p.name === 'operation')?.default;
+  const parameters = given.operation === undefined && typeof defaultOp === 'string' ? { ...given, operation: defaultOp } : given;
   // A query operation (SQLite's Execute Query) is a read while its SQL is empty (the agent writes it per call) or only reads: its name starts with a write verb.
   if (isQueryRead(info, parameters)) return false;
   if (writesOutside({ type: info.type, parameters })) return true;
@@ -652,6 +659,109 @@ function sameTool(token: string, tool: string): boolean {
 const snakeOf = (type: string) => (type.split('.').pop() ?? type).replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/-/g, '_').toLowerCase();
 const FIELD_CONTEXT = /^`?\s*(?:field|value|column|key|parameter)\b|^`?\s+as\s+(?:the|an?)\b|^`?\s+from\s+the\b|^`?\s+to\s+(?:order|sort|group)\b/i; // AG07: what follows a field-shaped token
 
+/**
+ * AG24: the sentence checks of revised instructions (item 3 of wave ag5). A rewrite that took a tool name out of a clause once left
+ * "1. read-only SELECT) to read…": the clause was cut at a comma inside brackets. `splitClauses` never cuts inside brackets or
+ * backticks, and `readsAsSentence` is the check every rewritten line goes through.
+ */
+const LEAD = /^(\s*(?:\d+[.)]|[-*•])\s+)/;
+const CLAUSE_BREAK = /^(?:,|;|\band\b|\bthen\b)$/i;
+
+/** The pieces of a sentence between its commas, semicolons, "and" and "then", never splitting inside (), [], {} or backticks. */
+function splitClauses(sentence: string): string[] {
+  const pieces: string[] = [];
+  let depth = 0;
+  let ticks = false;
+  let start = 0;
+  for (let i = 0; i < sentence.length; i++) {
+    const c = sentence[i];
+    if (c === '`') ticks = !ticks;
+    else if (!ticks && '([{'.includes(c)) depth++;
+    else if (!ticks && ')]}'.includes(c)) depth = Math.max(0, depth - 1);
+    else if (!ticks && depth === 0) {
+      const rest = sentence.slice(i);
+      const word = /^(?:and|then)\b/i.exec(rest)?.[0];
+      const prev = sentence[i - 1];
+      if (c === ',' || c === ';' || (word && (i === 0 || /\s/.test(prev)))) {
+        pieces.push(sentence.slice(start, i));
+        i += word ? word.length - 1 : 0;
+        start = i + 1;
+      }
+    }
+  }
+  pieces.push(sentence.slice(start));
+  return pieces.map((x) => x.trim()).filter((x) => x && !CLAUSE_BREAK.test(x));
+}
+
+const DANGLING_END = /(?:\b(?:and|or|then|to|the|a|an|of|with|from|by|for|in|on|that|which|so|but)|[,;:(])$/i;
+
+/** A line that reads as a sentence: brackets and backticks balanced, no step starting with `)` or a fragment, no doubled step numbers, not cut mid-clause. */
+export function readsAsSentence(line: string): boolean {
+  if (!line.trim()) return true;
+  const body = line.replace(LEAD, '').trim();
+  const numbered = LEAD.test(line) && /^\s*\d+[.)]/.test(line);
+  if (/^\s*\d+[.)]\s*\d+[.)]\s/.test(line)) return false; // "1. 2. Do it": a doubled number
+  for (const [open, close] of [['(', ')'], ['[', ']'], ['{', '}']]) {
+    let depth = 0;
+    for (const c of body) {
+      if (c === open) depth++;
+      else if (c === close && --depth < 0) return false;
+    }
+    if (depth !== 0) return false;
+  }
+  if ((body.match(/`/g) ?? []).length % 2) return false;
+  if (numbered || LEAD.test(line)) {
+    if (/^[)\]},;.:!?]/.test(body)) return false;
+    if (numbered && body.split(/\s+/).filter((w) => /[A-Za-z0-9]/.test(w)).length < 2) return false;
+    if (numbered && /^[a-z]/.test(body) && /^(?:no|and|or|then|to|of|with|from|by|that|which|but|so|in|on)\b/.test(body)) return false; // a fragment, not a step
+  }
+  if (/^[A-Za-z][A-Za-z -]*:\s*$/.test(body)) return true; // a part's own heading ("Steps:")
+  if (DANGLING_END.test(body.replace(/…$/, '').trim()) && !/[.!?…]$/.test(body)) return false;
+  return true;
+}
+
+const wordsOf = (line: string) => new Set(line.toLowerCase().replace(LEAD, '').split(/[^a-z0-9]+/).filter((w) => w.length > 2));
+const overlap = (a: string, b: string) => {
+  const x = wordsOf(a);
+  const y = wordsOf(b);
+  return x.size ? [...x].filter((w) => y.has(w)).length / Math.max(x.size, y.size, 1) : 0;
+};
+
+/**
+ * AG24: every line of `text` (the revised instructions) must read as a sentence. A line that does not takes the model's own line
+ * for it (`proposed`, the text the rewrite started from), else the base's, else is dropped with a note; the steps are then
+ * numbered again, in order, so none is doubled or skipped. `avoid` are call names the agent no longer has: a replacement line
+ * never names one.
+ */
+export function wholeSentences(text: string, proposed: string, base: string, avoid: string[] = []): { text: string; dropped: string[] } {
+  const dropped: string[] = [];
+  const names = (line: string) => avoid.some((n) => new RegExp(`(?<![A-Za-z0-9_])${escapeRe(n)}(?![A-Za-z0-9_])`, 'i').test(line));
+  const out: string[] = [];
+  const given = new Set([...proposed.split('\n'), ...base.split('\n')]); // a line the model or the base wrote as it is was not rewritten here
+  for (const line of text.split('\n')) {
+    if (given.has(line) || readsAsSentence(line)) {
+      out.push(line);
+      continue;
+    }
+    const pick = (source: string) =>
+      source
+        .split('\n')
+        .filter((l) => readsAsSentence(l) && !names(l) && l.trim())
+        .map((l) => ({ l, score: overlap(line, l) }))
+        .filter((c) => c.score >= 0.3)
+        .sort((a, b) => b.score - a.score)[0]?.l;
+    const own = pick(proposed) ?? pick(base);
+    if (own && out.includes(own)) dropped.push('a step of the instructions did not read as a sentence and was left out');
+    else if (own) {
+      out.push(LEAD.test(line) && !LEAD.test(own) ? `${LEAD.exec(line)![0]}${own}` : own);
+      dropped.push(`a step of the instructions did not read as a sentence: kept ${own === pick(proposed) ? 'the model’s' : 'the earlier'} line`);
+    } else dropped.push('a step of the instructions did not read as a sentence and was left out');
+  }
+  let n = 0;
+  const renumbered = out.map((l) => (/^\s*\d+[.)]\s/.test(l) ? l.replace(/^(\s*)\d+([.)])/, (_m, sp: string, dot: string) => `${sp}${++n}${dot}`) : ((n = 0), l)));
+  return { text: renumbered.join('\n'), dropped };
+}
+
 export function nameOnlyOwnTools(instructions: string, tools: Array<{ name: string; description?: string }>, options: StepsOptions = {}): { text: string; dropped: string[] } {
   const own = new Set(tools.map((t) => t.name));
   const foreignNames = new Set((options.foreign ?? []).filter((f) => f && !own.has(f)));
@@ -707,9 +817,11 @@ export function nameOnlyOwnTools(instructions: string, tools: Array<{ name: stri
         .split(/(?<=[.!?])\s+(?=[A-Z0-9`"'(])/)
         .flatMap((sentence) => {
           if (!has.test(sentence)) return [sentence];
-          const clauses = sentence.split(/\s*(?:,|;|\band\b|\bthen\b)\s*/i).filter((piece) => piece && !has.test(piece));
+          // AG24: clauses are cut outside brackets only; a clause that would read as a fragment takes the whole sentence out
+          const clauses = splitClauses(sentence).filter((piece) => !has.test(piece));
           const joined = clauses.join(', ');
-          return clauses.length ? [`${joined}${/[.!?]$/.test(sentence) && !/[.!?]$/.test(joined) ? '.' : ''}`] : [];
+          const result = `${joined}${/[.!?]$/.test(sentence) && !/[.!?]$/.test(joined) ? '.' : ''}`;
+          return clauses.length && readsAsSentence(`1. ${result.charAt(0).toUpperCase()}${result.slice(1)}`) && /^[A-Za-z0-9`"'(]/.test(result) ? [result] : [];
         });
       current = kept.length ? `${lead}${kept.join(' ')}` : '';
       dropped.push(`instructions named ${token}, which it does not have`);
@@ -1154,7 +1266,7 @@ function modelNamedIn(request: string, models: readonly AgentModel[]): AgentMode
  * It runs inside the architect's scope, so it counts as its calls do; a model that fails leaves the cases to the person.
  */
 async function casesFor(model: LanguageModel, agent: { name: string; description: string; request: string; asksFirst?: string[] /* AG15: */ }, usage: { inputTokens: number; outputTokens: number }, signal?: AbortSignal): Promise<AgentCaseDraft[]> {
-  const system = 'You write test cases for an AI agent. Answer with 3 to 5 lines and nothing else, one case per line, plain text: what a person would actually send it, written out (the alert, the question, the text itself; never a description of it or a placeholder) => what a right answer says. Example: [Wazuh] rule 5710 sshd: attempt to login using a non-existent user, src 203.0.113.45 => Names the source address and says it is a login probe.' + (agent.asksFirst?.length ? ` The agent's tools ${agent.asksFirst.join(', ')} ask the person first: a case about that action expects the agent to say what it would do and that it waits for the person's approval, never that it was done.` : ''); // AG08: AG15:
+  const system = 'You write test cases for an AI agent. Answer with 3 to 5 lines and nothing else, one case per line, plain text: what a person would actually send it, written out (the alert, the question, the text itself; never a description of it or a placeholder) => what a right answer says. Example: [Wazuh] rule 5710 sshd: attempt to login using a non-existent user, src 203.0.113.45 => Names the source address and says it is a login probe. ' + DATA_CASES_RULE + (agent.asksFirst?.length ? ` The agent's tools ${agent.asksFirst.join(', ')} ask the person first: a case about that action expects the agent to say what it would do and that it waits for the person's approval, never that it was done.` : ''); // AG08: AG15:
   const messages: AgentMessage[] = [{ role: 'user', content: `Agent: ${agent.name}\nWhat it does: ${agent.description}\nThe request it was designed from:\n${agent.request.slice(0, 1500)}` }];
   try {
     const turn = await withCallNote({ purpose: 'answer', draft: plainDraft({ system, tools: [], messages }) }, () => model.generate({ system, messages, tools: [], ...(signal && { signal }) }));
@@ -1165,6 +1277,27 @@ async function casesFor(model: LanguageModel, agent: { name: string; description
     if (isUsageCapError(caught)) throw caught;
     return [];
   }
+}
+
+/**
+ * AG24: the case writer once more, after the design route dropped cases (`reasons`): 2 to 3 new cases for the agent, each following
+ * the rules the reasons name. Counted in the architect's scope like its other calls; a model that fails leaves the cases as they are.
+ */
+export async function casesAgain(input: { model?: string | LanguageModel; actor: Actor; signal?: AbortSignal }, agent: { name: string; description: string; config: Partial<AgentConfig>; reasons: string[]; avoid: string[]; titles?: string[] }): Promise<AgentCaseDraft[]> {
+  const scope = assistantScope({ surface: 'architect', userId: input.actor.id });
+  return runInUsageScope(scope, async () => {
+    const usage = { inputTokens: 0, outputTokens: 0 };
+    const tools = (agent.config.tools ?? []).map((t) => ('name' in t && t.name ? t.name : t.type)).slice(0, 8).join(', ');
+    const request = [
+      `Tools: ${tools || 'none'}`,
+      `Some of its test cases were dropped: ${agent.reasons.slice(0, 4).join('; ')}.`,
+      DATA_CASES_RULE,
+      agent.titles?.length ? `Its knowledge base holds only these documents: ${agent.titles.slice(0, 20).join(', ')}.` : '',
+      agent.avoid.length ? `Do not write these questions again: ${agent.avoid.slice(0, 5).map((a) => `“${a.slice(0, 120)}”`).join('; ')}.` : '',
+      'Write 3 new cases.',
+    ].filter(Boolean).join('\n');
+    return casesFor(assistantModel(input.model), { name: agent.name, description: agent.description, request, asksFirst: asksFirstNames(agent.config) }, usage, input.signal);
+  });
 }
 
 // AG15: the tools of a config that ask the person first (a write): their names as the card shows them.
@@ -1489,6 +1622,10 @@ export interface AgentSpec {
   /** AG04: a change to an agent that exists (or to a card's config): the config it starts from and what the person asked to change. */
   base?: Partial<AgentConfig>;
   change?: string;
+  /** AG24: the tools a session added: a change never removes one (`DesignKeep`, lib/shared/fix-autonomy.ts). */
+  keep?: { tools: string[]; reason: string };
+  /** Wave ag5 fix pass: an agent-fix design only: the words a tool may be named by (the session's cause, the fix's own words and the person's ask). A tool the change adds that they do not name is not added. */
+  namedBy?: string;
   /** A change to an agent that exists: its test cases, so the design can name the ones the change makes wrong. */
   cases?: Array<{ id: string; input: string; expected?: string }>;
 }
@@ -1538,7 +1675,7 @@ function reviseRequest(base: Partial<AgentConfig>, change: string, cases: AgentS
     'Change this agent now and propose the whole agent again, with the change made and nothing else touched. Keep its name, model, instructions, guardrails and every tool the change does not name; leave out a tool only if the change removes it. Leave out what only I can give (a repository, a channel, an id): it is listed for me to fill in.',
     'If the change gives the agent a database or a knowledge base, also rewrite any instruction sentence that says it cannot look data up or may use only the text it is given, so it agrees with the new tool; leave every other sentence as it is.',
     baseAsk(base),
-    cases.length ? `Its test cases (id: input => what a right answer says):\n${cases.slice(0, 20).map((c) => `${c.id}: ${c.input.slice(0, 200)}${c.expected ? ` => ${c.expected.slice(0, 200)}` : ''}`).join('\n')}\nIf the change makes a case wrong, name its id in contradictedCases and write 1 to 2 new cases in cases; name no case that still holds.` : '',
+    cases.length ? `Its test cases (id: input => what a right answer says):\n${cases.slice(0, 20).map((c) => `${c.id}: ${c.input.slice(0, 200)}${c.expected ? ` => ${c.expected.slice(0, 200)}` : ''}`).join('\n')}\nIf the change makes a case wrong, name its id in contradictedCases and write 1 to 2 new cases in cases (never the same question again); name no case that still holds. ${DATA_CASES_RULE}` : '',
     `The change: ${change}`,
   ].filter(Boolean).join('\n');
 }
@@ -1641,11 +1778,34 @@ const STEPS_HEAD = /^\s*(?:#{1,4}\s*)?steps\s*:/i;
 const AFTER_STEPS = /^\s*(?:#{1,4}\s*)?(?:output|hand[ -]?over(?:\s+when)?)\s*:/i;
 const NUMBERED = /^(\s*)\d+([.)]\s)/;
 
+/** A clause that reads after "When", built from what the tool says it is for (its description's first sentence, without a lead-in such as "Use this to" or "When you need to"). */
+function descriptionClause(tool: AgentToolConfig): string {
+  const first = ('description' in tool && tool.description ? tool.description : '').replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s/)[0].replace(/[\s.!?]+$/, '').replace(/`/g, '');
+  // A description's own slips never reach the step: a doubled article ("in a a SQLite …") and a noun said twice ("database file database").
+  const clean = first.replace(/\b(a|an|the)\s+\1\b/gi, '$1').replace(/\b(database|server|table|file)\s+file\s+\1\b/gi, '$1').replace(/\b(\w+)\s+\1\b/gi, '$1');
+  // A tool that only reads says "read", whatever the plugin's text offers ("Read or change data in …").
+  const reads = tool.type === 'node' && !tool.requireApproval && !writesOutside({ type: tool.nodeType, parameters: tool.parameters ?? {} }) && (tool.parameters?.operation !== undefined);
+  const task = (reads ? clean.replace(/^read (?:or change|and write|or write)\b/i, 'Read') : clean).replace(/^(?:use|call)\s+(?:this|it)\s+(?:when|to|for|if)\s+/i, '').replace(/^(?:use\s+when|when|if)\s+(?:you\s+|the\s+agent\s+)?(?:need\s+to\s+|needs?\s+to\s+)?/i, '').trim();
+  if (task) {
+    let cut = task.length > 90 ? `${task.slice(0, 90).replace(/\s+\S*$/, '')}…` : task;
+    // A cut never leaves a bracket open: the clause stops before the unmatched opener.
+    const open: number[] = [];
+    for (let i = 0; i < cut.length; i++) {
+      if ('([{'.includes(cut[i])) open.push(i);
+      else if (')]}'.includes(cut[i])) open.pop();
+    }
+    if (open.length) cut = `${cut.slice(0, open[0]).trimEnd()}${task.length > 90 ? '…' : ''}`;
+    return `you need to ${cut.charAt(0).toLowerCase()}${cut.slice(1)}`;
+  }
+  return `the job needs ${'name' in tool && tool.name ? tool.name.replace(/[_-]+/g, ' ') : 'it'}`;
+}
+
 /** What the change asked, cut to one clause that reads after "When": the clause that names the tool, its leading "also"/"please" dropped, "let it X" as "it should X". */
 function changeClause(change: string, tool: AgentToolConfig): string {
   const clauses = change.split(/[.;\n]+/).map((c) => c.trim()).filter(Boolean);
   const clause = clauses.find((c) => names(c, tool)) ?? clauses[0] ?? '';
-  const piece = clause.split(/,|\s+(?:and|but|then)\s+/i).map((c) => c.trim()).find((c) => names(c, tool)) ?? clause;
+  // Never cut inside brackets or backticks ("Give it the SQLite tool (select / executeQuery, read-only) …"): `splitClauses` and then "but".
+  const piece = splitClauses(clause).flatMap((c) => c.split(/\s+but\s+/i)).map((c) => c.trim()).find((c) => names(c, tool)) ?? clause;
   const text = piece.replace(/^(?:(?:also|and|please|now|then|just)\s+)+/i, '').replace(/[\s,.:;!?]+$/, '');
   // AG09: "add Slugify as a tool" configures the agent; it is no task, so the step comes from what the tool does.
   // AG09: the shape "a tool that/to/which/for …" is read before its article is stripped.
@@ -1662,14 +1822,7 @@ function changeClause(change: string, tool: AgentToolConfig): string {
   if (configAsk) {
     const toTask = /^(?:(?:a|an|the|another)\s+)?tools?\s+to\s+(?!(?:the|this|my|our)\s+(?:agent|bot|assistant)\b|it\b)(.+)$/i.exec(bare)?.[1];
     if (toTask) return `asked to ${toTask.split(/\s+/).slice(0, 14).join(' ')}`;
-    // the first sentence of what the tool says it is for, without a lead-in such as "Use this to" or "When you need to"
-    const first = ('description' in tool && tool.description ? tool.description : '').replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s/)[0].replace(/[\s.!?]+$/, '').replace(/`/g, '');
-    const task = first.replace(/^(?:use|call)\s+(?:this|it)\s+(?:when|to|for|if)\s+/i, '').replace(/^(?:use\s+when|when|if)\s+(?:you\s+|the\s+agent\s+)?(?:need\s+to\s+|needs?\s+to\s+)?/i, '').trim();
-    if (task) {
-      const cut = task.length > 90 ? `${task.slice(0, 90).replace(/\s+\S*$/, '')}…` : task;
-      return `you need to ${cut.charAt(0).toLowerCase()}${cut.slice(1)}`;
-    }
-    return `the job needs ${'name' in tool && tool.name ? tool.name.replace(/[_-]+/g, ' ') : 'it'}`;
+    return descriptionClause(tool);
   }
   const said = /^(?:let|have|make)\s+(?:it|the agent)\s+/i.test(text) ? text.replace(/^(?:let|have|make)\s+(?:it|the agent)\s+/i, 'it should ') : `asked to ${text}`;
   const words = said.split(/\s+/).slice(0, 16).join(' ');
@@ -1677,7 +1830,7 @@ function changeClause(change: string, tool: AgentToolConfig): string {
 }
 const CONFIG_VERB = /^(?:add|attach|include|install|enable|connect|use|give\s+(?:it|the agent))\b/i;
 
-function withToolSteps(text: string, added: Array<{ tool: AgentToolConfig; line?: string }>, change: string): string {
+export function withToolSteps(text: string, added: Array<{ tool: AgentToolConfig; line?: string }>, change: string): string {
   const lines = text.split('\n');
   const stepsAt = lines.findIndex((l) => STEPS_HEAD.test(l));
   const outputAt = lines.findIndex((l, i) => i > stepsAt && AFTER_STEPS.test(l));
@@ -1686,7 +1839,17 @@ function withToolSteps(text: string, added: Array<{ tool: AgentToolConfig; line?
   const others = lines.filter((l) => !TOOLS_LINE.test(l)).join('\n');
   const missing = added.filter(({ tool: t }) => 'name' in t && t.name && !new RegExp(`(?<![A-Za-z0-9_])${escapeRe(t.name)}(?![A-Za-z0-9_])`, 'i').test(others));
   if (!missing.length) return text;
-  const steps = missing.map(({ tool: t, line }) => line ?? `0. When ${changeClause(change, t)}, call ${'name' in t ? t.name : ''}${'requireApproval' in t && t.requireApproval ? ' (it asks the person first)' : ''}.`);
+  const call = (t: AgentToolConfig) => `${'name' in t ? t.name : ''}${'requireApproval' in t && t.requireApproval ? ' (it asks the person first)' : ''}`;
+  const steps = missing.map(({ tool: t, line }) => {
+    if (line) return line;
+    const built = `0. When ${changeClause(change, t)}, call ${call(t)}.`;
+    // A step cut mid-bracket, or one that repeats the ask's own "Give it …", falls back to a step built from the tool's description.
+    // The clause after "asked to" must start with a verb: an article, a quote, a capitalised word (the ask's own "Give it …", “X”) or a ":" in the clause means the ask was not cut into a task.
+    const clause = /^0\. When (.*), call /.exec(built)?.[1] ?? '';
+    const afterAsked = /^asked to (.*)$/i.exec(clause)?.[1];
+    const notATask = afterAsked !== undefined && (/^(?:the|a|an|this|that|these|those|[“"'‘]|[A-Z])/.test(afterAsked) || /^(?:add|attach|include|install|enable|connect|use|give)\b/i.test(afterAsked));
+    return readsAsSentence(built) && !notATask && !clause.includes(':') ? built : `0. When ${descriptionClause(t)}, call ${call(t)}${t.type === 'node' && !t.requireApproval && t.parameters?.operation !== undefined && !writesOutside({ type: t.nodeType, parameters: t.parameters }) ? ' (read only)' : ''}.`;
+  });
   const toolsAt = lines.findIndex((l, i) => i >= start && i < end && TOOLS_LINE.test(l));
   let at = toolsAt;
   if (at < 0) {
@@ -1755,7 +1918,8 @@ function withSenderGiven(tool: AgentToolConfig, change: string, types: NodeTypeI
   const current = (tool.parameters as Record<string, unknown> | undefined)?.fromEmail;
   if (typeof current === 'string' ? current.trim() !== '' : current !== undefined && current !== null) return tool;
   const said = change.replace(AGENT_ASK, ' ');
-  const senders = [...said.matchAll(/\bfrom(?:\s+(?:the\s+)?(?:address|e-?mail(?:\s+address)?|sender))?(?:\s+(?:to|as|be|is))?\s*:?\s+([\w.+-]+@[\w-]+(?:\.[\w-]+)+)/gi)].map((m) => m[1]);
+  // ag5 carryover (live G2): the chat writes the person's “Send the email from x” as “Set send_email's fixed fromEmail parameter to x”.
+  const senders = [...said.matchAll(/\bfrom(?:\s*e-?mail)?(?:\s+(?:the\s+)?(?:address|e-?mail(?:\s+address)?|sender|parameter|field))?(?:\s+(?:to|as|be|is))?\s*:?\s+([\w.+-]+@[\w-]+(?:\.[\w-]+)+)/gi)].map((m) => m[1]);
   const distinct = [...new Set(senders.map((a) => a.toLowerCase()))];
   if (distinct.length !== 1) return tool; // none, or two different senders: ask, never guess
   return { ...tool, parameters: { ...((tool.parameters as Record<string, unknown> | undefined) ?? {}), fromEmail: senders[0] } } as AgentToolConfig;
@@ -1773,10 +1937,16 @@ export const EXPLICIT_WRITE = /\b(?:insert|updat(?:e|es|ing)|delet(?:e|es|ing)|w
  * privilege holds for the tools the change does not name), a new tool stays only when the change names it, and the name, model,
  * practices, look and team stay unless the change names them.
  */
-function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: string, types: NodeTypeInfo[] = [], typedAsk?: string): void {
+function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: string, types: NodeTypeInfo[] = [], typedAsk?: string, keep?: AgentSpec['keep'] /* AG24: */): void {
   // What the person said decides whether a read may become a write; in an agent-fix session that is their typed ask, not the model's own change text.
   const said = typedAsk ?? change;
-  const kept = (base.tools ?? []).filter((t) => !removed(change, t)).map((t) => withSenderGiven(t, change, types)); // ag3 carryover:
+  const proposedInstructions = draft.config.instructions ?? base.instructions ?? ''; // the model's own text, before any rewrite here
+  // AG24: a tool the session added is never removed by the change's words, nor dropped by the design: it stays, and a line says why.
+  const keeps = (t: AgentToolConfig) => isKeptTool(keep, t as unknown as Record<string, unknown>);
+  for (const t of base.tools ?? []) {
+    if (keeps(t) && (removed(change, t) || !(draft.config.tools ?? []).some((d) => (t.type === 'node' && d.type === 'node' ? d.nodeType === t.nodeType : toolKey(d) === toolKey(t))))) draft.dropped.push(keptToolLine('name' in t && t.name ? t.name : t.type === 'node' ? t.nodeType : 'the tool'));
+  }
+  const kept = (base.tools ?? []).filter((t) => keeps(t) || !removed(change, t)).map((t) => withSenderGiven(t, change, types)); // ag3 carryover:
   const have = new Set(kept.map(toolKey));
   const added: AgentToolConfig[] = [];
   const addedLabels = new Set<string>(); // AG09:
@@ -1815,15 +1985,28 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
     ...base,
     name: renamed ?? madeAgain(base, [...kept, ...added], types) /* AG09: */ ?? base.name ?? draft.config.name,
     description: draft.config.description || base.description || '',
-    instructions: reviseInstructions(draft.config.instructions ?? base.instructions ?? '', base.instructions ?? '', [...kept, ...added], { tools: added, change } /* AG09: */),
+    instructions: reviseInstructions(proposedInstructions, base.instructions ?? '', [...kept, ...added], { tools: added, change } /* AG09: */),
     tools: [...kept, ...added],
   };
+  // AG24 (fix pass): a tool the session added keeps a step that calls it: the base's own step for it, else one built from the tool.
+  for (const t of kept.filter(keeps)) {
+    const name = 'name' in t ? t.name : undefined;
+    if (!name) continue;
+    const named = (line: string) => new RegExp(`(?<![A-Za-z0-9_])${escapeRe(name)}(?![A-Za-z0-9_])`, 'i').test(line);
+    const text = config.instructions ?? '';
+    if (text.split('\n').some((l) => !TOOLS_LINE.test(l) && named(l))) continue;
+    const own = (base.instructions ?? '').split('\n').find((l) => /^\s*\d+[.)]\s/.test(l) && !TOOLS_LINE.test(l) && named(l) && readsAsSentence(l));
+    config.instructions = withToolSteps(text, [{ tool: t, ...(own && { line: own }) }], change);
+  }
   // The steps name only the tools the agent ends up with: a tool the change removed leaves no step that calls it.
   // AG07: the call names of the final tools, and as foreign the call names of the base's tools that are gone (a revise's removed tool leaves no step).
   const finalSteps = stepsToolsOf(config.tools ?? [], types);
   const gone = stepsToolsOf(base.tools ?? [], types).list.map((t) => t.name).filter((n) => !finalSteps.list.some((t) => t.name === n));
   const reconciled = nameOnlyOwnTools(config.instructions ?? '', finalSteps.list, { ...finalSteps.options, foreign: gone });
-  config.instructions = reconciled.text;
+  // AG24: every line of the rewritten text must read as a sentence (the model's own line, else the base's, else out).
+  const whole = wholeSentences(reconciled.text, proposedInstructions, base.instructions ?? '', gone); // the model's proposal, so a line `withToolSteps` or `reviseToolsLine` wrote is checked too
+  config.instructions = whole.text;
+  reconciled.dropped.push(...whole.dropped);
   // The base's own tools kept here are not "never asked for": the design's rule for a tool the change does not name does not apply to them.
   const keptNames = kept.flatMap((t) => (t.type === 'node' ? [types.find((x) => x.type === t.nodeType)?.descriptor.displayName] : [])).filter((n): n is string => Boolean(n));
   draft.dropped = draft.dropped.filter((line) => !(/the request (?:never asks for it|asks to read or check)/.test(line) && keptNames.some((n) => line.startsWith(`${n}:`) || line.startsWith(`${n} (`))));
@@ -2046,6 +2229,53 @@ export function designFailure(caught: unknown): string {
   return text ? `the model call failed: ${text.length > 160 ? `${text.slice(0, 159)}…` : text}` : 'the model call failed';
 }
 
+/** Verbs a display name starts with ("Change Case", "Read Rows"): words of a request that never name a tool by themselves. */
+const NAME_VERBS = new Set('change read write send create update delete search get make convert format run execute query fetch list add remove set'.split(' '));
+
+/**
+ * Wave ag5 fix pass 2: whether `text` names this tool, in whole words: its call name, its display name as a phrase, its plugin, a
+ * keyword of its app (5+ letters, "database" names SQLite), or a word of its display name that is not a verb and has 5+ letters
+ * ("Sales Read" by "the sales"). One verb of a longer name never does: "Change “X” so these cases pass" does not name Change Case.
+ */
+export function namesTool(text: string, tool: AgentToolConfig, types: NodeTypeInfo[], identifyingOnly = false): boolean {
+  const words = text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map((w) => w.replace(/(?:e?s)$/, ''));
+  const joined = ` ${words.join(' ')} `;
+  const phrase = (name: string) => {
+    const parts = name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map((w) => w.replace(/(?:e?s)$/, ''));
+    return parts.length > 0 && joined.includes(` ${parts.join(' ')} `);
+  };
+  const info = tool.type === 'node' ? types.find((x) => x.type === tool.nodeType) : undefined;
+  if (phrase(('name' in tool && tool.name) || '') || (info && phrase(info.descriptor.displayName))) return true;
+  if (!info) return false;
+  const plugin = [info.pluginId, info.pluginName].filter((n): n is string => Boolean(n));
+  const keywords = (info.descriptor.keywords ?? []).filter((k) => k.length >= 5);
+  const sameAsPlugin = (k: string) => plugin.some((n) => n.toLowerCase() === k.toLowerCase());
+  // What identifies the tool: its plugin (id or name) and a keyword that is the plugin. The common words of its app and the single words of its display name only loosely point at it.
+  if (plugin.some((t) => phrase(t)) || keywords.filter(sameAsPlugin).some((k) => phrase(k))) return true;
+  if (identifyingOnly) return false;
+  const loose = [...keywords, ...info.descriptor.displayName.split(/[^A-Za-z0-9]+/).filter((w) => w.length >= 5 && !NAME_VERBS.has(w.toLowerCase()))];
+  return loose.some((t) => phrase(t));
+}
+
+/** Whether a node tool only reads: it does not ask first and the design path's `toolWrites` says its call changes nothing outside. */
+const readOnlyTool = (tool: AgentToolConfig, types: NodeTypeInfo[]) => {
+  if (tool.type !== 'node' || tool.requireApproval) return false;
+  const info = types.find((x) => x.type === tool.nodeType);
+  return info ? !toolWrites(info, tool.parameters ?? {}) : !writesOutside({ type: tool.nodeType, parameters: tool.parameters ?? {} });
+};
+
+/**
+ * The fix design's rule for a tool it was not asked for (the live G2 fix added a Change Case tool that asks first): a tool the
+ * change adds must be named by the session's cause or the person's ask (`namedBy`). The model's own change text may name a tool
+ * only when it is a read, which keeps the SQLite select fix; a tool that asks first or writes always needs the cause or the ask.
+ */
+export function requested(tool: AgentToolConfig, spec: { namedBy: string; change: string }, types: NodeTypeInfo[]): boolean {
+  // A tool that asks first or writes counts only by a name that identifies it; the loose names count only for a read.
+  const read = readOnlyTool(tool, types);
+  if (namesTool(spec.namedBy, tool, types, !read)) return true;
+  return read && namesTool(spec.change, tool, types);
+}
+
 /**
  * Spotlight's newAgent, designed by the architect without a conversation (POST /api/agents/design): its last draft,
  * named as Spotlight named it. The first try hands the model what it would look up (designBrief) and offers only the
@@ -2101,9 +2331,30 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
     const kept: DraftResult = last;
     let notAdded: AgentNotAdded[] = [];
     if (spec.base && spec.change) {
-      reviseDraft(kept, spec.base, spec.change, input.types, spec.typedAsk); // AG04: the base's tools stay, a new one only when named
+      reviseDraft(kept, spec.base, spec.change, input.types, spec.typedAsk, spec.keep); // AG04: the base's tools stay, a new one only when named
       // ag1-int: AG02's promise holds for a change too: a tool it names is added (the same least-privilege rules), or said why not.
       notAdded = withSpecHints(kept, { name: spec.name, description: '', instructions: '', ask: spec.change, tools: changeTools(spec.change, input.types.filter(usableAsTool)) }, input, spec.base);
+      // Wave ag5 fix pass: in an agent-fix design a tool the session's cause and the person's ask do not name is not added: it is listed in `notAdded`.
+      if (spec.namedBy !== undefined) {
+        const had = new Set((spec.base.tools ?? []).map(toolKey));
+        const unrequested = (kept.config.tools ?? []).filter((t) => !had.has(toolKey(t)) && !requested(t, { namedBy: spec.namedBy!, change: spec.change! }, input.types));
+        if (unrequested.length) {
+          const tools = (kept.config.tools ?? []).filter((t) => !unrequested.includes(t));
+          const finalSteps = stepsToolsOf(tools, input.types);
+          const gone = stepsToolsOf(unrequested, input.types).list.map((t) => t.name);
+          // A step that calls a tool that is not added goes whole (never left as a clause that names no tool), then the rest is reconciled.
+          const named = (line: string) => gone.some((n) => new RegExp(`(?<![A-Za-z0-9_])${escapeRe(n)}(?![A-Za-z0-9_])`, 'i').test(line));
+          const stepped = (kept.config.instructions ?? '').split('\n').filter((l) => !(/^\s*\d+[.)]\s/.test(l) && !TOOLS_LINE.test(l) && named(l))).join('\n');
+          const reconciled = nameOnlyOwnTools(stepped, finalSteps.list, { ...finalSteps.options, foreign: gone });
+          const whole = wholeSentences(reconciled.text, stepped, spec.base.instructions ?? '', gone);
+          kept.config = { ...kept.config, tools, instructions: reviseToolsLine(whole.text, spec.base.instructions ?? '', tools) };
+          for (const t of unrequested) {
+            const label = ('name' in t && t.name) || (t.type === 'node' ? input.types.find((x) => x.type === t.nodeType)?.descriptor.displayName : undefined) || 'a tool';
+            notAdded.push({ name: label, reason: 'neither the failure nor your ask names it' });
+            kept.needs = kept.needs.filter((n) => n.tool !== label);
+          }
+        }
+      }
     } else notAdded = withSpecHints(kept, spec, input); // SB17: AG02: what the ask named and the agent did not get
     // AG19: the model Spotlight's chat named (`newAgent.model`): kept when this host lists it, else the default stays and the card says so.
     if (!spec.base && spec.agentModel && input.resources) {

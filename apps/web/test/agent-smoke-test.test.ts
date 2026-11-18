@@ -355,6 +355,7 @@ function stubTheSession() {
   useAssistant.getState().reset();
   useAssistant.getState().bind(WF);
   useEditor.getState().load(sessionFlow(), types);
+  useEditor.setState({ save: undefined } as never); // wave ag5: a test that needs the editor's save wires it itself
   run.mockReset().mockImplementation(() => {
     const scripted = runs.shift() ?? {};
     useEditor.setState({ running: true, executionId: `ex_${run.mock.calls.length}` });
@@ -433,6 +434,10 @@ describe('one yes per scheme', () => {
   beforeEach(() => {
     stubTheSession();
     noteOpened(WF, 0);
+    // Wave ag5 (AG22, the decision of 2026-11-18): with the switch on, a fix session's pass now publishes the flow, and a published
+    // flow's own URLs count as given in the next session. The yes-per-scheme rule is the same with the switch off, where nothing is
+    // published by itself, so these tests read it there; a destination nobody gave still waits in both modes (session-auto-ag5).
+    useAutonomyFacts.setState({ switchOn: false });
   });
 
   it('a yes to http://127.0.0.1:3399 (or the bare host:port from before) covers http, and an https step asks again', async () => {
@@ -469,6 +474,9 @@ describe('the review after a right fix names what is missing', () => {
     stubTheSession();
     noteOpened(WF, 0);
     approveDestinations(WF, ['http://127.0.0.1:3399']);
+    // Wave ag5 (AG22): the tests below assert the asks-first end of a pass (the Publish action waits for a click), so they run with
+    // the switch off; the switch-on twin is the last test of this block (a session that fixed nothing still leaves Publish to the click).
+    useAutonomyFacts.setState({ switchOn: false });
   });
 
   it('missingPart reads a named part, and nothing for a bare no', () => {
@@ -507,6 +515,21 @@ describe('the review after a right fix names what is missing', () => {
     expect(actions()).toEqual([]);
     expect(outcomes().at(-1)?.text).toBe('It runs, but doesn’t do all you asked yet: it never tells the desk about big orders. I have no change for it. Left: open “Notify VIP” and change it by hand, or tell me what to change.');
   });
+
+  it('switch on (wave ag5, AG22): a "Yes" review on a session that fixed nothing offers Publish and publishes nothing by itself', async () => {
+    useAutonomyFacts.setState({ switchOn: true });
+    useEditor.setState({ save: async () => true } as never);
+    published.mockClear();
+    runs = [{ 'Notify VIP': { items: 1 } }];
+    replies = [{ text: 'Yes, it posts.' }];
+    await testUntilItRuns(goal);
+    expect((send.mock.calls[0][0] as string)).toContain(`“${goal}”`);
+    // No fix was applied: the draft (the person's own edits too) is published only by a click.
+    expect(actions()).toEqual(['publish']);
+    expect(published).not.toHaveBeenCalled();
+    expect(texts().some((t) => t.startsWith('Published: workflow'))).toBe(false);
+    expect(outcomes()).toEqual([]);
+  });
 });
 
 describe('an agent that is not published when the flow runs', () => {
@@ -528,6 +551,9 @@ describe('an agent that is not published when the flow runs', () => {
 
   it('autonomous: "Publish … first" is not a fix round: it is tested, published on the pass, and the run goes again', async () => {
     noteOpened(WF, 0);
+    // Wave ag5 (AG22): an autonomous pass publishes the flow only after a fix; this session fixed nothing (publishing its own agent is not a fix).
+    useEditor.setState({ save: async () => true } as never);
+    published.mockClear();
     useAssistant.getState().setAgent('g', { name: 'Answerer', state: 'draft', agentId });
     runs = [{ Answerer: { error: 'Publish “Answerer” first' } }, { Answerer: { items: 1 } }];
     replies = [{ text: 'Yes, it answers.' }];
@@ -538,6 +564,8 @@ describe('an agent that is not published when the flow runs', () => {
     // The one call to the assistant is the review of the passing run, never a fix of the failed one.
     expect(send.mock.calls.map((c) => (c[1] as { session?: string }).session)).toEqual(['review']);
     expect(outcomes()).toEqual([]);
+    expect(published).not.toHaveBeenCalled(); // wave ag5: no fix, so the workflow's publish stays the person's click
+    expect(actions()).toEqual(['publish']);
   });
 
   it('autonomous: an untested agent whose step now has an item is tested before the first run', async () => {
@@ -554,6 +582,8 @@ describe('an agent that is not published when the flow runs', () => {
   it('asks-first: a Needs-you row publishes it after the pass, and nothing is published before the click', async () => {
     noteOpened(WF, 5);
     expect(autonomyOf(WF)).toBe('asks-first');
+    // Wave ag5 (AG22, the decision of 2026-11-18): a fix session's autonomy is the switch alone, so asks-first is the switch off.
+    useAutonomyFacts.setState({ switchOn: false });
     useAssistant.getState().setAgent('g', { name: 'Answerer', state: 'draft', agentId });
     runs = [{ Answerer: { error: 'Publish “Answerer” first' } }];
     await testUntilItRuns('Answer refund questions');

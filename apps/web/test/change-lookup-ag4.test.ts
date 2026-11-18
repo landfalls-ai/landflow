@@ -88,7 +88,7 @@ describe('an agent fix that adds SQLite to a text-only agent', () => {
 });
 
 
-import { expectsOnlyDenial, reconcileLookup } from '@/lib/server/agents/change-lookup';
+import { expectsOnlyDenial, isDenial, reconcileLookup } from '@/lib/server/agents/change-lookup';
 
 describe('cases are replaced only when the design names them, or their expected answer is only a denial', () => {
   it('the safety, format and greeting cases stay when the design names none', async () => {
@@ -201,5 +201,20 @@ describe('reconcileLookup removes only a bare denial', () => {
   it('a line that is only the denial goes, with its number', () => {
     const r = run({}, 'Steps:\n1. Summarise.\n2. Uses only the text it receives.\n3. Reply briefly.');
     expect(r.config.instructions).toBe('Steps:\n1. Summarise.\n3. Reply briefly.');
+  });
+});
+
+describe('re-review finding 2: the two sentences a live SQLite fix left in the persona', () => {
+  const sqlite = { id: 'new', type: 'node', nodeType: 'databases.sqlite', name: 'sqlite' };
+  it('“Use only the figures given in the message.” and “Never claim to access databases or other data.” go, each listed on the card', () => {
+    const config = { tools: [sqlite], instructions: 'Steps:\n1. Write the summary.\n2. Use only the figures given in the message.', persona: { always: ['Use only the figures given in the message.', 'Name the region'], never: ['Never claim to access databases or other data.', 'Never invent a region'] } };
+    const r = reconcileLookup({ tools: [] } as never, config as never);
+    expect(r.config.persona).toEqual({ always: ['Name the region'], never: ['Never invent a region'] });
+    expect(r.config.instructions).not.toMatch(/figures given in the message/);
+    expect(r.lines).toEqual(expect.arrayContaining(['Persona: removed “Use only the figures given in the message.”', 'Persona: removed “Never claim to access databases or other data.”']));
+  });
+  it('a sentence with a scope stays', () => {
+    expect(isDenial('Never claim to access databases other than the sales one.')).toBe(false);
+    expect(isDenial('Use only the figures given in the message for the north region.')).toBe(false);
   });
 });
