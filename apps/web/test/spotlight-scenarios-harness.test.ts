@@ -160,7 +160,7 @@ describe('the harness drives the product', () => {
     expect(seen[0].last).toContain('make C run');
     const fix = seen.find((s) => /Test run 1 \(execution ex_[^)]+\) failed/.test(s.last)); // AG20: a fix round names the run's execution
     expect(fix?.turn).toBe(2);
-    expect(seen.at(-1)?.last).toContain('Test run 2 had no errors');
+    expect(seen.at(-1)?.last).toMatch(/Test run 2 \(execution ex_[^)]+\) had no errors/);
     // The failed run's digest reached the fix request, as the editor's `runs` do: the failed node's context holds its
     // last run (only `runDigests()` puts it there), where without it the prompt says "Not run yet."
     expect(fix?.system).toContain('Last run:');
