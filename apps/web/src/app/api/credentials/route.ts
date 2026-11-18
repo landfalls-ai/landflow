@@ -13,14 +13,17 @@ export const dynamic = 'force-dynamic';
 
 /**
  * GET ?projectId= &workflowId= — the credentials the caller sees, each with its `ownership` (never secrets);
- * `workflowId` keeps the ones that workflow's project may use (the node panel's credential picker).
+ * `workflowId` keeps the ones that workflow's project may use (the node panel's credential picker); `agentId` the ones an agent's
+ * project may use (Spotlight's and the card's picker). Both answer the `projectId` they filtered by.
  */
 export const GET = handler(async (request: Request) => {
   const actor = routeActor();
-  const workflowId = new URL(request.url).searchParams.get('workflowId');
+  const params = new URL(request.url).searchParams;
+  const workflowId = params.get('workflowId');
+  const agentId = params.get('agentId');
   let list = withOwnership(actor, 'credential', credentials.list(), projectParam(request));
-  const usableBy = workflowId ? homeProjectId('workflow', workflowId) : undefined;
-  if (workflowId) {
+  const usableBy = workflowId ? homeProjectId('workflow', workflowId) : agentId ? homeProjectId('agent', agentId) : undefined;
+  if (workflowId || agentId) {
     const usable = usableCredentialIds(usableBy, list.map((c) => c.id));
     list = list.filter((c) => usable.has(c.id));
   }

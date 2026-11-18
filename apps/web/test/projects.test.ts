@@ -44,6 +44,7 @@ const credentialTransferRoute = await import('@/app/api/credentials/[id]/transfe
 const credentialTestRoute = await import('@/app/api/credentials/test/route');
 const dataTablesRoute = await import('@/app/api/data-tables/route');
 const agentsRoute = await import('@/app/api/agents/route');
+const agentRoute = await import('@/app/api/agents/[id]/route');
 const agentDesignRoute = await import('@/app/api/agents/design/route');
 const executionsRoute = await import('@/app/api/executions/route');
 const projectsRoute = await import('@/app/api/projects/route');
@@ -345,6 +346,21 @@ describe('lists show what the caller can see', () => {
     expect(picker.body.credentials.map((c: { id: string }) => c.id)).toEqual([ids.credential]);
     const ownerPicker = await call(credentialsRoute.GET, `/api/credentials?workflowId=${ids.ownerWorkflow}`, 'GET', owner);
     expect(ownerPicker.body.credentials.map((c: { id: string }) => c.id)).toEqual([ids.ownerCredential]);
+  });
+
+  it('the credential picker for an agent offers what the agent’s project may use', async () => {
+    const picker = await call(credentialsRoute.GET, `/api/credentials?agentId=${ids.agent}`, 'GET', owner);
+    expect(picker.body.credentials.map((c: { id: string }) => c.id)).toEqual([ids.credential]);
+    expect(picker.body.projectId).toBe(team);
+  });
+
+  it('an agent’s save refuses a credential its project may not use', async () => {
+    const withTool = (credential: string) => ({ name: 'Team agent', tools: [{ id: 't1', type: 'node', nodeType: 'core.httpRequest', credentials: { auth: { id: credential, name: 'x' } } }] });
+    const refused = await call(agentRoute.PUT, `/api/agents/${ids.agent}`, 'PUT', owner, withTool(ids.ownerCredential), { id: ids.agent });
+    expect(refused.status).toBe(403);
+    expect(refused.body.error).toMatch(/can’t use/);
+    const allowed = await call(agentRoute.PUT, `/api/agents/${ids.agent}`, 'PUT', owner, withTool(ids.credential), { id: ids.agent });
+    expect(allowed.status).toBe(200);
   });
 
   it('live events reach the members of the workflow’s project only', () => {

@@ -11,14 +11,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { AgentCardView } = await import('@/components/editor/spotlight/agent-card');
 const { useEditor } = await import('@/components/editor/store');
+const { useAssistant } = await import('@/components/editor/assistant');
+const { toolNeedingCredential } = await import('@/components/editor/spotlight/agent-credential-picker');
 const { useCredentialStore } = await import('@/components/credentials/use-credentials');
 
 let container: HTMLDivElement;
 let root: Root;
+const gets: string[] = [];
 const puts: Array<{ url: string; body: { tools: Array<{ credentials?: Record<string, { id: string; name: string }> }> } }> = [];
 const draft = { id: 'ag_q', name: 'Question answerer', model: { provider: 'anthropic', model: 'm' }, tools: [{ id: 't1', type: 'node', name: 'sqlite', description: 'x', nodeType: 'databases.sqlite', parameters: {} }] };
 beforeEach(() => {
   puts.length = 0;
+  gets.length = 0;
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -29,7 +33,8 @@ beforeEach(() => {
     const u = String(url);
     if (init?.method === 'PUT') { puts.push({ url: u, body: JSON.parse(init.body!) }); return ok({ agent: draft }); }
     if (/smoke-test/.test(u)) return ok({ smoke: { state: 'passed' } });
-    if (/\/api\/credentials/.test(u)) return ok({ credentials: [{ id: 'c1', name: 'Sales DB', type: 'databases.sqlite' }, { id: 'c2', name: 'Other', type: 'slack.slackApi' }] });
+    if (/\/api\/credentials/.test(u)) gets.push(u);
+    if (/\/api\/credentials/.test(u)) return ok({ credentials: [{ id: 'c1', name: 'Sales DB', type: 'databases.sqlite' }, { id: 'c2', name: 'Other', type: 'slack.slackApi' }], projectId: 'proj_team' });
     if (/credential-types/.test(u)) return ok({ types: [] });
     if (/\/api\/agents\/ag_q/.test(u)) return ok({ agent: draft });
     return ok({});
@@ -62,7 +67,25 @@ describe('Pick it, in place', () => {
     expect(puts).toHaveLength(1);
     expect(puts[0]!.body.tools[0]!.credentials).toEqual({ sqlite: { id: 'c1', name: 'Sales DB' } });
     expect(container.querySelector('a[href="/agents/ag_q"]')).toBeTruthy();
+    // Blocker: the list is the agent's project's (?agentId=), never everything the person sees.
+    expect(gets.some((u) => /agentId=ag_q/.test(u)), 'asked for the agent’s credentials').toBe(true);
+    expect(gets.filter((u) => !/agentId=ag_q/.test(u))).toEqual([]);
   });
+
+  it('after a pick the card stops saying it needs a credential', async () => {
+    useAssistant.setState({ agents: [{ nodeId: 'n1', agentId: 'ag_q', name: 'Question answerer', state: 'draft', smoke: card.smoke }] } as never);
+    await act(async () => root.render(createElement(AgentCardView, { itemId: 'i1', card: card as never })));
+    await settle();
+    expect(container.textContent).toMatch(/needs a credential/);
+    await act(async () => button(/^Pick it$/)!.click());
+    await settle();
+    await act(async () => (container.querySelector('input[type="radio"]') as HTMLInputElement).click());
+    await act(async () => button(/Use it/)!.click());
+    await settle();
+    expect(container.textContent).not.toMatch(/needs a credential/);
+    useAssistant.setState({ agents: [] } as never);
+  });
+
 
   it('Create one opens the credential dialog', async () => {
     await act(async () => root.render(createElement(AgentCardView, { itemId: 'i1', card: card as never })));
@@ -73,5 +96,15 @@ describe('Pick it, in place', () => {
     await settle();
     expect(document.body.textContent).toMatch(/credential/i);
     expect(document.querySelector('[role="dialog"]')).toBeTruthy();
+  });
+});
+
+describe('toolNeedingCredential', () => {
+  const slots = (tool: { parameters?: Record<string, unknown> }) => [{ name: 'a', required: true }, { name: 'b', required: true, hidden: true }].filter((c) => !c.hidden || tool.parameters?.show);
+  it('skips filled slots and the ones the tool’s settings hide', () => {
+    const tool = { id: 't', type: 'node', nodeType: 'x.y', credentials: { a: { id: 'c', name: 'n' } } };
+    expect(toolNeedingCredential({ tools: [tool] }, slots)).toBeUndefined();
+    expect(toolNeedingCredential({ tools: [{ ...tool, credentials: {} }] }, slots)?.slots).toEqual(['a']);
+    expect(toolNeedingCredential({ tools: [{ ...tool, credentials: {}, parameters: { show: true } }] }, slots)?.slots).toEqual(['a', 'b']);
   });
 });

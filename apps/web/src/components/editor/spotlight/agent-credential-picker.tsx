@@ -4,30 +4,58 @@
  * pick writes it into the agent's DRAFT (the agent page's tool dialog is not needed), and every card and canvas redraws through
  * `announceSaved`. "Create one" opens the existing credential dialog. Names and types only: no secret reaches the page.
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { toast } from 'sonner';
+import { api } from '@/lib/client/api';
 import { changeAgentTool } from '@/lib/client/agent-edit';
 import { readDraft } from '@/lib/client/agent-change';
 import { CredentialDialog } from '../../credentials/credential-dialog';
-import { qualifiedCredentialType, useCredentialStore, useCredentials } from '../../credentials/use-credentials';
+import { qualifiedCredentialType, useCredentialStore } from '../../credentials/use-credentials';
+import { useAssistant } from '../assistant';
 import { useEditor } from '../store';
+import type { AgentSmoke } from '@/lib/shared/agent-card';
 import { CredentialPickerView, type PickerOption } from './credential-picker';
 
-type Tool = Record<string, unknown> & { id: string; name?: string; nodeType?: string; credentials?: Record<string, { id: string; name: string }> };
+type Tool = Record<string, unknown> & { id: string; name?: string; nodeType?: string; parameters?: Record<string, unknown>; credentials?: Record<string, { id: string; name: string }> };
 
-/** The first node tool of the draft with a required credential slot nothing is picked for, and that slot. */
-export function toolNeedingCredential(draft: Record<string, unknown> | undefined, slotsOf: (nodeType: string) => string[]): { tool: Tool; slots: string[] } | undefined {
+/** A node type's credential slot, as far as the picker needs it. */
+export interface CredentialSlot {
+  name: string;
+  required?: boolean;
+  displayOptions?: unknown;
+}
+
+/**
+ * The first node tool of the draft with a required credential slot nothing is picked for, and the slots still open. A slot the
+ * tool's own settings hide (a different auth method) is not asked for, and a filled slot is not offered again.
+ */
+export function toolNeedingCredential(draft: Record<string, unknown> | undefined, slotsOf: (tool: Tool) => CredentialSlot[]): { tool: Tool; slots: string[] } | undefined {
   for (const tool of (Array.isArray(draft?.tools) ? (draft!.tools as Tool[]) : [])) {
     if (tool.type !== 'node' || !tool.nodeType) continue;
-    const slots = slotsOf(tool.nodeType);
-    if (slots.length && slots.some((slot) => !tool.credentials?.[slot])) return { tool, slots };
+    const open = slotsOf(tool).filter((c) => c.required && !tool.credentials?.[c.name]).map((c) => c.name);
+    if (open.length) return { tool, slots: open };
   }
   return undefined;
 }
 
+/** The smoke test's answer after a pick: the agent's rows and cards say it, so "needs a credential" goes. */
+function showSmoke(agentId: string, smoke: AgentSmoke) {
+  useAssistant.setState((s) => ({ agents: s.agents.map((a) => (a.agentId === agentId ? { ...a, smoke } : a)) }));
+  for (const item of useAssistant.getState().items) {
+    useAssistant.getState().updateParts(item.id, (parts) => parts.map((p) => (p.kind === 'agentCard' && p.card.agentId === agentId ? { ...p, card: { ...p.card, smoke } } : p)));
+  }
+}
+
 export function AgentCredentialPicker({ agentId, onDone, startCreating = false }: { agentId: string; onDone?: () => void; startCreating?: boolean }) {
   const nodeTypes = useEditor((s) => s.nodeTypes);
-  const { credentials: all } = useCredentials();
+  // The credentials the agent's own project may use (not every one the person sees), and that project for "Create one".
+  const [scope, setScope] = useState<{ credentials: Array<{ id: string; name: string; type: string }>; projectId?: string }>();
+  const loadScope = useCallback(() => api<{ credentials: Array<{ id: string; name: string; type: string }>; projectId?: string }>(`/api/credentials?agentId=${encodeURIComponent(agentId)}`).then(setScope, () => setScope({ credentials: [] })), [agentId]);
+  useEffect(() => {
+    void loadScope();
+  }, [loadScope]);
+  const all = scope?.credentials;
   const [draft, setDraft] = useState<Record<string, unknown>>();
   const [chosen, setChosen] = useState('');
   const [creating, setCreating] = useState(startCreating);
@@ -39,7 +67,11 @@ export function AgentCredentialPicker({ agentId, onDone, startCreating = false }
       live = false;
     };
   }, [agentId]);
-  const need = toolNeedingCredential(draft, (type) => (nodeTypes[type]?.descriptor.credentials ?? []).filter((c) => c.required).map((c) => c.name));
+  const need = toolNeedingCredential(draft, (tool) => {
+    const descriptor = nodeTypes[tool.nodeType ?? '']?.descriptor;
+    const parameters = withPropertyDefaults(descriptor?.properties ?? [], (tool.parameters ?? {}) as never);
+    return (descriptor?.credentials ?? []).filter((c) => isPropertyVisible(c as never, parameters)) as CredentialSlot[];
+  });
   if (!draft) return <p className="text-[11.5px] text-t3">Looking for your credentials…</p>;
   if (!need) return <p className="text-[11.5px] text-t3">Nothing in this agent needs a credential now.</p>;
   const type = need.tool.nodeType!;
@@ -51,7 +83,8 @@ export function AgentCredentialPicker({ agentId, onDone, startCreating = false }
     if (!option || !slot) return;
     setBusy(true);
     try {
-      await changeAgentTool(agentId, { ...need.tool, credentials: { ...need.tool.credentials, [slot]: { id: option.id, name: option.name } } });
+      const { smoke } = await changeAgentTool(agentId, { ...need.tool, credentials: { ...need.tool.credentials, [slot]: { id: option.id, name: option.name } } });
+      showSmoke(agentId, smoke);
       toast.success(`Using “${option.name}” for ${need.tool.name ?? 'the tool'}`);
       onDone?.();
     } catch (e) {
@@ -66,8 +99,12 @@ export function AgentCredentialPicker({ agentId, onDone, startCreating = false }
       {creating && (
         <CredentialDialog
           allowedTypes={[...fitting.keys()]}
+          projectId={scope?.projectId}
           onClose={() => setCreating(false)}
-          onSaved={() => void useCredentialStore.getState().refresh()}
+          onSaved={() => {
+            void useCredentialStore.getState().refresh();
+            void loadScope();
+          }}
         />
       )}
     </>
