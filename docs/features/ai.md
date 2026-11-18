@@ -117,7 +117,7 @@ Landflow speaks the [Model Context Protocol](https://modelcontextprotocol.io) bo
 
 | Scope | Tools |
 |---|---|
-| `workflows:read` | `list_workflows`, `get_workflow`, `validate_workflow`, `list_node_types`, `search_node_types`, `get_node_type` |
+| `workflows:read` | `list_workflows`, `get_workflow`, `validate_workflow`, `list_node_types`, `search_node_types`, `get_node_type`, `list_agent_updates` |
 | `workflows:write` | `create_workflow`, `update_workflow` |
 | `run` | `execute_workflow`, `retry_execution`, `run_node` |
 | `executions:read` | `list_executions`, `get_execution`, `explain_failure`, `get_run_trace`, `get_plugin_logs` |
