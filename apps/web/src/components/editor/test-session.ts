@@ -175,8 +175,9 @@ function givenDestinations(workflowId: string, goal: string | undefined): string
 }
 
 /** The destinations the Run an Agent steps' own agents fix in their saved config (each asks-first node tool's fixed To, URL or channel): a snapshot, read once when a session starts. */
+const boundAgentIds = (): string[] => [...new Set(useEditor.getState().nodes.flatMap((n) => (n.data.wf.type === 'core.messageAgent' && !n.data.wf.disabled && typeof n.data.wf.parameters?.agentId === 'string' && n.data.wf.parameters.agentId ? [n.data.wf.parameters.agentId] : [])))];
 async function agentConfigDestinations(): Promise<string[]> {
-  const ids = [...new Set(useEditor.getState().nodes.flatMap((n) => (n.data.wf.type === 'core.messageAgent' && !n.data.wf.disabled && typeof n.data.wf.parameters?.agentId === 'string' && n.data.wf.parameters.agentId ? [n.data.wf.parameters.agentId] : [])))];
+  const ids = boundAgentIds();
   const found = await Promise.all(ids.map((id) => api<{ agent?: { tools?: AgentConfig['tools'] } }>(`/api/agents/${id}`, { background: true }).then((r) => agentDestinations({ tools: r.agent?.tools ?? [] }), () => [] as string[])));
   return found.flat();
 }
@@ -810,7 +811,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     const ownNodes = new Set<string>(resumed?.ownNodes ?? []);
     // Wave ag5 fix pass 2: the destinations the bound agents' own configs fix, as they stand NOW (when the session starts): the server no
     // longer reads the draft, which this session may edit, so an address the session sets later is never given by being configured.
-    const given: string[] = resumed?.given ?? (autonomy === 'auto' ? [...givenDestinations(wfId, goal), ...(await agentConfigDestinations())] : []);
+    const given: string[] = resumed?.given ?? (autonomy === 'auto' ? [...givenDestinations(wfId, goal), ...(boundAgentIds().length ? await agentConfigDestinations() : [])] : []);
     if (!resumed && given.length) approveDestinations(wfId, given); // AG22: a destination the flow already sent to, or the ask names, needs no "Run it now?"
 
     const publishAgents = options.publishAgents ?? resumed?.publishAgents;
