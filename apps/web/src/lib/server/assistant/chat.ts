@@ -387,7 +387,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
   if (question && input.session === 'auto') input = { ...input, session: undefined };
   /** SB04: a question is offered every tool except the one that changes the workflow. */
   const testSession = input.session === 'fix' || input.session === 'review'; // SB11: a test session goes on by itself and asks through its own "Needs you" rows
-  const tools = (question ? TOOLS.filter((t) => t.name !== 'propose_changes' && t.name !== 'propose_agent_fix' /* AG20: */) : TOOLS).filter((t) => !(testSession && t.name === ASK_USER_TOOL)); // SB11:
+  const tools = (question ? TOOLS.filter((t) => t.name !== 'propose_changes' && t.name !== 'propose_agent_fix' /* AG20: */) : TOOLS).filter((t) => !(testSession && t.name === ASK_USER_TOOL)).filter((t) => !(t.name === 'propose_agent_fix' && input.session !== 'fix')); // SB11: AG20: only the fix session renders an agent change card
   const { onEvent, runs = {} } = input;
   const trace = input.trace === true;
   const types = input.types ?? availableTypes();

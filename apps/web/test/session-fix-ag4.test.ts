@@ -274,6 +274,21 @@ describe('the bound', () => {
     expect(outcomes()[0].text).toMatch(/^Still failing at “Notify VIP”: HTTP 400\. The last fix didn’t change the error, so I undid it\. Left: open “Notify VIP”/);
   });
 
+  it('keeps what the last fix changed across a pause, so the same failure after a resume still undoes it', async () => {
+    noteOpened(WF, 3);
+    yes();
+    runs = [{ 'Notify VIP': { error: 'HTTP 400' } }, { 'Notify VIP': { error: 'No Slack credential selected' } }, { 'Notify VIP': { error: 'HTTP 400' } }];
+    replies = [{ text: 'Try the body.', proposals: [{ summary: 'Send the body as report_text', ops: [fixBody] }] }];
+    const first = testUntilItRuns();
+    await vi.waitFor(() => expect(useAssistant.getState().items.some((i) => i.role === 'assistant' && i.parts.some((p) => p.kind === 'proposal'))).toBe(true));
+    decide('r1p0', 'applied');
+    await first;
+    expect(needs().some((n) => !n.state)).toBe(true); // paused on a Needs-you row
+    await testUntilItRuns(undefined, { resume: true });
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(outcomes()[0].text).toMatch(/The last fix didn’t change the error, so I undid it\./);
+  });
+
   it('stops after MAX_FIXES fixes as before', async () => {
     noteOpened(WF, 3);
     yes();

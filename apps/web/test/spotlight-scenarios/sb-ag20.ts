@@ -66,7 +66,7 @@ export default defineScenarios([
     via: 'session',
     title: 'The run failed inside the agent (Send Email with an empty To): Spotlight proposes a change to the agent, not the flow, and applies nothing by itself',
     ask: 'Email on-call that the report is ready. Run it now and fix it if it fails.',
-    start: { ...START, workflow: agentFlow(), sessionRuns: [{ 'Email oncall': { error: 'Ail failed: send_email returned “the To address is empty”' } }] },
+    start: { ...START, workflow: agentFlow(), sessionRuns: [{ 'Email oncall': { error: 'Email failed: send_email returned “the To address is empty”' } }] },
     script: [
       { text: 'I will run it and fix it if it fails.' },
       call('get_run_log', {}),

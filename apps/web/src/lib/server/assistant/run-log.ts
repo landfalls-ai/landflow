@@ -39,11 +39,14 @@ const itemsOf = (batches: NodeItem[][] | undefined): unknown[] | undefined => {
 
 /** The agent session a Run an Agent node ran: the id its output names, else the session linked to this execution and node. */
 function sessionFor(record: ExecutionRecord, nodeId: string, agentId: string | undefined, run: NodeRun | undefined) {
-  const named = run?.outputs[0]?.[0]?.json?.sessionId;
+  const named = run?.outputs.flat().map((i) => i.json?.sessionId).find((v) => typeof v === 'string');
   if (typeof named === 'string') return agentStore.getSession(named);
   if (!agentId) return undefined;
-  const found = agentStore.listSessions(agentId, 30).find((s) => agentStore.getSession(s.id)?.execution?.executionId === record.executionId && agentStore.getSession(s.id)?.execution?.nodeId === nodeId);
-  return found && agentStore.getSession(found.id);
+  for (const s of agentStore.listSessions(agentId, 30)) {
+    const session = agentStore.getSession(s.id);
+    if (session?.execution?.executionId === record.executionId && session.execution.nodeId === nodeId) return session;
+  }
+  return undefined;
 }
 
 const isEmpty = (value: unknown): boolean => value === undefined || value === null || value === '' || (Array.isArray(value) && !value.length) || (typeof value === 'object' && !Array.isArray(value) && !Object.keys(value as object).length);
@@ -53,7 +56,8 @@ function agentPart(record: ExecutionRecord, nodeId: string, parameters: Record<s
   const session = sessionFor(record, nodeId, agentId, run);
   const agent = (agentId && agentStore.get(agentId)) || undefined;
   const reply = run?.outputs[0]?.[0]?.json?.reply;
-  const calls = (session?.timeline ?? []).flatMap((e) =>
+  const since = run?.startedAt ? Date.parse(run.startedAt) : NaN; // a reused session ("Continue by key") holds earlier runs' calls
+  const calls = (session?.timeline ?? []).filter((e) => Number.isNaN(since) || !(Date.parse(e.at) < since)).flatMap((e) =>
     e.type === 'tool' && e.status !== 'running'
       ? [
           {

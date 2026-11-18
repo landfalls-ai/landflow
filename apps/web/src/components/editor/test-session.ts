@@ -374,6 +374,7 @@ interface Paused {
   tried: string[];
   lastApplied: Array<{ item: string; proposals: string[] }>;
   lastFailure: string | undefined;
+  lastFix?: 'flow' | 'agent';
   reviewedAt: number | undefined;
   ran: boolean;
   autonomy: Autonomy;
@@ -539,14 +540,14 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
     /** The last failure, to tell a fix that changed nothing. */
     let lastFailure: string | undefined = resumed?.lastFailure;
     /** AG20: what the last fix changed: an agent's change is not undone with the flow's. */
-    let lastFix: 'flow' | 'agent' | undefined;
+    let lastFix: 'flow' | 'agent' | undefined = resumed?.lastFix;
     /** What was applied so far: the assistant gets no history, so it hears what didn't help. */
     const tried: string[] = resumed?.tried ?? [];
     /** The fixes applied, newest last, for undoing one that changed nothing (or all of them, from the outcome card). */
     const lastApplied: Array<{ item: string; proposals: string[] }> = resumed?.lastApplied ?? [];
     /** SB18: a row waits for the person: the session's state is kept for the click that goes on. */
     const waitFor = (need: Need) => {
-      paused.set(wfId, { fixes, startNodes, tried, lastApplied, lastFailure, reviewedAt, ran, autonomy, publishAgents });
+      paused.set(wfId, { fixes, startNodes, tried, lastApplied, lastFailure, lastFix, reviewedAt, ran, autonomy, publishAgents });
       ask(need);
     };
     /** SB18: agents whose "Publish … first" was already handled once this session. */
