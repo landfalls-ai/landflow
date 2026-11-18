@@ -263,6 +263,13 @@ describe('the open path', () => {
       expect(container.querySelector('[data-testid="agent-moves-pill"]')).toBeTruthy();
       // The pill sits left of the canvas toolbar's column (right-3, 36px wide), so Add node stays clickable.
       expect((container.querySelector('[data-testid="agent-moves-pill"]')!.parentElement as HTMLElement).className).toMatch(/\bright-14\b/);
+      // On a phone it is an icon and a count at the top, left of the toolbar column: not over the toolbar's Add sticky
+      // note (right-3, 44px buttons) nor the brain card (left-3 top-16), and the label stays for screen readers.
+      const wrap = (container.querySelector('[data-testid="agent-moves-pill"]')!.parentElement as HTMLElement).className;
+      expect(wrap).toMatch(/max-md:right-16\b/);
+      expect(wrap).toMatch(/max-md:top-3\b/);
+      expect(wrap).not.toMatch(/max-md:top-16|max-md:right-3\b/);
+      expect(container.querySelector('[data-testid="agent-moves-pill"] .max-md\\:sr-only')).toBeTruthy();
     });
   });
 });

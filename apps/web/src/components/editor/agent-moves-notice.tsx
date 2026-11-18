@@ -203,7 +203,7 @@ export function AgentMovesNotice({ workflowId }: { workflowId: string }) {
 
   if (!open) {
     return (
-      <div className="pointer-events-none absolute right-14 top-3 z-20 max-md:right-3 max-md:top-16">
+      <div className="pointer-events-none absolute right-14 top-3 z-20 max-md:right-16 max-md:top-3">
         <button
           type="button"
           onClick={() => {
@@ -211,11 +211,15 @@ export function AgentMovesNotice({ workflowId }: { workflowId: string }) {
             setOpen(true);
           }}
           data-testid="agent-moves-pill"
-          className="pointer-events-auto flex h-8 items-center gap-1.5 rounded-full border border-hair bg-sf px-3 text-[12px] font-semibold text-t1 shadow-[0_2px_8px_rgba(0,0,0,0.04)] hover:border-ac"
+          className="pointer-events-auto flex h-8 items-center gap-1.5 rounded-full border border-hair bg-sf px-3 text-[12px] max-md:h-11 max-md:min-w-11 max-md:justify-center font-semibold text-t1 shadow-[0_2px_8px_rgba(0,0,0,0.04)] hover:border-ac"
           title="What moved from this flow into its agents"
         >
           <ArrowRightLeft className="size-3.5 text-ac" />
-          {count ? `Moved into agents · ${count}` : `This flow only · ${moves.length}`}
+          {/* On a phone: the icon and the number, left of the toolbar column (nothing else lives there). */}
+          <span className="max-md:sr-only">{count ? `Moved into agents · ${count}` : `This flow only · ${moves.length}`}</span>
+          <span aria-hidden className="hidden max-md:inline">
+            {count || moves.length}
+          </span>
         </button>
       </div>
     );
