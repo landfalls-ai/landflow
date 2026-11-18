@@ -158,6 +158,28 @@ describe('the writes', () => {
     expect((await call('test_agent', { id, message: 'disk full' })).data.smoke).toMatchObject({ state: 'passed', reply: 'I triage alerts.' });
   });
 
+  it('update_agent refuses a NEW credential the agent’s project may not use, and leaves one the draft already holds', async () => {
+    const { call } = await connect(TEST_OWNER);
+    const pg = { host: '127.0.0.1', port: 5432, database: 'd', user: 'u', password: 'p', ssl: 'disable' };
+    const mine = credentials.create({ name: 'Scope mine', type: 'core.postgres', data: pg });
+    const other = credentials.create({ name: 'Scope other', type: 'core.postgres', data: pg });
+    const other2 = credentials.create({ name: 'Scope other 2', type: 'core.postgres', data: pg });
+    const id = (await call('create_agent', { config: { ...CONFIG, name: 'Scoped' } })).data.id as string;
+    setHomeProject('agent', id, 'prj_scope_a');
+    setHomeProject('credential', mine.id, 'prj_scope_a');
+    setHomeProject('credential', other.id, 'prj_scope_b');
+    setHomeProject('credential', other2.id, 'prj_scope_b');
+    const withTool = (credential: string, name = 'Scoped') => ({ name, tools: [{ id: 't1', type: 'node', nodeType: 'core.postgres', credentials: { postgres: { id: credential, name: 'x' } } }] });
+    expect((await call('update_agent', { id, config: withTool(mine.id) })).data).toMatchObject({ id });
+    const refused = await call('update_agent', { id, config: withTool(other.id) });
+    expect(refused.failed).toBe(true);
+    // A legacy pick (already in the stored draft) stays: the agent can still be edited.
+    agentStore.saveDraft(id, withTool(other.id) as never);
+    expect((await call('update_agent', { id, config: withTool(other.id, 'Renamed') })).failed).toBe(false);
+    expect(agentStore.get(id)!.name).toBe('Renamed');
+    expect((await call('update_agent', { id, config: withTool(other2.id, 'Renamed') })).failed).toBe(true);
+  });
+
   it('publish_agent runs the eval gate: a pass publishes, a hold answers the verdict and publishes nothing; there is no skipEval', async () => {
     const { client, call } = await connect(TEST_OWNER);
     const id = (await call('create_agent', { config: { ...CONFIG, name: 'Gated' } })).data.id as string;

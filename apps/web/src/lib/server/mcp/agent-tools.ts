@@ -11,6 +11,7 @@ import { z } from 'zod';
 import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import { hasPrompt } from '../../shared/persona';
 import { adoptRun, checkPublish } from '../agents/eval-gate';
+import { REFUSED_CREDENTIAL_MESSAGE, refusedCredentials } from '../agents/credential-scope';
 import { agentConfigSchema, asConfig } from '../agents/http';
 import { smokeTest, SmokeTestError } from '../agents/smoke-test';
 import { agentStore, configOf } from '../agents/store';
@@ -117,6 +118,7 @@ export function registerAgentTools(server: McpServer, ctx: AgentToolsContext) {
     async ({ id, config }) => {
       if (isProtectedEnvironment()) return failure(protectedMessage());
       if (!editable(id)) return gone(id);
+      if (refusedCredentials(id, config).length) return failure(REFUSED_CREDENTIAL_MESSAGE);
       const agent = agentStore.saveDraft(id, asConfig(config));
       return agent ? json({ id, name: agent.name, published: agent.published?.version ?? false, draftDiffers: agent.published ? JSON.stringify(configOf(agent)) !== JSON.stringify(configOf(agent.published.config)) : false }) : gone(id);
     },

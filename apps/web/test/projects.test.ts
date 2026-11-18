@@ -30,6 +30,7 @@ const { liveEventFilter } = await import('@/lib/server/projects/events');
 const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
 const { store } = await import('@/lib/server/store');
+const { agentStore } = await import('@/lib/server/agents/store');
 const { runWorkflow } = await import('@/lib/server/runner');
 const { resourceCan } = await import('@/lib/shared/projects');
 
@@ -361,6 +362,17 @@ describe('lists show what the caller can see', () => {
     expect(refused.body.error).toMatch(/can’t use/);
     const allowed = await call(agentRoute.PUT, `/api/agents/${ids.agent}`, 'PUT', owner, withTool(ids.credential), { id: ids.agent });
     expect(allowed.status).toBe(200);
+  });
+
+  it('an agent that already holds an out-of-scope credential can still be edited; only a new one is refused', async () => {
+    const tool = (credential: string) => ({ id: 't1', type: 'node', nodeType: 'core.httpRequest', credentials: { auth: { id: credential, name: 'x' } } });
+    const save = (name: string, credential: string) => call(agentRoute.PUT, `/api/agents/${ids.agent}`, 'PUT', owner, { name, tools: [tool(credential)] }, { id: ids.agent });
+    // A legacy pick: written straight to the store, as before the rule existed.
+    agentStore.saveDraft(ids.agent, { name: 'Legacy', tools: [tool(ids.ownerCredential)] } as never);
+    expect((await save('Renamed', ids.ownerCredential)).status).toBe(200);
+    const second = (await call(credentialsRoute.POST, '/api/credentials', 'POST', owner, { name: 'Owner second', type: 'core.httpHeaderAuth', data: { name: 'x', value: 'v' } })).body.credential.id;
+    expect((await save('Renamed', second)).status).toBe(403);
+    agentStore.saveDraft(ids.agent, { name: 'Team agent', tools: [] } as never);
   });
 
   it('live events reach the members of the workflow’s project only', () => {

@@ -2,7 +2,8 @@ import { agentConfigSchema, asConfig } from '@/lib/server/agents/http';
 import { removeAgent } from '@/lib/server/agents/remove'; // SB18:
 import { agentStore } from '@/lib/server/agents/store';
 import { error, handler, json, parseBody } from '@/lib/server/http';
-import { homeProjectId, ownershipOf, usableCredentialIds } from '@/lib/server/projects';
+import { ownershipOf } from '@/lib/server/projects';
+import { REFUSED_CREDENTIAL_MESSAGE, refusedCredentials } from '@/lib/server/agents/credential-scope';
 import { routeActor } from '@/lib/server/projects/http';
 
 export const dynamic = 'force-dynamic';
@@ -18,13 +19,9 @@ export const PUT = handler(async (request: Request, { params }: Ctx) => {
   const body = await parseBody(request, agentConfigSchema);
   if (!body.ok) return body.response;
   const { id } = await params;
-  // A credential the agent's project may not use cannot be attached to it (a personal credential on a shared agent): the picker and the page both save here.
-  const refs = [...((body.data.tools ?? []) as Array<{ credentials?: Record<string, { id?: string }> }>).flatMap((t) => Object.values(t.credentials ?? {}).map((c) => c?.id)), (body.data.model as { credential?: { id?: string } } | undefined)?.credential?.id].filter((x): x is string => typeof x === 'string' && x !== '');
-  if (refs.length && agentStore.get(id)) {
-    const usable = usableCredentialIds(homeProjectId('agent', id), refs);
-    const refused = refs.filter((ref) => !usable.has(ref));
-    if (refused.length) return error('A credential this agent’s project can’t use is picked: share it with the project, or pick one the project owns', 403, { credentialIds: refused });
-  }
+  // A NEW credential the agent's project may not use cannot be attached (a personal credential on a shared agent); ones the draft already holds stay.
+  const refused = refusedCredentials(id, body.data);
+  if (refused.length) return error(REFUSED_CREDENTIAL_MESSAGE, 403, { credentialIds: refused });
   const agent = agentStore.saveDraft(id, asConfig(body.data));
   return agent ? json({ agent }) : error('Agent not found', 404);
 });
