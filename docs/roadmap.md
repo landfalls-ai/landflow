@@ -2892,6 +2892,10 @@ account's own console is the figure.
   - ~~Spend: an agent's smoke tests, eval-gate cases and chat runs carry no surface, so the AI page cannot tell them apart~~ built in ag3, AG15 (surface `agent-test`); the scorecard's calls are on no host's page.
 - Owed to a person: whether a denied write may count as a pass in a smoke test; whether the agent page keeps its own **Publish anyway**; whether the Grafana observer should ever get Acknowledge Alert by default; whether every Run an Agent in the editor's chat should ask (saved flows keep Refuse); whether a fixed destination on a heuristic-schema tool should be closed to the model (`lib/server/agents/tools.ts`).
 
+## The agent as bubbles, wave ag4
+
+- **Built (AG16):** the canvas draws a Run an Agent node's agent (a Run a Team node's lead) as bubbles on dashed edges to its Chat Model, Memory and Tool slots, and the node card says nothing about it (AG12's band is removed); the + under a slot and a bubble's menu edit the agent's draft (live after Publish, with a Publish chip and a confirm when several workflows run it); moved and kept wiring is marked *moved here* / *this flow only* with Try again and *Use for <agent> everywhere*; *Your agents* in the node creator places a bound node by click or drag; Tidy up and Spotlight's placement keep the bubbles clear; the steps list shows mini bubbles. Left: pinned-version bubbles in version previews and runs (needs AG21's routes), a tenant list of knowledge bases for the + under Tool.
+
 ## Agents that show what they are connected to, wave ag3
 
 - **AG15**: an agent that asks before it writes can pass its eval gate honestly: the cases for a tool that asks first expect the ask, not the send, and an agent's smoke test, gate runs and test chat show as **agent tests** in Insights → AI.
@@ -2910,7 +2914,7 @@ account's own console is the figure.
   - The agent page's Spotlight answered "when I ask it to acknowledge an alert, it should call acknowledge_alert instead of handing it over" as a question; **Change it instead** switched to change mode but did not send the text again.
   - A step fragment after the steps check, again: "5. When asked to acknowledge an alert." (with ag2's "…GET) on the dashboard URL…").
   - A Grafana call's via line names the credential type's display name (*Grafana Alertmanager API Token 127.0.0.1:53188*), not "Grafana".
-  - The canvas band shows a tool a change added only after it is published (the band shows what runs; *Draft has changes* says the rest).
+  - ~~The canvas band shows a tool a change added only after it is published (the band shows what runs; *Draft has changes* says the rest).~~ (closed by AG16: the bubbles show the draft's changes, marked)
   - A Spotlight conversation brought back after a reload shows the card's knowledge as *Knows: The “runbooks” knowledge base*, without the Knowledge row.
   - A knowledge agent's cases are written without reading its folder: on the phone, Spotlight's own Create (a brand-new draft, D1) smoke-tested "How do I fail over the primary database?", the search found nothing, and the test failed (*Search Runbooks returned nothing to work with*).
   - With the take's `runbooks` knowledge base on the host, the no-folder ask reused it (a base that fits), so its *no source given* row was read only in the scorecard (`ag13-no-source`, 3 of 3 live).
