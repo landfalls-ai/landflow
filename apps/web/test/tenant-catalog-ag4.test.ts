@@ -21,7 +21,7 @@ vi.mock('@/lib/server/assistant/build-plan', async (original) => ({
   ...(await original<typeof import('@/lib/server/assistant/build-plan')>()),
   planFlow: vi.fn(async (_prompt: string, input: { agents?: Array<{ name: string; published?: boolean }> }) => {
     planned.agents = input.agents ?? [];
-    return { plan: { steps: [] }, alternatives: [] };
+    return { plan: { name: 'x', steps: [], assumptions: ['read as 8:00'], cannot: [] }, alternatives: [] };
   }),
 }));
 
@@ -280,13 +280,13 @@ describe('the roster', () => {
     expect(text).toContain(`(agentId ${draftOnly}, not published)`);
   });
 
-  it('the build plan route says it read the agents, as a step of the trace', async () => {
+  it('the build plan route says it read the agents, as the first line of the plan card', async () => {
     const response = await withAuth({ principal: { user: TEST_OWNER, via: 'test' } }, () =>
       planRoute.POST(new Request('http://localhost/api/ai/build/plan', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'Email the on-call when an alert comes in', model: 'anthropic/claude-sonnet-5-5' }) })),
     );
-    const body = (await response.json()) as { steps?: Array<{ tool: string; label: string }>; error?: string };
+    const body = (await response.json()) as { plan?: { assumptions: string[] }; error?: string };
     expect(response.status, body.error).toBe(200);
-    expect(body.steps).toEqual([{ tool: 'list_agents', label: 'Looked at 2 agents', ok: true }]);
+    expect(body.plan?.assumptions).toEqual(['Looked at 2 agents', 'read as 8:00']);
     expect(planned.agents.map((a) => a.name)).toEqual(['Alert triager', 'Draft helper']);
   });
 });

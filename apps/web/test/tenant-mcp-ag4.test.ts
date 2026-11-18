@@ -50,6 +50,8 @@ const { agentStore } = await import('@/lib/server/agents/store');
 const { addCase } = await import('@/lib/server/agents/eval-gate');
 const { instanceServer } = await import('@/lib/server/mcp/instance-tools');
 const { tenantTool, TENANT_TOOL_NAMES } = await import('@/lib/server/assistant/tenant-tools');
+const { setHomeProject } = await import('@/lib/server/projects/store');
+const { credentials } = await import('@/lib/server/credentials/vault');
 const { TEST_OWNER } = await import('@/lib/server/auth/test-bypass');
 const { plugin: triage } = await import('../../../plugins/triage/src/main');
 
@@ -66,9 +68,9 @@ afterAll(() => {
 
 const text = (result: CallToolResult) => ((result.content ?? []) as Array<{ type: string; text?: string }>).filter((p) => p.type === 'text').map((p) => p.text).join('');
 
-async function connect(actor?: typeof TEST_OWNER | { id: string; role: 'member' }, keyScopes?: ApiKeyScope[]) {
+async function connect(actor?: typeof TEST_OWNER | { id: string; role: 'member' }, keyScopes?: ApiKeyScope[], scope?: { projectId: string }) {
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-  await instanceServer(actor, undefined, keyScopes).connect(serverSide);
+  await instanceServer(actor, scope, keyScopes).connect(serverSide);
   const client = new Client({ name: 'ag18-test', version: '1.0.0' });
   await client.connect(clientSide);
   const call = async (name: string, args: Record<string, unknown> = {}) => {
@@ -186,5 +188,36 @@ describe('the writes', () => {
     }
     expect(agentStore.get(id)!.description).toBe('Reads an alert and says what to do');
     expect((await other.call('get_agent', { id })).raw).toContain('not found');
+  });
+});
+
+describe('a project-scoped server (AG18)', () => {
+  it('lists and changes only that project’s agents and credentials, for a user and for the instance token', async () => {
+    const owner = await connect(TEST_OWNER);
+    const inside = (await owner.call('create_agent', { config: { ...CONFIG, name: 'Scoped inside' } })).data.id as string;
+    const outside = (await owner.call('create_agent', { config: { ...CONFIG, name: 'Scoped outside' } })).data.id as string;
+    setHomeProject('agent', inside, 'prj_ag18_in');
+    setHomeProject('agent', outside, 'prj_ag18_out');
+    const here = credentials.create({ name: 'Inside cred', type: 'core.postgres', data: { host: '127.0.0.1', port: 5432, database: 'd', user: 'u', password: 'p', ssl: 'disable' } });
+    const there = credentials.create({ name: 'Outside cred', type: 'core.postgres', data: { host: '127.0.0.1', port: 5432, database: 'd', user: 'u', password: 'p', ssl: 'disable' } });
+    setHomeProject('credential', here.id, 'prj_ag18_in');
+    setHomeProject('credential', there.id, 'prj_ag18_out');
+    for (const actor of [TEST_OWNER, undefined]) {
+      const scoped = await connect(actor, undefined, { projectId: 'prj_ag18_in' });
+      const names = ((await scoped.call('list_agents')).data as Array<{ name: string }>).map((a) => a.name);
+      expect(names).toContain('Scoped inside');
+      expect(names).not.toContain('Scoped outside');
+      expect((await scoped.call('get_agent', { id: outside })).failed).toBe(true);
+      const creds = ((await scoped.call('list_credentials')).data as Array<{ name: string }>).map((c) => c.name);
+      expect(creds).toContain('Inside cred');
+      expect(creds).not.toContain('Outside cred');
+      for (const [name, args] of [['update_agent', { id: outside, config: { description: 'x' } }], ['test_agent', { id: outside, message: 'hi' }], ['publish_agent', { id: outside }]] as const) {
+        const refused = await scoped.call(name, args);
+        expect(refused.failed).toBe(true);
+        expect(refused.raw).toBe(`Agent ${outside} not found`);
+      }
+      expect((await scoped.call('update_agent', { id: inside, config: { description: 'ok' } })).failed).toBe(false);
+    }
+    expect(agentStore.get(outside)!.description).toBe('Reads an alert and says what to do');
   });
 });

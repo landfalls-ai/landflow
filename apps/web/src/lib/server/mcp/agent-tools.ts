@@ -19,6 +19,7 @@ import { isProtectedEnvironment } from '../environments/settings';
 import { redeployIfDeployed } from '../kagent/deploy';
 import { canResource, creationProject, type Actor } from '../projects/access';
 import { createIn } from '../projects/http';
+import { homeProjectId } from '../projects/store';
 import { isTenantTool, TENANT_TOOLS, tenantTool } from '../assistant/tenant-tools';
 import type { McpScope } from './project-servers';
 
@@ -49,7 +50,8 @@ export function registerAgentTools(server: McpServer, ctx: AgentToolsContext) {
   const { actor, scope, json, failure } = ctx;
   const gone = (id: string) => failure(`Agent ${id} not found`);
   /** The agent, when the caller may update it (a caller who may not sees "not found", never that it exists). */
-  const editable = (id: string) => (agentStore.get(id) && (!actor || canResource(actor, 'agent', id, 'update')) ? agentStore.get(id) : undefined);
+  const editable = (id: string) =>
+    agentStore.get(id) && (!actor || canResource(actor, 'agent', id, 'update')) && (!scope || homeProjectId('agent', id) === scope.projectId) ? agentStore.get(id) : undefined;
   const smoke = async (id: string, message: string, signal?: AbortSignal) => {
     try {
       return await smokeTest(id, message, signal ? { signal } : {});
@@ -66,7 +68,7 @@ export function registerAgentTools(server: McpServer, ctx: AgentToolsContext) {
       name,
       { title: name.replace(/_/g, ' '), description: spec.description, inputSchema: READ_INPUTS[name]!, annotations: READ_ONLY },
       async (args: Record<string, unknown>) => {
-        const answer = await tenantTool(name, args, { actor });
+        const answer = await tenantTool(name, args, { actor, ...(scope && { projectId: scope.projectId }) });
         return answer.ok ? json(answer.text) : failure(answer.text);
       },
     );

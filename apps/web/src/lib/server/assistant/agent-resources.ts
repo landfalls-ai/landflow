@@ -9,6 +9,7 @@ import { agentStore } from '../agents/store';
 import { modelOptions } from '../agents/models';
 import { ollamaUrl } from '../config';
 import { canResource, type Actor } from '../projects';
+import { homeProjectId } from '../projects/store';
 import { KEYWORD_EMBEDDINGS } from './knowledge-setup';
 import { DEFAULT_ASSISTANT_MODEL } from './model';
 
@@ -52,7 +53,7 @@ export function agentModelOf(name: string | undefined): AgentModel | undefined {
   return undefined;
 }
 
-export async function agentResources(actor: Actor): Promise<AgentResources> {
+export async function agentResources(actor: Actor, projectId?: string): Promise<AgentResources> {
   const local = await modelOptions('ollama', {}).catch(() => []);
   const builder = agentModelOf(builderModel()); // AG02: the host's own model leads, whichever provider it is
   const own = builder?.provider === 'ollama' ? builder.model : undefined;
@@ -73,6 +74,7 @@ export async function agentResources(actor: Actor): Promise<AgentResources> {
   const knowledge = new Map<string, AgentResources['knowledge'][number]>();
   for (const agent of agentStore.list()) {
     if (!canResource(actor, 'agent', agent.id, 'read')) continue;
+    if (projectId && homeProjectId('agent', agent.id) !== projectId) continue;
     for (const tool of agent.tools) {
       // A plugin's knowledge base (Clickland) has no collection to share: only vector stores are offered.
       if (tool.type !== 'knowledge' || isNodeKnowledge(tool)) continue;

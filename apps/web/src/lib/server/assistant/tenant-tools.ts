@@ -60,6 +60,8 @@ export const TENANT_TOOLS: ToolSpec[] = [
 export interface TenantToolContext {
   /** The caller; absent: the instance's view (the MCP instance access token). */
   actor?: Actor;
+  /** The MCP project scope: only that project's agents, workflows and usable credentials are answered. */
+  projectId?: string;
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -80,17 +82,17 @@ const str = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
 
 /** Answers one tenant tool; `ok: false` is a failure to show (an agent that is not there). */
 export async function tenantTool(name: string, args: Record<string, unknown>, ctx: TenantToolContext = {}): Promise<{ text: string; label: string; ok: boolean }> {
-  const { actor } = ctx;
+  const { actor, projectId } = ctx;
   switch (name as TenantToolName) {
     case 'list_agents': {
-      const list = catalogAgents(actor, { query: str(args.query) || undefined });
+      const list = catalogAgents(actor, { query: str(args.query) || undefined, projectId });
       return { text: list.length ? fit(list, BUDGET.list_agents) : 'There are no agents yet.', label: `Looked at ${plural(list.length, 'agent')}`, ok: true };
     }
     case 'get_agent': {
       const asked = str(args.id) || str(args.name);
-      const found = catalogAgent(actor, asked) ?? ((): ReturnType<typeof catalogAgent> => {
-        const byName = catalogAgents(actor).find((a: CatalogAgent) => a.name.toLowerCase() === asked.toLowerCase());
-        return byName ? catalogAgent(actor, byName.id) : undefined;
+      const found = catalogAgent(actor, asked, projectId) ?? ((): ReturnType<typeof catalogAgent> => {
+        const byName = catalogAgents(actor, { projectId }).find((a: CatalogAgent) => a.name.toLowerCase() === asked.toLowerCase());
+        return byName ? catalogAgent(actor, byName.id, projectId) : undefined;
       })();
       if (!found) return { text: `Agent ${asked || '(none given)'} not found. Call list_agents for the agents you can read.`, label: `Looked for agent “${short(asked, 40)}”: not found`, ok: false };
       return { text: short(JSON.stringify(found), BUDGET.get_agent), label: `Read agent “${short(found.name, 40)}”`, ok: true };
@@ -98,12 +100,12 @@ export async function tenantTool(name: string, args: Record<string, unknown>, ct
     case 'list_tool_nodes': {
       const query = str(args.query);
       const types = Array.isArray(args.types) ? args.types.filter((t): t is string => typeof t === 'string') : undefined;
-      const list = catalogToolNodes(actor, { query: query || undefined, types });
+      const list = catalogToolNodes(actor, { query: query || undefined, types, projectId });
       const label = query ? `Found ${plural(list.length, 'tool node')} for “${short(query, 40)}”` : `Looked at ${plural(list.length, 'tool node')}`;
       return { text: list.length ? fit(list, BUDGET.list_tool_nodes) : `No node an agent can use matches “${query}”. Try other words; if nothing fits, that part isn't available here.`, label, ok: true };
     }
     case 'list_knowledge_bases': {
-      const listing = await catalogKnowledge(actor);
+      const listing = await catalogKnowledge(actor, projectId);
       return { text: fit(listing.bases, BUDGET.list_knowledge_bases, (bases) => ({ ...listing, bases })), label: `Looked at ${plural(listing.bases.length, 'knowledge base')}`, ok: true };
     }
     case 'list_models': {
@@ -111,7 +113,7 @@ export async function tenantTool(name: string, args: Record<string, unknown>, ct
       return { text: fit(list, BUDGET.list_models), label: `Looked at ${plural(list.length, 'model')}`, ok: true };
     }
     case 'list_credentials': {
-      const list = catalogCredentials(actor);
+      const list = catalogCredentials(actor, projectId);
       return { text: list.length ? fit(list, BUDGET.list_credentials) : 'The person has no credentials yet.', label: `Looked at ${plural(list.length, 'credential')}`, ok: true };
     }
     case 'read_agent_practices':

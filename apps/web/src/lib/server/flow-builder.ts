@@ -144,10 +144,10 @@ function catalog(types: NodeTypeInfo[]): string {
     .join('\n');
 }
 
-/** A Run an Agent node keeps only an agent the caller has: an id the model made up is cleared, so the node asks for one. */
+/** A Run an Agent node keeps only an agent the caller has: an id the model made up, or an agent never published (it cannot run yet), is cleared, so the node asks for one. */
 export function knownAgent(parameters: Record<string, unknown>, agents: readonly AgentBrief[]): Record<string, unknown> {
   const id = typeof parameters.agentId === 'string' ? parameters.agentId : '';
-  return !id || id.includes('{{') || agents.some((a) => a.id === id) ? parameters : { ...parameters, agentId: '' };
+  return !id || id.includes('{{') || agents.some((a) => a.id === id && a.published !== false) ? parameters : { ...parameters, agentId: '' };
 }
 
 /**

@@ -23,6 +23,9 @@ import { listKnowledgeDocuments } from '../agents/knowledge';
 import { credentials } from '../credentials/vault';
 import { filesDir } from '../nodes/files';
 import { canResource, withOwnership, type Actor } from '../projects';
+import { credentialUsableBy } from '../projects/access';
+import { homeProjectId } from '../projects/store';
+import { redactValue } from '../secrets/redact';
 import { store } from '../store';
 import { agentTeamStore } from '../agent-teams/store';
 import { registry } from '../plugins/registry';
@@ -101,7 +104,7 @@ function toolOf(tool: AgentToolConfig, agents: Map<string, string>): CatalogAgen
 }
 
 /** The workflows (the caller can read) that run each agent: a Run an Agent node, or a Run a Team node whose team has it. */
-function usedByMap(actor: Actor): Map<string, string[]> {
+function usedByMap(actor: Actor, projectId?: string): Map<string, string[]> {
   const teamMembers = new Map<string, string[]>();
   for (const team of agentTeamStore.list()) {
     const config = team.published ?? team.draft;
@@ -111,6 +114,7 @@ function usedByMap(actor: Actor): Map<string, string[]> {
   const add = (agentId: string, name: string) => used.set(agentId, (used.get(agentId) ?? new Set()).add(name));
   for (const w of store.listWorkflows()) {
     if (!canResource(actor, 'workflow', w.id, 'read')) continue;
+    if (projectId && homeProjectId('workflow', w.id) !== projectId) continue;
     for (const n of w.nodes) {
       if (n.type === 'core.messageAgent' && typeof n.parameters.agentId === 'string') add(n.parameters.agentId, w.name);
       else if (n.type === 'core.runTeam' && typeof n.parameters.teamId === 'string') for (const id of teamMembers.get(n.parameters.teamId) ?? []) add(id, w.name);
@@ -141,11 +145,11 @@ function agentOf(agent: Agent, names: Map<string, string>, used: Map<string, str
 }
 
 /** Every agent the caller can read, published or not, optionally matched by a text query. */
-export function catalogAgents(actor: Actor | undefined, options: { query?: string } = {}): CatalogAgent[] {
+export function catalogAgents(actor: Actor | undefined, options: { query?: string; projectId?: string } = {}): CatalogAgent[] {
   const me = who(actor);
-  const all = agentStore.list().filter((a) => canResource(me, 'agent', a.id, 'read'));
+  const all = agentStore.list().filter((a) => canResource(me, 'agent', a.id, 'read') && (!options.projectId || homeProjectId('agent', a.id) === options.projectId));
   const names = new Map(all.map((a) => [a.id, a.published?.config.name ?? a.name]));
-  const used = usedByMap(me);
+  const used = usedByMap(me, options.projectId);
   const terms = (options.query ?? '').toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 1);
   const list = all.map((a) => agentOf(a, names, used));
   if (!terms.length) return list;
@@ -154,24 +158,25 @@ export function catalogAgents(actor: Actor | undefined, options: { query?: strin
 }
 
 /** One agent with its instructions and each tool's parameters (a credential by name; no secret is read). */
-export function catalogAgent(actor: Actor | undefined, id: string): (CatalogAgent & { instructions: string; toolParameters: Array<{ name: string; parameters: Record<string, unknown> }> }) | undefined {
+export function catalogAgent(actor: Actor | undefined, id: string, projectId?: string): (CatalogAgent & { instructions: string; toolParameters: Array<{ name: string; parameters: Record<string, unknown> }> }) | undefined {
   const me = who(actor);
   const agent = agentStore.get(id);
-  if (!agent || !canResource(me, 'agent', id, 'read')) return undefined;
+  if (!agent || !canResource(me, 'agent', id, 'read') || (projectId && homeProjectId('agent', id) !== projectId)) return undefined;
   const names = new Map(agentStore.list().map((a) => [a.id, a.published?.config.name ?? a.name]));
   const config = configOf(agent.published?.config ?? agent);
   return {
-    ...agentOf(agent, names, usedByMap(me)),
+    ...agentOf(agent, names, usedByMap(me, projectId)),
     instructions: config.instructions,
-    toolParameters: config.tools.flatMap((t) => (t.type === 'node' ? [{ name: t.name, parameters: t.parameters }] : [])),
+    toolParameters: config.tools.flatMap((t) => (t.type === 'node' ? [{ name: t.name, parameters: redactValue(t.parameters) }] : [])),
   };
 }
 
 /** Action nodes of plugins that are online that an agent can use as a tool, with what each needs. Best match first with a query. */
-export function catalogToolNodes(actor: Actor | undefined, options: { query?: string; types?: string[] } = {}): CatalogToolNode[] {
+export function catalogToolNodes(actor: Actor | undefined, options: { query?: string; types?: string[]; projectId?: string } = {}): CatalogToolNode[] {
   const mine = who(actor);
-  const types = availableTypes().filter(usable);
-  const have = withOwnership(mine, 'credential', credentials.list());
+  const wanted = options.types?.length ? new Set(options.types) : undefined;
+  const types = availableTypes().filter((t) => usable(t) && (!wanted || wanted.has(t.type)));
+  const have = withOwnership(mine, 'credential', credentials.list()).filter((c) => !options.projectId || credentialUsableBy(c.id, options.projectId));
   const byType = new Map<string, string[]>();
   for (const c of have) byType.set(c.type, [...(byType.get(c.type) ?? []), c.name]);
   const describe = (info: NodeTypeInfo): CatalogToolNode => {
@@ -206,7 +211,6 @@ export function catalogToolNodes(actor: Actor | undefined, options: { query?: st
       .sort((a, b) => covers(b) - covers(a) || score.get(b.type)! - score.get(a.type)! || a.descriptor.displayName.localeCompare(b.descriptor.displayName))
       .slice(0, 12);
   } else chosen = [...types].sort((a, b) => a.pluginName.localeCompare(b.pluginName) || a.descriptor.displayName.localeCompare(b.descriptor.displayName));
-  if (options.types?.length) chosen = chosen.filter((t) => options.types!.includes(t.type));
   return chosen.map(describe);
 }
 
@@ -223,12 +227,15 @@ async function topFolders(): Promise<CatalogFolder[]> {
   const root = filesDir();
   const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
   const out: CatalogFolder[] = [];
-  const count = async (dir: string): Promise<number> => {
+  let budget = 5000; // entries read in all: a huge files directory is counted up to here, not walked whole
+  const count = async (dir: string, depth = 0): Promise<number> => {
+    if (depth > 4 || budget <= 0) return 0;
     const items = await readdir(dir, { withFileTypes: true }).catch(() => []);
+    budget -= items.length;
     let n = 0;
     for (const item of items) {
       if (item.name.startsWith('.')) continue;
-      if (item.isDirectory()) n += await count(join(dir, item.name));
+      if (item.isDirectory()) n += await count(join(dir, item.name), depth + 1);
       else if (item.isFile()) n += 1;
     }
     return n;
@@ -237,12 +244,12 @@ async function topFolders(): Promise<CatalogFolder[]> {
     if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
     out.push({ path: entry.name, files: await count(join(root, entry.name)) });
   }
-  return out;
+  return out.slice(0, 50);
 }
 
 /** The knowledge bases agents search, with document counts, and the folders a new one could come from. */
-export async function catalogKnowledge(actor: Actor | undefined): Promise<KnowledgeListing> {
-  const resources = await agentResources(who(actor));
+export async function catalogKnowledge(actor: Actor | undefined, projectId?: string): Promise<KnowledgeListing> {
+  const resources = await agentResources(who(actor), projectId);
   const bases: CatalogKnowledgeBase[] = [];
   for (const k of resources.knowledge) {
     let documents: number | undefined;
@@ -290,6 +297,6 @@ export async function catalogModels(actor: Actor | undefined): Promise<CatalogMo
 }
 
 /** The credentials the caller can see: name and type, never data. */
-export function catalogCredentials(actor: Actor | undefined): CatalogCredential[] {
-  return withOwnership(who(actor), 'credential', credentials.list()).map((c) => ({ name: c.name, type: c.type }));
+export function catalogCredentials(actor: Actor | undefined, projectId?: string): CatalogCredential[] {
+  return withOwnership(who(actor), 'credential', credentials.list()).filter((c) => !projectId || credentialUsableBy(c.id, projectId)).map((c) => ({ name: c.name, type: c.type }));
 }
