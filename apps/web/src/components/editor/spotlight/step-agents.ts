@@ -56,7 +56,7 @@ async function designFor(nodeId: string, ask: string, hints: Record<string, NewA
     const after = nameOf(main.find((e) => e.target === nodeId)?.source ?? '');
     const before = nameOf(main.find((e) => e.source === nodeId)?.target ?? '');
     const message = typeof node.data.wf.parameters.message === 'string' && !node.data.wf.parameters.message.includes('{{') ? node.data.wf.parameters.message.trim() : '';
-    const description = message || `Does the “${name}” step of this flow: ${oneLine(ask, 160)}`;
+    const description = oneLine(message || `Does the “${name}” step of this flow: ${oneLine(ask, 160)}`, 500);
     const place = { workflow: editor.name, ...(after && { after }), ...(before && { before }) };
     // What the builder had wired to the AI Agent this step replaced (its system message, tools and Chat Model) is the architect's starting point.
     const hint = hints[name];
@@ -64,7 +64,7 @@ async function designFor(nodeId: string, ask: string, hints: Record<string, NewA
     const spec = {
       name,
       description,
-      instructions: hint?.instructions ?? '',
+      instructions: (hint?.instructions ?? '').slice(0, 4000),
       ...(tools.length && { tools }),
       ...(hint?.model && { agentModel: hint.model }),
       ...(hint?.toolNodes?.length && { toolNodes: hint.toolNodes.slice(0, 8) }),

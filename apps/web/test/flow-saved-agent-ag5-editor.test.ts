@@ -100,6 +100,20 @@ describe('an unbound Run an Agent step is designed after Apply', () => {
     expect(wire.calls[0]!.json).toMatchObject({ name: 'Write summary', preview: true, instructions: 'You write sales summaries.', tools: ['SQLite'], agentModel: 'anthropic/claude-haiku-5', toolNodes: [{ nodeType: 'core.sqliteTool', operation: 'query' }] });
   });
 
+  it('cuts a long step message and long instructions to what the design route accepts, and the card is still made', async () => {
+    noteOpened(WF, 0);
+    const long = { ...flow, nodes: flow.nodes.map((n) => (n.id === 's' ? { ...n, parameters: { agentId: '', message: 'Summarise sales by region. '.repeat(60) } } : n)) };
+    useEditor.getState().load(long, types);
+    useAutonomyFacts.setState({ switchOn: true, workflows: {} });
+    noteOpened(WF, 0);
+    await designUnboundAgents(['s'], ASK, { 'Write summary': { instructions: 'x'.repeat(6000), tools: [] } });
+    await agentsSettled();
+    const sent = wire.calls[0]!.json;
+    expect(sent.description.length).toBeLessThanOrEqual(500);
+    expect(sent.instructions.length).toBeLessThanOrEqual(4000);
+    expect(useAssistant.getState().agents.find((a) => a.nodeId === 's')?.state).not.toBe('failed');
+  });
+
   it('on a saved flow the card waits: nothing is created, the step stays unbound', async () => {
     noteOpened(WF, 3);
     await designUnboundAgents(['s'], ASK);
