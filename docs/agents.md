@@ -239,7 +239,7 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   and one set after Apply (in the tool's dialog on the agent's page) drops off the card without a reload (the page's
   save sends `landflow:agent-saved`; the card also re-reads the draft on `landflow:agent-changed`).
 - A change that gives a mail tool its sender ("send the email from landflow@landflow.test", "set Send Email's From Email
-  to …") sets that tool's **From Email** when it is still empty, and the Changes row says "Send Email: From Email set to
+  to …", or the chat's own wording of it, "set send_email's fromEmail parameter to …") sets that tool's **From Email** when it is still empty, and the Changes row says "Send Email: From Email set to
   landflow@landflow.test"; a From you already set is never rewritten, and a change that names no sender, or two, sets
   none (wave ag3's live pass found the change said "No change" instead).
   The card's **Left** row then drops "fill in From Email" (any "fill in" or "set" line whose field the agent's draft now

@@ -1886,7 +1886,8 @@ function withSenderGiven(tool: AgentToolConfig, change: string, types: NodeTypeI
   const current = (tool.parameters as Record<string, unknown> | undefined)?.fromEmail;
   if (typeof current === 'string' ? current.trim() !== '' : current !== undefined && current !== null) return tool;
   const said = change.replace(AGENT_ASK, ' ');
-  const senders = [...said.matchAll(/\bfrom(?:\s+(?:the\s+)?(?:address|e-?mail(?:\s+address)?|sender))?(?:\s+(?:to|as|be|is))?\s*:?\s+([\w.+-]+@[\w-]+(?:\.[\w-]+)+)/gi)].map((m) => m[1]);
+  // ag5 carryover (live G2): the chat writes the person's “Send the email from x” as “Set send_email's fixed fromEmail parameter to x”.
+  const senders = [...said.matchAll(/\bfrom(?:\s*e-?mail)?(?:\s+(?:the\s+)?(?:address|e-?mail(?:\s+address)?|sender|parameter|field))?(?:\s+(?:to|as|be|is))?\s*:?\s+([\w.+-]+@[\w-]+(?:\.[\w-]+)+)/gi)].map((m) => m[1]);
   const distinct = [...new Set(senders.map((a) => a.toLowerCase()))];
   if (distinct.length !== 1) return tool; // none, or two different senders: ask, never guess
   return { ...tool, parameters: { ...((tool.parameters as Record<string, unknown> | undefined) ?? {}), fromEmail: senders[0] } } as AgentToolConfig;
