@@ -213,3 +213,17 @@ const click = async (selector: string) => { await act(async () => { (container.q
     expect(/overflow-x-(?:auto|scroll)/.test(html)).toBe(false);
   });
 });
+
+describe('AG19: the card keeps what the design said across a reload', () => {
+  it('the saved card part keeps reuse, attached, modelWhy, modelNote, catalog and knowledgeSetup', async () => {
+    const { agentCardPartSchema } = await import('@/lib/shared/conversations');
+    const card = {
+      name: 'Alert reader', description: 'Reads alerts.', tools: [], practices: true, guardrails: [], cases: [], needs: [], missing: [], state: 'designed' as const,
+      reuse: { agentId: 'ag_1', name: 'Alert triager', why: 'extracts IOCs', published: true, gaps: ['the runbooks'] },
+      attached: { collection: 'runbooks', documents: 4, search: 'keyword' },
+      modelWhy: 'asked' as const, modelNote: 'n', catalog: [{ tool: 'list_agents', count: 5 }],
+      knowledgeSetup: { collection: 'runbooks', existing: true },
+    };
+    expect(agentCardPartSchema.parse(card)).toMatchObject({ reuse: card.reuse, attached: card.attached, modelWhy: 'asked', modelNote: 'n', catalog: card.catalog, knowledgeSetup: card.knowledgeSetup });
+  });
+});

@@ -198,6 +198,9 @@ describe('the design route', () => {
     expect(catalogAgents(TEST_OWNER).some((a) => a.id === s1.id && a.published === 1)).toBe(true);
     expect(designBrief({ name: 'X', description: 'triage an alert', instructions: '' }, { types, actor: TEST_OWNER })).toContain(`[${s1.id}] Alert triager`);
     expect(fromDesign({ reuseAgentId: 'ag_1', reuseWhy: 'w', reuseGaps: 'a\nb', knowledgeBase: 'runbooks' })).toMatchObject({ reuse: { agentId: 'ag_1', why: 'w', gaps: ['a', 'b'] }, knowledgeBase: 'runbooks' });
+    // A model writes "None known; …" for no gap: that is no gap (an agent with gaps is never used by itself).
+    expect(fromDesign({ reuseAgentId: 'ag_1', reuseWhy: 'w', reuseGaps: 'None known; the model is not local.' }).reuse?.gaps).toEqual([]);
+    expect(draftFrom({ name: 'X', role: 'Y', instructions: 'z', tools: [], reuse: { agentId: s1.id, why: 'it does it', gaps: ['None known', 'a runbook search'] } }, { types, actor: TEST_OWNER, known: '', request: 'triage an alert' }).design?.reuse?.gaps).toEqual(['a runbook search']);
   });
 
   it('credentials: a tool that needs SMTP offers the tenant’s credential by name and never picks it (D2)', async () => {

@@ -248,7 +248,7 @@ const DESIGN_TOOL: ToolSpec = {
       knowledgeBase: { type: 'string', description: 'An existing knowledge base collection that fits, searched as it is (nothing indexed again); empty for none' }, // AG19:
       reuseAgentId: { type: 'string', description: 'The id of an existing agent that already does the whole job (the agents listed); empty when none does' }, // AG19:
       reuseWhy: { type: 'string', description: 'One clause: what that agent already does that the request needs; empty when none' }, // AG19:
-      reuseGaps: { type: 'string', description: 'What the request needs that it lacks, one per line; empty when none' }, // AG19:
+      reuseGaps: { type: 'string', description: 'What the request needs that it lacks, one noun phrase per line ("IOC extraction", "a Haiku model", "the runbooks"), never a sentence; empty when none' }, // AG19:
       nodeTools: { type: 'string', description: 'Node type ids it calls as tools, comma-separated; empty for none' },
       missing: { type: 'string', description: 'What no node here can do, one per line: "Grafana: read firing alerts"; empty for none' },
     },
@@ -311,7 +311,7 @@ export function fromDesign(args: Record<string, unknown>): Record<string, unknow
     tones: list(args.tones, /,/),
     ...(plain(args.model) && { model: plain(args.model) }),
     ...(plain(args.knowledgeBase) && !none.test(plain(args.knowledgeBase)) && { knowledgeBase: plain(args.knowledgeBase) }), // AG19:
-    ...(plain(args.reuseAgentId) && !none.test(plain(args.reuseAgentId)) && { reuse: { agentId: plain(args.reuseAgentId), why: plain(args.reuseWhy), gaps: list(args.reuseGaps, /\n/).filter((g) => !none.test(g)) } }), // AG19:
+    ...(plain(args.reuseAgentId) && !none.test(plain(args.reuseAgentId)) && { reuse: { agentId: plain(args.reuseAgentId), why: plain(args.reuseWhy), gaps: list(args.reuseGaps, /\n/).filter((g) => !none.test(g) && !/^(?:none|no|nothing|n\/a)\b/i.test(g.trim())) } }), // AG19:
     tools,
     missing: list(args.missing, /\n/).filter((m) => !/^(none|no|n\/a|-)$/i.test(m)),
   };
@@ -327,7 +327,7 @@ An agent is:
 
 How to work:
 - If the request is too vague to pick tools (no task, or no system to work in), ask one short question. Otherwise don't ask: design.
-- Research before proposing: list_agents first (an agent that already does the whole job goes in propose_agent's "reuse": its id, why in one clause, and what it lacks; still propose the closest design, the person may want a new one), then search_nodes for each thing the agent must do (read tickets, post to Slack, query a database…, found by what the job needs, never only by a name the request gave), get_node_docs for each node you use, list_workflows when an existing workflow could do part of the job, list_knowledge_bases and list_models, list_credentials to see what works right away, list_templates when one fits as a start.
+- Research before proposing: list_agents first (an agent that already does the whole job goes in propose_agent's "reuse": its id, why in one clause, and what it lacks; documents the request answers from, a tool it needs or a model the person named that the agent does not have are things it lacks, listed one per line; still propose the closest design, the person may want a new one), then search_nodes for each thing the agent must do (read tickets, post to Slack, query a database…, found by what the job needs, never only by a name the request gave), get_node_docs for each node you use, list_workflows when an existing workflow could do part of the job, list_knowledge_bases and list_models, list_credentials to see what works right away, list_templates when one fits as a start.
 - Use only node types search_nodes returned, and ids list_workflows and list_agents returned. If nothing online can do a part of the job, leave it out of the tools, list it in propose_agent's "missing" as the app's name, a colon and what the agent would do ("Grafana: read firing alerts"), and say so in one sentence; never invent a node type.
 - A node tool's parameters: set what is fixed for this agent (the operation, a resource); what the agent writes or decides per call (a subject, a body, a message, an id) is "{{ $fromAI('key', 'what it is', 'string') }}". A destination (To, URL, channel, path, repository) is set only to a value the request gives, word for word, else left empty. Never make up ids, channels, URLs or emails the user didn't give: leave those for the user.
 - An agent that answers from documents (policies, contracts, docs, past tickets, runbooks) searches a knowledge base: list_knowledge_bases; one whose description or folder fits is attached as it is (propose_agent's "knowledgeBase": its collection; nothing is indexed again), a folder the request names is indexed for it, else say in "missing" that it needs a source: never invent one.
@@ -1100,7 +1100,7 @@ export function draftFrom(args: Record<string, unknown>, context: { types: NodeT
     const agent = otherAgents(actor).find((a) => a.id === wanted) ?? otherAgents(actor).filter((a) => a.name.toLowerCase() === wanted?.toLowerCase()).at(0); // a model writes the name where the id goes, as it does for Run an Agent
     if (!agent) dropped.push(`the agent ${text(r.agentId, 80) ?? ''} to reuse: not on this instance`);
     else {
-      const gaps = (Array.isArray(r.gaps) ? r.gaps : typeof r.gaps === 'string' ? r.gaps.split('\n') : []).flatMap((g) => text(g, 120) ?? []).slice(0, 6);
+      const gaps = (Array.isArray(r.gaps) ? r.gaps : typeof r.gaps === 'string' ? r.gaps.split('\n') : []).flatMap((g) => text(g, 120) ?? []).filter((g) => !/^(?:none|no|nothing|n\/a|-)\b/i.test(g.trim())).slice(0, 6); // a model writes "None known" for no gap
       reuse = { agentId: agent.id, name: agent.name, why: text(r.why, 200) ?? shorten(agent.description ?? '', 160), published: agent.publishedVersion !== undefined, gaps };
     }
   }

@@ -127,12 +127,12 @@ export async function designAgentCard(message: string, ask: AgentAsk, options: {
     patchReply(reply.id, {
       parts: [
         // ag1-int: a fallback design (the architect's call failed or proposed nothing) says so; the card's Left row says why.
-        { kind: 'text', text: `${preview.designed === false ? `Made “${card.name}” from your words only: the Agent architect did not design it, so it has no tools yet.` : `Designed “${card.name}”.`} ${card.reuse ? (alone ? `“${card.reuse.name}” already does this: using it.` : `“${card.reuse.name}” already does this: use it, or create a new one anyway.`) /* AG19: */ : alone ? 'Creating it now.' : `Review it, then create it${options.starter ? ' with a flow that runs it' : ''}.`}` },
+        { kind: 'text', text: `${preview.designed === false ? `Made “${card.name}” from your words only: the Agent architect did not design it, so it has no tools yet.` : `Designed “${card.name}”.`} ${card.reuse ? (card.reuse.gaps.length ? (alone ? `“${card.reuse.name}” is the closest but lacks ${card.reuse.gaps.join(', ')}: creating a new one.` : `“${card.reuse.name}” is the closest but lacks ${card.reuse.gaps.join(', ')}: use it, or create a new one.`) : alone ? `“${card.reuse.name}” already does this: using it.` : `“${card.reuse.name}” already does this: use it, or create a new one anyway.`) /* AG19: */ : alone ? 'Creating it now.' : `Review it, then create it${options.starter ? ' with a flow that runs it' : ''}.`}` },
         { kind: 'agentCard', card },
       ],
     });
-    // AG19: a brand-new draft in autonomous mode uses the agent that already does the job; Create is never the default when one does.
-    if (alone) queueMicrotask(() => (card.reuse ? void useExistingAgent(reply.id, card) : void createFromCard(reply.id, card)));
+    // AG19: a brand-new draft in autonomous mode uses the agent that already does the whole job (no gaps); Create is never the default when one does. One that lacks something the ask needs is the closest, not a reuse: the card shows its gaps and Create builds the new one.
+    if (alone) queueMicrotask(() => (card.reuse && !card.reuse.gaps.length ? void useExistingAgent(reply.id, card) : void createFromCard(reply.id, card)));
   } catch (e) {
     if (abort.signal.aborted) patchReply(reply.id, { parts: [{ kind: 'text', text: 'Stopped: no agent was designed.' }] });
     else patchReply(reply.id, { parts: [{ kind: 'text', text: 'No agent was designed.' }], error: `Couldn’t design the agent: ${(e as Error).message}` });
