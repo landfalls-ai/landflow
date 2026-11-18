@@ -136,8 +136,8 @@ export interface RunLogNode {
   logs?: string[];
   /** A Run an Agent / Run a Team node: the agent's tool calls in order, each with its status and error. */
   agentCalls?: Array<{ tool: string; status: 'success' | 'error' | 'denied' | 'empty'; error?: string; input?: unknown; output?: unknown }>;
-  /** The agent that ran (id and name) and its reply's first 400 characters. */
-  agent?: { id: string; name: string; reply?: string };
+  /** The agent that ran (id and name), its reply's first 400 characters and the names of the tools it has (an empty list: it has none), so a tool it lacks is read, not guessed. */
+  agent?: { id: string; name: string; reply?: string; tools?: string[] };
 }
 
 /** What `get_run_log` answers for one execution (the latest of the workflow when no id is given). */
@@ -179,6 +179,11 @@ export function credentialNeedLine(node: CatalogToolNode): string | undefined {
 export function reuseSentence(name: string, why: string): string {
   const clause = why.trim().replace(/^(?:because|since|as)\s+/i, '').replace(/[.\s]+$/, '');
   return `Reuses “${name}”${clause ? `: ${clause}` : ''}.`;
+}
+
+/** What a run log says of each agent's tools, plainly: "“Question answerer” has no tools." (an empty list is said, not left out). */
+export function agentToolLines(log: RunLog): string[] {
+  return log.nodes.flatMap((n) => (n.agent?.tools ? [`“${n.agent.name || n.name}” (step “${n.name}”) has ${n.agent.tools.length ? `these tools: ${n.agent.tools.join(', ')}` : 'no tools'}.`] : []));
 }
 
 /** The first failing node of a run log and its error, in one clause of at most 12 words (chat.ts's rule). */

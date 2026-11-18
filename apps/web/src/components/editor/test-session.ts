@@ -13,7 +13,7 @@
 import { nanoid } from 'nanoid';
 import { toast } from 'sonner';
 import { opsTitle } from '@/lib/shared/assistant-ops';
-import { checkRun, destinationsOf, writesOutside, givenKept, hollowSteps, hostOf, multipliedSteps, needsPerson, isUnreadHost, NO_ADDRESS, sameFailure, type CheckedRun, type RunVerdict } from '@/lib/shared/run-check';
+import { checkRun, destinationsOf, writesOutside, givenKept, hollowSteps, hostOf, multipliedSteps, needsPerson, rawMarkupSteps, isUnreadHost, NO_ADDRESS, sameFailure, type CheckedRun, type RunVerdict } from '@/lib/shared/run-check';
 import { applyChanges, fixedNodes, ownRun, runDigests, undos, useAssistant, type Need, type Outcome, type ReplyPart } from './assistant';
 import { nextRound } from './timeline';
 import { agentsSettled, itemReaching, smokeTestAgent } from './new-agent'; // SB18:
@@ -307,7 +307,13 @@ function personNeed(result: RunVerdict, error: string | undefined, goal: string 
  */
 function weakSteps(): Array<{ node: string; problem: string }> {
   const steps = useEditor.getState().nodes.map((n) => ({ id: n.id, name: n.data.wf.name, type: n.data.wf.type, parameters: n.data.wf.parameters }));
-  return [...hollowSteps(steps), ...multipliedSteps(canvasRun(), steps)];
+  // AG20: an agent step whose reply is raw tool-call markup did not answer, whatever the run's status says.
+  const digests = runDigests();
+  const replies = steps.map((s) => {
+    const sample = digests[s.id]?.outputs[0]?.sample;
+    return { name: s.name, type: s.type, reply: sample === undefined ? undefined : JSON.stringify(sample) };
+  });
+  return [...hollowSteps(steps), ...multipliedSteps(canvasRun(), steps), ...rawMarkupSteps(replies)];
 }
 
 /** Run the workflow once and judge it; `stopped` when the session can't go on. */
@@ -433,6 +439,17 @@ const causeOf = (summary: string, body: string): string => {
   const words = body.replace(/\s+/g, ' ').trim().split(' ').slice(0, 14).join(' ');
   return words ? `${error} (${words})` : error;
 };
+
+/**
+ * AG20: what is left when a pass falls short and nothing can be proposed: when the missing part reads like a tool the
+ * agent lacks, the step to connect it at ("connect a tool to “Question answerer”"), else the step to open.
+ */
+function leftForAgent(node: string | undefined, part?: string): string {
+  const agentStep = useEditor.getState().nodes.find((n) => n.data.wf.type === 'core.messageAgent' && (n.data.wf.name === node || !node)) ?? useEditor.getState().nodes.find((n) => n.data.wf.type === 'core.messageAgent');
+  const name = agentStep?.data.wf.name;
+  if (name && /\b(?:tool|isn.t available|not available|no access|can.?t (?:query|reach|read|send)|lacks?|doesn.t have|has no)\b/i.test(part ?? 'tool')) return `connect the tool it needs to “${name}” (the + under Tool on the step), then tell me to test again, or tell me what to change.`;
+  return `open ${node ? `“${node}”` : 'the step'} and change it by hand, or tell me what to change.`;
+}
 
 /** AG20: what is left for the person when the same failure comes twice. */
 const leftFor = (node: string | undefined) => `open ${node ? `“${node}”` : 'the step'} and fix it by hand, or tell me what it should do instead.`;
@@ -675,8 +692,8 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       const request = !result.passed
         ? `Test run ${round} ${executionId ? `(execution ${executionId}) ` : ''}${result.summary}.${asked} Fix it.${before}`
         : hollow.length
-          ? `Test run ${round} had no errors, but ${hollow.map((h) => h.problem).join('; ')}.${asked} Fix it.${before}`
-          : `Test run ${round} had no errors: ${result.summary}.${outputOf(result.node)} Does that do what I asked for: “${goal}”?${outputFields() /* SB18: */} Check each part of what I asked against it. If it does, start your reply with "Yes," and say so in one sentence. If not, start your reply with "No," and name the part of what I asked that did not happen, then fix it.${before}`;
+          ? `Test run ${round} ${executionId ? `(execution ${executionId}) ` : ''}had no errors, but ${hollow.map((h) => h.problem).join('; ')}.${asked} Read the run log (get_run_log) for what the agent said and which tools it has, then fix it.${before}`
+          : `Test run ${round} ${executionId ? `(execution ${executionId}) ` : ''}had no errors: ${result.summary}.${outputOf(result.node)} Does that do what I asked for: “${goal}”?${outputFields() /* SB18: */} Check each part of what I asked against it. If the output falls short, read the run log (get_run_log): for a Run an Agent step it shows the agent's tools, tool calls and reply, so a tool the agent lacks is read there (propose_agent_fix), not guessed. If it does, start your reply with "Yes," and say so in one sentence. If not, start your reply with "No," and name the part of what I asked that did not happen, then fix it.${before}`;
       if (!failed) reviewedAt = fixes; // SB03:
       useAssistant.setState({ fixing: failed ? nodeId : undefined });
       await useAssistant.getState().send(request, { auto: true, fresh: true, session: failed ? 'fix' : 'review', autonomy, withoutSelection: true, testId, ...(nodeId && { nodeId }) });
@@ -688,9 +705,10 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         return;
       }
       // AG20: the log shows the cause inside an agent: its change card goes through Apply, the smoke test and Publish, then the run goes again.
-      if (reply.agentFix && failed) {
+      // AG20: a run that passed can need it too: the agent said a tool is not available, and the review reads that from the log.
+      if (reply.agentFix) {
         if (fixes >= MAX_FIXES) {
-          stop(`Still failing${result.node ? ` at “${result.node}”` : ''} after ${MAX_FIXES} fixes. Left: ${leftFor(result.node)}`, result.node);
+          stop(failed ? `Still failing${result.node ? ` at “${result.node}”` : ''} after ${MAX_FIXES} fixes. Left: ${leftFor(result.node)}` : `It runs, but doesn’t do all you asked yet, and I am out of fixes. Left: ${leftForAgent(result.node)}`, result.node);
           return;
         }
         const cardItem = await showAgentFix(reply.agentFix, fixes + 1, signal, testId);
@@ -733,7 +751,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
         else if (!failed && !part) {
           say([{ kind: 'text', text: 'Reviewed: nothing missing.' }]);
           say([{ kind: 'action', action: 'publish' }]);
-        } else if (!failed) stop(`It runs, but doesn’t do all you asked yet: ${part}. I have no change for it: tell me what to change.`, result.node);
+        } else if (!failed) stop(`It runs, but doesn’t do all you asked yet: ${part}. I have no change for it. Left: ${leftForAgent(result.node, part)}`, result.node);
         // The reply above already says why.
         else stop(`I found no fix for “${result.node ?? 'this step'}”. Tell me what it should do, or open it.`, at);
         return;

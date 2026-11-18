@@ -634,6 +634,36 @@ describe('3. run, read the log, fix (AG20 × AG18 × AG19)', () => {
   });
 });
 
+describe('3b. a run that passed with an agent that lacks a tool is fixed from the log (AG20 × AG18 × AG19)', () => {
+  it('review session: get_run_log says the agent has no tools, propose_agent_fix is offered and answers an agent change, no flow change', async () => {
+    const agent = agentStore.create({ name: 'Question answerer', description: 'Answers sales questions', instructions: 'Answer sales questions from the database.', model: { provider: 'anthropic', model: 'claude-sonnet-5-5' } } as never);
+    agentStore.publish(agent.id);
+    const wf = saveFlow({ id: 'wf_review_notools', name: 'Sales question', nodes: [node('Start', 'core.manualTrigger'), node('Ask', 'core.messageAgent', { agentId: agent.id, message: 'Sales by region?', conversation: 'new' }, 'Ask sales analyst')], connections: [edge('Start', 'Ask')] });
+    agentSide.reply = 'The database query tool isn’t available in this session.';
+    const passed = await runEditor(wf.id);
+    expect(passed.status).toBe('success'); // the run passes; the output falls short
+    const request = `Test run 2 (execution ${passed.executionId}) had no errors: 2 steps. Does that do what I asked for: “sales by region”? If not, start your reply with "No,".`;
+    const review = await chat(wf, request, [
+      { calls: [{ name: 'get_run_log' }] },
+      { calls: [{ name: 'propose_agent_fix', input: { step: 'Ask sales analyst', cause: 'the agent has no database tool', change: 'Add the Sales DB query tool and tell it to query it.' } }] },
+      { text: 'No: the agent has no database tool; the change card adds it.' },
+    ], { session: 'review' });
+    expect(review.tools.slice(0, 2)).toEqual(['get_run_log', 'propose_agent_fix']);
+    expect(review.toolResults.find((r) => r.name === 'get_run_log')!.content).toContain('“Question answerer” (step “Ask sales analyst”) has no tools.');
+    expect(review.events.find((e) => e.type === 'agent-fix')).toMatchObject({ agentId: agent.id, agent: 'Question answerer', fix: { executionId: passed.executionId, step: 'Ask sales analyst' } });
+    expect(review.proposals).toEqual([]);
+  });
+
+  it('a get_run_log read when no run exists is a step that is not red, and says a waiting row holds the run', async () => {
+    const wf = saveFlow({ id: 'wf_never_run', name: 'Never run', nodes: [node('Start', 'core.manualTrigger')], connections: [] });
+    const out = await chat(wf, 'Run it now and fix it if it fails.', [{ calls: [{ name: 'get_run_log' }] }, { text: 'The run is waiting on the “Run it for real” row.' }], { session: 'fix' });
+    const read = out.events.find((e) => e.type === 'tool' && e.name === 'get_run_log')!;
+    expect(read.ok).toBe(true);
+    expect(read.label).toBe('No run yet');
+    expect(out.toolResults.find((r) => r.name === 'get_run_log')!.content).toContain('Run it for real');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 4. The bubbles follow a change made through Spotlight
 // ---------------------------------------------------------------------------

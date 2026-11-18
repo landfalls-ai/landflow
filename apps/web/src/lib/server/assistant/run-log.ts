@@ -51,6 +51,18 @@ function sessionFor(record: ExecutionRecord, nodeId: string, agentId: string | u
 
 const isEmpty = (value: unknown): boolean => value === undefined || value === null || value === '' || (Array.isArray(value) && !value.length) || (typeof value === 'object' && !Array.isArray(value) && !Object.keys(value as object).length);
 
+/**
+ * The names of the tools the agent had for this run: its own (the draft in the editor's runs, the published version in
+ * production's), and the tool sub-nodes the flow still wires into the step. An empty list is said, not left out.
+ */
+function toolsOf(record: ExecutionRecord, nodeId: string, agent: ReturnType<typeof agentStore.get>): string[] | undefined {
+  if (!agent) return undefined;
+  const config = record.mode === 'manual' ? agent : (agent.published?.config ?? agent);
+  const workflow = record.workflow ?? store.getWorkflow(record.workflowId);
+  const wired = (workflow?.connections ?? []).filter((c) => c.type === 'ai_tool' && c.target === nodeId).flatMap((c) => workflow?.nodes.find((n) => n.id === c.source)?.name ?? []);
+  return [...new Set([...config.tools.map((t) => (t.type === 'agent' ? `asks ${agentStore.get(t.agentId)?.name ?? 'another agent'}` : t.name)), ...wired])];
+}
+
 function agentPart(record: ExecutionRecord, nodeId: string, parameters: Record<string, unknown>, run: NodeRun | undefined): Pick<RunLogNode, 'agentCalls' | 'agent'> {
   const agentId = typeof parameters.agentId === 'string' ? parameters.agentId : typeof run?.outputs[0]?.[0]?.json?.agentId === 'string' ? (run.outputs[0][0].json.agentId as string) : undefined;
   const session = sessionFor(record, nodeId, agentId, run);
@@ -72,7 +84,7 @@ function agentPart(record: ExecutionRecord, nodeId: string, parameters: Record<s
   );
   return {
     ...(calls.length && { agentCalls: calls }),
-    ...((agentId || agent) && { agent: { id: agentId ?? agent!.id, name: agent?.name ?? '', ...(typeof reply === 'string' && reply && { reply: cut(reply) }) } }),
+    ...((agentId || agent) && { agent: { id: agentId ?? agent!.id, name: agent?.name ?? '', ...(typeof reply === 'string' && reply && { reply: cut(reply) }), ...(agent && { tools: toolsOf(record, nodeId, agent) }) } }),
   };
 }
 

@@ -277,6 +277,84 @@ describe('a failure inside an agent', () => {
   });
 });
 
+describe('a run that passed, with an agent that lacks a tool (AG20, live pass S3)', () => {
+  const AGENT_FLOW = 'wf_sales_question';
+  const askFlow = (): Workflow => ({
+    id: AGENT_FLOW,
+    name: 'Sales question',
+    nodes: [node('a', 'Start', 'core.manualTrigger'), node('b', 'Ask sales analyst', 'core.messageAgent', { agentId: 'ag_q', message: 'Sales by region?' })],
+    connections: [{ id: 'e1', type: 'main', source: 'a', sourceIndex: 0, target: 'b', targetIndex: 0 }],
+  });
+  const agentSaid = (reply: string) =>
+    useEditor.setState({ runs: { b: [{ source: 'main', status: 'success', durationMs: 5, inputs: [[{ json: { q: 'x' } }]], outputs: [[{ json: { reply } }]] }] } as never });
+  const lacks = { type: 'agent-fix', agentId: 'ag_q', agent: 'Question answerer', change: 'Add the Sales DB query tool and tell it to use it', fix: { executionId: 'ex_1', step: 'Ask sales analyst', cause: 'the agent has no database tool', attempt: 1 } };
+  const design = () => ({ config: { name: 'Question answerer', instructions: 'Query the Sales DB', tools: [] }, changes: ['Adds the Sales DB tool'], designed: true });
+  const openAgentFlow = () => {
+    noteOpened(AGENT_FLOW, 3);
+    useEditor.getState().load(askFlow(), []);
+    useEditor.setState({ nodeTypes });
+  };
+
+  it('the review request carries the execution id and says to read get_run_log; the agent change card, not a flow change, goes through Apply and Publish, and the run goes again', async () => {
+    openAgentFlow();
+    apiAnswers = { 'POST /api/agents/design': design, 'POST /api/agents/ag_q/smoke-test': () => ({ smoke: { state: 'passed', reply: 'ok' } }) };
+    runs = [{ 'Ask sales analyst': { items: 1 } }, { 'Ask sales analyst': { items: 1 } }];
+    replies = [{ text: 'No, the agent has no database tool.', agentFix: lacks }];
+    const session = testUntilItRuns('sales by region');
+    await waitForCard();
+    expect(sentSessions).toEqual(['review']);
+    expect(sentRequests[0]).toContain('(execution ex_1)');
+    expect(sentRequests[0]).toContain('get_run_log');
+    expect(sentRequests[0]).toContain('propose_agent_fix');
+    const [{ itemId, card }] = cards();
+    expect(card.base).toEqual({ agentId: 'ag_q', name: 'Question answerer' });
+    expect(card.fix).toMatchObject({ step: 'Ask sales analyst', cause: 'the agent has no database tool' });
+    expect(applied).toEqual([]); // no flow change with an agent fix
+    expect(run).toHaveBeenCalledTimes(1);
+    await applyAgentChange(itemId, card);
+    await publishAgentChange(itemId, cards()[0].card);
+    await session;
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(outcomes()).toEqual([]);
+    expect(actions()).toEqual(['publish']);
+  });
+
+  it('a pass whose agent put out raw tool-call markup counts as a failed output: a fix session, not a pass', async () => {
+    openAgentFlow();
+    apiAnswers = { 'POST /api/agents/design': design, 'POST /api/agents/ag_q/smoke-test': () => ({ smoke: { state: 'passed' } }) };
+    runs = [{ 'Ask sales analyst': { items: 1 } }, { 'Ask sales analyst': { items: 1 } }];
+    const answer = (n: number, reply: string) => () => {
+      useEditor.setState({ running: true, executionId: `ex_${n}` });
+      setTimeout(() => {
+        agentSaid(reply);
+        useEditor.setState({ running: false, statuses: { b: { state: 'success', itemCounts: [1] } } as never, runStatus: 'success' });
+      }, 0);
+    };
+    run.mockImplementationOnce(answer(1, '<invoke name="executeQuery"><parameter name="sql">select region, sum(amount) from sales group by region</parameter></invoke>')).mockImplementationOnce(answer(2, 'North 4,150'));
+    replies = [{ text: 'The agent has no database tool.', agentFix: lacks }];
+    const session = testUntilItRuns();
+    await waitForCard();
+    expect(sentSessions).toEqual(['fix']);
+    expect(sentRequests[0]).toContain('raw tool-call markup');
+    expect(sentRequests[0]).toContain('(execution ex_1)');
+    const [{ itemId, card }] = cards();
+    await applyAgentChange(itemId, card);
+    await publishAgentChange(itemId, cards()[0].card);
+    await session;
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(actions()).toEqual(['publish']);
+  });
+
+  it('a pass with nothing to propose stops and names what is left, not “tell me what to change” alone', async () => {
+    openAgentFlow();
+    runs = [{ 'Ask sales analyst': { items: 1 } }];
+    replies = [{ text: 'No, the agent says the database query tool isn’t available.' }];
+    await testUntilItRuns('sales by region');
+    expect(outcomes()[0].text).toContain('I have no change for it.');
+    expect(outcomes()[0].text).toContain('Left: connect the tool it needs to “Ask sales analyst”');
+  });
+});
+
 describe('the bound', () => {
   it('stops after the same failure twice in a row, undoes the flow change that did not help and says what is left', async () => {
     noteOpened(WF, 3);

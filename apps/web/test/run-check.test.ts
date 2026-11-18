@@ -4,7 +4,7 @@
  * Steps that run but do nothing (a filter without conditions) are found too.
  */
 import { describe, expect, it } from 'vitest';
-import { checkRun, hollowSteps, multipliedSteps, type CheckedRun } from '@/lib/shared/run-check';
+import { checkRun, hollowSteps, multipliedSteps, rawMarkupSteps, type CheckedRun } from '@/lib/shared/run-check';
 
 /** Schedule → Fetch → Filter → Post, with a tool on the side. */
 const run = (ran: CheckedRun['ran'], extra: Partial<CheckedRun> = {}): CheckedRun => ({
@@ -88,5 +88,16 @@ describe('multiplied steps', () => {
     // One result per item, or a single item in: nothing to say.
     expect(multipliedSteps(run({ s: { items: 1 }, f: { items: 10 }, k: { items: 10 } }), steps)).toEqual([]);
     expect(multipliedSteps(run({ s: { items: 1 }, f: { items: 1 }, k: { items: 5 } }), steps)).toEqual([]);
+  });
+});
+
+describe('raw tool-call markup in an agent reply', () => {
+  it('is a failed output; a plain answer, a non-agent step and other angle brackets are not', () => {
+    const markup = '[{"reply":"<invoke name=\\"executeQuery\\"><parameter name=\\"sql\\">select 1</parameter></invoke>"}]';
+    expect(rawMarkupSteps([{ name: 'Ask', type: 'core.messageAgent', reply: markup }])).toEqual([{ node: 'Ask', problem: expect.stringContaining('raw tool-call markup') }]);
+    expect(rawMarkupSteps([{ name: 'Ask', type: 'core.messageAgent', reply: '<function_calls><invoke name="x">' }])).toHaveLength(1);
+    expect(rawMarkupSteps([{ name: 'Ask', type: 'core.messageAgent', reply: '[{"reply":"North 4,150 (a < b and c > d)"}]' }])).toEqual([]);
+    expect(rawMarkupSteps([{ name: 'Set', type: 'core.set', reply: markup }])).toEqual([]);
+    expect(rawMarkupSteps([{ name: 'Ask', type: 'core.messageAgent', reply: undefined }])).toEqual([]);
   });
 });

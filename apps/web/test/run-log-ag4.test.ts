@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { Workflow, WorkflowNode } from '@landflow/engine';
+import { agentToolLines } from '@/lib/shared/tenant-catalog';
 import { startFakeModels } from './fake-ai-services';
 
 vi.setConfig({ testTimeout: 30_000 });
@@ -143,6 +144,25 @@ describe('runLog', () => {
     expect(step.agent?.reply).toContain('calculator failed');
     expect(step.agentCalls?.[0]).toMatchObject({ tool: 'Calculator', status: 'error', input: { expression: '6 *' } });
     expect(step.agentCalls?.[0].error).toBeTruthy();
+    expect(step.agent?.tools).toEqual(['Calculator']); // the tool sub-node the flow still wires in
+  });
+
+  it('says an agent with no tools has none (a missing tool is read from the log, not guessed from its reply)', async () => {
+    const agent = agentStore.create({ name: 'Question answerer', instructions: 'Answer sales questions from the database.', model: { provider: 'ollama', model: 'agent-own-model', baseUrl: fake.url.replace(/\/v1$/, '') } });
+    agentStore.publish(agent.id);
+    const wf = mine({
+      id: 'wf_agent_notools_ag20',
+      name: 'No tools',
+      nodes: [node('Start', 'core.manualTrigger'), node('Ask sales analyst', 'core.messageAgent', { agentId: agent.id, message: 'Sales by region?', conversation: 'new' })],
+      connections: [edge('Start', 'Ask sales analyst')],
+    });
+    const record = await runWorkflow({ workflow: wf, mode: 'manual', startNodeId: 'Start' });
+    const log = await runLog(actorOf(alice), { workflowId: wf.id, executionId: record.executionId });
+    expect(log!.nodes.find((n) => n.name === 'Ask sales analyst')!.agent?.tools).toEqual([]);
+    expect(agentToolLines(log!)).toEqual(['“Question answerer” (step “Ask sales analyst”) has no tools.']);
+    agentStore.saveDraft(agent.id, { tools: [{ id: 't1', type: 'node', name: 'query_sales', description: 'x', nodeType: 'databases.sqlite', parameters: {} }] } as never);
+    const again = await runLog(actorOf(alice), { workflowId: wf.id, executionId: (await runWorkflow({ workflow: wf, mode: 'manual', startNodeId: 'Start' })).executionId });
+    expect(agentToolLines(again!)).toEqual(['“Question answerer” (step “Ask sales analyst”) has these tools: query_sales.']);
   });
 });
 

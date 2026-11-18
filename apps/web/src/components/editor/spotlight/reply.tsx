@@ -2,7 +2,7 @@
 /** One reply of the timeline: its text, changes, runs, needs and buttons (docs/assistant.md#the-spotlight-panel). */
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
-import { Bot, Check, CircleCheck, CircleStop, CircleX, ExternalLink, Hand, Loader2, Play, Rocket, Sparkles } from 'lucide-react';
+import { Bot, Check, CircleCheck, CircleStop, CircleX, ExternalLink, FileSearch, Hand, Loader2, Play, Rocket, Sparkles } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { holdsForClick, typedSession } from '../autonomous'; // SB04:
 import { afterReply, useAutonomous } from '../autonomous';
@@ -15,7 +15,7 @@ import { ActivityTrace } from '../../ui/activity-trace';
 import { StatusSwap, StreamingText } from '../../ui/chat-motion';
 import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta, ShortReply } from '../../ui/chat';
 import { MAX_FIXES, approveDestinations, productionNote, publishToProduction, testUntilItRuns, undoApplied } from '../test-session'; // SB03:
-import { agentStep, runRow } from '../timeline';
+import { agentStep, logRead, runRow } from '../timeline';
 import { AgentCardView } from './agent-card'; // SB16:
 import { PublishCardView } from './publish-card'; // AG21:
 import { reviseAgentCard } from './agent-ask'; // AG04:
@@ -465,6 +465,8 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
   const firstText = item.parts.findIndex((p) => p.kind === 'text');
   const firstProposal = item.parts.findIndex((p) => p.kind === 'proposal');
   const hasTrace = (item.steps?.length ?? 0) > 0;
+  const logRow = logRead(item); // AG20: a session's fix read the run log: its row, and the cause under "Fixed"
+  const logCause = logRow?.cause;
   // SB11: a question back shows its words in its own row (never cut to two sentences).
   const asked = item.parts.find((p) => p.kind === 'ask');
   const words = quietText || !text.trim() || (asked && asked.ask.question.trim() === text.trim()) ? null : provisional ? (
@@ -477,6 +479,12 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
   return (
     <AssistantRow mark={swap.spinner ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}>
       {streamed && steps && <LiveSteps live={steps} trace={item.steps} durationMs={item.meta?.durationMs} />}
+      {logRow && quietText && (
+        <div data-testid="run-log-read" className="flex min-h-6 items-start gap-1.5 py-0.5 text-[12.5px] leading-snug text-t2">
+          <FileSearch className="mt-px size-3.5 shrink-0 text-t3" />
+          <span className="min-w-0 [overflow-wrap:anywhere]">{logRow.label}</span>
+        </div>
+      )}
       {streamed && !steps && hasTrace && !quietText && <ActivityTrace steps={item.steps!} live={live} durationMs={item.meta?.durationMs ?? item.done?.durationMs} />}
       {swap.mounted && (
         <StatusSwap working={swap.working} silent={swap.silent} label={status ?? (lastTool?.kind === 'tool' ? `${lastTool.tool.label}…` : 'Thinking…')}>
@@ -494,7 +502,7 @@ export function ReplyView({ item, live, status }: { item: Reply; live: boolean; 
           steps ? (
             !streamed && i === firstProposal && <LiveSteps key="steps" live={steps} />
           ) : asRows && (part.proposal.state || live || spotlightBusy) ? (
-            <ProposalRow key={part.proposal.id} proposal={part.proposal} fix={Boolean(item.testId)} />
+            <ProposalRow key={part.proposal.id} proposal={part.proposal} fix={Boolean(item.testId)} {...(logCause && { cause: logCause })} />
           ) : (
             // Not applied by Spotlight (a stopped reply, a change that no longer fits, a Fix bubble): the person decides.
             <ProposalCard key={part.proposal.id} itemId={item.id} proposal={part.proposal} />

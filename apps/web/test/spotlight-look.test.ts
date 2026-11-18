@@ -4,7 +4,7 @@
  * folds to *Tested 3× · 2 fixes · stopped*.
  */
 import { describe, expect, it } from 'vitest';
-import { foldLine, lastOutcomeOf, nextRound, runRow, sessionFold, stepsOf } from '@/components/editor/timeline';
+import { foldLine, lastOutcomeOf, logRead, nextRound, runRow, sessionFold, stepsOf } from '@/components/editor/timeline';
 type ChatItem = import('@/components/editor/assistant').ChatItem;
 
 describe('a run as one row', () => {
@@ -71,5 +71,43 @@ describe('undoing all of a session’s fixes', () => {
     undo();
     // Changed since the fix: an outcome card holding `applied` no longer offers Undo all.
     expect(useEditor.getState().edits).toBe(applied + 1);
+  });
+});
+
+describe('a fix that read the run log (AG20)', () => {
+  const fixReply = (steps: Array<{ id: string; label: string; kind: 'tool'; status: 'ok' }>): ChatItem => ({
+    id: 'fx',
+    role: 'assistant',
+    testId: 't1',
+    steps,
+    parts: [
+      { kind: 'text', text: '“Post report” sent no report_text. The rest is explained here.' },
+      { kind: 'proposal', proposal: { id: 'fxp', summary: 'Send the body as report_text', ops: [{ op: 'setParameters', node: 'Post report', parameters: { body: { report_text: 'x' } } }], dropped: [], warnings: [], state: 'applied' } },
+    ],
+  } as never);
+
+  it('reads as a row, with the cause in one clause under Fixed', () => {
+    const item = fixReply([{ id: 's1', label: 'Read the run log (failed at “Post report”)', kind: 'tool', status: 'ok' }]);
+    expect(logRead(item)).toEqual({ label: 'Read the run log (failed at “Post report”)', cause: '“Post report” sent no report_text.' });
+    const { steps } = stepsOf([{ id: 'u', role: 'user', text: 'fix it' } as never, item]);
+    expect(steps).toHaveLength(2);
+    expect(steps[0]!.text).toBe('Read the run log (failed at “Post report”)');
+    expect(steps[1]!.text).toMatch(/^Fixed · .+ · “Post report” sent no report_text\.$/);
+  });
+
+  it('the Fixed row shows the cause under it', async () => {
+    const { renderToStaticMarkup } = await import('react-dom/server');
+    const { createElement } = await import('react');
+    const { ProposalRow } = await import('@/components/editor/spotlight/proposal');
+    const proposal = { id: 'fxp', summary: 's', ops: [{ op: 'setParameters', node: 'Post report', parameters: { body: 1 } }], dropped: [], warnings: [], state: 'applied' } as never;
+    const html = renderToStaticMarkup(createElement(ProposalRow, { proposal, fix: true, cause: '“Post report” sent no report_text.' }));
+    expect(html).toContain('Fixed');
+    expect(html).toMatch(/data-testid="fix-cause"[^>]*>“Post report” sent no report_text\./);
+    expect(renderToStaticMarkup(createElement(ProposalRow, { proposal, fix: true }))).not.toContain('fix-cause');
+  });
+
+  it('is none for a reply that read nothing, or one that is not a session’s', () => {
+    expect(logRead(fixReply([]))).toBeUndefined();
+    expect(logRead({ ...fixReply([{ id: 's1', label: 'Read the run log', kind: 'tool', status: 'ok' }]), testId: undefined } as never)).toBeUndefined();
   });
 });

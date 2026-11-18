@@ -165,7 +165,9 @@ export function stepsOf(items: ChatItem[], options: { live?: boolean; drafting?:
     }
     if (!runs.length) {
       const proposals = item.parts.flatMap((p) => (p.kind === 'proposal' ? [p.proposal] : []));
-      for (const proposal of proposals) steps.push({ id: key(proposal.id), kind: 'fix', icon: 'fix', text: `${proposal.state === 'applied' ? (item.testId ? 'Fixed' : 'Done') : proposal.state === 'dismissed' ? 'Not applied' : proposal.state === 'undone' ? 'Undone' : 'Proposed'} · ${opsTitle(proposal.ops)}` });
+      const read = logRead(item); // AG20: the log read comes before the fix it led to
+      if (read) steps.push({ id: key('log'), kind: 'note', icon: 'note', text: read.label });
+      for (const proposal of proposals) steps.push({ id: key(proposal.id), kind: 'fix', icon: 'fix', text: `${proposal.state === 'applied' ? (item.testId ? 'Fixed' : 'Done') : proposal.state === 'dismissed' ? 'Not applied' : proposal.state === 'undone' ? 'Undone' : 'Proposed'} · ${opsTitle(proposal.ops)}${read?.cause ? ` · ${read.cause}` : ''}` });
       const ended = item.parts.find((p) => p.kind === 'outcome');
       if (ended?.kind === 'outcome') steps.push({ id: key('outcome'), kind: 'outcome', icon: 'note', text: `Stopped · ${ended.outcome.text}`, ...(ended.outcome.node && { nodeName: ended.outcome.node }) });
       const need = item.parts.find((p) => p.kind === 'needs');
@@ -183,6 +185,19 @@ export function stepsOf(items: ChatItem[], options: { live?: boolean; drafting?:
     steps.push(...agentsAfter(item.id));
   });
   return { ask: asked?.role === 'user' ? asked.text : undefined, steps };
+}
+
+/**
+ * AG20: a session's fix reply read the run's log (a `get_run_log` step): the row that says so, and the cause in one clause
+ * (the model's first sentence, which the fix rule says is the cause) to show under "Fixed". Undefined for any other reply.
+ */
+export function logRead(item: ChatItem): { label: string; cause?: string } | undefined {
+  if (item.role !== 'assistant' || !item.testId) return undefined;
+  const step = item.steps?.find((s) => /^Read the run log/.test(s.label));
+  if (!step) return undefined;
+  const text = item.parts.find((p) => p.kind === 'text');
+  const cause = text?.kind === 'text' ? firstSentence(text.text).replace(/\s+/g, ' ') : undefined;
+  return { label: step.label, ...(cause && cause.length <= 160 && { cause }) };
 }
 
 export interface PanelState {

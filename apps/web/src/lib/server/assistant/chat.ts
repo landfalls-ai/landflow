@@ -31,7 +31,7 @@ import { ASK_CHOICES_MAX, ASK_CHOICES_MIN, ASK_CHOICE_MAX_CHARS, ASK_USER_TOOL, 
 import { claimsAChange } from './guards'; // SB12:
 import { withAskedTools } from '@/lib/shared/agent-ask'; // SB16:
 import type { AgentFixEvent } from '@/lib/shared/agent-fix'; // AG20:
-import { failureClause } from '@/lib/shared/tenant-catalog'; // AG20:
+import { agentToolLines, failureClause } from '@/lib/shared/tenant-catalog'; // AG20:
 import { runLog } from './run-log'; // AG20:
 import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol'; // SB12:
 import { needsPerson } from '@/lib/shared/run-check'; // SB12:
@@ -299,7 +299,7 @@ How to work:
 - Never make up ids, channels, email addresses, URLs or keys the user didn't give: leave those parameters empty and say the user fills them in.
 - A tool attached to an agent: a value the agent should choose when it calls the tool (a branch, a file path, an issue or pull request number, a message) is the expression {{ $fromAI('<parameter name>', '<what it is>', 'string' | 'number' | 'boolean') }}, never a bare $fromAI; fixed values (the owner, the repository, a channel) are set plainly. Credentials are the person's to pick, on the reply: never set one and never name a credential to use; say which step needs one.
 - After proposing, say in one sentence what it does and what the user still has to do (click Apply, pick a credential, run it). Nothing is applied yet: never say the change was applied, made, set or updated, a change exists only as the card. When you change nothing, say why in one sentence. Don't repeat the ops in prose.
-- When asked whether a test run's result does what the user asked for, read the output of the last step with get_run_data and compare it with the request: if it falls short (wrong items, a filter that keeps everything, fields missing), propose the change; if it does what was asked, say so in one sentence and propose nothing.
+- When asked whether a test run's result does what the user asked for, read the output of the last step with get_run_data and compare it with the request; when the output came from a Run an Agent step, read get_run_log as well (the execution id is in the message): the agent's tool list and reply show a tool it lacks. If it falls short (wrong items, a filter that keeps everything, fields missing), propose the change (an agent that lacks a tool: propose_agent_fix); if it does what was asked, say so in one sentence and propose nothing.
 - A question about the flow or a run (why, what, how…) is answered from the workflow and the run data in at most two sentences, naming the cause; propose nothing unless the message asks for a change.
 - When a message reports a failed test run, read its log with get_run_log first (the failing node, its error and the HTTP response body, the plugin's log lines, an agent's tool calls), then get_run_data for a node's full data if you need it. Find the cause and say it in one clause of at most 12 words ("“Triage Ticket” got an empty message."), then make one focused change without asking first: in the flow (a parameter of the failing node or what feeds it, never something else, never by removing a node and adding the same one back), or, when the log shows the cause inside a Run an Agent step's agent (a tool call that failed for a fixed parameter, a tool the agent lacks, its instructions), call propose_agent_fix and no flow change. Never change a URL, address or id the person gave, never remove a step, never wire a sub-node into a Run an Agent node. If the message says the same failure happened twice in a row, propose nothing and say what is left for the person. If only the user can fix it (a credential, an id, an account), say what to do in one sentence and propose nothing. // AG20:
 - Ask when it is not clear (ask_user): when several steps could be the one the request means and it names none, or a value only the person knows (a channel, a table, an id, a recipient) is missing and has no default. Ask one question with 2 to 4 short choices that are what the person would type, then stop: never ask and propose in the same step, and never ask what search_nodes, get_workflow or get_run_data can tell you.
@@ -314,7 +314,7 @@ ${PARAMETER_FORMATS}`;
 const NEVER_CHANGE = 'A run blocked by the host\'s outbound policy, a credential or an account is the person\'s to fix: propose nothing and say what they must do. Never change a URL, channel, address or id the person gave, and never remove a step they asked for.'; // SB03:
 
 /** A test-and-fix session's message, by what Spotlight may do alone: `auto` applies the proposal, `asks-first` shows it as a card and waits for Apply. */
-const SESSION_RUN = ' A failed run\'s message names its execution id: get_run_log reads that run (the node errors with HTTP bodies, plugin lines, an agent\'s tool calls).'; // AG20:
+const SESSION_RUN = ' A run\'s message names its execution id: get_run_log reads that run (the node errors with HTTP bodies, plugin lines, an agent\'s tools, tool calls and reply). When a run passed but its output falls short of what was asked, read get_run_log too: an agent that says a tool is not available, or puts out raw tool-call markup, lacks that tool (its tool list is in the log, an empty list means none), so call propose_agent_fix, never a change to the flow\'s prompt.'; // AG20:
 const sessionText = (autonomy: 'auto' | 'asks-first') =>
   autonomy === 'auto'
     ? `This message comes from Spotlight's test-and-fix session: it applies your proposal and runs the workflow again by itself (a change that removes or turns off a step waits for the person's Apply). Never ask the user to click Apply or to run it. ${NEVER_CHANGE}${SESSION_RUN}`
@@ -416,7 +416,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
   if (question && input.session === 'auto') input = { ...input, session: undefined };
   /** SB04: a question is offered every tool except the one that changes the workflow. */
   const testSession = input.session === 'fix' || input.session === 'review'; // SB11: a test session goes on by itself and asks through its own "Needs you" rows
-  const tools = (question ? TOOLS.filter((t) => t.name !== 'propose_changes' && t.name !== 'propose_agent_fix' /* AG20: */) : TOOLS).filter((t) => !(testSession && t.name === ASK_USER_TOOL)).filter((t) => !(t.name === 'propose_agent_fix' && input.session !== 'fix')); // SB11: AG20: only the fix session renders an agent change card
+  const tools = (question ? TOOLS.filter((t) => t.name !== 'propose_changes' && t.name !== 'propose_agent_fix' /* AG20: */) : TOOLS).filter((t) => !(testSession && t.name === ASK_USER_TOOL)).filter((t) => !(t.name === 'propose_agent_fix' && !testSession)); // SB11: AG20: a test session (fix or review) renders an agent change card
   const { onEvent, runs = {} } = input;
   const trace = input.trace === true;
   const types = input.types ?? availableTypes();
@@ -644,12 +644,14 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
       case 'get_run_log': {
         const executionId = executionIdIn(input.messages);
         const logWorkflowId = input.workflow.id && input.workflow.id !== 'draft' ? input.workflow.id : undefined;
-        if (!logWorkflowId && !executionId) return result('This workflow is not saved yet, so there is no run log to read.', 'No run log: not saved', false);
+        // No run yet is not a failed step (a red row): a session's "Run it for real" row may be waiting for the person's yes.
+        if (!logWorkflowId && !executionId) return result('This workflow is not saved yet, so there is no run log to read.', 'No run log yet: not saved');
         const log = await runLog(input.actor, { ...(logWorkflowId && { workflowId: logWorkflowId }), ...(executionId && { executionId }) });
-        if (!log) return result('No run of this workflow to read.', 'No run log found', false);
+        if (!log) return result('No run of this workflow to read yet. If a "Run it for real" row is waiting in the panel, the run starts when the person answers it: say that, and never say you cannot run it.', 'No run yet');
         detail = `${log.nodes.length} nodes, ${log.status}`;
         const clause = failureClause(log);
-        return result(`${shorten(JSON.stringify(log), 14000)}${clause ? `\nCause to say, in one clause: ${clause}.` : ''}`, `Read the run log${log.failed ? ` (failed at “${shorten(log.failed, 40)}”)` : ''}`);
+        const toolLines = agentToolLines(log);
+        return result(`${shorten(JSON.stringify(log), 14000)}${toolLines.length ? `\n${toolLines.join('\n')}` : ''}${clause ? `\nCause to say, in one clause: ${clause}.` : ''}`, `Read the run log${log.failed ? ` (failed at “${shorten(log.failed, 40)}”)` : ''}`);
       }
       case 'propose_agent_fix': {
         const step = String(args.step ?? '').trim();

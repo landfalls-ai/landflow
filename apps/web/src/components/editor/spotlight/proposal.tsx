@@ -109,7 +109,7 @@ export function ProposalCard({ itemId, proposal }: { itemId: string; proposal: P
  * A change as a row of the timeline: applied by Spotlight (autonomous mode, a fix). Its title says what it did, read from
  * its ops; the model's words and the diff open on a click. The latest one has Undo (a phone has no ⌘Z).
  */
-export function ProposalRow({ proposal, fix }: { proposal: Proposal; fix: boolean }) {
+export function ProposalRow({ proposal, fix, cause }: { proposal: Proposal; fix: boolean; cause?: string }) {
   const [open, setOpen] = useState(false);
   // Re-read on each render: the newest undo is the only one that is safe to use.
   const latest = useAssistant((s) => s.items.length) >= 0 && isNewestUndo(undos, proposal.id);
@@ -130,6 +130,12 @@ export function ProposalRow({ proposal, fix }: { proposal: Proposal; fix: boolea
             <span className="font-semibold text-t1">{verb}</span>
             <span className="text-t2"> · {opsTitle(proposal.ops)}</span>
             {proposal.skipped ? <span className="text-warn"> ({proposal.skipped} part{proposal.skipped === 1 ? '' : 's'} skipped)</span> : null}
+            {/* AG20: the cause the run log showed, in one clause, under what was done. */}
+            {cause && (
+              <span data-testid="fix-cause" className="mt-0.5 block text-[11.5px] text-t3">
+                {cause}
+              </span>
+            )}
           </span>
           <ChevronRight className={cn('mt-px size-3.5 shrink-0 text-t3 transition-transform', open && 'rotate-90')} />
         </button>

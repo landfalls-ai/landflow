@@ -82,6 +82,21 @@ export function multipliedSteps(run: CheckedRun, steps: Array<CheckedStep & { id
   });
 }
 
+/** Tool-call markup a model leaks into its reply instead of calling the tool (`<invoke name=…>`, `<function_calls>`, `<tool_call>`). */
+export const RAW_TOOL_MARKUP = /<\/?(?:antml:)?(?:function_calls|invoke|tool_call|tool_use)\b|<parameter(?:\s|=)|<\|?tool_call/i;
+
+/**
+ * An agent step whose reply is raw tool-call markup did not answer: it tried a tool it does not have, and the run still
+ * "passed". That counts as a failed output (wave ag4: AG20, S3's Question answerer with no tools).
+ */
+export function rawMarkupSteps(steps: Array<{ name: string; type: string; reply: string | undefined }>): Array<{ node: string; problem: string }> {
+  return steps.flatMap((step) =>
+    (step.type === 'core.messageAgent' || step.type === 'core.aiAgent' || step.type === 'core.runTeam') && step.reply && RAW_TOOL_MARKUP.test(step.reply)
+      ? [{ node: step.name, problem: `“${step.name}” put out raw tool-call markup, not an answer: its agent tried a tool it does not have` }]
+      : [],
+  );
+}
+
 /** Something only a person can give the flow, read from a failed run's error. */
 // SB03: 'blocked' (the host's outbound policy refused the destination).
 export type PersonNeed = 'credential' | 'agent' | 'trigger' | 'blocked';
