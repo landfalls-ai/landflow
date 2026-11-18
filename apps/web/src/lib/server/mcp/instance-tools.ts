@@ -36,6 +36,7 @@ import { registerBrainTools } from './brain-tools';
 import { registerPracticeTools } from './practice-tools'; // PR04
 import { registerProjectTools } from './project-tools'; // PC10
 import { registerDebugTools } from './debug-tools';
+import { listAgentUpdates } from '../assistant/publish-tools'; // AG21:
 import { normalizeWorkflow, validateWorkflow, type WorkflowInput } from './workflows';
 
 const INSTRUCTIONS = `Landflow is an n8n-like workflow platform. A workflow is a graph of nodes: a trigger starts it, items (JSON objects) flow along "main" connections from left to right, and each node processes the items it gets.
@@ -521,6 +522,26 @@ export function instanceServer(actor?: Actor, scope?: McpScope, keyScopes?: read
   registerPracticeTools(server, { actor, scope, denied: (id, action) => denied(id, action), json, failure, keyScopes });
   registerProjectTools(server, { actor, scope, json, failure, keyScopes }); // PC10
   registerAgentTools(server, { actor, scope, json, failure }); // AG18: the tenant reads and the agent writes
+  // AG21: the agents a production workflow has newer versions of (publishing stays a person's click: no MCP publish tool).
+  server.registerTool(
+    'list_agent_updates',
+    {
+      title: 'List agent updates',
+      description:
+        'Which agents have a newer published version than the one a production workflow runs: with workflowId, that workflow\'s; with agentId, the production workflows that run an older version of that agent. A production workflow keeps the agent version it was published with until it is published again.',
+      inputSchema: z.object({ workflowId: z.string().optional(), agentId: z.string().optional() }),
+      annotations: READ_ONLY,
+    },
+    async ({ workflowId, agentId }) => {
+      if (workflowId) {
+        const refusal = denied(workflowId, 'read');
+        if (refusal) return refusal;
+        return json(listAgentUpdates({ workflowId }));
+      }
+      if (!agentId) return failure('Give a workflowId or an agentId');
+      return json({ updates: listAgentUpdates({ agentId }).updates.filter((u) => inScope(scope, u.workflowId) && (!actor || canResource(actor, 'workflow', u.workflowId, 'read'))) });
+    },
+  );
   // The caller's briefing as a prompt and resources: for a person who may read the brain (not the instance access token).
   if (actor && toolAllowed(keyScopes, 'my_briefing')) registerBrainPrompts(server, actor);
 

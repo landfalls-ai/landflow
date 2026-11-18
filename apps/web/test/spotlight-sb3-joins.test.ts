@@ -388,8 +388,9 @@ describe('2. brief → card → smoke test → publish (SB17 → SB16 → SB18)'
     expect(wire.calls.some((c) => c.path.endsWith('/publish'))).toBe(false);
     expect(agentStore.get(agentId)?.published).toBeUndefined();
 
-    // 3 (before publishing): the starter flow's run fails "Publish … first", the published version is what runs.
-    const unpublished = await runWorkflow({ workflow: editorWorkflow(), mode: 'manual', startNodeId: nodes[0].id });
+    // 3 (before publishing): a production run of the starter flow fails "Publish … first", the published version is what runs.
+    // (AG21: the editor's own manual runs test the agent's draft, so this is a production-style run.)
+    const unpublished = await runWorkflow({ workflow: editorWorkflow(), mode: 'webhook', startNodeId: nodes[0].id });
     expect(unpublished.status).toBe('error');
     expect(JSON.stringify(unpublished.error)).toMatch(/Publish “PR reviewer” first/);
 

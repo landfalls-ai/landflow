@@ -29,6 +29,8 @@ import { saveTeamFor } from './turn-into-team';
 import { defaultCollapsed } from './spotlight/states';
 import type { SpotlightScope } from '@/lib/shared/spotlight-scope'; // SB07:
 import type { PlanPart } from './spotlight/plan-part'; // SB13:
+import type { PublishOffer } from '@/lib/shared/agent-versions'; // AG21:
+import type { PublishCardState } from './spotlight/publish-part'; // AG21:
 import type { DraftSummary } from '@/lib/shared/draft-summary'; // SB15:
 
 const freshKept = (): { id?: string; stored: Stored } => ({ stored: emptyStored() });
@@ -365,6 +367,7 @@ export type ReplyPart =
   | AskPart // SB11: a question back with its choices
   | { kind: 'plan'; plan: PlanPart } // SB13: the first draft's plan card
   | { kind: 'summary'; summary: DraftSummary; workflowName: string } // SB15: the build summary
+  | { kind: 'publishOffer'; offer: PublishOffer; card?: PublishCardState } // AG21: publish the draft, or test and publish an agent update (./spotlight/publish-card.tsx)
   | { kind: 'agentCard'; card: AgentCard }; // SB16: an agent Spotlight designed, to review and create (./spotlight/agent-ask.ts)
 
 /**
@@ -420,7 +423,8 @@ export type StreamEvent =
   | AskEvent // SB11:
   | { type: 'done'; model: string; durationMs: number; steps: number; usage?: { inputTokens: number; outputTokens: number }; costUsd?: number; local?: boolean }
   | { type: 'error'; message: string; kind?: 'model' | 'cap' | 'stalled' | 'internal'; checkpoint?: string; step?: number }
-  | CredentialOfferEvent; // SB12:
+  | CredentialOfferEvent // SB12:
+  | { type: 'publishOffer'; offer: PublishOffer }; // AG21:
 
 /** What kind of trace row a tool call is. */
 export function toolKind(name: string): ActivityKind {
@@ -493,6 +497,9 @@ export function applyStreamEvent(turn: AssistantTurn, event: StreamEvent, now: n
     // SB12: a step that needs a credential: a "Needs you" row with the picker (decision D2), never one set by Spotlight.
     case 'credential':
       return { ...turn, parts: [...turn.parts, { kind: 'needs', need: { what: 'credential', text: event.text, node: event.node, ...(event.nodeId && { nodeId: event.nodeId }), credentialTypes: event.credentialTypes } }] };
+    // AG21: a card to publish the draft or to test and publish an agent update: the person's click does it, never the chat.
+    case 'publishOffer':
+      return { ...turn, parts: [...turn.parts, { kind: 'publishOffer', offer: event.offer }] };
   }
 }
 

@@ -117,7 +117,7 @@ Landflow speaks the [Model Context Protocol](https://modelcontextprotocol.io) bo
 
 | Scope | Tools |
 |---|---|
-| `workflows:read` | `list_workflows`, `get_workflow`, `validate_workflow`, `list_node_types`, `search_node_types`, `get_node_type`, and the tenant reads `list_agents`, `get_agent`, `list_tool_nodes`, `list_knowledge_bases`, `list_models`, `list_credentials`, `read_agent_practices` |
+| `workflows:read` | `list_workflows`, `get_workflow`, `validate_workflow`, `list_node_types`, `search_node_types`, `get_node_type`, `list_agent_updates`, and the tenant reads `list_agents`, `get_agent`, `list_tool_nodes`, `list_knowledge_bases`, `list_models`, `list_credentials`, `read_agent_practices` |
 | `workflows:write` | `create_workflow`, `update_workflow`, `create_agent`, `update_agent` |
 | `run` | `execute_workflow`, `retry_execution`, `run_node`, `test_agent`, `publish_agent` |
 | `executions:read` | `list_executions`, `get_execution`, `explain_failure`, `get_run_trace`, `get_plugin_logs` |

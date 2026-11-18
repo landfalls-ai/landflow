@@ -78,7 +78,7 @@ describe('Run an Agent', () => {
     const before = fake.requests.length;
     const record = await run(workflow('wf_agent_plain', {}));
     expect(record.error?.message ?? record.status).toBe('success');
-    expect(agentOutput(record)).toMatchObject({ reply: 'Echo: What is 6*7?', agentId: agent.id, version: 1, model: 'ollama/agent-own-model', endReason: 'completed', steps: [] });
+    expect(agentOutput(record)).toMatchObject({ reply: 'Echo: What is 6*7?', agentId: agent.id, version: 'draft' /* AG21: a manual run in the editor tests the agent's draft */, model: 'ollama/agent-own-model', endReason: 'completed', steps: [] });
     const [request] = fake.requests.slice(before);
     expect(request.path).toBe('/api/chat');
     expect(JSON.stringify(request.body.messages[0])).toContain('Check every sum with a tool');

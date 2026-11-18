@@ -203,6 +203,13 @@ figure; the detail says the usual day, the score, the runs and the surfaces. **A
 again if the day's value doubles); **Open** shows the AI page at that day, narrowed to what the item is about. Nothing here
 changes a cap, a budget or a run.
 
+### The versions a run used
+
+Under the header a line says which versions ran ("workflow v4 · Alert triager v2"): `RunVersionsLine`, from the
+execution's `versions` (`GET /api/executions/:id`). An editor run shows "draft" for an agent it tested, a pinned run
+the pin, a run the version published at that time otherwise. The executions list shows the workflow version chip on
+each card, and the run header the full line (on a phone too).
+
 ### A run as a timeline
 
 A card above the tabs shows the run as a timeline

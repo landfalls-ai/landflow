@@ -14,15 +14,17 @@ import type { ExecutionMode } from '@landflow/protocol';
 import type { Workflow } from '@landflow/engine';
 import type { PublicationStatus, PublishResult } from '../shared/publish';
 import type { WorkflowVersion } from '../shared/types';
-import { userNames } from './auth/users';
+import type { AgentPin, PinBlock } from '../shared/agent-versions'; // AG21: (types only: the logic loads lazily, so the routes' import closure stays small)
+import { getUser, userNames } from './auth/users';
 import { workflowCompositeIssues } from './composites';
 import { database } from './db';
 import { publishBlockedReason } from './governance/policy';
+import { canResource } from './projects/access';
 import { clearPublication, deletePublications, getPublication, listPublications, publishLog, publishedVersionId, setPublication } from './publications';
 import { singleton } from './singleton';
 import { store } from './store';
 import { logger } from './telemetry/logger';
-import { applyVersion, getVersion, listVersions, recordVersion, versionFor } from './versions';
+import { applyVersion, getVersion, listVersions, productionPins, recordVersion, versionFor } from './versions';
 import { HttpError } from './errors';
 
 export class PublishError extends HttpError {
@@ -30,8 +32,9 @@ export class PublishError extends HttpError {
   constructor(
     message: string,
     status = 400,
+    options: { code?: string; details?: Record<string, unknown> } = {}, // AG21: the 409 that names the agents
   ) {
-    super(message, status, { expose: true });
+    super(message, status, { expose: true, ...options });
   }
 }
 
@@ -76,10 +79,13 @@ export function productionWorkflow(workflow: Workflow): Workflow | undefined {
     return undefined;
   }
   // applyVersion reads only the snapshot.
-  const production = applyVersion(workflow, { workflow: published } as WorkflowVersion);
+  // AG21: each bound agent node carries the agent version this version was published with (never saved, never shown).
+  const production = applyAgentPins(applyVersion(workflow, { workflow: published } as WorkflowVersion), versionId);
   merged.set(workflow, { versionId, workflow: production });
   return production;
 }
+
+const applyAgentPins = (workflow: Workflow, versionId: string): Workflow => productionPins.apply?.(workflow, versionId) ?? workflow;
 
 /** Every published workflow as production triggers see it. */
 export function productionWorkflows(): Workflow[] {
@@ -141,14 +147,75 @@ export async function publicationStatus(workflowId: string): Promise<Publication
   };
 }
 
+/** AG21: publishing an agent on a workflow's behalf; `agents/publish-first.ts` sets `run` (the publish route imports it). */
+export type AgentPublishOutcome = { ok: true; version: number } | { ok: false; status: number; message: string; details?: Record<string, unknown> };
+export const agentPublishing = singleton('agent-publishing', () => ({ run: undefined as undefined | ((agentId: string, options: { signal?: AbortSignal }) => Promise<AgentPublishOutcome>) }));
+
+/** AG21: how a publish treats agents whose draft is not what is published. */
+export interface PublishOptions {
+  /** `publish-first`: each such agent goes through its smoke test and gate first; `as-published`: pin the published versions knowingly. */
+  agents?: 'publish-first' | 'as-published';
+  /** The pins to set (the update path); a version's pins never change, so only for a version without any. */
+  pins?: AgentPin[];
+  signal?: AbortSignal;
+}
+
+/**
+ * AG21: what to do about agents whose draft differs from their published version, for a graph about to be pinned.
+ * Refuses (409 `agent_changes_unpublished`) unless the options say what to do; returns the log note when it pinned
+ * what is published knowingly.
+ */
+export async function resolveAgents(graph: Pick<Workflow, 'nodes'>, options: PublishOptions, by?: string): Promise<string | undefined> {
+  const { blocks } = await import('./agents/versions');
+  const stopping = withAccess(blocks(graph), by);
+  if (!stopping.length) return undefined;
+  if (options.agents === 'publish-first') {
+    // Publishing an agent needs the same right as `POST /api/agents/:id/publish`: a workflow editor may not push a shared agent's draft live.
+    const refused = stopping.filter((b) => b.canPublish === false);
+    if (refused.length) {
+      throw new PublishError(`Ask the owners of ${refused.map((b) => `“${b.name}”`).join(', ')} to publish ${refused.length === 1 ? 'it' : 'them'}: you can use ${refused.length === 1 ? 'it' : 'them'} but not change ${refused.length === 1 ? 'it' : 'them'}`, 403, { code: 'agent_publish_forbidden', details: { agents: stopping } });
+    }
+    for (const block of stopping) {
+      if (!agentPublishing.run) throw new PublishError('Publishing agents first is not available here', 501);
+      const outcome = await agentPublishing.run(block.agentId, { signal: options.signal });
+      if (!outcome.ok) throw new PublishError(outcome.message, outcome.status, { code: 'agent_publish_held', details: { agent: block.agentId, ...outcome.details } });
+    }
+    logger.info('agents published for a workflow publish', { 'landflow.agents': stopping.length, ...(by && { 'landflow.user': by }) });
+    return undefined;
+  }
+  if (options.agents === 'as-published') {
+    const never = stopping.filter((b) => b.published === undefined);
+    if (never.length) {
+      throw new PublishError(`${never.map((b) => `“${b.name}”`).join(', ')} ${never.length === 1 ? 'was' : 'were'} never published, so there is no version to pin: publish ${never.length === 1 ? 'it' : 'them'} first`, 409, { code: 'agent_changes_unpublished', details: { agents: never } });
+    }
+    return `Pinned ${stopping.map((b) => `${b.name} v${b.published}`).join(', ')} as published, not the agent drafts the editor tested`;
+  }
+  throw new PublishError(`${stopping.map((b) => `“${b.name}”`).join(', ')} ${stopping.length === 1 ? 'has' : 'have'} changes that are not published, so the editor tested something production would not run`, 409, {
+    code: 'agent_changes_unpublished',
+    details: { agents: stopping },
+  });
+}
+
+/** A block with whether the person publishing may publish that agent (no person: the system, which may). */
+export type AccessBlock = PinBlock & { canPublish?: boolean };
+
+/** `blocks` with `canPublish` set from `by`'s right to update each agent (`by` a user id; absent or not a user, like 'migration': the system). */
+export function withAccess(blocks: PinBlock[], by?: string): AccessBlock[] {
+  const actor = by ? getUser(by) : undefined;
+  return blocks.map((b) => ({ ...b, canPublish: !actor || canResource(actor, 'agent', b.agentId, 'update') }));
+}
+
 /**
  * Publish a version of a workflow: production triggers run it from now on, the workflow is active, and its app
  * webhook triggers are registered (or moved to the new version's settings). Publishing an older version is a rollback.
  * Trigger registrations that fail are reported in `triggerErrors` and retried; the publish itself stands.
  *
+ * AG21: the version pins each bound agent at its published version (a version with pins publishes with them: a rollback
+ * runs its own); an agent whose draft differs refuses the publish unless `options.agents` says what to do.
+ *
  * `by`: who publishes (shown in the timeline). Approval flows wrap this function; it is the only one that publishes.
  */
-export async function publishVersion(workflowId: string, versionId: string, by?: string, note?: string): Promise<PublishResult> {
+export async function publishVersion(workflowId: string, versionId: string, by?: string, note?: string, options: PublishOptions = {}): Promise<PublishResult> {
   const workflow = store.getWorkflow(workflowId);
   if (!workflow) throw new PublishError('Workflow not found', 404);
   const version = getVersion(workflowId, versionId);
@@ -162,8 +229,18 @@ export async function publishVersion(workflowId: string, versionId: string, by?:
     const listed = broken.slice(0, 3).map((issue) => issue.message).join('; ');
     throw new PublishError(`This version breaks a composite’s contract, so it can’t be published: ${listed}${broken.length > 3 ? `, and ${broken.length - 3} more` : ''}`, 422);
   }
+  // AG21: a version's pins are set when it is first published and never change.
+  const { pinsFor, pinsToSet, setPins } = await import('./agents/versions');
+  let pins: AgentPin[] | undefined;
+  let logNote = note;
+  if (!pinsFor(versionId).length) {
+    const decided = options.pins ? undefined : await resolveAgents(version.workflow, options, by);
+    pins = options.pins ?? pinsToSet(version.workflow);
+    if (decided) logNote = note ? `${note} · ${decided}` : decided;
+  }
   database().transaction(() => {
-    setPublication(workflowId, versionId, by, note);
+    if (pins) setPins(versionId, pins);
+    setPublication(workflowId, versionId, by, logNote);
     if (!workflow.active) store.saveWorkflow({ ...workflow, active: true });
   });
   logger.info('workflow published', { 'landflow.workflow.id': workflowId, 'landflow.version.id': versionId, ...(by && { 'landflow.user': by }) });
@@ -171,13 +248,60 @@ export async function publishVersion(workflowId: string, versionId: string, by?:
   return { ...(await publicationStatus(workflowId)), triggerErrors };
 }
 
-/** Publish the saved draft (the newest saved state of the workflow). */
-export async function publishDraft(workflowId: string, by?: string, note?: string): Promise<PublishResult> {
+const agentNames = (pins: readonly AgentPin[]) => new Map(pins.map((p) => [p.agentId, p.agentName ?? p.agentId]));
+
+/** What changes between two pin sets, one entry per agent (for a new version's summary). */
+export function pinChanges(from: readonly AgentPin[], to: readonly AgentPin[]): Array<{ agentName: string; from?: number; to: number }> {
+  const names = agentNames([...from, ...to]);
+  const before = new Map(from.map((p) => [p.agentId, p.version]));
+  const out = new Map<string, { agentName: string; from?: number; to: number }>();
+  for (const p of to) if (before.get(p.agentId) !== p.version && !out.has(p.agentId)) out.set(p.agentId, { agentName: names.get(p.agentId)!, ...(before.has(p.agentId) && { from: before.get(p.agentId) }), to: p.version });
+  return [...out.values()];
+}
+
+/**
+ * Publish the saved draft (the newest saved state of the workflow). AG21: when its version already has pins and the
+ * agents' published versions are newer, a new version is recorded (the same graph, the next number) and that one is published.
+ */
+export async function publishDraft(workflowId: string, by?: string, note?: string, options: PublishOptions = {}): Promise<PublishResult> {
   const workflow = store.getWorkflow(workflowId);
   if (!workflow) throw new PublishError('Workflow not found', 404);
-  const version = versionFor(workflow) ?? recordVersion(workflow);
+  let version = versionFor(workflow) ?? recordVersion(workflow);
   if (!version) throw new PublishError('This workflow has no saved version to publish: save it first', 409);
-  return publishVersion(workflowId, version.id, by, note);
+  const { pinsDiffer, pinsFor, pinsSummary, pinsToSet } = await import('./agents/versions');
+  // An agent draft that differs refuses (or is published first, or pinned knowingly) whether or not this version has pins already.
+  const decided = await resolveAgents(workflow, options, by);
+  const existing = pinsFor(version.id);
+  const wanted = pinsToSet(workflow);
+  if (existing.length && pinsDiffer(existing, wanted)) {
+    version = recordVersion(workflow, { force: true, summary: pinsSummary(pinChanges(existing, wanted)), ...(by && { author: by }) }) ?? version;
+  }
+  if (decided) note = note ? `${note} · ${decided}` : decided;
+  // Decided above: publishVersion sets these pins (when the version has none) without asking again.
+  return publishVersion(workflowId, version.id, by, note, { ...options, pins: wanted });
+}
+
+/**
+ * AG21: "Alert triager v3 is available": a new version from the production version's graph with these agents moved to
+ * their published versions, published. The draft is not touched. `testedExecutionId` is the test run that passed.
+ */
+export async function publishUpdate(workflowId: string, agentIds: readonly string[], by?: string, testedExecutionId?: string): Promise<PublishResult> {
+  const workflow = store.getWorkflow(workflowId);
+  if (!workflow) throw new PublishError('Workflow not found', 404);
+  const production = getPublication(workflowId);
+  const base = production && getVersion(workflowId, production.versionId);
+  if (!production || !base) throw new PublishError('This workflow is not published, so there is no production version to update', 409, { code: 'not_published' });
+  const { pinsFor, pinsSummary, repinned, testPassed } = await import('./agents/versions');
+  const current = pinsFor(base.id);
+  const wanted = repinned(current, agentIds);
+  const changes = pinChanges(current, wanted);
+  if (!changes.length) throw new PublishError('Nothing to update: production already runs the latest published versions of these agents', 409, { code: 'nothing_to_update' });
+  const tested = testPassed(workflowId, testedExecutionId, wanted);
+  if (tested !== true) throw new PublishError(tested, 409, { code: 'not_tested' });
+  const graph = applyVersion(workflow, base);
+  const version = recordVersion(graph, { force: true, summary: pinsSummary(changes), ...(by && { author: by }) });
+  if (!version) throw new PublishError('Could not record the new version', 500);
+  return publishVersion(workflowId, version.id, by, `Moved to ${pinsSummary(changes)} after a passing test`, { pins: wanted });
 }
 
 /** Unpublish: production triggers stop, the workflow is inactive, and its app webhooks are removed from their services. */

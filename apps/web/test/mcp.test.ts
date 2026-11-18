@@ -613,6 +613,7 @@ describe('Instance MCP server', () => {
         'get_plugin_logs',
         'get_run_trace',
         'get_workflow',
+        'list_agent_updates', // AG21
         'list_agents', // AG18
         'list_credentials',
         'list_executions',
