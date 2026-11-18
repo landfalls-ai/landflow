@@ -21,8 +21,6 @@ import { NodeIcon } from '../ui/icon';
 
 export const TILE = 88;
 export const WIDE_TILE = 240;
-/** AG12: the width a wide node with an agent band is at least (three columns above its three slots). */
-export const BAND_TILE = 300;
 const AI_LABEL: Record<string, string> = {
   ai_languageModel: 'Model',
   ai_memory: 'Memory',
@@ -99,8 +97,6 @@ export interface NodeTileProps {
   live?: NodeLive;
   /** Names for the sub-node slots by connection type, over the descriptor's: a team node's "Lead's model". */
   slotNames?: Partial<Record<ConnectionType, string>>;
-  /** AG12: what the agent is connected to, read-only, under the node's name and above its slots (canvas/agent-band.tsx). */
-  band?: ReactNode;
   /** Toolbars and overlays rendered inside the node. */
   children?: ReactNode;
 }
@@ -177,7 +173,6 @@ export function NodeTile(props: NodeTileProps) {
     fresh,
     face,
     live,
-    band,
     slotNames,
     children,
   } = props;
@@ -367,13 +362,9 @@ export function NodeTile(props: NodeTileProps) {
   }
 
   // -------------------------------------------------------------- main node
-  // AG12: a band (what the agent is connected to) widens the tile to hold its three columns and grows it in height; a team's live body follows it (the lead's band above the roster or the live body).
-  const banded = wide && Boolean(band);
-  const width = wide ? Math.max(WIDE_TILE, slotsWidth(aiIn), banded ? BAND_TILE : 0) : TILE;
+  const width = wide ? Math.max(WIDE_TILE, slotsWidth(aiIn)) : TILE;
   const height = Math.max(TILE, Math.max(mainIn.length, mainOut.length) * 30 + 22);
-  const grows = wide && (Boolean(live?.body) || banded);
-  // A banded tile stays at or under ~140 canvas px (a team's idle line included): its slot labels and + buttons add ~50 more, and wired sub-nodes sit 200 px below the tile's top.
-  const headHeight = banded ? Math.min(height, 48) : height;
+  const grows = wide && Boolean(live?.body);
   const head = wide && live?.head ? (
     live.head
   ) : (
@@ -417,11 +408,10 @@ export function NodeTile(props: NodeTileProps) {
       >
         {grows ? (
           <>
-            <div className="flex shrink-0 items-center gap-3 px-4" style={{ height: headHeight }}>
+            <div className="flex shrink-0 items-center gap-3 px-4" style={{ height }}>
               {head}
             </div>
-            {banded && band}
-            {live?.body}
+            {live!.body}
           </>
         ) : (
           head

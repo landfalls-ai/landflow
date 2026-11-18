@@ -11,7 +11,10 @@ import { cn } from '@/lib/utils';
 import { duration } from '@/lib/client/format';
 import { NodeIcon } from '../ui/icon';
 import { useTeamLeads } from '../agents/faces'; // AG12
-import { stepLine, useAgentConnections } from '../canvas/agent-band'; // AG12
+import { useBubbleAnswer, bubblesFromAnswer } from '@/lib/client/agent-bubble-data'; // AG16
+import { boundAgentOf } from '@/lib/client/agent-bubble-data'; // AG16
+import { bubbleTitle, type Bubble } from '@/lib/shared/agent-bubbles'; // AG16
+import { useBubbleIcon } from '../canvas/bubble-view'; // AG16
 import { useEditor } from './store';
 import { stepOrder } from './step-order';
 
@@ -111,21 +114,12 @@ function StepCard({ id, index, attached, then }: { id: string; index: number; at
   const pinned = useEditor((s) => Boolean(s.pinData[id]));
   const breakpoint = useEditor((s) => s.breakpoints.includes(id));
   const names = useEditor(useShallow((s) => [...attached, ...then].map((other) => s.nodes.find((n) => n.id === other)?.data.wf.name ?? other)));
-  // AG12: a Run an Agent / Run a Team step says what its agent is connected to (the canvas's band, as one line).
+  // AG16: a Run an Agent / Run a Team step is "Run an Agent" and, under it, mini bubbles of its agent (the labels are the hover and the screen reader's, never card text).
   const workflowId = useEditor((s) => s.workflowId);
-  const wired = useEditor(
-    useShallow((s) => {
-      const subs = s.edges.filter((e) => e.target === id && e.data?.connectionType !== 'main');
-      const nameOf = (type: string) => {
-        const edge = subs.find((e) => e.data?.connectionType === type);
-        return edge ? s.nodes.find((n) => n.id === edge.source)?.data.wf.name : undefined;
-      };
-      return { model: nameOf('ai_languageModel'), memory: nameOf('ai_memory'), tools: subs.filter((e) => e.data?.connectionType === 'ai_tool').length };
-    }),
-  );
   const leads = useTeamLeads(wf?.type === 'core.runTeam' ? [wf] : undefined);
-  const agentId = wf?.type === 'core.messageAgent' && typeof wf.parameters.agentId === 'string' && wf.parameters.agentId && !wf.parameters.agentId.includes('{{') ? wf.parameters.agentId : wf?.type === 'core.runTeam' ? leads[String(wf.parameters.teamId)] : undefined;
-  const connected = useAgentConnections(agentId, workflowId || undefined, id);
+  const agentId = boundAgentOf(wf, leads);
+  const connected = useBubbleAnswer(agentId ? { agentId, nodeId: id, ...(workflowId && { workflowId }) } : undefined);
+  const iconOf = useBubbleIcon();
   if (!wf) return null;
   const open = (nodeId: string) => useEditor.getState().openNode(nodeId);
   const state = status?.state ?? 'idle';
@@ -145,7 +139,8 @@ function StepCard({ id, index, attached, then }: { id: string; index: number; at
             {pinned && <Pin className="size-3.5 shrink-0 text-viz-7" aria-label="Pinned output" />}
             {breakpoint && <CircleDot className="size-3.5 shrink-0 text-rd" aria-label="Breakpoint" />}
           </span>
-          <span className={cn('block text-[12.5px] text-t3', connected ? 'line-clamp-2' : 'truncate')}>{connected ? stepLine(info?.descriptor.displayName ?? wf.type, connected.connections, { ...(wired.model && { model: wired.model }), ...(wired.memory && { memory: wired.memory }), tools: wired.tools }) : (info?.descriptor.displayName ?? wf.type)}</span>
+          <span className="block truncate text-[12.5px] text-t3">{info?.descriptor.displayName ?? wf.type}</span>
+          {connected && <MiniBubbles agentName={connected.agent.name} bubbles={bubblesFromAnswer(connected, [], id)} iconOf={iconOf} />}
         </span>
         <StepState state={state} items={items} ms={status?.durationMs} />
       </button>
@@ -182,6 +177,22 @@ function StepState({ state, items, ms }: { state: string; items?: number; ms?: n
           {ms !== undefined && ` · ${duration(ms)}`}
         </span>
       )}
+    </span>
+  );
+}
+
+/** AG16: an agent's bubbles as 20 px circles with their logos, on a step card: at most 6, then "+N". The names are in `title` and `aria-label` only. */
+function MiniBubbles({ agentName, bubbles, iconOf }: { agentName: string; bubbles: Bubble[]; iconOf: (b: Bubble) => string }) {
+  const shown = bubbles.slice(0, 6);
+  const more = bubbles.length - shown.length;
+  return (
+    <span data-testid="mini-bubbles" role="group" aria-label={`${agentName}: ${bubbles.map((b) => bubbleTitle(agentName, b)).join('; ')}`} className="mt-1 flex items-center gap-1">
+      {shown.map((b) => (
+        <span key={b.id} data-bubble={b.id} title={bubbleTitle(agentName, b)} className={cn('grid size-5 place-items-center rounded-full border bg-sf', b.pending === 'added' || b.movedHere ? 'border-dashed border-ac' : 'border-hair', b.pending === 'removed' && 'opacity-50')}>
+          <NodeIcon icon={iconOf(b)} size={12} strokeWidth={1.8} className="text-t1" />
+        </span>
+      ))}
+      {more > 0 && <span className="text-[11px] text-t3">+{more}</span>}
     </span>
   );
 }
