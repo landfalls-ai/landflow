@@ -16,6 +16,7 @@ import type { AgentConfig, AgentGuardrails, AgentModel, AgentPersona, AgentTempl
 import { DEFAULT_BRIEF_GUARDRAILS, isNodeKnowledge } from '@/lib/shared/agents';
 import type { AgentCaseDraft, AgentNotAdded, AgentReuse, AgentCard } from '@/lib/shared/agent-card'; // SB17: AG02: AG19: AgentReuse, AgentCard
 import { agentLine, type CatalogAgent } from '@/lib/shared/tenant-catalog'; // AG19:
+import { catalogCredentials, catalogToolNodes } from './tenant-catalog'; // wave ag4 carryover: the brief reads the person's credentials
 import { writesOutside } from '@/lib/shared/run-check'; // SB17:
 import { missingSystem, type ArchitectEvent, type ArchitectMissing, type ArchitectNeed, type ArchitectTurn } from '@/lib/shared/agent-architect';
 import { randomFace } from '@/lib/shared/faces';
@@ -1821,6 +1822,12 @@ export function designBrief(spec: AgentSpec, input: Pick<ArchitectInput, 'types'
     // A score under 4 is words of the request found only in a node's description: not a match.
     for (const hit of query ? searchNodes(query, types, 6) : []) if (hit.score >= 4 && !hits.has(hit.type) && hits.size < 8) hits.set(hit.type, `${hit.type} (${hit.displayName}): ${shorten(hit.description, 120)}`);
   }
+  // Wave ag4 carryover: the credentials the person has (list_credentials): a matched node one of them fits says so and is
+  // listed first, so "the sales database" with a SQLite credential named Sales DB is the SQLite node, not Postgres.
+  const creds = input.actor ? catalogCredentials(input.actor) : [];
+  const yours = new Map((input.actor && hits.size ? catalogToolNodes(input.actor, { types: [...hits.keys()] }) : []).map((n) => [n.nodeType, n.credentials.flatMap((c) => c.yours)]));
+  const matched = [...hits.entries()].map(([type, line]) => (yours.get(type)?.length ? `${line} (works with your credential ${yours.get(type)!.map((n) => `“${n}”`).join(', ')})` : line));
+  matched.sort((a, b) => Number(b.includes('(works with your credential')) - Number(a.includes('(works with your credential')));
   const models = input.resources?.models ?? [];
   const knowledge = input.resources?.knowledge ?? [];
   const agents = input.actor ? catalogAgents(input.actor) : []; // AG19:
@@ -1832,7 +1839,8 @@ export function designBrief(spec: AgentSpec, input: Pick<ArchitectInput, 'types'
     // AG13: a new knowledge base can always be started (the host's embeddings model, else keyword search), so the brief never says it cannot
     'Knowledge: only if its job means looking things up in documents (policies, contracts, playbooks, past answers). Use an existing collection only if it holds those documents; else a new name (lowercase-dashes) for an empty one the user fills (it is searched with the host\'s embeddings model, or by keywords when it has none). Most agents that act need none: leave knowledge empty.',
     'Node tools: only for what it must do outside its reply (post a message, create a ticket, fetch a record). Reading, judging or summarising the message it gets needs no tool: then leave nodeTools empty.',
-    hits.size ? `Nodes that matched the request (most are probably not needed): ${[...hits.values()].join('; ')}` : 'No node matched the request.',
+    creds.length ? `Credentials the person has (names and types only; of two nodes that do the same job, pick the one a credential here fits; never set one, the person picks): ${creds.map((c) => `${c.name} (${c.type})`).join('; ')}` : 'Credentials the person has: none yet.',
+    hits.size ? `Nodes that matched the request (most are probably not needed): ${matched.join('; ')}` : 'No node matched the request.',
     'If it must act in an app none of these nodes covers (Slack, Jira…), name it in missing ("Slack: post a message") instead of picking a node that doesn\'t do it.',
   ].join('\n');
 }
@@ -2031,6 +2039,7 @@ export async function designAgent(spec: AgentSpec, input: Omit<ArchitectInput, '
       lookedAt('list_tool_nodes', input.types.filter(usableAsTool).length);
       lookedAt('list_knowledge_bases', input.resources?.knowledge.length ?? 0);
       lookedAt('list_models', input.resources?.models.length ?? 0);
+      lookedAt('list_credentials', catalogCredentials(input.actor).length); // wave ag4 carryover: the brief lists them
     }
     await runArchitect({ ...input, ...attempt, onDesign, agentModel, ...(spec.base && spec.change && { draft: spec.base, noCases: true, revise: true }) /* AG04: */, request: spec.change ? `${designWords(spec)}\n${spec.change}` /* AG04: */ : designWords(spec), onEvent }).catch((caught: unknown) => {
       if (isUsageCapError(caught)) throw caught;

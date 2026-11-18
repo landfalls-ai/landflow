@@ -206,9 +206,12 @@ export function catalogToolNodes(actor: Actor | undefined, options: { query?: st
       const text = `${d.displayName} ${t.type} ${(d.keywords ?? []).join(' ')} ${d.description}`.toLowerCase();
       return words.filter((w) => text.includes(w)).length;
     };
+    // Wave ag4 carryover: of two nodes that cover the query as well (Postgres, SQLite for "the sales database"), the one
+    // whose credential the person already has ranks first: it works right away, and the person named no server.
+    const ready = (t: NodeTypeInfo) => ((t.descriptor.credentials ?? []).some((c) => byType.has(qualified(t.pluginId, c.name))) ? 1 : 0);
     chosen = types
       .filter((t) => score.has(t.type))
-      .sort((a, b) => covers(b) - covers(a) || score.get(b.type)! - score.get(a.type)! || a.descriptor.displayName.localeCompare(b.descriptor.displayName))
+      .sort((a, b) => covers(b) - covers(a) || ready(b) - ready(a) || score.get(b.type)! - score.get(a.type)! || a.descriptor.displayName.localeCompare(b.descriptor.displayName))
       .slice(0, 12);
   } else chosen = [...types].sort((a, b) => a.pluginName.localeCompare(b.pluginName) || a.descriptor.displayName.localeCompare(b.descriptor.displayName));
   return chosen.map(describe);
