@@ -701,7 +701,8 @@ describe('4. a held publish says its score everywhere (AG24 × AG22 × the publi
     expect(held).toMatchObject({ average: 2, basis: 'threshold' });
     const session = sessionHeldLine('Gate writer', held, viaCard.reason);
     expect(session).toContain('2.0 / 5');
-    expect(session).toContain('judged on its new cases');
+    expect(session).toContain('judged on its own cases against 3.0');
+    expect(session).toBe(`“Gate writer”: ${cardHeldLine(held as never)}`); // one wording
     for (let attempt = 1; attempt <= 2; attempt++) {
       let thrown: InstanceType<typeof ApiError> | undefined;
       await publishVersion(id, { agents: 'publish-first' }).catch((e: InstanceType<typeof ApiError>) => (thrown = e));

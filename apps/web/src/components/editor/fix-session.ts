@@ -7,6 +7,7 @@
 import type { AssistantOp } from '@/lib/shared/assistant-ops';
 import { fixAutonomyFor, keptOwnFixLine, normalDestination, type FixAutonomy, type SessionFix } from '@/lib/shared/fix-autonomy';
 import { dropRepeatedAgentWork, type AgentBrief } from '@/lib/shared/agent-brief';
+import { heldLine as gateHeldLine } from '@/lib/shared/agent-eval';
 import { useAutonomyFacts } from './spotlight-autonomy';
 
 /** What a test-and-fix session takes when nothing names it: the switch alone (decision of 2026-11-18); never `autonomyOf`. */
@@ -110,13 +111,10 @@ export function heldRequest(agent: string, line: string, lowCases: ReadonlyArray
   return `${line} Change “${agent}” so these cases pass without removing what it already does: ${rows.length ? rows.join('; ') : 'the cases that scored lowest'}.`;
 }
 
-/** *The eval gate held “X”: 2.7 / 5, below the 3.0 it asks for (judged on its new cases)*: the session's line for a held verdict. */
+/** The session's line for a held verdict: the shared wording (`heldLine` of lib/shared/agent-eval.ts, also the publish card's and the agent card's) with the agent named, so every place says it the same way. */
 export function heldLine(agent: string, held: { average?: number; basis?: string; shared?: number; reason?: string } | undefined, fallback?: string): string {
   if (held?.average === undefined) return `The eval gate held “${agent}”${held?.reason ?? fallback ? `: ${held?.reason ?? fallback}` : ''}.`;
-  const score = held.average;
-  const asks = /below the ([\d.]+)/.exec(held.reason ?? '')?.[1];
-  const basis = held.basis === 'threshold' ? ' (judged on its new cases)' : held.basis === 'same-cases' ? ' (judged on the cases both runs share)' : '';
-  return `The eval gate held “${agent}”: ${score.toFixed(1)} / 5${asks ? `, below the ${asks} it asks for` : held.reason ? `: ${held.reason}` : ''}${basis}.`;
+  return `“${agent}”: ${gateHeldLine({ average: held.average, basis: held.basis as 'threshold' | 'same-cases' | undefined, shared: held.shared, reason: held.reason ?? '' })}`;
 }
 
 /**
@@ -131,4 +129,18 @@ export function duplicatedSteps(
   const nodes = workflow.nodes.map((n) => ({ key: n.id, type: n.type, name: n.name, parameters: n.parameters }));
   const edges = workflow.connections.map((c): [string, string, number, never] => [c.source, c.target, c.sourceIndex ?? 0, c.type as never]);
   return new Map(dropRepeatedAgentWork(nodes, edges, briefs).by.map((d) => [d.key, d.agent]));
+}
+
+/** Headers a trigger's last event keeps out of a test run: what authenticates the caller or signs the call is not test data. */
+export const SECRET_HEADERS = /^(?:authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token|x-webhook-secret|x-hub-signature.*|.*-signature|.*token.*|.*secret.*)$/i;
+/** Query parameters that look like a secret (a token, key, signature, password or auth value). */
+export const SECRET_PARAMS = /token|secret|signature|password|passwd|api[-_]?key|\bkey$|^sig$|auth/i;
+
+/** A trigger event's JSON without the secrets of the call: its signature, token and secret headers and its secret-looking query parameters. */
+export function withoutSecrets(item: Record<string, unknown>): Record<string, unknown> {
+  const pick = (value: unknown, secret: (key: string) => boolean) =>
+    value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([key]) => !secret(key))) : undefined;
+  const headers = pick(item.headers, (k) => SECRET_HEADERS.test(k));
+  const query = pick(item.query, (k) => SECRET_PARAMS.test(k));
+  return { ...item, ...(headers && { headers }), ...(query && { query }) };
 }

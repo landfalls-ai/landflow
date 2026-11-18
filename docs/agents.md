@@ -795,7 +795,7 @@ request: the run goes on when the last one is decided). The Platform analyst's o
   editor test run of the draft by a signed-in person may carry it, never a trigger, a rerun, an API key or the test-update run).
   A Run an Agent step in that run lets Spotlight decide each call that asks first (or a held read): the call runs at once when
   every destination it reaches was already **given** (the agent's saved fixed To / CC / BCC, URL, channel or recipient number, read from the
-  agent config the run uses; the flow's own sending nodes; the person's words), and the Run Trace reads *Approved by Spotlight
+  agent config the run uses; the flow's own sending nodes, once the flow has been published (a brand-new draft's builder addresses are not given, as in AG22); the person's words), and the Run Trace reads *Approved by Spotlight
   (autonomous fix session)*. Any other call is not run: where the run can wait (the editor, no model or tools wired on the node)
   it waits for the person as in the editor's chat and the session says *Needs you*; where it can't, it is refused as *Left for you
   by Spotlight: a destination nobody gave*. An expression or an address that can't be read is never given, a write that names no address

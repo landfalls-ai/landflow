@@ -13,6 +13,7 @@
  * (what to change, in words) the answer is the changed config and `changes` (what differs from the base, one line each); nothing
  * is saved. AG24: `keep` ({ tools, reason }, at most 20 names) names tools a fix session added: a change never removes one, and a `dropped` line says it was kept. `base` without `change` (or the reverse) or without `preview` is 400; an agent the caller cannot edit is 404.
  */
+import { keptToolLine } from '@/lib/shared/kept-tool';
 import { z } from 'zod';
 import { randomFace } from '@/lib/shared/faces';
 import { agentResources } from '@/lib/server/assistant/agent-resources';
@@ -141,7 +142,7 @@ export const POST = handler(async (request: Request) => {
       const put = putKeptBack(baseConfig as { tools?: unknown }, design.config as { tools?: unknown }, keep);
       design.config = put.config as typeof design.config;
       for (const name of put.restored) {
-        const line = `Kept “${name}”: this session added it`;
+        const line = keptToolLine(name);
         if (!design.dropped.includes(line)) design.dropped.push(line);
       }
     }

@@ -23,6 +23,7 @@ import { DuplicateRunError, findTrigger, liveExecution, newExecutionId, planReru
 import { workflowSchema } from '@/lib/server/schemas';
 import { store } from '@/lib/server/store';
 import { flowDestinations } from '@/lib/server/agents/spotlight-approvals'; // AG23:
+import { getPublication } from '@/lib/server/publications';
 import { currentPrincipal } from '@/lib/server/auth/guard'; // AG23:
 import { SPOTLIGHT_ONLY_EDITOR, spotlightRunFields } from '@/lib/server/spotlight-run-schema'; // AG23:
 import { startTrigger, traceparentHeader, type TriggerFire } from '@/lib/server/telemetry';
@@ -78,7 +79,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   if (body.data.approvals) {
     const principal = currentPrincipal();
     if (body.data.rerun || !principal || (principal.via !== 'session' && principal.via !== 'test') || !body.data.sessionId) return error(SPOTLIGHT_ONLY_EDITOR, 400);
-    spotlightApprovals = { userId: principal.user.id, sessionId: body.data.sessionId, destinations: [...(body.data.destinations ?? []), ...flowDestinations(workflow)] };
+    spotlightApprovals = { userId: principal.user.id, sessionId: body.data.sessionId, destinations: [...(body.data.destinations ?? []), ...(getPublication(id) ? flowDestinations(workflow) : [])] }; // AG22 and AG23 agree: a brand-new draft's own builder URLs are not given (lesson 21), a published flow's are
   } else if (body.data.sessionId || body.data.destinations) return error(SPOTLIGHT_ONLY_EDITOR, 400);
 
   let plan: Omit<RunOptions, 'signal' | 'onEvent' | 'onStart'>;

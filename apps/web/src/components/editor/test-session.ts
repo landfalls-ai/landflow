@@ -21,8 +21,9 @@ import { smokeLine, fixLine, type AgentCard, type AgentSmoke } from '@/lib/share
 import type { AgentFixEvent } from '@/lib/shared/agent-fix'; // AG20:
 import { designChange, heldOf, readDraft, type ChangeDesign } from '@/lib/client/agent-change'; // AG20: AG22: heldOf, readDraft
 import { api } from '@/lib/client/api'; // AG22:
+import { keptToolOf } from '@/lib/shared/kept-tool';
 import { normalDestination, publishedLine, SPOTLIGHT_APPROVALS, unattendedLine, type SpotlightRunApprovals } from '@/lib/shared/fix-autonomy'; // AG22:
-import { agentReplyText, agentUndoneBy, destinationsInText, droppedLine, fixAutonomyNow, fixesOf, heldLine, heldRequest, KEEP_REASON, keptTools, leftForNextRound, duplicatedSteps, sameFixTwice, toolsAdded, undoneBy, type OwnFix } from './fix-session'; // AG22:
+import { agentReplyText, agentUndoneBy, destinationsInText, droppedLine, fixAutonomyNow, fixesOf, heldLine, heldRequest, KEEP_REASON, keptTools, leftForNextRound, duplicatedSteps, sameFixTwice, toolsAdded, undoneBy, withoutSecrets, type OwnFix } from './fix-session'; // AG22:
 import { followsPractices, guardrailWords, type AgentConfig } from '@/lib/shared/agents'; // AG20:
 import { useBubbleData } from '@/lib/client/agent-bubble-data'; // ag4 review: the agent's name in what is left
 import { pickedModel } from './spotlight-model'; // AG20:
@@ -332,8 +333,6 @@ function weakSteps(): Array<{ node: string; problem: string }> {
   return [...hollowSteps(steps), ...multipliedSteps(canvasRun(), steps), ...rawMarkupSteps(replies)];
 }
 
-/** Headers a trigger's last event keeps out of a test run: what authenticates the caller is not test data. */
-const SECRET_HEADERS = /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token)$/i;
 
 /**
  * ag5 carryover (the live pass's G): a flow whose trigger waits for a test event (a Webhook or Form trigger with no pinned
@@ -351,8 +350,7 @@ async function lastTriggerEvent(): Promise<{ items: Array<{ json: Record<string,
       const { execution } = await api<{ execution: { startedAt?: string; runData?: Record<string, Array<{ outputs?: Array<Array<{ json?: Record<string, unknown> }>> }>> } }>(`/api/executions/${summary.id}`, { background: true });
       const item = execution.runData?.[nodeId]?.[0]?.outputs?.[0]?.[0]?.json;
       if (!item) continue;
-      const headers = item.headers && typeof item.headers === 'object' ? Object.fromEntries(Object.entries(item.headers as Record<string, unknown>).filter(([k]) => !SECRET_HEADERS.test(k))) : undefined;
-      return { items: [{ json: { ...item, ...(headers && { headers }) } }], trigger, at: execution.startedAt ?? summary.startedAt ?? '' };
+      return { items: [{ json: withoutSecrets(item) }], trigger, at: execution.startedAt ?? summary.startedAt ?? '' };
     }
   } catch {
     /* no run to read: the run listens */
@@ -587,7 +585,7 @@ async function showAgentFix(event: AgentFixEvent, attempt: number, signal: Abort
     const design = await designChange({ name: event.agent, description: '', base: { agentId: event.agentId }, change: event.change, typedAsk, namedBy: `${event.fix.cause ?? ''}\n${event.change}\n${typedAsk}` /* a tool the cause, the fix's words and the person's ask do not name is not added */, ...(kept.length && { keep: { tools: kept, reason: KEEP_REASON } }), ...pickedModel() }, signal);
     // AG22: never undo the session's own tool. ag5 carryover (join 1): the design route puts a kept tool back (`keep`, AG24) and says so in
     // `dropped`, so a design that tried to remove one never shows it missing: that line counts as the undo, and the design is dropped.
-    const restored = own ? ((design as { dropped?: string[] }).dropped ?? []).flatMap((line) => /^Kept “(.+)”: this session added it$/.exec(line)?.[1] ?? []) : [];
+    const restored = own ? ((design as { dropped?: string[] }).dropped ?? []).flatMap((line) => keptToolOf(line) ?? []) : [];
     const undone = own && (agentUndoneBy(event.agentId, design.config, own.fixes) ?? (restored.length ? own.fixes.find((f) => f.kind === 'agent' && f.agentId === event.agentId && f.toolsAdded?.some((t) => restored.includes(t))) : undefined));
     if (undone) return { undone };
     // Wave ag5 fix pass: a design that changes nothing publishes nothing: an autonomous session stops here, before any card or empty agent version.
@@ -873,7 +871,7 @@ export async function testUntilItRuns(goal?: string, options: { publishAgents?: 
       ran = true;
       const runItem = say([{ kind: 'run', run: { round, state: 'running' } }], testId);
       // AG22: an autonomous fix session's run carries Spotlight's approvals, with the destinations given (the person's yes too).
-      const approvals: SpotlightRunApprovals | undefined = autonomy === 'auto' ? { approvals: SPOTLIGHT_APPROVALS, sessionId: testId, destinations: [...new Set([...given, ...(sendsAllowed.get(wfId) ?? [])].map(normalDestination))] } : undefined;
+      const approvals: SpotlightRunApprovals | undefined = autonomy === 'auto' ? { approvals: SPOTLIGHT_APPROVALS, sessionId: testId, destinations: [...new Set([...given, ...(sendsAllowed.get(wfId) ?? [])].map(normalDestination))].filter((d) => d.length > 0 && d.length <= 2000).slice(0, 50) /* the run schema's limits: 50 strings of at most 2000 characters */ } : undefined;
       const result = await runOnce(signal, approvals, testId);
       approvedOnce.clear(); // a yes for an expression destination covered that run only
       if ('stopped' in result) {

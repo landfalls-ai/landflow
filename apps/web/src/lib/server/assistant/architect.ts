@@ -14,6 +14,7 @@ import { toToolName, type AgentMessage, type LanguageModel, type ToolCall, type 
 import { deriveToolSchema } from '@landflow/engine'; // AG08:
 import type { AgentConfig, AgentGuardrails, AgentModel, AgentPersona, AgentTemplate, AgentToolConfig, AnswerLength, NodeToolConfig } from '@/lib/shared/agents';
 import { DEFAULT_BRIEF_GUARDRAILS, isNodeKnowledge } from '@/lib/shared/agents';
+import { keptToolLine } from '@/lib/shared/kept-tool';
 import type { AgentCaseDraft, AgentNotAdded, AgentReuse, AgentCard } from '@/lib/shared/agent-card'; // SB17: AG02: AG19: AgentReuse, AgentCard
 import { agentLine, type CatalogAgent } from '@/lib/shared/tenant-catalog'; // AG19:
 import { catalogCredentials, catalogToolNodes } from './tenant-catalog'; // wave ag4 carryover: the brief reads the person's credentials
@@ -1932,7 +1933,7 @@ function reviseDraft(draft: DraftResult, base: Partial<AgentConfig>, change: str
   // AG24: a tool the session added is never removed by the change's words, nor dropped by the design: it stays, and a line says why.
   const keeps = (t: AgentToolConfig) => isKeptTool(keep, t as unknown as Record<string, unknown>);
   for (const t of base.tools ?? []) {
-    if (keeps(t) && (removed(change, t) || !(draft.config.tools ?? []).some((d) => (t.type === 'node' && d.type === 'node' ? d.nodeType === t.nodeType : toolKey(d) === toolKey(t))))) draft.dropped.push(`Kept “${'name' in t && t.name ? t.name : t.type === 'node' ? t.nodeType : 'the tool'}”: this session added it`);
+    if (keeps(t) && (removed(change, t) || !(draft.config.tools ?? []).some((d) => (t.type === 'node' && d.type === 'node' ? d.nodeType === t.nodeType : toolKey(d) === toolKey(t))))) draft.dropped.push(keptToolLine('name' in t && t.name ? t.name : t.type === 'node' ? t.nodeType : 'the tool'));
   }
   const kept = (base.tools ?? []).filter((t) => keeps(t) || !removed(change, t)).map((t) => withSenderGiven(t, change, types)); // ag3 carryover:
   const have = new Set(kept.map(toolKey));

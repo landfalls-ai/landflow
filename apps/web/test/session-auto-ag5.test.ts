@@ -252,6 +252,17 @@ describe('an autonomous fix session on a saved, published flow (switch on)', () 
     expect(published).not.toHaveBeenCalled();
   });
 
+  it('the run carries at most the run schema’s limits: 50 destinations of at most 2000 characters', async () => {
+    open();
+    runs = [{ 'Ask analyst': { items: 1 }, Post: { items: 1 } }];
+    replies = [{ text: 'Yes.' }];
+    const mails = Array.from({ length: 70 }, (_v, i) => `person${i}@landflow.test`).join(', ');
+    await testUntilItRuns(`Email the figures to ${mails} and post to https://example.test/${'a'.repeat(2100)}`);
+    const sent = run.mock.calls[0][0].approvals.destinations as string[];
+    expect(sent.length).toBeLessThanOrEqual(50);
+    expect(sent.every((d) => d.length <= 2000)).toBe(true);
+  });
+
   it('with the switch off every step waits and the run carries no approvals; the header asks to apply the fix', async () => {
     open();
     useAutonomyFacts.setState({ switchOn: false });
@@ -303,7 +314,7 @@ describe('an autonomous fix session on a saved, published flow (switch on)', () 
     runs = [{ 'Ask analyst': { items: 1 }, Post: { items: 1 } }, { 'Ask analyst': { items: 1 }, Post: { items: 1 } }];
     replies = [{ text: 'No, the agent has no database tool.', agentFix: lack }, { text: 'Yes, it does what you asked.' }];
     await testUntilItRuns('Post the sales by region to the receiver');
-    expect(lines()).toContain('The eval gate held “Question answerer”: 2.7 / 5, below the 3.0 it asks for (judged on its new cases).');
+    expect(lines()).toContain('“Question answerer”: Held by the eval gate: 2.7 / 5 (judged on its own cases against 3.0). 2.7 / 5, below the 3.0 it asks for');
     const designs = apiCalls.filter((c) => c.path === '/api/agents/design');
     expect(designs).toHaveLength(2);
     expect(JSON.stringify(designs[1].json)).toContain('Sales by region?');
@@ -324,7 +335,7 @@ describe('an autonomous fix session on a saved, published flow (switch on)', () 
     runs = [{ 'Ask analyst': { items: 1 }, Post: { items: 1 } }];
     replies = [{ text: 'No, the agent has no database tool.', agentFix: lack }];
     await testUntilItRuns('Post the sales by region to the receiver');
-    expect(outcomes()[0].text).toContain('The eval gate held “Question answerer”: 2.7 / 5');
+    expect(outcomes()[0].text).toContain('“Question answerer”: Held by the eval gate: 2.7 / 5');
     expect(outcomes()[0].text).toContain('out of fixes');
     expect(published).not.toHaveBeenCalled();
     expect(everyBody()).not.toMatch(/skipEval|as-published/);

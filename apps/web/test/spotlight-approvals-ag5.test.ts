@@ -150,6 +150,20 @@ describe('the run body', () => {
     expect(smtp.mails[0].to).toEqual(['X@Elsewhere.test']); // as the model gave it: never rewritten
   });
 
+  it('AG22 and AG23 agree: a brand-new draft’s own addresses are not given, a published flow’s are', async () => {
+    const { setPublication } = await import('@/lib/server/publications');
+    const own = [node('Mail', 'messaging.emailSend', { toEmail: 'ops@landflow.test', subject: 's', text: 't' })];
+    script = (t) => (t === 1 ? sendCall({ to: 'ops@landflow.test', subject: 'Triage' }) : { text: 'Done.' });
+    const draft = flow(loose.id, own);
+    expect(resultOf((await post(runRoute.POST, draft.id, SPOTLIGHT)).text)!.status).toBe('waiting'); // never published: the builder's own address is not given
+    expect(smtp.mails).toHaveLength(0);
+    turns.clear();
+    const live = flow(loose.id, own);
+    setPublication(live.id, store.listVersions?.(live.id)?.[0]?.id ?? 'v1');
+    expect(resultOf((await post(runRoute.POST, live.id, SPOTLIGHT)).text)!.status).toBe('success'); // published: the flow's own address counts
+    expect(smtp.mails).toHaveLength(1);
+  });
+
   it('where the run cannot wait the call is refused with the line, never run', async () => {
     // A model wired on the node: no decision can wait there, so the call that nobody gave is refused.
     const { approvedByLine: line } = await import('@/lib/shared/fix-autonomy');
