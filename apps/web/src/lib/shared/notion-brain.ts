@@ -105,9 +105,12 @@ export interface LinkCreateInput {
 
 /** PATCH /api/projects/:id/brain/notion */
 export interface LinkPatchInput {
+  /** `true` pauses. `false` resumes a paused link, and tries a refused (`unauthorized`) or `unshared` one again: the page is checked with the key first (wave nb3). */
   paused?: boolean;
   rps?: number;
   knowledgeScope?: KnowledgeScope;
+  /** Wave nb3: another Notion key for the same page (an admin's; checked like a new link before it is kept). */
+  credentialId?: string;
 }
 
 /** Requests a copy makes: the brain page, Log, four databases and their four reads, then a row and a body per page, one per fact, practice and note, and Home. */

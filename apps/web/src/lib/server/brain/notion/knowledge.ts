@@ -37,16 +37,25 @@ export const MAX_MARKDOWN_CHARS = 200_000;
 export const WALK_INTERVAL_MS = 15 * 60_000;
 
 const PROBE_MS = 10_000;
-/** What the next pass indexes with: the brain's model when it answers, else keyword vectors (the collection never mixes the two). */
-async function usableEmbeddings(): Promise<string> {
+/**
+ * What the next pass indexes with: the brain's model when it answers, else keyword vectors (the collection never mixes the two).
+ * NB08: a failed probe on a collection that already holds a model's vectors is an outage, not a change: `outage` keeps the held
+ * model and the collection (the pass indexes nothing new) instead of clearing it twice, once down and once back up. Keywords only
+ * when the collection is empty or already keyword.
+ */
+async function usableEmbeddings(held?: string, populated = false): Promise<{ key: string; outage?: true }> {
   const model = brainEmbeddingsModel();
-  if (!model) return 'bm25';
+  if (!model) return { key: 'bm25' };
   try {
     await ollamaEmbeddings({ baseUrl: ollamaUrl(), model, queryPrefix: 'search_query: ' }).embedQuery('ping', AbortSignal.timeout(PROBE_MS));
-    return model;
+    return { key: model };
   } catch (error) {
+    if (held && held !== 'bm25' && populated) {
+      logger.warn('[notion-brain] knowledge walk: the embeddings model did not answer; keeping the index and trying again next pass', { model, error: (error as Error).message });
+      return { key: held, outage: true };
+    }
     logger.warn('[notion-brain] knowledge walk: the embeddings model did not answer; indexing for keyword search', { model, error: (error as Error).message });
-    return 'bm25';
+    return { key: 'bm25' };
   }
 }
 
@@ -255,7 +264,8 @@ async function readPages(client: NotionClient, link: LinkRow, walked: Walked): P
 async function dropGone(link: LinkRow, walked: Walked, vectors: SqliteVectorStore): Promise<void> {
   if (!walked.complete) return;
   const present = new Set(walked.candidates.map((c) => compact(c.id)));
-  const items = new Set(itemsOf(link.id).map((item) => compact(item.notion_id)));
+  // A trashed row (`detached`) is no longer Landflow's page: its "Your notes" stop being searchable.
+  const items = new Set(itemsOf(link.id).filter((item) => item.state !== 'detached').map((item) => compact(item.notion_id)));
   for (const doc of docsOf(link.id)) {
     if (present.has(compact(doc.page_id)) || items.has(compact(doc.page_id))) continue;
     dropDoc(link.id, doc.page_id);
@@ -264,27 +274,33 @@ async function dropGone(link: LinkRow, walked: Walked, vectors: SqliteVectorStor
 }
 
 /** Chunk and index every doc whose hash differs from what the collection holds (a notes doc included); at most PASS_PAGES. */
-async function indexDocs(link: LinkRow, vectors: SqliteVectorStore, model: string | undefined): Promise<number> {
+async function indexDocs(link: LinkRow, vectors: SqliteVectorStore, model: string | undefined, outage = false): Promise<number> {
   const collection = notionKnowledgeCollection(link.project_id);
   const held = new Map<string, string>();
   const docs = docsOf(link.id);
   const live = new Set(docs.map((doc) => dashed(doc.page_id)));
   const gone = new Set<string>();
+  const otherLinks = new Set<string>();
   for (const { metadata } of await vectors.metadataOf(collection)) {
-    if (metadata.linkId === link.id && typeof metadata.pageId === 'string') {
+    // NB08: a relink's old chunks (another link id) go at once.
+    if (typeof metadata.linkId === 'string' && metadata.linkId !== link.id) otherLinks.add(metadata.linkId);
+    else if (metadata.linkId === link.id && typeof metadata.pageId === 'string') {
       // The chunks keep the page's hash and where it sits: a moved page is indexed again so their `path` follows.
       if (live.has(metadata.pageId)) held.set(metadata.pageId, `${String(metadata.hash ?? '')}|${String(metadata.path ?? '')}`);
       else gone.add(metadata.pageId); // a chunk of a doc that is gone
     }
   }
   for (const pageId of gone) await vectors.deleteWhere(collection, { linkId: link.id, pageId });
+  for (const other of otherLinks) await vectors.deleteWhere(collection, { linkId: other });
   const embeddings = embeddingsOf(model);
   let done = 0;
   let waiting = 0;
+  let failed = false;
   for (const doc of docs) {
     const id = dashed(doc.page_id);
     if (held.get(id) === `${doc.hash ?? ''}|${doc.path ?? ''}`) continue;
-    if (done >= PASS_PAGES) {
+    // NB08: what is not reached (the cap, an outage, the first embed failure) is waiting, so `pending` brings the next pass on the next tick.
+    if (outage || failed || done >= PASS_PAGES) {
       waiting++;
       continue;
     }
@@ -308,7 +324,8 @@ async function indexDocs(link: LinkRow, vectors: SqliteVectorStore, model: strin
     } catch (error) {
       // Embeddings down (or a dimension clash): keep what is indexed, retry at the next pass.
       logger.warn('[notion-brain] knowledge walk: a page could not be indexed', { link: link.id, error: (error as Error).message });
-      break;
+      waiting++;
+      failed = true;
     }
   }
   return waiting;
@@ -320,8 +337,9 @@ export async function walkKnowledge(link: LinkRow, client: NotionClient = readCl
   const collection = notionKnowledgeCollection(link.project_id);
   const cursor = (readCursors(link).knowledge ?? {}) as KnowledgeCursor;
   // The model when it answers, else keyword vectors: a collection holds one or the other, so a change clears it and the docs are indexed again.
-  const embeddingsKey = await usableEmbeddings();
-  if (cursor.embeddings !== embeddingsKey && (await vectors.count(collection)) > 0) await vectors.clear(collection);
+  const populated = (await vectors.count(collection)) > 0;
+  const { key: embeddingsKey, outage } = await usableEmbeddings(cursor.embeddings, populated);
+  if (cursor.embeddings !== embeddingsKey && populated) await vectors.clear(collection);
   const next: KnowledgeCursor = { at: new Date().toISOString(), embeddings: embeddingsKey };
   let waiting = 0;
   let pages = 0;
@@ -330,7 +348,7 @@ export async function walkKnowledge(link: LinkRow, client: NotionClient = readCl
     pages = walked.candidates.length;
     waiting += await readPages(client, link, walked);
     await dropGone(link, walked, vectors);
-    waiting += await indexDocs(link, vectors, embeddingsKey === 'bm25' ? undefined : embeddingsKey);
+    waiting += await indexDocs(link, vectors, embeddingsKey === 'bm25' ? undefined : embeddingsKey, outage === true);
   } catch (error) {
     writeCursor(link.id, { ...next, error: (error as Error).message.slice(0, 200) });
     throw error;

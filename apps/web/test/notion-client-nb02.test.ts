@@ -283,6 +283,15 @@ describe('text, ids and logs', () => {
     expect(fitMarkdown('short')).toBe('short');
   });
 
+  it('NB08: a fence closes only on its own marker (a ``` line inside a ~~~ fence is text)', () => {
+    const body = ['# Top', 'intro', '~~~', '```', ...Array.from({ length: 4_700 }, (_, i) => `code ${i}`), '~~~'].join('\n');
+    const cut = fitMarkdown(body);
+    const open = cut.split('\n').filter((l) => /^~~~/.test(l)).length;
+    // Cut inside the ~~~ fence, which the ``` line did not close: the cut falls before it (at the heading) or closes it with its own marker.
+    expect(open % 2).toBe(0);
+    expect(cut.endsWith(`${CUT_LINE}\n`)).toBe(true);
+  });
+
   it('reads the id forms and refuses another host', () => {
     const hex = '0123456789abcdef0123456789abcdef';
     const dashed = '01234567-89ab-cdef-0123-456789abcdef';

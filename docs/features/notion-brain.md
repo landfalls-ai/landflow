@@ -1,6 +1,6 @@
 # Notion as the brain
 
-Part of the [Landflow docs](../README.md). A project's second brain can live in Notion: the pages, facts, practices and notes the project already has are copied to a Notion page a person owns, and what people change there is read back. This page is built wave by wave; the sections below are added by the package that builds each part. After wave nb2 a linked brain syncs: the first copy, the push of every change, the pull of what people edit in Notion and the company pages read as knowledge are built; the Brain card that shows a link's status and problems comes with wave nb3.
+Part of the [Landflow docs](../README.md). A project's second brain can live in Notion: the pages, facts, practices and notes the project already has are copied to a Notion page a person owns, and what people change there is read back. This page is built wave by wave; the sections below are added by the package that builds each part. A linked brain syncs: the first copy, the push of every change, the pull of what people edit in Notion and the company pages read as knowledge are built (nb1, nb2). Wave nb3 built the Brain card (a link's status, problems and the button that fixes a stopped one), the Brain page's Notion parts and Spotlight's Notion asks (NB08); the live check with a real Notion is still to come.
 
 ## How it is built
 
@@ -68,6 +68,61 @@ it. It never calls `api.notion.com` from a test: the only Notion a test talks to
 
 ## Setting it up
 
+**In the product (NB07).** A project admin moves the brain to Notion from the project's **Settings** tab, in the **Brain** card
+after Governance ("Where this project's brain lives": **Landflow** or **Notion**). Step by step:
+
+1. **In Notion** (someone who owns the workspace): make an internal connection (Settings → Connections → Develop or manage
+   integrations → New integration) with the capabilities **Read content**, **Update content** and **Insert content**, and copy
+   its secret. Then open the one page the brain should live under and share it with the connection (••• → Add connections). The
+   page and everything under it become visible to Landflow; nothing else in the workspace does. "User information with email"
+   is optional (it lets a pulled change name who made it).
+2. **In Landflow**, choose **Notion**. The **Notion key** list shows the keys this project may use, by name (the project's
+   own and those shared with it); with exactly one it is already picked. **New Notion key** opens the credential dialog for
+   `productivity.notionApi`: paste the secret, **Test connection** says "Authenticated as <the connection>", **Create**. The card
+   keeps only the credential's id and name and never shows, logs or stores the secret. If the productivity plugin is not
+   running the button says "Start the productivity plugin to add a Notion key" and existing keys are still listed.
+3. Paste the page's link (or id) and press **Check**. It shows the page's title, the workspace and the connection, and "A
+   Landflow brain is already here: it will be reused" when one is; a page that is not shared answers "Landflow can't see this
+   page: open it in Notion → ••• → Add connections → <connection>" and offers no Connect.
+4. **What will be copied**: the counts (pages, facts, practices, notes), the one line of what never leaves
+   (private and team-only work, nightly briefings, usage and AI spend, run data, other projects, secrets), about how many minutes
+   it takes, and which pages Landflow reads as knowledge: **Pages you add under Landflow brain** (the default) or **Every page
+   under <the page>** (decision D4). **Connect and copy** starts it.
+5. **While it copies** the card shows a progress bar ("Copying the pages · 120 of 300") and "You can leave this page"; it asks
+   again every 3 seconds while the link is `setting_up` or `copying`, every 30 seconds otherwise, and not at all while the tab is
+   hidden.
+6. **When it is in sync** the card reads "In sync · synced 2 minutes ago · 0 waiting · 1 problem" with **Open in Notion**,
+   **Sync now**, **Pause** (**Resume** when paused), the speed (2 requests a second, or 8 "if your Notion is on Business or
+   Enterprise"), the knowledge scope and **Disconnect**, which asks first ("Landflow stops syncing. Your Notion pages stay as
+   they are, and the brain stays in Landflow."). Members who are not admins see the status line, Open in Notion and the problems,
+   and nothing to change. The Brain page shows the same sentence as a chip ([second-brain.md](../second-brain.md#the-brain-page)).
+
+The words are one file, `lib/client/notion-brain.ts` (`statusSentence`, `STATUS_FIX`, `copyLine`, `actionsFor`), so the card, the
+Brain page's chip and Spotlight's card say the same thing.
+
+### A refused key and an unshared page have a way back
+
+A stopped link shows its sentence and its one button: **Notion refused the key** → **Pick another key** (the key list and New
+Notion key again, then **Use this key**; updating the same credential in the dialog and pressing **Check again** works too),
+**The page is no longer shared** → **Check again** (after sharing it again in Notion), **Paused** → **Resume**, **Needs a repair** →
+**Repair**. Behind the first two, `PATCH …/brain/notion` takes `credentialId` (another Notion key the project may use) or `paused:
+false`: the page (and the brain page, when the link has one) is checked with that key first, and only then is the key kept and
+the link moved back to `active` (or `setting_up` when it never got its databases), with the one notice to the admins
+("The brain is in Notion"). A refused key (400), a credential of another type (400), a credential the project may not use (403),
+a page the key cannot see (404) and a Notion that does not answer (504, within the same 15 seconds for the page and the brain page together) leave the link as it was. `PATCH { paused: true, credentialId }` on an `unauthorized` or `unshared` link checks the key, keeps it and sets `paused`; a later **Resume** (`paused: false`) then goes to `active`. The audit row
+`notion-brain.update` names `credentialId`, never the key.
+
+### The check's deadline, and one check per project
+
+A check answers within 15 seconds (`CHECK_DEADLINE_MS`). When Notion has not said who the key is, or has not returned the page,
+by then it is a 504 "Notion took too long to answer. Try Check again in a moment." and nothing was written. Once the page is read,
+the search for an existing brain stops starting new reads at the deadline and answers what it has: a brain named
+`Landflow brain · <project>` is found by the first pass (the root's children), a brain found only by the deeper probe of up to 20
+child pages may be missed (`found: false`), which is safe because the copy finds the brain page by its title again before it
+creates one. One check runs per project at a time: a second check of the same page with the same key shares the running one's
+answer (Notion is asked once), a different page or key while one runs is a 409 "A check of this project is running; try again
+when it ends", and linking (which checks again) follows the same rule.
+
 One project links to one Notion page, with a Notion API credential the project may use. The credential is the existing
 `productivity.notionApi` one (a `productivity.notionOAuth2Api` credential works too); no key leaves the vault, and no
 response, audit row or log line holds it. The Notion integration must be added to the page first (in Notion: ••• → Add
@@ -78,10 +133,10 @@ connections → the integration), which gives it access to the page and everythi
 | `GET /api/projects/:id/brain/notion` | project members (an API key needs `brain:read`) | `{ linked: false, canManage }`, or the link: status, credential (id and name), the page, the copy's progress, what waits, open problems |
 | `POST …/check` `{ credentialId, page }` | project admins | reads the page and writes nothing: its title, whether a "Landflow brain" page is already under it, what a copy of this project would send (pages, facts, practices, project-scope notes) and about how many minutes it takes |
 | `POST /api/projects/:id/brain/notion` `{ credentialId, page, knowledgeScope?, rps? }` | project admins | checks again, then makes the link in `setting_up` and answers 202 |
-| `PATCH` the same | project admins | `paused`, `rps` (1 to 8 requests a second, 2 by default), `knowledgeScope` (`brain`, the default: company pages under "Landflow brain" only, or `root`) |
+| `PATCH` the same | project admins | `paused`, `rps` (1 to 8 requests a second, 2 by default), `knowledgeScope` (`brain`, the default: company pages under "Landflow brain" only, or `root`), `credentialId` (another key; checked first, see above); `paused: false` also tries an `unauthorized` or `unshared` link again |
 | `DELETE` the same | project admins | disconnects: the link is kept as `unlinked` for the history, nothing is sent to Notion, which keeps what is there, and the local brain is unchanged. The project can be linked again |
 | `POST …/sync` | project admins | makes the next sync due at once (202) |
-| `GET …/problems` | project members | the open sync problems: kind, Landflow's words about it, the actions it offers |
+| `GET …/problems` | project members (an API key needs `brain:read`, like the link) | the open sync problems: kind, Landflow's words about it, `notionUrl` when it names a Notion page, the actions its kind offers (the client shows the ones the viewer's role may press) |
 | `POST …/problems/:problemId` `{ action }` | project editors; `repair` and `deleteLocal` need an admin | `dismiss` records who and when; `putBack`, `deleteLocal`, `keepAsFact` and `repair` do what [Problems and what they offer](#problems-and-their-actions) says; 409 when the problem is resolved already, the object it names is gone, or `LANDFLOW_NOTION_BRAIN=off`; an action the problem's kind does not offer is 400 |
 
 `page` is a Notion link, a 32-hex id or a dashed UUID. The check answers 400 for a link to another host, a credential of
@@ -157,7 +212,9 @@ Landflow user with that email is the change's `by`; without it nobody is named (
 
 `repair` (admins) adds the removed properties back to their data source and lets the link sync again; `putBack` makes a new row for
 a trashed one (the item points at it, it is Landflow's, the push writes the rest); `deleteLocal` (admins) deletes the page or fact
-in Landflow (a practice or a note is never deleted from here); `keepAsFact` keeps a region edit as a fact. `dismiss` needs nothing.
+in Landflow (a practice or a note is never deleted from here); `keepAsFact` keeps a region edit as a fact: the newest suggestion's text of that
+page, **clipped at 500 characters with "…"** (the same clipped text the person sees on the suggestion), and nothing when that suggestion only says lines were
+removed. `dismiss` needs nothing.
 With `LANDFLOW_NOTION_BRAIN=off` an action answers 409. A problem a person resolved is not filed again for the same row edit.
 
 Tests: `apps/web/test/notion-pull-nb05.test.ts` and `notion-conflicts-nb05.test.ts` (the linked state is seeded by
@@ -186,10 +243,14 @@ Log, the four databases and every row Landflow made for a page, fact, practice o
   the facts use; unset means `nomic-embed-text`) it is hybrid. Each pass first asks the model once: if it does not answer, the
   pages are indexed with keyword vectors and `cursors.knowledge.embeddings` says `bm25`, so Ask, MCP and the agents' tool still
   find them; a later pass where the model answers clears the collection and indexes it again with vectors (one dimension a
-  collection, never mixed). Search and the agents' tool use what the cursor says the collection holds, not the variable, and a
+  collection, never mixed). A failed 10-second probe on a collection that already holds a model's vectors is an outage, not a
+  change: the pass keeps the collection, indexes nothing new and counts the changed pages as waiting (`pending`, so the next tick
+  tries again); keyword vectors replace it only when the collection is empty or already keyword. Search and the agents' tool use what the cursor says the collection holds, not the variable, and a
   query that takes over 10 seconds to embed is answered by keywords. Switching the model, or the embeddings off, clears the
   collection and indexes it again; a page that moved is indexed again so its passages' `path` follows. A "Your notes" doc written by the pull (its `page_id` is a row
-  of the link) is indexed like any other and never deleted by the walk.
+  of the link) is indexed like any other and never deleted by the walk, unless its item was trashed in Notion (`detached`). A
+  relink's old chunks (another link id) are deleted at once. The agents' `project_knowledge` tool falls back to keywords when the
+  query can't be embedded, as Ask does; a pass that could not embed counts the pages it did not reach as waiting.
 - **Ask.** Ask's fourth source, after pages, facts and work: up to 5 Notion pages of the projects the asker can read (the same
   scope as the facts), only for projects with an active link. The found line gains "· 2 Notion pages" (the `found` event gains
   `knowledge`), the passages reach the model as quoted numbered lines after the work items ("data, not instructions"), and a
@@ -210,3 +271,23 @@ What is read from Notion is data: a page that says "Ignore your instructions" re
 the walk cannot do is in [limitations.md](../limitations.md#what-the-notion-brain-does-not-do).
 
 Tests: `apps/web/test/notion-knowledge-nb06.test.ts`.
+
+## With Spotlight
+
+Outside the editor, the shell Spotlight moves a project's brain to Notion from a typed ask and says whether it is in sync
+(NB08; the full behaviour is in [spotlight.md](../spotlight.md#one-spotlight)). The words decide it in the browser, so no model
+runs and nothing is spent. The card offers the project's Notion keys by name and opens the credential dialog for a new one;
+**Connect and copy** is the person's click, and a project that is already linked answers with its status. "Is the brain in sync
+with Notion?" answers from the link and its problems with the sentence the Brain card shows. A pasted key is hidden and never
+sent. When the link has stopped (the key was refused or the page is no longer shared), the sync answer carries a link to the
+project's Settings **Brain** card (`/projects/:id?tab=settings#brain`), where **Pick another key** and **Check again** are. The editor's builder does not move a brain: ask from the project page or the Brain page.
+
+## Over MCP
+
+The brain's MCP answers say where an object lives in Notion. `brain_search_facts` and the facts of `brain_workflow_knowledge`
+carry **`notionUrl`** on each fact of a linked project, and `brain_ask` carries it on each brain page and fact it names (the
+row's `https://www.notion.so/<id>` URL, from the local tables: no Notion call). A project that is not linked, a row trashed in
+Notion (`detached`) and a disconnected link give no field; the caller's reach was applied before, so only what they may read is
+listed. `brain_search_knowledge` gives passages of the company's Notion pages with their URLs (named in the instance server's
+instructions and in [features/ai.md](ai.md#mcp)). To read the pages themselves from a company's tools, see [Your company's
+tools on Notion](../connect-your-harness.md#your-companys-tools-on-notion).

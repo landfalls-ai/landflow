@@ -388,6 +388,16 @@ prose and a person keeps the facts. Spotlight asks it questions.
 
 **In Notion.** When the project is linked to a Notion page, the brain is also written there (pages, facts, practices and notes, with a body per page and your own notes below Landflow's part), within seconds of each change: see [features/notion-brain.md](features/notion-brain.md#what-landflow-writes).
 
+**Notion on the page (NB07).** For a page of a project linked to Notion, a chip in the title bar says how it syncs ("In Notion ·
+synced 2 minutes ago", amber when something needs a look or it is paused, red when Notion refused the key or stopped seeing the
+page; on a phone it sits in the status bar), the chips row has **Open in Notion** (the page's own row), "Changed in Notion by <name>,
+replacing your edit" shows for 7 days after a later edit in Notion replaced a value, and **Your notes (from Notion)** shows what a
+person wrote under the page's "Your notes" in Notion, read-only and always as text. The Problems panel gains a **Notion sync** group:
+each problem the link has, in Landflow's words, with a link to its Notion page and the buttons the viewer may press (**Dismiss**,
+**Put back**, **Keep as a fact**; **Repair** and **Delete in Landflow** for the project's admins), and the status bar's problem count
+adds them. A project with no link shows none of it. Setting it up is the project's Brain card
+([notion-brain.md](features/notion-brain.md#setting-it-up)).
+
 #### The vector collections
 
 Workflows and agents can't read or write `landflow-brain` and `landflow-brain-<project>` with a Vector Store node: the
@@ -420,6 +430,8 @@ no hand-built MCP Server Trigger workflow:
 | `my_ai_spend` | the caller's own AI spend and caps (`period`: `24h`, `7d`, `30d`, `90d`), as text and JSON; never anyone else's ([llm-gateway.md](llm-gateway.md)) |
 | `record_work` | save the caller's own work events, private |
 | `project_context` | the "Where this work fits" block of the project that lists a repository, or of a project you name (`repo`, `projectId`, `size`); the resource `project://{id}/context` is the full block ([connect-your-harness.md](connect-your-harness.md#project-context)) |
+
+On a project linked to Notion, each fact `brain_search_facts` and `brain_workflow_knowledge` list, and each page and fact `brain_ask` names, carries `notionUrl`, the Notion row it was copied to (none when the project is not linked, the row was trashed in Notion or the link is disconnected). To read the pages in Notion itself see [Your company's tools on Notion](connect-your-harness.md#your-companys-tools-on-notion).
 
 Practices: see [practices.md](practices.md#following) (`practices_for`, `practice_get`, `practice_cite`,
 `practice_draft` and the `practices://` resources).

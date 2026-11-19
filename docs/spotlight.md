@@ -40,6 +40,25 @@ brain.
   Spotlight button or the strip bring the builder back and the brain panel goes. Closing the brain panel (X) unfolds the
   builder again if the panel was what folded it; a builder that was already folded stays folded. In about mode "Ask the brain instead"
   drops the chip, and so does closing the panel or removing the chip in its box. Ctrl does not count as the key on a Mac.
+- **Moving a brain to Notion** (wave nb3, NB08). A typed ask in the shell panel (not the editor's builder) about the Notion
+  brain is decided from the words, in the browser, with no model and no spend (`lib/shared/notion-brain-ask.ts`, as
+  `askKind` and the agent ask do): "Keep this project's brain in Notion under <link>", "Move the brain to Notion", "Sync
+  this project's brain with Notion". It never goes to Ask and is never stored in the conversation. It answers with a card,
+  **Brain in Notion · <project>**: the project's Notion keys by name (the one fitting key is preselected; with two or more
+  none is), **New Notion key** (the credential dialog for `productivity.notionApi`, where the person types the secret:
+  Spotlight never sees, asks for, repeats or sets one), the page from the ask (editable), **Check** (what the page is, what a
+  copy would send and what is never copied), and **Connect and copy**, which is the person's click: nothing that writes runs
+  before it. While the copy runs the card folds to one progress line, and the panel can close: the project page's Brain card and the Brain
+  page's chip keep showing it. A project that is already linked answers with its status and **Open in Notion**, not a second
+  Connect; a viewer who is not the project's admin sees "An admin of <project> can move its brain to Notion". The project is
+  the one the page names (`/projects/<id>`), else a choice among the projects the viewer administers.
+  **"Is the brain in sync with Notion?"** (also "when did it last sync", "what is wrong with the Notion sync") is answered from
+  the link's status and problems, in the same sentence the Brain card uses ("The brain is in Notion under “Acme”. Synced 2
+  minutes ago, 0 waiting, 1 problem: …"). **A pasted key** (`ntn_` or `secret_` and 40 or more letters and digits) is never
+  sent: the message is shown as "[a Notion key, hidden]" with the warning "That looks like a Notion key. Keys don't belong
+  in a chat: add it in the credential dialog (New Notion key), where it is kept encrypted. It was not sent or saved."
+  Flows and agents mask the same shape (`NOTION_KEY` in the guardrails). The asks are English words and a key is recognised
+  only by its shape ([limitations](limitations.md#what-the-notion-brain-does-not-do)).
 - **The Brain page** has one way in: the Ask button in its title bar opens this panel.
 
 ## 1. Home 2.0

@@ -120,7 +120,10 @@ export function CredentialDialog({
   onClose,
   onSaved,
   projectId,
+  overSheet,
 }: {
+  /** Draw above a bottom sheet (z-[60]), as the Spotlight card does; the default stays z-50 so the expression menu (z-[60]) shows over it. */
+  overSheet?: boolean;
   /** Edit this credential; otherwise create one. */
   credentialId?: string;
   /** Create it in this project (default: the viewer's personal project). */
@@ -270,7 +273,7 @@ export function CredentialDialog({
 
   const picking = !type && !credentialId;
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-6 animate-in max-md:items-end max-md:p-0" onMouseDown={onClose}>
+    <div className={`fixed inset-0 ${overSheet ? 'z-[70]' : 'z-50'} flex items-center justify-center bg-overlay p-6 animate-in max-md:items-end max-md:p-0`} onMouseDown={onClose}>
       <div
         ref={panel}
         role="dialog"

@@ -96,7 +96,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/approval-inbox')) return read ? { scope: 'executions:read' } : { scope: 'run', sessionOnly: true };
   if (path === '/api/projects/context') return { scope: 'brain:read' }; // PC10
   // NB03: a project's Notion link status (docs/features/notion-brain.md); every write stays session-or-workflows:write like /api/projects.
-  if (read && /^\/api\/projects\/[^/]+\/brain\/notion$/.test(path)) return { scope: 'brain:read' };
+  // NB07: the problems list is words and ids, so it reads like the link it belongs to.
+  if (read && /^\/api\/projects\/[^/]+\/brain\/notion(\/problems)?$/.test(path)) return { scope: 'brain:read' };
   if (['/api/workflows', '/api/folders', '/api/data-tables', '/api/agents', '/api/agent-teams', '/api/agent-templates', '/api/skills', '/api/node-types', '/api/credential-types', '/api/expressions', '/api/projects', '/api/templates', '/api/composites', '/api/runbooks'].some(under)) {
     return { scope: read ? 'workflows:read' : 'workflows:write' };
   }

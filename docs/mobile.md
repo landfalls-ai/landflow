@@ -173,6 +173,8 @@ The cards **Agents in this project** and **AI budget** in a project's Settings t
 The **Workspace** card after them is one column too: the default branch and branch template fields, the add field and its button,
 and **Save** are 44 px tall on a phone, and each repository's **Remove** is a 44 px target. Desktop is as it was apart from the card.
 
+The **Brain** card (Notion) is one column at 390 px: the Landflow/Notion switch scrolls inside itself, the key list, the page field, **Check**, **New Notion key**, **Connect and copy**, **Sync now**, **Pause**, **Disconnect**, the speed list, the two knowledge radios and every problem's buttons are 44 px tall, and the copy's progress bar is the full width. On the Brain page the Notion chip moves to the status bar (it would crowd the title bar), **Open in Notion** and the problems' buttons are 44 px targets. Desktop is as it was apart from the card and the chip.
+
 ### Project tasks
 
 The **Tasks** tab of a project is one column at 390 px. The five tabs scroll sideways inside their switch rather than

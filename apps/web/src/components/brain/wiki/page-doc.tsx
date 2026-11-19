@@ -7,7 +7,7 @@
  * each a section the Outline lists. Its Source view is `pageMarkdown` (lib/shared/brain-files.ts).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pencil, Plus, RefreshCw, Sparkles } from 'lucide-react';
+import { ExternalLink, Pencil, Plus, RefreshCw, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { askAbout, askDetail } from '@/lib/client/ask-about';
@@ -46,6 +46,15 @@ export function PageDoc({ page, onChanged, onSummary }: { page: WikiPage; onChan
       <Header page={page} sources={sources} onSaved={onChanged} Icon={Icon} />
       <Section title="Summary">
         <SummaryCard page={page} onCite={cite} onWritten={onSummary} />
+        {/* NB07: what a person wrote under "Your notes" on the page's Notion row, read-only and always as text. */}
+        {page.notion?.notes && (
+          <div data-testid="your-notes">
+            <Card className="space-y-1">
+              <div className="text-[12px] font-semibold text-t2">Your notes (from Notion)</div>
+              <p className="whitespace-pre-wrap break-words text-[12.5px] leading-relaxed text-t1">{page.notion.notes}</p>
+            </Card>
+          </div>
+        )}
       </Section>
 
       <Section title="Work" count={page.work.length}>
@@ -191,6 +200,19 @@ function Header({ page, sources, onSaved, Icon }: { page: WikiPage; sources: str
           <Chip key={s}>{s}</Chip>
         ))}
         <Chip tone="muted">{page.work.length ? `last work ${timeAgo(page.work[0].at)}` : 'no work yet'}</Chip>
+        {/* NB07: */}
+        {page.notion?.url && (
+          <a href={page.notion.url} target="_blank" rel="noreferrer" data-testid="open-in-notion" className="max-md:inline-flex max-md:min-h-11 max-md:items-center">
+            <Chip tone="accent" className="hover:underline">
+              Open in Notion <ExternalLink className="size-3" aria-hidden />
+            </Chip>
+          </a>
+        )}
+        {page.changedInNotion && (
+          <Chip tone="warning" className="whitespace-normal">
+            Changed in Notion by {page.changedInNotion.by}, replacing your edit
+          </Chip>
+        )}
       </div>
     </div>
   );

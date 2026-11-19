@@ -465,6 +465,29 @@ describe('facts', () => {
     expect(searchFacts('wire', {})).toHaveLength(1);
   });
 
+  it('NB08: a Landflow edit that wins over a Notion edit is not recorded as applied from Notion', async () => {
+    const s = await setup();
+    await seed.seedPage(s, { type: 'customer', id: 'winner', name: 'Winner' });
+    const own = brainStoreFor(s.project).addFact(getEntity('customer', 'winner')!, { kind: 'purpose', statement: 'Wins by default' });
+    const row = await s.client.createPage({
+      parent: { data_source_id: s.dbs.facts!.dataSourceId },
+      properties: { Statement: title(own.statement), Kind: select('purpose'), [LANDFLOW_ID]: rt(own.id) },
+    });
+    seed.seedItem(s, 'fact', own.id, row.id, null);
+    await s.pull();
+    tick();
+    fake.editAsPerson(row.id, { properties: { Statement: title('Notion says otherwise') } });
+    // The Landflow edit is later and its push is queued: Landflow wins.
+    tick();
+    const { upsertFact } = await import('@/lib/server/brain/facts');
+    upsertFact({ id: own.id, subjectType: own.subjectType, subjectId: own.subjectId, kind: own.kind, statement: 'Landflow edited it', evidence: own.evidence, confidence: own.confidence, projectId: s.project }, database(), new Date(clock + 120_000).toISOString());
+    sync.enqueue(s.link.id, 'fact', own.id);
+    await s.pull();
+    expect(getFact(own.id)!.statement).toBe('Landflow edited it');
+    const item = database().get<{ pulled_hash: string }>('SELECT pulled_hash FROM notion_brain_items WHERE link_id = ? AND local_key = ?', s.link.id, own.id)!;
+    expect(item.pulled_hash).not.toContain('|');
+  });
+
   it('a change to a study fact’s statement is put back and offers "Keep as a fact"; a person’s own fact takes the edit', async () => {
     const s = await setup();
     const page = await seed.seedPage(s, {
