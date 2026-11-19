@@ -363,11 +363,11 @@ function notionFields(entity: BrainEntity, ref: string): { notion?: { url: strin
     const url = mappedNotionUrl(projectId, 'entity', ref);
     if (!url || !projectId) return {};
     const link = getLink(projectId);
-    const pageId = url.slice(url.lastIndexOf('/') + 1);
-    const doc = link
-      ? database()
-          .all<{ page_id: string; markdown: string | null }>('SELECT page_id, markdown FROM notion_knowledge_docs WHERE link_id = ?', link.id)
-          .find((d) => d.page_id.replace(/-/g, '').toLowerCase() === pageId)
+    const item = link
+      ? database().get<{ notion_id: string }>("SELECT notion_id FROM notion_brain_items WHERE link_id = ? AND kind = 'entity' AND state <> 'detached' AND local_key = ?", link.id, ref)
+      : undefined;
+    const doc = link && item
+      ? database().get<{ markdown: string | null }>('SELECT markdown FROM notion_knowledge_docs WHERE link_id = ? AND page_id = ?', link.id, item.notion_id.toLowerCase())
       : undefined;
     const notes = doc?.markdown?.trim().slice(0, 4_000);
     return { notion: { url, ...(notes && { notes }) } };

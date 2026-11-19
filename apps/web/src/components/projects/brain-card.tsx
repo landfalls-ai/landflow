@@ -372,7 +372,7 @@ function Linked({ projectId, view, problems, canEdit, reload, onGone }: { projec
             <Button size="sm" variant="outline" className={BTN} onClick={() => void run('sync', () => syncNotionNow(projectId), 'Syncing now')} loading={busy === 'sync'} disabled={view.status === 'unlinked'}>
               Sync now
             </Button>
-            {view.status !== 'paused' && (
+            {view.status !== 'paused' && !fix && (
               <Button size="sm" variant="outline" className={BTN} onClick={() => void run('pause', () => changeNotionLink(projectId, { paused: true }))} loading={busy === 'pause'}>
                 Pause
               </Button>

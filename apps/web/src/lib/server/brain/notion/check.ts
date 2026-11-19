@@ -6,6 +6,7 @@
 import { brainPageTitle, estimateMinutes, LANDFLOW_ID, RPS_DEFAULT, type BrainCounts, type CheckResult } from '../../../shared/notion-brain';
 import { credentials } from '../../credentials/vault';
 import { database } from '../../db';
+import { singleton } from '../../singleton';
 import { credentialUsableBy } from '../../projects/access';
 import { ProjectError, type ProjectRecord } from '../../projects/store';
 import { isNotionError, notionClientFor, notionId, type NotionClient, type NotionPage } from '../../notion/port';
@@ -57,6 +58,7 @@ async function findBrain(client: NotionClient, rootId: string, projectName: stri
   const title = brainPageTitle(projectName);
   const pages: Array<{ id: string; title: string }> = [];
   for await (const block of client.paginate((cursor) => client.children(rootId, cursor))) {
+    if (expired()) return partial; // NB07:
     if (block.type === 'child_page' && !block.in_trash) pages.push({ id: block.id, title: block.child_page?.title ?? '' });
   }
   const named = pages.find((p) => p.title === title);
@@ -90,7 +92,7 @@ export function setCheckDeadline(ms?: number): void {
 const TOO_SLOW = 'Notion took too long to answer. Try Check again in a moment.';
 
 /** The checks running now, one per project: what they check, and the answer the second identical check shares. */
-const running = new Map<string, { credentialId: string; rootPageId: string; promise: Promise<CheckedPage> }>();
+const running = () => singleton('notion-brain-checks', () => new Map<string, { credentialId: string; rootPageId: string; promise: Promise<CheckedPage> }>());
 
 /** Races `work` against the deadline: a 504 when it is not done in time. The late answer is dropped (its failure too). */
 function within<T>(work: Promise<T>, deadline: { at: number }): Promise<T> {
@@ -126,18 +128,18 @@ export async function checkPage(project: Pick<ProjectRecord, 'id' | 'name'>, inp
   if (other && other.project_id !== project.id) throw new ProjectError('That Notion page is linked to another project already', 409);
 
   // NB07: a second check of the same page with the same key shares the running one; any other waits its turn.
-  const current = running.get(project.id);
+  const current = running().get(project.id);
   if (current) {
     if (current.credentialId === input.credentialId && current.rootPageId === rootPageId) return current.promise;
     throw new ProjectError('A check of this project is running; try again when it ends', 409);
   }
   const promise = runCheck(project, input, rootPageId);
   const entry = { credentialId: input.credentialId, rootPageId, promise };
-  running.set(project.id, entry);
+  running().set(project.id, entry);
   try {
     return await promise;
   } finally {
-    if (running.get(project.id) === entry) running.delete(project.id);
+    if (running().get(project.id) === entry) running().delete(project.id);
   }
 }
 
