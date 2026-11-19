@@ -12,12 +12,29 @@ import { SectionTitle } from './parts';
 import { BudgetActions, SpendActions, TaskActions } from './needs-you-actions';
 import { NeedFaces } from './approval-card';
 import { listFaces } from '@/lib/shared/approval-evidence';
+import { isInboxItem, rowOfItem, useRowStates, withDecided } from '@/lib/client/approval-inbox'; // AP03:
+import { InboxRow } from '../home/approval-inbox'; // AP03:
 
 const KIND: Record<NeedsYouRow['kind'], string> = { approval: 'Approval', form: 'Form', question: 'Question', gate: 'Checks failed', check: 'Check failed', budget: 'AI budget', task: 'Task', spend: 'AI spend' };
 
+/** AP03: the inbox items just decided that the list already lost, put back where they were (their row says what happened). */
+function withDecidedItems(list: NeedsYouRow[], states: Parameters<typeof withDecided>[1]): NeedsYouRow[] {
+  const ids = list.filter(isInboxItem).map((i) => i.requestId);
+  const ghosts = withDecided(list.filter(isInboxItem).map(rowOfItem), states).filter((r) => !ids.includes(r.id));
+  if (!ghosts.length) return list;
+  const out = [...list];
+  for (const g of ghosts) {
+    const index = Math.min(states.get(g.id)?.index ?? out.length, out.length);
+    out.splice(index, 0, { executionId: g.executionId, workflowId: '', workflowName: g.workflowName, kind: 'approval', title: g.tool, since: g.requestedAt, requestId: g.id, tool: g.tool, agentName: g.agentName, agentVersion: g.agentVersion, workflowVersion: g.workflowVersion, destination: g.destination, expiresAt: g.expiresAt, canDecide: g.canDecide });
+  }
+  return out;
+}
+
 /** Waits for a person and failed checks nobody settled, newest first; each opens the run. */
 export function NeedsYouList() {
-  const { items, refresh } = useNeedsYou();
+  const { items: listed, refresh } = useNeedsYou();
+  const decided = useRowStates(); // AP03: a request just decided stays in its place for a few seconds
+  const items = listed && withDecidedItems(listed, decided); // AP03:
   if (!items?.length) return null;
   // Who has something for you, across the runs (a dot on each member that waits).
   const faces = listFaces(items.filter((i) => i.member || i.actor?.type === 'agent'));
@@ -26,8 +43,10 @@ export function NeedsYouList() {
       <SectionTitle>Needs you · {items.length}</SectionTitle>
       {faces.length > 0 && <NeedFaces faces={faces} className="mb-2 px-1" />}
       <ul className="divide-y divide-hair overflow-hidden rounded-2xl border border-warnbd bg-warndim">
-        {items.map((item) =>
-          item.kind === 'budget' ? (
+        {items.map((item, index) =>
+          isInboxItem(item) /* AP03: */ ? (
+            <InboxRow key={`inbox:${item.requestId}`} row={rowOfItem(item)} index={index} />
+          ) : item.kind === 'budget' ? (
             <BudgetRow key={`budget:${item.incidentId ?? item.title}`} item={item} onDone={refresh} />
           ) : item.kind === 'task' ? (
             <TaskRow key={`task:${item.taskRunId ?? item.title}`} item={item} />

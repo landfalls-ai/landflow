@@ -8,6 +8,7 @@ import type { JournalEvent, RunActor } from '../shared/run-trace';
 import { foldJournal, type RunModel } from '../shared/run-trace-model';
 import { api, streamEvents } from './api';
 import { useLiveEvents } from './live';
+import type { InboxItemFields } from '../shared/approval-inbox'; // AP03:
 
 /** `GET /api/executions/:id/events` */
 export interface JournalPage {
@@ -92,7 +93,7 @@ export function useRunJournal(executionId: string | undefined): RunJournal {
 }
 
 /** One thing waiting for a person (`GET /api/runs/needs-you`). */
-export interface NeedsYouRow {
+export interface NeedsYouRow extends Partial<InboxItemFields> /* AP03: an approval that is an inbox request carries its fields */ {
   executionId: string;
   workflowId: string;
   workflowName: string;

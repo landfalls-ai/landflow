@@ -18,6 +18,7 @@ import { sawPersona } from '@/lib/shared/what-it-saw-sections';
 import { WhatItSaw } from '../run-trace/what-it-saw';
 import { TimelineView, TraceChip, type ToolEntry } from './timeline';
 import { REASON_LABEL, useAgentRun } from './use-agent-run';
+import { useExecutionRequests } from '@/lib/client/approval-inbox'; // AP03:
 
 const SOURCE: Record<SessionSource, { label: string; icon: typeof Bot; tone: Tone }> = {
   test: { label: 'Test', icon: FlaskConical, tone: 'accent' },
@@ -109,6 +110,10 @@ function SessionDetail({
   const [confirm, setConfirm] = useState(false);
   const [deciding, setDeciding] = useState(false);
   const run = useAgentRun(agentId, session, traceUrls);
+  // AP03: a workflow session whose calls wait in the approval inbox says so, with a link, and has no Approve or Deny here.
+  const inboxRequests = useExecutionRequests(session?.execution?.executionId ?? '', session?.status);
+  const waitingRequest = session?.execution && session.status === 'awaiting_approval' ? inboxRequests.find((r) => r.status === 'waiting') : undefined;
+  const inboxHref = waitingRequest ? `/?approval=${encodeURIComponent(waitingRequest.id)}` : run.waitsInNeedsYou && session?.execution ? `/runs/${session.execution.executionId}` : undefined;
 
   const load = useCallback(
     () =>
@@ -277,6 +282,7 @@ function SessionDetail({
                 decisions={run.decisions}
                 onDecideAll={(ids, approved) => void decideAll(ids, approved)}
                 wide
+                inboxHref={inboxHref} // AP03:
                 feedback={feedback}
                 onRate={(entryId, rating) => void rate(entryId, rating)}
               />
