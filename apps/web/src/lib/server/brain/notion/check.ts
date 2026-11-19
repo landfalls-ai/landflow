@@ -116,7 +116,7 @@ function within<T>(work: Promise<T>, deadline: { at: number }): Promise<T> {
  * project), 400 (credential of another type, a page that does not parse, a refused key), 403 (credential the project may not
  * use), 404 (the page is not shared with the key).
  */
-export async function checkPage(project: Pick<ProjectRecord, 'id' | 'name'>, input: { credentialId: string; page: string; rps?: number }): Promise<CheckedPage> {
+export async function checkPage(project: Pick<ProjectRecord, 'id' | 'name'>, input: { credentialId: string; page: string; rps?: number; deadlineAt?: number }): Promise<CheckedPage> {
   if (!notionBrainEnabled()) throw new ProjectError(SWITCHED_OFF, 409);
   const credential = credentials.get(input.credentialId);
   if (!credential) throw new ProjectError('That credential does not exist', 400);
@@ -144,8 +144,8 @@ export async function checkPage(project: Pick<ProjectRecord, 'id' | 'name'>, inp
 }
 
 /** The reads of one check, inside the deadline (NB07). */
-async function runCheck(project: Pick<ProjectRecord, 'id' | 'name'>, input: { credentialId: string; page: string; rps?: number }, rootPageId: string): Promise<CheckedPage> {
-  const deadline = { at: Date.now() + CHECK_DEADLINE_MS };
+async function runCheck(project: Pick<ProjectRecord, 'id' | 'name'>, input: { credentialId: string; page: string; rps?: number; deadlineAt?: number }, rootPageId: string): Promise<CheckedPage> {
+  const deadline = { at: input.deadlineAt ?? Date.now() + CHECK_DEADLINE_MS };
   const client = notionClientFor({ credentialId: input.credentialId, rps: input.rps });
   let me;
   try {
@@ -200,9 +200,10 @@ export async function recheckLink(
   link: { root_page_id: string; brain_page_id: string | null },
   credentialId: string,
 ): Promise<CheckedPage> {
-  const checked = await checkPage(project, { credentialId, page: link.root_page_id });
+  // One deadline for both reads, so the whole recheck answers within CHECK_DEADLINE_MS.
+  const deadline = { at: Date.now() + CHECK_DEADLINE_MS };
+  const checked = await checkPage(project, { credentialId, page: link.root_page_id, deadlineAt: deadline.at });
   if (link.brain_page_id) {
-    const deadline = { at: Date.now() + CHECK_DEADLINE_MS };
     try {
       const page = await within(notionClientFor({ credentialId }).page(link.brain_page_id), deadline);
       if (page.in_trash) throw new ProjectError(`Landflow can't see the Landflow brain page: share it with ${checked.botName ?? 'the Landflow connection'} again (••• → Add connections)`, 404);

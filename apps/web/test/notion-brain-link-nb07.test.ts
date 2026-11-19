@@ -194,6 +194,32 @@ describe('the check answers within its deadline', () => {
     expect((await check(root)).status).toBe(200);
   });
 
+  it('a recheck of a link (PATCH credentialId) shares one deadline between the page read and the brain page read', async () => {
+    const root = newRoot();
+    const l = link(root);
+    links.updateLink(l.id, { brain_page_id: fake.addPage({ parentId: root, title: 'Landflow brain', shared: true }) });
+    setCheckDeadline(1500);
+    // The key answers after 1.0 s and the brain page never does: 1.0 s + a second full 1.5 s would pass 2.5 s.
+    setNotionClientFactory((options) => {
+      const client = real(options);
+      return {
+        ...client,
+        me: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          return client.me();
+        },
+        page: (id: string) => (id === links.linkById(l.id)!.brain_page_id ? new Promise(() => undefined) : client.page(id)),
+      } as typeof client;
+    });
+    const started = Date.now();
+    const slow = await patch({ credentialId: second });
+    expect(slow.status).toBe(504);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    setCheckDeadline();
+    setNotionClientFactory(virtual);
+    links.unlink(l.id);
+  });
+
   it('two identical checks at once ask Notion once; another page while one runs is a 409', async () => {
     const root = newRoot();
     const elsewhere = newRoot();
