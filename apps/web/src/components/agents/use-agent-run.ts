@@ -33,6 +33,8 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
   const controller = useRef<AbortController>(undefined);
   // AG05: the calls already decided, so their Approve and Deny go away; read from the session, updated by each decision.
   const [decisions, setDecisions] = useState<Decisions>(decisionsOf(initial));
+  // AP03: the side door answered 409 "It waits in Needs you": the call belongs to a workflow run whose approvals wait in the inbox.
+  const [waitsInNeedsYou, setWaitsInNeedsYou] = useState(false);
 
   // A different session loaded into the same view (the Sessions tab's detail).
   useEffect(() => {
@@ -44,6 +46,7 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
     setUsage(initial.usage);
     setStatus(initial.status);
     setDecisions(decisionsOf(initial)); // AG05:
+    setWaitsInNeedsYou(false); // AP03:
   }, [initial, initialTraceUrls]);
 
   useEffect(() => {
@@ -120,6 +123,17 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
     } catch (error) {
       if (c.signal.aborted) return false;
       if (quiet && error instanceof ApiError && error.status === 409) {
+        // AP03: not a decision at all: the call waits in Needs you, so its buttons go and the session says where.
+        if (/Needs you/i.test(error.message) && !/^Already/.test(error.message)) {
+          const waiting = (body as { callId?: string }).callId;
+          if (waiting)
+            setDecisions((d) => {
+              const { [waiting]: _gone, ...rest } = d;
+              return rest;
+            });
+          setWaitsInNeedsYou(true);
+          return true;
+        }
         // AG05: say what it was decided as, then show the session as it is.
         const was = /^Already (approved|denied)/.exec(error.message)?.[1] as Decisions[string] | undefined;
         const callId = (body as { callId?: string }).callId;
@@ -226,6 +240,7 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
     decide,
     decideAll, // AG05:
     decisions, // AG05:
+    waitsInNeedsYou, // AP03:
     stop,
     reset,
     load,

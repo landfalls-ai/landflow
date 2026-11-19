@@ -10,7 +10,9 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Check, ChevronRight, Clock, FileDiff, FlaskConical, Gauge, Hourglass, Pencil, Repeat, ShieldCheck, Timer, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { decideAsk } from '@/lib/client/run-controls';
-import { decideToolApprovals } from '@/lib/client/run-trace';
+import { decideToolApprovals, refreshNeedsYou } from '@/lib/client/run-trace';
+import { approveRequest, denyRequest, inboxClock, refreshApprovalInbox, useExecutionRequests, versionName, waitText } from '@/lib/client/approval-inbox'; // AP03:
+import { settledLine, type InboxRequestView } from '@/lib/shared/approval-inbox'; // AP03:
 import { approvalCase, editedInput, VERDICT_LABEL, type ApprovalCase, type ApprovalWait, type CaseEdit, type ReviewVerdict } from '@/lib/shared/approval-case';
 import { approvalEvidence, type EvidenceLink, type EvidenceRow, type EvidenceTone, type NeedFace } from '@/lib/shared/approval-evidence';
 import type { RunChanges } from '@/lib/shared/run-changes';
@@ -122,14 +124,38 @@ export function ApprovalCard({
   const rows = useMemo(() => approvalEvidence(model, wait, { ...(changes && { changes }), ...(profile && { profile }) }), [model, wait, changes, profile]);
   const [draft, setDraft] = useState<CaseEdit>();
   const [busy, setBusy] = useState<'approve' | 'deny'>();
+  // AP03: a wait that is an inbox request reads its own lines and decides through the inbox claim (docs/approval-inbox.md).
+  const requests = useExecutionRequests(executionId, wait.spanId);
+  const [closed, setClosed] = useState<string>();
+  const [settled, setSettled] = useState<InboxRequestView>(); // the card's own outcome: what the decision answered
   const edited = draft ? editedInput(c, draft) : undefined;
   const actor = memberActor(model, c.member, wait.actor);
   const who = c.member ?? wait.actor.name;
   const verb = c.verb;
 
+  const found = c.callId ? requests.find((r) => r.callId === c.callId) : undefined; // AP03: by call only, never "any waiting"
+  const request = settled ?? found;
+  const inbox = !closed && request?.status === 'waiting' ? request : undefined; // AP03:
+
   const send = async (approved: boolean, edit?: ApprovalEdit) => {
     setBusy(approved ? 'approve' : 'deny');
     try {
+      if (inbox) {
+        // AP03: the same claim as Needs you: a race answers with who won, never a second decision.
+        const answer = await (approved ? approveRequest : denyRequest)(inbox.id);
+        refreshApprovalInbox();
+        refreshNeedsYou();
+        if (answer.closed) {
+          setClosed(answer.closed);
+          toast.message(answer.closed);
+        } else {
+          if (answer.view) setSettled(answer.view);
+          else setClosed(approved ? 'Approved' : 'Denied');
+          toast.success(approved ? 'Approved' : 'Denied');
+        }
+        onDecided?.();
+        return;
+      }
       if (decide) await decide(approved, { ...edit, ...(c.callId && { callId: c.callId }) });
       else {
         const done = c.ask ? Boolean(await decideAsk(executionId, c.ask, approved, edit?.command)) : await decideToolApprovals(executionId, approved, undefined, { ...(edit?.input && { input: edit.input }), ...(c.callId && { callId: c.callId }) });
@@ -168,9 +194,27 @@ export function ApprovalCard({
             <b>{who}</b> <span className="text-t2">wants to {c.kind === 'command' ? 'run' : 'use'}</span> <span className="font-mono font-semibold" data-testid="approval-tool">{c.toolName}</span>
             {c.target && <span className="text-t2" data-testid="approval-target"> on {c.target}</span>}
           </div>
-          <div className="font-mono text-[11px] tabular-nums text-t3">waiting since {clock(wait.since)}</div>
+          {request ? (
+            <div className="text-[11.5px] leading-4 text-t3" data-testid="approval-inbox-line">
+              {inbox ? waitText({ requestedAt: inbox.requestedAt, expiresAt: inbox.expiresAt }) : request.status === 'waiting' ? '' : settledLine(request, inboxClock)}
+            </div>
+          ) : (
+            <div className="font-mono text-[11px] tabular-nums text-t3">waiting since {clock(wait.since)}</div>
+          )}
         </div>
       </header>
+      {request && (
+        <p className="mt-2 text-[12px] text-t2 [overflow-wrap:anywhere]" data-testid="approval-inbox-facts">
+          {versionName(request.agentName, request.agentVersion)} · {versionName(request.workflowName, request.workflowVersion)}
+          {request.destination && <span> · goes to {request.destination}</span>}
+        </p>
+      )}
+      {inbox && !inbox.canDecide && <p className="mt-2 text-[12px] text-t3">Only people who can run this workflow decide it.</p>}
+      {closed && (
+        <p className="mt-2 text-[12.5px] font-medium text-warn" role="status" data-testid="approval-closed">
+          {closed}
+        </p>
+      )}
 
       {c.words && (
         <div className="mt-3">
@@ -216,7 +260,7 @@ export function ApprovalCard({
       )}
 
       <div className="mt-3.5 flex flex-wrap gap-2">
-        {draft ? (
+        {request && (!inbox || !inbox.canDecide) ? null /* AP03: settled, or not yours to decide: Details stays */ : draft ? (
           <>
             <Button variant="primary" loading={busy === 'approve'} disabled={Boolean(busy) || !edited || !edited.ok || !edited.changed} onClick={approveEdited} data-testid="approval-approve-edited">
               <Check className="size-3.5" strokeWidth={3} /> Approve with these changes
@@ -231,7 +275,7 @@ export function ApprovalCard({
               <Check className="size-3.5" strokeWidth={3} /> {verb}
             </Button>
             {/* Nothing to edit when the tool takes no input. */}
-            {(c.rows.length > 0 || c.edit.kind !== 'json') && (
+            {!request && (c.rows.length > 0 || c.edit.kind !== 'json') && ( /* AP03: the inbox decides what was asked, not an edit of it */
               <Button variant="outline" disabled={Boolean(busy)} onClick={() => setDraft(c.edit)} data-testid="approval-edit">
                 <Pencil className="size-3.5" /> Edit
               </Button>

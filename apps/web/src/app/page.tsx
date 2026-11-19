@@ -20,6 +20,7 @@ import { LiveRuns } from '@/components/run-trace/run-lists';
 import { RunLines } from '@/components/run-trace/run-line';
 import { homeKpis, offlinePlugins, PluginsOfflineLine, type HomeStats, type Kpi as KpiData } from '@/components/home/home-kpis';
 import { StatCard } from '@/components/ui/stat-card';
+import { ApprovalInboxPanel } from '@/components/home/approval-inbox'; // AP03:
 
 function Kpi({ kpi, index }: { kpi: KpiData; index: number }) {
   const card = (
@@ -114,6 +115,8 @@ export default function Overview() {
             <Kpi key={kpi.label} kpi={kpi} index={i} />
           ))}
         </section>
+
+        <ApprovalInboxPanel /> {/* AP03: the requests waiting for your approval */}
 
         <SuggestionsInbox />
 
