@@ -18,8 +18,8 @@ import {
   type AgentSettingsForm,
   type AgentSettingsState,
 } from '@/lib/client/project-agent-settings';
-import { isNodeKnowledge, type AgentModel, type KnowledgeBaseToolConfig, type ModelProvider } from '@/lib/shared/agents';
-import { PROJECT_KNOWLEDGE_TOOL, PROJECT_TOOL_KINDS, PROJECT_TOOL_KIND_LABELS, type ProjectToolKind } from '@/lib/shared/project-policy';
+import { isNodeKnowledge, type AgentModel, type ModelProvider } from '@/lib/shared/agents';
+import { isNotionBrainKnowledge, PROJECT_KNOWLEDGE_TOOL, PROJECT_TOOL_KINDS, PROJECT_TOOL_KIND_LABELS, type ProjectSettings, type ProjectToolKind } from '@/lib/shared/project-policy';
 import { Card } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { Checkbox, FieldLabel, Select, Switch } from '@/components/ui/inputs';
@@ -29,7 +29,8 @@ import { KnowledgeDialog } from '@/components/agents/knowledge-dialog';
 import { PROVIDERS } from '@/components/agents/util';
 import { useCredentials } from '@/components/credentials/use-credentials';
 
-const knowledgeLabel = (tool: KnowledgeBaseToolConfig): string => (isNodeKnowledge(tool) ? `${tool.name} (${tool.nodeType})` : `${tool.name} (${tool.collection})`);
+const knowledgeLabel = (tool: NonNullable<ProjectSettings['knowledge']>['tool']): string =>
+  isNotionBrainKnowledge(tool) ? 'Notion brain (the company’s Notion pages)' : isNodeKnowledge(tool) ? `${tool.name} (${tool.nodeType})` : `${tool.name} (${tool.collection})`;
 
 function ModelChoice({ model, onChange, disabled, error }: { model?: AgentModel; onChange: (m?: AgentModel) => void; disabled: boolean; error?: string }) {
   const { credentials } = useCredentials();
@@ -147,7 +148,7 @@ export function ProjectAgentSettingsView({
           </div>
           {picking && (
             <KnowledgeDialog
-              tool={knowledge?.tool}
+              tool={knowledge && !isNotionBrainKnowledge(knowledge.tool) ? knowledge.tool : undefined}
               onClose={() => setPicking(false)}
               onSave={(tool) => {
                 set({ knowledge: { enabled: true, tool: { ...tool, id: PROJECT_KNOWLEDGE_TOOL } } });

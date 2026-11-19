@@ -1,6 +1,6 @@
 /**
  * POST { action } — resolve a sync problem. Project editors act; `repair` and `deleteLocal` need an admin; an action the
- * problem's kind does not offer is a 400. `dismiss` works now; the others answer 409 until the pull (wave nb2) performs them.
+ * problem's kind does not offer is a 400. A resolved problem, a gone object or the Notion brain being off answers 409.
  */
 import { recordAudit } from '@/lib/server/audit';
 import { SWITCHED_OFF, getLink, notionBrainEnabled, performProblemAction, problemById, problemActionsReady, resolveProblem } from '@/lib/server/brain/notion/links';

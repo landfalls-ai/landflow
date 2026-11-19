@@ -1,7 +1,7 @@
 /**
  * POST /api/brain/ask `{ question, about?, history?, mentions? }` — ask the second brain (docs/second-brain.md#the-brain-page). It finds the
  * pages, facts and work the question is about, among what the caller can open, and the brain's model answers from them
- * with `[[type/id]]` page links and `[n]` work references (only numbers that point at a work item). `about` (`<type>/<id>`)
+ * with `[[type/id]]` page links and `[n]` references (only numbers that point at a work item, or after those at a page of the project's Notion brain). `about` (`<type>/<id>`)
  * asks from a page (it counts as one `brainPage` tag); `history` is the last two turns, for a follow-up; `mentions.refs`
  * (at most 8) are what the person tagged with @ (docs/assistant.md#tagging-with-): each is checked against what the
  * caller may open, read into the prompt and told as a step, and one that is missing or not theirs says only "Couldn't read". Without a model the answer is left out and what was
@@ -11,6 +11,7 @@
 import { z } from 'zod';
 import { projectsOf, scopeForActor } from '@/lib/server/brain/scope';
 import { vectorFactHits } from '@/lib/server/brain/study';
+import { searchNotionKnowledge } from '@/lib/server/brain/notion/knowledge'; // NB06:
 import { askBrainStream, askJson, askMentionsSplit } from '@/lib/server/brain/ask-stream';
 import { askBrain } from '@/lib/server/brain/wiki';
 import { currentPrincipal } from '@/lib/server/auth/guard';
@@ -39,12 +40,14 @@ export const POST = handler(async (request: Request) => {
   const scope = scopeForActor(actor);
   const { question, about, history, mentions } = parsed.data;
   const vectorHits = await vectorFactHits(question, projectsOf(scope));
+  // NB06: the company's Notion pages of the projects the caller can read (only projects with an active Notion link).
+  const knowledge = await searchNotionKnowledge(question, { projects: projectsOf(scope), signal: request.signal });
   const { kept, cut } = askMentionsSplit(mentions?.refs, about);
   // An API key may tag only what its scopes cover reading elsewhere; the rest is refused like a tag that is not theirs.
   const { allowed, denied } = splitByScopes(kept, currentPrincipal()?.apiKey?.scopes);
   const name = (r: { id: string; name?: string }) => (r.name ?? r.id).replace(/\s+/g, ' ').slice(0, 60);
   const refusals = [...denied.map((r) => `Couldn't read @${name(r)}`), ...cut.map((r) => `Left out @${name(r)}: too many tags`)];
-  const base = { vectorHits, ...(about && { about }), ...(history && { history }), signal: request.signal };
+  const base = { vectorHits, ...(knowledge.length && { knowledge }), ...(about && { about }), ...(history && { history }), signal: request.signal };
   const options = { ...base, ...(allowed.length && { mentions: allowed }), ...(refusals.length && { refusals }) };
   if (request.headers.get('accept')?.includes('text/event-stream')) {
     return sseResponse(

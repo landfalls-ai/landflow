@@ -49,6 +49,11 @@ pattern must be a regular expression, or the request answers 400 and names it.
 - **A draft pulled from Notion** (`source: notion`, written only by the Notion puller, never accepted from a route) is
   tainted like `learned` and `agent`, and it is drafted at **project level only**: org practices are never pulled, and an
   org draft with source `notion` is refused with 403 ([features/notion-brain.md](features/notion-brain.md#how-it-is-built)).
+  A person who edits a practice's title, summary or body in the linked Notion page gets a new tainted draft (a later edit before
+  approval updates that same draft version); the inbox suggestion says it was read from "a linked Notion page" and links the row,
+  and the approved text is written back to Notion. Status, Version and Handle are never read from Notion, so nothing is approved
+  there ([features/notion-brain.md](features/notion-brain.md#what-comes-back-from-notion)). An approval emits its changes after
+  its transaction commits.
 - **Org practices are approved by instance owners and admins.** **Project practices are approved by that project's
   admins** (instance owners and admins count as admins everywhere). The drafter may approve their own: there is no
   four-eyes setting. Approving, rejecting, retiring and waiving need a session; an API key gets 403.

@@ -44,6 +44,8 @@ const OLD_MAIN = [
   // LL04: the budgets sync to LiteLLM.
   'LLM gateway budgets sync', 'binary maintenance', 'publications', 'agent versions backfill', 'cap-raise trigger', 'project adoption', 'scheduled publishes', 'scheduler', 'mcp trigger subscriptions', 'wait timers', 'trigger buffers',
   'held trigger events', 'recovery', 'retry timers', 'alerts', 'agent triggers', 'project task wake-ups', 'evaluation schedules', 'online evaluations', 'usage listeners', 'usage trigger', 'second brain',
+  // NB04: the Notion brain's push service, a leader service right after the second brain.
+  'notion brain',
   'registry gRPC server', 'static plugin seeds', 'kubernetes discovery', 'startup scan', 'node plugins', 'app webhooks', 'agent flow moves', 'IMAP IDLE',
 ];
 

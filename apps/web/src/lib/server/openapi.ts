@@ -2437,7 +2437,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Second brain',
     id: 'linkProjectToNotion',
     summary: 'Link a project to a Notion page',
-    description: 'The project’s admins. Checks the page again, then makes the link in `setting_up`; the copy is the sync’s (nothing syncs yet). `credentialId` must be a `productivity.notionApi` credential the project may use. 409 when the project or the page is linked already, or the Notion brain is off; 404 when the page is not shared with the key; 400 for a refused key or a page that is not a Notion page.',
+    description: 'The project’s admins. Checks the page again, then makes the link in `setting_up`; the copy is the sync’s. `credentialId` must be a `productivity.notionApi` credential the project may use. 409 when the project or the page is linked already, or the Notion brain is off; 404 when the page is not shared with the key; 400 for a refused key or a page that is not a Notion page.',
     pathParams: notionPath,
     body: jsonBody(object({ credentialId: { type: 'string' }, page: { type: 'string', description: 'A Notion link, a 32-hex id or a dashed UUID' }, knowledgeScope: { type: 'string', enum: ['brain', 'root'], default: 'brain' }, rps: { type: 'integer', minimum: 1, maximum: 8, default: 2 } }, ['credentialId', 'page'])),
     responses: { 202: reply('The link', notionLink), 400: invalid, 403: errorRef('Not an admin of the project, or the project may not use that credential'), 404: notFound, 409: notionOff },
@@ -2488,10 +2488,10 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Second brain',
     id: 'resolveNotionProblem',
     summary: 'Resolve a Notion sync problem',
-    description: 'Project editors and admins; `repair` and `deleteLocal` need an admin. 400 for an action the problem’s kind does not offer; 409 while the action is not available yet (only `dismiss` works until the pull ships) or the problem is resolved.',
+    description: 'Project editors and admins; `repair` and `deleteLocal` need an admin. 400 for an action the problem’s kind does not offer; 409 when the problem is resolved already, the object it names is gone, or `LANDFLOW_NOTION_BRAIN=off`.',
     pathParams: { id: 'The project id', problemId: 'The problem id' },
     body: jsonBody(object({ action: { type: 'string', enum: ['dismiss', 'repair', 'putBack', 'deleteLocal', 'keepAsFact'] } }, ['action'])),
-    responses: { 200: reply('Resolved', object({ id: { type: 'string' }, resolved: { type: 'boolean' }, action: { type: 'string' }, by: { type: 'string' }, at: { type: 'string' } }, ['id', 'resolved', 'action'])), 400: invalid, 403: errorRef('Not allowed to take that action'), 404: notFound, 409: errorRef('Not available yet, or resolved already') },
+    responses: { 200: reply('Resolved', object({ id: { type: 'string' }, resolved: { type: 'boolean' }, action: { type: 'string' }, by: { type: 'string' }, at: { type: 'string' } }, ['id', 'resolved', 'action'])), 400: invalid, 403: errorRef('Not allowed to take that action'), 404: notFound, 409: errorRef('Resolved already, the object is gone, or the Notion brain is off') },
   });
   // B05: the person's own work and day (docs/work-and-briefings.md).
   const briefingWorkItem = { type: 'object', description: 'A WorkItem (lib/shared/brain-work.ts): id, sourceId, source, kind, title, summary, repo, areas, at, endedAt, url, visibility' };

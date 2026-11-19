@@ -16,7 +16,7 @@ import { listKnowledgeDocuments } from './knowledge';
 // AG12: the vault's names (never data), and what a project's settings change for a run.
 import { credentials } from '../credentials/vault';
 import type { ProjectAgentRules } from '../project-context/project-settings';
-import { PROJECT_TOOL_KIND_LABELS, toolKindAllowedBy, type ProjectToolKind } from '../../shared/project-policy';
+import { isNotionBrainKnowledge, notionBrainLabel, PROJECT_TOOL_KIND_LABELS, toolKindAllowedBy, type ProjectToolKind } from '../../shared/project-policy';
 
 const PROVIDER: Record<string, string> = { anthropic: 'Anthropic', openai: 'OpenAI', ollama: 'Ollama' };
 
@@ -136,7 +136,8 @@ export function agentConnections(agent: Agent, skip: { model?: boolean; memory?:
     }
     // The runtime adds the project's own knowledge base to every agent run there (runtime.ts, PROJECT_KNOWLEDGE_TOOL).
     const knowledge = rules?.settings.knowledge;
-    if (knowledge?.enabled) out.push({ ...toolShape(knowledge.tool as AgentToolConfig), name: 'Project knowledge', from: 'project' });
+    if (rules && knowledge?.enabled && isNotionBrainKnowledge(knowledge.tool)) out.push({ kind: 'knowledge', name: notionBrainLabel(rules.projectName), detail: 'Notion · the company’s pages (keyword search, and meaning when embeddings are on)', icon: brandIcon('notion'), from: 'project' }); // NB06:
+    else if (knowledge?.enabled && !isNotionBrainKnowledge(knowledge.tool)) out.push({ ...toolShape(knowledge.tool as AgentToolConfig), name: 'Project knowledge', from: 'project' });
   }
   for (const skill of config.skills ?? []) out.push({ kind: 'skill', name: skill.name, icon: 'lucide:graduation-cap', from: 'agent' });
   return out;

@@ -159,6 +159,9 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'notion-brain.unlink': 'Disconnected a project from Notion',
   'notion-brain.sync': 'Asked for a Notion sync',
   'notion-brain.problem': 'Resolved a Notion sync problem',
+  // NB05:
+  'notion-brain.overwrite': 'Replaced a value with a later edit, in Landflow or in Notion',
+  'notion-brain.region': 'A person changed the part of a Notion page that Landflow writes',
   'project.goals_changed': 'Changed a project’s goals',
   'project.budget.update': 'Changed a project’s AI budget',
   'project.budget.stopped': 'A project reached its AI budget',

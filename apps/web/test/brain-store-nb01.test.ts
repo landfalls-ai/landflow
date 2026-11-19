@@ -30,6 +30,7 @@ const { scopeForActor } = await import('@/lib/server/brain/scope');
 const practices = await import('@/lib/server/practices/store');
 const approve = await import('@/lib/server/practices/approve');
 const { noteStore } = await import('@/lib/server/notebook/store');
+const { logger } = await import('@/lib/server/telemetry/logger');
 const notes = await import('@/lib/server/notebook/service');
 const { agentTeamStore } = await import('@/lib/server/agent-teams/store');
 const { agentStore } = await import('@/lib/server/agents/store');
@@ -186,6 +187,7 @@ describe('practices', () => {
     expect(() => practices.draftPractice(draftInput({ level: 'org', projectId: undefined, handle: 'team/org-two' }), origin)).toThrowError(/Sign in|only editors|403/i);
     try {
       practices.draftPractice(draftInput({ level: 'org', projectId: undefined, handle: 'team/org-three' }), origin);
+      throw new Error('should have refused');
     } catch (error) {
       expect((error as { status?: number }).status).toBe(403);
     }
@@ -236,6 +238,15 @@ describe('notes', () => {
     expect(sweptLater.filter((c) => c.key === old.id)).toMatchObject([{ op: 'delete' }]);
   });
 
+  it('a member\'s note_add in a run emits one note change for the team\'s project', async () => {
+    const binding = { team: { id: team.id, name: team.name }, projectId: alpha.id, runId: 'run_nb01', member: { id: 'm_lead', title: 'Lead' }, manager: true, content: 'full' as const };
+    const added = await changes(() => notes.addNote(binding, { kind: 'decision', text: 'Each chart gets a values file per stage.' }));
+    expect(added).toMatchObject([{ kind: 'note', op: 'upsert', projectId: alpha.id, origin: 'landflow' }]);
+    expect(noteStore.get(added[0].key)).toMatchObject({ scope: 'run', author: 'Lead', authorId: 'm_lead' });
+    const again = await changes(() => notes.addNote(binding, { kind: 'decision', text: 'Each chart gets a values file per stage.' }));
+    expect(again).toEqual([]);
+  });
+
   it('deleteTeam emits a delete for each note', async () => {
     await add();
     await add();
@@ -273,13 +284,16 @@ describe('the store and its resolver', () => {
     }
   });
 
-  it('a resolver that throws is local', () => {
+  it('a resolver that throws is local, and the failure is logged', () => {
     store.setBackendResolver(() => {
       throw new Error('no table');
     });
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     try {
       expect(store.brainStoreFor('p1').backend).toBe('local');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('backend resolver failed'), expect.objectContaining({ projectId: 'p1' }));
     } finally {
+      warn.mockRestore();
       store.setBackendResolver(undefined);
     }
   });

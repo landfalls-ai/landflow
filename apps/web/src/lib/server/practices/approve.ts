@@ -12,7 +12,7 @@ import { canResource, executionWorkflowId, isInstanceAdmin, projectRole, type Ac
 import { redactPatterns, redactText } from '../secrets/redact';
 import { PracticeConflict, PracticeError, PracticeNeedsReview } from './errors';
 import { setInboxDeps, settleApproved, settleRejected, settleRetired } from './inbox'; // PR09:
-import { findWaiver, getPractice, getVersion, insertApplication, markApproved, markRejected, markRetired } from './store';
+import { emitPractice, findWaiver, getPractice, getVersion, insertApplication, markApproved, markRejected, markRetired, versionsOf } from './store'; // NB05: emitPractice, versionsOf
 
 /** Org practices: owners and admins. Project practices: that project's admins. */
 export function canApprove(actor: Actor | undefined, practice: Pick<Practice, 'level' | 'projectId'>): boolean {
@@ -87,10 +87,13 @@ export function approvePractice(actor: Actor, practiceId: string, input: Practic
     if (!canApprove(actor, c)) throw new PracticeError(`You can’t retire “${c.handle}”: it is approved by someone else`, 403);
   }
 
-  const approved = database().transaction(() => {
-    for (const c of superseded) markRetired(c.id);
-    return markApproved(practice, version, actor.id, superseded.map((c) => c.id));
+  // NB05: nothing is emitted inside the transaction (it may still roll back); the changes are heard once it has committed.
+  const { approved, retired } = database().transaction(() => {
+    const retired = superseded.map((c) => markRetired(c.id, { emit: false }));
+    return { retired, approved: markApproved(practice, version, actor.id, superseded.map((c) => c.id), { emit: false }) };
   });
+  for (const r of retired) emitPractice(r, r.approvedVersion ?? versionsOf(r.id)[0]?.version ?? 0, 'upsert'); // NB05:
+  emitPractice(approved, version.version, 'upsert'); // NB05:
   recordAudit({
     action: 'practice.approved',
     target: { type: 'practice', id: practice.id, name: practice.handle },

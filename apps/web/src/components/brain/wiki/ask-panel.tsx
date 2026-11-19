@@ -57,7 +57,7 @@ export interface AskItem {
   earlier?: boolean;
   /** Links (and tags) a reopened turn lost because the reader may no longer open them. */
   hidden?: number;
-  found?: { pages: Array<{ id: string; name: string }>; facts: number; work: number };
+  found?: { pages: Array<{ id: string; name: string }>; facts: number; work: number; knowledge?: number };
   steps: ActivityStep[];
   /** The words so far, while they stream. */
   streamed: string;
@@ -93,7 +93,7 @@ const MODEL_STEP = 'Writing the answer';
 export function applyAskEvent(item: AskItem, event: AskEvent): AskItem {
   switch (event.type) {
     case 'found':
-      return { ...item, found: { pages: event.pages, facts: event.facts, work: event.work } };
+      return { ...item, found: { pages: event.pages, facts: event.facts, work: event.work, ...(event.knowledge && { knowledge: event.knowledge }) } };
     case 'step.start':
       return { ...item, steps: [...item.steps, { id: `s${event.step}`, label: event.label, kind: event.label === MODEL_STEP ? 'model' : 'read', status: 'running' }] };
     case 'tool': {
@@ -641,6 +641,7 @@ function AskTurnView({ item, onRetry }: { item: AskItem; onRetry?: () => void })
       `${item.found.pages.length} ${item.found.pages.length === 1 ? 'page' : 'pages'}`,
       `${item.found.facts} ${item.found.facts === 1 ? 'fact' : 'facts'}`,
       ...(item.found.work ? [`${item.found.work} work ${item.found.work === 1 ? 'item' : 'items'}`] : []),
+      ...(item.found.knowledge ? [`${item.found.knowledge} Notion ${item.found.knowledge === 1 ? 'page' : 'pages'}`] : []), // NB06:
     ].join(' · ');
   return (
     <div id={`turn-${item.id}`} className="space-y-2.5">

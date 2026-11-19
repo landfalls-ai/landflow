@@ -320,7 +320,8 @@ prose and a person keeps the facts. Spotlight asks it questions.
     that page in the editor beside it while the answer stays. With a page open, the question is about that page (the
     `@` chip) until the chip is removed. The answer streams: first **Found 3 pages · 2 facts · 5 work items** (with
     the pages as links), then its steps and its words, then the model, time, tokens and cost under it (a local model
-    says "local"). A follow-up ("and since when?") knows the last two turns of the conversation. A source is numbered
+    says "local"). In a project linked to Notion, **· 2 Notion pages** joins that line and a cited `[n]` after the work items
+    links to the page in Notion ([notion-brain.md](features/notion-brain.md#your-companys-pages-as-knowledge)). A follow-up ("and since when?") knows the last two turns of the conversation. A source is numbered
     only when the answer cites it, and a `[n]` that points at no work item is dropped. **New conversation** clears
     it. On a phone Ask is a bottom sheet; a link closes it to show the page, and the Ask button brings it back with
     the same answers.
@@ -385,11 +386,17 @@ prose and a person keeps the facts. Spotlight asks it questions.
   `apps/web/test/brain-wiki.test.ts`, `apps/web/test/brain-files.test.ts`. Why it looks this way:
   [research/brain-ui-research.md](research/brain-ui-research.md).
 
+**In Notion.** When the project is linked to a Notion page, the brain is also written there (pages, facts, practices and notes, with a body per page and your own notes below Landflow's part), within seconds of each change: see [features/notion-brain.md](features/notion-brain.md#what-landflow-writes).
+
 #### The vector collections
 
 Workflows and agents can't read or write `landflow-brain` and `landflow-brain-<project>` with a Vector Store node: the
 node refuses any collection with that name (case ignored) and points at Find Similar and Landflow Usage, which return
-only what the workflow's creator can see. The brain itself writes them and searches the ones the caller's projects own.
+only what the workflow's creator can see. The brain itself writes them and searches the ones the caller's projects own. The same holds for `landflow-notion-<project>`,
+where a linked project's Notion pages are indexed as knowledge, and now also for an agent's own knowledge tool and a project's
+knowledge setting: naming a collection with either prefix is refused ("is the second brain's own collection"); only the runtime
+builds the tool for a project's own Notion brain, and Ask's fourth source (up to 5 Notion pages of the projects the asker can
+read, only for projects with an active link) reads the collection.
 
 #### The brain over MCP
 
@@ -407,7 +414,8 @@ no hand-built MCP Server Trigger workflow:
 | `brain_usage_report` | the usage report (`groupBy`, `kinds`, `days`, `workflowId`) |
 | `check_overlap` | Find Similar for a title and a goal; other projects as the projection above (`includeOthers`, default true) |
 | `brain_suggest` | post a suggestion (source `analyst`, like `POST /api/proposals`) |
-| `brain_ask` | ask the brain a question (`question`, `about`), like `POST /api/brain/ask` |
+| `brain_ask` | ask the brain a question (`question`, `about`), like `POST /api/brain/ask` (with the Notion pages of linked projects as `knowledge`) |
+| `brain_search_knowledge` | passages of the company's Notion pages in the caller's linked projects (`query`, `limit`, default 5): `{ results: [{ title, url, passage, score }] }`; `brain:read` |
 | `my_briefing` | the caller's own briefing (`day`) |
 | `my_ai_spend` | the caller's own AI spend and caps (`period`: `24h`, `7d`, `30d`, `90d`), as text and JSON; never anyone else's ([llm-gateway.md](llm-gateway.md)) |
 | `record_work` | save the caller's own work events, private |
@@ -758,6 +766,7 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
   - Find Similar (`similar.ts`);
   - entities (`entities.ts`; `apps/web/src/app/api/entities/` for their routes);
   - the store seam and the change feed every brain write goes through (`store/`: `brainStoreFor`, `onBrainChange`, `changeOrigin`; [features/notion-brain.md](features/notion-brain.md#how-it-is-built));
+  - the Notion pull (`notion/pull.ts`, `conflicts.ts`, `problems.ts`): a page a person adds in a linked Notion page is an entity with `source: 'notion'`, a fact they add is a fact with the evidence `Notion`, and the text under "Your notes" on a page is a knowledge doc (not an attribute) ([features/notion-brain.md](features/notion-brain.md#what-comes-back-from-notion));
   - audiences and the Slack mirror (`audience.ts`; the Slack side of a click is in `slack/handlers.ts`);
   - backtests (`backtest.ts`; the run-level flag nodes read is `backtest-scope.ts`; table `brain_backtests`).
 - `apps/web/src/lib/server/usage/kinds.ts`: the declared custom kinds and the attribute checks;

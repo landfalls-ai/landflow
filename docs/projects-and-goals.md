@@ -234,7 +234,8 @@ Both use the same picker as the goal dialog and the project brief. The team's me
 A project can link its second brain to a Notion page a person owns (`/api/projects/:id/brain/notion`, the project's admins):
 the check reads the page and says what a copy would send, the link keeps the Notion key by credential only, and a
 disconnect keeps what Notion has. Only this project's pages, facts, practices and project-scope notes are ever meant to
-go; private and team-only work never does. It is per project, and nothing syncs yet; the routes and rules are in
+go; private and team-only work never does. It is per project: the brain is copied to Notion and kept in sync both ways
+([what Landflow writes](features/notion-brain.md#what-landflow-writes)); the routes and rules are in
 [the Notion brain page](features/notion-brain.md#setting-it-up).
 
 ## Project settings for agents
@@ -252,7 +253,10 @@ project page's **Agents in this project** card; the fields and answers are in [t
 - **Knowledge base.** One knowledge base (a vector collection or a plugin's) every agent in the project can search, as the
   tool `project_knowledge` ("Project knowledge" in the timeline). It is added after the kinds are filtered, so the list
   of kinds never withholds it, and a broken one (a plugin node that is gone) is a "Tool unavailable" notice, not a failed
-  run. Its credentials must be usable in the project. The collection name is global, as an agent's own is.
+  run. Its credentials must be usable in the project. The collection name is global, as an agent's own is, except that the
+  second brain's collections (`landflow-brain*`, `landflow-notion-*`) are refused (a 400 when the setting is saved). A project linked to Notion can pick **the
+  Notion brain** instead (`{ "source": "notion-brain" }`): the company's Notion pages, labelled "Notion · <brain page title>"
+  ([agents.md](agents.md#project-knowledge-from-the-notion-brain)).
 - **Allowed agents.** With **Only these**, an agent runs in the project only if it is the project's own (always) or on the
   list; the list holds only agents available in the project. An agent that isn't allowed fails its run with "“Writer”
   isn't allowed in project “Payments” (Project settings → Agents)", with no model call. Run an Agent nodes, team
