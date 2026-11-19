@@ -51,7 +51,7 @@ export function askMentionsSplit(mentions: readonly SentMention[] | undefined, a
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 /** NB06: a Notion page as the source a cited `[n]` points at: the work items come first, so `n` counts on from them. */
-const notionSource = (hit: KnowledgeHit, at: string): WorkItem => ({ id: `notion:${hit.url}`, at, kind: 'notion', source: 'notion', title: hit.title, summary: hit.passage.slice(0, 300), url: hit.url, refs: [] });
+const notionSource = (hit: KnowledgeHit, at: string): WorkItem => ({ id: `notion:${hit.url}`, at: hit.editedAt ?? at, kind: 'notion', source: 'notion', title: hit.title, summary: hit.passage.slice(0, 300), url: hit.url, refs: [] });
 const message = (caught: unknown) => (caught instanceof Error ? caught.message : String(caught));
 
 /** Ask the brain and tell it as events. Never throws: a failure is an `error` event. */

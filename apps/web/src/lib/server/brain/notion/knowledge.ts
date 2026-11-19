@@ -12,7 +12,7 @@ import { createHash } from 'node:crypto';
 import type { Embeddings } from '@landflow/engine';
 import type { JsonObject } from '@landflow/protocol';
 import { ASK_KNOWLEDGE_LIMIT, type KnowledgeHit } from '../../../shared/brain-wiki';
-import { notionKnowledgeCollection } from '../../../shared/notion-brain';
+import { notionKnowledgeCollection, NOTION_DATA_NOTE } from '../../../shared/notion-brain';
 import { notionBrainLabel, PROJECT_KNOWLEDGE_TOOL, type NotionBrainKnowledge } from '../../../shared/project-policy';
 import type { VectorKnowledgeBaseConfig } from '../../../shared/agents';
 import { ollamaUrl } from '../../config';
@@ -34,6 +34,20 @@ export const PASS_PAGES = 200;
 export const MAX_MARKDOWN_CHARS = 200_000;
 /** The walk runs this often (Sync now forces it). */
 export const WALK_INTERVAL_MS = 15 * 60_000;
+
+const PROBE_MS = 10_000;
+/** What the next pass indexes with: the brain's model when it answers, else keyword vectors (the collection never mixes the two). */
+async function usableEmbeddings(): Promise<string> {
+  const model = brainEmbeddingsModel();
+  if (!model) return 'bm25';
+  try {
+    await ollamaEmbeddings({ baseUrl: ollamaUrl(), model, queryPrefix: 'search_query: ' }).embedQuery('ping', AbortSignal.timeout(PROBE_MS));
+    return model;
+  } catch (error) {
+    logger.warn('[notion-brain] knowledge walk: the embeddings model did not answer; indexing for keyword search', { model, error: (error as Error).message });
+    return 'bm25';
+  }
+}
 
 const CHUNK = { chunkSize: 1_000, chunkOverlap: 150 };
 
@@ -79,15 +93,18 @@ export function brainEmbeddingsModel(): string | undefined {
   return model?.toLowerCase() === 'off' ? undefined : model || 'nomic-embed-text';
 }
 
-/** A knowledge tool's embeddings setting: the brain's model, or keyword search (BM25) when the brain's embeddings are off. */
-export const knowledgeEmbeddingsSetting = (): VectorKnowledgeBaseConfig['embeddings'] => {
-  const model = brainEmbeddingsModel();
-  return model ? { provider: 'ollama', model, queryPrefix: 'search_query: ' } : { provider: 'none', model: 'bm25' };
-};
+/** A knowledge tool's embeddings setting for what a collection holds: the model, or keyword search (BM25). */
+export const knowledgeEmbeddingsSetting = (model?: string): VectorKnowledgeBaseConfig['embeddings'] =>
+  model && model !== 'bm25' ? { provider: 'ollama', model, queryPrefix: 'search_query: ' } : { provider: 'none', model: 'bm25' };
+
+/** The embeddings a link's collection actually holds (`cursors.knowledge.embeddings`): a model name, or undefined for keyword vectors. */
+export function heldModel(link: LinkRow): string | undefined {
+  const held = ((readCursors(link).knowledge ?? {}) as KnowledgeCursor).embeddings;
+  return held && held !== 'bm25' ? held : undefined;
+}
 
 const keyword: Embeddings = { provider: 'none', model: 'bm25', embedDocuments: async (texts) => texts.map(() => [0]), embedQuery: async () => [0] };
-const embeddingsOf = (): Embeddings => {
-  const model = brainEmbeddingsModel();
+const embeddingsOf = (model: string | undefined): Embeddings => {
   return model ? ollamaEmbeddings({ baseUrl: ollamaUrl(), model, documentPrefix: 'search_document: ', queryPrefix: 'search_query: ' }) : keyword;
 };
 
@@ -241,28 +258,31 @@ async function dropGone(link: LinkRow, walked: Walked, vectors: SqliteVectorStor
   for (const doc of docsOf(link.id)) {
     if (present.has(compact(doc.page_id)) || items.has(compact(doc.page_id))) continue;
     dropDoc(link.id, doc.page_id);
-    await vectors.deleteWhere(notionKnowledgeCollection(link.project_id), { linkId: link.id, pageId: dashed(doc.page_id) });
+    await vectors.deleteWhere(notionKnowledgeCollection(link.project_id), { linkId: link.id, pageId: dashed(doc.page_id) }); // once per gone page
   }
 }
 
 /** Chunk and index every doc whose hash differs from what the collection holds (a notes doc included); at most PASS_PAGES. */
-async function indexDocs(link: LinkRow, vectors: SqliteVectorStore): Promise<number> {
+async function indexDocs(link: LinkRow, vectors: SqliteVectorStore, model: string | undefined): Promise<number> {
   const collection = notionKnowledgeCollection(link.project_id);
   const held = new Map<string, string>();
   const docs = docsOf(link.id);
   const live = new Set(docs.map((doc) => dashed(doc.page_id)));
+  const gone = new Set<string>();
   for (const { metadata } of await vectors.metadataOf(collection)) {
     if (metadata.linkId === link.id && typeof metadata.pageId === 'string') {
-      if (live.has(metadata.pageId)) held.set(metadata.pageId, String(metadata.hash ?? ''));
-      else await vectors.deleteWhere(collection, { linkId: link.id, pageId: metadata.pageId }); // a chunk of a doc that is gone
+      // The chunks keep the page's hash and where it sits: a moved page is indexed again so their `path` follows.
+      if (live.has(metadata.pageId)) held.set(metadata.pageId, `${String(metadata.hash ?? '')}|${String(metadata.path ?? '')}`);
+      else gone.add(metadata.pageId); // a chunk of a doc that is gone
     }
   }
-  const embeddings = embeddingsOf();
+  for (const pageId of gone) await vectors.deleteWhere(collection, { linkId: link.id, pageId });
+  const embeddings = embeddingsOf(model);
   let done = 0;
   let waiting = 0;
   for (const doc of docs) {
     const id = dashed(doc.page_id);
-    if (held.get(id) === doc.hash) continue;
+    if (held.get(id) === `${doc.hash ?? ''}|${doc.path ?? ''}`) continue;
     if (done >= PASS_PAGES) {
       waiting++;
       continue;
@@ -279,7 +299,7 @@ async function indexDocs(link: LinkRow, vectors: SqliteVectorStore): Promise<num
         texts.map((text, i) => ({
           id: `${link.id}:${id}:${i}`,
           pageContent: text,
-          metadata: { linkId: link.id, pageId: id, title, url: doc.url ?? '', path: doc.path ?? '', hash: doc.hash ?? '', chunk: i } satisfies JsonObject,
+          metadata: { linkId: link.id, pageId: id, title, url: doc.url ?? '', path: doc.path ?? '', hash: doc.hash ?? '', editedAt: doc.edited_at ?? '', chunk: i } satisfies JsonObject,
           embedding: vectorsOf[i],
         })),
       );
@@ -298,8 +318,8 @@ export async function walkKnowledge(link: LinkRow, client: NotionClient = readCl
   const vectors = new SqliteVectorStore();
   const collection = notionKnowledgeCollection(link.project_id);
   const cursor = (readCursors(link).knowledge ?? {}) as KnowledgeCursor;
-  const embeddingsKey = brainEmbeddingsModel() ?? 'bm25';
-  // A different embeddings model (or switching them off) cannot share a collection: clear it, the docs are indexed again.
+  // The model when it answers, else keyword vectors: a collection holds one or the other, so a change clears it and the docs are indexed again.
+  const embeddingsKey = await usableEmbeddings();
   if (cursor.embeddings !== embeddingsKey && (await vectors.count(collection)) > 0) await vectors.clear(collection);
   const next: KnowledgeCursor = { at: new Date().toISOString(), embeddings: embeddingsKey };
   let waiting = 0;
@@ -309,7 +329,7 @@ export async function walkKnowledge(link: LinkRow, client: NotionClient = readCl
     pages = walked.candidates.length;
     waiting += await readPages(client, link, walked);
     await dropGone(link, walked, vectors);
-    waiting += await indexDocs(link, vectors);
+    waiting += await indexDocs(link, vectors, embeddingsKey === 'bm25' ? undefined : embeddingsKey);
   } catch (error) {
     writeCursor(link.id, { ...next, error: (error as Error).message.slice(0, 200) });
     throw error;
@@ -356,25 +376,28 @@ export async function searchNotionKnowledge(query: string, options: { projects?:
   if (!links.length) return [];
   const vectors = new SqliteVectorStore();
   const found: Array<KnowledgeHit & { key: string }> = [];
-  let vector: number[] | undefined;
-  let hybrid = Boolean(brainEmbeddingsModel());
+  // The query is embedded with the model a collection holds (its cursor), once per model; one that does not answer in 10 s means keywords.
+  const vectorsByModel = new Map<string, number[] | null>();
   for (const link of links) {
+    const model = heldModel(link);
     const collection = notionKnowledgeCollection(link.project_id);
     try {
       if ((await vectors.count(collection)) === 0) continue;
-      if (hybrid && !vector) {
+      if (model && !vectorsByModel.has(model)) {
         try {
-          vector = await embeddingsOf().embedQuery(text, options.signal);
+          const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000);
+          vectorsByModel.set(model, await embeddingsOf(model).embedQuery(text, signal));
         } catch (error) {
-          hybrid = false;
+          vectorsByModel.set(model, null);
           logger.warn('notion knowledge: the query could not be embedded; searching by keywords only', { error: (error as Error).message });
         }
       }
-      const mode: SearchMode = hybrid && vector ? 'hybrid' : 'keyword';
+      const vector = model ? vectorsByModel.get(model) : undefined;
+      const mode: SearchMode = vector ? 'hybrid' : 'keyword';
       const documents = await searchStore(vectors, collection, { query: text, vector: vector ?? [], topK: limit * 3, mode });
       for (const doc of documents) {
         const meta = doc.metadata as Record<string, unknown>;
-        found.push({ key: `${link.id}:${String(meta.pageId)}`, title: String(meta.title ?? 'Untitled'), url: String(meta.url ?? ''), passage: doc.pageContent, score: doc.score ?? 0 });
+        found.push({ key: `${link.id}:${String(meta.pageId)}`, title: String(meta.title ?? 'Untitled'), url: String(meta.url ?? ''), passage: doc.pageContent, score: doc.score ?? 0, ...(typeof meta.editedAt === 'string' && meta.editedAt && { editedAt: meta.editedAt }) });
       }
     } catch (error) {
       logger.warn('notion knowledge: a project’s pages could not be searched', { project: link.project_id, error: (error as Error).message });
@@ -398,13 +421,14 @@ export function notionBrainKnowledgeConfig(projectId: string, setting?: Pick<Not
   const project = getProject(projectId);
   const label = notionBrainLabel(project?.name ?? 'this project');
   if (!activeLinkOf(projectId)) return { error: `${label}: this project has no active Notion link` };
-  const embeddings = knowledgeEmbeddingsSetting();
+  const link = activeLinkOf(projectId)!;
+  const embeddings = knowledgeEmbeddingsSetting(heldModel(link)); // what the collection holds, not what the env asks for now
   return {
     id: PROJECT_KNOWLEDGE_TOOL,
     type: 'knowledge',
     source: 'vector',
     name: label,
-    description: setting?.description || 'Search the company’s Notion pages for passages that help answer a question',
+    description: `${setting?.description || 'Search the company’s Notion pages for passages that help answer a question'}. ${NOTION_DATA_NOTE}`,
     store: 'sqlite',
     collection: notionKnowledgeCollection(projectId),
     embeddings,

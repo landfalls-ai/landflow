@@ -22,6 +22,7 @@ import type { BuiltTool } from './tools';
 import { targetOfKnowledge } from './tool-target'; // AG14:
 import { ollamaUrl } from '../config';
 import { isBrainCollection } from '../../shared/brain'; // NB06:
+import { NOTION_DATA_NOTE } from '../../shared/notion-brain'; // NB06:
 
 /** The vector store node each kind of store matches (its icon in the timeline, its credential requirement). */
 export const KNOWLEDGE_STORE_NODE: Record<KnowledgeBaseToolConfig['store'], string> = {
@@ -110,9 +111,13 @@ export function knowledgeTool(config: KnowledgeBaseToolConfig, internal?: Knowle
         topK,
       );
       // AG14: with the document count, when it is cheap to read (the SQLite store).
-      const count = config.store === 'sqlite' ? await listKnowledgeDocuments(config, internal).then((r) => r.documents.length, () => undefined) : undefined;
+      const count = config.store === 'sqlite' ? await documentCount(config, internal).catch(() => undefined) : undefined;
       return {
-        output: { results: documents.map((doc) => ({ pageContent: doc.pageContent, metadata: doc.metadata, ...(doc.score !== undefined && { score: doc.score }) })) },
+        output: {
+          // NB06: the Notion brain's passages are other people's words: quoted data, not instructions.
+          ...(internal?.allowReserved && { note: NOTION_DATA_NOTE }),
+          results: documents.map((doc) => ({ pageContent: doc.pageContent, metadata: doc.metadata, ...(doc.score !== undefined && { score: doc.score }) })),
+        },
         ...(count !== undefined && { target: targetOfKnowledge({ collection: config.collection.trim(), store: config.store, embeddings: config.embeddings }, count) }),
       };
     },
@@ -191,6 +196,13 @@ export async function listKnowledgeDocuments(config: KnowledgeBaseToolConfig, in
   }
   for (const [id, set] of pages) byId.get(id)!.pages = set.size;
   return { documents: [...byId.values()], otherChunks };
+}
+
+/** The documents a base holds: uploads by `documentId`, and (the Notion brain's) pages by `pageId`. */
+async function documentCount(config: KnowledgeBaseToolConfig, internal?: KnowledgeInternal): Promise<number> {
+  if (!internal?.allowReserved) return (await listKnowledgeDocuments(config, internal)).documents.length;
+  const rows = await openStore(config, internal).metadataOf(config.collection.trim());
+  return new Set(rows.map((row) => row.metadata.pageId).filter((id) => typeof id === 'string')).size;
 }
 
 /** Remove one uploaded document (all its chunks); returns how many chunks went. */

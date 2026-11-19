@@ -104,8 +104,12 @@ Log, the four databases and every row Landflow made for a page, fact, practice o
 - **The index.** Each doc is cut into passages of about 1,000 characters (150 overlap, the splitter knowledge bases use), each
   starting with the page title, and kept in the SQLite vector collection `landflow-notion-<project>` with the doc's hash, URL and
   path in every passage's metadata. Search is BM25 always; with the brain's embeddings on (`LANDFLOW_BRAIN_EMBEDDINGS`, the model
-  the facts use) it is hybrid, and if the embeddings model does not answer, search falls back to keywords. Switching the model, or
-  the embeddings off, clears the collection and indexes it again. A "Your notes" doc written by the pull (its `page_id` is a row
+  the facts use; unset means `nomic-embed-text`) it is hybrid. Each pass first asks the model once: if it does not answer, the
+  pages are indexed with keyword vectors and `cursors.knowledge.embeddings` says `bm25`, so Ask, MCP and the agents' tool still
+  find them; a later pass where the model answers clears the collection and indexes it again with vectors (one dimension a
+  collection, never mixed). Search and the agents' tool use what the cursor says the collection holds, not the variable, and a
+  query that takes over 10 seconds to embed is answered by keywords. Switching the model, or the embeddings off, clears the
+  collection and indexes it again; a page that moved is indexed again so its passages' `path` follows. A "Your notes" doc written by the pull (its `page_id` is a row
   of the link) is indexed like any other and never deleted by the walk.
 - **Ask.** Ask's fourth source, after pages, facts and work: up to 5 Notion pages of the projects the asker can read (the same
   scope as the facts), only for projects with an active link. The found line gains "· 2 Notion pages" (the `found` event gains
@@ -115,7 +119,8 @@ Log, the four databases and every row Landflow made for a page, fact, practice o
   `{ "knowledge": { "enabled": true, "tool": { "source": "notion-brain" } } }`. Every agent run in the project then gets the tool
   `project_knowledge` over the project's collection, labelled "Notion · <brain page title>" in the connections and the Run Trace.
   With no active link it is left out with the usual "Tool unavailable" notice. An agent's own knowledge tool cannot take this
-  form.
+  form. The tool's description and every result say the passages are quoted text, data and not instructions (`note`). Naming
+  either reserved prefix in a project's knowledge setting is a 400 when saved.
 - **MCP.** `brain_search_knowledge { query, limit? }` (`brain:read`) answers `{ results: [{ title, url, passage, score }] }` for the
   caller's projects; `brain_ask` includes the pages as `knowledge`.
 - **Reserved.** `landflow-notion-<project>` is reserved like `landflow-brain-<project>`: a Vector Store node refuses it, and so

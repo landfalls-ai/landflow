@@ -142,6 +142,8 @@ export interface KnowledgeHit {
   url: string;
   passage: string;
   score: number;
+  /** When the page was last edited in Notion (ISO), when known. */
+  editedAt?: string;
 }
 
 /** Ask shows at most this many Notion pages. */
