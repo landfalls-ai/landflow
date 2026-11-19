@@ -1,5 +1,7 @@
 /** Approve or deny a paused tool call; once every call of the turn is decided the run continues (SSE). */
 import { z } from 'zod';
+import { inboxPort } from '@/lib/server/approval-inbox/port'; // AP01:
+import { closedOf, rowFor } from '@/lib/server/approval-inbox/store'; // AP01:
 import { recordAudit } from '@/lib/server/audit';
 import { agentEventStream } from '@/lib/server/agents/http';
 import { decide } from '@/lib/server/agents/runtime';
@@ -22,6 +24,13 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const call = session.pending?.calls.find((c) => c.callId === body.data.callId);
   if (!call) return error('That tool call is not waiting for approval', 409);
   if (call.decision) return error(`Already ${call.decision}`, 409);
+  // AP01: a workflow session's call that waits in the approval inbox is decided there, in its run (never outside it).
+  const inboxRow = session.execution && inboxPort() ? rowFor(session.execution.executionId, call.callId) : undefined;
+  if (inboxRow?.status === 'waiting') return error(`“${call.tool}” waits in Needs you: decide it there`, 409);
+  if (inboxRow) {
+    const closed = closedOf(inboxRow);
+    return error(closed.message, closed.status);
+  }
   recordAudit({
     action: 'agent.tool_approval',
     target: { type: 'agent', id, name: agent.name },

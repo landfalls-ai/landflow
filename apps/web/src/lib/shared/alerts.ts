@@ -12,7 +12,7 @@ export type AlertChannelKind = 'email' | 'slack' | 'webhook' | 'telegram' | 'tea
  * The rest belong to rules of another kind (`AlertRuleKind`): `failureRate`, `pluginOffline` (and its recovery),
  * `costThreshold` and `evaluationScore`.
  */
-export type AlertEvent = 'failed' | 'timedOut' | 'retriesExhausted' | 'waiting' | 'failureRate' | 'pluginOffline' | 'pluginOnline' | 'costThreshold' | 'costForecast' | 'spendAnomaly' | 'evaluationScore'; // SP23: costForecast, spendAnomaly
+export type AlertEvent = 'failed' | 'timedOut' | 'retriesExhausted' | 'waiting' | 'failureRate' | 'pluginOffline' | 'pluginOnline' | 'costThreshold' | 'costForecast' | 'spendAnomaly' | 'evaluationScore' | 'approval'; // SP23: costForecast, spendAnomaly; AP01: approval
 
 /**
  * What a rule watches. `runs` (the default): single runs that failed or waited too long (the `events`);
@@ -43,6 +43,7 @@ export const ALERT_EVENTS: readonly { id: AlertEvent; label: string; hint: strin
   { id: 'timedOut', label: 'Timed out', hint: 'The workflow or a node hit its timeout' },
   { id: 'retriesExhausted', label: 'Retries exhausted', hint: 'The last automatic retry failed too' },
   { id: 'waiting', label: 'Waiting too long', hint: 'A run has been waiting longer than the minutes you set' },
+  { id: 'approval', label: 'Waits for your approval', hint: 'A run nobody watches paused at a tool that asks first and waits in Needs you (the message never carries the parameters)' }, // AP01:
 ];
 
 export const ALERT_CHANNEL_KINDS: readonly { id: AlertChannelKind; label: string; hint: string }[] = [

@@ -7,7 +7,7 @@ import { error } from '../http';
 import { AlertError, alertStore } from './store';
 
 const kind = z.enum(['email', 'slack', 'webhook', 'telegram', 'teams', 'discord']);
-const event = z.enum(['failed', 'timedOut', 'retriesExhausted', 'waiting']);
+const event = z.enum(['failed', 'timedOut', 'retriesExhausted', 'waiting', 'approval']); // AP01: approval
 const ruleKind = z.enum(['runs', 'failureRate', 'plugin', 'cost', 'evaluation']);
 
 const config = z
