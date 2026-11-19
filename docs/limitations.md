@@ -800,9 +800,13 @@ Seen in AG18's live pass (production profile, Claude): a create-an-agent ask in 
 
 ## What the Notion brain does not do
 
-- **Nothing syncs until wave nb2.** A project can be linked, checked, paused and disconnected, and a linked project reports the `notion` backend, but nothing is copied to or read from Notion yet; only `dismiss` works on a sync problem, the other actions answer 409.
+- **Edits come back by owner rule.** What people change in the linked Notion pages (names, descriptions, owners, attributes, "Your notes", new pages, facts, team notes, practice changes as tainted drafts) is pulled, conflicts are put back with a suggestion, and the problem actions (`repair`, `putBack`, `deleteLocal`, `keepAsFact`) work ([features/notion-brain.md](features/notion-brain.md#what-comes-back-from-notion)).
 - **Per project only.** Org practices and facts shared across projects stay in Landflow; there is no org-wide link (decision D6).
-- **No webhooks.** Notion's webhooks need a public URL, so the sync will poll; there is none now.
+- **No webhooks.** Notion's webhooks need a public URL, which this setup does not open, so the sync polls.
 - **One key per project.** The link uses an existing `productivity.notionApi` credential the project may use; the project must be able to use it (shared with it) and a deleted credential stops the link.
 - **What stays in Landflow.** Org practices and facts that span projects are not copied; suggestions go as titles with "Open in Landflow"; a page over 4,500 blocks is cut at a heading with a note.
 - **The limiter's two limits.** A key's rate only rises until the host restarts (a lower setting waits for it), and a `Retry-After` pauses the call that got it, not the shared bucket.
+- **Polling every 2 minutes.** An edit in Notion reaches Landflow within about two minutes (Sync now makes it at once); trashed rows are found by a full listing every 15 minutes or on Sync now.
+- **Edit times are coarse.** Notion rounds `last_edited_time` to the minute, so the window reaches 5 minutes back and hashes and values decide; when both sides change a field, the later edit wins by the minute and a tie goes to Notion.
+- **An editor is named only with the email capability.** Without the connection's "user information with email", a pulled change says "a Notion user"; with it, a user is named only when their email is a Landflow user's.
+- **The summary writer does not read "Your notes".** They are a knowledge doc that Ask and agents read, not part of the page summary yet.

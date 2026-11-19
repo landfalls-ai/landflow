@@ -760,6 +760,7 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
   - Find Similar (`similar.ts`);
   - entities (`entities.ts`; `apps/web/src/app/api/entities/` for their routes);
   - the store seam and the change feed every brain write goes through (`store/`: `brainStoreFor`, `onBrainChange`, `changeOrigin`; [features/notion-brain.md](features/notion-brain.md#how-it-is-built));
+  - the Notion pull (`notion/pull.ts`, `conflicts.ts`, `problems.ts`): a page a person adds in a linked Notion page is an entity with `source: 'notion'`, a fact they add is a fact with the evidence `Notion`, and the text under "Your notes" on a page is a knowledge doc (not an attribute) ([features/notion-brain.md](features/notion-brain.md#what-comes-back-from-notion));
   - audiences and the Slack mirror (`audience.ts`; the Slack side of a click is in `slack/handlers.ts`);
   - backtests (`backtest.ts`; the run-level flag nodes read is `backtest-scope.ts`; table `brain_backtests`).
 - `apps/web/src/lib/server/usage/kinds.ts`: the declared custom kinds and the attribute checks;

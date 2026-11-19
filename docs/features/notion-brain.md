@@ -107,3 +107,58 @@ Under the page a person shared, one page named for the project, with these child
 - **The region and "Your notes".** Each page and practice body is `<!-- landflow:start -->`, Landflow's text, `<!-- landflow:end -->`, then `## Your notes`. Landflow rewrites only the region; a person's edit inside it is reported and put back, and what is under "Your notes" is never touched.
 - **How the text is rendered.** Starting from the project's own page, Markdown from `## Summary`: `[[type/id|Label]]` links become page mentions where the target is in Notion and the plain label elsewhere, `<` and `>` are escaped, and text over the limit is cut at a heading and never inside a code block. Practices show the approved version, with a callout while a draft from Notion waits.
 - **What never leaves.** Only org or ownerless work shows on a page (private and team work, and the actors of work, stay in Landflow); run notes, notes of other projects, facts of other projects or none, and org practices are not copied. Suggestions are titles with "Open in Landflow".
+
+## What comes back from Notion
+
+Wave nb2's pull (NB05; `apps/web/src/lib/server/brain/notion/pull.ts`, `conflicts.ts`, `problems.ts`) reads what people edit in the
+linked pages. Every two minutes per active link (or at once on **Sync now**), for each of the four data sources it queries the rows
+edited since the cursor minus 5 minutes (edit times are minute-rounded, so hashes and values decide, not times), oldest first,
+through every page; an answer capped at the data source's 10,000 results (`request_status: incomplete`) halves the window and reads
+each half. The cursors advance only after a data source is read completely and `last_pull_at` after the pass. The pull reads only
+under the link's data sources and rows (never `/v1/search`); the one write it makes of its own is the `Landflow ID` of a row a
+person added, through the scoped writer. A full listing of every row (to find trashed ones) runs on Sync now and every 15 minutes.
+
+Everything pulled is applied through `brainStoreFor(project)` with origin `notion` (tainted where Landflow has taint; the
+editor's name never decides a permission). NB04's listener drops `notion`-origin changes, so every re-push the pull needs is an
+explicit `enqueue`, and it clears the item's `pushed_hash` so the push writes even when its own render did not change. When the
+connection has "user information with email", the editor's email is looked up (`GET /v1/users/:id`, cached ten minutes) and a
+Landflow user with that email is the change's `by`; without it nobody is named ("A Notion user").
+
+| What | Rule |
+|---|---|
+| Pages: Name, Description, Owner, Attributes | Pulled. A rename, description, owner or attribute change becomes `upsertEntity(…, 'notion', editor)`. Attributes are one `key: value` per line (at most 20); a line that is not one is a `bad_attribute` problem and the rest is kept. |
+| Pages: Type and Landflow's properties (Teams, Sources, Last work, Needs a person, Landflow ID, Open in Landflow) | Put back (`enqueue`). A changed Type also files a `type_changed` problem. |
+| A new row in Pages (no Landflow ID) | A new entity of the link's project, `source: 'notion'`, with the Type it has (else an initiative and a `type_changed` problem); its Landflow ID is written back and Landflow's side (region, Teams, Sources) is queued. A row with no name waits. A row with a Landflow ID another row holds is a copy: it is new. |
+| "Your notes" (the text after the end marker) | A knowledge doc: a `notion_knowledge_docs` row whose `page_id` is the row's Notion id, titled "<page> · Your notes", path `Pages / <page>`, at most 4,000 characters (`truncated` says if it was cut), kept as written (never redacted). Not an entity attribute (attributes are cut at 200 characters). Ask and agents read it through the knowledge source; the summary writer does not read it yet. A body is read when the row's edit time moved (or the last read was inside the minute of the stamp). |
+| The region between the markers | Landflow's. A region that is not what Landflow wrote is a conflict (below). With the markers gone, the notes are the body without the last copy of the region, and the region is queued to be written again. |
+| Facts: a new row (no Landflow ID) | With About set, `addFact(entity, { kind, statement }, 'notion', editor)` with the evidence `{ label: 'Notion', href: <row url> }` (kind `purpose` when the row has none), its ID written back and Source, Status and the rest queued. Without About, a `fact_without_page` problem and nothing is written. |
+| Facts: an existing row | A fact a person added takes a changed Statement or Kind. A study fact's Statement is Landflow's: it is put back and a "Keep as a fact" suggestion is filed. |
+| Practices | Title, summary (a leading quote) or body (the rest of the region) changed against the approved version: `draftPractice(…, { source: 'notion' })`, a **tainted draft** (project level; needs `reviewedSources` to approve) for the approvers' inbox, which says it came from "a linked Notion page" and links the row. One draft per practice per poll; a later edit before approval updates that same draft version. The approved text is queued to be written back (with the "Your change is draft v<n>" callout). A new row is a new draft at the link's level (project). Status, Version, Handle and the rest are never pulled: a change is put back, and nothing is approved. |
+| Notebook | A new row with a Team of the project is a team note: `addNote(team, …, 'notion', editor)`, unverified and tainted, author the matched user's name or "A Notion user" (a note's author is never "Notion"). Without a Team (or with another project's), a `note_without_team` problem. An edit to an existing note is put back: notes are edited in Landflow. |
+| Trash, 404 and a row moved out | The item becomes `detached` with a `trashed_in_notion` problem (found when the full listing no longer returns the row and a read says trashed or 404). Nothing local is deleted. A row that comes back reattaches. |
+| Schema | A property missing by id is a `schema_changed` problem; when a required one (Name, Landflow ID) is gone the link becomes `needs_repair` and nothing is pulled until a repair. |
+
+### Conflicts
+
+- **The region.** A person changed the part of a page Landflow writes: Landflow queues its own text (the region NB04 replaces is
+  what Notion holds now) and files, for the project's editors and admins, one suggestion per page per day ("<who> changed the
+  summary of <name> in Notion", source `analyst`, label "Notion brain", the added lines as evidence "Changed in Notion", clipped to
+  500 characters; a second edit the same day updates the diff) with a `landflow_part_edited` problem (Landflow's words and ids
+  only) and an audit row `notion-brain.region`. The problem's **Keep as a fact** adds a fact of the page with that text.
+- **Both sides.** A person-owned field changed in Notion and in Landflow since the last push: the later edit wins (Notion's
+  `last_edited_time` against the local `updated_at`, compared by the minute, a tie to Notion, the home). The value that lost goes to
+  the audit row `notion-brain.overwrite` (`details.winner`, `replaced`), and when Notion won the page's view carries
+  `changedInNotion { by, at }` for 7 days (the interface is NB07's).
+- **Practices** are never a conflict: a Notion edit is a draft.
+
+### Problems and their actions
+
+`repair` (admins) adds the removed properties back to their data source and lets the link sync again; `putBack` makes a new row for
+a trashed one (the item points at it, it is Landflow's, the push writes the rest); `deleteLocal` (admins) deletes the page or fact
+in Landflow (a practice or a note is never deleted from here); `keepAsFact` keeps a region edit as a fact. `dismiss` needs nothing.
+With `LANDFLOW_NOTION_BRAIN=off` an action answers 409. A problem a person resolved is not filed again for the same row edit.
+
+Tests: `apps/web/test/notion-pull-nb05.test.ts` and `notion-conflicts-nb05.test.ts` (the linked state is seeded by
+`notion-pull-seed.ts`, the Notion is the local fake). A practice approval now emits its changes after its transaction commits, so
+nothing is heard from one that rolls back.
+

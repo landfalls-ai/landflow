@@ -133,6 +133,8 @@ export interface WikiPage extends EntityKnowledge {
   model?: string;
   /** Whether the caller can change it (edit, add a fact). */
   canEdit: boolean;
+  /** NB05: a later edit in Notion replaced a value of this page within the last 7 days (the audit row `notion-brain.overwrite` holds the other value). */
+  changedInNotion?: { by: string; at: string };
 }
 
 /** POST /api/brain/ask. */

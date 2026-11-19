@@ -437,7 +437,7 @@ export function approvedPractices(scope: { projectIds: readonly string[] | 'all'
 }
 
 /** NB01: one change for a practice (the project it lives in; none for org). */
-function emitPractice(practice: Practice, version: number, op: 'upsert' | 'delete', explicit?: 'notion'): void {
+export function emitPractice(practice: Practice, version: number, op: 'upsert' | 'delete', explicit?: 'notion'): void { // NB05: exported, for approve.ts to emit after its transaction
   emitBrainChange({ kind: 'practice', key: practice.id, ...(practice.projectId && { projectId: practice.projectId }), op, version, ...changeOrigin(explicit), at: new Date().toISOString() });
 }
 
@@ -612,7 +612,7 @@ function patchVersion(practiceId: string, version: number, patch: Partial<Record
 }
 
 /** Write the approval: the version's own fields move to the practice, which is `approved` from now on. */
-export function markApproved(practice: Practice, version: PracticeVersion, by: string, superseded: string[]): Practice {
+export function markApproved(practice: Practice, version: PracticeVersion, by: string, superseded: string[], options: { emit?: boolean } = {}): Practice { // NB05: `emit: false` inside a transaction
   const now = new Date().toISOString();
   patchVersion(practice.id, version.version, { approved_by: by, approved_at: now });
   patchPractice(practice.id, {
@@ -627,7 +627,7 @@ export function markApproved(practice: Practice, version: PracticeVersion, by: s
     updated_at: now,
   });
   const approved = getPractice(practice.id)!;
-  emitPractice(approved, version.version, 'upsert'); // NB01
+  if (options.emit !== false) emitPractice(approved, version.version, 'upsert'); // NB01
   return approved;
 }
 
@@ -639,10 +639,10 @@ export function markRejected(practiceId: string, version: number, by: string, re
   if (practice) emitPractice(practice, version, 'upsert');
 }
 
-export function markRetired(practiceId: string): Practice {
+export function markRetired(practiceId: string, options: { emit?: boolean } = {}): Practice { // NB05: `emit: false` inside a transaction
   patchPractice(practiceId, { status: 'retired', updated_at: new Date().toISOString() });
   const retired = getPractice(practiceId)!;
-  emitPractice(retired, retired.approvedVersion ?? versionsOf(practiceId)[0]?.version ?? 0, 'upsert'); // NB01
+  if (options.emit !== false) emitPractice(retired, retired.approvedVersion ?? versionsOf(practiceId)[0]?.version ?? 0, 'upsert'); // NB01
   return retired;
 }
 

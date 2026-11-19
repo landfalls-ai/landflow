@@ -40,6 +40,8 @@ import './brain/notion/links';
 import './brain/store';
 // NB04: the Notion brain's push service (its outbox listener registers when it loads).
 import { notionBrain } from './brain/notion/service';
+// NB05: registers the Notion pull (setPullStep), the region conflict and the problem actions (docs/features/notion-brain.md#what-comes-back-from-notion).
+import './brain/notion/pull';
 import { agentTriggers } from './agents/triggers';
 import { taskWakeups } from './tasks/wakeups';
 import { alerts } from './alerts/service';
