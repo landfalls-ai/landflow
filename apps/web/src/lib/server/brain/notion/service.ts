@@ -136,6 +136,9 @@ async function syncLink(first: LinkRow, now: number): Promise<void> {
       if (error instanceof LinkStopped) return;
       logger.warn('[notion-brain] a sync step failed', { linkId: link.id, step: name, error: isNotionError(error) ? `${error.kind} ${error.status}` : (error as Error).name });
     }
+    // A step that stopped the link (a refused key, a gone page) ends the pass: the next step would run against a stopped link.
+    link = linkById(link.id) ?? link;
+    if (isStopped(link.status)) return;
   }
   if (link.next_sync_at) updateLink(link.id, { next_sync_at: null });
 }
