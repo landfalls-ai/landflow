@@ -381,6 +381,23 @@ describe("the status question", () => {
     expect(calls.some((c) => /\/api\/brain\/ask/.test(c.url))).toBe(false);
   });
 
+  it("a stopped link answers with a link to the Settings Brain card, where the fix button is", async () => {
+    link = linkView({ status: "unauthorized", problems: 0 });
+    await ask("Is the brain in sync with Notion?");
+    const a = container.querySelector(
+      '[data-testid="notion-fix-link"]',
+    ) as HTMLAnchorElement | null;
+    expect(a?.getAttribute("href")).toBe("/projects/p1?tab=settings#brain");
+    expect(a?.textContent).toContain("Pick another key");
+    expect(writes()).toEqual([]);
+  });
+
+  it("a healthy link has no such link", async () => {
+    link = linkView();
+    await ask("Is the brain in sync with Notion?");
+    expect(container.querySelector('[data-testid="notion-fix-link"]')).toBeNull();
+  });
+
   it("on an unlinked project says it lives in Landflow", async () => {
     await ask("Is the brain in sync with Notion?");
     expect(container.textContent).toContain("not linked to Notion");

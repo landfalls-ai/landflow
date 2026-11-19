@@ -1,5 +1,5 @@
 /**
- * What a typed message says about the Notion brain (docs/spotlight.md#moving-a-brain-to-notion): the shell Spotlight decides
+ * What a typed message says about the Notion brain (docs/spotlight.md#one-spotlight): the shell Spotlight decides
  * from the words, so no model runs and nothing is spent, as `askKind` and `agentChangeAsk` do. Pure, no zod, English words
  * only. A question about Notion's pages ("what does our Notion say about refunds") is not one of these: it stays Ask's.
  */

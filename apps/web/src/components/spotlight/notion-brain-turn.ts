@@ -1,5 +1,5 @@
 /**
- * What Spotlight shows for a Notion-brain ask (docs/spotlight.md#moving-a-brain-to-notion). No React and no model: it reads the
+ * What Spotlight shows for a Notion-brain ask (docs/spotlight.md#one-spotlight). No React and no model: it reads the
  * project's link, problems and keys through the browser's client contract (`lib/client/notion-brain.ts`, names only, never a
  * secret) and returns the words or the card's data. Nothing here writes: Connect and copy is the person's click on the card.
  */
@@ -12,12 +12,17 @@ import {
   projectNotionKeys,
   statusAnswer,
   statusSentence,
+  STATUS_FIX,
   type NotionKey,
 } from "@/lib/client/notion-brain";
 
 /** What a key-shaped text is answered with. */
 export const KEY_WARNING =
   "That looks like a Notion key. Keys don’t belong in a chat: add it in the credential dialog (New Notion key), where it is kept encrypted. It was not sent or saved.";
+
+/** Where the Brain card is: the project's Settings tab, at its #brain anchor. */
+export const brainCardHref = (projectId: string): string =>
+  `/projects/${encodeURIComponent(projectId)}?tab=settings#brain`;
 
 /** A project the viewer may name: id, name and the viewer's role in it. */
 export interface TurnProject {
@@ -36,7 +41,8 @@ export interface NotionBrainCardData {
 }
 
 export type NotionBrainReply =
-  | { kind: "text"; text: string }
+  /** `fix` is a link to the project's Settings Brain card, where the button that fixes a stopped link is (NB07). */
+  | { kind: "text"; text: string; fix?: { href: string; label: string } }
   /** `data` is there when the project is known; else the card lets the person pick one of `projects`. */
   | {
       kind: "card";
@@ -99,7 +105,17 @@ export async function notionBrainReply(
         view.linked && view.problems > 0
           ? await notionProblems(id).catch(() => [])
           : [];
-      return { kind: "text", text: statusAnswer(view, problems) };
+      const stopped =
+        view.linked && STATUS_FIX[view.status]?.action !== undefined
+          ? STATUS_FIX[view.status]
+          : undefined;
+      return {
+        kind: "text",
+        text: statusAnswer(view, problems),
+        ...(stopped && {
+          fix: { href: brainCardHref(id), label: stopped.button },
+        }),
+      };
     }
     const id = ctx.projectId ?? only(projects, true)?.id;
     const page = ask.page;

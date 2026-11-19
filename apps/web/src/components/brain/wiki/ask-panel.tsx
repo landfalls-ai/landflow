@@ -683,6 +683,11 @@ function LocalTurnView({ turn }: { turn: LocalTurn }) {
         <div className="space-y-2">
           {reply.kind === 'card' && reply.text ? <p className="text-[13px] text-t1">{reply.text}</p> : null}
           {reply.kind === 'text' || reply.kind === 'key' ? <p className="text-[13px] leading-relaxed text-t1 [overflow-wrap:anywhere]">{reply.text}</p> : null}
+          {reply.kind === 'text' && reply.fix ? (
+            <a href={reply.fix.href} className="inline-block text-[12px] font-medium text-accent underline" data-testid="notion-fix-link">
+              {reply.fix.label}: open the Brain card
+            </a>
+          ) : null}
           {reply.kind !== 'text' && <NotionBrainCard reply={reply} />}
         </div>
       )}

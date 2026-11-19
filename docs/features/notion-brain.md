@@ -1,6 +1,6 @@
 # Notion as the brain
 
-Part of the [Landflow docs](../README.md). A project's second brain can live in Notion: the pages, facts, practices and notes the project already has are copied to a Notion page a person owns, and what people change there is read back. This page is built wave by wave; the sections below are added by the package that builds each part. After wave nb2 a linked brain syncs: the first copy, the push of every change, the pull of what people edit in Notion and the company pages read as knowledge are built; the Brain card that shows a link's status and problems comes with wave nb3.
+Part of the [Landflow docs](../README.md). A project's second brain can live in Notion: the pages, facts, practices and notes the project already has are copied to a Notion page a person owns, and what people change there is read back. This page is built wave by wave; the sections below are added by the package that builds each part. A linked brain syncs: the first copy, the push of every change, the pull of what people edit in Notion and the company pages read as knowledge are built (nb1, nb2). Wave nb3 built the Brain card (a link's status, problems and the button that fixes a stopped one), the Brain page's Notion parts and Spotlight's Notion asks (NB08); the live check with a real Notion is still to come.
 
 ## How it is built
 
@@ -109,7 +109,7 @@ Notion key again, then **Use this key**; updating the same credential in the dia
 false`: the page (and the brain page, when the link has one) is checked with that key first, and only then is the key kept and
 the link moved back to `active` (or `setting_up` when it never got its databases), with the one notice to the admins
 ("The brain is in Notion"). A refused key (400), a credential of another type (400), a credential the project may not use (403),
-a page the key cannot see (404) and a Notion that does not answer (504) leave the link as it was. The audit row
+a page the key cannot see (404) and a Notion that does not answer (504, within the same 15 seconds for the page and the brain page together) leave the link as it was. `PATCH { paused: true, credentialId }` on an `unauthorized` or `unshared` link checks the key, keeps it and sets `paused`; a later **Resume** (`paused: false`) then goes to `active`. The audit row
 `notion-brain.update` names `credentialId`, never the key.
 
 ### The check's deadline, and one check per project
@@ -279,7 +279,8 @@ Outside the editor, the shell Spotlight moves a project's brain to Notion from a
 runs and nothing is spent. The card offers the project's Notion keys by name and opens the credential dialog for a new one;
 **Connect and copy** is the person's click, and a project that is already linked answers with its status. "Is the brain in sync
 with Notion?" answers from the link and its problems with the sentence the Brain card shows. A pasted key is hidden and never
-sent. The editor's builder does not move a brain: ask from the project page or the Brain page.
+sent. When the link has stopped (the key was refused or the page is no longer shared), the sync answer carries a link to the
+project's Settings **Brain** card (`/projects/:id?tab=settings#brain`), where **Pick another key** and **Check again** are. The editor's builder does not move a brain: ask from the project page or the Brain page.
 
 ## Over MCP
 
