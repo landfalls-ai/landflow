@@ -26,7 +26,9 @@ import { database, type Database } from '../db';
 import { listKinds } from '../usage/kinds';
 import { listUsageEvents, type UsageScope } from '../usage/query';
 import { logger } from '../telemetry/logger';
-import { entityKey, entityKnowledge, listEntities } from './entities';
+import { entityKey, entityKnowledge, entityProject, listEntities } from './entities';
+import { changeOrigin } from './store/origin'; // NB01
+import { emitBrainChange } from './store/port'; // NB01
 import { listFacts, searchFacts } from './facts';
 import { brainStatus } from './index';
 import { listProposals } from './proposals';
@@ -483,6 +485,7 @@ export async function writeSummary(entity: BrainEntity, scope: UsageScope | unde
   const textOut = linkMentions(keepKnownLinks(summary.slice(0, 4_000), index), shown, entityKey(entity));
   const generatedAt = new Date().toISOString();
   db.upsert('brain_pages', { subject: entityKey(entity), summary: textOut, model: `${model.provider}/${model.model}`, basis: basisOf(entity, page.facts, page.work), generated_at: generatedAt });
+  emitBrainChange({ kind: 'summary', key: entityKey(entity), ...(entityProject(entity) && { projectId: entityProject(entity) }), op: 'upsert', ...changeOrigin(), at: generatedAt }); // NB01
   return { text: textOut, model: `${model.provider}/${model.model}`, generatedAt, stale: false, links: linksIn(textOut, index) };
 }
 

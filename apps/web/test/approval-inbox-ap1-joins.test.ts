@@ -900,11 +900,12 @@ describe('10. contracts and guards', () => {
     expect(readFileSync(join(src, 'shared', 'fix-autonomy.ts'), 'utf8')).toBe(readFileSync(join(dir, 'ag5', 'fix-autonomy.ts'), 'utf8'));
   });
 
-  it('no Spotlight, MCP or kagent path names the inbox; approval_inbox is in TABLES; 2907 is the last migration', async () => {
+  it("no Spotlight, MCP or kagent path names the inbox; approval_inbox is in TABLES; 2907 is ap1's one migration", async () => {
     expect(git('grep', '-n', '-i', '-e', 'approval-inbox', '-e', 'approvalInbox', '-e', 'approval_inbox', '--', 'apps/web/src/lib/server/assistant', 'apps/web/src/lib/server/mcp', 'apps/web/src/lib/server/kagent', 'apps/web/src/lib/shared/assistant-ops.ts')).toBe('');
     const { MIGRATIONS, TABLES } = (await import('@/lib/server/db/schema')) as unknown as { MIGRATIONS: Array<{ version: number }>; TABLES: Record<string, unknown> };
     expect(Object.keys(TABLES)).toContain('approval_inbox');
-    expect(MIGRATIONS.at(-1)!.version).toBe(2907);
-    expect(MIGRATIONS.filter((m) => m.version > 2906).map((m) => m.version)).toEqual([2907]);
+    // NB03: later waves append migrations after 2907, so this says what ap1 meant: 2907 exists and is the only one in its slot.
+    expect(MIGRATIONS.some((m) => m.version === 2907)).toBe(true);
+    expect(MIGRATIONS.filter((m) => m.version > 2906 && m.version < 2908).map((m) => m.version)).toEqual([2907]);
   });
 });

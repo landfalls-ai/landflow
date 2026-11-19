@@ -194,6 +194,10 @@ export const CONFIG_CATALOG: readonly ConfigVariable[] = [
   { name: 'LANDFLOW_BRAIN_EMBEDDINGS', group: 'ai', default: '`nomic-embed-text`', description: 'the Ollama model that embeds its facts into `landflow-brain-<project>`; `off`: keyword search only' },
   { name: 'LANDFLOW_BRAIN_INTERVAL_MINUTES', group: 'ai', default: '`60`', description: 'how often the leader rolls up, checks effects and runs the detectors (it studies once a day)' },
   { name: 'LANDFLOW_BRAIN_WEEKLY_CAP', group: 'ai', default: '`3`', description: 'suggestions per workflow per week' },
+  // NB02:
+  { name: 'LANDFLOW_NOTION_WRITE_LOG', group: 'ai', default: '–', description: 'a file that gets one line per Notion write (ids only, never a body or a key): a test and live-check aid ([notion-brain.md](../features/notion-brain.md#how-landflow-talks-to-notion))' },
+  // NB03:
+  { name: 'LANDFLOW_NOTION_BRAIN', group: 'ai', default: '`on`', description: '`off` switches the [Notion brain](../features/notion-brain.md) off for the whole instance: every project\'s brain stays local, links read as paused, the link routes (check, link, change, sync) answer 409 and nothing calls Notion' },
   { name: 'LANDFLOW_TEAM_PAUSE_MINUTES', group: 'ai', default: '`30`', description: 'how long a paused team member waits for a person\'s instruction before it carries on without one ([run-trace.md](../run-trace.md#pause-and-take-over))' },
   { name: 'LANDFLOW_PROJECT_CONTEXT', group: 'ai', default: 'on', description: '`off` stops the "Where this work fits" block (mission, goals, project brief) from being added to the system prompt of every agent Landflow runs; an agent\'s own setting (`projectContext`: full, compact or off) applies while this is on ([agents.md](../agents.md#project-context))' },
   { name: 'LANDFLOW_NOTEBOOK_EMBEDDINGS', group: 'ai', default: 'on', description: '`off` stops the team notebook from asking Ollama for embeddings; search then matches words ([team-notebook.md](../team-notebook.md#search-by-meaning))' },

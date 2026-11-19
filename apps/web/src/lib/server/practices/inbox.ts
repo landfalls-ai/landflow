@@ -23,7 +23,8 @@ import { PracticeConflict, PracticeNeedsReview } from './errors';
 /** Where a practice is read on the Brain page. */
 export const practiceHref = (practiceId: string) => `/brain/practices/${practiceId}`;
 
-const DRAFTER = { person: 'A person', learned: 'A repository', agent: 'An agent' } as const;
+// NB01: notion added.
+const DRAFTER = { person: 'A person', learned: 'A repository', agent: 'An agent', notion: 'Notion' } as const;
 
 /** Who may approve a practice (the same rule as approve.ts `canApprove`): org practices, owners and admins; project ones, the project's admins and owners/admins. */
 function approvers(practice: Pick<Practice, 'level' | 'projectId'>): UserRecord[] {

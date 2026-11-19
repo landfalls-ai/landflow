@@ -56,6 +56,8 @@ the ids stay and the excerpt is not kept.
 A note is **tainted** when it gives a `url`, has a URL in its text, or its author used a web or fetch tool in the same
 run (a conservative reading: the author may not have used what it read). A tainted note shows a warning, and it cannot be
 promoted until a person has **Verified** it. This stops a page's instructions from becoming the team's standing memory.
+A note pulled from Notion is the same: `unverified` and tainted, with `source.tool: notion` and the page's URL
+([features/notion-brain.md](features/notion-brain.md#how-it-is-built)).
 
 ### Search by meaning
 

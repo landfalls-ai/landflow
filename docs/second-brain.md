@@ -757,6 +757,7 @@ Routes are also in [reference/api.md](reference/api.md), and variables in
   - flow detectors (`flow-detectors.ts`);
   - Find Similar (`similar.ts`);
   - entities (`entities.ts`; `apps/web/src/app/api/entities/` for their routes);
+  - the store seam and the change feed every brain write goes through (`store/`: `brainStoreFor`, `onBrainChange`, `changeOrigin`; [features/notion-brain.md](features/notion-brain.md#how-it-is-built));
   - audiences and the Slack mirror (`audience.ts`; the Slack side of a click is in `slack/handlers.ts`);
   - backtests (`backtest.ts`; the run-level flag nodes read is `backtest-scope.ts`; table `brain_backtests`).
 - `apps/web/src/lib/server/usage/kinds.ts`: the declared custom kinds and the attribute checks;

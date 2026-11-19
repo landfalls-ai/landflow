@@ -351,7 +351,7 @@ reply's `done` model or the draft's. Two shared checks read what a designed agen
 
 Each backbone wave's packages are joined on their real sides in a joins file (`spotlight-sb1-joins.test.ts` …
 `spotlight-sb3-joins.test.ts`, `agents-ag1-joins.test.ts`, `agents-ag2-joins.test.ts`, `agents-ag3-joins.test.ts`,
-`agents-ag4-joins.test.ts`, `fix-path-ag5-joins.test.ts`); they always run with scripted models. Their last block compares the contract copies in the
+`agents-ag4-joins.test.ts`, `fix-path-ag5-joins.test.ts`, `approval-inbox-ap1-joins.test.ts`, `notion-brain-nb1-joins.test.ts`); they always run with scripted models. Wave nb1's joins NB01's brain store and change feed, NB02's Notion client and NB03's links on their real sides against the [Notion fake](#the-notion-fake) only (the client is the one `runtime.ts` registers, never a stub): a linked project's store reports `notion` and writes locally with one change, the check route through the real client writes nothing and keeps the key out of every response, audit row and log line, and a fact added in a linked project reaches a listener; its last block compares `lib/shared/brain-store.ts`, `lib/server/brain/store/port.ts`, `lib/server/notion/port.ts`, `test/fake-notion.ts` and `lib/shared/notion-brain.ts` with the contracts folder's `nb/`. Their last block compares the contract copies in the
 repository (wave ag4's: `lib/shared/agent-card.ts`, `lib/shared/tenant-catalog.ts`, `lib/shared/agent-bubbles.ts`,
 `lib/shared/agent-versions.ts`, `components/canvas/bubble-view.tsx`, `test/spotlight-scenarios/scenario.ts` and
 `test/fixtures/legacy-agent-flow.json`; wave ag3's `lib/shared/tool-target.ts` and the runbooks in
@@ -378,6 +378,25 @@ Mailpit answers, and `mcp-gateway-two-issuers.test.ts` runs its gateway checks w
 The databases plugin has its own: `cd plugins/databases && LANDFLOW_INTEGRATION=postgres,redis go test -count=1 -run
 Integration -v .` (`all` adds MySQL); see
 [deployment.md, "Integration tests (databases plugin)"](deployment.md#integration-tests-databases-plugin).
+
+### The Notion fake
+
+Every test of the Notion brain talks to `apps/web/test/fake-notion.ts`, an in-memory Notion on a local port (its header lists
+every endpoint and behaviour; no test calls `api.notion.com` or holds a real key). Start it with `startFakeNotion()` and register
+a stand-in credential type before creating a credential that points at it:
+
+```ts
+registry.registerBuiltin(definePlugin({ info: { id: 'productivity', name: 'Productivity (stand-in)', version: '0.0.0', language: 'typescript' },
+  credentialTypes: [defineCredentialType({ name: 'notionApi', displayName: 'Notion API', properties: [
+    { name: 'apiKey', displayName: 'Key', type: 'string', required: true, typeOptions: { password: true } },
+    { name: 'baseUrl', displayName: 'API Base URL', type: 'string', default: 'https://api.notion.com' }] })], nodes: [] }));
+const fake = await startFakeNotion();
+const { id } = credentials.create({ name: 'Notion', type: 'productivity.notionApi', data: { apiKey: FAKE_NOTION_TOKEN, baseUrl: fake.url } });
+```
+
+`fake.state.requests` records every request (assert on headers' effects, counts and paths), `setRateLimit` and `failNext`
+script 429, 529 and 5xx. Pass `now` and `sleep` to `notionClient` to drive the limiter with a fake clock, and call
+`resetLimiters()` between tests. `LANDFLOW_NOTION_WRITE_LOG=<file>` records one id-only line per write.
 
 ### Checking a change live
 

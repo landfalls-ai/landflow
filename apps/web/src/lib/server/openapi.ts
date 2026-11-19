@@ -2421,6 +2421,78 @@ function paths(): Record<string, Record<string, Json>> {
       400: invalid,
     },
   });
+  // NB03: a project's link to a Notion page (docs/features/notion-brain.md#setting-it-up).
+  const notionLink = { type: 'object', additionalProperties: true, description: 'A LinkView (lib/shared/notion-brain.ts): id, projectId, status, reason, credential (id and name, never the key), rootPageId, rootUrl, rootTitle, brainPageId, workspaceName, botName, knowledgeScope, rps, copy, lastPushAt, lastPullAt, waiting, problems, createdAt, updatedAt, canManage' };
+  const notionPath = { id: 'The project id' };
+  const notionOff = errorRef('The Notion brain is switched off on this instance (`LANDFLOW_NOTION_BRAIN=off`), or the page is linked already');
+  add('get', '/api/projects/{id}/brain/notion', {
+    tag: 'Second brain',
+    id: 'getProjectNotionLink',
+    summary: 'A project’s Notion link',
+    description: 'Any role in the project; with an API key it needs the `brain:read` scope. `{ linked: false, canManage }` when the project is not linked, else the link: its status, the credential by id and name (never the key), the progress of the copy, what waits and how many problems are open.',
+    pathParams: notionPath,
+    responses: { 200: reply('The link', { oneOf: [notionLink, object({ linked: { type: 'boolean', enum: [false] }, canManage: { type: 'boolean' } }, ['linked', 'canManage'])] }), 404: notFound },
+  });
+  add('post', '/api/projects/{id}/brain/notion', {
+    tag: 'Second brain',
+    id: 'linkProjectToNotion',
+    summary: 'Link a project to a Notion page',
+    description: 'The project’s admins. Checks the page again, then makes the link in `setting_up`; the copy is the sync’s (nothing syncs yet). `credentialId` must be a `productivity.notionApi` credential the project may use. 409 when the project or the page is linked already, or the Notion brain is off; 404 when the page is not shared with the key; 400 for a refused key or a page that is not a Notion page.',
+    pathParams: notionPath,
+    body: jsonBody(object({ credentialId: { type: 'string' }, page: { type: 'string', description: 'A Notion link, a 32-hex id or a dashed UUID' }, knowledgeScope: { type: 'string', enum: ['brain', 'root'], default: 'brain' }, rps: { type: 'integer', minimum: 1, maximum: 8, default: 2 } }, ['credentialId', 'page'])),
+    responses: { 202: reply('The link', notionLink), 400: invalid, 403: errorRef('Not an admin of the project, or the project may not use that credential'), 404: notFound, 409: notionOff },
+  });
+  add('patch', '/api/projects/{id}/brain/notion', {
+    tag: 'Second brain',
+    id: 'updateProjectNotionLink',
+    summary: 'Pause, resume or tune a project’s Notion link',
+    description: 'The project’s admins. `paused`, `rps` (1 to 8 requests a second) and `knowledgeScope` (`brain` or `root`); a field left out keeps its value.',
+    pathParams: notionPath,
+    body: jsonBody(object({ paused: { type: 'boolean' }, rps: { type: 'integer', minimum: 1, maximum: 8 }, knowledgeScope: { type: 'string', enum: ['brain', 'root'] } })),
+    responses: { 200: reply('The link', notionLink), 400: invalid, 403: errorRef('Not an admin of the project'), 404: notFound, 409: notionOff },
+  });
+  add('delete', '/api/projects/{id}/brain/notion', {
+    tag: 'Second brain',
+    id: 'unlinkProjectFromNotion',
+    summary: 'Disconnect a project from Notion',
+    description: 'The project’s admins. The link is kept as `unlinked` for the history; nothing is sent to Notion, which keeps what is there, and Landflow’s own brain is unchanged. The project can be linked again.',
+    pathParams: notionPath,
+    responses: { 200: reply('Disconnected', object({ ok: { type: 'boolean' }, linked: { type: 'boolean' }, message: { type: 'string' } }, ['ok', 'message'])), 403: errorRef('Not an admin of the project'), 404: notFound },
+  });
+  add('post', '/api/projects/{id}/brain/notion/check', {
+    tag: 'Second brain',
+    id: 'checkNotionPage',
+    summary: 'Check a Notion page before linking it',
+    description: 'The project’s admins. Reads Notion and writes nothing: the page’s title, whether a Landflow brain is already under it, what a copy of this project would send (pages, facts, practices, project notes) and about how many minutes it takes. 404 “Landflow can’t see this page” names the connection to add in Notion.',
+    pathParams: notionPath,
+    body: jsonBody(object({ credentialId: { type: 'string' }, page: { type: 'string' } }, ['credentialId', 'page'])),
+    responses: { 200: reply('What the page is', object({ title: { type: 'string' }, url: { type: 'string' }, workspaceName: { type: 'string' }, botName: { type: 'string' }, existingBrain: object({ found: { type: 'boolean' }, pageId: { type: 'string' } }, ['found']), counts: object({ pages: { type: 'integer' }, facts: { type: 'integer' }, practices: { type: 'integer' }, notes: { type: 'integer' } }, ['pages', 'facts', 'practices', 'notes']), estimateMinutes: { type: 'integer' } }, ['title', 'url', 'existingBrain', 'counts', 'estimateMinutes'])), 400: invalid, 403: errorRef('Not an admin of the project, or the project may not use that credential'), 404: notFound, 409: notionOff },
+  });
+  add('post', '/api/projects/{id}/brain/notion/sync', {
+    tag: 'Second brain',
+    id: 'syncProjectNotionLink',
+    summary: 'Sync a project’s Notion link now',
+    description: 'The project’s admins. Makes the next sync due at once and answers 202 with the link.',
+    pathParams: notionPath,
+    responses: { 202: reply('The link', notionLink), 403: errorRef('Not an admin of the project'), 404: notFound, 409: notionOff },
+  });
+  add('get', '/api/projects/{id}/brain/notion/problems', {
+    tag: 'Second brain',
+    id: 'listNotionProblems',
+    summary: 'Open sync problems of a project’s Notion link',
+    description: 'Any role in the project. Each problem has its kind, Landflow’s words about it (never page text) and the actions it offers.',
+    pathParams: notionPath,
+    responses: { 200: reply('The problems', array({ type: 'object', additionalProperties: true, description: 'A LinkProblemView: id, kind, notionId, notionUrl, localKey, detail, at, actions' })), 404: notFound },
+  });
+  add('post', '/api/projects/{id}/brain/notion/problems/{problemId}', {
+    tag: 'Second brain',
+    id: 'resolveNotionProblem',
+    summary: 'Resolve a Notion sync problem',
+    description: 'Project editors and admins; `repair` and `deleteLocal` need an admin. 400 for an action the problem’s kind does not offer; 409 while the action is not available yet (only `dismiss` works until the pull ships) or the problem is resolved.',
+    pathParams: { id: 'The project id', problemId: 'The problem id' },
+    body: jsonBody(object({ action: { type: 'string', enum: ['dismiss', 'repair', 'putBack', 'deleteLocal', 'keepAsFact'] } }, ['action'])),
+    responses: { 200: reply('Resolved', object({ id: { type: 'string' }, resolved: { type: 'boolean' }, action: { type: 'string' }, by: { type: 'string' }, at: { type: 'string' } }, ['id', 'resolved', 'action'])), 400: invalid, 403: errorRef('Not allowed to take that action'), 404: notFound, 409: errorRef('Not available yet, or resolved already') },
+  });
   // B05: the person's own work and day (docs/work-and-briefings.md).
   const briefingWorkItem = { type: 'object', description: 'A WorkItem (lib/shared/brain-work.ts): id, sourceId, source, kind, title, summary, repo, areas, at, endedAt, url, visibility' };
   add('post', '/api/brain/work', {
