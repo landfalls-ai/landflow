@@ -1,15 +1,17 @@
 /**
- * AG23: the asks-first tools a run nobody watches will refuse, said before publishing (docs/agents.md#production-approvals).
+ * AG23, AP02: the asks-first tools a run nobody watches will wait for or refuse, said before publishing (docs/agents.md#production-approvals).
  *
- * A webhook, schedule, channel, app trigger, the hosted chat or a form starts a run with no person in the editor, so a Run an
- * Agent step's tool that asks first is refused there (the agent runtime's `deny`). The person's decision of 2026-11-18 lets Spotlight
- * approve its own test runs; where a production run's approvals go is still theirs to decide, so production keeps refusing and
- * this says so: one line per tool, for the publish card and the Publish menu (`unattendedLine`).
+ * A webhook, schedule, app trigger or form starts a run with no person in the editor. The person's decision of 2026-11-18: a Run
+ * an Agent step whose Tool Approvals is Ask pauses at a tool that asks first and waits in Needs you (the approval inbox,
+ * docs/approval-inbox.md), so the line says `waitLine`; a step that still refuses (Refuse, a model or tools wired to it, an MCP
+ * call, the hosted chat, a host with no inbox) says `refusesLine` with why. One `PublishLine` per tool and trigger, for the
+ * publish card, the Publish menu and the session's last line.
  */
 import type { Workflow } from '@landflow/engine';
 import type { UnattendedApproval } from '../../shared/unattended';
+import { EXPIRY_VARIABLE, expiryMinutes, refusesLine, waitLine, type RefuseWhy } from '../../shared/approval-inbox'; // AP02:
+import { inboxPort } from '../approval-inbox/port'; // AP02:
 import { PIN_PARAM } from '../../shared/agent-versions';
-import { unattendedLine } from '../../shared/fix-autonomy';
 import { registry } from '../plugins/registry';
 import { publishedVersionId } from '../publications';
 import { productionWorkflow } from '../publish';
@@ -64,15 +66,32 @@ function graphOf(workflowId: string, version?: number | 'draft'): Workflow | und
   return (publishedVersionId(workflowId) && productionWorkflow({ ...saved, active: true })) || saved;
 }
 
+/** AP02: why a trigger's runs cannot wait, whatever the step says (an MCP call answers its caller at once; the hosted chat page cannot show an approval). */
+function triggerRefuses(type: string): RefuseWhy | undefined {
+  if (type === 'core.mcpTrigger') return 'mcp';
+  if (type === 'core.chatTrigger') return 'hostedChat';
+  return undefined;
+}
+
 /**
  * For each trigger of the version that starts without a person, each Run an Agent step whose agent version (its pin, else the
- * published one, else the draft; `latest` names agents read at their latest published version, as an update offer would re-pin them) has a tool that asks first: `{ tool, agent, node, trigger, line }`. `undefined`: no such workflow or version.
+ * published one, else the draft; `latest` names agents read at their latest published version, as an update offer would re-pin them) has a tool that asks first: a `PublishLine`
+ * (`outcome: 'waits'` with the expiry a request opened now would get, or `'refuses'` with why). `undefined`: no such workflow or version.
  */
 export function unattendedApprovals(workflowId: string, version?: number | 'draft', latest: readonly string[] = []): UnattendedApproval[] | undefined {
   const graph = graphOf(workflowId, version);
   if (!graph) return undefined;
-  const triggers = [...new Set(graph.nodes.filter((n) => !n.disabled).flatMap((n) => unattendedTrigger(n.type) ?? []))];
-  if (!triggers.length) return [];
+  const triggers = new Map<string, { word: string; why?: RefuseWhy }>();
+  for (const n of graph.nodes) {
+    const word = n.disabled ? undefined : unattendedTrigger(n.type);
+    if (!word) continue;
+    const why = triggerRefuses(n.type);
+    const known = triggers.get(word);
+    // A word that some trigger can wait for waits (a flow with a webhook and an MCP trigger: the webhook's runs wait; the MCP trigger has its own word).
+    if (!known || (known.why && !why)) triggers.set(word, { word, ...(why && { why }) });
+  }
+  if (!triggers.size) return [];
+  const minutes = expiryMinutes(process.env[EXPIRY_VARIABLE]);
   const out: UnattendedApproval[] = [];
   const seen = new Set<string>();
   for (const node of graph.nodes) {
@@ -81,14 +100,19 @@ export function unattendedApprovals(workflowId: string, version?: number | 'draf
     if (!agent) continue;
     const pin = node.parameters?.[PIN_PARAM];
     const config = (typeof pin === 'number' && !latest.includes(agent.id) ? agentVersionConfig(agent.id, pin) : undefined) ?? (agent.published ? agent.published.config : configOf(agent));
+    // What the step does at run time: a step saved without Tool Approvals refuses, and a model or tools wired to it go through no decision.
+    const stepWhy: RefuseWhy | undefined =
+      node.parameters?.toolApprovals !== 'askInChat' ? 'refuseSetting' : graph.connections.some((c) => c.target === node.id && (c.type === 'ai_languageModel' || c.type === 'ai_tool')) ? 'wired' : undefined;
     for (const tool of config.tools) {
       if (!tool.requireApproval) continue;
       const name = 'name' in tool && typeof tool.name === 'string' ? tool.name : tool.type;
-      for (const trigger of triggers) {
+      for (const { word: trigger, why: triggerWhy } of triggers.values()) {
         const key = `${node.id}|${name}|${trigger}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        out.push({ tool: name, agent: agent.name, node: node.name ?? node.id, trigger, line: unattendedLine(name, trigger) });
+        const why = stepWhy ?? triggerWhy ?? (inboxPort() ? undefined : 'noInbox');
+        const base = { tool: name, agent: agent.name, node: node.name ?? node.id, trigger };
+        out.push(why ? { ...base, line: refusesLine(name, trigger, why), outcome: 'refuses', why } : { ...base, line: waitLine(name, trigger, minutes), outcome: 'waits', expiresAfterMinutes: minutes });
       }
     }
   }
