@@ -909,6 +909,8 @@ export async function decide(
   const call = session.pending?.calls.find((c) => c.callId === callId);
   if (!session.pending || !call) throw new DecisionError('That tool call is not waiting for approval', 409);
   if (call.decision) throw new DecisionError(`Already ${call.decision}`, 409);
+  // AP02: a call held in the approval inbox is decided by the record through the run's resume, never by a link, a click or the session route.
+  if (call.review && !options.inbox) throw new DecisionError('This call waits in the approval inbox: decide it in Needs you', 409);
   call.decision = approved ? 'approved' : 'denied';
   if (options.by) call.decidedBy = options.by;
   if (options.line) call.decidedLine = options.line; // AP02:

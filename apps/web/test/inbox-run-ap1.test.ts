@@ -221,6 +221,31 @@ describe('Run an Agent in a run nobody watches (the approval inbox)', () => {
     expect(everything).not.toContain('sk-fixed-looking-secret');
   });
 
+  it('an edited input on an inbox wait is not carried: the call runs as reviewed, never with the mask or the edit', async () => {
+    script = callThenReply();
+    const record = await run(flow({ toolApprovals: 'askInChat' }));
+    claim(record.executionId, callOf(record), 'approved');
+    const outcome = await decideApproval(record.executionId, callOf(record), true, { by: 'usr_owner', input: { toEmail: 'attacker@evil.test', apiKey: MASK, subject: 'changed' } });
+    expect(outcome.status).toBe('resumed');
+    for (const mail of smtp.mails) {
+      expect(mail.to).toEqual(['oncall@landflow.test']);
+      expect(mail.data).not.toContain(MASK);
+      expect(mail.data).not.toContain('changed');
+      expect(mail.data).not.toContain('attacker@evil.test');
+    }
+  });
+
+  it('a call held in the inbox is refused by decide() without the inbox flag (route, mail link and Teams click)', async () => {
+    script = callThenReply();
+    const record = await run(flow({ toolApprovals: 'askInChat' }));
+    const session = sessionOf(record)!;
+    const { decide } = await import('@/lib/server/agents/runtime');
+    const agent = agentStore.get(session.agentId)!;
+    await expect(decide(agent, session.id, callOf(record), true, {})).rejects.toMatchObject({ status: 409 });
+    expect(smtp.mails).toHaveLength(0);
+    expect(agentStore.getSession(session.id)!.pending!.calls[0]!.decision).toBeUndefined();
+  });
+
   it('Deny: the agent hears the refusal, no mail is sent, the step succeeds', async () => {
     script = callThenReply();
     const record = await run(flow({ toolApprovals: 'askInChat' }));

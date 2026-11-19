@@ -504,7 +504,6 @@ async function inboxDecisions(
 ) {
   const port = inboxPort();
   if (!port) throw new NodeOperationError('This host has no approval inbox, so this approval cannot be settled', { itemIndex });
-  const given = decisionsOf(resume);
   const decisions: ReturnType<typeof decisionsOf> = {};
   const extra: Record<string, { line: string; refusal?: string }> = {};
   const executionId = ctx.getExecutionId();
@@ -513,14 +512,14 @@ async function inboxDecisions(
     let outcome = port.outcome(executionId, call.callId);
     if (outcome?.status === 'waiting' || !outcome) {
       if (resume?.kind === 'timeout' || !outcome) outcome = (await port.settle(executionId, call.callId, 'expired')).outcome;
-      // A deny the record does not say fails closed too (AP01's claim settles the record first); the run never ends with a request still waiting.
+      // A deny the record does not say fails closed too (AP01's claim settles the record first); the throw leaves the request waiting.
       else throw new NodeOperationError('The approval inbox has no decision for this tool call', { itemIndex });
     }
     const label = labels.get(call.callId) ?? call.tool;
     const view = { status: outcome.status, tool: label, ...(outcome.byName && { decidedByName: outcome.byName }), ...(outcome.by && { decidedBy: outcome.by }), ...(outcome.via && { decidedVia: outcome.via }), ...(outcome.at && { decidedAt: outcome.at }) };
     const line = settledLine(view, clock);
     if (outcome.status === 'approved') {
-      decisions[call.callId] = { approved: true, ...(outcome.by && { by: outcome.by }), ...(given[call.callId]?.approved && given[call.callId].input && { input: given[call.callId].input }) };
+      decisions[call.callId] = { approved: true, ...(outcome.by && { by: outcome.by }), }; // an edited input is never carried: the inbox approved the review as shown (the doors are Approve and Deny)
       extra[call.callId] = { line };
     } else if (outcome.status === 'waiting') throw new NodeOperationError('The approval inbox has no decision for this tool call', { itemIndex });
     else {
