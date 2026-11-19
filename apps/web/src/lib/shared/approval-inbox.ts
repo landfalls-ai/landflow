@@ -66,6 +66,7 @@ export const REFUSE_WHY = {
   mcp: 'an MCP call answers its caller at once',
   tool: 'a workflow an agent calls as a tool answers it at once',
   hostedChat: 'the hosted chat page cannot show an approval',
+  unknownOrigin: "this run's start could not be shown to come from a trigger that may wait",
   noInbox: 'this host has no approval inbox',
 } as const;
 export type RefuseWhy = keyof typeof REFUSE_WHY;

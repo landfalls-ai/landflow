@@ -425,7 +425,7 @@ describe('Run an Agent, Tool Approvals', () => {
         // Stamped from the parent while it is readable ...
         store.deleteExecution(parent.executionId); // ... and deleted before the child reaches its agent (saveSuccessfulExecutions off)
         const called = await start(child, { startNodeId: 'Start', triggerType: undefined, parent: { executionId: parent.executionId } });
-        refused(called, 'cannot show an approval');
+        refused(called, REFUSE_WHY.unknownOrigin); // an unreadable parent: the neutral reason, not the hosted chat's
         expect(opened).toEqual([]);
         // A readable parent hands its trigger over at creation.
         const live = await start(flow({ toolApprovals: 'refuse' }), { triggerType: 'core.chatTrigger' });
@@ -468,7 +468,7 @@ describe('Run an Agent, Tool Approvals', () => {
         unstamped(chat.executionId);
         const replay = await start(chatFlow, { partial: { executionId: chat.executionId, nodeId: 'Agent', scope: 'from' }, startNodeId: undefined, triggerItems: undefined });
         expect(replay.triggerType).toBeUndefined();
-        refused(replay, 'cannot show an approval');
+        refused(replay, REFUSE_WHY.unknownOrigin); // the first node it ran is no trigger: the neutral reason
         expect(opened).toHaveLength(2); // the webhook run's own and its replay's; the hosted-chat replay opened none
       } finally {
         registerInboxPort(undefined as never);

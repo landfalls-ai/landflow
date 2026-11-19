@@ -47,9 +47,10 @@ const CORE_TRIGGER_WORDS: Record<string, string> = {
 export function unattendedTrigger(type: string): string | undefined {
   if (type === 'core.manualTrigger' || type === 'core.evaluationTrigger') return undefined;
   if (CORE_TRIGGER_WORDS[type]) return CORE_TRIGGER_WORDS[type];
-  const resolved = registry.resolve(type);
-  if ('error' in resolved || resolved.descriptor.kind !== 'trigger') return undefined;
-  const source = resolved.descriptor.triggerSource;
+  // The descriptor from the manifest, with no transport chosen: a plugin that is offline right now is still the trigger it declared.
+  const descriptor = registry.nodeTypes().find((t) => t.type === type)?.descriptor;
+  if (!descriptor || descriptor.kind !== 'trigger') return undefined;
+  const source = descriptor.triggerSource;
   if (source === 'manual') return 'trigger';
   // A plugin's chat source is no hosted chat page (core.chatTrigger says `chat` and refuses): its own word, so the two never merge into one line.
   if (source === 'chat') return 'chat app';

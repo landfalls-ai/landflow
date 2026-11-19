@@ -7,7 +7,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workflow, WorkflowNode } from '@landflow/engine';
 import { defineNode, definePlugin } from '@landflow/sdk';
 
@@ -107,6 +107,20 @@ describe('GET /api/workflows/:id/unattended-approvals (the publish card’s line
     const { unattendedTrigger } = await import('@/lib/server/agents/unattended');
     expect(unattendedTrigger('chatapp.chatMessage')).toBe('chat app');
     expect(unattendedTrigger('core.chatTrigger')).toBe('chat');
+  });
+
+  it('a plugin trigger whose plugin is offline is still the trigger it declared (no transport is chosen to look it up)', async () => {
+    const { unattendedTrigger } = await import('@/lib/server/agents/unattended');
+    const { triggerCanWait } = await import('@/lib/server/runner/trigger');
+    // What `registry.resolve` answers for a remote plugin with no endpoint online (transports/selector.ts): an error.
+    const offline = vi.spyOn(registry, 'resolve').mockReturnValue({ error: 'Plugin "chatapp" is offline — start it or check its endpoint' });
+    try {
+      expect(unattendedTrigger('chatapp.chatMessage')).toBe('chat app');
+      expect(triggerCanWait('chatapp.chatMessage')).toBe(true);
+      expect(unattendedTrigger('chatapp.missing')).toBeUndefined();
+    } finally {
+      offline.mockRestore();
+    }
   });
 
   it('a step set to Refuse (or saved with no value), a wired model and a host with no inbox refuse, with their reasons', async () => {

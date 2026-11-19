@@ -451,19 +451,22 @@ async function triggerRefusal(executionId: string): Promise<RefuseWhy | undefine
   const { liveExecution } = await import('../runner');
   const { store } = await import('../store');
   const record: ExecutionRecord | undefined = liveExecution(executionId) ?? (await store.loadExecution(executionId));
-  if (!record) return 'hostedChat';
+  if (!record) return 'unknownOrigin';
   if (record.mode === 'mcp') return 'mcp';
-  let type = record.triggerType;
-  if (!type) {
-    const { workflow } = await runGraph(executionId, record.workflowId);
-    const first = record.executionOrder[0];
-    type = first ? workflow?.nodes.find((n) => n.id === first || n.name === first)?.type : undefined;
+  const { recordTrigger, triggerCanWait } = await import('../runner/trigger');
+  const { MAX_WORKFLOW_DEPTH } = await import('../runner/types');
+  // A record from before the wave has no stamp: its parent's verdict, else its first node. Read from the live run first, then the saved one.
+  // The ancestors are read first (async, live then saved), so the sync verdict never reads the store's cache.
+  const known = new Map<string, ExecutionRecord>([[record.executionId, record]]);
+  for (let at = record, hops = 0; at.parentExecutionId && !known.has(at.parentExecutionId) && hops <= MAX_WORKFLOW_DEPTH; hops++) {
+    const parent = liveExecution(at.parentExecutionId) ?? (await store.loadExecution(at.parentExecutionId));
+    if (!parent) break;
+    known.set(parent.executionId, parent);
+    at = parent;
   }
+  const type = recordTrigger(record, (id) => known.get(id));
   // Fail closed on whatever type it ends with, stamped or derived: only a known trigger that can wait (or the manual one) waits.
-  if (type !== 'core.mcpTrigger' && type !== 'core.chatTrigger') {
-    const { triggerCanWait } = await import('../runner/trigger');
-    if (!triggerCanWait(type)) return 'hostedChat';
-  }
+  if (type !== 'core.mcpTrigger' && type !== 'core.chatTrigger' && !triggerCanWait(type)) return 'unknownOrigin';
   if (type === 'core.mcpTrigger') return 'mcp';
   if (type === 'core.chatTrigger') return 'hostedChat';
   return undefined;

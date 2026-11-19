@@ -702,6 +702,84 @@ describe('6c. a run saved before the wave has no triggerType (fix pass 3)', () =
   });
 });
 
+describe('6d. a pre-wave child of a pre-wave parent is judged by its parent (fix pass 4)', () => {
+  const agentNode = (id: string) => node(id, 'core.messageAgent', { agentId: mailer.id, message: 'Email on-call about the alert', conversation: 'new', toolApprovals: 'askInChat' });
+  const publishFlow = async (wf: Workflow) => {
+    store.saveWorkflow(wf);
+    projects.setHomeProject('workflow', wf.id, P);
+    await publishDraft(wf.id, owner.id, 'ap1 joins');
+    return store.getWorkflow(wf.id)!;
+  };
+  const unstamp = (id: string) => store.patchExecution(id, { triggerType: undefined });
+  const requestsOf = async (wfId: string, executionId: string) => (await listFor(wfId)).filter((r) => r.executionId === executionId);
+  /** A parent run begun by `trigger`, and a workflow it called, both saved as the version before the wave saved them (no triggerType). */
+  async function preWavePair(trigger: 'core.chatTrigger' | 'core.webhook') {
+    const n = ++flows;
+    const parent = await published(trigger, 'refuse');
+    const parentRun = (await runWorkflow({ workflow: parent, mode: 'webhook', startNodeId: 'Start', triggerType: trigger, triggerItems: [{ json: { chatInput: 'hi' } }] })).executionId;
+    const child = await publishFlow({ id: `wf_ap1_pair_${n}`, name: `Pair child ${n}`, nodes: [node('Start', 'core.workflowTrigger'), agentNode('Agent')], connections: [edge('Start', 'Agent')] });
+    // The child as the version before the wave ran it: it waited (or ran) under its parent with no stamp on either record.
+    const childRun = trigger === 'core.webhook'
+      ? await runWorkflow({ workflow: child, mode: 'webhook', startNodeId: 'Start', triggerItems: [{ json: {} }], parent: { executionId: parentRun } })
+      : await runWorkflow({ workflow: child, mode: 'webhook', startNodeId: 'Start', triggerItems: [{ json: {} }], triggerType: 'core.workflowTrigger', parent: { executionId: parentRun } });
+    if (trigger === 'core.webhook') cancelWaitingExecution(childRun.executionId);
+    unstamp(parentRun);
+    unstamp(childRun.executionId);
+    expect(store.getExecution(childRun.executionId)!.parentExecutionId).toBe(parentRun);
+    return { child, childRun: childRun.executionId, parentRun };
+  }
+
+  it.each([
+    ['core.chatTrigger', 'refuses'],
+    ['core.webhook', 'waits'],
+  ] as const)('a pre-wave child of a pre-wave %s parent, re-run whole: it %s', async (trigger, expected) => {
+    const { child, childRun } = await preWavePair(trigger);
+    expect(planRerun(childRun, { scope: 'all' }).triggerType).toBe(trigger === 'core.chatTrigger' ? 'core.chatTrigger' : 'core.workflowTrigger');
+    const again = await runWorkflow({ ...planRerun(childRun, { scope: 'all' }) });
+    const requests = await requestsOf(child.id, again.executionId);
+    if (expected === 'waits') {
+      expect(again.status).toBe('waiting');
+      expect(requests).toHaveLength(1);
+      cancelWaitingExecution(again.executionId);
+    } else {
+      expect(again.status).toBe('success');
+      expect(requests).toHaveLength(0);
+    }
+  });
+
+  it.each([
+    ['core.chatTrigger', 'refuses'],
+    ['core.webhook', 'waits'],
+  ] as const)('a pre-wave child of a pre-wave %s parent, retried by a person: it %s', async (trigger, expected) => {
+    const { child, childRun } = await preWavePair(trigger);
+    store.patchExecution(childRun, { status: 'error', error: { message: 'boom', nodeId: 'Gone' } });
+    const sent = toOncall().length;
+    const retried = await runWorkflow({ ...planRetry(childRun, { from: 'start' }), bypassConcurrency: true });
+    const requests = await requestsOf(child.id, retried.executionId);
+    if (expected === 'waits') {
+      expect(retried.status).toBe('waiting');
+      expect(requests).toHaveLength(1);
+      cancelWaitingExecution(retried.executionId);
+    } else {
+      expect(retried.status).toBe('success');
+      expect(requests).toHaveLength(0);
+    }
+    expect(toOncall()).toHaveLength(sent);
+  });
+
+  it('the verdict the agent node reads on a resume (recordTrigger through the live lookup) is the parent\'s for a pre-wave child, recursively; an unreadable parent is no trigger that may wait', async () => {
+    const { recordTrigger, triggerCanWait, UNKNOWN_ORIGIN } = await import('@/lib/server/runner/trigger');
+    const record = (over: Record<string, unknown>) => ({ executionId: 'x', workflowId: 'w', workflowName: 'w', mode: 'webhook', status: 'running', startedAt: '', finishedAt: '', durationMs: 0, runData: {}, executionOrder: [], ...over }) as never;
+    const chat = record({ executionId: 'p0', workflow: { id: 'w', name: 'w', nodes: [node('Start', 'core.chatTrigger')], connections: [] }, executionOrder: ['Start'] });
+    const mid = record({ executionId: 'p1', parentExecutionId: 'p0', workflow: { id: 'w', name: 'w', nodes: [node('Start', 'core.workflowTrigger')], connections: [] }, executionOrder: ['Start'] });
+    const leaf = record({ executionId: 'p2', parentExecutionId: 'p1', workflow: { id: 'w', name: 'w', nodes: [node('Start', 'core.workflowTrigger')], connections: [] }, executionOrder: ['Start'] });
+    const all: Record<string, unknown> = { p0: chat, p1: mid, p2: leaf };
+    expect(recordTrigger(leaf, (id) => all[id] as never)).toBe('core.chatTrigger');
+    expect(recordTrigger(leaf, () => undefined)).toBe(UNKNOWN_ORIGIN);
+    expect(triggerCanWait(UNKNOWN_ORIGIN)).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 7. Races
 // ---------------------------------------------------------------------------

@@ -27,7 +27,7 @@ import { contextDataSource, runContextProvider } from '../project-context/seam';
 import { parameterSecretOptions, redactRunData } from '../secrets/runtime';
 import { singleton } from '../singleton';
 import { store } from '../store';
-import { recordTrigger, triggerCanWait } from './trigger';
+import { inheritedFrom } from './trigger';
 import { logger, recordRuntimeEvent } from '../telemetry';
 import { variables } from '../variables';
 import { dispatchSegment, preflight, shouldDispatch } from '../cluster/dispatch';
@@ -110,15 +110,8 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
     const parentRecord = parentEntry?.record ?? store.getExecution(options.parent.executionId);
     depth = (parentRecord?.depth ?? 0) + 1;
     parentStarter = parentRecord?.startedBy;
-    // A parent from before the wave has no `triggerType`: it is judged by its first node (as the agent node does); one that cannot wait, or cannot be judged, hands the hosted chat's refusal down.
-    const parentTrigger = parentRecord && (parentRecord.mode === 'manual' || parentRecord.mode === 'chat' ? parentRecord.triggerType : recordTrigger(parentRecord));
-    inheritedTrigger = !parentRecord
-      ? 'core.chatTrigger'
-      : parentRecord.mode === 'mcp' || parentTrigger === 'core.mcpTrigger'
-        ? 'core.mcpTrigger'
-        : parentTrigger === 'core.chatTrigger' || (parentRecord.mode !== 'manual' && parentRecord.mode !== 'chat' && !triggerCanWait(parentTrigger))
-          ? 'core.chatTrigger'
-          : undefined;
+    // A parent from before the wave has no `triggerType`: it is judged like the agent node does (its parent's, else its first node); one that cannot wait, or cannot be read, hands the hosted chat's refusal down.
+    inheritedTrigger = inheritedFrom(parentRecord);
     evaluation ??= parentRecord?.evaluation;
     if (depth > MAX_WORKFLOW_DEPTH) throw new Error(`Sub-workflows can be nested at most ${MAX_WORKFLOW_DEPTH} levels deep`);
     // Linked both ways: the parent lists its sub-executions, the child names its parent.
