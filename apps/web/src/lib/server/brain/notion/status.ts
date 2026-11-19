@@ -9,12 +9,13 @@ import { MAX_AUDIENCE } from '../../../shared/brain';
 import { LINK_STATUS_LABELS, type LinkStatus } from '../../../shared/notion-brain';
 import { projectRoleCan } from '../../../shared/projects';
 import { listUsers } from '../../auth/users';
-import { isNotionError, notionClientFor, sameId, type NotionErrorInfo } from '../../notion/port';
+import { isNotionError, sameId, type NotionErrorInfo } from '../../notion/port';
 import { projectRole } from '../../projects/access';
 import { getProject } from '../../projects/store';
 import { logger } from '../../telemetry/logger';
 import { upsertProposal } from '../proposals';
 import { linkById, setStatus, type LinkRow } from './links';
+import { readClient } from './sync';
 
 /** Thrown to end the work on a link whose status was just changed (the caller stops, the next tick sees the new status). */
 export class LinkStopped extends Error {
@@ -94,7 +95,7 @@ export function stopOnLinkFailure(linkId: string, error: unknown): void {
 
 /** After a 404: whether the root or the brain page is the missing one (then the link is `unshared`). Reads only. */
 export async function checkStillShared(link: LinkRow): Promise<void> {
-  const client = notionClientFor({ credentialId: link.credential_id, rps: link.rps });
+  const client = readClient(link);
   for (const id of [link.root_page_id, link.brain_page_id]) {
     if (!id) continue;
     try {

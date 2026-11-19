@@ -9,9 +9,9 @@
  * found the same way. All writes go through `linkClient`, the scoped writer.
  */
 import { type CopyProgress, DATABASE_KINDS, DATABASES, LANDFLOW_ID, LOG_PAGE_TITLE, brainPageTitle, type DatabaseKind } from '../../../shared/notion-brain';
-import { ITEM_DATABASE, itemOf, linkClient, linkDatabases, markOwn, saveItem, splitBody, verifyOwn, wholeBody, type ItemKind, type LinkDatabases } from './sync';
+import { ITEM_DATABASE, itemOf, linkClient, readClient, linkDatabases, markOwn, saveItem, splitBody, verifyOwn, wholeBody, type ItemKind, type LinkDatabases } from './sync';
 import { getProject } from '../../projects/store';
-import { isNotionError, notionClientFor, type NotionBlock, type NotionClient } from '../../notion/port';
+import { isNotionError, type NotionBlock, type NotionClient } from '../../notion/port';
 import { richText } from '../../notion/text';
 import { logger } from '../../telemetry/logger';
 import { linkById, setCopyProgress, updateLink, type LinkRow } from './links';
@@ -48,7 +48,7 @@ export async function runCopy(initial: LinkRow): Promise<void> {
   const session = sessionFor(link);
   const keys = localKeys(link);
   const progress = (phase: CopyProgress['phase'], done: number, of: number) => void setCopyProgress(link.id, { phase, done, total: of });
-  const readOnly = notionClientFor({ credentialId: link.credential_id, rps: link.rps });
+  const readOnly = readClient(link);
 
   // ---- the brain page under the root, then Log ---------------------------------------------------------------
   progress('pages', 0, 2);

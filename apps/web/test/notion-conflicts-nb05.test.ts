@@ -117,7 +117,8 @@ type Setup = Awaited<ReturnType<typeof setup>>;
 const tick = () => {
   clock += 60_000;
 };
-const outbox = (s: Setup) => database().all<{ kind: string; local_key: string }>('SELECT kind, local_key FROM notion_brain_outbox WHERE link_id = ? ORDER BY local_key', s.link.id);
+// Wave nb2 integration: NB04's listener also marks Home and Log due after any change (its own behaviour, tested in NB04's tests); these assertions are about the objects queued.
+const outbox = (s: Setup) => database().all<{ kind: string; local_key: string }>("SELECT kind, local_key FROM notion_brain_outbox WHERE link_id = ? AND kind NOT IN ('home', 'log') ORDER BY local_key", s.link.id);
 const regionSuggestions = (s: Setup) => listProposals({ status: 'open', limit: 100 }).filter((p) => p.fingerprint.startsWith(`notion-brain:region:${s.link.id}:`));
 const req = (url: string, body: unknown) =>
   new Request(`http://conflicts.test${url}`, {
@@ -358,6 +359,8 @@ describe('problem actions', () => {
     await s.pull();
     fake.trash(page.row);
     await s.pull();
+    // Wave nb2 integration: what NB04's push would have sent by now (Landflow's own writes during the setup) is drained.
+    database().delete('notion_brain_outbox', { link_id: s.link.id });
     const [problem] = links.problems(s.link.id);
     expect(problem.kind).toBe('trashed_in_notion');
     return { s, page, problem };

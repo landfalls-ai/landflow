@@ -11,6 +11,7 @@ import { createLink, updateLink, type LinkRow } from '@/lib/server/brain/notion/
 import { schemaOf } from '@/lib/server/brain/notion/problems';
 import { markOwn, pageBody, saveItem, splitBody, type ItemKind, type LinkDatabases } from '@/lib/server/brain/notion/sync';
 import { upsertEntity } from '@/lib/server/brain/entities';
+import { database } from '@/lib/server/db';
 import type { FakeNotion } from './fake-notion';
 
 export const fixture = (name: string) => readFileSync(join(__dirname, 'fixtures', 'notion-render', name), 'utf8');
@@ -80,6 +81,9 @@ export async function seedLink(fake: FakeNotion, credentialId: string, projectId
 /** An item the way the copy leaves it: pushed (its region as written, a hash), not yet pulled. `pushedAt` is now, as after a real push. */
 export function seedItem(s: Seeded, kind: ItemKind, localKey: string, notionId: string, region: string | null, pushedAt = new Date().toISOString()) {
   markOwn(s.link.id, notionId);
+  // Wave nb2 integration: with NB04 merged its outbox listener queues the local write that made this object; a real push
+  // would have drained it, so a seeded "pushed" item has no row waiting.
+  database().delete('notion_brain_outbox', { link_id: s.link.id, kind, local_key: localKey });
   return saveItem({
     link_id: s.link.id,
     kind,

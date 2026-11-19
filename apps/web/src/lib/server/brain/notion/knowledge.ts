@@ -3,7 +3,7 @@
  * the pages under the brain page (or under the root, the link's `knowledgeScope`) that Landflow did not create, keeps each
  * page's Markdown in `notion_knowledge_docs` and its chunks in the vector collection `landflow-notion-<project>` (BM25 always,
  * vectors when the brain's embeddings are on). Ask, the project's agents and MCP read that collection; nothing writes to Notion
- * and nothing calls `/v1/search`.
+ * and nothing calls Notion's search endpoint.
  *
  * The walk registers itself as the knowledge step of the sync service (`setKnowledgeStep`): once per tick per link, returning at
  * once until 15 minutes passed since its last pass (Sync now forces it).

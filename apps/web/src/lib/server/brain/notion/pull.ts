@@ -11,7 +11,7 @@
  * - A trashed or moved row detaches its item (nothing local is deleted). A removed property is a problem, and a removed required
  *   one makes the link need a repair.
  *
- * The pull reads only under the link's data sources and rows (never `/v1/search`), through the link's read client; the only writes
+ * The pull reads only under the link's data sources and rows (never Notion's search endpoint), through the link's read client; the only writes
  * it makes (the Landflow ID of a row a person added) go through `linkClient`. Logs carry ids, never page text.
  */
 import { createHash } from 'node:crypto';

@@ -132,7 +132,8 @@ async function setup() {
   return { ...s, project: project.id, pull };
 }
 type Setup = Awaited<ReturnType<typeof setup>>;
-const outbox = (s: Setup) => database().all<{ kind: string; local_key: string }>('SELECT kind, local_key FROM notion_brain_outbox WHERE link_id = ? ORDER BY local_key', s.link.id);
+// Wave nb2 integration: NB04's listener also marks Home and Log due after any change (its own behaviour, tested in NB04's tests); these assertions are about the objects queued.
+const outbox = (s: Setup) => database().all<{ kind: string; local_key: string }>("SELECT kind, local_key FROM notion_brain_outbox WHERE link_id = ? AND kind NOT IN ('home', 'log') ORDER BY local_key", s.link.id);
 const problemKinds = (s: Setup) => links.problems(s.link.id).map((p) => p.kind);
 const reads = () => fake.state.requests.filter((r) => r.method === 'GET' && r.template === '/v1/pages/:id/markdown').length;
 /** The next minute: edit times are rounded to the minute, so an edit after a pull needs a later stamp than the pull saw. */
@@ -620,6 +621,9 @@ describe('practices', () => {
     const { practice, row } = await approved(s);
     const { practice: pending } = draft(s.project);
     await s.pull();
+    // Wave nb2 integration: NB04's listener queued the new local draft; its push would have sent it by now.
+    await flush();
+    database().delete('notion_brain_outbox', { link_id: s.link.id });
     tick();
     fake.editAsPerson(row, { properties: { Status: select('retired') } });
     await s.pull();
