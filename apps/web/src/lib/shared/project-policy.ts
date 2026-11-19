@@ -10,6 +10,7 @@
  * and each only narrowing. PC15 copies it byte for byte (its settings card); no other wave-9 package touches it.
  */
 import type { AgentModel, KnowledgeBaseToolConfig } from './agents';
+import { brainPageTitle } from './notion-brain'; // NB06:
 
 /** An allow-list of plugins and node types (`off`: no list, everything the level above allows). */
 export interface ScopedNodePolicy {
@@ -66,12 +67,31 @@ export interface ProjectToolKinds {
   kinds: ProjectToolKind[];
 }
 
+/**
+ * NB06: the project's own Notion brain as its knowledge base: the company's Notion pages under the brain page (or the root,
+ * by the link's `knowledgeScope`), indexed into `landflow-notion-<project>` (docs/features/notion-brain.md). It names no collection
+ * and no credential: the runtime builds the tool for this project's own link only.
+ */
+export interface NotionBrainKnowledge {
+  id?: string;
+  type: 'knowledge';
+  source: 'notion-brain';
+  name: string;
+  description: string;
+}
+
 /** One knowledge base every agent running in the project can search, as the tool `project_knowledge`. */
 export interface ProjectKnowledge {
   enabled: boolean;
-  /** An agent knowledge base's settings (a vector collection or a plugin node); its credentials must be usable in the project. */
-  tool: KnowledgeBaseToolConfig;
+  /** An agent knowledge base's settings (a vector collection or a plugin node; its credentials must be usable in the project), or the project's Notion brain. */
+  tool: KnowledgeBaseToolConfig | NotionBrainKnowledge;
 }
+
+/** The label the project's Notion brain has in connections and the Run Trace: `Notion · <brain page title>`. */
+export const notionBrainLabel = (projectName: string) => `Notion · ${brainPageTitle(projectName)}`;
+
+/** Whether the project's knowledge setting is its Notion brain. */
+export const isNotionBrainKnowledge = (tool: ProjectKnowledge['tool']): tool is NotionBrainKnowledge => tool.source === 'notion-brain';
 
 /** The tool name the project's knowledge base gets in every run (a name an agent's own tool already has is renamed by `dedupe`). */
 export const PROJECT_KNOWLEDGE_TOOL = 'project_knowledge';

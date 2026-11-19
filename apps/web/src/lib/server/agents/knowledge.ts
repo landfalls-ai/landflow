@@ -21,6 +21,8 @@ import type { JsonObject } from '@landflow/protocol';
 import type { BuiltTool } from './tools';
 import { targetOfKnowledge } from './tool-target'; // AG14:
 import { ollamaUrl } from '../config';
+import { isBrainCollection } from '../../shared/brain'; // NB06:
+import { NOTION_DATA_NOTE } from '../../shared/notion-brain'; // NB06:
 
 /** The vector store node each kind of store matches (its icon in the timeline, its credential requirement). */
 export const KNOWLEDGE_STORE_NODE: Record<KnowledgeBaseToolConfig['store'], string> = {
@@ -37,7 +39,18 @@ function credentialFor(nodeType: string, name: string, ref: KnowledgeBaseToolCon
   return credentials.resolveFor({ type: nodeType, credentials: ref ? { [name]: ref } : undefined, parameters: {} }, resolved.descriptor)[name];
 }
 
-function openStore(config: KnowledgeBaseToolConfig): VectorStore {
+/**
+ * NB06: the second brain's collections (`landflow-brain*`, `landflow-notion-<project>`) hold what other projects wrote, so no
+ * agent's or project's saved knowledge setting may open one. The runtime alone passes `internal` for a project's own Notion brain
+ * (the option is never read from a saved config).
+ */
+export interface KnowledgeInternal {
+  allowReserved?: boolean;
+}
+const reserved = (collection: string) => `“${collection.trim()}” is the second brain’s own collection`;
+
+function openStore(config: KnowledgeBaseToolConfig, internal?: KnowledgeInternal): VectorStore {
+  if (!internal?.allowReserved && isBrainCollection(config.collection ?? '')) throw new Error(reserved(config.collection)); // NB06:
   // AG13: keyword search has no real vectors, and Postgres needs them
   if (config.store === 'pgvector' && config.embeddings?.provider === 'none') throw new Error('Keyword search (no embeddings model) works with the SQLite and in-memory stores only: Postgres needs real vectors. Pick an embeddings model');
   if (config.store === 'memory') return new MemoryVectorStore();
@@ -64,13 +77,13 @@ function embeddingsFor(config: KnowledgeBaseToolConfig['embeddings']): Embedding
 }
 
 /** The knowledge base as a tool: `{ query }` in, the best-matching passages out. */
-export function knowledgeTool(config: KnowledgeBaseToolConfig): BuiltTool | { error: string } {
+export function knowledgeTool(config: KnowledgeBaseToolConfig, internal?: KnowledgeInternal): BuiltTool | { error: string } {
   const label = config.name || config.collection || 'Knowledge base';
   if (!config.collection?.trim()) return { error: `${label}: no collection set` };
   let store: VectorStore;
   let embeddings: Embeddings;
   try {
-    store = openStore(config);
+    store = openStore(config, internal);
     embeddings = embeddingsFor(config.embeddings);
   } catch (error) {
     return { error: `${label}: ${(error as Error).message}` };
@@ -98,9 +111,13 @@ export function knowledgeTool(config: KnowledgeBaseToolConfig): BuiltTool | { er
         topK,
       );
       // AG14: with the document count, when it is cheap to read (the SQLite store).
-      const count = config.store === 'sqlite' ? await listKnowledgeDocuments(config).then((r) => r.documents.length, () => undefined) : undefined;
+      const count = config.store === 'sqlite' ? await documentCount(config, internal).catch(() => undefined) : undefined;
       return {
-        output: { results: documents.map((doc) => ({ pageContent: doc.pageContent, metadata: doc.metadata, ...(doc.score !== undefined && { score: doc.score }) })) },
+        output: {
+          // NB06: the Notion brain's passages are other people's words: quoted data, not instructions.
+          ...(internal?.allowReserved && { note: NOTION_DATA_NOTE }),
+          results: documents.map((doc) => ({ pageContent: doc.pageContent, metadata: doc.metadata, ...(doc.score !== undefined && { score: doc.score }) })),
+        },
         ...(count !== undefined && { target: targetOfKnowledge({ collection: config.collection.trim(), store: config.store, embeddings: config.embeddings }, count) }),
       };
     },
@@ -155,8 +172,8 @@ export async function addKnowledgeDocument(config: KnowledgeBaseToolConfig, file
 }
 
 /** The uploaded documents of the collection (chunks without a `documentId`, inserted by workflows, are counted apart). */
-export async function listKnowledgeDocuments(config: KnowledgeBaseToolConfig): Promise<{ documents: KnowledgeDocument[]; otherChunks: number }> {
-  const rows = await openStore(config).metadataOf(config.collection.trim());
+export async function listKnowledgeDocuments(config: KnowledgeBaseToolConfig, internal?: KnowledgeInternal): Promise<{ documents: KnowledgeDocument[]; otherChunks: number }> {
+  const rows = await openStore(config, internal).metadataOf(config.collection.trim());
   const byId = new Map<string, KnowledgeDocument>();
   const pages = new Map<string, Set<unknown>>();
   let otherChunks = 0;
@@ -179,6 +196,13 @@ export async function listKnowledgeDocuments(config: KnowledgeBaseToolConfig): P
   }
   for (const [id, set] of pages) byId.get(id)!.pages = set.size;
   return { documents: [...byId.values()], otherChunks };
+}
+
+/** The documents a base holds: uploads by `documentId`, and (the Notion brain's) pages by `pageId`. */
+async function documentCount(config: KnowledgeBaseToolConfig, internal?: KnowledgeInternal): Promise<number> {
+  if (!internal?.allowReserved) return (await listKnowledgeDocuments(config, internal)).documents.length;
+  const rows = await openStore(config, internal).metadataOf(config.collection.trim());
+  return new Set(rows.map((row) => row.metadata.pageId).filter((id) => typeof id === 'string')).size;
 }
 
 /** Remove one uploaded document (all its chunks); returns how many chunks went. */

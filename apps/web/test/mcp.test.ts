@@ -599,6 +599,7 @@ describe('Instance MCP server', () => {
         'brain_ask',
         'brain_list_suggestions',
         'brain_search_facts',
+        'brain_search_knowledge', // NB06
         'brain_suggest',
         'brain_usage_report',
         'brain_workflow_knowledge',

@@ -6,7 +6,7 @@
 import { nanoid } from 'nanoid';
 import { withCallNote } from '../ai-usage/call-context'; // SP03:
 import { plainDraft } from '../ai-usage/drafts'; // SP03:
-import type { AskEvent, AskTurn } from '../../shared/brain-wiki';
+import type { AskEvent, AskTurn, KnowledgeHit, WorkItem } from '../../shared/brain-wiki';
 import { MENTION_LIMITS, type MentionRef } from '../../shared/mentions';
 import { assistantScope, isUsageCapError, runInUsageScope } from '../ai-usage';
 import type { Database } from '../db';
@@ -20,7 +20,7 @@ import { brainModel } from './writer';
 import type { UsageScope } from '../usage/query';
 import type { LanguageModel } from '@landflow/engine';
 
-export interface AskStreamInput extends Pick<AskOptions, 'vectorHits' | 'about' | 'signal'> {
+export interface AskStreamInput extends Pick<AskOptions, 'vectorHits' | 'knowledge' | 'about' | 'signal'> {
   question: string;
   scope: UsageScope | undefined;
   history?: AskTurn[];
@@ -50,6 +50,8 @@ export function askMentionsSplit(mentions: readonly SentMention[] | undefined, a
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+/** NB06: a Notion page as the source a cited `[n]` points at: the work items come first, so `n` counts on from them. */
+const notionSource = (hit: KnowledgeHit, at: string): WorkItem => ({ id: `notion:${hit.url}`, at: hit.editedAt ?? at, kind: 'notion', source: 'notion', title: hit.title, summary: hit.passage.slice(0, 300), url: hit.url, refs: [] });
 const message = (caught: unknown) => (caught instanceof Error ? caught.message : String(caught));
 
 /** Ask the brain and tell it as events. Never throws: a failure is an `error` event. */
@@ -66,11 +68,12 @@ export async function askBrainStream(actor: AskActor | undefined, input: AskStre
       emit({ type: 'error', kind: caught instanceof WikiError ? 'invalid' : 'internal', message: message(caught) });
       return;
     }
-    const { pages, facts, work } = g;
+    const { pages, facts, work, knowledge } = g;
+    const sourced = [...work, ...knowledge.map((k) => notionSource(k, new Date().toISOString()))];
     // The tags: each is read as the person (one that is missing and one that is not theirs say the same), and each is a step.
     const tagged = actor && input.mentions?.length ? await resolveMentions(actor, input.mentions) : undefined;
-    emit({ type: 'found', pages: pages.map((e) => ({ id: entityKey(e), name: e.name })), facts: facts.length, work: work.length });
-    const read = (name: 'read_pages' | 'search_facts' | 'read_work', label: string, ms: number | undefined, detail?: string) => {
+    emit({ type: 'found', pages: pages.map((e) => ({ id: entityKey(e), name: e.name })), facts: facts.length, work: work.length, ...(knowledge.length && { knowledge: knowledge.length }) });
+    const read = (name: 'read_pages' | 'search_facts' | 'read_work' | 'read_notion', label: string, ms: number | undefined, detail?: string) => {
       step++;
       emit({ type: 'step.start', step, label });
       emit({ type: 'tool', name, label, ok: true, id: `t_${nanoid(8)}`, step, durationMs: ms ?? 0, ...(detail && { detail }) });
@@ -106,13 +109,24 @@ export async function askBrainStream(actor: AskActor | undefined, input: AskStre
         .filter(Boolean)
         .join('; ') || undefined,
     );
+    if (knowledge.length) {
+      read(
+        'read_notion',
+        `Read ${plural(knowledge.length, 'Notion page', 'Notion pages')}`,
+        undefined,
+        knowledge
+          .slice(0, 3)
+          .map((k) => k.title)
+          .join('; ') || undefined,
+      );
+    }
 
     const model = brainModel(input.model);
     const done = (extra: Partial<Extract<AskEvent, { type: 'done' }>> = {}) =>
       emit({
         type: 'done',
         links: [],
-        sources: work,
+        sources: sourced,
         cited: [],
         local: model?.provider === 'ollama',
         durationMs: Date.now() - started,
@@ -126,7 +140,7 @@ export async function askBrainStream(actor: AskActor | undefined, input: AskStre
       done({ note: 'No model is set for the brain (LANDFLOW_BRAIN_MODEL), so here is what it found.' });
       return;
     }
-    if (!pages.length && !facts.length && !work.length && !tagged?.block) {
+    if (!pages.length && !facts.length && !work.length && !knowledge.length && !tagged?.block) {
       emit({ type: 'text', text: 'The brain has nothing about that yet.' });
       done();
       return;
@@ -197,7 +211,8 @@ export async function askJson(actor: AskActor | undefined, input: AskStreamInput
     ...(done?.model && { model: done.model }),
     pages,
     facts: [],
-    work: done?.sources ?? [],
+    work: (done?.sources ?? []).slice(0, found?.work ?? undefined),
+    ...(found?.knowledge && { knowledge: (done?.sources ?? []).slice(found.work).map((s) => ({ title: s.title ?? '', url: s.url ?? '', passage: s.summary ?? '', score: 0 })) }),
     ...((done?.note ?? failed?.message) && { note: done?.note ?? failed?.message }),
     ...(done && { links: done.links, cited: done.cited }),
     ...(input.about && { about: input.about }),

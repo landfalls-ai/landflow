@@ -398,6 +398,8 @@ const { id } = credentials.create({ name: 'Notion', type: 'productivity.notionAp
 script 429, 529 and 5xx. Pass `now` and `sleep` to `notionClient` to drive the limiter with a fake clock, and call
 `resetLimiters()` between tests. `LANDFLOW_NOTION_WRITE_LOG=<file>` records one id-only line per write.
 
+The company's pages as knowledge ([notion-brain.md](features/notion-brain.md#your-companys-pages-as-knowledge)) is `notion-knowledge-nb06.test.ts`: the real client over the fake (`editTimes: 'exact'`), the knowledge walk called as the sync step with a seeded link, BM25 with `LANDFLOW_BRAIN_EMBEDDINGS=off`, Ask with a scripted model, a scripted agent run, the reserved collections and `brain_search_knowledge` over the in-memory MCP transport. With `LANDFLOW_BACKBONE_CONTRACTS` set it also compares `sync.ts` with the contract.
+
 ### Checking a change live
 
 Each feature in [roadmap.md](roadmap.md) was also checked in the running app, on a scratch host that leaves

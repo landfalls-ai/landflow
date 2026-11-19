@@ -137,6 +137,20 @@ export interface WikiPage extends EntityKnowledge {
   changedInNotion?: { by: string; at: string };
 }
 
+/** NB06: a passage of one of the company's Notion pages, found for a question (docs/features/notion-brain.md#your-companys-pages-as-knowledge). */
+export interface KnowledgeHit {
+  title: string;
+  /** The page's Notion URL: a cited `[n]` links to it. */
+  url: string;
+  passage: string;
+  score: number;
+  /** When the page was last edited in Notion (ISO), when known. */
+  editedAt?: string;
+}
+
+/** Ask shows at most this many Notion pages. */
+export const ASK_KNOWLEDGE_LIMIT = 5;
+
 /** POST /api/brain/ask. */
 export interface WikiAnswer {
   question: string;
@@ -146,6 +160,8 @@ export interface WikiAnswer {
   pages: Array<Pick<BrainEntity, 'type' | 'id' | 'name'>>;
   facts: BrainFact[];
   work: WorkItem[];
+  /** NB06: the company's Notion pages the question reaches (at most 5), numbered after the work items. */
+  knowledge?: KnowledgeHit[];
   /** Why there is no answer when there is a model (it failed). */
   note?: string;
   /** The page it was asked from, when the question was about one. */
@@ -170,16 +186,16 @@ export type AskErrorKind = 'invalid' | 'model' | 'cap' | 'internal';
 /** The events of the streamed form of POST /api/brain/ask (`Accept: text/event-stream`), in the order they come. */
 export type AskEvent =
   /** What it found, before any word: the page refs (`type/id`) with names, and how many facts and work items. */
-  | { type: 'found'; pages: Array<{ id: string; name: string }>; facts: number; work: number }
+  | { type: 'found'; pages: Array<{ id: string; name: string }>; facts: number; work: number; /** NB06: Notion pages found (from the project's Notion brain). */ knowledge?: number }
   | { type: 'step.start'; step: number; label: string }
-  | { type: 'tool'; name: 'read_pages' | 'search_facts' | 'read_work' | 'write_answer'; label: string; ok: boolean; id: string; step: number; durationMs: number; detail?: string }
+  | { type: 'tool'; name: 'read_pages' | 'search_facts' | 'read_work' | 'read_notion' | 'write_answer'; label: string; ok: boolean; id: string; step: number; durationMs: number; detail?: string }
   /** Words as they come: provisional, replaced by the checked `text`. */
   | { type: 'text.delta'; step: number; text: string }
   | { type: 'text'; text: string }
   | {
       type: 'done';
       links: WikiLink[];
-      /** The work items the answer was written from, in the order `[n]` counts them. */
+      /** The work items the answer was written from, in the order `[n]` counts them; NB06: the Notion pages come after them (kind `notion`, `url` the page's). */
       sources: WorkItem[];
       cited: number[];
       model?: string;

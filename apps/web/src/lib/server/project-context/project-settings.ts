@@ -11,6 +11,7 @@ import { getProjectSettings, type projectSettingsPatchSchema } from '../governan
 import { agentAvailableIn, availableAgentIds, credentialUsableBy } from '../projects/access';
 import { getProject, homeProjectId } from '../projects/store';
 import { credentials } from '../credentials/vault';
+import { isBrainCollection } from '../../shared/brain'; // NB06:
 import type { z } from 'zod';
 
 type Patch = z.infer<typeof projectSettingsPatchSchema>;
@@ -76,8 +77,11 @@ export function assertAgentSettingsPatch(projectId: string, patch: Patch): void 
   }
   const tool = patch.knowledge?.tool;
   if (tool) {
-    if (tool.source === 'node') for (const ref of Object.values(tool.credentials ?? {})) checkRef(ref);
+    if (tool.source === 'notion-brain') {
+      // NB06: names no credential; the runtime builds it for the project's own link
+    } else if (tool.source === 'node') for (const ref of Object.values(tool.credentials ?? {})) checkRef(ref);
     else {
+      if (isBrainCollection(tool.collection ?? '')) throw bad(`“${tool.collection.trim()}” is the second brain’s own collection`); // NB06: refused when saved, not only when a run builds it
       checkRef(tool.credential);
       checkRef(tool.embeddings.credential);
     }

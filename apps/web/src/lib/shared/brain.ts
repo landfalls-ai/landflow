@@ -657,10 +657,14 @@ export interface BrainStatus {
 /** The reserved name of the brain's vector collections: `landflow-brain` and `landflow-brain-<project>`. */
 export const BRAIN_COLLECTION_PREFIX = 'landflow-brain';
 
-/** Whether a vector collection name is one of the brain's. Workflows and agents can't read or write these (nodes/vector-stores.ts). */
+/**
+ * Whether a vector collection name is one of the brain's: `landflow-brain*`, and (NB06) `landflow-notion-<project>`, the
+ * company's Notion pages as knowledge. Workflows and agents can't read or write these (nodes/vector-stores.ts, agents/knowledge.ts).
+ */
 export const isBrainCollection = (name: string): boolean => {
   const lower = name.trim().toLowerCase();
-  return lower === BRAIN_COLLECTION_PREFIX || lower.startsWith(`${BRAIN_COLLECTION_PREFIX}-`);
+  const NOTION_KNOWLEDGE_PREFIX = 'landflow-notion'; // NB06: the value of notion-brain.ts's constant (that file imports this one, so it cannot be imported here)
+  return lower === BRAIN_COLLECTION_PREFIX || lower.startsWith(`${BRAIN_COLLECTION_PREFIX}-`) || lower === NOTION_KNOWLEDGE_PREFIX || lower.startsWith(`${NOTION_KNOWLEDGE_PREFIX}-`); // NB06:
 };
 
 export const SIMILAR_KINDS = ['workflow', 'agent', 'entity', 'fact'] as const;
