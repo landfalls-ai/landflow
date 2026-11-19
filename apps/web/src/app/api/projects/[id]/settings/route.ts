@@ -30,7 +30,7 @@ function view(projectId: string, canEdit: boolean): ProjectSettingsView {
   };
 }
 
-const knowledgeTarget = (tool: NonNullable<ProjectSettingsView['settings']['knowledge']>['tool']) => (tool.source === 'node' ? tool.nodeType : tool.collection);
+const knowledgeTarget = (tool: NonNullable<ProjectSettingsView['settings']['knowledge']>['tool']) => (tool.source === 'node' ? tool.nodeType : tool.source === 'notion-brain' ? 'notion-brain' : tool.collection);
 
 export const GET = projectRoute(async (_request: Request, { params }: Ctx) => {
   ensureProjectApprovers();

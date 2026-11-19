@@ -76,7 +76,9 @@ export function assertAgentSettingsPatch(projectId: string, patch: Patch): void 
   }
   const tool = patch.knowledge?.tool;
   if (tool) {
-    if (tool.source === 'node') for (const ref of Object.values(tool.credentials ?? {})) checkRef(ref);
+    if (tool.source === 'notion-brain') {
+      // NB06: names no credential; the runtime builds it for the project's own link
+    } else if (tool.source === 'node') for (const ref of Object.values(tool.credentials ?? {})) checkRef(ref);
     else {
       checkRef(tool.credential);
       checkRef(tool.embeddings.credential);

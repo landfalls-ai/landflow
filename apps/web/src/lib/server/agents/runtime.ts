@@ -53,7 +53,8 @@ import { buildToolset, binaryScopeFor, targetOfCall, dedupe, nodeKnowledgeTool, 
 import { knowledgeTool } from './knowledge';
 import { agentNotAllowedMessage, projectAgentRules } from '../project-context/project-settings';
 import { isNodeKnowledge, type AgentModel, type AgentToolConfig } from '../../shared/agents'; // AG17: moved types
-import { PROJECT_KNOWLEDGE_TOOL } from '../../shared/project-policy';
+import { isNotionBrainKnowledge, notionBrainLabel, PROJECT_KNOWLEDGE_TOOL } from '../../shared/project-policy';
+import { notionBrainKnowledgeConfig } from '../brain/notion/knowledge'; // NB06:
 import { hostBinaryClient, storeBinary } from '../binary/access';
 import { DEFAULT_KEPT_TOOL_IMAGES, hydrateToolImages, imageSizeLabel, storeToolImages, type ToolImageMode } from '../nodes/tool-images';
 import { HttpError } from '../errors';
@@ -511,10 +512,12 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         const kept = toolset.tools.filter((tool) => teamNames.has(tool.name) || rules.toolAllowed(tool));
         accessNotes = [...accessNotes, ...toolset.tools.filter((tool) => !kept.includes(tool)).map((tool) => `${tool.label} withheld by project “${rules.projectName}” settings`)];
         const knowledge = rules.settings.knowledge;
-        const built = knowledge?.enabled ? (isNodeKnowledge(knowledge.tool) ? nodeKnowledgeTool(knowledge.tool) : knowledgeTool(knowledge.tool)) : undefined;
+        // NB06: the project's own Notion brain is built by the runtime (the only path that may open `landflow-notion-<project>`).
+        const notion = knowledge?.enabled && isNotionBrainKnowledge(knowledge.tool) ? notionBrainKnowledgeConfig(rules.projectId, knowledge.tool) : undefined;
+        const built = notion ? ('error' in notion ? notion : knowledgeTool(notion, { allowReserved: true })) : knowledge?.enabled && !isNotionBrainKnowledge(knowledge.tool) ? (isNodeKnowledge(knowledge.tool) ? nodeKnowledgeTool(knowledge.tool) : knowledgeTool(knowledge.tool)) : undefined;
         if (built && 'error' in built) toolset = { ...toolset, tools: kept, unavailable: [...toolset.unavailable, built.error] };
         else if (built) {
-          toolset = { ...toolset, tools: dedupe([...kept, { ...built, name: PROJECT_KNOWLEDGE_TOOL, label: 'Project knowledge' }]) };
+          toolset = { ...toolset, tools: dedupe([...kept, { ...built, name: PROJECT_KNOWLEDGE_TOOL, label: notion ? notionBrainLabel(rules.projectName) : 'Project knowledge' }]) };
           toolsOffered += 1;
         } else toolset = { ...toolset, tools: kept };
       }

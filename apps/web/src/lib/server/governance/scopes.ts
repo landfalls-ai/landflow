@@ -76,6 +76,15 @@ export const knowledgeToolSchema = z.union([
     searchMode: z.enum(['vector', 'hybrid']).optional(),
   }),
 ]);
+/** NB06: the project's Notion brain as its knowledge base (a project's setting only; an agent's own knowledge tool never takes it). */
+const notionBrainKnowledgeSchema = z.object({
+  id: z.string().max(200).optional(),
+  type: z.literal('knowledge').default('knowledge'),
+  source: z.literal('notion-brain'),
+  name: z.string().trim().min(1).max(200).default('Notion brain'),
+  description: z.string().max(2_000).default('Search the company’s Notion pages for passages that help answer a question'),
+});
+const projectKnowledgeToolSchema = z.union([knowledgeToolSchema, notionBrainKnowledgeSchema]);
 const agentIdList = z.array(z.string().trim().min(1).max(200)).max(200);
 
 export const scopedNodePolicySchema = z.strictObject({ mode: z.enum(['off', 'allow']), plugins: list, types: list });
@@ -86,7 +95,7 @@ export const projectSettingsPatchSchema = z.strictObject({
   fourEyes: z.boolean().optional(),
   brainPayloads: z.boolean().optional(),
   defaultModel: agentModelSchema.nullable().optional(),
-  knowledge: z.strictObject({ enabled: z.boolean(), tool: knowledgeToolSchema }).nullable().optional(),
+  knowledge: z.strictObject({ enabled: z.boolean(), tool: projectKnowledgeToolSchema }).nullable().optional(),
   agents: z.strictObject({ mode: z.enum(['off', 'allow']), ids: agentIdList }).optional(),
   agentTools: z.strictObject({ mode: z.enum(['off', 'allow']), kinds: z.array(z.enum(PROJECT_TOOL_KINDS)).max(PROJECT_TOOL_KINDS.length) }).optional(),
 });
@@ -146,7 +155,7 @@ function agentSettings(saved: Partial<Record<'defaultModel' | 'knowledge' | 'age
   const out: Partial<ProjectSettings> = {};
   const model = agentModelSchema.safeParse(saved?.defaultModel);
   if (model.success) out.defaultModel = model.data;
-  const knowledge = z.strictObject({ enabled: z.boolean(), tool: knowledgeToolSchema }).safeParse(saved?.knowledge);
+  const knowledge = z.strictObject({ enabled: z.boolean(), tool: projectKnowledgeToolSchema }).safeParse(saved?.knowledge);
   if (knowledge.success) out.knowledge = { enabled: knowledge.data.enabled, tool: { ...knowledge.data.tool, id: PROJECT_KNOWLEDGE_TOOL } as NonNullable<ProjectSettings['knowledge']>['tool'] };
   const agents = z.strictObject({ mode: z.enum(['off', 'allow']), ids: agentIdList }).safeParse(saved?.agents);
   if (agents.success) out.agents = { mode: agents.data.mode, ids: tidy(agents.data.ids) };

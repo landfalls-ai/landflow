@@ -36,6 +36,8 @@ import './approval-inbox';
 import './notion/client';
 // NB03: registers the Notion link resolver, so a linked project's brain reports the notion backend (docs/features/notion-brain.md).
 import './brain/notion/links';
+// NB06: registers the knowledge walk (the company's Notion pages as knowledge) with the Notion sync (docs/features/notion-brain.md).
+import './brain/notion/knowledge';
 import { agentTriggers } from './agents/triggers';
 import { taskWakeups } from './tasks/wakeups';
 import { alerts } from './alerts/service';
