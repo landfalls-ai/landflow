@@ -16,7 +16,7 @@ const previousEnv = { ...process.env };
 Object.assign(process.env, ENV);
 
 const { registry } = await import('@/lib/server/plugins/registry');
-const { credentials } = await import('@/lib/server/credentials/vault');
+const { credentials, CredentialError } = await import('@/lib/server/credentials/vault');
 const { notionClient } = await import('@/lib/server/notion/client');
 const { notionClientFor, notionId, isNotionError, NOTION_VERSION } = await import('@/lib/server/notion/port');
 const { resetLimiters, currentRate } = await import('@/lib/server/notion/limiter');
@@ -286,6 +286,71 @@ describe('text, ids and logs', () => {
     } finally {
       delete process.env.LANDFLOW_NOTION_WRITE_LOG;
     }
+  });
+});
+
+// NB04: carryover from nb1's reviews (writes that may have landed, 529, a credential the vault refuses).
+describe('NB04: writes that may have landed', () => {
+  it('a network error on a write may have landed; on a read it did not', async () => {
+    const down = notionClient({ credentialId: cred, fetchImpl: (async () => { throw new Error('socket hang up'); }) as unknown as typeof fetch, now: () => 1, sleep: async () => undefined });
+    const write = await down.createPage({ parent: { page_id: root() }, markdown: 'x' }).catch((e) => e);
+    expect(write).toMatchObject({ kind: 'network', mayHaveLanded: true });
+    const read = await down.me().catch((e) => e);
+    expect(read.kind).toBe('network');
+    expect(read.mayHaveLanded).toBeUndefined();
+  });
+
+  it('any 5xx on a write throws at once with mayHaveLanded and is never retried; a read still backs off', async () => {
+    const { client } = make();
+    const id = root();
+    for (const status of [500, 502, 503, 504]) {
+      const before = fake.state.requests.length;
+      fake.failNext({ status, match: (method, template) => method === 'POST' && template === '/v1/pages' });
+      const lost = await client.createPage({ parent: { page_id: id }, markdown: '# T' }).catch((e) => e);
+      expect(lost).toMatchObject({ kind: 'unavailable', mayHaveLanded: true });
+      expect(fake.state.requests.length - before).toBe(1);
+    }
+    const page = await client.createPage({ parent: { page_id: id }, markdown: 'a' });
+    fake.failNext({ status: 500 });
+    expect(await client.updateMarkdown(page.id, { type: 'replace_content', replace_content: { new_str: 'b' } }).catch((e) => e)).toMatchObject({ mayHaveLanded: true });
+    const reads = fake.state.requests.length;
+    fake.failNext({ status: 500 });
+    await client.me();
+    expect(fake.state.requests.length - reads).toBe(2);
+  });
+
+  it('a createDatabase whose follow-up read keeps failing retries it 3 times, then throws mayHaveLanded naming the database', async () => {
+    const { client } = make();
+    const parent = root();
+    const before = fake.state.requests.length;
+    fake.failNext({ status: 404, match: (method, template) => method === 'GET' && template === '/v1/data_sources/:id' }, 3);
+    const lost = await client.createDatabase({ parent: { page_id: parent }, title: 'Lost', properties: { Name: { title: {} } } }).catch((e) => e);
+    expect(lost).toMatchObject({ mayHaveLanded: true });
+    const created = fake.state.requests.slice(before);
+    expect(created.filter((r) => r.template === '/v1/data_sources/:id')).toHaveLength(3);
+    const database = [...fake.state.databases.values()].find((d) => d.title === 'Lost')!;
+    expect(lost.message).toContain(database.id);
+    // One failed read is retried and the create succeeds.
+    fake.failNext({ status: 404, match: (method, template) => method === 'GET' && template === '/v1/data_sources/:id' });
+    const ok = await client.createDatabase({ parent: { page_id: parent }, title: 'Fine', properties: { Name: { title: {} } } });
+    expect(Object.keys(ok.propertyIds)).toEqual(['Name']);
+  });
+
+  it('a 529 counts toward the 429 streak that halves the rate', async () => {
+    const { client, c } = make();
+    fake.failNext({ status: 529, retryAfter: 1 }, 3);
+    fake.failNext({ status: 429, retryAfter: 1 }, 2);
+    await client.me();
+    expect(currentRate(cred, c.now())).toBe(1);
+  });
+
+  it('a credential the vault refuses to open is `unauthorized` with status 0', async () => {
+    const { client } = make();
+    const spy = vi.spyOn(credentials, 'dataWithSecrets').mockRejectedValueOnce(new CredentialError('Credential "Notion" was deleted'));
+    const err = await client.me().catch((e) => e);
+    spy.mockRestore();
+    expect(err).toMatchObject({ kind: 'unauthorized', status: 0 });
+    expect(await client.me()).toMatchObject({ type: 'bot' });
   });
 });
 
