@@ -429,6 +429,8 @@ describe('problem actions', () => {
     expect(Object.keys(ds.properties)).toEqual(expect.arrayContaining(['Teams', LANDFLOW_ID]));
     expect(sync.linkDatabases(after).pages!.properties[LANDFLOW_ID]).toBe(ds.properties[LANDFLOW_ID].id);
     expect(links.problems(s.link.id)).toEqual([]);
+    // Wave nb2 integration: the repair goes through NB04's status.ts, so "The brain is in Notion" follows it.
+    expect(listProposals({ status: 'open', limit: 200 }).filter((p) => p.fingerprint === `notion-brain:${s.link.id}:active`)).toHaveLength(1);
     await s.pull();
     expect(links.linkById(s.link.id)!.status).toBe('active');
   });

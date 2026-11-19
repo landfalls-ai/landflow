@@ -1,12 +1,12 @@
 # Notion as the brain
 
-Part of the [Landflow docs](../README.md). A project's second brain can live in Notion: the pages, facts, practices and notes the project already has are copied to a Notion page a person owns, and what people change there is read back. This page is built wave by wave; the sections below are added by the package that builds each part. After wave nb1 nothing syncs yet (wave nb2 copies, pushes and pulls).
+Part of the [Landflow docs](../README.md). A project's second brain can live in Notion: the pages, facts, practices and notes the project already has are copied to a Notion page a person owns, and what people change there is read back. This page is built wave by wave; the sections below are added by the package that builds each part. After wave nb2 a linked brain syncs: the first copy, the push of every change, the pull of what people edit in Notion and the company pages read as knowledge are built; the Brain card that shows a link's status and problems comes with wave nb3.
 
 ## How it is built
 
 The brain's local SQL tables stay the working copy: runs, Ask, MCP and search read them synchronously, and nothing reads Notion. What changes is where a write is heard. Wave nb1's first package (NB01) adds a seam with three parts, and no screen changes.
 
-- **One store per project.** `brainStoreFor(projectId)` (`apps/web/src/lib/server/brain/store/port.ts`; import `@/lib/server/brain/store`, not the port) answers a `BrainStore` (`lib/shared/brain-store.ts`). With no project, no resolver or a project the resolver calls `local`, it is the **local store** (`store/local.ts`): the existing functions (`upsertEntity`, `deleteEntity`, `addEntityFact`, `draftPractice`, `personAdd`), unchanged, with the origin passed through. A project whose resolver says `notion` (the Notion links register one, NB03) gets a store that reports `backend: 'notion'`; until a Notion store is registered (NB04) its writes are the local writes. A resolver that throws is logged and the project is local. The slot is a `singleton('brain-store')`.
+- **One store per project.** `brainStoreFor(projectId)` (`apps/web/src/lib/server/brain/store/port.ts`; import `@/lib/server/brain/store`, not the port) answers a `BrainStore` (`lib/shared/brain-store.ts`). With no project, no resolver or a project the resolver calls `local`, it is the **local store** (`store/local.ts`): the existing functions (`upsertEntity`, `deleteEntity`, `addEntityFact`, `draftPractice`, `personAdd`), unchanged, with the origin passed through. A project whose resolver says `notion` (the Notion links register one, NB03) gets a store that reports `backend: 'notion'` and writes exactly as the local one: no Notion store is registered, and the sync hears the writes through the change feed instead (NB04's outbox listener, `brain/notion/store.ts`, queues each one for the push). A resolver that throws is logged and the project is local. The slot is a `singleton('brain-store')`.
 - **A change feed every write goes through.** After a write is stored, the writer calls `emitBrainChange({ kind, key, projectId?, op, origin, by?, version?, at })`. `onBrainChange(listener)` hears it; listeners run in a microtask, one after the other, and one that throws is logged (kind and key, never text) without failing the write or stopping the next. A write that threw emits nothing, and nothing is emitted inside a transaction that may still throw. The writers, each marked `// NB01:`: `upsertEntity` and `deleteEntity` (`entity`; a delete also emits `fact` deletes and a `summary` delete), `upsertFact` (`fact`; `addEntityFact` calls it, so one change), `deleteFact` and `staleFactsBefore` (one per fact), `writeSummary` (`summary`), `draftPractice`, `markApproved`, `markRejected` and `markRetired` (`practice`, with the `version`), and the notebook **store**'s `insert`, `patch`, `delete`, `expire` and `deleteTeam` (`note`), which catches every notebook writer.
 - **Who made it.** `changeOrigin(explicit?)` (`store/origin.ts`): an explicit `notion` (the puller, NB05) wins; else `person`, with the user's id, for a signed-in session (`via: 'session'` or `'test'`); else `landflow` (an API key, MCP, a flow, the study, the loop). It never trusts a name a caller sends.
 
@@ -82,7 +82,7 @@ connections → the integration), which gives it access to the page and everythi
 | `DELETE` the same | project admins | disconnects: the link is kept as `unlinked` for the history, nothing is sent to Notion, which keeps what is there, and the local brain is unchanged. The project can be linked again |
 | `POST …/sync` | project admins | makes the next sync due at once (202) |
 | `GET …/problems` | project members | the open sync problems: kind, Landflow's words about it, the actions it offers |
-| `POST …/problems/:problemId` `{ action }` | project editors; `repair` and `deleteLocal` need an admin | `dismiss` records who and when; `putBack`, `deleteLocal`, `keepAsFact` and `repair` answer 409 "Not available yet" until the pull (wave nb2) performs them; an action the problem's kind does not offer is 400 |
+| `POST …/problems/:problemId` `{ action }` | project editors; `repair` and `deleteLocal` need an admin | `dismiss` records who and when; `putBack`, `deleteLocal`, `keepAsFact` and `repair` do what [Problems and what they offer](#problems-and-their-actions) says; 409 when the problem is resolved already, the object it names is gone, or `LANDFLOW_NOTION_BRAIN=off`; an action the problem's kind does not offer is 400 |
 
 `page` is a Notion link, a 32-hex id or a dashed UUID. The check answers 400 for a link to another host, a credential of
 another type or a key Notion refuses, 403 for a credential the project may not use (share it with the project first), 404
@@ -96,7 +96,7 @@ and the deleted project's Notion page can be linked to another project again.
 check, link, change and sync routes answer 409 "The Notion brain is switched off on this instance" and nothing calls Notion
 (disconnecting still works). The tables are `notion_brain_links`, `notion_brain_items`, `notion_brain_outbox`,
 `notion_brain_problems` and `notion_knowledge_docs` (migrations 2908 to 2911). A project with a link that is not `unlinked`
-resolves to the `notion` backend in `brainStoreFor`; until the Notion store ships it reads and writes exactly like the local one.
+resolves to the `notion` backend in `brainStoreFor`; it reads and writes exactly like the local one, and the sync hears its writes through the change feed.
 
 ## What Landflow writes
 
@@ -138,6 +138,7 @@ Landflow user with that email is the change's `by`; without it nobody is named (
 | Notebook | A new row with a Team of the project is a team note: `addNote(team, …, 'notion', editor)`, unverified and tainted, author the matched user's name or "A Notion user" (a note's author is never "Notion"). Without a Team (or with another project's), a `note_without_team` problem. An edit to an existing note is put back: notes are edited in Landflow. |
 | Trash, 404 and a row moved out | The item becomes `detached` with a `trashed_in_notion` problem (found when the full listing no longer returns the row and a read says trashed or 404). Nothing local is deleted. A row that comes back reattaches. |
 | Schema | A property missing by id is a `schema_changed` problem; when a required one (Name, Landflow ID) is gone the link becomes `needs_repair` and nothing is pulled until a repair. |
+| The whole link | The pull changes a link's status as the push does (`brain/notion/status.ts`), and each change files one notice for the project's admins: a refused key (401) or a deleted credential sets `unauthorized` ("Notion refused the key" or "The Notion key was deleted"), Notion blocking the key pauses it, a database in the trash or a 404 for the root, the brain page or a database sets `unshared`, and a missing required property sets `needs_repair`. A repair that works sets `active` again with its "The brain is in Notion" notice. Any other failure is the link's last error and the next pass tries again. |
 
 ### Conflicts
 

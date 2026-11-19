@@ -135,6 +135,8 @@ type Setup = Awaited<ReturnType<typeof setup>>;
 // Wave nb2 integration: NB04's listener also marks Home and Log due after any change (its own behaviour, tested in NB04's tests); these assertions are about the objects queued.
 const outbox = (s: Setup) => database().all<{ kind: string; local_key: string }>("SELECT kind, local_key FROM notion_brain_outbox WHERE link_id = ? AND kind NOT IN ('home', 'log') ORDER BY local_key", s.link.id);
 const problemKinds = (s: Setup) => links.problems(s.link.id).map((p) => p.kind);
+/** NB04's status notices for this link (status.ts: one brain suggestion per link and status). */
+const statusNotices = (s: Setup) => listProposals({ status: 'open', limit: 200 }).filter((p) => p.fingerprint.startsWith(`notion-brain:${s.link.id}:`));
 const reads = () => fake.state.requests.filter((r) => r.method === 'GET' && r.template === '/v1/pages/:id/markdown').length;
 /** The next minute: edit times are rounded to the minute, so an edit after a pull needs a later stamp than the pull saw. */
 const tick = () => {
@@ -824,6 +826,33 @@ describe('trash, schema and what the pull reads', () => {
     fake.removeProperty(s.database.pages, LANDFLOW_ID);
     await s.pull();
     expect(links.linkById(s.link.id)).toMatchObject({ status: 'needs_repair' });
+    expect(statusNotices(s).map((p) => p.title)).toEqual([expect.stringContaining('The Notion brain needs a repair')]);
+  });
+
+  // Wave nb2 integration: the pull changes a link's status through NB04's status.ts, so the admins hear of it.
+  it('a 401 seen first by the pull stops the link as unauthorized and files one "Notion refused the key" notice', async () => {
+    const s = await setup();
+    await seed.seedPage(s, { type: 'customer', id: 'refused', name: 'Refused' });
+    await s.pull();
+    expect(statusNotices(s)).toEqual([]);
+    fake.failNext({ status: 401 });
+    await s.pull();
+    expect(links.linkById(s.link.id)).toMatchObject({ status: 'unauthorized', reason: 'Notion refused the key' });
+    const notices = statusNotices(s);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ fingerprint: `notion-brain:${s.link.id}:unauthorized`, projectId: s.project });
+    expect(notices[0].title).toContain('Notion refused the key');
+    await s.pull(); // a stopped link is not pulled, and no second notice is filed
+    expect(statusNotices(s)).toHaveLength(1);
+  });
+
+  it('a trashed database seen by the pull makes the link unshared with one notice', async () => {
+    const s = await setup();
+    await s.pull();
+    fake.trash(s.database.pages);
+    await s.pull();
+    expect(links.linkById(s.link.id)!.status).toBe('unshared');
+    expect(statusNotices(s).map((p) => p.fingerprint)).toEqual([`notion-brain:${s.link.id}:unshared`]);
   });
 
   it('reads only under the link’s data sources and rows: never search, never another page', async () => {

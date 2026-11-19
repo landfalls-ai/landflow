@@ -37,8 +37,9 @@ import { getFact, upsertFact } from '../facts';
 import { getProposal, saveProposal } from '../proposals';
 import { brainStoreFor } from '../store/port';
 import { notionIsLater, recordOverwrite, regionConflict, statementConflict } from './conflicts';
-import { addProblem, isStopped, linkById, notionBrainEnabled, problems, resolveProblem, setCursors, setStatus, updateLink, type LinkRow } from './links';
+import { addProblem, isStopped, linkById, notionBrainEnabled, problems, resolveProblem, setCursors, updateLink, type LinkRow } from './links';
 import './problems'; // registers the problem actions (setProblemActions)
+import { LinkStopped, changeStatus, checkStillShared, stopOnLinkFailure } from './status';
 import {
   enqueue,
   itemByNotionId,
@@ -318,26 +319,62 @@ export async function pullLink(link: LinkRow, options: { force?: boolean } = {})
       last_error: null,
     });
   } catch (error) {
-    stopped(link.id, error);
+    await stopped(linkById(link.id) ?? link, error);
   } finally {
     running.delete(link.id);
   }
 }
 
-/** What a failed pass does to the link: the key is refused, Notion blocked it, the data source is gone; anything else is the last error (no page text). */
-function stopped(linkId: string, error: unknown): void {
+/**
+ * What a failed pass does to the link, through NB04's status.ts so each change of status files one notice for the project's
+ * admins: a refused or deleted key stops it as unauthorized, Notion blocking the key pauses it, and a 404 is checked as the push
+ * checks it (the root or the brain page gone or unshared, else one of the brain's databases). Anything else is the last error
+ * (no page text); the next pass tries again.
+ */
+async function stopped(link: LinkRow, error: unknown): Promise<void> {
   const message = error instanceof Error ? error.message : String(error);
-  if (isNotionError(error)) {
-    if (error.kind === 'unauthorized') setStatus(linkId, 'unauthorized', 'Notion refused the key');
-    else if (error.kind === 'blocked') setStatus(linkId, 'paused', 'Notion blocked the key (public_api_request_blocked)');
-    else if (error.kind === 'notFound') setStatus(linkId, 'unshared', 'A page of the brain is gone or no longer shared');
-    else updateLink(linkId, { last_error: message });
-  } else updateLink(linkId, { last_error: message });
+  try {
+    stopOnLinkFailure(link.id, error);
+    if (isNotionError(error) && error.kind === 'notFound') {
+      await checkStillShared(link);
+      await checkDatabasesShared(link);
+    }
+    updateLink(link.id, { last_error: message });
+  } catch (stop) {
+    if (!(stop instanceof LinkStopped)) updateLink(link.id, { last_error: message });
+  }
   logger.warn('[notion-brain] the pull stopped', {
-    link: linkId,
+    link: link.id,
     error: message,
   });
 }
+
+/** After a 404 with the root and brain page still shared: a database of the brain that is gone makes the link `unshared`. Reads only. */
+async function checkDatabasesShared(link: LinkRow): Promise<void> {
+  const client = readClient(link);
+  const dbs = linkDatabases(link);
+  for (const kind of DATABASE_KINDS) {
+    const db = dbs[kind];
+    if (!db) continue;
+    try {
+      const source = await client.dataSource(db.dataSourceId);
+      if (source.in_trash) throw new LinkStopped(trashedDatabase(link.id, kind));
+    } catch (error) {
+      if (error instanceof LinkStopped) throw error;
+      if (isNotionError(error) && error.kind === 'notFound') {
+        changeStatus(link.id, 'unshared', `The ${DATABASES[kind].title} database is gone or no longer shared`);
+        throw new LinkStopped('unshared');
+      }
+      stopOnLinkFailure(link.id, error);
+      throw error;
+    }
+  }
+}
+
+const trashedDatabase = (linkId: string, kind: DatabaseKind): 'unshared' => {
+  changeStatus(linkId, 'unshared', `The ${DATABASES[kind].title} database is in Notion’s trash`);
+  return 'unshared';
+};
 
 type Cursors = Partial<Record<DatabaseKind | 'sweptAt', string>>;
 const rawCursors = (link: LinkRow): Record<string, unknown> => {
@@ -428,7 +465,7 @@ async function checkSchema(ctx: Context): Promise<boolean> {
     if (!db) continue;
     const source = await ctx.client.dataSource(db.dataSourceId);
     if (source.in_trash) {
-      setStatus(ctx.link.id, 'unshared', `The ${DATABASES[kind].title} database is in Notion’s trash`);
+      trashedDatabase(ctx.link.id, kind);
       return false;
     }
     const ids = new Set(Object.values(source.properties).map((p) => p.id));
@@ -445,7 +482,7 @@ async function checkSchema(ctx: Context): Promise<boolean> {
     }
   }
   if (required) {
-    setStatus(ctx.link.id, 'needs_repair', required);
+    changeStatus(ctx.link.id, 'needs_repair', required);
     return false;
   }
   return true;

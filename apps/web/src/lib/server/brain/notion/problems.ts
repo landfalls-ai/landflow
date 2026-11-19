@@ -20,7 +20,8 @@ import { getEntity } from '../entities';
 import { deleteFact, getFact } from '../facts';
 import { brainStoreFor } from '../store/port';
 import { suggestedText } from './conflicts';
-import { setProblemActions, updateLink, setStatus, type LinkRow, type ProblemActionContext, type ProblemRow } from './links';
+import { setProblemActions, updateLink, type LinkRow, type ProblemActionContext, type ProblemRow } from './links';
+import { changeStatus } from './status';
 import { ITEM_DATABASE, enqueue, itemByNotionId, linkClient, linkDatabases, markOwn, readClient, saveItem, verifyOwn, type ItemRow, type LinkDatabases } from './sync';
 
 const gone = (message: string) => new HttpError(message, 409, { expose: true });
@@ -86,7 +87,7 @@ async function repair(link: LinkRow): Promise<void> {
     next[kind] = { ...db, properties };
   }
   updateLink(link.id, { databases: JSON.stringify(next) });
-  setStatus(link.id, 'active');
+  changeStatus(link.id, 'active');
   // The other open schema problems of this link are settled by the repair.
   const open = database().all<ProblemRow>("SELECT * FROM notion_brain_problems WHERE link_id = ? AND kind = 'schema_changed' AND resolved_at IS NULL", link.id);
   for (const p of open)

@@ -234,7 +234,8 @@ Both use the same picker as the goal dialog and the project brief. The team's me
 A project can link its second brain to a Notion page a person owns (`/api/projects/:id/brain/notion`, the project's admins):
 the check reads the page and says what a copy would send, the link keeps the Notion key by credential only, and a
 disconnect keeps what Notion has. Only this project's pages, facts, practices and project-scope notes are ever meant to
-go; private and team-only work never does. It is per project, and nothing syncs yet; the routes and rules are in
+go; private and team-only work never does. It is per project: the brain is copied to Notion and kept in sync both ways
+([what Landflow writes](features/notion-brain.md#what-landflow-writes)); the routes and rules are in
 [the Notion brain page](features/notion-brain.md#setting-it-up).
 
 ## Project settings for agents
