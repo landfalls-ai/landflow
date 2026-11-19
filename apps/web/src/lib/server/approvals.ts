@@ -159,6 +159,8 @@ export async function decideApproval(
       throw new ApprovalError(closed.message, closed.status);
     }
     if (options.text !== undefined || options.comment !== undefined) throw new ApprovalError('Only an Ask a Person request takes text or a comment', 400);
+    // The call runs as it was reviewed (masked parameters, fixed destination): an edit the node would drop must not be journaled as applied.
+    if (options.input !== undefined) throw new ApprovalError('A request in Needs you runs as reviewed and takes no edited input', 400);
   }
   const approval = pendingApproval(stored);
   if (!approval) throw new ApprovalError(stored.status === 'waiting' ? 'This execution is not waiting for a tool approval' : `This execution is ${stored.status}, not waiting for an approval`, 409);

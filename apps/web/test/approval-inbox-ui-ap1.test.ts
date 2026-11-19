@@ -263,6 +263,39 @@ describe('the Run Trace card', () => {
     expect(host.querySelector('[data-testid="approval-deny"]')).toBeNull();
   });
 
+  it('a destination that already starts with "to" is not read "goes to to …"', async () => {
+    routes.list = [view({ destination: 'to oncall@landflow.test' })];
+    await mount(card());
+    const facts = host.querySelector('[data-testid="approval-inbox-facts"]')?.textContent ?? '';
+    expect(facts).toContain('goes to oncall@landflow.test');
+    expect(facts).not.toMatch(/to to/);
+  });
+
+  it('an inbox wait offers no JSON edit, even before its request has loaded; a plain wait still does', async () => {
+    routes.list = [];
+    const inboxWait = { ...wait, attrs: { ...wait.attrs, inbox: true } };
+    await mount(createElement(ApprovalCard, { wait: inboxWait as never, model: foldJournal([]), executionId: 'ex1' }));
+    expect(host.querySelector('[data-testid="approval-approve"]')).toBeTruthy();
+    expect(host.querySelector('[data-testid="approval-edit"]')).toBeNull();
+    act(() => root.unmount());
+    root = createRoot(host);
+    await mount(card());
+    expect(host.querySelector('[data-testid="approval-edit"]')).toBeTruthy();
+  });
+
+  it('a 200 without a readable view reads Approved in a settled tone, not the warn closed one, and no buttons', async () => {
+    routes.list = [view()];
+    routes.decide = () => json({});
+    await mount(card());
+    await click(host.querySelector('[data-testid="approval-approve"]')!);
+    const done = host.querySelector('[data-testid="approval-done"]');
+    expect(done?.textContent).toBe('Approved');
+    expect(done?.className).not.toContain('text-warn');
+    expect(host.querySelector('[data-testid="approval-closed"]')).toBeNull();
+    expect(host.querySelector('[data-testid="approval-approve"]')).toBeNull();
+    expect(host.querySelector('[data-testid="approval-deny"]')).toBeNull();
+  });
+
   it('a lost race says who won, and a wait without a request reads waiting since as before', async () => {
     routes.list = [view()];
     routes.decide = () => json({ error: 'Already denied by Owner at 14:05.' }, 409);

@@ -409,6 +409,20 @@ describe('one claim behind every door', () => {
     await until(() => expect(store.getExecution(a.executionId)?.status).toBe('success'));
   });
 
+  it('an edited input on an inbox request is refused with 400 on the route and in decideApproval, and nothing is claimed', async () => {
+    const a = await ask();
+    const id = idOf(a);
+    const body = JSON.stringify({ callId: a.calls[0].callId, approved: true, input: { toEmail: 'attacker@evil.test' } });
+    const response = await as(editor, () => executionApprovals.POST(new Request('http://inbox.test/x', { method: 'POST', headers: { 'content-type': 'application/json' }, body }), ctx(a.executionId)));
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toMatch(/runs as reviewed/);
+    await expect(decideApproval(a.executionId, a.calls[0].callId, true, { by: 'ed@inbox.test', input: { subject: 'x' } })).rejects.toMatchObject({ status: 400 });
+    expect(inbox.requestRow(id)).toMatchObject({ status: 'waiting' });
+    expect(journalStore.readAll(a.executionId).some((e) => e.type === 'message' && 'text' in e && /with changes/.test(e.text))).toBe(false);
+    // The same call, without the edit, still decides.
+    expect((await as(editor, () => post(approveRoute, id))).status).toBe(200);
+  });
+
   it('the agent-session side door answers 409 for a call that waits in Needs you, and never decides it', async () => {
     const a = await ask();
     const agent = agentStore.create({ name: 'Alert mailer', instructions: 'x' });

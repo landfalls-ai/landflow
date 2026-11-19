@@ -227,6 +227,7 @@ describe('Run an Agent in a run nobody watches (the approval inbox)', () => {
     claim(record.executionId, callOf(record), 'approved');
     const outcome = await decideApproval(record.executionId, callOf(record), true, { by: 'usr_owner', input: { toEmail: 'attacker@evil.test', apiKey: MASK, subject: 'changed' } });
     expect(outcome.status).toBe('resumed');
+    expect(smtp.mails).toHaveLength(1);
     for (const mail of smtp.mails) {
       expect(mail.to).toEqual(['oncall@landflow.test']);
       expect(mail.data).not.toContain(MASK);

@@ -127,6 +127,7 @@ export function ApprovalCard({
   // AP03: a wait that is an inbox request reads its own lines and decides through the inbox claim (docs/approval-inbox.md).
   const requests = useExecutionRequests(executionId, wait.spanId);
   const [closed, setClosed] = useState<string>();
+  const [done, setDone] = useState<string>(); // 'Approved' | 'Denied' when the answer carried no view
   const [settled, setSettled] = useState<InboxRequestView>(); // the card's own outcome: what the decision answered
   const edited = draft ? editedInput(c, draft) : undefined;
   const actor = memberActor(model, c.member, wait.actor);
@@ -135,7 +136,7 @@ export function ApprovalCard({
 
   const found = c.callId ? requests.find((r) => r.callId === c.callId) : undefined; // AP03: by call only, never "any waiting"
   const request = settled ?? found;
-  const inbox = !closed && request?.status === 'waiting' ? request : undefined; // AP03:
+  const inbox = !closed && !done && request?.status === 'waiting' ? request : undefined; // AP03:
 
   const send = async (approved: boolean, edit?: ApprovalEdit) => {
     setBusy(approved ? 'approve' : 'deny');
@@ -150,7 +151,7 @@ export function ApprovalCard({
           toast.message(answer.closed);
         } else {
           if (answer.view) setSettled(answer.view);
-          else setClosed(approved ? 'Approved' : 'Denied');
+          else setDone(approved ? 'Approved' : 'Denied'); // a 200 without a view: the decision stands, said in a settled tone (not the warn 'closed' one)
           toast.success(approved ? 'Approved' : 'Denied');
         }
         onDecided?.();
@@ -206,13 +207,18 @@ export function ApprovalCard({
       {request && (
         <p className="mt-2 text-[12px] text-t2 [overflow-wrap:anywhere]" data-testid="approval-inbox-facts">
           {versionName(request.agentName, request.agentVersion)} · {versionName(request.workflowName, request.workflowVersion)}
-          {request.destination && <span> · goes to {request.destination}</span>}
+          {request.destination && <span> · goes to {request.destination.replace(/^to\b[:\s]+/i, '')}</span>}
         </p>
       )}
       {inbox && !inbox.canDecide && <p className="mt-2 text-[12px] text-t3">Only people who can run this workflow decide it.</p>}
       {closed && (
         <p className="mt-2 text-[12.5px] font-medium text-warn" role="status" data-testid="approval-closed">
           {closed}
+        </p>
+      )}
+      {done && (
+        <p className="mt-2 text-[12.5px] font-medium text-t2" role="status" data-testid="approval-done">
+          {done}
         </p>
       )}
 
@@ -260,7 +266,7 @@ export function ApprovalCard({
       )}
 
       <div className="mt-3.5 flex flex-wrap gap-2">
-        {request && (!inbox || !inbox.canDecide) ? null /* AP03: settled, or not yours to decide: Details stays */ : draft ? (
+        {(request || done) && (!inbox || !inbox.canDecide) ? null /* AP03: settled, or not yours to decide: Details stays */ : draft ? (
           <>
             <Button variant="primary" loading={busy === 'approve'} disabled={Boolean(busy) || !edited || !edited.ok || !edited.changed} onClick={approveEdited} data-testid="approval-approve-edited">
               <Check className="size-3.5" strokeWidth={3} /> Approve with these changes
@@ -275,7 +281,7 @@ export function ApprovalCard({
               <Check className="size-3.5" strokeWidth={3} /> {verb}
             </Button>
             {/* Nothing to edit when the tool takes no input. */}
-            {!request && (c.rows.length > 0 || c.edit.kind !== 'json') && ( /* AP03: the inbox decides what was asked, not an edit of it */
+            {!request && !wait.attrs.inbox && (c.rows.length > 0 || c.edit.kind !== 'json') && ( /* AP03: the inbox decides what was asked, not an edit of it */
               <Button variant="outline" disabled={Boolean(busy)} onClick={() => setDraft(c.edit)} data-testid="approval-edit">
                 <Pencil className="size-3.5" /> Edit
               </Button>

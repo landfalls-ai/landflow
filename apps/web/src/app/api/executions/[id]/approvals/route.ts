@@ -48,6 +48,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
       const closed = closedOf(inboxRow);
       return error(closed.message, closed.status);
     }
+    if (body.data.input !== undefined) return error('A request in Needs you runs as reviewed and takes no edited input', 400);
   }
   const approval = pendingApproval(record);
   if (!approval) return error(`This execution is ${record.status}, not waiting for a tool approval`, 409);

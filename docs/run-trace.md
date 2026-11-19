@@ -292,6 +292,7 @@ instead of a title and two buttons, so the person decides with the reasons in fr
   member's own. The journal marks the wait `edited: true` with `editedBy`, says "Approved … with changes", and the
   Approval check says it too; the wait's detail sheet shows an **Edited by you** badge. A guard's ask (a command) sends the
   edited command: the mod's poll hands it back and the mod runs it instead (still stopped by the rules nobody can allow).
+  A call that waits in the approval inbox has no **Edit**: it runs as it was reviewed, and the route refuses an edited input with 400.
 
 The card is the Needs you section's, and the waiting node's: from the editor, **Review** next to Approve / Deny on the node
 opens it in a sheet, and the execution view's phone card is it (both read the run's journal). Needs you also gets a row of

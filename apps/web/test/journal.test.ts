@@ -189,6 +189,12 @@ describe('translator', () => {
     expect(spanEnd(drafts, 'run')).toBeUndefined();
   });
 
+  it('a wait the approval inbox holds says so in its attrs (the card offers no edit); a plain one does not', () => {
+    const waiting = (inbox: boolean) => translate(firstSegment().map((e) => (e.type === 'execution.finished' && e.wait ? ({ ...e, wait: { ...e.wait, data: { ...(e.wait.data as object), ...(inbox && { inbox: { ids: { k1: 'req_1' } } }) } } } as ExecutionEvent) : e)));
+    expect(spanStart(waiting(true), 'run/wait:1')).toMatchObject({ attrs: { wait: 'approval', inbox: true } });
+    expect(spanStart(waiting(false), 'run/wait:1')!.attrs).not.toHaveProperty('inbox');
+  });
+
   it('resumes in another segment: seeded from the stored events it ends the wait, counts node runs on and ends the run', () => {
     const seed = withSeq(drafts);
     const second = translate(
