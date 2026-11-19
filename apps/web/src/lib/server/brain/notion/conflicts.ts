@@ -26,6 +26,9 @@ const CLIP = 500;
 const day = () => new Date().toISOString().slice(0, 10);
 const looksLikeId = (text: string | undefined) => !text || /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(text);
 
+/** What a suggestion shows when a person only removed lines; never a fact's text. */
+export const NOTHING_ADDED = 'Lines were removed.';
+
 /** The lines `after` has that `before` did not, for a person to read (clipped to 500 characters). */
 export function addedLines(before: string, after: string): string {
   const had = new Set(before.split('\n').map((line) => line.trim()));
@@ -34,7 +37,7 @@ export function addedLines(before: string, after: string): string {
     .map((line) => line.trim())
     .filter((line) => line && !had.has(line));
   const text = added.join('\n');
-  return text.length > CLIP ? `${text.slice(0, CLIP - 1)}…` : text || 'Lines were removed.';
+  return text.length > CLIP ? `${text.slice(0, CLIP - 1)}…` : text || NOTHING_ADDED;
 }
 
 /** The project's editors and admins: who a Notion suggestion is addressed to. */
@@ -167,7 +170,7 @@ export function suggestedText(link: LinkRow, localKey: string): { text: string; 
         target?: { id?: string };
       };
       const text = proposal.evidence?.find((e) => e.label === EVIDENCE_LABEL)?.value;
-      if (typeof text === 'string' && text.trim() && proposal.target?.id)
+      if (typeof text === 'string' && text.trim() && text !== NOTHING_ADDED && proposal.target?.id)
         return {
           text,
           ref: proposal.target.id,

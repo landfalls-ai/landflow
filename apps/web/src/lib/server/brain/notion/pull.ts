@@ -25,7 +25,7 @@ import { findUserByEmail, getUser } from '../../auth/users';
 import { credentials } from '../../credentials/vault';
 import { database } from '../../db';
 import { safeFetch } from '../../net/safe-fetch';
-import { isNotionError, notionId, type NotionClient, type NotionPage, type NotionPropertyValue, type NotionRichText } from '../../notion/port';
+import { NOTION_VERSION, isNotionError, notionId, type NotionClient, type NotionPage, type NotionPropertyValue, type NotionRichText } from '../../notion/port';
 import { PracticeError } from '../../practices/errors';
 import { fileDraftSuggestion } from '../../practices/inbox';
 import { cleanFields, draftPractice, getPractice, hashFields, versionsOf } from '../../practices/store';
@@ -126,10 +126,19 @@ interface RowHashes {
   person: string;
   landflow: string;
 }
-const baselineOf = (item: ItemRow | undefined): Partial<RowHashes> | undefined => {
+const baselineOf = (item: ItemRow | undefined): (Partial<RowHashes> & { applied?: string }) | undefined => {
   if (!item?.pulled_hash) return undefined;
-  const [person, landflow] = item.pulled_hash.split('.');
-  return { person, landflow };
+  const [hashes, applied] = item.pulled_hash.split('|');
+  const [person, landflow] = hashes.split('.');
+  return { person, landflow, ...(applied && { applied }) };
+};
+/** pulled_hash: the two hashes, and (after "|") the local updatedAt right after the pull last applied a Notion value, so that write does not read as a Landflow edit. */
+const pulledHash = (h: RowHashes, applied?: string) => `${h.person}.${h.landflow}${applied ? `|${applied}` : ''}`;
+/** The later of the two baselines a local change must pass to count as a Landflow edit. */
+const dirtyAfter = (item: ItemRow): string => {
+  const applied = baselineOf(item)?.applied ?? '';
+  const pushed = item.pushed_at ?? '';
+  return applied > pushed ? applied : pushed;
 };
 const hashOf = (names: string[], row: NotionPage, db: LinkDatabase | undefined) => sha(JSON.stringify(names.map((n) => text(row, db, n)))).slice(0, 16);
 const specs = (kind: DatabaseKind, owner: PropertySpec['owner'][]) => DATABASES[kind].properties.filter((p) => owner.includes(p.owner)).map((p) => p.name);
@@ -179,7 +188,7 @@ async function fetchUser(link: LinkRow, id: string): Promise<{ email?: string } 
         method: 'GET',
         headers: {
           Authorization: `Bearer ${key}`,
-          'Notion-Version': '2026-03-11',
+          'Notion-Version': NOTION_VERSION,
         },
       },
       { span: false },
@@ -635,18 +644,19 @@ async function pullPage(ctx: Context, db: LinkDatabase, row: NotionPage, item: I
     current = putBack(ctx, current);
   } else if (!bot && landflowChanged) current = putBack(ctx, current);
 
-  if (personChanged && !(bot && outboxPending(ctx.link, 'entity', item.local_key))) await applyPersonFields(ctx, db, row, local, current);
+  let applied = base?.applied;
+  if (personChanged && !(bot && outboxPending(ctx.link, 'entity', item.local_key))) applied = (await applyPersonFields(ctx, db, row, local, current)) ?? applied;
 
   const after = pageHashes(row, db);
   current = saveItem({
     ...(itemOf(ctx.link.id, 'entity', item.local_key) ?? current),
-    pulled_hash: `${after.person}.${after.landflow}`,
+    pulled_hash: pulledHash(after, applied),
   });
   await readBody(ctx, row, current, local.name, false);
 }
 
 /** Name, Description, Owner and Attributes: Notion's value wins when only Notion changed it; when both sides changed, the later edit wins and the other value is kept in the audit log. */
-async function applyPersonFields(ctx: Context, db: LinkDatabase, row: NotionPage, local: BrainEntity, item: ItemRow): Promise<void> {
+async function applyPersonFields(ctx: Context, db: LinkDatabase, row: NotionPage, local: BrainEntity, item: ItemRow): Promise<string | undefined> {
   const ref = item.local_key;
   const notion = {
     name: text(row, db, 'Name').trim(),
@@ -655,7 +665,7 @@ async function applyPersonFields(ctx: Context, db: LinkDatabase, row: NotionPage
   };
   const parsed = parseAttributes(text(row, db, 'Attributes'));
   const localAttrs = attrString(local.attrs);
-  const localDirty = outboxPending(ctx.link, 'entity', ref) || Boolean(item.pushed_at && local.updatedAt > item.pushed_at);
+  const localDirty = outboxPending(ctx.link, 'entity', ref) || Boolean(item.pushed_at && local.updatedAt > dirtyAfter(item));
   const notionWins = !localDirty || notionIsLater(row.last_edited_time, local.updatedAt);
   const editor = await editorOf(ctx, row);
   const by = editor.name;
@@ -699,7 +709,7 @@ async function applyPersonFields(ctx: Context, db: LinkDatabase, row: NotionPage
       ref,
       `Line${parsed.bad.length > 1 ? 's' : ''} ${parsed.bad.join(', ')} of the Attributes of ${ref} ${parsed.bad.length > 1 ? 'are' : 'is'} not “key: value”. The other lines were kept.`,
     );
-  if (!differing.length) return;
+  if (!differing.length) return undefined;
 
   if (!notionWins) {
     for (const d of differing)
@@ -712,7 +722,7 @@ async function applyPersonFields(ctx: Context, db: LinkDatabase, row: NotionPage
         replaced: d.notion,
       });
     enqueue(ctx.link.id, 'entity', ref); // the push writes Landflow's later edit
-    return;
+    return undefined;
   }
   for (const d of differing) {
     if (d.field === 'name') input.name = d.notion;
@@ -726,7 +736,7 @@ async function applyPersonFields(ctx: Context, db: LinkDatabase, row: NotionPage
     if (!(error instanceof EntityError)) throw error;
     problem(ctx, 'bad_attribute', row, ref, `A change to ${ref} in Notion was refused (${error.message.split('\n')[0].slice(0, 120)}). Landflow put its own back.`);
     enqueue(ctx.link.id, 'entity', ref);
-    return;
+    return undefined;
   }
   if (localDirty)
     for (const d of differing)
@@ -738,6 +748,7 @@ async function applyPersonFields(ctx: Context, db: LinkDatabase, row: NotionPage
         by,
         replaced: d.local,
       });
+  return getEntity(local.type, local.id)?.updatedAt;
 }
 
 // ---------------------------------------------------------------------------------------------------- bodies
@@ -893,12 +904,13 @@ async function pullFact(ctx: Context, db: LinkDatabase, row: NotionPage, item: I
   const bot = botEdited(ctx, row);
   const changed = !base || base.person !== hashes.person || base.landflow !== hashes.landflow;
   let current = item;
+  let applied = base?.applied;
   if (changed && !bot) {
     const statement = text(row, db, 'Statement').trim();
     if (manual) {
       const kind = factKindOf(text(row, db, 'Kind').trim(), fact.kind);
       if (statement && (statement !== fact.statement || kind !== fact.kind)) {
-        const localDirty = outboxPending(ctx.link, 'fact', fact.id) || Boolean(item.pushed_at && fact.lastSeen > item.pushed_at);
+        const localDirty = outboxPending(ctx.link, 'fact', fact.id) || Boolean(item.pushed_at && fact.lastSeen > dirtyAfter(item));
         const editor = await editorOf(ctx, row);
         if (localDirty && !notionIsLater(row.last_edited_time, fact.lastSeen)) enqueue(ctx.link.id, 'fact', fact.id);
         else
@@ -919,6 +931,7 @@ async function pullFact(ctx: Context, db: LinkDatabase, row: NotionPage, item: I
             'notion',
             editor.userId,
           );
+        applied = getFact(fact.id)?.lastSeen ?? applied;
       }
     } else if (statement !== fact.statement || (base && base.landflow !== hashes.landflow)) {
       if (statement && statement !== fact.statement) {
@@ -935,7 +948,7 @@ async function pullFact(ctx: Context, db: LinkDatabase, row: NotionPage, item: I
   }
   saveItem({
     ...current,
-    pulled_hash: `${hashes.person}.${hashes.landflow}`,
+    pulled_hash: pulledHash(hashes, applied),
     seen_edited_at: row.last_edited_time,
   });
 }

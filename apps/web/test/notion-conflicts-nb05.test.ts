@@ -215,6 +215,35 @@ describe('the region of a page', () => {
     expect(links.problems(s.link.id)).toEqual([]);
   });
 
+  it('two Notion edits in a row, pulled one at a time, are not a both-sides conflict', async () => {
+    const s = await setup();
+    const page = await seed.seedPage(s, { type: 'customer', id: 'twice', name: 'Twice', description: 'Original' });
+    await s.pull();
+    clock = Date.now() + 60_000;
+    fake.editAsPerson(page.row, { properties: { Description: rt('First Notion edit') } });
+    await s.pull();
+    clock = Date.now() + 60_000;
+    fake.editAsPerson(page.row, { properties: { Description: rt('Second Notion edit') } });
+    await s.pull();
+    expect(getEntity('customer', 'twice')!.description).toBe('Second Notion edit');
+    expect(queryEvents({ action: ['notion-brain.overwrite'], targetId: 'customer/twice' }).events).toHaveLength(0);
+    expect(wikiPage(getEntity('customer', 'twice')!, undefined, { id: TEST_OWNER.id } as never, true).changedInNotion).toBeUndefined();
+  });
+
+  it('"Keep as a fact" after lines were only removed adds no fact', async () => {
+    const s = await setup();
+    const page = await seed.seedPage(s, { type: 'customer', id: 'kestrel-bank', name: 'Kestrel Bank' });
+    await s.pull();
+    tick();
+    fake.editAsPerson(page.row, { markdown: sync.pageBody('') });
+    await s.pull();
+    const [problem] = links.problems(s.link.id);
+    expect(problem).toBeTruthy();
+    const done = await act(s, problem.id, 'keepAsFact');
+    expect(done.status).toBe(409);
+    expect(searchFacts('removed', {})).toHaveLength(0);
+  });
+
   it('is what the sync registers for the push to call on a no_match', async () => {
     const s = await setup();
     const page = await seed.seedPage(s, {

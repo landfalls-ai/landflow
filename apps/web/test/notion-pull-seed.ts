@@ -77,8 +77,8 @@ export async function seedLink(fake: FakeNotion, credentialId: string, projectId
   return { link: active, root, brain: brain.id, dbs, client, database };
 }
 
-/** An item the way the copy leaves it: pushed (its region as written, a hash), not yet pulled. `pushedAt` in the future keeps local edits from reading as newer than the push. */
-export function seedItem(s: Seeded, kind: ItemKind, localKey: string, notionId: string, region: string | null, pushedAt = new Date(Date.now() + 10 * 60_000).toISOString()) {
+/** An item the way the copy leaves it: pushed (its region as written, a hash), not yet pulled. `pushedAt` is now, as after a real push. */
+export function seedItem(s: Seeded, kind: ItemKind, localKey: string, notionId: string, region: string | null, pushedAt = new Date().toISOString()) {
   markOwn(s.link.id, notionId);
   return saveItem({
     link_id: s.link.id,
