@@ -78,7 +78,7 @@ nothing), in the background, never failing the run.
   `Approval needed: “Send Email” in “Alert mailer flow”`; the body has the masked parameters, the destination, the workflow and
   agent versions, the expiry, **Approve** and **Deny** links (signed, one use per recipient, expiring with the request) and the
   Needs you link (`<public URL>/?approval=<id>`). A link opens a confirmation page (mail scanners fetch links); the page's button
-  decides. After the request settled the page says who won (409) or that it expired (410).
+  decides. After the request settled the page says who won (409) or that it expired (410); a link used after its time says *This approval link has expired at <time>* (the request's expiry).
 - **Slack, a signed webhook, Telegram, Teams, Discord or an alert email**: only through an **alert rule you add** (Settings →
   Alerts → New rule, event *Waits for your approval*). The alert service's ticker sends one message per request and rule; it names
   the tool, agent, workflow, destination, expiry and the link, **never a parameter value**. Nothing is sent when no rule has the

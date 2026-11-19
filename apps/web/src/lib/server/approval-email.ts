@@ -81,7 +81,7 @@ export function verifyLink(token: string, now = Date.now()): LinkPayload {
     ((target?.t === 'wf' && typeof target.e === 'string' && typeof target.c === 'string') ||
       (target?.t === 'agent' && typeof target.a === 'string' && typeof target.s === 'string' && typeof target.c === 'string'));
   if (!wellFormed) throw new LinkError('This approval link is not valid', 400);
-  if (payload.x < now) throw new LinkError('This approval link has expired', 410);
+  if (payload.x < now) throw new LinkError(`This approval link has expired at ${new Date(payload.x).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`, 410); // the link's time is the request's expiry
   return payload;
 }
 

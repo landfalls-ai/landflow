@@ -103,7 +103,7 @@ the run in its workflow's Runs tab (`/workflows/<id>/runs/<executionId>`, no red
   **Send back for a fix**), a form wait such as a team member's question (**Answer** opens the run's form page,
   `/form/waiting/<executionId>`), other waits (**Open to answer**), and failed checks nobody has decided on.
 - **Story** (the default): the run as a conversation. It shows messages, requests between agents (with **Why** they
-  were asked) and their result (Delivered, Answered, Left undelivered, Working, Waiting), waits for people, round
+  were asked) and their result (Delivered, Answered, Left undelivered, Working, Waiting; an approval nobody answered in time reads *Expired*, with the inbox's line *Expired at …: nobody approved “Send Email” in time, so it did not run*), waits for people, round
   dividers when the flow loops, and artifacts as cards. Failed steps and
   failed checks appear inline. Tool and model calls fold into "n steps" rows that open; each tool call there says what
   it did, in the agent's own words when it gave a `description` (Claude Code does with every command), else in plain

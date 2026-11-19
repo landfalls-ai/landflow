@@ -201,7 +201,7 @@ describe('the mail nudge', () => {
     await expect(useLink(tokenOf(link))).rejects.toBeInstanceOf(LinkError);
     await expect(describeLink(tokenOf(link))).resolves.toMatchObject({ closed: expect.stringContaining('expired'), closedStatus: 410 });
     // Past the request's expiry the signed link itself is refused (410).
-    expect(() => verifyLink(tokenOf(link), Date.parse(opened.expiresAt) + 1)).toThrow(/expired/);
+    expect(() => verifyLink(tokenOf(link), Date.parse(opened.expiresAt) + 1)).toThrow(/This approval link has expired at \d\d:\d\d$/);
   });
 });
 

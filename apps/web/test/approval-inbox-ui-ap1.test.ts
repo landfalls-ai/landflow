@@ -253,6 +253,15 @@ describe('the Run Trace card', () => {
     expect(host.querySelector('[data-testid="approval-deny"]')).toBeNull();
   });
 
+  it('a request that expired reads as the expiry, with its time and no buttons', async () => {
+    routes.list = [view({ status: 'expired', decidedAt: iso(12) })];
+    await mount(card());
+    const line = host.querySelector('[data-testid="approval-inbox-line"]')?.textContent ?? '';
+    expect(line).toMatch(/^Expired at \d\d:\d\d: nobody approved “.+” in time, so it did not run$/);
+    expect(line).not.toContain('Answered');
+    expect(host.querySelector('[data-testid="approval-approve"]')).toBeNull();
+  });
+
   it('after a 410 the card shows the closed message and no buttons', async () => {
     routes.list = [view()];
     routes.decide = () => json({ error: 'This approval expired at 14:12.' }, 410);
