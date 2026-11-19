@@ -293,6 +293,12 @@ describe('the resolver', () => {
     expect(links.getLink(gone)).toBeUndefined();
     expect(links.listActiveLinks().map((l) => l.project_id)).not.toContain(gone);
     expect(database().get('SELECT 1 AS x FROM notion_brain_links WHERE project_id = ?', gone)).toBeDefined();
+    // The deleted project's page is free again: another project can check and link it.
+    expect(links.linkOfRoot(goneRoot)).toBeUndefined();
+    const again = await call(alice, () => checkRoute.POST(req('POST', `/api/projects/${other}/brain/notion/check`, { credentialId: credential, page: goneRoot }), params({ id: other })));
+    expect(again.status).toBe(200);
+    expect((await link(alice, other, goneRoot)).status).toBe(202);
+    await unlinkIt(alice, other);
     await unlinkIt(alice, team);
     expect(brainStoreFor(team).backend).toBe('local');
     expect((await link(alice, team, fake.addPage({ title: 'Again', shared: true }))).status).toBe(202);

@@ -3,7 +3,7 @@
  * problem's kind does not offer is a 400. `dismiss` works now; the others answer 409 until the pull (wave nb2) performs them.
  */
 import { recordAudit } from '@/lib/server/audit';
-import { getLink, performProblemAction, problemById, problemActionsReady, resolveProblem } from '@/lib/server/brain/notion/links';
+import { SWITCHED_OFF, getLink, notionBrainEnabled, performProblemAction, problemById, problemActionsReady, resolveProblem } from '@/lib/server/brain/notion/links';
 import { problemActionSchema } from '@/lib/server/brain/notion/schemas';
 import { error, json, parseBody } from '@/lib/server/http';
 import { projectRoute, requireProject, routeActor } from '@/lib/server/projects/http';
@@ -26,6 +26,7 @@ export const POST = projectRoute(async (request: Request, { params }: Ctx) => {
   if (action !== 'dismiss' && !PROBLEM_KIND_ACTIONS[problem.kind].includes(action)) return error(`“${action}” is not offered for this problem`, 400);
   if (ADMIN_PROBLEM_ACTIONS.includes(action)) requireProject(actor, id, 'manage');
   if (action !== 'dismiss') {
+    if (!notionBrainEnabled()) return error(SWITCHED_OFF, 409);
     if (!problemActionsReady()) return error('Not available yet', 409);
     await performProblemAction({ link, problem, action, actorId: actor.id });
   }

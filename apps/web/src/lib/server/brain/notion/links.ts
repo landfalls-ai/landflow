@@ -94,7 +94,17 @@ export function listActiveLinks(): LinkRow[] {
 }
 
 /** The link that holds this root page, if one does. */
-export const linkOfRoot = (rootPageId: string): LinkRow | undefined => db().get<LinkRow>("SELECT * FROM notion_brain_links WHERE root_page_id = ? AND status <> 'unlinked'", rootPageId);
+export const linkOfRoot = (rootPageId: string): LinkRow | undefined =>
+  db()
+    .all<LinkRow>("SELECT * FROM notion_brain_links WHERE root_page_id = ? AND status <> 'unlinked'", rootPageId)
+    .find((row) => getProject(row.project_id));
+
+/** A link whose project is gone reads as unlinked: mark it so, which frees its page (the partial unique index counts only rows that are not `unlinked`). */
+function reapGone(where: string, value: string): void {
+  for (const row of db().all<LinkRow>(`SELECT * FROM notion_brain_links WHERE ${where} = ? AND status <> 'unlinked'`, value)) {
+    if (!getProject(row.project_id)) db().upsert('notion_brain_links', { ...row, status: 'unlinked', reason: null, next_sync_at: null, updated_at: now() } as unknown as Record<string, never>);
+  }
+}
 
 // ---------------------------------------------------------------------------------------------------- writing
 
@@ -125,6 +135,8 @@ export class LinkConflictError extends Error {
 /** A new link in `setting_up` (NB04's service picks it up and copies). Throws LinkConflictError when the project or the page is linked already. */
 export function createLink(input: NewLink): LinkRow {
   return db().transaction(() => {
+    reapGone('root_page_id', input.rootPageId);
+    reapGone('project_id', input.projectId);
     if (db().get('SELECT 1 AS x FROM notion_brain_links WHERE project_id = ? AND status <> ?', input.projectId, 'unlinked')) throw new LinkConflictError('Already linked', 'project');
     if (linkOfRoot(input.rootPageId)) throw new LinkConflictError('That Notion page is linked to another project already', 'root');
     const at = now();
@@ -216,7 +228,7 @@ export interface ProblemActionContext {
   actorId?: string;
 }
 
-/** Performs `repair`, `putBack`, `deleteLocal` and `keepAsFact` (NB05 registers it); it resolves the problem when it succeeds. */
+/** Performs `repair`, `putBack`, `deleteLocal` and `keepAsFact` (NB05 registers it); the route resolves the problem when it succeeds. */
 export type ProblemActionPort = (context: ProblemActionContext) => Promise<void> | void;
 let performer: ProblemActionPort | undefined;
 export function setProblemActions(fn: ProblemActionPort | undefined): void {
