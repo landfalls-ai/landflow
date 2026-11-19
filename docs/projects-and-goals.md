@@ -238,6 +238,12 @@ go; private and team-only work never does. It is per project: the brain is copie
 ([what Landflow writes](features/notion-brain.md#what-landflow-writes)); the routes and rules are in
 [the Notion brain page](features/notion-brain.md#setting-it-up).
 
+**The Brain card** (Settings tab, after Governance) is where an admin does it: pick a Notion key by name or add one in the
+credential dialog, give a page, **Check**, see what would be copied and about how long it takes, **Connect and copy**, then watch
+the copy and see the status, with **Open in Notion**, **Sync now**, **Pause**, the speed, the knowledge scope and **Disconnect**;
+a link that stopped shows its one fix button. Members see the status and the link. In **Agents in this project**, a project with
+an active link can choose **This project's Notion brain** as its knowledge base.
+
 ## Project settings for agents
 
 A project can set four things for the agents that run in it, next to its allowed nodes, approvers and four-eyes

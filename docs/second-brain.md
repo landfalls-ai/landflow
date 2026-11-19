@@ -388,6 +388,16 @@ prose and a person keeps the facts. Spotlight asks it questions.
 
 **In Notion.** When the project is linked to a Notion page, the brain is also written there (pages, facts, practices and notes, with a body per page and your own notes below Landflow's part), within seconds of each change: see [features/notion-brain.md](features/notion-brain.md#what-landflow-writes).
 
+**Notion on the page (NB07).** For a page of a project linked to Notion, a chip in the title bar says how it syncs ("In Notion ·
+synced 2 minutes ago", amber when something needs a look or it is paused, red when Notion refused the key or stopped seeing the
+page; on a phone it sits in the status bar), the chips row has **Open in Notion** (the page's own row), "Changed in Notion by <name>,
+replacing your edit" shows for 7 days after a later edit in Notion replaced a value, and **Your notes (from Notion)** shows what a
+person wrote under the page's "Your notes" in Notion, read-only and always as text. The Problems panel gains a **Notion sync** group:
+each problem the link has, in Landflow's words, with a link to its Notion page and the buttons the viewer may press (**Dismiss**,
+**Put back**, **Keep as a fact**; **Repair** and **Delete in Landflow** for the project's admins), and the status bar's problem count
+adds them. A project with no link shows none of it. Setting it up is the project's Brain card
+([notion-brain.md](features/notion-brain.md#setting-it-up)).
+
 #### The vector collections
 
 Workflows and agents can't read or write `landflow-brain` and `landflow-brain-<project>` with a Vector Store node: the
