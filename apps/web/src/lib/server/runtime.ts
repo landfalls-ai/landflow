@@ -32,6 +32,8 @@ import './practices/context-source';
 import './ai-usage/parts-register';
 // AP01: registers the approval inbox's port and settles a cancelled run's requests (docs/approval-inbox.md).
 import './approval-inbox';
+// NB02: registers the Notion client factory, so notionClientFor works wherever the runtime is loaded (docs/features/notion-brain.md).
+import './notion/client';
 import { agentTriggers } from './agents/triggers';
 import { taskWakeups } from './tasks/wakeups';
 import { alerts } from './alerts/service';

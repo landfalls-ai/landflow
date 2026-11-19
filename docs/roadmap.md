@@ -3012,3 +3012,6 @@ The person decided on 2026-11-18 that production approvals go to an approval inb
 - The Agent architect added a Home suggestion *Build a tool for Model* from the *no local model is listed* note (91).
 - Decisions owed by the person: an error workflow fired by a failing hosted-chat or MCP run waits (its input carries the outsider's data); a workflow called from a chat or MCP run refuses though its own publish line says it waits (see [limitations.md](limitations.md#the-approval-inbox-wave-ap1)).
 - Not covered by the live pass: K1 (kagent and the Claude Code harness have no inbox) and K2 (Run a Team's members). F2: the SMTP dialog leaves SSL/TLS on, seen again (06, 07).
+
+## Notion as the brain
+- **NB02: a Notion client in the host** ([notion-brain.md](features/notion-brain.md#how-landflow-talks-to-notion)): Notion-Version 2026-03-11 and Markdown v2, a token bucket per credential, Notion's errors and retry rules (a 503 on a write may have landed), a scoped writer that refuses any write outside the root before sending, rich-text and Markdown size limits, `LANDFLOW_NOTION_WRITE_LOG`, and the local Notion fake every test uses (`test/notion-client-nb02.test.ts`).

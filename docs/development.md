@@ -379,6 +379,25 @@ The databases plugin has its own: `cd plugins/databases && LANDFLOW_INTEGRATION=
 Integration -v .` (`all` adds MySQL); see
 [deployment.md, "Integration tests (databases plugin)"](deployment.md#integration-tests-databases-plugin).
 
+### The Notion fake
+
+Every test of the Notion brain talks to `apps/web/test/fake-notion.ts`, an in-memory Notion on a local port (its header lists
+every endpoint and behaviour; no test calls `api.notion.com` or holds a real key). Start it with `startFakeNotion()` and register
+a stand-in credential type before creating a credential that points at it:
+
+```ts
+registry.registerBuiltin(definePlugin({ info: { id: 'productivity', name: 'Productivity (stand-in)', version: '0.0.0', language: 'typescript' },
+  credentialTypes: [defineCredentialType({ name: 'notionApi', displayName: 'Notion API', properties: [
+    { name: 'apiKey', displayName: 'Key', type: 'string', required: true, typeOptions: { password: true } },
+    { name: 'baseUrl', displayName: 'API Base URL', type: 'string', default: 'https://api.notion.com' }] })], nodes: [] }));
+const fake = await startFakeNotion();
+const { id } = credentials.create({ name: 'Notion', type: 'productivity.notionApi', data: { apiKey: FAKE_NOTION_TOKEN, baseUrl: fake.url } });
+```
+
+`fake.state.requests` records every request (assert on headers' effects, counts and paths), `setRateLimit` and `failNext`
+script 429, 529 and 5xx. Pass `now` and `sleep` to `notionClient` to drive the limiter with a fake clock, and call
+`resetLimiters()` between tests. `LANDFLOW_NOTION_WRITE_LOG=<file>` records one id-only line per write.
+
 ### Checking a change live
 
 Each feature in [roadmap.md](roadmap.md) was also checked in the running app, on a scratch host that leaves
