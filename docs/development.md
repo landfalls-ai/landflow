@@ -383,7 +383,7 @@ Integration -v .` (`all` adds MySQL); see
 
 Every test of the Notion brain talks to `apps/web/test/fake-notion.ts`, an in-memory Notion on a local port (its header lists
 every endpoint and behaviour; no test calls `api.notion.com` or holds a real key). Start it with `startFakeNotion()` and register
-a stand-in credential type before creating a credential that points at it:
+a stand-in credential type before creating a credential that points at it. The push and the first copy have their own package tests, `notion-push-nb04.test.ts` and `notion-copy-nb04.test.ts`:
 
 ```ts
 registry.registerBuiltin(definePlugin({ info: { id: 'productivity', name: 'Productivity (stand-in)', version: '0.0.0', language: 'typescript' },

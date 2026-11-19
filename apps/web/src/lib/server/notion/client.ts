@@ -7,14 +7,15 @@
  * write log never hold it, nor page text.
  *
  * Retries: 429 and 529 wait `Retry-After` (or `additional_data.retry_after`, at most 120 s) and go again; 429
- * `public_api_request_blocked` is `blocked` and never retried; 500 and reads that get 503 or 504 back off with jitter
- * (1 s up to 5 min, at most 6 tries in one call); a 503 or 504 on a write is not retried (it may have landed: `mayHaveLanded`);
+ * `public_api_request_blocked` is `blocked` and never retried; reads that get a 5xx back off with jitter
+ * (1 s up to 5 min, at most 6 tries in one call); any 5xx on a write, or a network error on a write, is not retried (it may have
+ * landed: `mayHaveLanded`);
  * 409 is `conflict` (the caller re-reads and retries once); 400, 401, 403 and 404 are not retried.
  */
-import { credentials } from '../credentials/vault';
+import { CredentialError, credentials } from '../credentials/vault';
 import { safeFetch } from '../net/safe-fetch';
 import { withSpan, SpanKind } from '../telemetry';
-import { MAX_RETRY_AFTER_MS, NotionError, kindOfStatus, retryAfterMs } from './errors';
+import { NotionError, kindOfStatus, retryAfterMs } from './errors';
 import { acquire, noteAnswered, noteRateLimited } from './limiter';
 import {
   MARKDOWN_VERSION,
@@ -74,7 +75,14 @@ export function notionClient(options: NotionClientOptions): NotionClient {
     if (!stored || !field) {
       throw new NotionError(stored ? `Credential "${stored.name}" is a ${stored.type}, not a Notion credential` : 'The Notion credential was deleted', { kind: 'unauthorized', status: 0, retryable: false });
     }
-    const data = await credentials.dataWithSecrets({ id: stored.id, name: stored.name }, stored.type);
+    // NB04: a credential the vault refuses to open (deleted meanwhile, wrong type) stops the link as `unauthorized`.
+    let data: Record<string, unknown>;
+    try {
+      data = await credentials.dataWithSecrets({ id: stored.id, name: stored.name }, stored.type);
+    } catch (error) {
+      if (error instanceof CredentialError) throw new NotionError('The Notion credential could not be opened', { kind: 'unauthorized', status: 0, retryable: false });
+      throw error;
+    }
     const key = typeof data[field] === 'string' ? (data[field] as string) : '';
     if (!key) throw new NotionError(`Credential "${stored.name}" has no ${field}`, { kind: 'unauthorized', status: 0, retryable: false });
     const base = typeof data.baseUrl === 'string' && data.baseUrl.trim() ? data.baseUrl.trim() : NOTION_API;
@@ -90,7 +98,7 @@ export function notionClient(options: NotionClientOptions): NotionClient {
       return await doFetch(url, { method: call.method, headers, ...(call.body && { body: JSON.stringify(call.body) }) });
     } catch (error) {
       // The cause of a fetch failure is a network error's text, which never holds the key.
-      throw new NotionError(`${call.method} ${call.template}: no answer (${(error as Error).message})`, { kind: 'network', status: 0, mayHaveLanded: false });
+      throw new NotionError(`${call.method} ${call.template}: no answer (${(error as Error).message})`, { kind: 'network', status: 0, ...(call.write && { mayHaveLanded: true }) }); // NB04: a write with no answer may have landed
     }
   }
 
@@ -121,20 +129,19 @@ export function notionClient(options: NotionClientOptions): NotionClient {
         const message = `Notion ${call.method} ${call.template}: ${status}${code ? ` ${code}` : ''}`;
         const waitMs = retryAfterMs(response.headers.get('retry-after'), payload);
         if (status === 429 || status === 529) {
-          if (status === 429) {
-            if (code === 'public_api_request_blocked') {
-              noteAnswered(options.credentialId);
-              throw new NotionError(message, { kind: 'blocked', status, code, retryable: false });
-            }
-            noteRateLimited(options.credentialId, now());
-          } else noteAnswered(options.credentialId);
+          if (status === 429 && code === 'public_api_request_blocked') {
+            noteAnswered(options.credentialId);
+            throw new NotionError(message, { kind: 'blocked', status, code, retryable: false });
+          }
+          noteRateLimited(options.credentialId, now()); // NB04: a 529 counts toward the streak like a 429
           if (++rateWaits > MAX_RATE_LIMIT_WAITS) throw new NotionError(message, { kind: 'rateLimited', status, ...(code && { code }), retryAfterMs: waitMs });
           await sleep(waitMs ?? 1000);
           continue;
         }
         noteAnswered(options.credentialId);
         if (status >= 500) {
-          const landed = call.write && (status === 503 || status === 504);
+          // NB04: any 5xx on a write may have landed (a retried createPage makes a duplicate, a retried update_content a false no_match).
+          const landed = call.write;
           if (landed) throw new NotionError(message, { kind: 'unavailable', status, ...(code && { code }), mayHaveLanded: true });
           if (++tries >= MAX_TRIES) throw new NotionError(message, { kind: 'unavailable', status, ...(code && { code }) });
           const backoff = Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (tries - 1));
@@ -191,7 +198,20 @@ export function notionClient(options: NotionClientOptions): NotionClient {
       });
       const dataSourceId = created.data_sources?.[0]?.id;
       if (!dataSourceId) throw new NotionError('Notion POST /v1/databases: the answer named no data source', { kind: 'invalid', status: 200, retryable: false });
-      const source = await client.dataSource(dataSourceId);
+      // NB04: the database exists; a failing read of its properties is retried, then reported with its id so the caller adopts it.
+      let source: NotionDataSource | undefined;
+      let readError: unknown;
+      for (let read = 0; read < 3 && !source; read++) {
+        try {
+          source = await client.dataSource(dataSourceId);
+        } catch (error) {
+          readError = error;
+        }
+      }
+      if (!source) {
+        const info = readError as { kind?: NotionError['kind']; status?: number };
+        throw new NotionError(`Notion POST /v1/databases: the database ${created.id} was created but its properties could not be read`, { kind: info.kind === 'unauthorized' ? 'unauthorized' : 'unavailable', status: info.status ?? 0, mayHaveLanded: true });
+      }
       return { databaseId: created.id, dataSourceId, propertyIds: Object.fromEntries(Object.entries(source.properties).map(([name, property]) => [name, property.id])), url: created.url };
     },
     database: (id) => get<NotionDatabase>('/v1/databases/:id', `/v1/databases/${id}`),

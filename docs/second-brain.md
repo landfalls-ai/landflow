@@ -385,6 +385,8 @@ prose and a person keeps the facts. Spotlight asks it questions.
   `apps/web/test/brain-wiki.test.ts`, `apps/web/test/brain-files.test.ts`. Why it looks this way:
   [research/brain-ui-research.md](research/brain-ui-research.md).
 
+**In Notion.** When the project is linked to a Notion page, the brain is also written there (pages, facts, practices and notes, with a body per page and your own notes below Landflow's part), within seconds of each change: see [features/notion-brain.md](features/notion-brain.md#what-landflow-writes).
+
 #### The vector collections
 
 Workflows and agents can't read or write `landflow-brain` and `landflow-brain-<project>` with a Vector Store node: the

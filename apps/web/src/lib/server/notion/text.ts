@@ -38,14 +38,25 @@ export function fitMarkdown(markdown: string): string {
   let bytes = 0;
   let end = lines.length;
   let heading = -1;
+  // NB04: a `# comment` inside a fenced code block reads as a heading, and a cut inside a fence would leave it open.
+  let fenceStart = -1;
+  let fenceAtEnd = -1;
+  let fenceMarker = '```';
   for (let i = 0; i < lines.length; i++) {
     const cost = Buffer.byteLength(lines[i]) + 1;
-    if (lines[i].trim() && blocks + 1 > MARKDOWN_BLOCKS - 1) { end = i; break; }
-    if (bytes + cost > MARKDOWN_BYTES - Buffer.byteLength(CUT_LINE) - 2) { end = i; break; }
+    if (lines[i].trim() && blocks + 1 > MARKDOWN_BLOCKS - 1) { end = i; fenceAtEnd = fenceStart; break; }
+    if (bytes + cost > MARKDOWN_BYTES - Buffer.byteLength(CUT_LINE) - 2) { end = i; fenceAtEnd = fenceStart; break; }
     if (lines[i].trim()) blocks++;
     bytes += cost;
-    if (/^#{1,6}\s/.test(lines[i])) heading = i;
+    const fence = /^\s*(```|~~~)/.exec(lines[i]);
+    if (fence) {
+      if (fenceStart < 0) fenceMarker = fence[1];
+      fenceStart = fenceStart < 0 ? i : -1;
+    }
+    else if (fenceStart < 0 && /^#{1,6}\s/.test(lines[i])) heading = i;
   }
-  const cutAt = heading > 0 ? heading : end;
-  return `${lines.slice(0, cutAt).join('\n').replace(/\s+$/, '')}\n\n${CUT_LINE}\n`;
+  if (heading > 0 && (fenceAtEnd < 0 || heading < fenceAtEnd)) return `${lines.slice(0, heading).join('\n').replace(/\s+$/, '')}\n\n${CUT_LINE}\n`;
+  if (fenceAtEnd > 0) return `${lines.slice(0, fenceAtEnd).join('\n').replace(/\s+$/, '')}\n\n${CUT_LINE}\n`;
+  const kept = lines.slice(0, end).join('\n').replace(/\s+$/, '');
+  return `${kept}${fenceAtEnd === 0 ? `\n${fenceMarker}` : ''}\n\n${CUT_LINE}\n`;
 }

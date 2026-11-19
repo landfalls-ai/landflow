@@ -36,6 +36,10 @@ import './approval-inbox';
 import './notion/client';
 // NB03: registers the Notion link resolver, so a linked project's brain reports the notion backend (docs/features/notion-brain.md).
 import './brain/notion/links';
+// NB04: loads the brain store (the local store and the change feed): without it brainStoreFor throws "The brain store is not loaded".
+import './brain/store';
+// NB04: the Notion brain's push service (its outbox listener registers when it loads).
+import { notionBrain } from './brain/notion/service';
 import { agentTriggers } from './agents/triggers';
 import { taskWakeups } from './tasks/wakeups';
 import { alerts } from './alerts/service';
@@ -212,6 +216,8 @@ export const SERVICES: ServiceSpec[] = [
   { name: 'usage listeners', roles: MAIN, start: startUsageListeners },
   { name: 'usage trigger', roles: MAIN, start: startUsageTrigger },
   { name: 'second brain', roles: MAIN, leader: true, start: () => brain.start(), stop: () => brain.stop() },
+  // NB04: the Notion brain's copy and push (docs/features/notion-brain.md#how-it-is-built): a tick every 5 seconds on the leader.
+  { name: 'notion brain', roles: MAIN, leader: true, start: () => notionBrain.start(), stop: () => notionBrain.stop() },
   {
     name: 'registry gRPC server',
     roles: MAIN,
