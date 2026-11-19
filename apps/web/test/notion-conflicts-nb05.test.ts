@@ -434,4 +434,16 @@ describe('problem actions', () => {
     await s.pull();
     expect(links.linkById(s.link.id)!.status).toBe('active');
   });
+
+  it('repair keeps the status of a link that is not waiting for it, and files no notice', async () => {
+    const s = await setup();
+    await seed.seedPage(s, { type: 'customer', id: 'repair-paused', name: 'Repair Paused' });
+    fake.removeProperty(s.database.pages, LANDFLOW_ID);
+    await s.pull();
+    const [problem] = links.problems(s.link.id).filter((p) => p.local_key === `pages:${LANDFLOW_ID}`);
+    links.setStatus(s.link.id, 'paused', 'Paused by an admin');
+    expect((await act(s, problem.id, 'repair')).status).toBe(200);
+    expect(links.linkById(s.link.id)!.status).toBe('paused');
+    expect(listProposals({ status: 'open', limit: 200 }).filter((p) => p.fingerprint === `notion-brain:${s.link.id}:active`)).toEqual([]);
+  });
 });

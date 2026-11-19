@@ -45,6 +45,7 @@ const { searchFacts, getFact } = await import('@/lib/server/brain/facts');
 const { listProposals } = await import('@/lib/server/brain/proposals');
 const links = await import('@/lib/server/brain/notion/links');
 const sync = await import('@/lib/server/brain/notion/sync');
+const service = await import('@/lib/server/brain/notion/service');
 const { pullLink, parseAttributes, parsePracticeRegion } = await import('@/lib/server/brain/notion/pull');
 const practicesStore = await import('@/lib/server/practices/store');
 const approve = await import('@/lib/server/practices/approve');
@@ -853,6 +854,62 @@ describe('trash, schema and what the pull reads', () => {
     await s.pull();
     expect(links.linkById(s.link.id)!.status).toBe('unshared');
     expect(statusNotices(s).map((p) => p.fingerprint)).toEqual([`notion-brain:${s.link.id}:unshared`]);
+  });
+
+  it('a 404 that the database check resolves to a gone database makes the link unshared with its reason and one notice', async () => {
+    const s = await setup();
+    await s.pull();
+    fake.failNext({ status: 404, match: (m, t) => m === 'GET' && t === '/v1/data_sources/:id' }, 2); // the pull's read, then the check's
+    await s.pull();
+    const after = links.linkById(s.link.id)!;
+    expect(after.status).toBe('unshared');
+    expect(after.reason).toMatch(/database is gone or no longer shared/);
+    expect(statusNotices(s).map((p) => p.fingerprint)).toEqual([`notion-brain:${s.link.id}:unshared`]);
+  });
+
+  it('a 5xx during the database check leaves the link active with the error kept', async () => {
+    const s = await setup();
+    await s.pull();
+    fake.failNext({ status: 404, match: (m, t) => m === 'GET' && t === '/v1/data_sources/:id' }); // the pull's read
+    let armed = true; // the scripted 500s end with the pull: none is left for the next test
+    fake.failNext({ status: 500, match: (m, t) => armed && m === 'GET' && t === '/v1/data_sources/:id' }, 20); // the check's
+    // The client backs off a read for seconds between its tries; here the waits are cut to a millisecond.
+    const realTimeout = globalThis.setTimeout;
+    const quick = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number, ...rest: unknown[]) => realTimeout(fn, ms && ms >= 500 ? 1 : ms, ...rest)) as never);
+    try {
+      await s.pull();
+    } finally {
+      armed = false;
+      quick.mockRestore();
+    }
+    const after = links.linkById(s.link.id)!;
+    expect(after.status).toBe('active');
+    expect(after.last_error).toBeTruthy();
+    expect(statusNotices(s)).toEqual([]);
+  });
+
+  it('a deleted credential seen first by the pull stops the link as unauthorized with its reason and one notice', async () => {
+    const doomed = credentials.create({ name: 'Doomed', type: 'productivity.notionApi', data: { apiKey: FAKE_NOTION_TOKEN, baseUrl: fake.url } }).id;
+    const project = projects.createTeamProject({ name: `Pull ${++counter}` });
+    const s = await seed.seedLink(fake, doomed, project.id);
+    credentials.delete(doomed);
+    await pullLink(links.linkById(s.link.id)!, { force: true });
+    expect(links.linkById(s.link.id)).toMatchObject({ status: 'unauthorized', reason: 'The Notion key was deleted' });
+    expect(listProposals({ status: 'open', limit: 200 }).filter((p) => p.fingerprint === `notion-brain:${s.link.id}:unauthorized`)).toHaveLength(1);
+  });
+
+  it('a pass whose pull stopped the link on a 401 makes no knowledge-walk request', async () => {
+    const s = await setup();
+    for (const other of links.listActiveLinks()) if (other.id !== s.link.id) links.setStatus(other.id, 'paused', 'Paused for this test');
+    await service.tickOnce(); // the first pass settles whatever is due
+    links.updateLink(s.link.id, { last_pull_at: null }); // the pull is due again, and so is the walk
+    links.setCursors(s.link.id, {});
+    fake.state.requests.length = 0;
+    fake.failNext({ status: 401, match: (m, t) => m === 'POST' && t.endsWith('/query') });
+    await service.tickOnce();
+    expect(links.linkById(s.link.id)!.status).toBe('unauthorized');
+    const walked = fake.state.requests.filter((r) => r.template === '/v1/blocks/:id/children' || r.path.includes(s.root.replace(/-/g, '')) || r.path.includes(s.brain.replace(/-/g, '')));
+    expect(walked.map((r) => `${r.method} ${r.template}`)).toEqual([]);
   });
 
   it('reads only under the link’s data sources and rows: never search, never another page', async () => {
