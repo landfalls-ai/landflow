@@ -72,13 +72,13 @@ export function fileDraftSuggestion(practice: Pick<Practice, 'id' | 'handle' | '
         target: { type: 'instance', name: practice.handle },
         title: version.tainted ? `Read this draft practice: ${version.title}` : `Approve this practice: ${version.title}`,
         why: version.tainted
-          ? `${drafter} drafted version ${version.version} of ${practice.handle}, ${where}: ${version.summary} It was read from outside (a repository or an agent’s run), so it is approved only by someone who reads its rules against their sources on /brain.`
+          ? `${drafter} drafted version ${version.version} of ${practice.handle}, ${where}: ${version.summary} It was read from outside (${version.source === 'notion' ? 'a linked Notion page' : 'a repository or an agent’s run'}), so it is approved only by someone who reads its rules against their sources on /brain.` // NB05: the origin of a Notion draft
           : `${drafter} drafted version ${version.version} of ${practice.handle}, ${where}: ${version.summary} Applying it approves this version: agents get it from then on.`,
         evidence: [
           { label: 'Practice', value: practice.handle, href: practiceHref(practice.id) },
           { label: 'Version', value: version.version },
           { label: 'Strength', value: version.strength },
-          ...(version.tainted ? [{ label: 'Read from outside', value: version.source === 'learned' ? 'a repository' : 'an agent’s run' }] : []),
+          ...(version.tainted ? [{ label: 'Read from outside', value: version.source === 'notion' ? 'a linked Notion page' : version.source === 'learned' ? 'a repository' : 'an agent’s run' }] : []), // NB05: notion
         ],
         ops: [],
         audience: audienceOf(practice),
