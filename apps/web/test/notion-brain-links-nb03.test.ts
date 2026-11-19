@@ -351,7 +351,7 @@ describe('secrets, policy and docs', () => {
     expect(routePolicy('GET', '/api/projects/p/brain/notion')).toEqual({ scope: 'brain:read' });
     expect(routePolicy('POST', '/api/projects/p/brain/notion')).toEqual({ scope: 'workflows:write' });
     expect(routePolicy('DELETE', '/api/projects/p/brain/notion')).toEqual({ scope: 'workflows:write' });
-    expect(routePolicy('GET', '/api/projects/p/brain/notion/problems')).toEqual({ scope: 'workflows:read' });
+    expect(routePolicy('GET', '/api/projects/p/brain/notion/problems')).toEqual({ scope: 'brain:read' });
     const paths = (openApiDocument('http://notion-links.test') as { paths: Record<string, Record<string, unknown>> }).paths;
     expect(Object.keys(paths['/api/projects/{id}/brain/notion'])).toEqual(expect.arrayContaining(['get', 'post', 'patch', 'delete']));
     expect(paths).toHaveProperty(['/api/projects/{id}/brain/notion/check']);

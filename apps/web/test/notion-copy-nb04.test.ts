@@ -378,6 +378,11 @@ describe('Notion pushing back', () => {
     await service.tickOnce();
     expect(current(l.id).status).toBe('unshared');
     expect(fake.writes().length - writesBefore).toBeLessThanOrEqual(1);
+    // NB07: the second row's outbox entry is still there, untried: no attempt, no error.
+    const second = database().get<{ attempts: number; last_error: string | null }>('SELECT attempts, last_error FROM notion_brain_outbox WHERE link_id = ? AND kind = ? AND local_key = ?', l.id, 'entity', keys[1]);
+    expect(second).toBeDefined();
+    expect(second!.attempts).toBe(0);
+    expect(second!.last_error ?? null).toBeNull();
     links.unlink(l.id);
   });
 });

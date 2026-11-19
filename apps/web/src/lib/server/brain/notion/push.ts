@@ -258,9 +258,9 @@ export async function pushWhole(env: PushEnv, kind: 'home' | 'log'): Promise<Pus
   const hash = hashOf(region);
   const item = itemOf(link.id, kind as unknown as ItemKind, '');
   if (item && unpackHash(item.pushed_hash)?.body === hash) return 'unchanged';
-  await verifyOwn(link, pageId, client);
   let written: string;
   try {
+    await verifyOwn(link, pageId, client); // NB07: inside the try, so a gone brain page after a restart reaches checkStillShared
     written = await writeWhole(env, pageId, item?.pushed_region ?? null, region);
   } catch (error) {
     // The brain page is trashed or no longer shared: say so for the whole link instead of backing off forever.

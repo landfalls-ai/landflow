@@ -135,6 +135,8 @@ export interface WikiPage extends EntityKnowledge {
   canEdit: boolean;
   /** NB05: a later edit in Notion replaced a value of this page within the last 7 days (the audit row `notion-brain.overwrite` holds the other value). */
   changedInNotion?: { by: string; at: string };
+  /** NB07: where this page lives in the project's Notion brain: its row's URL and "Your notes" (read-only, as the person wrote them). Absent when the project is not linked or the row is detached. */
+  notion?: { url: string; notes?: string };
 }
 
 /** NB06: a passage of one of the company's Notion pages, found for a question (docs/features/notion-brain.md#your-companys-pages-as-knowledge). */
