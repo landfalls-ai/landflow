@@ -78,4 +78,34 @@ describe.skipIf(!enabled)('approval inbox claims across two processes', async ()
     expect(stored.rows[0].decided_by).toBe('ada@x.test');
     expect(JSON.parse(stored.rows[0].nudged).email).toBe(2);
   });
+
+  it('a claim that commits right after a nudge UPDATE is not undone by the nudge', async () => {
+    const id = 'req-interleave';
+    main.upsert('approval_inbox', row(id));
+    await main.flush();
+    await until(() => expect(statusIn(worker, id)).toBe('waiting'));
+    // Main's claim commits in Postgres right after the worker's nudge UPDATE returns, before the worker's copy hears of it.
+    const direct = worker.direct.bind(worker) as Database['direct'];
+    let injected = false;
+    worker.direct = (async (fn: Parameters<Database['direct']>[0]) => {
+      const result = await direct(fn);
+      if (!injected && (result as { rows?: { nudged?: string }[] } | undefined)?.rows?.[0]?.nudged) {
+        injected = true;
+        await claim(id, 'approved', { by: 'ada@x.test', via: 'inbox' }, main);
+      }
+      return result;
+    }) as Database['direct'];
+    try {
+      await recordNudge(id, { email: 1, channels: 0 }, worker);
+    } finally {
+      worker.direct = direct;
+    }
+    expect(injected).toBe(true);
+    await main.flush();
+    await worker.flush();
+    await until(() => expect([statusIn(main, id), statusIn(worker, id)]).toEqual(['approved', 'approved']));
+    const stored = await admin.query('SELECT status, decided_by FROM approval_inbox WHERE id = $1', [id]);
+    expect(stored.rows[0]).toEqual({ status: 'approved', decided_by: 'ada@x.test' });
+    expect(main.get<{ decided_by: string }>('SELECT decided_by FROM approval_inbox WHERE id = ?', id)?.decided_by).toBe('ada@x.test');
+  });
 });

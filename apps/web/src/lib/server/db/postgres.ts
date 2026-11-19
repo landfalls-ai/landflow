@@ -31,7 +31,7 @@ import { envNumber, envString } from '../config';
 import { logger } from '../telemetry/logger';
 import { Database, openSqliteConnection, upsertSql, type DirectClient, type SqlValue, type WriteHealth, type WriteOp, type WriteSink } from './database';
 import { hotCutoff, mirrorSelect, startEviction } from './hot-mirror';
-import { CHANGES_CHANNEL, noticesFor, Replica, rowIdOf } from './replication';
+import { CHANGES_CHANNEL, noticesFor, type ChangeNotice, Replica, rowIdOf } from './replication';
 import { recordWriteRejection, recordWriteRetry, registerWriteMetrics } from './write-metrics';
 import { addColumnSql, MIGRATIONS, pendingMigrations, SCHEMA_VERSION_TABLE, TABLES, type TableName } from './schema';
 
@@ -248,6 +248,17 @@ export class PostgresSink implements WriteSink {
     } finally {
       client.release();
     }
+  }
+
+  async refresh(table: TableName, where: Record<string, SqlValue>): Promise<boolean> {
+    if (!this.replica) return false;
+    await this.replica.refresh(table, where);
+    return true;
+  }
+
+  keyNotice(table: TableName, key: SqlValue[]): string | undefined {
+    if (!this.replica) return undefined;
+    return JSON.stringify({ o: this.replica.origin, c: [['k', table, key]], t: Date.now() } satisfies ChangeNotice);
   }
 
   enqueue(ops: WriteOp[]) {

@@ -59,6 +59,10 @@ export interface WriteSink {
   close(): Promise<void>;
   /** Run `fn` on a Postgres connection of its own (Postgres mode). */
   direct?<T>(fn: (client: DirectClient) => Promise<T>): Promise<T>;
+  /** Queue mode: read rows from Postgres into this process's copy only, queuing nothing. False without replication. */
+  refresh?(table: TableName, where: Record<string, SqlValue>): Promise<boolean>;
+  /** Queue mode: the pg_notify payload telling the other processes to read one row back (a key notice), if there are any. */
+  keyNotice?(table: TableName, key: SqlValue[]): string | undefined;
   health?(): WriteHealth;
   /**
    * Tables the in-memory copy holds only in part (Postgres mode: the data and events of cold runs, ./hot-mirror). A delete
@@ -350,6 +354,15 @@ export class Database {
    * one-use claim several processes must agree on: lib/server/audit/chain.ts, lib/server/auth/saml-state.ts). Undefined on
    * SQLite, where the file itself is shared and `transaction` (BEGIN IMMEDIATE) already serializes writers.
    */
+  async refresh(table: TableName, where: Record<string, SqlValue>): Promise<boolean> {
+    return (await this.sink?.refresh?.(table, where)) ?? false;
+  }
+
+  /** The notice (pg_notify payload) that makes the other processes read one row back, or undefined (SQLite, one process). */
+  keyNotice(table: TableName, key: SqlValue[]): string | undefined {
+    return this.sink?.keyNotice?.(table, key);
+  }
+
   direct<T>(fn: (client: DirectClient) => Promise<T>): Promise<T> | undefined {
     const call = this.sink?.direct;
     if (!call) return undefined;

@@ -11,6 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import { closedAnswer, EXPIRY_VARIABLE, expiryMinutes, maskParams, type InboxOpen, type InboxRequestView, type InboxStatus, type InboxVia } from '../../shared/approval-inbox';
 import { database, type Database } from '../db';
+import { logger } from '../telemetry/logger';
 import { redactValue } from '../secrets/redact';
 import { store as executions } from '../store';
 import type { InboxOutcome } from './port';
@@ -120,6 +121,9 @@ export function openRequests(calls: InboxOpen[], now = new Date()): { ids: Recor
         decided_via: null,
         decided_at: null,
       };
+      // Postgres mode: the replayed insert is `ON CONFLICT (id) DO NOTHING`, while the table is also UNIQUE (execution_id, call_id).
+      // Two processes opening the same call before replication catches up would make the later batch a unique violation, not a
+      // no-op. A call opens on the one process that runs it and a re-open comes much later, so this is accepted.
       if (db().insertNew('approval_inbox', row as unknown as Record<string, string | number | null>)) {
         ids[call.callId] = row.id;
         created.push(row);
@@ -141,6 +145,24 @@ export interface ClaimBy {
   at?: string;
 }
 
+const asRow = (row: InboxRow) => row as unknown as Record<string, string | number | null>;
+
+/**
+ * Take a row Postgres decided into this process's copy without replaying it: a replayed full row (`INSERT ... ON CONFLICT DO
+ * UPDATE` of every column) could, when it reaches Postgres late, write an older status or nudge count over a newer one.
+ * With replication the copy is read back (`refresh`) and the others are told by a key notice sent from the same connection
+ * (`notify`, run inside `direct`); with one process there is no other writer, so the row is written as usual.
+ */
+async function adopt(handle: Database, row: InboxRow): Promise<void> {
+  if (!(await handle.refresh('approval_inbox', { id: row.id }))) handle.upsert('approval_inbox', asRow(row));
+}
+
+/** Send the key notice for a row changed through `direct` (a no-op without replication). */
+async function tell(handle: Database, client: { query(text: string, values?: unknown[]): Promise<unknown> }, id: string): Promise<void> {
+  const payload = handle.keyNotice('approval_inbox', [id]);
+  if (payload) await client.query('SELECT pg_notify($1, $2)', ['landflow_changes', payload]);
+}
+
 /**
  * Move a waiting request to `to`, once. `won` is false when it was no longer waiting (then `row` is the winner's). In Postgres
  * mode the conditional write is made there and this main's copy follows. `handle` is for tests (two processes' databases).
@@ -160,19 +182,21 @@ export async function claim(id: string, to: Exclude<InboxStatus, 'waiting'>, who
     });
   }
   await handle.flush();
-  const result = await handle.direct((client) =>
-    client.query<InboxRow>(`UPDATE approval_inbox SET status = $1, decided_by = $2, decided_by_name = $3, decided_via = $4, decided_at = $5 WHERE id = $6 AND status = 'waiting' RETURNING *`, [to, set.decided_by, set.decided_by_name, set.decided_via, at, id]),
-  );
+  const result = await handle.direct(async (client) => {
+    const updated = await client.query<InboxRow>(`UPDATE approval_inbox SET status = $1, decided_by = $2, decided_by_name = $3, decided_via = $4, decided_at = $5 WHERE id = $6 AND status = 'waiting' RETURNING *`, [to, set.decided_by, set.decided_by_name, set.decided_via, at, id]);
+    if (updated.rows[0]) await tell(handle, client, id);
+    return updated;
+  });
   // The winner's row comes from Postgres (a stale copy, or none yet, must not decide who won or carry old `nudged` counts).
   const won = result?.rows[0];
   if (won) {
-    handle.upsert('approval_inbox', won as unknown as Record<string, string | number | null>);
+    await adopt(handle, won);
     return { won: true, row: won };
   }
   // Someone else settled it first: take their word into this main's copy.
   const theirs = await handle.direct((client) => client.query<InboxRow>('SELECT * FROM approval_inbox WHERE id = $1', [id]));
   const settled = theirs?.rows[0];
-  if (settled) handle.upsert('approval_inbox', settled as unknown as Record<string, string | number | null>);
+  if (settled) await adopt(handle, settled);
   return { won: false, row: settled ?? read(id) };
 }
 
@@ -283,13 +307,18 @@ export async function recordNudge(id: string, counts: { email: number; channels:
     const current = await handle.direct((client) => client.query<InboxRow>('SELECT * FROM approval_inbox WHERE id = $1', [id]));
     const row = current?.rows[0];
     if (!row) return;
-    const updated = await handle.direct((client) => client.query<InboxRow>('UPDATE approval_inbox SET nudged = $1 WHERE id = $2 AND nudged IS NOT DISTINCT FROM $3 RETURNING *', [next(row.nudged), id, row.nudged]));
+    const updated = await handle.direct(async (client) => {
+      const result = await client.query<InboxRow>('UPDATE approval_inbox SET nudged = $1 WHERE id = $2 AND nudged IS NOT DISTINCT FROM $3 RETURNING *', [next(row.nudged), id, row.nudged]);
+      if (result.rows[0]) await tell(handle, client, id);
+      return result;
+    });
     const fresh = updated?.rows[0];
     if (fresh) {
-      handle.upsert('approval_inbox', fresh as unknown as Record<string, string | number | null>);
+      await adopt(handle, fresh);
       return;
     }
   }
+  logger.warn('approval inbox: a nudge count was not recorded (the row kept changing)', { 'landflow.approval_inbox.id': id });
 }
 
 export const rowFor = rowOfCall;
