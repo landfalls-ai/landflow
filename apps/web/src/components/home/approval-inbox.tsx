@@ -4,7 +4,7 @@
  * first, and the question waits here. Each row says what would run (the tool, the agent and workflow versions, the destination,
  * since and expires) and has Approve and Deny; Details opens the parameters it would run with (masked by the server and again
  * here), the run and the agent. A decision goes through the one claim on the server, so a second approver or the expiry timer
- * is answered with who won. There is no Approve all, no select-many and no shortcut that approves: one request, one click.
+ * is answered with who won. There is no bulk approve, no select-many and no shortcut that approves: one request, one click.
  */
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
