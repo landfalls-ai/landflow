@@ -154,15 +154,15 @@ const asRow = (row: InboxRow) => row as unknown as Record<string, string | numbe
  * With replication the copy is read back (`refresh`) and the others are told by a key notice sent from the same connection
  * (`tell`, run inside `direct`). With one process and Postgres there is no other writer but two async tasks of this one can
  * finish out of order (a nudge's read, a claim's), so the copy takes only the columns that task changed (`status`: the decision,
- * `nudged`: the counts) onto the copy as it is at that moment, in one synchronous step: the row that is replayed always holds
- * both. SQLite and a missing copy write the row as given.
+ * `nudged`: the counts) onto the copy as it is at that moment, in one synchronous step, and queues nothing (the direct UPDATE
+ * already wrote Postgres; a queued full row could put a stale column back there until the other task's copy caught up). SQLite and a missing copy write the row as given.
  */
 async function adopt(handle: Database, row: InboxRow, columns: 'status' | 'nudged'): Promise<void> {
   if (await handle.refresh('approval_inbox', { id: row.id })) return;
   const local = handle.get<InboxRow>('SELECT * FROM approval_inbox WHERE id = ?', row.id);
   if (!local || handle.kind !== 'postgres') return void handle.upsert('approval_inbox', asRow(row));
   const taken = columns === 'status' ? { status: row.status, decided_by: row.decided_by, decided_by_name: row.decided_by_name, decided_via: row.decided_via, decided_at: row.decided_at } : { nudged: row.nudged };
-  handle.upsert('approval_inbox', { ...asRow(local), ...taken });
+  handle.upsertLocal('approval_inbox', { ...asRow(local), ...taken }); // copy only: the direct UPDATE already wrote Postgres, and a queued full row could replay a stale column there
 }
 
 /** Send the key notice for a row changed through `direct` (a no-op without replication). */

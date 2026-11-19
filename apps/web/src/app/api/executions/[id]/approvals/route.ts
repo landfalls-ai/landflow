@@ -10,7 +10,7 @@
  */
 import { z } from 'zod';
 import type { JsonObject } from '@landflow/protocol';
-import { closedOf, rowFor } from '@/lib/server/approval-inbox/store'; // AP01:
+import { claim, closedOf, rowFor } from '@/lib/server/approval-inbox/store'; // AP01:
 import { ApprovalError, decideApproval, pendingApproval } from '@/lib/server/approvals';
 import { currentPrincipal } from '@/lib/server/auth/guard';
 import { error, handler, json, parseBody } from '@/lib/server/http';
@@ -46,6 +46,12 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
     if (currentPrincipal()?.via === 'api-key' || currentPrincipal()?.via === 'mcp') return error('A person decides an approval in Needs you', 403);
     if (inboxRow.status !== 'waiting') {
       const closed = closedOf(inboxRow);
+      return error(closed.message, closed.status);
+    }
+    // Past its time a request is closed (410) before any other answer: expiry never approves, and an edit is no reason to say 400 about a request nobody can decide.
+    if (Date.parse(inboxRow.expires_at) <= Date.now()) {
+      const expired = await claim(inboxRow.id, 'expired', { via: 'expiry' });
+      const closed = closedOf(expired.row ?? inboxRow);
       return error(closed.message, closed.status);
     }
     if (body.data.input !== undefined) return error('A request in Needs you runs as reviewed and takes no edited input', 400);

@@ -444,7 +444,7 @@ async function runGraph(executionId: string, workflowId: string | undefined) {
  * Wave ap1: why a run that is no editor's cannot wait for an approval, whatever its execution mode: the hosted chat page
  * (`core.chatTrigger`, started in mode 'webhook') cannot show one and an MCP call answers its caller at once. Read from the run's
  * own record only: a workflow such a run called was stamped with that trigger when it started (runner/run.ts), so no parent has to
- * be found later. A run with no `triggerType` (one that waits across the upgrade) is judged by the first node it ran: unless that
+ * be found later. A run with no `triggerType` (one that waits across the upgrade) is judged by the first node it ran, and a stamped type is checked the same way: unless that
  * is a known trigger that can wait, it refuses (fail closed); undefined for every trigger that can wait.
  */
 async function triggerRefusal(executionId: string): Promise<RefuseWhy | undefined> {
@@ -458,8 +458,11 @@ async function triggerRefusal(executionId: string): Promise<RefuseWhy | undefine
     const { workflow } = await runGraph(executionId, record.workflowId);
     const first = record.executionOrder[0];
     type = first ? workflow?.nodes.find((n) => n.id === first || n.name === first)?.type : undefined;
-    const { unattendedTrigger } = await import('../agents/unattended');
-    if (!type || (!unattendedTrigger(type) && type !== 'core.manualTrigger')) return 'hostedChat';
+  }
+  // Fail closed on whatever type it ends with, stamped or derived: only a known trigger that can wait (or the manual one) waits.
+  if (type !== 'core.mcpTrigger' && type !== 'core.chatTrigger') {
+    const { triggerCanWait } = await import('../runner/trigger');
+    if (!triggerCanWait(type)) return 'hostedChat';
   }
   if (type === 'core.mcpTrigger') return 'mcp';
   if (type === 'core.chatTrigger') return 'hostedChat';

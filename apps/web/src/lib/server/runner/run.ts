@@ -27,6 +27,7 @@ import { contextDataSource, runContextProvider } from '../project-context/seam';
 import { parameterSecretOptions, redactRunData } from '../secrets/runtime';
 import { singleton } from '../singleton';
 import { store } from '../store';
+import { recordTrigger, triggerCanWait } from './trigger';
 import { logger, recordRuntimeEvent } from '../telemetry';
 import { variables } from '../variables';
 import { dispatchSegment, preflight, shouldDispatch } from '../cluster/dispatch';
@@ -109,7 +110,15 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
     const parentRecord = parentEntry?.record ?? store.getExecution(options.parent.executionId);
     depth = (parentRecord?.depth ?? 0) + 1;
     parentStarter = parentRecord?.startedBy;
-    inheritedTrigger = !parentRecord ? 'core.chatTrigger' : parentRecord.mode === 'mcp' || parentRecord.triggerType === 'core.mcpTrigger' ? 'core.mcpTrigger' : parentRecord.triggerType === 'core.chatTrigger' ? 'core.chatTrigger' : undefined;
+    // A parent from before the wave has no `triggerType`: it is judged by its first node (as the agent node does); one that cannot wait, or cannot be judged, hands the hosted chat's refusal down.
+    const parentTrigger = parentRecord && (parentRecord.mode === 'manual' || parentRecord.mode === 'chat' ? parentRecord.triggerType : recordTrigger(parentRecord));
+    inheritedTrigger = !parentRecord
+      ? 'core.chatTrigger'
+      : parentRecord.mode === 'mcp' || parentTrigger === 'core.mcpTrigger'
+        ? 'core.mcpTrigger'
+        : parentTrigger === 'core.chatTrigger' || (parentRecord.mode !== 'manual' && parentRecord.mode !== 'chat' && !triggerCanWait(parentTrigger))
+          ? 'core.chatTrigger'
+          : undefined;
     evaluation ??= parentRecord?.evaluation;
     if (depth > MAX_WORKFLOW_DEPTH) throw new Error(`Sub-workflows can be nested at most ${MAX_WORKFLOW_DEPTH} levels deep`);
     // Linked both ways: the parent lists its sub-executions, the child names its parent.
@@ -125,8 +134,8 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
   const startId = options.triggerOutput?.nodeId ?? options.startNodeId;
   // A retry or re-run keeps the trigger type of the run it replays (`options.triggerType` from the plan; else its source's record), not its start node's.
   const triggerType =
+    inheritedTrigger ?? // a refusing inherited trigger wins over the one the caller passed
     options.triggerType ??
-    inheritedTrigger ??
     source?.triggerType ??
     (options.fromCheckpoint ? store.getExecution(options.fromCheckpoint.executionId)?.triggerType : undefined) ??
     (startId ? options.workflow.nodes.find((n) => n.id === startId)?.type : undefined);

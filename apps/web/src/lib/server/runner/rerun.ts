@@ -8,6 +8,7 @@ import type { ExecutionRecord, RerunOf, RerunScope } from '../../shared/types';
 import { retries } from '../retries';
 import { getVersion } from '../versions';
 import { store } from '../store';
+import { recordTrigger } from './trigger';
 import { fireTrigger, logger, recordRuntimeEvent } from '../telemetry';
 import { type RunOptions, RerunError } from './types';
 import { runWorkflow } from './run';
@@ -39,7 +40,8 @@ export function planRerun(sourceId: string, request: RerunRequest, workflowOverr
   if (!workflow) throw new RerunError('The workflow of this execution no longer exists', 404);
   const rerunOf: RerunOf = { executionId: source.executionId, scope: request.scope, ...(request.nodeId && { nodeId: request.nodeId }) };
   // Wave ap1: the replay keeps the trigger that started the source (a hosted-chat run that began at a roster target has no trigger node to start from).
-  const trigger = source.triggerType ? { triggerType: source.triggerType } : {};
+  const triggerOf = recordTrigger(source); // a record from before the wave has none stamped: its first node's type
+  const trigger = triggerOf ? { triggerType: triggerOf } : {};
 
   if (request.scope === 'all') {
     const start = recordedStart(source);
@@ -81,7 +83,8 @@ export function planRetry(sourceId: string, request: RetryRequest = {}): Omit<Ru
   const starter = request.automatic && source.startedBy ? { startedBy: source.startedBy } : {};
   const fromFailed = request.from !== 'start';
   const rerun = source.rerunOf ? { rerunOf: source.rerunOf } : {};
-  const trigger = source.triggerType ? { triggerType: source.triggerType } : {}; // wave ap1: a retry keeps the trigger of the run it retries
+  const triggerOf = recordTrigger(source);
+  const trigger = triggerOf ? { triggerType: triggerOf } : {}; // wave ap1: a retry keeps the trigger of the run it retries (derived for a record from before the wave)
   if (fromFailed && workflow === original && store.getCheckpoint(sourceId)) return { workflow, mode: source.mode, retry, ...starter, ...rerun, ...trigger, fromCheckpoint: { executionId: sourceId } };
   const failedNode = source.error?.nodeId;
   const scope = fromFailed && failedNode && workflow.nodes.some((node) => node.id === failedNode) ? { scope: 'from' as const, nodeId: failedNode } : { scope: 'all' as const };

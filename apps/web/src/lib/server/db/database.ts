@@ -189,6 +189,17 @@ export class Database {
     this.write({ op: 'upsert', table, row: clean(filtered(table, row)) });
   }
 
+  /**
+   * Postgres mode: write a row into this process's copy only (nothing is queued, no observer hears of it), for a row a direct
+   * Postgres statement already changed there. A write the copy must not send on (it could replay a column Postgres has moved past).
+   */
+  upsertLocal(table: TableName, row: Row) {
+    const clear = clean(filtered(table, row));
+    const columns = Object.keys(clear);
+    const sql = upsertSql(table, columns, 'upsert', () => '?');
+    this.timed('upsert', sql, () => this.statement(sql).run(...columns.map((c) => clear[c] as SQLInputValue)));
+  }
+
   /** Insert a row unless its primary key exists. Returns whether it was inserted. */
   insertNew(table: TableName, row: Row): boolean {
     return this.write({ op: 'insert', table, row: clean(filtered(table, row)) }) > 0;

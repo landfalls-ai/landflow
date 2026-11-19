@@ -18,7 +18,7 @@ const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof impor
 function fakePostgres() {
   const remote = new Map<string, Row>();
   const queued: WriteOp[] = [];
-  const gates: { nudgeApplied?: () => void; holdNudge?: Promise<void> } = {};
+  const gates: { nudgeApplied?: () => void; holdNudge?: Promise<void>; claimApplied?: () => void; holdClaim?: Promise<void> } = {};
   const applyQueued = () => {
     for (const op of queued.splice(0)) if (op.op === 'upsert' && op.table === 'approval_inbox') remote.set(String(op.row.id), { ...remote.get(String(op.row.id)), ...op.row });
   };
@@ -30,6 +30,8 @@ function fakePostgres() {
         if (!row || row.status !== 'waiting') return { rows: [], rowCount: 0 };
         const next = { ...row, status: to, decided_by: by, decided_by_name: byName, decided_via: via, decided_at: at };
         remote.set(id, next);
+        gates.claimApplied?.();
+        await gates.holdClaim; // the claim's answer is on its way back to this process
         return { rows: [{ ...next }] as never[], rowCount: 1 };
       }
       if (text.startsWith('UPDATE approval_inbox SET nudged')) {
@@ -102,6 +104,30 @@ describe('claim and nudge finishing out of order on one Postgres host', () => {
     for (const row of [local, remote.get('r2')!]) {
       expect(row.status).toBe('denied');
       expect(JSON.parse(String(row.nudged))).toMatchObject({ email: 2, channels: 1 });
+    }
+  });
+
+  it('a nudge that adopts while a claim already won in Postgres but has not answered yet replays no `waiting` row', async () => {
+    const { handle, remote, gates, applyQueued } = fakePostgres();
+    handle.upsert('approval_inbox', waiting('r3'));
+    await handle.flush();
+    let release!: () => void;
+    gates.holdClaim = new Promise<void>((resolve) => (release = resolve));
+    const applied = new Promise<void>((resolve) => (gates.claimApplied = resolve));
+
+    const won = claim('r3', 'approved', { by: 'ada@x.test', byName: 'Ada', via: 'inbox' }, handle);
+    await applied; // the claim's UPDATE is in Postgres; this process's copy still says waiting
+    await recordNudge('r3', { email: 1, channels: 0 }, handle); // its adopt runs first
+    applyQueued();
+    // Nothing the nudge queued may put `waiting` over the decision in Postgres, not even until the claim's own answer is adopted.
+    expect(remote.get('r3')!.status).toBe('approved');
+    release();
+    expect((await won).won).toBe(true);
+    applyQueued();
+    const local = handle.get<Row>('SELECT * FROM approval_inbox WHERE id = ?', 'r3')!;
+    for (const row of [local, remote.get('r3')!]) {
+      expect(row.status).toBe('approved');
+      expect(JSON.parse(String(row.nudged)).email).toBe(1);
     }
   });
 });

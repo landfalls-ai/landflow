@@ -423,6 +423,16 @@ describe('one claim behind every door', () => {
     expect((await as(editor, () => post(approveRoute, id))).status).toBe(200);
   });
 
+  it('an edited input on a request past its expiry (still waiting) is closed with 410, not refused with 400', async () => {
+    const a = await ask();
+    const id = idOf(a);
+    database().sqlite.prepare('UPDATE approval_inbox SET expires_at = ? WHERE id = ?').run(new Date(Date.now() - 1000).toISOString(), id);
+    const body = JSON.stringify({ callId: a.calls[0].callId, approved: true, input: { toEmail: 'attacker@evil.test' } });
+    const response = await as(editor, () => executionApprovals.POST(new Request('http://inbox.test/x', { method: 'POST', headers: { 'content-type': 'application/json' }, body }), ctx(a.executionId)));
+    expect(response.status).toBe(410);
+    expect(inbox.requestRow(id)).toMatchObject({ status: 'expired' });
+  });
+
   it('the agent-session side door answers 409 for a call that waits in Needs you, and never decides it', async () => {
     const a = await ask();
     const agent = agentStore.create({ name: 'Alert mailer', instructions: 'x' });

@@ -60,7 +60,7 @@ const { corePlugin } = await import('@/lib/server/nodes');
 const { plugin: messaging } = await import('../../../plugins/messaging/src/main');
 const { store } = await import('@/lib/server/store');
 const { waits } = await import('@/lib/server/waits');
-const { runWorkflow, cancelWaitingExecution, planRetry } = await import('@/lib/server/runner');
+const { runWorkflow, cancelWaitingExecution, planRetry, planRerun } = await import('@/lib/server/runner');
 const { publishDraft } = await import('@/lib/server/publish');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { credentials } = await import('@/lib/server/credentials/vault');
@@ -573,6 +573,132 @@ describe('6b. publish lines agree with the runtime for a roster target, a called
         expect(requests).toHaveLength(0);
       }
     }
+  });
+});
+
+describe('6c. a run saved before the wave has no triggerType (fix pass 3)', () => {
+  const agentNode = (id: string) => node(id, 'core.messageAgent', { agentId: mailer.id, message: 'Email on-call about the alert', conversation: 'new', toolApprovals: 'askInChat' });
+  const publishFlow = async (wf: Workflow) => {
+    store.saveWorkflow(wf);
+    projects.setHomeProject('workflow', wf.id, P);
+    await publishDraft(wf.id, owner.id, 'ap1 joins');
+    return store.getWorkflow(wf.id)!;
+  };
+  /** A record as the version before the wave saved it. */
+  const unstamp = (id: string) => store.patchExecution(id, { triggerType: undefined });
+  const requestsOf = async (wfId: string, executionId: string) => (await listFor(wfId)).filter((r) => r.executionId === executionId);
+  /** A hosted chat run that began at the roster target ('Ops'), or its webhook twin starting at the same node. */
+  const rosterFlow = (trigger: 'core.chatTrigger' | 'core.webhook') => {
+    const n = ++flows;
+    return publishFlow({
+      id: `wf_ap1_prewave_${n}`,
+      name: `Pre-wave ${n}`,
+      nodes: [node('Start', trigger, trigger === 'core.webhook' ? { path: `ap1-prewave-${n}`, method: 'POST' } : { public: true, responseMode: 'lastNode' }), agentNode('Lead'), agentNode('Ops')],
+      connections: [edge('Start', 'Lead')],
+    });
+  };
+  const startAt = (wf: Workflow, trigger: string) => runWorkflow({ workflow: wf, mode: 'webhook', startNodeId: trigger === 'core.webhook' ? 'Start' : 'Ops', triggerType: trigger, triggerItems: [{ json: { chatInput: 'Email on-call about the alert' } }] });
+
+  it.each([
+    ['core.chatTrigger', 'refuses'],
+    ['core.webhook', 'waits'],
+  ] as const)('a pre-wave %s run, re-run whole: it %s', async (trigger, expected) => {
+    const wf = await rosterFlow(trigger);
+    const source = await startAt(wf, trigger);
+    if (expected === 'waits') cancelWaitingExecution(source.executionId);
+    unstamp(source.executionId);
+    const sent = toOncall().length;
+    const again = await runWorkflow({ ...planRerun(source.executionId, { scope: 'all' }) });
+    const requests = await requestsOf(wf.id, again.executionId);
+    if (expected === 'waits') {
+      expect(again.status).toBe('waiting');
+      expect(requests).toHaveLength(1);
+      cancelWaitingExecution(again.executionId);
+    } else {
+      expect(again.status).toBe('success');
+      expect(requests).toHaveLength(0);
+      const steps = (store.getExecution(again.executionId)!.runData.Ops?.at(-1)?.outputs?.[0]?.[0]?.json as { steps: Array<{ tool: string; status: string }> }).steps;
+      expect(steps).toEqual([expect.objectContaining({ tool: WRITE, status: 'denied' })]);
+    }
+    expect(toOncall()).toHaveLength(sent);
+  });
+
+  it.each([
+    ['core.chatTrigger', 'refuses'],
+    ['core.webhook', 'waits'],
+  ] as const)('a pre-wave %s run, retried automatically from the start: it %s', async (trigger, expected) => {
+    const wf = await rosterFlow(trigger);
+    const source = await startAt(wf, trigger);
+    if (expected === 'waits') cancelWaitingExecution(source.executionId);
+    unstamp(source.executionId);
+    store.patchExecution(source.executionId, { status: 'error', error: { message: 'boom', nodeId: 'Gone' } });
+    const sent = toOncall().length;
+    const retried = await runWorkflow({ ...planRetry(source.executionId, { automatic: true, from: 'start' }), bypassConcurrency: true });
+    const requests = await requestsOf(wf.id, retried.executionId);
+    if (expected === 'waits') {
+      expect(retried.status).toBe('waiting');
+      expect(requests).toHaveLength(1);
+      cancelWaitingExecution(retried.executionId);
+    } else {
+      expect(retried.status).toBe('success');
+      expect(requests).toHaveLength(0);
+    }
+    expect(toOncall()).toHaveLength(sent);
+  });
+
+  it.each([
+    ['core.chatTrigger', 'refuses'],
+    ['core.webhook', 'waits'],
+  ] as const)('a workflow called by a pre-wave %s parent: it %s', async (trigger, expected) => {
+    const n = ++flows;
+    const parent = await published(trigger, 'refuse');
+    const parentRun = (await runWorkflow({ workflow: parent, mode: 'webhook', startNodeId: 'Start', triggerType: trigger, triggerItems: [{ json: { chatInput: 'hi' } }] })).executionId;
+    unstamp(parentRun);
+    const child = await publishFlow({ id: `wf_ap1_prechild_${n}`, name: `Pre child ${n}`, nodes: [node('Start', 'core.workflowTrigger'), agentNode('Agent')], connections: [edge('Start', 'Agent')] });
+    const called = await runWorkflow({ workflow: child, mode: 'webhook', startNodeId: 'Start', triggerItems: [{ json: {} }], parent: { executionId: parentRun } });
+    if (expected === 'waits') {
+      expect(called.status).toBe('waiting');
+      expect(await requestsOf(child.id, called.executionId)).toHaveLength(1);
+      cancelWaitingExecution(called.executionId);
+    } else {
+      expect(called.triggerType).toBe('core.chatTrigger');
+      expect(called.status).toBe('success');
+      expect(await requestsOf(child.id, called.executionId)).toHaveLength(0);
+    }
+  });
+
+  it('a refusing inherited trigger wins over the one the caller passed', async () => {
+    const n = ++flows;
+    const parent = await published('core.chatTrigger', 'refuse');
+    const parentRun = (await runWorkflow({ workflow: parent, mode: 'webhook', startNodeId: 'Start', triggerType: 'core.chatTrigger', triggerItems: [{ json: { chatInput: 'hi' } }] })).executionId;
+    const child = await publishFlow({ id: `wf_ap1_winchild_${n}`, name: `Win child ${n}`, nodes: [node('Start', 'core.workflowTrigger'), agentNode('Agent')], connections: [edge('Start', 'Agent')] });
+    const called = await runWorkflow({ workflow: child, mode: 'webhook', startNodeId: 'Start', triggerType: 'core.webhook', triggerItems: [{ json: {} }], parent: { executionId: parentRun } });
+    expect(called.triggerType).toBe('core.chatTrigger');
+    expect(await requestsOf(child.id, called.executionId)).toHaveLength(0);
+  });
+
+  it('a retry from the checkpoint of a pre-wave roster-target run keeps its refusal, and the plan names the trigger it derived', async () => {
+    const n = ++flows;
+    const wf = await publishFlow({
+      id: `wf_ap1_precp_${n}`,
+      name: `Pre checkpoint ${n}`,
+      nodes: [node('Start', 'core.chatTrigger', { public: true, responseMode: 'lastNode' }), node('Ops', 'core.noOp'), node('Boom', 'core.stopAndError', { message: 'boom' }), agentNode('Agent')],
+      connections: [edge('Start', 'Ops'), edge('Ops', 'Boom'), edge('Boom', 'Agent')],
+    });
+    const source = await runWorkflow({ workflow: wf, mode: 'webhook', startNodeId: 'Ops', triggerType: 'core.chatTrigger', triggerItems: [{ json: { chatInput: 'x' } }] });
+    expect(source.status).toBe('error');
+    expect(store.getCheckpoint(source.executionId)).toBeDefined();
+    unstamp(source.executionId);
+    const plan = planRetry(source.executionId, { automatic: true });
+    expect(plan.fromCheckpoint).toBeDefined();
+    expect(plan.triggerType).toBe('core.noOp');
+    // The graph repaired (the failing step is now a no-op) and resumed from the checkpoint: the agent after it must refuse.
+    const repaired = { ...wf, nodes: wf.nodes.map((nd) => (nd.id === 'Boom' ? node('Boom', 'core.noOp') : nd)) };
+    const sent = toOncall().length;
+    const retried = await runWorkflow({ ...plan, workflow: repaired, bypassConcurrency: true });
+    expect(retried.status).toBe('success');
+    expect(await requestsOf(wf.id, retried.executionId)).toHaveLength(0);
+    expect(toOncall()).toHaveLength(sent);
   });
 });
 
