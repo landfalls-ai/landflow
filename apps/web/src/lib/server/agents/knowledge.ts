@@ -21,6 +21,7 @@ import type { JsonObject } from '@landflow/protocol';
 import type { BuiltTool } from './tools';
 import { targetOfKnowledge } from './tool-target'; // AG14:
 import { ollamaUrl } from '../config';
+import { logger } from '../telemetry/logger'; // NB08:
 import { isBrainCollection } from '../../shared/brain'; // NB06:
 import { NOTION_DATA_NOTE } from '../brain/notion/data-note'; // NB06:
 
@@ -113,6 +114,7 @@ export function knowledgeTool(config: KnowledgeBaseToolConfig, internal?: Knowle
       } catch (error) {
         // NB08: the Notion brain's passages are always searchable by keywords: when the query can't be embedded (the model is down), say so and search by words, as Ask does.
         if (!internal?.allowReserved || config.embeddings.provider === 'none' || ctx.signal?.aborted) throw error;
+        logger.warn('the Notion brain search could not embed the query; searching by keywords', { error: error instanceof Error ? error.message : String(error) });
         documents = await search({ ...searcher, options: { searchMode: 'keyword' } }, query, topK);
       }
       // AG14: with the document count, when it is cheap to read (the SQLite store).

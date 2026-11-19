@@ -63,6 +63,7 @@ function NewKeyButton({
       </Button>
       {open && (
         <CredentialDialog
+          overSheet
           allowedTypes={[NOTION_KEY_TYPE]}
           {...(projectId && { projectId })}
           onClose={() => setOpen(false)}

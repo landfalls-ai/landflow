@@ -41,7 +41,8 @@ const norm = (text: string) =>
 
 /** "is the brain in sync with Notion", "when did it last sync to Notion", "what is wrong with the Notion sync". */
 const STATUS = [
-  /^(?:is|are|isn't|aren't)\b.*\b(?:in sync|synced|syncing|up to date|out of date|stale|in notion)\b/,
+  /^(?:is|are|isn't|aren't)\b.*\b(?:in sync|synced|syncing|up to date|out of date|stale)\b/,
+  /^(?:is|are)\b(?!.*\bor\b).*\bin notion\b/,
   /^(?:when|what time)\b.*\bsync(?:ed)?\b/,
   /^(?:what(?:'s| is| went| has gone)?|why)\b.*\b(?:wrong|failing|failed|broken|stuck|not syncing|isn't syncing)\b.*\bsync/,
   /^(?:what(?:'s| is| went| has gone)?|why)\b.*\bsync\b.*\b(?:wrong|failing|failed|broken|stuck)\b/,
@@ -62,6 +63,9 @@ export function notionBrainAsk(text: string): NotionBrainAsk | undefined {
   if (!words.includes("notion")) return undefined;
   // Without "brain" or "sync" it is about Notion's pages, not the brain's home.
   if (!/\bbrain\b/.test(words) && !/\bsync/.test(words)) return undefined;
+  // A negation is not a request; a choice ("in the brain or in Notion") and a copy out of Notion are questions for Ask.
+  if (/^(?:don't|do not|never|stop|no)\b/.test(words)) return undefined;
+  if (/\bfrom notion\b/.test(words) && !/\b(?:to|into|in|on) notion\b/.test(words)) return undefined;
   if (STATUS.some((rule) => rule.test(words))) return { kind: "status" };
   const body = words.replace(
     /^(?:please|pls|kindly|ok(?:ay)?|so|hey|just|now|also|then|and|go ahead and|(?:can|could|would|will) (?:you|we|i)(?: please)?|i(?:'d| would)? (?:want|need|like)(?: you| it| this| that)? to|i (?:want|need)|let's)\b[,\s]*/g,
