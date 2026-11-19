@@ -22,7 +22,7 @@ import type { BuiltTool } from './tools';
 import { targetOfKnowledge } from './tool-target'; // AG14:
 import { ollamaUrl } from '../config';
 import { isBrainCollection } from '../../shared/brain'; // NB06:
-import { NOTION_DATA_NOTE } from '../../shared/notion-brain'; // NB06:
+import { NOTION_DATA_NOTE } from '../brain/notion/data-note'; // NB06:
 
 /** The vector store node each kind of store matches (its icon in the timeline, its credential requirement). */
 export const KNOWLEDGE_STORE_NODE: Record<KnowledgeBaseToolConfig['store'], string> = {
