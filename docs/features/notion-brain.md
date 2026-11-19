@@ -89,7 +89,8 @@ another type or a key Notion refuses, 403 for a credential the project may not u
 "Landflow can't see this page" (with the connection to add) for a page not shared with the key, and 409 when another
 project holds that page. One project has one active link and one page belongs to one project; disconnecting frees both.
 
-A link whose project is deleted stays in the table and reads as unlinked: nothing is sent to Notion, which keeps what is there.
+A link whose project is deleted stays in the table and reads as unlinked: nothing is sent to Notion, which keeps what is there,
+and the deleted project's Notion page can be linked to another project again.
 
 `LANDFLOW_NOTION_BRAIN=off` switches the whole feature off: every project's brain stays local, links read as *paused*, the
 check, link, change and sync routes answer 409 "The Notion brain is switched off on this instance" and nothing calls Notion

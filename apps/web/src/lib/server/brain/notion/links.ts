@@ -100,7 +100,7 @@ export const linkOfRoot = (rootPageId: string): LinkRow | undefined =>
     .find((row) => getProject(row.project_id));
 
 /** A link whose project is gone reads as unlinked: mark it so, which frees its page (the partial unique index counts only rows that are not `unlinked`). */
-function reapGone(where: string, value: string): void {
+function reapGone(where: 'root_page_id' | 'project_id', value: string): void {
   for (const row of db().all<LinkRow>(`SELECT * FROM notion_brain_links WHERE ${where} = ? AND status <> 'unlinked'`, value)) {
     if (!getProject(row.project_id)) db().upsert('notion_brain_links', { ...row, status: 'unlinked', reason: null, next_sync_at: null, updated_at: now() } as unknown as Record<string, never>);
   }
@@ -283,7 +283,7 @@ export function linkView(link: LinkRow, viewer: { member?: boolean; canManage: b
     ...(member && link.root_url && { rootUrl: link.root_url }),
     ...(link.root_title && { rootTitle: link.root_title }),
     ...(member && link.brain_page_id && { brainPageId: link.brain_page_id }),
-    ...(member && link.brain_page_id && link.root_url && { brainUrl: `https://www.notion.so/${link.brain_page_id.replace(/-/g, '')}` }),
+    ...(member && link.brain_page_id && { brainUrl: `https://www.notion.so/${link.brain_page_id.replace(/-/g, '')}` }),
     ...(link.workspace_name && { workspaceName: link.workspace_name }),
     ...(link.bot_name && { botName: link.bot_name }),
     knowledgeScope: link.knowledge_scope,
