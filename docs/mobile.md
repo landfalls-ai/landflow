@@ -182,6 +182,10 @@ target. The task dialog rises as a bottom sheet with 44 px fields, wake-up choic
 **Approve**, **Deny**, **Open session** and **Delete**. A task row in **Needs you** has its title as the link and **Approve**,
 **Deny** and **Open task** below it, 44 px each. Desktop is as it was apart from the tab and the rows.
 
+## Approval requests
+
+Home's **Waiting for your approval · n** panel and the Runs list's **Needs you** rows (wave ap1) stack the tool, the versions, the destination and the waiting line, with **Approve** and **Deny** at 44 px under them. **Details** rises as a bottom sheet (a centred dialog from `md`) with the parameters as a two-column list that wraps long values and the same two buttons in its footer. `/?approval=<id>` opens it. Desktop keeps the same rows without the 44 px height.
+
 ## Settings and agents
 
 - **Settings** is five group cards on a phone (Workspace, People & access, Governance, AI, Infrastructure), each

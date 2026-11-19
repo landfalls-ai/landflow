@@ -2990,3 +2990,7 @@ Seen in the ag5 confirm run (b7ac9bc4, port 3351, shots in `backbone/shots/wave-
 - A passing gate's score and basis are not shown in the session (only *tested, 1 of 1 passed · published*).
 - The agent page's capability row names *sqlite* but not the credential (*Sales DB*) it uses.
 - *Run a Team* still records its run version after the input checks, so a team run that fails early has no version label.
+
+## The approval inbox, wave ap1
+
+- **AP03, the approver's view**: Home lists every request waiting for your approval (*Waiting for your approval · n*) with Approve and Deny and a Details sheet (the parameters it would run with, masked; the destination; the agent and workflow versions; the run; the expiry; a bottom sheet on a phone), the Runs list's Needs you draws the same row, `/?approval=<id>` opens one, the Run Trace card reads *Waiting for your approval since … · expires …* and decides through the inbox's one claim, the publish card and the Publish menu draw a clock for a step that will wait and the shield for one that still refuses, and the agent page's session says *Waiting in Needs you* with no buttons. Never an approve-all. Seen on seeded responses only (AP01 and AP02 are not on this base): the person's live pass of `contracts/ap1/asks.md` P1 to P5 is open.

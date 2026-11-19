@@ -14,7 +14,7 @@ import type { NeedsYouRow } from './run-trace';
 /** "14:05" in the viewer's zone, the `clock` every inbox line takes. */
 export const inboxClock = (iso: string): string => {
   const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], { hour12: false });
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 };
 
 /** The list answer, whichever envelope the route gives it (an array, or `{ requests }` / `{ items }`). */
