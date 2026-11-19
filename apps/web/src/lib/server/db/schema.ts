@@ -1947,6 +1947,45 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS approval_inbox_workflow ON approval_inbox (workflow_id)`,
     ],
   },
+  // NB03: a project's link to a Notion page and what the sync keeps about it (docs/features/notion-brain.md); nothing syncs until wave nb2
+  {
+    version: 2908,
+    name: 'notion_brain_links',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS notion_brain_links (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, credential_id TEXT NOT NULL, root_page_id TEXT NOT NULL, root_title TEXT, root_url TEXT, brain_page_id TEXT, log_page_id TEXT, databases TEXT, bot_id TEXT, bot_name TEXT, workspace_name TEXT, status TEXT NOT NULL, reason TEXT, rps BIGINT NOT NULL DEFAULT 2, knowledge_scope TEXT NOT NULL DEFAULT 'brain', cursors TEXT, copy TEXT, next_sync_at TEXT, last_push_at TEXT, last_pull_at TEXT, last_error TEXT, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS notion_brain_links_project ON notion_brain_links (project_id)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS notion_brain_links_root ON notion_brain_links (root_page_id) WHERE status <> 'unlinked'`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS notion_brain_links_active_project ON notion_brain_links (project_id) WHERE status <> 'unlinked'`,
+    ],
+  },
+  // NB03: which Notion object each local object is (the join, with the hashes the push and pull compare)
+  {
+    version: 2909,
+    name: 'notion_brain_items',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS notion_brain_items (link_id TEXT NOT NULL, kind TEXT NOT NULL, local_key TEXT NOT NULL, notion_id TEXT NOT NULL, pushed_hash TEXT, pushed_region TEXT, pushed_at TEXT, seen_edited_at TEXT, pulled_hash TEXT, state TEXT NOT NULL DEFAULT 'ok', PRIMARY KEY (link_id, kind, local_key))`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS notion_brain_items_notion ON notion_brain_items (link_id, notion_id)`,
+    ],
+  },
+  // NB03: local changes waiting to be pushed (one row per object: a second change updates the first)
+  {
+    version: 2910,
+    name: 'notion_brain_outbox',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS notion_brain_outbox (link_id TEXT NOT NULL, kind TEXT NOT NULL, local_key TEXT NOT NULL, op TEXT NOT NULL, enqueued_at TEXT NOT NULL, attempts BIGINT NOT NULL DEFAULT 0, next_at TEXT, last_error TEXT, PRIMARY KEY (link_id, kind, local_key))`,
+      `CREATE INDEX IF NOT EXISTS notion_brain_outbox_next ON notion_brain_outbox (next_at)`,
+    ],
+  },
+  // NB03: sync problems a person resolves, and the company pages read as knowledge
+  {
+    version: 2911,
+    name: 'notion_brain_problems_and_knowledge',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS notion_brain_problems (id TEXT PRIMARY KEY, link_id TEXT NOT NULL, kind TEXT NOT NULL, notion_id TEXT, local_key TEXT, detail TEXT NOT NULL, at TEXT NOT NULL, resolved_by TEXT, resolved_action TEXT, resolved_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS notion_brain_problems_link ON notion_brain_problems (link_id, resolved_at)`,
+      `CREATE TABLE IF NOT EXISTS notion_knowledge_docs (link_id TEXT NOT NULL, page_id TEXT NOT NULL, title TEXT, url TEXT, path TEXT, edited_at TEXT, hash TEXT, markdown TEXT, truncated BIGINT NOT NULL DEFAULT 0, PRIMARY KEY (link_id, page_id))`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -2035,6 +2074,11 @@ export const TABLES = {
   scheduled_publishes: ['id'],
   approval_email_used: ['group_id'],
   approval_inbox: ['id'], // AP01:
+  notion_brain_links: ['id'], // NB03:
+  notion_brain_items: ['link_id', 'kind', 'local_key'], // NB03:
+  notion_brain_outbox: ['link_id', 'kind', 'local_key'], // NB03:
+  notion_brain_problems: ['id'], // NB03:
+  notion_knowledge_docs: ['link_id', 'page_id'], // NB03:
   chat_feedback: ['id'],
   agent_definitions: ['id'],
   agent_sessions: ['id'],

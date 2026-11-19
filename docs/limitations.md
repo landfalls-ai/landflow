@@ -797,3 +797,10 @@ Seen in AG18's live pass (production profile, Claude): a create-an-agent ask in 
 - **A workflow called from a chat or MCP run:** the called workflow's own publish line may say its step *will wait for your approval in Needs you*, but a run a chat or an MCP trigger (or an agent's tool call) started still refuses the call, because the run keeps its caller's trigger; the line is read from the workflow alone.
 - **An error workflow fired by a failing hosted-chat or MCP run waits** in Needs you, though its input carries the outsider's data: a decision for the person ([approval-inbox.md](approval-inbox.md)).
 - **The Run Trace card (AP03):** the card decides only the first call of a wait that holds several calls; the rest are decided from Home's panel or Needs you.
+
+## What the Notion brain does not do
+
+- **Nothing syncs until wave nb2.** A project can be linked, checked, paused and disconnected, and a linked project reports the `notion` backend, but nothing is copied to or read from Notion yet; only `dismiss` works on a sync problem, the other actions answer 409.
+- **Per project only.** Org practices and facts shared across projects stay in Landflow; there is no org-wide link (decision D6).
+- **No webhooks.** Notion's webhooks need a public URL, so the sync will poll; there is none now.
+- **One key per project.** The link uses an existing `productivity.notionApi` credential the project may use; the project must be able to use it (shared with it) and a deleted credential stops the link.

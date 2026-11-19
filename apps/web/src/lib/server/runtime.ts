@@ -34,6 +34,8 @@ import './ai-usage/parts-register';
 import './approval-inbox';
 // NB02: registers the Notion client factory, so notionClientFor works wherever the runtime is loaded (docs/features/notion-brain.md).
 import './notion/client';
+// NB03: registers the Notion link resolver, so a linked project's brain reports the notion backend (docs/features/notion-brain.md).
+import './brain/notion/links';
 import { agentTriggers } from './agents/triggers';
 import { taskWakeups } from './tasks/wakeups';
 import { alerts } from './alerts/service';

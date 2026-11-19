@@ -95,6 +95,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   // AP01: the approval inbox (docs/approval-inbox.md): reading is like reading executions; a decision needs a signed-in person (never an API key) with run access, which the route checks.
   if (under('/api/approval-inbox')) return read ? { scope: 'executions:read' } : { scope: 'run', sessionOnly: true };
   if (path === '/api/projects/context') return { scope: 'brain:read' }; // PC10
+  // NB03: a project's Notion link status (docs/features/notion-brain.md); every write stays session-or-workflows:write like /api/projects.
+  if (read && /^\/api\/projects\/[^/]+\/brain\/notion$/.test(path)) return { scope: 'brain:read' };
   if (['/api/workflows', '/api/folders', '/api/data-tables', '/api/agents', '/api/agent-teams', '/api/agent-templates', '/api/skills', '/api/node-types', '/api/credential-types', '/api/expressions', '/api/projects', '/api/templates', '/api/composites', '/api/runbooks'].some(under)) {
     return { scope: read ? 'workflows:read' : 'workflows:write' };
   }
