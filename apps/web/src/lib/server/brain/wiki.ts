@@ -34,6 +34,7 @@ import { brainStatus } from './index';
 import { listProposals } from './proposals';
 import { brainModel, brainModelName } from './writer';
 import { HttpError } from '../errors';
+import { queryEvents } from '../audit/store'; // NB05:
 
 const DAY = 86_400_000;
 /** How far back the home's shared-work and team views look. */
@@ -338,7 +339,18 @@ export function wikiPage(entity: BrainEntity, scope: UsageScope | undefined, vie
     mentionedIn: mentions(entity, index, db),
     ...(brainModelName() && { model: brainModelName() }),
     canEdit,
+    ...changedInNotion(ref, now), // NB05:
   };
+}
+
+/** NB05: a later edit in Notion replaced a value of this page in the last 7 days (the audit row `notion-brain.overwrite` holds the other value). */
+function changedInNotion(ref: string, now: number): { changedInNotion?: { by: string; at: string } } {
+  try {
+    const found = queryEvents({ action: ['notion-brain.overwrite'], targetType: 'entity', targetId: ref, from: new Date(now - 7 * 86_400_000).toISOString() }, { limit: 20 }).events.find((e) => e.details?.winner === 'notion');
+    return found ? { changedInNotion: { by: String(found.details?.by ?? 'A Notion user'), at: found.at } } : {};
+  } catch {
+    return {};
+  }
 }
 
 function summaryOf(row: PageRow, basis: string, index: PageIndex): WikiSummary {
