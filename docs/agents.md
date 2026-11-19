@@ -607,6 +607,15 @@ own-image Harnesses are listed but can't be picked); a deployed agent can move b
 the card shows the runtime and, on Claude Code, the plugins at their commits. See
 [a2a.md](a2a.md#landflow-agents-on-kagent).
 
+### Project knowledge from the Notion brain
+
+A project linked to Notion can make its **Notion brain** the project's knowledge base (`{ "knowledge": { "enabled": true, "tool":
+{ "source": "notion-brain" } } }` in the project's settings; [notion-brain.md](features/notion-brain.md#your-companys-pages-as-knowledge)).
+Every agent run in the project then gets `project_knowledge` over the company's Notion pages the walk indexed
+(`landflow-notion-<project>`; keyword search, and meaning when the brain's embeddings are on), labelled "Notion · <brain page title>"
+in the connections and the Run Trace. With no active link the tool is left out with the "Tool unavailable" notice. An agent's own
+knowledge base cannot name `landflow-notion-<project>` or `landflow-brain-<project>`: those collections are refused.
+
 ### Knowledge bases from a plugin
 
 **Add knowledge base → Knowledge from → From a plugin: Clickland** makes a knowledge base that a plugin node answers

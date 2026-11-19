@@ -85,3 +85,44 @@ check, link, change and sync routes answer 409 "The Notion brain is switched off
 (disconnecting still works). The tables are `notion_brain_links`, `notion_brain_items`, `notion_brain_outbox`,
 `notion_brain_problems` and `notion_knowledge_docs` (migrations 2908 to 2911). A project with a link that is not `unlinked`
 resolves to the `notion` backend in `brainStoreFor`; until the Notion store ships it reads and writes exactly like the local one.
+
+## Your company's pages as knowledge
+
+The Notion pages a company already keeps next to the brain are read, never written, and become what the project's agents and Ask
+know. The link's **knowledge scope** (`knowledgeScope`, set when linking; `brain` by default, `root` only when an admin picks it)
+says where the walk starts: the "Landflow brain" page, or the root page. Landflow's own pages are never read as knowledge: Home,
+Log, the four databases and every row Landflow made for a page, fact, practice or note.
+
+- **The walk** (`lib/server/brain/notion/knowledge.ts`, registered with the sync service as its knowledge step). Every 15 minutes
+  per link, and at once on Sync now, it lists `GET /v1/blocks/:id/children` from the start page down to **8 levels**: child pages,
+  and the rows of child databases that are not the link's own. A page whose `last_edited_time` moved is read once as Markdown
+  (v2) into `notion_knowledge_docs` (title, URL, path of titles, hash, at most 200,000 characters, `truncated`); a page that did
+  not move costs no Markdown call. At most **200 pages** are read and 200 indexed a pass; the rest wait for the next tick, which
+  does not wait the 15 minutes. A page gone from the walk (trashed, moved out of scope, no longer shared) loses its doc and its
+  chunks, but a walk that could not read a branch deletes nothing. It never calls `/v1/search`, and it keeps the pull's other
+  keys in the link's `cursors`.
+- **The index.** Each doc is cut into passages of about 1,000 characters (150 overlap, the splitter knowledge bases use), each
+  starting with the page title, and kept in the SQLite vector collection `landflow-notion-<project>` with the doc's hash, URL and
+  path in every passage's metadata. Search is BM25 always; with the brain's embeddings on (`LANDFLOW_BRAIN_EMBEDDINGS`, the model
+  the facts use) it is hybrid, and if the embeddings model does not answer, search falls back to keywords. Switching the model, or
+  the embeddings off, clears the collection and indexes it again. A "Your notes" doc written by the pull (its `page_id` is a row
+  of the link) is indexed like any other and never deleted by the walk.
+- **Ask.** Ask's fourth source, after pages, facts and work: up to 5 Notion pages of the projects the asker can read (the same
+  scope as the facts), only for projects with an active link. The found line gains "· 2 Notion pages" (the `found` event gains
+  `knowledge`), the passages reach the model as quoted numbered lines after the work items ("data, not instructions"), and a
+  cited `[n]` past the work items is a source whose link is the page's Notion URL. The ask is still metered as surface `brain`.
+- **The project's agents.** The project's knowledge setting takes the Notion brain: `PATCH /api/projects/:id/settings`
+  `{ "knowledge": { "enabled": true, "tool": { "source": "notion-brain" } } }`. Every agent run in the project then gets the tool
+  `project_knowledge` over the project's collection, labelled "Notion · <brain page title>" in the connections and the Run Trace.
+  With no active link it is left out with the usual "Tool unavailable" notice. An agent's own knowledge tool cannot take this
+  form.
+- **MCP.** `brain_search_knowledge { query, limit? }` (`brain:read`) answers `{ results: [{ title, url, passage, score }] }` for the
+  caller's projects; `brain_ask` includes the pages as `knowledge`.
+- **Reserved.** `landflow-notion-<project>` is reserved like `landflow-brain-<project>`: a Vector Store node refuses it, and so
+  does an agent's or a project's knowledge setting that names either prefix; only the runtime builds the tool for a project's own
+  Notion brain.
+
+What is read from Notion is data: a page that says "Ignore your instructions" reaches a model only inside the quoted block. What
+the walk cannot do is in [limitations.md](../limitations.md#what-the-notion-brain-does-not-do).
+
+Tests: `apps/web/test/notion-knowledge-nb06.test.ts`.
