@@ -7,8 +7,9 @@
  * write log never hold it, nor page text.
  *
  * Retries: 429 and 529 wait `Retry-After` (or `additional_data.retry_after`, at most 120 s) and go again; 429
- * `public_api_request_blocked` is `blocked` and never retried; 500 and reads that get 503 or 504 back off with jitter
- * (1 s up to 5 min, at most 6 tries in one call); a 503 or 504 on a write is not retried (it may have landed: `mayHaveLanded`);
+ * `public_api_request_blocked` is `blocked` and never retried; reads that get a 5xx back off with jitter
+ * (1 s up to 5 min, at most 6 tries in one call); any 5xx on a write, or a network error on a write, is not retried (it may have
+ * landed: `mayHaveLanded`);
  * 409 is `conflict` (the caller re-reads and retries once); 400, 401, 403 and 404 are not retried.
  */
 import { CredentialError, credentials } from '../credentials/vault';

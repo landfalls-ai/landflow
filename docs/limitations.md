@@ -804,5 +804,5 @@ Seen in AG18's live pass (production profile, Claude): a create-an-agent ask in 
 - **Per project only.** Org practices and facts shared across projects stay in Landflow; there is no org-wide link (decision D6).
 - **No webhooks.** Notion's webhooks need a public URL, so the sync will poll; there is none now.
 - **One key per project.** The link uses an existing `productivity.notionApi` credential the project may use; the project must be able to use it (shared with it) and a deleted credential stops the link.
-- **What stays in Landflow.** Org practices and facts that span projects are not copied; suggestions go as titles with "Open in Landflow"; a page over 5,000 blocks is cut at a heading with a note.
+- **What stays in Landflow.** Org practices and facts that span projects are not copied; suggestions go as titles with "Open in Landflow"; a page over 4,500 blocks is cut at a heading with a note.
 - **The limiter's two limits.** A key's rate only rises until the host restarts (a lower setting waits for it), and a `Retry-After` pauses the call that got it, not the shared bucket.

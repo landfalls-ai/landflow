@@ -16,7 +16,6 @@ import { isStopped, linkById, listActiveLinks, notionBrainEnabled, updateLink, t
 import { pushEnv, pushOutboxRow } from './push';
 import { sessionFor } from './render';
 import { LinkStopped, checkStillShared, stopOnLinkFailure } from './status';
-import './store';
 import { outboxListener } from './store';
 
 export const TICK_MS = 5000;
@@ -72,6 +71,8 @@ async function drain(link: LinkRow, now: number): Promise<void> {
       if (result === 'written') pushed++;
       database().delete('notion_brain_outbox', { link_id: row.link_id, kind: row.kind, local_key: row.local_key, enqueued_at: row.enqueued_at });
     } catch (error) {
+      // The link stopped (unshared, unauthorized, paused): nothing more is sent this tick.
+      if (error instanceof LinkStopped) throw error;
       stopOnLinkFailure(link.id, error);
       failRow(row, error, now);
       logger.warn('[notion-brain] a push failed', { linkId: link.id, kind: row.kind, key: row.local_key, error: isNotionError(error) ? `${error.kind} ${error.status}` : (error as Error).name });

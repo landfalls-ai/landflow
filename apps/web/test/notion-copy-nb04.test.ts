@@ -362,6 +362,24 @@ describe('Notion pushing back', () => {
     expect(current(l.id).reason).toContain('Share');
     links.unlink(l.id);
   });
+
+  it('an unshared link stops the drain at the first row: one tick, no write for the second', async () => {
+    const root = newRoot();
+    const l = link(root);
+    await until(l.id, (x) => x.status === 'active');
+    const keys = sync.itemsOf(l.id, 'entity').slice(0, 2).map((i) => i.local_key);
+    expect(keys).toHaveLength(2);
+    fake.share(root, false);
+    for (const key of keys) {
+      sync.enqueue(l.id, 'entity', key);
+      database().upsert('notion_brain_items', { ...sync.itemOf(l.id, 'entity', key)!, pushed_hash: null } as never);
+    }
+    const writesBefore = fake.writes().length;
+    await service.tickOnce();
+    expect(current(l.id).status).toBe('unshared');
+    expect(fake.writes().length - writesBefore).toBeLessThanOrEqual(1);
+    links.unlink(l.id);
+  });
 });
 
 describe('what leaves a trace', () => {

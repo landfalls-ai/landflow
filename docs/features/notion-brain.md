@@ -103,7 +103,7 @@ Under the page a person shared, one page named for the project, with these child
 
 - **Home** (the brain page's body): a callout saying how this works, then the counts and the index, written with `update_content` so the child pages and databases are never replaced.
 - **Log**: the project's log, from its first heading on.
-- **Four databases**: Pages (initiatives, customers, people, systems, one row each, with a body per page), Facts, Practices and Notes. Every row has a `Landflow ID` property that keys it.
+- **Four databases**: Pages (initiatives, customers, people, systems, one row each, with a body per page), Facts, Practices and Notebook. Every row has a `Landflow ID` property that keys it.
 - **The region and "Your notes".** Each page and practice body is `<!-- landflow:start -->`, Landflow's text, `<!-- landflow:end -->`, then `## Your notes`. Landflow rewrites only the region; a person's edit inside it is reported and put back, and what is under "Your notes" is never touched.
 - **How the text is rendered.** Starting from the project's own page, Markdown from `## Summary`: `[[type/id|Label]]` links become page mentions where the target is in Notion and the plain label elsewhere, `<` and `>` are escaped, and text over the limit is cut at a heading and never inside a code block. Practices show the approved version, with a callout while a draft from Notion waits.
 - **What never leaves.** Only org or ownerless work shows on a page (private and team work, and the actors of work, stay in Landflow); run notes, notes of other projects, facts of other projects or none, and org practices are not copied. Suggestions are titles with "Open in Landflow".

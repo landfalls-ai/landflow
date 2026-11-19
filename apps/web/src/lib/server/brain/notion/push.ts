@@ -8,7 +8,7 @@
  * The outbox row says which object changed, never what to do: the push reads the current local state, so a delete that
  * arrives for an object that still exists is a refresh, and a change that was already pushed is a no-op.
  */
-import { ITEM_DATABASE, type ItemKind, type ItemRow, type OutboxKind, itemOf, linkClient, linkDatabases, markOwn, pageBody, readClient, saveItem, splitBody, verifyOwn, wholeBody, regionConflict } from './sync';
+import { ITEM_DATABASE, type ItemKind, type ItemRow, type OutboxKind, itemOf, linkClient, linkDatabases, markOwn, pageBody, saveItem, splitBody, verifyOwn, wholeBody, regionConflict } from './sync';
 import { parseEntityRef } from '../../../shared/brain';
 import { LANDFLOW_ID } from '../../../shared/notion-brain';
 import { database } from '../../db';
@@ -259,7 +259,14 @@ export async function pushWhole(env: PushEnv, kind: 'home' | 'log'): Promise<Pus
   const item = itemOf(link.id, kind as unknown as ItemKind, '');
   if (item && unpackHash(item.pushed_hash)?.body === hash) return 'unchanged';
   await verifyOwn(link, pageId, client);
-  const written = await writeWhole(env, pageId, item?.pushed_region ?? null, region);
+  let written: string;
+  try {
+    written = await writeWhole(env, pageId, item?.pushed_region ?? null, region);
+  } catch (error) {
+    // The brain page is trashed or no longer shared: say so for the whole link instead of backing off forever.
+    if (isNotionError(error) && error.kind === 'notFound') await checkStillShared(link);
+    throw error;
+  }
   saveItem({ link_id: link.id, kind: kind as unknown as ItemKind, local_key: '', notion_id: pageId, pushed_hash: packHash({ person: '', landflow: '', body: hash }), pushed_region: written, pushed_at: now(), seen_edited_at: item?.seen_edited_at ?? null, pulled_hash: item?.pulled_hash ?? null, state: 'ok' });
   return 'written';
 }
@@ -297,4 +304,3 @@ export function pushOutboxRow(env: PushEnv, kind: OutboxKind, key: string): Prom
   return kind === 'home' || kind === 'log' ? pushWhole(env, kind) : pushItem(env, kind, key);
 }
 
-export { readClient };
