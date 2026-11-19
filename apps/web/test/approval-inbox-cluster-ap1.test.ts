@@ -19,7 +19,7 @@ vi.setConfig({ testTimeout: 30_000 });
 describe.skipIf(!enabled)('approval inbox claims across two processes', async () => {
   const pg = (await import('pg')).default;
   const { openPostgres } = await import('@/lib/server/db/postgres');
-  const { claim } = await import('@/lib/server/approval-inbox/store');
+  const { claim, recordNudge } = await import('@/lib/server/approval-inbox/store');
   const admin = new pg.Pool({ connectionString: URL, max: 2 });
   const tmp = () => mkdtempSync(join(tmpdir(), 'landflow-pgq-inbox-'));
   const opened: Database[] = [];
@@ -59,5 +59,23 @@ describe.skipIf(!enabled)('approval inbox claims across two processes', async ()
       const stored = await admin.query('SELECT status, decided_by FROM approval_inbox WHERE id = $1', [id]);
       expect(stored.rows[0]).toEqual({ status: winner.row!.status, decided_by: winner.row!.decided_by });
     }
+  });
+
+  it('a nudge recorded from a stale copy never undoes a claim made elsewhere', async () => {
+    const id = 'req-nudge';
+    main.upsert('approval_inbox', row(id));
+    await main.flush();
+    await until(() => expect(statusIn(worker, id)).toBe('waiting'));
+    // The worker still holds `waiting` when main claims; the worker then records its nudge.
+    const won = await claim(id, 'approved', { by: 'ada@x.test', via: 'inbox' }, main);
+    expect(won.won).toBe(true);
+    await recordNudge(id, { email: 2, channels: 0 }, worker);
+    await main.flush();
+    await worker.flush();
+    await until(() => expect([statusIn(main, id), statusIn(worker, id)]).toEqual(['approved', 'approved']));
+    const stored = await admin.query('SELECT status, decided_by, nudged FROM approval_inbox WHERE id = $1', [id]);
+    expect(stored.rows[0].status).toBe('approved');
+    expect(stored.rows[0].decided_by).toBe('ada@x.test');
+    expect(JSON.parse(stored.rows[0].nudged).email).toBe(2);
   });
 });

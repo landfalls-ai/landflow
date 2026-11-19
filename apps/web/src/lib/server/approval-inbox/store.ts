@@ -75,15 +75,20 @@ export function openRequests(calls: InboxOpen[], now = new Date()): { ids: Recor
   let expiresAt = fresh;
   let kept = false;
   db().transaction(() => {
+    // The kept expiry first: a new row in a batch that mixes it with an existing call shares the wait's `until`.
+    for (const call of calls) {
+      const existing = rowOfCall(call.executionId, call.callId);
+      if (existing) {
+        expiresAt = existing.expires_at;
+        kept = true;
+        break;
+      }
+    }
     for (const call of calls) {
       const existing = rowOfCall(call.executionId, call.callId);
       if (existing) {
         ids[call.callId] = existing.id;
         // A re-open keeps the expiry the request opened with: changing the variable never moves an open request.
-        if (!kept) {
-          expiresAt = existing.expires_at;
-          kept = true;
-        }
         continue;
       }
       // The host's redaction (a `$secrets` value) first, then the mask (a key that names a secret): the row never holds either.
@@ -108,7 +113,7 @@ export function openRequests(calls: InboxOpen[], now = new Date()): { ids: Recor
         trigger_word: call.trigger,
         status: 'waiting',
         requested_at: now.toISOString(),
-        expires_at: fresh,
+        expires_at: expiresAt,
         nudged: null,
         decided_by: null,
         decided_by_name: null,
@@ -154,21 +159,21 @@ export async function claim(id: string, to: Exclude<InboxStatus, 'waiting'>, who
       return { won: true, row: next as InboxRow };
     });
   }
-  const row = read(id);
   await handle.flush();
   const result = await handle.direct((client) =>
-    client.query(`UPDATE approval_inbox SET status = $1, decided_by = $2, decided_by_name = $3, decided_via = $4, decided_at = $5 WHERE id = $6 AND status = 'waiting'`, [to, set.decided_by, set.decided_by_name, set.decided_via, at, id]),
+    client.query<InboxRow>(`UPDATE approval_inbox SET status = $1, decided_by = $2, decided_by_name = $3, decided_via = $4, decided_at = $5 WHERE id = $6 AND status = 'waiting' RETURNING *`, [to, set.decided_by, set.decided_by_name, set.decided_via, at, id]),
   );
-  if (result?.rowCount && row) {
-    const next = { ...row, ...set } as InboxRow;
-    handle.upsert('approval_inbox', next as unknown as Record<string, string | number | null>);
-    return { won: true, row: next };
+  // The winner's row comes from Postgres (a stale copy, or none yet, must not decide who won or carry old `nudged` counts).
+  const won = result?.rows[0];
+  if (won) {
+    handle.upsert('approval_inbox', won as unknown as Record<string, string | number | null>);
+    return { won: true, row: won };
   }
   // Someone else settled it first: take their word into this main's copy.
   const theirs = await handle.direct((client) => client.query<InboxRow>('SELECT * FROM approval_inbox WHERE id = $1', [id]));
   const settled = theirs?.rows[0];
   if (settled) handle.upsert('approval_inbox', settled as unknown as Record<string, string | number | null>);
-  return { won: false, row: settled ?? row };
+  return { won: false, row: settled ?? read(id) };
 }
 
 /** The record's state for one call of an execution. */
@@ -256,12 +261,35 @@ export async function cancelExecution(executionId: string): Promise<number> {
 
 export const isSettled = (status: InboxStatus) => SETTLED.includes(status);
 
-/** Record who was nudged: counts only, never addresses. */
-export function recordNudge(id: string, counts: { email: number; channels: number }): void {
-  const row = rowById(id);
-  if (!row) return;
-  const previous = parseJson<{ email?: number; channels?: number }>(row.nudged, {});
-  db().upsert('approval_inbox', { ...(row as unknown as Record<string, string | number | null>), nudged: JSON.stringify({ email: (previous.email ?? 0) + counts.email, channels: (previous.channels ?? 0) + counts.channels, at: new Date().toISOString() }) });
+/**
+ * Record who was nudged: counts only, never addresses. Only `nudged` is written, never the status columns: a nudge from a
+ * stale copy must not undo a claim another process made meanwhile (SQLite: read and write in one transaction; Postgres: a
+ * conditional UPDATE of the column, retried when another nudge got in between, and this main's copy follows the row read back).
+ */
+export async function recordNudge(id: string, counts: { email: number; channels: number }, handle: Database = db()): Promise<void> {
+  const next = (text: string | null) => {
+    const previous = parseJson<{ email?: number; channels?: number }>(text, {});
+    return JSON.stringify({ email: (previous.email ?? 0) + counts.email, channels: (previous.channels ?? 0) + counts.channels, at: new Date().toISOString() });
+  };
+  if (handle.kind !== 'postgres') {
+    handle.transaction(() => {
+      const row = handle.get<InboxRow>('SELECT * FROM approval_inbox WHERE id = ?', id);
+      if (row) handle.upsert('approval_inbox', { ...(row as unknown as Record<string, string | number | null>), nudged: next(row.nudged) });
+    });
+    return;
+  }
+  await handle.flush();
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const current = await handle.direct((client) => client.query<InboxRow>('SELECT * FROM approval_inbox WHERE id = $1', [id]));
+    const row = current?.rows[0];
+    if (!row) return;
+    const updated = await handle.direct((client) => client.query<InboxRow>('UPDATE approval_inbox SET nudged = $1 WHERE id = $2 AND nudged IS NOT DISTINCT FROM $3 RETURNING *', [next(row.nudged), id, row.nudged]));
+    const fresh = updated?.rows[0];
+    if (fresh) {
+      handle.upsert('approval_inbox', fresh as unknown as Record<string, string | number | null>);
+      return;
+    }
+  }
 }
 
 export const rowFor = rowOfCall;

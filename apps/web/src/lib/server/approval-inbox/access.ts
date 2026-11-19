@@ -30,10 +30,11 @@ export async function list(actor: Actor | undefined, filter: { status?: 'waiting
     where.push('execution_id = ?');
     params.push(filter.executionId);
   }
-  const rows = database().all<InboxRow>(`SELECT * FROM approval_inbox${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY requested_at DESC, id DESC LIMIT 500`, ...params);
+  const rows = database().all<InboxRow>(`SELECT * FROM approval_inbox${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY requested_at DESC, id DESC`, ...params);
   const out: InboxRequestView[] = [];
   const seen = new Map<string, boolean>();
   for (const candidate of rows) {
+    if (out.length >= 500) break; // the cap counts what the caller may read, not the rows they cannot see
     let readable = seen.get(candidate.workflow_id);
     if (readable === undefined) seen.set(candidate.workflow_id, (readable = Boolean(resourceAccess(actor, 'workflow', candidate.workflow_id))));
     if (!readable) continue;

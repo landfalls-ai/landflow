@@ -108,7 +108,7 @@ async function mailNudge(row: InboxRow): Promise<void> {
       logger.warn('approval mail not sent', { 'landflow.approval.request': row.id, error: (error as Error).message });
     }
   }
-  if (sent) recordNudge(row.id, { email: sent, channels: 0 });
+  if (sent) await recordNudge(row.id, { email: sent, channels: 0 });
 }
 
 const ALERT_PREFIX = 'approval:';
@@ -155,6 +155,6 @@ export async function checkApprovalAlerts(now: number, send: (rule: AlertRule, n
       await send(rule, approvalNotice(rule, row));
       channels += rule.channelIds.length;
     }
-    if (channels && requestRow(row.id)) recordNudge(row.id, { email: 0, channels });
+    if (channels && requestRow(row.id)) await recordNudge(row.id, { email: 0, channels });
   }
 }

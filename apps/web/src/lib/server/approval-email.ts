@@ -244,6 +244,14 @@ export async function useLink(token: string): Promise<LinkOutcome> {
     } else {
       const agent = agentStore.get(target.a);
       if (!agent) throw new LinkError('The agent no longer exists', 404);
+      // AP01: a workflow session's call that waits in the inbox is decided there (the same closed door as the agent-session route), for links sent before.
+      const session = agentStore.getSession(target.s);
+      const inboxRow = session?.execution ? rowFor(session.execution.executionId, target.c) : undefined;
+      if (inboxRow?.status === 'waiting') throw new LinkError('This tool call waits in Needs you: decide it there', 409);
+      if (inboxRow) {
+        const closed = closedOf(inboxRow);
+        throw new LinkError(closed.message, closed.status);
+      }
       const outcome = await decide(agent, target.s, target.c, approved, { by });
       if (outcome.status === 'resumed') await deliverToChannel(agent, outcome);
     }
