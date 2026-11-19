@@ -458,7 +458,7 @@ async function triggerRefusal(executionId: string): Promise<RefuseWhy | undefine
   // A record from before the wave has no stamp: its parent's verdict, else its first node. Read from the live run first, then the saved one.
   // The ancestors are read first (async, live then saved), so the sync verdict never reads the store's cache.
   const known = new Map<string, ExecutionRecord>([[record.executionId, record]]);
-  for (let at = record, hops = 0; at.parentExecutionId && !known.has(at.parentExecutionId) && hops <= MAX_WORKFLOW_DEPTH; hops++) {
+  for (let at = record, hops = 0; !record.triggerType && at.parentExecutionId && !known.has(at.parentExecutionId) && hops <= MAX_WORKFLOW_DEPTH; hops++) {
     const parent = liveExecution(at.parentExecutionId) ?? (await store.loadExecution(at.parentExecutionId));
     if (!parent) break;
     known.set(parent.executionId, parent);

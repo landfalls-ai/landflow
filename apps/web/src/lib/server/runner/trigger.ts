@@ -22,8 +22,8 @@ export const UNKNOWN_ORIGIN = 'core.unknownOrigin';
 export type FindRecord = (executionId: string) => ExecutionRecord | undefined;
 
 /**
- * Wave ap1: what a run called by `parent` inherits: the hosted chat's refusal (`core.chatTrigger`) when the parent cannot be read or cannot wait
- * and is no editor's run, the MCP trigger's when it is an MCP call, else undefined. A parent from before the wave (no `triggerType`) is judged
+ * Wave ap1: what a run called by `parent` inherits: `core.unknownOrigin` when the parent cannot be read (or the nesting is past the limit), the hosted chat's refusal (`core.chatTrigger`)
+ * when the parent cannot wait and is no editor's run, the MCP trigger's when it is an MCP call, else undefined. A parent from before the wave (no `triggerType`) is judged
  * by `recordTrigger`, so its own parent counts too (bounded by the nesting limit; past it, refuses).
  */
 export function inheritedFrom(parent: ExecutionRecord | undefined, find: FindRecord = (id) => store.getExecution(id), depth = 0): string | undefined {

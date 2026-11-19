@@ -110,7 +110,7 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
     const parentRecord = parentEntry?.record ?? store.getExecution(options.parent.executionId);
     depth = (parentRecord?.depth ?? 0) + 1;
     parentStarter = parentRecord?.startedBy;
-    // A parent from before the wave has no `triggerType`: it is judged like the agent node does (its parent's, else its first node); one that cannot wait, or cannot be read, hands the hosted chat's refusal down.
+    // A parent from before the wave has no `triggerType`: it is judged like the agent node does (its parent's, else its first node); one that cannot wait hands the hosted chat's refusal down, and one that cannot be read hands down `core.unknownOrigin`.
     inheritedTrigger = inheritedFrom(parentRecord);
     evaluation ??= parentRecord?.evaluation;
     if (depth > MAX_WORKFLOW_DEPTH) throw new Error(`Sub-workflows can be nested at most ${MAX_WORKFLOW_DEPTH} levels deep`);

@@ -446,6 +446,31 @@ describe('Run an Agent, Tool Approvals', () => {
       }
     });
 
+    it('a stamped run does not walk its ancestors: its own triggerType decides', async () => {
+      const opened: unknown[] = [];
+      port(opened);
+      try {
+        asks();
+        const hook = await start(flow({ toolApprovals: 'refuse' }, 'core.webhook'), { startNodeId: 'Start' });
+        const loads: string[] = [];
+        const load = store.loadExecution.bind(store);
+        const spy = vi.spyOn(store, 'loadExecution').mockImplementation(async (id: string) => {
+          loads.push(id);
+          return load(id);
+        });
+        try {
+          const child = await start(flow({ toolApprovals: 'askInChat' }, 'core.workflowTrigger'), { startNodeId: 'Start', triggerType: undefined, parent: { executionId: hook.executionId } });
+          expect(child.triggerType).toBeDefined();
+          expect(child.status).toBe('waiting');
+          expect(loads).not.toContain(hook.executionId);
+        } finally {
+          spy.mockRestore();
+        }
+      } finally {
+        registerInboxPort(undefined as never);
+      }
+    });
+
     it('a run from before the wave has no triggerType: the first node it ran decides, and a node that is no trigger refuses', async () => {
       const opened: unknown[] = [];
       port(opened);
