@@ -105,11 +105,16 @@ export function knowledgeTool(config: KnowledgeBaseToolConfig, internal?: Knowle
     },
     requireApproval: Boolean(config.requireApproval),
     async invoke(input, ctx) {
-      const documents = await search(
-        { store, collection: config.collection.trim(), embeddings, options: { searchMode: config.searchMode ?? 'vector' }, ...(ctx.signal && { signal: ctx.signal }) },
-        String(input.query ?? ''),
-        topK,
-      );
+      const query = String(input.query ?? '');
+      const searcher = { store, collection: config.collection.trim(), embeddings, options: { searchMode: config.searchMode ?? 'vector' }, ...(ctx.signal && { signal: ctx.signal }) };
+      let documents;
+      try {
+        documents = await search(searcher, query, topK);
+      } catch (error) {
+        // NB08: the Notion brain's passages are always searchable by keywords: when the query can't be embedded (the model is down), say so and search by words, as Ask does.
+        if (!internal?.allowReserved || config.embeddings.provider === 'none' || ctx.signal?.aborted) throw error;
+        documents = await search({ ...searcher, options: { searchMode: 'keyword' } }, query, topK);
+      }
       // AG14: with the document count, when it is cheap to read (the SQLite store).
       const count = config.store === 'sqlite' ? await documentCount(config, internal).catch(() => undefined) : undefined;
       return {
