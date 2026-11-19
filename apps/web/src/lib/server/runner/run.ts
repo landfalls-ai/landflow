@@ -118,6 +118,8 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
   const version = versionFor(options.workflow);
   const versionId = version?.id;
   const startedBy = options.parent ? parentStarter : starterOf(options);
+  const startId = options.triggerOutput?.nodeId ?? options.startNodeId;
+  const triggerType = options.triggerType ?? (startId ? options.workflow.nodes.find((n) => n.id === startId)?.type : undefined);
   const record: ExecutionRecord = {
     executionId,
     workflowId: options.workflow.id,
@@ -143,6 +145,7 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
     ...(options.buffered && { buffered: { kind: options.buffered.kind, count: options.buffered.count } }),
     ...(options.mcp && { mcp: options.mcp }),
     ...(options.spotlightApprovals && { spotlightApprovals: options.spotlightApprovals }), // AG23:
+    ...(triggerType && { triggerType }), // wave ap1: a hosted-chat or MCP-trigger run never waits in Needs you
   };
   if (idempotencyKey) rememberIdempotent(options.workflow.id, idempotencyKey, executionId);
   if (!admitted.run) return enqueue(record, options);

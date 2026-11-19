@@ -239,6 +239,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
       mode: 'webhook',
       // A flow that routes on `agentKey` is started at the trigger, so its Guardrails run for the picked agent too.
       startNodeId: chatStartNodeId(workflow, node, agent),
+      triggerType: node.type, // wave ap1: the record says the hosted chat started it, also when the run starts at a roster target (a Run an Agent step refuses instead of waiting in Needs you)
       triggerItems: [item],
       executionId,
       onStart: () => {

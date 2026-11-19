@@ -84,6 +84,8 @@ export interface RunOptions {
   mcp?: ExecutionMcpInfo;
   /** AG23: an editor run an autonomous fix session started: Spotlight approves its tool calls to given destinations (the record carries it to the node, also after a wait). */
   spotlightApprovals?: { userId: string; sessionId: string; destinations: string[] };
+  /** Wave ap1: the trigger behind the run when it starts at another node (the hosted chat's roster target): its type, kept on the record as `triggerType`. Default: the start node's type. */
+  triggerType?: string;
 }
 
 /** A fresh execution id. */

@@ -262,6 +262,8 @@ export interface ExecutionRecord extends Omit<ExecutionResult, 'status' | 'wait'
   mcp?: ExecutionMcpInfo;
   /** AG23: an autonomous fix session's editor run: Run an Agent steps let Spotlight approve tool calls to given destinations (lib/server/agents/spotlight-approvals.ts). */
   spotlightApprovals?: { userId: string; sessionId: string; destinations: string[] };
+  /** Wave ap1: the type of the trigger that started the run (its start node's, or the hosted chat's chat trigger when the run starts at a roster target). A Run an Agent step reads it: a hosted-chat or MCP-trigger run never waits in Needs you. */
+  triggerType?: string;
 }
 
 /** The MCP tool call behind an execution with mode `mcp` on a per-plugin endpoint (docs/transports.md). */

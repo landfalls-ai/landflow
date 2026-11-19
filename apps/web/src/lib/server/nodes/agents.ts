@@ -11,9 +11,10 @@ import { approvalSubject, type Agent, type AgentSession, type AgentStreamEvent }
 import { agentAllowedBy } from '../../shared/project-policy';
 // AG10: the chat approval (the AI Agent node's own wait, reused).
 import { approvalSettings, askForApproval, decisionsOf, toolTargets } from './ai';
-import { inboxMode, maskParams, refusedResult, settledLine, type InboxOpen } from '../../shared/approval-inbox'; // AP02:
+import { inboxMode, maskParams, REFUSE_WHY, refusedResult, settledLine, type InboxOpen, type RefuseWhy } from '../../shared/approval-inbox'; // AP02:
 import { inboxPort } from '../approval-inbox/port'; // AP02:
 import { redactValue } from '../secrets/redact'; // AP02:
+import type { ExecutionRecord } from '../../shared/types'; // wave ap1:
 
 const main = [{ type: 'main' as const }];
 
@@ -245,6 +246,8 @@ export const messageAgentNode = defineNode({
     const waited = saved?.waiting && saved.$resume ? saved.waiting : undefined;
     const out: NodeItem[] = waited ? [...waited.out] : [];
     const savedWithoutApprovals = await savedWithout(ctx, ctx.getNode().id, 'toolApprovals'); // AP02: once per run, not per item
+    // Wave ap1: a run the hosted chat or an MCP trigger started (or one of theirs called) refuses whatever the execution mode says, as the publish line says.
+    const triggerWhy = isEditorRun(ctx.getMode(), Boolean(ctx.putExecutionToWait)) ? undefined : await triggerRefusal(ctx.getExecutionId());
     for (let i = waited?.itemIndex ?? 0; i < Math.max(items.length, 1); i++) {
       try {
         const agentId = ctx.getNodeParameter<string>('agentId', i);
@@ -286,7 +289,8 @@ export const messageAgentNode = defineNode({
         // AP02: a step saved without Tool Approvals keeps refusing (the descriptor's default is for steps placed from now on).
         const setting = savedWithoutApprovals ? 'refuse' : ctx.getNodeParameter<string>('toolApprovals', i, 'refuse');
         // AP02: a run nobody watches (not the editor's, not an MCP call or a tool call) that can pause waits in the approval inbox, when the host has one.
-        const inbox = !editor && inboxMode(ctx.getMode()) === 'inbox' && setting === 'askInChat' && waitable ? inboxPort() : undefined;
+        const inbox = !editor && !triggerWhy && inboxMode(ctx.getMode()) === 'inbox' && setting === 'askInChat' && waitable ? inboxPort() : undefined;
+        const refusedWhy = !editor && setting === 'askInChat' && waitable && triggerWhy ? REFUSE_WHY[triggerWhy] : undefined;
         const askInChat = (setting === 'askInChat' && ctx.getMode() === 'chat' && waitable) || Boolean(spotlight?.canWait) || Boolean(inbox);
         const onEvent = send && streamer(send, i, { id: agent.id, name: agent.name, ...(agent.avatar && { face: agent.avatar as unknown as JsonObject }) });
         let result: Awaited<ReturnType<typeof runAgent>>;
@@ -343,6 +347,7 @@ export const messageAgentNode = defineNode({
             // AG10: 'ask' only in the editor's chat with Tool Approvals set to ask there.
             approvals: spotlight ? 'spotlight' : askInChat ? 'ask' : 'deny',
             ...(inbox && { inbox: true as const }), // AP02:
+            ...(refusedWhy && { refusedWhy }), // wave ap1: the hosted chat or an MCP trigger
             ...(spotlight && { spotlight }), // AG23:
             toolImages: { keep: Number(ctx.getNodeParameter('toolImagesKept', i, 2)) },
             ...(pending && { moved: pending }), // AG17:
@@ -433,6 +438,25 @@ async function runGraph(executionId: string, workflowId: string | undefined) {
   const versionId = record?.versionId ?? (await import('../agents/versions')).runVersions(executionId, record)?.workflow.versionId;
   const snapshot = record?.workflow ?? (versionId && id ? (await import('../versions')).getVersion(id, versionId)?.workflow : undefined) ?? (id ? store.getWorkflow(id) : undefined);
   return { record, workflow: snapshot, workflowId: id };
+}
+
+/**
+ * Wave ap1: why a run that is no editor's cannot wait for an approval, whatever its execution mode: the hosted chat page
+ * (`core.chatTrigger`, started in mode 'webhook') cannot show one and an MCP call answers its caller at once, also for a
+ * workflow such a run called. Read from the run's `triggerType` and its parents'; undefined for every other trigger.
+ */
+async function triggerRefusal(executionId: string): Promise<RefuseWhy | undefined> {
+  const { liveExecution } = await import('../runner');
+  const { store } = await import('../store');
+  let id: string | undefined = executionId;
+  for (let depth = 0; id && depth <= 16; depth++) {
+    const record: ExecutionRecord | undefined = liveExecution(id) ?? (await store.loadExecution(id));
+    if (!record) return undefined;
+    if (record.mode === 'mcp' || record.triggerType === 'core.mcpTrigger') return 'mcp';
+    if (record.triggerType === 'core.chatTrigger') return 'hostedChat';
+    id = record.parentExecutionId;
+  }
+  return undefined;
 }
 
 /** AP02: whether the run's workflow has no value saved for this parameter of the node (the descriptor's default would apply). False when the graph is not found. */

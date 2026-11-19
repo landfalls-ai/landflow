@@ -77,6 +77,8 @@ export interface RunRequest {
   spotlight?: SpotlightApprovals;
   /** AP02: a run nobody watches whose held calls wait in the approval inbox (Run an Agent, approvals 'ask'): each PendingCall carries its `review`, no agent-session approval mail goes out, and a remote agent's own pause stays auto-rejected. */
   inbox?: true;
+  /** Wave ap1: with approvals 'deny', why this run cannot ask (`REFUSE_WHY`'s words, e.g. the hosted chat's), said in the refused call's result. */
+  refusedWhy?: string;
   signal?: AbortSignal;
   onEvent?: (event: AgentStreamEvent) => void;
   /** Who is calling, for the project block (docs/agents.md#which-project-a-run-is-in); absent: the session says. Not `caller`, which is whose tools run. */
@@ -729,7 +731,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
           upsert(toolEntry(call, tool!, { status: 'denied', error: line, by: request.spotlight.by, decidedLine: line }));
           immediate.push({ id: call.id, name: call.name, content: message, isError: true });
         } else if ((tool.requireApproval || heldFor) && (request.approvals ?? 'ask') === 'deny') {
-          const message = `${heldFor ?? `"${tool.label}"`}${heldFor ? ' It' : ''} needs a person's approval, which isn't available in this kind of run. Don't retry it; explain what you would have done.`;
+          const message = `${heldFor ?? `"${tool.label}"`}${heldFor ? ' It' : ''} needs a person's approval, which isn't available in this kind of run${request.refusedWhy ? ` (${request.refusedWhy})` : ''}. Don't retry it; explain what you would have done.`;
           upsert(toolEntry(call, tool, { status: 'denied', error: message }));
           immediate.push({ id: call.id, name: call.name, content: message, isError: true });
         } else if (tool.requireApproval || heldFor) {

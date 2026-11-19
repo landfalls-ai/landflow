@@ -67,11 +67,11 @@ const POST = toToolName('Post Update');
 
 const node = (id: string, type: string, parameters: Record<string, unknown> = {}): WorkflowNode => ({ id, name: id, type, typeVersion: 1, position: [0, 0], parameters });
 let n = 0;
-function flow(parameters: Record<string, unknown>): Workflow {
+function flow(parameters: Record<string, unknown>, trigger = 'core.chatTrigger'): Workflow {
   const wf: Workflow = {
     id: `wf_ag10_${++n}`,
     name: 'ag10',
-    nodes: [node('Start', 'core.chatTrigger'), node('Agent', 'core.messageAgent', { agentId: writer.id, message: 'Email oncall', ...parameters })],
+    nodes: [node('Start', trigger, trigger === 'core.webhook' ? { path: `ag10-${n}`, method: 'POST' } : {}), node('Agent', 'core.messageAgent', { agentId: writer.id, message: 'Email oncall', ...parameters })],
     connections: [{ id: 'a', type: 'main', source: 'Start', target: 'Agent', sourceIndex: 0, targetIndex: 0 }],
   };
   store.saveWorkflow(wf);
@@ -291,19 +291,60 @@ describe('Run an Agent, Tool Approvals', () => {
     expect(out(record).steps).toEqual([expect.objectContaining({ tool: WRITE, status: 'denied' })]);
   });
 
-  it('AP02: webhook mode with Ask waits when the host has an approval inbox (the twin above refuses with none, or with Refuse)', async () => {
+  it('AP02: a webhook trigger with Ask waits when the host has an approval inbox (the twin above refuses with none, or with Refuse)', async () => {
     const opened: unknown[] = [];
     registerInboxPort({ open: async (calls) => (opened.push(...calls), { ids: Object.fromEntries(calls.map((c) => [c.callId, 'ib_1'])), expiresAt: new Date(Date.now() + 3_600_000).toISOString(), minutes: 60 }), outcome: () => undefined, settle: async (_e, _c, to) => ({ won: false, outcome: { status: to } }), view: () => undefined });
     try {
       script = (t) => (t === 1 ? { toolCalls: [call(WRITE, { to: 'a' }, 'c_send')] } : { text: 'Could not send.' });
-      const record = await run(flow({ toolApprovals: 'askInChat' }), 'webhook');
+      const record = await run(flow({ toolApprovals: 'askInChat' }, 'core.webhook'), 'webhook');
       expect(record.status).toBe('waiting');
+      expect(record.triggerType).toBe('core.webhook');
       expect(opened).toHaveLength(1);
       expect(toolResults).toEqual([]);
       // Refuse still refuses with an inbox on the host.
-      const refused = await run(flow({ toolApprovals: 'refuse' }), 'webhook');
+      const refused = await run(flow({ toolApprovals: 'refuse' }, 'core.webhook'), 'webhook');
       expect(refused.status).toBe('success');
       expect(toolResults[0]).toContain("needs a person's approval");
+    } finally {
+      registerInboxPort(undefined as never);
+    }
+  });
+
+  it.each([
+    ['the hosted chat page (core.chatTrigger, mode webhook)', 'core.chatTrigger', 'webhook', 'the hosted chat page cannot show an approval'],
+    ['an MCP trigger (mode mcp)', 'core.mcpTrigger', 'mcp', 'an MCP call answers its caller at once'],
+    ['an MCP trigger even in mode webhook', 'core.mcpTrigger', 'webhook', 'an MCP call answers its caller at once'],
+  ] as const)('wave ap1: Ask refuses from %s even with an approval inbox, and says why', async (_name, trigger, mode, why) => {
+    const opened: unknown[] = [];
+    registerInboxPort({ open: async (calls) => (opened.push(...calls), { ids: Object.fromEntries(calls.map((c) => [c.callId, 'ib_1'])), expiresAt: new Date(Date.now() + 3_600_000).toISOString(), minutes: 60 }), outcome: () => undefined, settle: async (_e, _c, to) => ({ won: false, outcome: { status: to } }), view: () => undefined });
+    try {
+      script = (t) => (t === 1 ? { toolCalls: [call(WRITE, { to: 'a' }, 'c_send')] } : { text: 'Could not send.' });
+      turn = 0;
+      toolResults.length = 0;
+      // The trigger's output is given (an MCP trigger's own item is the tool call), so the step gets the chat input either way.
+      const record = await runWorkflow({ workflow: flow({ toolApprovals: 'askInChat' }, trigger), mode, triggerOutput: { nodeId: 'Start', items: [{ json: { chatInput: 'Email oncall' } }] } });
+      expect(record.status).toBe('success');
+      expect(record.triggerType).toBe(trigger);
+      expect(opened).toEqual([]);
+      expect(toolResults[0]).toContain("needs a person's approval");
+      expect(toolResults[0]).toContain(why);
+      expect(out(record).steps).toEqual([expect.objectContaining({ tool: WRITE, status: 'denied' })]);
+    } finally {
+      registerInboxPort(undefined as never);
+    }
+  });
+
+  it('wave ap1: the hosted chat that starts at a roster target (triggerType given) refuses too', async () => {
+    const opened: unknown[] = [];
+    registerInboxPort({ open: async (calls) => (opened.push(...calls), { ids: Object.fromEntries(calls.map((c) => [c.callId, 'ib_1'])), expiresAt: new Date(Date.now() + 3_600_000).toISOString(), minutes: 60 }), outcome: () => undefined, settle: async (_e, _c, to) => ({ won: false, outcome: { status: to } }), view: () => undefined });
+    try {
+      script = (t) => (t === 1 ? { toolCalls: [call(WRITE, { to: 'a' }, 'c_send')] } : { text: 'Could not send.' });
+      turn = 0;
+      toolResults.length = 0;
+      const record = await runWorkflow({ workflow: flow({ toolApprovals: 'askInChat' }), mode: 'webhook', startNodeId: 'Agent', triggerType: 'core.chatTrigger', triggerItems: [{ json: { chatInput: 'Email oncall' } }] });
+      expect(record.status).toBe('success');
+      expect(opened).toEqual([]);
+      expect(toolResults[0]).toContain('the hosted chat page cannot show an approval');
     } finally {
       registerInboxPort(undefined as never);
     }

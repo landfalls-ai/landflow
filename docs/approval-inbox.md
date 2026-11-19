@@ -13,8 +13,11 @@ Run Trace card are AP03's: see [What you see](#what-you-see). Part of the [Landf
 ## What waits, and who decides
 
 - **What waits**: one request per undecided tool call of a Run an Agent step whose Tool Approvals is *Ask*, in a run whose mode is
-  not manual, not the editor's chat and not an MCP or tool call (`inboxMode` in `lib/shared/approval-inbox.ts`). A step set to
-  *Refuse* keeps refusing. Spotlight's own test runs, the editor's chat, manual runs, the eval gate and sub-agents are unchanged.
+  not manual, not the editor's chat and not an MCP or tool call (`inboxMode` in `lib/shared/approval-inbox.ts`), and that neither
+  the hosted chat page nor an MCP trigger started: the hosted chat starts its runs in mode `webhook`, so the node reads the
+  execution's `triggerType` (the start node's type; the hosted chat sets it to its chat trigger also when the run starts at a roster
+  target), and its parents' for a called workflow, and refuses with the publish line's reason (*the hosted chat page cannot show an
+  approval*, *an MCP call answers its caller at once*). A step set to *Refuse* keeps refusing. Spotlight's own test runs, the editor's chat, manual runs, the eval gate and sub-agents are unchanged.
   Not covered: an agent deployed to kagent (its pause lives in kagent's own task) and Run a Team's members (they already wait in
   production with no expiry and no nudge).
 - **Who decides**: a signed-in person with run access on the workflow (its project's editors and admins, an editor share, instance

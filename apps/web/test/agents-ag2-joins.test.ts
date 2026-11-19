@@ -441,7 +441,7 @@ describe('2. revise: add and remove, the steps follow (AG09 × AG07 × AG08)', (
 // ---------------------------------------------------------------------------
 
 describe('3. the editor’s chat approves the agent’s write (AG10 × AG08 × SB16)', () => {
-  it('the starter flow asks in the chat; Approve sends one email to the ask’s address with the model’s subject; a webhook run waits in Needs you (a Refuse twin refuses)', async () => {
+  it('the starter flow asks in the chat; Approve sends one email to the ask’s address with the model’s subject; the hosted chat refuses; a webhook twin waits in Needs you (a Refuse twin refuses)', async () => {
     architect.design = propose({ ...AG1_TRIAGE, nodeTools: 'triage.normalizeAlert, triage.extractIocs, messaging.emailSend' });
     architect.cases = REAL_CASES;
     const { id, card } = await designOnEmpty('wf_ag2_chat', TRIAGE_ASK);
@@ -479,18 +479,29 @@ describe('3. the editor’s chat approves the agent’s write (AG10 × AG08 × S
     expect(smtp.mails[0].data).toMatch(/^Subject: Brute force on web-01/m);
     expect(json(smtp.mails[0])).not.toContain('attacker@example.net');
 
-    // The same flow from a webhook (wave ap1, AP02: the person's decision of 2026-11-18): it waits in Needs you, one
-    // approval-inbox request for the held call, nothing more sent until someone approves.
+    // The same flow as the hosted chat page starts it (mode 'webhook', its chat trigger on the record): refused, as the publish
+    // line says (REFUSE_WHY.hostedChat: the page cannot show an approval), no approval-inbox request, nothing more sent.
     agentSide.turns = 0;
     const trigger = flow.nodes.find((n) => n.type === 'core.chatTrigger')!;
-    const hooked = await runWorkflow({ workflow: flow, mode: 'webhook', startNodeId: trigger.id, triggerItems: [{ json: { chatInput: WAZUH } }] });
-    expect(hooked.status).toBe('waiting');
-    expect(waitingOfExecution(hooked.executionId)).toHaveLength(1);
+    const hosted = await runWorkflow({ workflow: flow, mode: 'webhook', startNodeId: trigger.id, triggerItems: [{ json: { chatInput: WAZUH } }] });
+    expect(hosted.status).toBe('success');
+    expect(json(hosted.runData)).toMatch(/needs a person'?s approval/);
+    expect(json(hosted.runData)).toContain('the hosted chat page cannot show an approval');
+    expect(waitingOfExecution(hosted.executionId)).toHaveLength(0);
     expect(smtp.mails).toHaveLength(1);
 
-    // Twin: the same flow with Tool Approvals Refuse still refuses from a webhook, nothing more sent.
+    // Twin (wave ap1, AP02: the person's decision of 2026-11-18): the same steps behind a webhook trigger wait in Needs you,
+    // one approval-inbox request for the held call, nothing more sent until someone approves.
     agentSide.turns = 0;
-    const refusing = { ...flow, nodes: flow.nodes.map((n) => (n.type === 'core.messageAgent' ? { ...n, parameters: { ...n.parameters, toolApprovals: 'refuse' } } : n)) } as Workflow;
+    const hooked = { ...flow, nodes: flow.nodes.map((n) => (n.id === trigger.id ? { ...n, type: 'core.webhook', parameters: { path: 'ag2-join-3', method: 'POST' } } : n)) } as Workflow;
+    const waited = await runWorkflow({ workflow: hooked, mode: 'webhook', startNodeId: trigger.id, triggerItems: [{ json: { chatInput: WAZUH } }] });
+    expect(waited.status).toBe('waiting');
+    expect(waitingOfExecution(waited.executionId)).toHaveLength(1);
+    expect(smtp.mails).toHaveLength(1);
+
+    // Twin: the webhook flow with Tool Approvals Refuse still refuses, nothing more sent.
+    agentSide.turns = 0;
+    const refusing = { ...hooked, nodes: hooked.nodes.map((n) => (n.type === 'core.messageAgent' ? { ...n, parameters: { ...n.parameters, toolApprovals: 'refuse' } } : n)) } as Workflow;
     const refused = await runWorkflow({ workflow: refusing, mode: 'webhook', startNodeId: trigger.id, triggerItems: [{ json: { chatInput: WAZUH } }] });
     expect(refused.status).toBe('success');
     expect(json(refused.runData)).toMatch(/needs a person'?s approval|denied/);

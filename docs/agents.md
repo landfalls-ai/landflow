@@ -824,7 +824,10 @@ request: the run goes on when the last one is decided). The Platform analyst's o
   `PublishLine` per such tool and trigger: `waitLine` (*In production “Send Email” will wait for your approval in Needs you: a webhook
   run pauses until someone approves or denies it, and the request expires after 24 h.*) or `refusesLine` with why (Tool Approvals is Refuse,
   a model or tools wired to the step, an MCP trigger, the hosted chat, no inbox on the host); the publish card, the Publish menu and the
-  session's last line read the same line. A Spotlight fix session still decides its own test runs as above; a Run a Team member and a
+  session's last line read the same line, and the runtime does what the line says: a run the hosted chat page started (mode `webhook`,
+  with its chat trigger kept on the execution as `triggerType`, also when it starts at a roster target), an MCP trigger's run, and a
+  workflow either of them calls refuse even with *Ask*, and the tool's answer to the agent names the reason. So an anonymous chat
+  visitor never opens a request or sends a nudge. A Spotlight fix session still decides its own test runs as above; a Run a Team member and a
   kagent agent's pause are not in the inbox yet ([limitations](limitations.md)). Each run is an agent session from the
   workflow. The node is `usableAsTool`, so an AI Agent node can delegate to an agent. It runs
   the agent on Landflow's runtime, also when the agent is deployed to kagent; to call it there,
