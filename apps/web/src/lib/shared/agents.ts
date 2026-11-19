@@ -856,6 +856,11 @@ export interface PendingCall {
   remote?: { agent: string; calls: Array<{ name: string; args?: Record<string, unknown> }>; state: Record<string, unknown> };
   /** A person's answer, when the remote agent paused on a question for one (a team member's question): sent to it as the reply. */
   answer?: string;
+  /** AP02: a call held in a run nobody watches (RunRequest.inbox): the parameters it would run with (redacted, then masked), and where it goes in plain words. */
+  review?: { params: Record<string, unknown>; destination?: string };
+  /** AP02: what the agent hears when the approval inbox refused the call (denied, expired or cancelled), and the line the Run Trace says for the decision. */
+  refusal?: string;
+  decidedLine?: string;
 }
 
 /** What an approval card shows for a pending call: a remote agent's pause names the agent and the calls it waits on. */

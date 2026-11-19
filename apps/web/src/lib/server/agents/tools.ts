@@ -147,6 +147,8 @@ export interface BuiltTool extends ToolSpec {
    * reason to hold it for a person, decided per call on the effective parameters. Undefined when the call may run.
    */
   holdReason?(input: Record<string, unknown>, ctx: ToolContext): Promise<string | undefined>;
+  /** AP02: the parameters this call would run with (the tool's fixed parameters, then the arguments its schema offered), for the approval inbox. Absent: the shown input. */
+  effectiveInput?(input: Record<string, unknown>, ctx: ToolContext): Promise<Record<string, unknown>>;
   /** AG23: where this call would go (what Spotlight checks before it approves a call that asks first): per call, on the parameters it would run with. Absent: the tool names no destination. */
   destinationsOf?(input: Record<string, unknown>, ctx: ToolContext): Promise<string[]>;
   /** After a pause (ToolOutcome.pause): send the person's decision and carry on. */
@@ -570,6 +572,10 @@ function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
         return `“${config.name}” is a read-only tool, and this call asked for ${what}.`;
       },
     }),
+    // AP02:
+    async effectiveInput(given: Record<string, unknown>, ctx: ToolContext) {
+      return (await effectiveOf(given, ctx)).parameters;
+    },
     // AG23:
     async destinationsOf(given: Record<string, unknown>, ctx: ToolContext) {
       const { parameters } = await effectiveOf(given, ctx);

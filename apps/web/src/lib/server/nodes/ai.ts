@@ -454,7 +454,7 @@ export function approvalSettings(ctx: IExecuteContext, itemIndex: number, mode =
  * `data.approval` is what the chat panel, the execution view and POST /api/executions/:id/approvals read;
  * with Slack, each call is posted as a message with Approve / Reject buttons first.
  */
-export async function askForApproval(ctx: IExecuteContext, itemIndex: number, settings: ApprovalSettings, calls: ToolCall[], extra: JsonObject = {}, title?: string) {
+export async function askForApproval(ctx: IExecuteContext, itemIndex: number, settings: ApprovalSettings, calls: ToolCall[], extra: JsonObject = {}, title?: string, until?: string /* AP02: the approval inbox's expiry */) {
   if (!ctx.putExecutionToWait) throw new NodeOperationError('Tool approvals need a host that can pause executions');
   const node = ctx.getNode();
   const approval: JsonObject = {
@@ -497,7 +497,7 @@ export async function askForApproval(ctx: IExecuteContext, itemIndex: number, se
   ctx.putExecutionToWait({
     resume: 'webhook',
     rerun: true,
-    ...(settings.timeoutMinutes > 0 && { until: new Date(Date.now() + settings.timeoutMinutes * 60_000).toISOString() }),
+    ...(until ? { until } : settings.timeoutMinutes > 0 && { until: new Date(Date.now() + settings.timeoutMinutes * 60_000).toISOString() }),
     data: { approval, ...extra },
   });
 }

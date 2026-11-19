@@ -11,6 +11,9 @@ import { approvalSubject, type Agent, type AgentSession, type AgentStreamEvent }
 import { agentAllowedBy } from '../../shared/project-policy';
 // AG10: the chat approval (the AI Agent node's own wait, reused).
 import { approvalSettings, askForApproval, decisionsOf, toolTargets } from './ai';
+import { inboxMode, maskParams, refusedResult, settledLine, type InboxOpen } from '../../shared/approval-inbox'; // AP02:
+import { inboxPort } from '../approval-inbox/port'; // AP02:
+import { redactValue } from '../secrets/redact'; // AP02:
 
 const main = [{ type: 'main' as const }];
 
@@ -196,18 +199,19 @@ export const messageAgentNode = defineNode({
         name: 'toolApprovals',
         displayName: 'Tool Approvals',
         type: 'options',
-        default: 'refuse',
+        // AP02: new steps ask; a saved step without the value keeps refusing (read from the run's workflow at run time, below).
+        default: 'askInChat',
         noDataExpression: true,
         options: [
+          { name: 'Ask (the editor’s chat; Needs you when nobody watches)', value: 'askInChat', description: 'A tool that needs approval waits for a person: in the editor’s chat when you run it there, in Needs you when a webhook, schedule or app trigger runs it (the request expires and is then refused)' },
           { name: 'Refuse', value: 'refuse', description: 'Tools that need approval are refused, as before' },
-          { name: 'Ask in the editor’s chat', value: 'askInChat', description: 'In the editor’s chat, a tool that needs approval waits for your Approve; every other run refuses it' },
         ],
       },
       {
         name: 'notice',
         displayName:
           // AG17:
-          'Runs the agent: its model, memory, tools and knowledge are the bubbles under this node. A model, memory or tool wired here is moved into the agent’s draft when the flow is opened (or at the host’s start); what can’t move stays and runs in this flow only. Tools that require approval are refused in workflow runs (nobody is there to approve them), unless Tool Approvals asks in the editor’s chat and you run the flow from its Chat (then the run waits for your Approve; with a model or tools still wired here it refuses). A run nobody watches (a webhook, a schedule) refuses a tool that asks first; Spotlight’s fix sessions approve their own test runs. Runs in the editor use the agent’s draft, which already holds what moved; a published workflow runs the agent’s published version, so what moved keeps running here until you publish the agent.',
+          'Runs the agent: its model, memory, tools and knowledge are the bubbles under this node. A model, memory or tool wired here is moved into the agent’s draft when the flow is opened (or at the host’s start); what can’t move stays and runs in this flow only. Tools that require approval are refused in workflow runs (nobody is there to approve them), unless Tool Approvals asks in the editor’s chat and you run the flow from its Chat (then the run waits for your Approve; with a model or tools still wired here it refuses). A run nobody watches (a webhook, a schedule, an app trigger) with Tool Approvals on Ask waits in Needs you for a person to approve or deny each call (and the call is refused if nobody does in time), while a step set to Refuse, a flow with a model or tools wired here, an MCP call or the hosted chat refuses it; Spotlight’s fix sessions approve their own test runs. Runs in the editor use the agent’s draft, which already holds what moved; a published workflow runs the agent’s published version, so what moved keeps running here until you publish the agent.',
         type: 'notice',
       },
     ],
@@ -236,7 +240,7 @@ export const messageAgentNode = defineNode({
     const send = ctx.sendChunk;
     const items = ctx.getInputData();
     // AG10: back from a wait for the person's Approve in the editor's chat (WaitRequest.rerun): the items done, and the session to go on with.
-    const saved = ctx.getNodeState?.() as { waiting?: { kind: 'approval'; itemIndex: number; sessionId: string; agentId: string; out: NodeItem[] }; $resume?: { kind: string; data?: JsonObject } } | undefined;
+    const saved = ctx.getNodeState?.() as { waiting?: { kind: 'approval'; itemIndex: number; sessionId: string; agentId: string; out: NodeItem[]; inbox?: { ids: Record<string, string>; expiresAt: string; minutes: number } /* AP02: */ }; $resume?: { kind: string; data?: JsonObject } } | undefined;
     ctx.setNodeState?.(undefined);
     const waited = saved?.waiting && saved.$resume ? saved.waiting : undefined;
     const out: NodeItem[] = waited ? [...waited.out] : [];
@@ -278,15 +282,21 @@ export const messageAgentNode = defineNode({
           given: [...spotlightRun.destinations], // wave ag5 fix pass 2: the agents' own destinations are the client's snapshot from when the session started (in `destinations`), never the draft this session may have edited
           canWait: waitable,
         };
-        const askInChat = (ctx.getNodeParameter<string>('toolApprovals', i, 'refuse') === 'askInChat' && ctx.getMode() === 'chat' && waitable) || Boolean(spotlight?.canWait);
+        // AP02: a step saved without Tool Approvals keeps refusing (the descriptor's default is for steps placed from now on).
+        const setting = (await savedWithout(ctx, node.id, 'toolApprovals')) ? 'refuse' : ctx.getNodeParameter<string>('toolApprovals', i, 'refuse');
+        // AP02: a run nobody watches (not the editor's, not an MCP call or a tool call) that can pause waits in the approval inbox, when the host has one.
+        const inbox = !editor && inboxMode(ctx.getMode()) === 'inbox' && setting === 'askInChat' && waitable ? inboxPort() : undefined;
+        const askInChat = (setting === 'askInChat' && ctx.getMode() === 'chat' && waitable) || Boolean(spotlight?.canWait) || Boolean(inbox);
         const onEvent = send && streamer(send, i, { id: agent.id, name: agent.name, ...(agent.avatar && { face: agent.avatar as unknown as JsonObject }) });
         let result: Awaited<ReturnType<typeof runAgent>>;
         if (waited && i === waited.itemIndex) {
           // AG10: each decision goes to the session in order; the last one resumes the run.
           const { decide } = await import('../agents/runtime');
-          const decisions = decisionsOf(saved?.$resume);
           const stored = agentStore.getSession(waited.sessionId);
           const calls = stored?.pending?.calls ?? [];
+          // AP02: a wait the inbox holds is settled by the record, not by the resume's word (see inboxDecisions).
+          const settled = waited.inbox ? await inboxDecisions(ctx, waited.inbox, saved?.$resume, calls, new Map((stored?.timeline ?? []).flatMap((e) => (e.type === 'tool' ? [[e.callId, e.label] as const] : []))), i) : undefined;
+          const decisions = settled?.decisions ?? decisionsOf(saved?.$resume);
           let resumed: Awaited<ReturnType<typeof decide>> | undefined;
           send?.({ type: 'begin', itemIndex: i });
           // Every edit is saved before the first decision, so no decision rewrites a stale copy of the session.
@@ -303,7 +313,8 @@ export const messageAgentNode = defineNode({
           for (const pendingCall of calls) {
             const decision = decisions[pendingCall.callId];
             if (!decision) continue;
-            resumed = await decide(agent, waited.sessionId, pendingCall.callId, decision.approved, { ...(decision.by && { by: decision.by }), toolImages: { keep: Number(ctx.getNodeParameter('toolImagesKept', i, 2)) }, ...(onEvent && { onEvent }), ...(ctx.signal && { signal: ctx.signal }) });
+            if (settled && pendingCall.decision) continue; // AP02: a re-run never decides a call twice
+            resumed = await decide(agent, waited.sessionId, pendingCall.callId, decision.approved, { ...(decision.by && { by: decision.by }), ...settled?.extra[pendingCall.callId], toolImages: { keep: Number(ctx.getNodeParameter('toolImagesKept', i, 2)) }, ...(onEvent && { onEvent }), ...(ctx.signal && { signal: ctx.signal }) });
           }
           if (!resumed || resumed.status !== 'resumed') throw new NodeOperationError('The approval was not decided for every tool call', { itemIndex: i });
           result = resumed;
@@ -330,6 +341,7 @@ export const messageAgentNode = defineNode({
             message,
             // AG10: 'ask' only in the editor's chat with Tool Approvals set to ask there.
             approvals: spotlight ? 'spotlight' : askInChat ? 'ask' : 'deny',
+            ...(inbox && { inbox: true as const }), // AP02:
             ...(spotlight && { spotlight }), // AG23:
             toolImages: { keep: Number(ctx.getNodeParameter('toolImagesKept', i, 2)) },
             ...(pending && { moved: pending }), // AG17:
@@ -343,9 +355,16 @@ export const messageAgentNode = defineNode({
           const labels = new Map(result.session.timeline.flatMap((e) => (e.type === 'tool' ? [[e.callId, e.label] as const] : [])));
           const calls = result.session.pending.calls.filter((c) => !c.decision).map((c) => {
             const subject = approvalSubject(c);
-            return { id: c.callId, name: c.remote ? subject.tool : (labels.get(c.callId) ?? c.tool), input: subject.input as JsonObject };
+            return { id: c.callId, name: c.remote ? subject.tool : (labels.get(c.callId) ?? c.tool), input: (c.review?.params ?? subject.input) as JsonObject /* AP02: masked */ };
           });
           send?.({ type: 'end', itemIndex: i });
+          // AP02: a run nobody watches: one inbox request per held call, and the wait ends with the request's expiry.
+          if (inbox) {
+            const opened = await openInbox(ctx, inbox, { agent, agentVersion: runVersion, session: result.session, labels, itemIndex: i });
+            ctx.setNodeState?.({ waiting: { kind: 'approval', itemIndex: i, sessionId: result.session.id, agentId: agent.id, out: out as unknown as JsonObject[], inbox: { ids: opened.ids, expiresAt: opened.expiresAt, minutes: opened.minutes } } as unknown as JsonObject });
+            await askForApproval(ctx, i, { ...approvalSettings(ctx, i, 'all'), channel: 'chat', timeoutMinutes: 0 }, calls, { agentApproval: { agent: agent.name }, inbox: { ids: opened.ids, expiresAt: opened.expiresAt } }, `${agent.name} wants to use ${calls.map((c) => c.name).join(', ')}`, opened.expiresAt);
+            return [out];
+          }
           ctx.setNodeState?.({ waiting: { kind: 'approval', itemIndex: i, sessionId: result.session.id, agentId: agent.id, out: out as unknown as JsonObject[] } as unknown as JsonObject });
           await askForApproval(ctx, i, approvalSettings(ctx, i, 'all'), calls, { agentApproval: { agent: agent.name } }, `${agent.name} wants to use ${calls.map((c) => c.name).join(', ')}`);
           return [out];
@@ -403,6 +422,113 @@ export const messageAgentNode = defineNode({
     },
   },
 });
+
+/** AP02: the graph this run uses: its own record's, else the saved version it started with, else the saved workflow. */
+async function runGraph(executionId: string, workflowId: string | undefined) {
+  const { liveExecution } = await import('../runner');
+  const { store } = await import('../store');
+  const record = liveExecution(executionId) ?? (await store.loadExecution(executionId));
+  const id = workflowId ?? record?.workflowId;
+  const versionId = record?.versionId ?? (await import('../agents/versions')).runVersions(executionId, record)?.workflow.versionId;
+  const snapshot = record?.workflow ?? (versionId && id ? (await import('../versions')).getVersion(id, versionId)?.workflow : undefined) ?? (id ? store.getWorkflow(id) : undefined);
+  return { record, workflow: snapshot, workflowId: id };
+}
+
+/** AP02: whether the run's workflow has no value saved for this parameter of the node (the descriptor's default would apply). False when the graph is not found. */
+async function savedWithout(ctx: IExecuteContext, nodeId: string, name: string): Promise<boolean> {
+  const { workflow } = await runGraph(ctx.getExecutionId(), ctx.getWorkflowId());
+  const saved = workflow?.nodes.find((n) => n.id === nodeId);
+  return Boolean(saved) && !(name in (saved!.parameters ?? {}));
+}
+
+/** AP02: the time of day a settled line shows, in the host's zone. */
+const clock = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+
+/** AP02: one request per undecided call in the approval inbox (idempotent: a node that runs again gets the same ids and nudges nobody twice). */
+async function openInbox(
+  ctx: IExecuteContext,
+  port: NonNullable<ReturnType<typeof inboxPort>>,
+  run: { agent: Agent; agentVersion: number | 'draft'; session: AgentSession; labels: Map<string, string>; itemIndex: number },
+) {
+  const { runVersions } = await import('../agents/versions');
+  const { unattendedTrigger } = await import('../agents/unattended');
+  const { homeProjectId } = await import('../projects/store');
+  const executionId = ctx.getExecutionId();
+  const { record, workflow, workflowId: graphId } = await runGraph(executionId, ctx.getWorkflowId());
+  const workflowId = graphId ?? 'unknown';
+  const node = ctx.getNode();
+  const trigger = workflow?.nodes.filter((n) => !n.disabled).flatMap((n) => unattendedTrigger(n.type) ?? [])[0] ?? 'trigger';
+  const number = (() => {
+    try {
+      return runVersions(executionId, record)?.workflow.number;
+    } catch {
+      return undefined;
+    }
+  })();
+  const projectId = homeProjectId('workflow', workflowId);
+  const calls: InboxOpen[] = (run.session.pending?.calls ?? []).filter((c) => !c.decision).map((c) => ({
+    executionId,
+    callId: c.callId,
+    workflowId,
+    workflowName: workflow?.name ?? workflowId,
+    ...(number !== undefined && { workflowVersion: number }),
+    nodeId: node.id,
+    nodeName: node.name ?? node.id,
+    agentId: run.agent.id,
+    agentName: run.agent.name,
+    agentVersion: run.agentVersion,
+    sessionId: run.session.id,
+    tool: run.labels.get(c.callId) ?? c.tool,
+    params: (c.review?.params ?? maskParams(redactValue(c.input))) as Record<string, unknown>,
+    ...(c.review?.destination && { destination: c.review.destination }),
+    trigger,
+    ...(projectId && { projectId }),
+  }));
+  return port.open(calls);
+}
+
+/**
+ * AP02: the decisions of a resumed inbox wait, from the record (the truth), never from the resume's word alone. `approved` and
+ * `denied` are the record's; on a timeout a `waiting` record is settled `expired` (and if another door won the race, its word
+ * stands); an expired, denied or cancelled call is denied to the agent with the refusal as its result and the settled line as its
+ * decidedLine. An approval the record does not say fails closed: the node stops rather than run the call.
+ */
+async function inboxDecisions(
+  ctx: IExecuteContext,
+  wait: { ids: Record<string, string>; expiresAt: string; minutes: number },
+  resume: { kind: string; data?: JsonObject } | undefined,
+  calls: Array<{ callId: string; tool: string; decision?: 'approved' | 'denied'; input: Record<string, unknown> }>,
+  labels: Map<string, string>,
+  itemIndex: number,
+) {
+  const port = inboxPort();
+  if (!port) throw new NodeOperationError('This host has no approval inbox, so this approval cannot be settled', { itemIndex });
+  const given = decisionsOf(resume);
+  const decisions: ReturnType<typeof decisionsOf> = {};
+  const extra: Record<string, { line: string; refusal?: string }> = {};
+  const executionId = ctx.getExecutionId();
+  for (const call of calls) {
+    if (call.decision) continue;
+    let outcome = port.outcome(executionId, call.callId);
+    if (outcome?.status === 'waiting' || !outcome) {
+      if (resume?.kind === 'timeout' || !outcome) outcome = (await port.settle(executionId, call.callId, 'expired')).outcome;
+      else if (given[call.callId] && !given[call.callId].approved) outcome = { status: 'denied', ...(given[call.callId].by && { by: given[call.callId].by }), via: 'inbox', at: given[call.callId].at ?? new Date().toISOString() };
+      else throw new NodeOperationError('The approval inbox has no decision for this tool call', { itemIndex });
+    }
+    const label = labels.get(call.callId) ?? call.tool;
+    const view = { status: outcome.status, tool: label, ...(outcome.byName && { decidedByName: outcome.byName }), ...(outcome.by && { decidedBy: outcome.by }), ...(outcome.via && { decidedVia: outcome.via }), ...(outcome.at && { decidedAt: outcome.at }) };
+    const line = settledLine(view, clock);
+    if (outcome.status === 'approved') {
+      decisions[call.callId] = { approved: true, ...(outcome.by && { by: outcome.by }), ...(given[call.callId]?.approved && given[call.callId].input && { input: given[call.callId].input }) };
+      extra[call.callId] = { line };
+    } else if (outcome.status === 'waiting') throw new NodeOperationError('The approval inbox has no decision for this tool call', { itemIndex });
+    else {
+      decisions[call.callId] = { approved: false, ...(outcome.by && { by: outcome.by }) };
+      extra[call.callId] = { line, refusal: refusedResult(outcome.status, label, outcome.byName ?? outcome.by, wait.minutes) };
+    }
+  }
+  return { decisions, extra };
+}
 
 /** AG23: the Spotlight test run this execution belongs to, if any (kept on its record by the run route; it survives a wait). */
 async function spotlightRunOf(executionId: string) {
