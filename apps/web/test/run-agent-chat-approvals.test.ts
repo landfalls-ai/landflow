@@ -27,6 +27,7 @@ const { runWorkflow } = await import('@/lib/server/runner');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { decideApproval } = await import('@/lib/server/approvals');
 const { starterFlow } = await import('@/lib/shared/agent-card');
+const { registerInboxPort } = await import('@/lib/server/approval-inbox/port'); // AP02:
 
 registry.registerBuiltin(corePlugin);
 
@@ -279,7 +280,8 @@ describe('Run an Agent, Tool Approvals', () => {
 
   it.each([
     ['chat mode with Refuse (the default)', {}, 'chat'],
-    ['webhook mode with Ask in the editor’s chat', { toolApprovals: 'askInChat' }, 'webhook'],
+    ['webhook mode with Ask in the editor’s chat and no approval inbox on the host (AP02: with an inbox it waits, below)', { toolApprovals: 'askInChat' }, 'webhook'],
+    ['webhook mode with Refuse, even with an approval inbox (AP02)', { toolApprovals: 'refuse' }, 'webhook'],
     ['manual mode with Ask in the editor’s chat', { toolApprovals: 'askInChat' }, 'manual'],
   ] as const)('refuses as before: %s', async (_name, parameters, mode) => {
     script = (t) => (t === 1 ? { toolCalls: [call(WRITE, { to: 'a' }, 'c_send')] } : { text: 'Could not send.' });
@@ -287,6 +289,24 @@ describe('Run an Agent, Tool Approvals', () => {
     expect(record.status).toBe('success');
     expect(toolResults[0]).toContain("needs a person's approval");
     expect(out(record).steps).toEqual([expect.objectContaining({ tool: WRITE, status: 'denied' })]);
+  });
+
+  it('AP02: webhook mode with Ask waits when the host has an approval inbox (the twin above refuses with none, or with Refuse)', async () => {
+    const opened: unknown[] = [];
+    registerInboxPort({ open: async (calls) => (opened.push(...calls), { ids: Object.fromEntries(calls.map((c) => [c.callId, 'ib_1'])), expiresAt: new Date(Date.now() + 3_600_000).toISOString(), minutes: 60 }), outcome: () => undefined, settle: async (_e, _c, to) => ({ won: false, outcome: { status: to } }), view: () => undefined });
+    try {
+      script = (t) => (t === 1 ? { toolCalls: [call(WRITE, { to: 'a' }, 'c_send')] } : { text: 'Could not send.' });
+      const record = await run(flow({ toolApprovals: 'askInChat' }), 'webhook');
+      expect(record.status).toBe('waiting');
+      expect(opened).toHaveLength(1);
+      expect(toolResults).toEqual([]);
+      // Refuse still refuses with an inbox on the host.
+      const refused = await run(flow({ toolApprovals: 'refuse' }), 'webhook');
+      expect(refused.status).toBe('success');
+      expect(toolResults[0]).toContain("needs a person's approval");
+    } finally {
+      registerInboxPort(undefined as never);
+    }
   });
 
   it('the starter flow asks in the chat; a flow saved without the setting refuses', () => {
