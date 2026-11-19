@@ -153,6 +153,12 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'project.workspace.update': 'Changed a project’s workspace',
   'project.brief_changed': 'Changed a project’s brief',
   'project.settings.update': 'Changed a project’s settings',
+  // NB03:
+  'notion-brain.link': 'Linked a project to a Notion page',
+  'notion-brain.update': 'Changed a project’s Notion link',
+  'notion-brain.unlink': 'Disconnected a project from Notion',
+  'notion-brain.sync': 'Asked for a Notion sync',
+  'notion-brain.problem': 'Resolved a Notion sync problem',
   'project.goals_changed': 'Changed a project’s goals',
   'project.budget.update': 'Changed a project’s AI budget',
   'project.budget.stopped': 'A project reached its AI budget',
