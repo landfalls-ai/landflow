@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Workflow, WorkflowNode } from '@landflow/engine';
+import { defineNode, definePlugin } from '@landflow/sdk';
 
 const ENV = { LANDFLOW_DATA_DIR: mkdtempSync(join(tmpdir(), 'landflow-inbox-lines-')), LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '' };
 const previousEnv = { ...process.env };
@@ -26,6 +27,13 @@ const route = await import('@/app/api/workflows/[id]/unattended-approvals/route'
 import type { InboxPort } from '@/lib/server/approval-inbox/port';
 
 registry.registerBuiltin(corePlugin);
+// A plugin's trigger whose source is `chat` (a chat app's messages): it can wait, unlike the hosted chat page (core.chatTrigger).
+registry.registerBuiltin(
+  definePlugin({
+    info: { id: 'chatapp', name: 'Chat app', version: '1.0.0' },
+    nodes: [defineNode({ description: { name: 'chatMessage', displayName: 'Chat message', description: 'A chat app message', version: 1, kind: 'trigger', triggerSource: 'chat', inputs: [], outputs: [{ type: 'main' }], properties: [] } as never, async execute() { return [[]]; } } as never)],
+  }),
+);
 afterAll(() => {
   for (const key of [...Object.keys(ENV), EXPIRY_VARIABLE]) {
     if (previousEnv[key] === undefined) delete process.env[key];
@@ -88,6 +96,17 @@ describe('GET /api/workflows/:id/unattended-approvals (the publish card’s line
     expect((await ask(flow('core.mcpTrigger', triager.id).id, '?version=draft')).body).toEqual([expect.objectContaining({ trigger: 'MCP call', outcome: 'refuses', why: 'mcp', line: refusesLine('Send Email', 'MCP call', 'mcp') })]);
     expect((await ask(flow('core.chatTrigger', triager.id).id, '?version=draft')).body).toEqual([expect.objectContaining({ trigger: 'chat', outcome: 'refuses', why: 'hostedChat', line: refusesLine('Send Email', 'chat', 'hostedChat') })]);
     expect((await ask(flow('core.manualTrigger', triager.id).id, '?version=draft')).body).toEqual([]);
+  });
+
+  it('a plugin chat trigger keeps its own word: it waits while the hosted chat page beside it refuses, and the refusal never merges away', async () => {
+    const wf = flow('core.chatTrigger', triager.id);
+    store.saveWorkflow({ ...wf, nodes: [...wf.nodes, node('Chat app', 'chatapp.chatMessage')], connections: [...wf.connections, { id: 'c', type: 'main', source: 'Chat app', target: 'Agent', sourceIndex: 0, targetIndex: 0 }] });
+    const lines = (await ask(wf.id, '?version=draft')).body;
+    expect(lines).toHaveLength(2);
+    expect(lines).toEqual(expect.arrayContaining([expect.objectContaining({ trigger: 'chat', outcome: 'refuses', why: 'hostedChat' }), expect.objectContaining({ trigger: 'chat app', outcome: 'waits' })]));
+    const { unattendedTrigger } = await import('@/lib/server/agents/unattended');
+    expect(unattendedTrigger('chatapp.chatMessage')).toBe('chat app');
+    expect(unattendedTrigger('core.chatTrigger')).toBe('chat');
   });
 
   it('a step set to Refuse (or saved with no value), a wired model and a host with no inbox refuse, with their reasons', async () => {

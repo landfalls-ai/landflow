@@ -442,20 +442,27 @@ async function runGraph(executionId: string, workflowId: string | undefined) {
 
 /**
  * Wave ap1: why a run that is no editor's cannot wait for an approval, whatever its execution mode: the hosted chat page
- * (`core.chatTrigger`, started in mode 'webhook') cannot show one and an MCP call answers its caller at once, also for a
- * workflow such a run called. Read from the run's `triggerType` and its parents'; undefined for every other trigger.
+ * (`core.chatTrigger`, started in mode 'webhook') cannot show one and an MCP call answers its caller at once. Read from the run's
+ * own record only: a workflow such a run called was stamped with that trigger when it started (runner/run.ts), so no parent has to
+ * be found later. A run with no `triggerType` (one that waits across the upgrade) is judged by the first node it ran: unless that
+ * is a known trigger that can wait, it refuses (fail closed); undefined for every trigger that can wait.
  */
 async function triggerRefusal(executionId: string): Promise<RefuseWhy | undefined> {
   const { liveExecution } = await import('../runner');
   const { store } = await import('../store');
-  let id: string | undefined = executionId;
-  for (let depth = 0; id && depth <= 16; depth++) {
-    const record: ExecutionRecord | undefined = liveExecution(id) ?? (await store.loadExecution(id));
-    if (!record) return undefined;
-    if (record.mode === 'mcp' || record.triggerType === 'core.mcpTrigger') return 'mcp';
-    if (record.triggerType === 'core.chatTrigger') return 'hostedChat';
-    id = record.parentExecutionId;
+  const record: ExecutionRecord | undefined = liveExecution(executionId) ?? (await store.loadExecution(executionId));
+  if (!record) return 'hostedChat';
+  if (record.mode === 'mcp') return 'mcp';
+  let type = record.triggerType;
+  if (!type) {
+    const { workflow } = await runGraph(executionId, record.workflowId);
+    const first = record.executionOrder[0];
+    type = first ? workflow?.nodes.find((n) => n.id === first || n.name === first)?.type : undefined;
+    const { unattendedTrigger } = await import('../agents/unattended');
+    if (!type || (!unattendedTrigger(type) && type !== 'core.manualTrigger')) return 'hostedChat';
   }
+  if (type === 'core.mcpTrigger') return 'mcp';
+  if (type === 'core.chatTrigger') return 'hostedChat';
   return undefined;
 }
 

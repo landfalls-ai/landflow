@@ -60,7 +60,7 @@ const { corePlugin } = await import('@/lib/server/nodes');
 const { plugin: messaging } = await import('../../../plugins/messaging/src/main');
 const { store } = await import('@/lib/server/store');
 const { waits } = await import('@/lib/server/waits');
-const { runWorkflow, cancelWaitingExecution } = await import('@/lib/server/runner');
+const { runWorkflow, cancelWaitingExecution, planRetry } = await import('@/lib/server/runner');
 const { publishDraft } = await import('@/lib/server/publish');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { credentials } = await import('@/lib/server/credentials/vault');
@@ -494,6 +494,84 @@ describe('6. publish lines agree with the runtime, for every trigger word', () =
       expect((await linesOf(wf.id))[0]).toMatchObject({ outcome: 'waits', expiresAfterMinutes: 10, line: waitLine(SEND, 'webhook', 10) });
     } finally {
       delete process.env[EXPIRY_VARIABLE];
+    }
+  });
+});
+
+describe('6b. publish lines agree with the runtime for a roster target, a called workflow and a retry (fix pass 2)', () => {
+  const agentNode = (id: string) => node(id, 'core.messageAgent', { agentId: mailer.id, message: 'Email on-call about the alert', conversation: 'new', toolApprovals: 'askInChat' });
+  const publishFlow = async (wf: Workflow) => {
+    store.saveWorkflow(wf);
+    projects.setHomeProject('workflow', wf.id, P);
+    await publishDraft(wf.id, owner.id, 'ap1 joins');
+    return store.getWorkflow(wf.id)!;
+  };
+  const noRequests = async (wfId: string) => expect((await listFor(wfId)).length).toBe(0);
+
+  it('a hosted chat whose visitor picks a roster target: every line refuses with the hosted chat as why, and the run refuses with no request and no mail', async () => {
+    const n = ++flows;
+    const wf = await publishFlow({
+      id: `wf_ap1_roster_${n}`,
+      name: `Roster ${n}`,
+      nodes: [node('Start', 'core.chatTrigger', { public: true, responseMode: 'lastNode', roster: { agent: [{ key: 'ops', label: 'Ops', target: 'Ops' }] } }), agentNode('Lead'), agentNode('Ops')],
+      connections: [edge('Start', 'Lead')],
+    });
+    const lines = await linesOf(wf.id);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) expect(line).toMatchObject({ trigger: 'chat', outcome: 'refuses', why: 'hostedChat' });
+    const sent = toOncall().length;
+    const answer = await chatRoute.POST(new Request(`http://joins.test/chat/${wf.id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: `visitor-roster-${n}`, message: 'Email on-call about the alert', agentKey: 'ops' }) }), { params: Promise.resolve({ path: [wf.id] }) });
+    const body = (await answer.json()) as { executionId?: string; status?: string };
+    expect(body.status).not.toBe('waiting');
+    const run = store.getExecution(body.executionId ?? store.listExecutions({ workflowId: wf.id })[0]!.id)!;
+    expect(run.triggerType).toBe('core.chatTrigger');
+    expect(run.runData.Ops).toBeDefined();
+    await noRequests(wf.id);
+    expect(toOncall()).toHaveLength(sent);
+  });
+
+  it('a called workflow waits when a webhook run called it and refuses when a hosted chat run did, while its own line says it waits', async () => {
+    const n = ++flows;
+    const child = await publishFlow({ id: `wf_ap1_child_${n}`, name: `Child ${n}`, nodes: [node('Start', 'core.workflowTrigger'), agentNode('Agent')], connections: [edge('Start', 'Agent')] });
+    expect(await linesOf(child.id)).toEqual([expect.objectContaining({ trigger: 'called workflow', outcome: 'waits' })]);
+    const call = (parentRun: string) => runWorkflow({ workflow: child, mode: 'webhook', startNodeId: 'Start', triggerItems: [{ json: { alert: 'disk full' } }], parent: { executionId: parentRun } });
+    const sent = toOncall().length;
+    // From a hosted chat run: refuses, the parent need not even exist any more.
+    const chat = await published('core.chatTrigger', 'refuse');
+    const chatRun = (await runWorkflow({ workflow: chat, mode: 'webhook', startNodeId: 'Start', triggerType: 'core.chatTrigger', triggerItems: [{ json: { chatInput: 'hi' } }] })).executionId;
+    store.deleteExecution(chatRun);
+    const refused = await call(chatRun);
+    expect(refused.status).toBe('success');
+    expect(agentOut(refused.executionId).steps).toEqual([expect.objectContaining({ tool: WRITE, status: 'denied' })]);
+    await noRequests(child.id);
+    // From a webhook run: waits.
+    const hookWf = await published('core.webhook', 'refuse');
+    const hookRun = (await runWorkflow({ workflow: hookWf, mode: 'webhook', startNodeId: 'Start', triggerItems: [{ json: {} }] })).executionId;
+    const waits = await call(hookRun);
+    expect(waits.status).toBe('waiting');
+    expect((await listFor(child.id)).filter((r) => r.executionId === waits.executionId)).toHaveLength(1);
+    cancelWaitingExecution(waits.executionId);
+    expect(toOncall()).toHaveLength(sent);
+  });
+
+  it('an automatic retry of a failed hosted-chat run refuses as its line says, and the retry of a webhook run waits as its line says', async () => {
+    for (const [trigger, expected] of [['core.chatTrigger', 'refuses'], ['core.webhook', 'waits']] as const) {
+      const wf = await published(trigger);
+      expect((await linesOf(wf.id))[0]).toMatchObject({ outcome: expected });
+      const source = (await runWorkflow({ workflow: wf, mode: 'webhook', startNodeId: 'Start', triggerType: trigger, triggerItems: [{ json: { chatInput: 'Email on-call about the alert' } }] })).executionId;
+      if (expected === 'waits') cancelWaitingExecution(source);
+      store.patchExecution(source, { status: 'error', error: { message: 'boom', nodeId: 'Agent' } });
+      const retried = await runWorkflow({ ...planRetry(source, { automatic: true }), bypassConcurrency: true });
+      expect(retried.triggerType).toBe(trigger);
+      const requests = (await listFor(wf.id)).filter((r) => r.executionId === retried.executionId);
+      if (expected === 'waits') {
+        expect(retried.status).toBe('waiting');
+        expect(requests).toHaveLength(1);
+        cancelWaitingExecution(retried.executionId);
+      } else {
+        expect(retried.status).toBe('success');
+        expect(requests).toHaveLength(0);
+      }
     }
   });
 });

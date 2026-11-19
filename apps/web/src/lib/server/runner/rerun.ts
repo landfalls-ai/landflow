@@ -38,18 +38,20 @@ export function planRerun(sourceId: string, request: RerunRequest, workflowOverr
     workflowOverride ?? (request.version === 'original' && source.workflow ? source.workflow : (store.getWorkflow(source.workflowId) ?? source.workflow));
   if (!workflow) throw new RerunError('The workflow of this execution no longer exists', 404);
   const rerunOf: RerunOf = { executionId: source.executionId, scope: request.scope, ...(request.nodeId && { nodeId: request.nodeId }) };
+  // Wave ap1: the replay keeps the trigger that started the source (a hosted-chat run that began at a roster target has no trigger node to start from).
+  const trigger = source.triggerType ? { triggerType: source.triggerType } : {};
 
   if (request.scope === 'all') {
     const start = recordedStart(source);
     const startNodeId = start.nodeId && workflow.nodes.some((n) => n.id === start.nodeId) ? start.nodeId : undefined;
     // A poll's run replays the items that poll found, rather than polling again.
     const polled = source.mode === 'poll' && startNodeId ? source.runData[startNodeId]?.find((run) => run.source === 'main')?.outputs[0] : undefined;
-    if (polled) return { workflow, mode: source.mode, startNodeId, triggerOutput: { nodeId: startNodeId!, items: polled }, rerunOf };
-    return { workflow, mode: source.mode, startNodeId, triggerItems: start.items, rerunOf };
+    if (polled) return { workflow, mode: source.mode, startNodeId, triggerOutput: { nodeId: startNodeId!, items: polled }, rerunOf, ...trigger };
+    return { workflow, mode: source.mode, startNodeId, triggerItems: start.items, rerunOf, ...trigger };
   }
   if (!request.nodeId) throw new RerunError('nodeId is required to re-run from a node');
   if (!workflow.nodes.some((n) => n.id === request.nodeId)) throw new RerunError('That node is not in the workflow any more');
-  return { workflow, mode: source.mode, partial: { executionId: source.executionId, nodeId: request.nodeId, scope: request.scope }, rerunOf };
+  return { workflow, mode: source.mode, partial: { executionId: source.executionId, nodeId: request.nodeId, scope: request.scope }, rerunOf, ...trigger };
 }
 
 export interface RetryRequest {
@@ -79,12 +81,13 @@ export function planRetry(sourceId: string, request: RetryRequest = {}): Omit<Ru
   const starter = request.automatic && source.startedBy ? { startedBy: source.startedBy } : {};
   const fromFailed = request.from !== 'start';
   const rerun = source.rerunOf ? { rerunOf: source.rerunOf } : {};
-  if (fromFailed && workflow === original && store.getCheckpoint(sourceId)) return { workflow, mode: source.mode, retry, ...starter, ...rerun, fromCheckpoint: { executionId: sourceId } };
+  const trigger = source.triggerType ? { triggerType: source.triggerType } : {}; // wave ap1: a retry keeps the trigger of the run it retries
+  if (fromFailed && workflow === original && store.getCheckpoint(sourceId)) return { workflow, mode: source.mode, retry, ...starter, ...rerun, ...trigger, fromCheckpoint: { executionId: sourceId } };
   const failedNode = source.error?.nodeId;
   const scope = fromFailed && failedNode && workflow.nodes.some((node) => node.id === failedNode) ? { scope: 'from' as const, nodeId: failedNode } : { scope: 'all' as const };
   // Not a re-run of the failed run, but a retry of a re-run is still one: its source's link is kept (nodes/briefing.ts reads it).
   const { rerunOf: _rerunOf, ...options } = planRerun(sourceId, scope, workflow);
-  return { ...options, retry, ...starter, ...rerun };
+  return { ...options, retry, ...starter, ...rerun, ...trigger };
 }
 
 /**

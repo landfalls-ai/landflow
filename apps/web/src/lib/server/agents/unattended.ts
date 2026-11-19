@@ -34,6 +34,7 @@ const CORE_TRIGGER_WORDS: Record<string, string> = {
   'core.detectorTrigger': 'detector',
   'core.capRaiseTrigger': 'cap raise',
   'core.errorTrigger': 'error workflow',
+  // A call from a hosted chat or MCP run refuses (the called run keeps its caller's trigger), which this line cannot know: it reads the workflow alone (docs/approval-inbox.md).
   'core.workflowTrigger': 'called workflow',
   'core.executeWorkflowTrigger': 'called workflow',
   'core.mcpTrigger': 'MCP call',
@@ -50,7 +51,9 @@ export function unattendedTrigger(type: string): string | undefined {
   if ('error' in resolved || resolved.descriptor.kind !== 'trigger') return undefined;
   const source = resolved.descriptor.triggerSource;
   if (source === 'manual') return 'trigger';
-  return source === 'webhook' || source === 'schedule' || source === 'chat' ? source : 'app trigger';
+  // A plugin's chat source is no hosted chat page (core.chatTrigger says `chat` and refuses): its own word, so the two never merge into one line.
+  if (source === 'chat') return 'chat app';
+  return source === 'webhook' || source === 'schedule' ? source : 'app trigger';
 }
 
 /** What `which` of a workflow answers: the published version (its production copy, agents at their pins), a saved version by number, else the draft. */
@@ -88,8 +91,8 @@ export function unattendedApprovals(workflowId: string, version?: number | 'draf
     if (!word) continue;
     const why = triggerRefuses(n.type);
     const known = triggers.get(word);
-    // A word that some trigger can wait for waits (a flow with a webhook and an MCP trigger: the webhook's runs wait; the MCP trigger has its own word).
-    if (!known || (known.why && !why)) triggers.set(word, { word, ...(why && { why }) });
+    // Words are distinct per behaviour; if one is ever shared, the refusal wins.
+    if (!known || (!known.why && why)) triggers.set(word, { word, ...(why && { why }) }); // a word that refuses for one trigger refuses (fail closed)
   }
   if (!triggers.size) return [];
   const minutes = expiryMinutes(envString(EXPIRY_VARIABLE));

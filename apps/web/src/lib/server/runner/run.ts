@@ -101,11 +101,15 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
   let depth = 0;
   let evaluation = options.evaluation;
   let parentStarter: string | undefined;
+  // Wave ap1: a run an outsider started that cannot wait (the hosted chat, an MCP call) hands that to the workflows it calls, stamped
+  // now while its record is readable; a parent that cannot be read refuses too (fail closed), never opens an approval request.
+  let inheritedTrigger: string | undefined;
   if (options.parent) {
     const parentEntry = live.get(options.parent.executionId);
     const parentRecord = parentEntry?.record ?? store.getExecution(options.parent.executionId);
     depth = (parentRecord?.depth ?? 0) + 1;
     parentStarter = parentRecord?.startedBy;
+    inheritedTrigger = !parentRecord ? 'core.chatTrigger' : parentRecord.mode === 'mcp' || parentRecord.triggerType === 'core.mcpTrigger' ? 'core.mcpTrigger' : parentRecord.triggerType === 'core.chatTrigger' ? 'core.chatTrigger' : undefined;
     evaluation ??= parentRecord?.evaluation;
     if (depth > MAX_WORKFLOW_DEPTH) throw new Error(`Sub-workflows can be nested at most ${MAX_WORKFLOW_DEPTH} levels deep`);
     // Linked both ways: the parent lists its sub-executions, the child names its parent.
@@ -119,7 +123,13 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
   const versionId = version?.id;
   const startedBy = options.parent ? parentStarter : starterOf(options);
   const startId = options.triggerOutput?.nodeId ?? options.startNodeId;
-  const triggerType = options.triggerType ?? (startId ? options.workflow.nodes.find((n) => n.id === startId)?.type : undefined);
+  // A retry or re-run keeps the trigger type of the run it replays (`options.triggerType` from the plan; else its source's record), not its start node's.
+  const triggerType =
+    options.triggerType ??
+    inheritedTrigger ??
+    source?.triggerType ??
+    (options.fromCheckpoint ? store.getExecution(options.fromCheckpoint.executionId)?.triggerType : undefined) ??
+    (startId ? options.workflow.nodes.find((n) => n.id === startId)?.type : undefined);
   const record: ExecutionRecord = {
     executionId,
     workflowId: options.workflow.id,

@@ -12,6 +12,7 @@ import { toToolName, type ExecutionMode, type Workflow, type WorkflowNode } from
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { startFakeModels, type FakeReply } from './fake-ai-services';
+import { REFUSE_WHY } from '@/lib/shared/approval-inbox';
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -23,7 +24,7 @@ Object.assign(process.env, ENV);
 const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
 const { store } = await import('@/lib/server/store');
-const { runWorkflow } = await import('@/lib/server/runner');
+const { runWorkflow, planRetry, planRerun } = await import('@/lib/server/runner');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { decideApproval } = await import('@/lib/server/approvals');
 const { starterFlow } = await import('@/lib/shared/agent-card');
@@ -285,9 +286,11 @@ describe('Run an Agent, Tool Approvals', () => {
     ['manual mode with Ask in the editor’s chat', { toolApprovals: 'askInChat' }, 'manual'],
   ] as const)('refuses as before: %s', async (_name, parameters, mode) => {
     script = (t) => (t === 1 ? { toolCalls: [call(WRITE, { to: 'a' }, 'c_send')] } : { text: 'Could not send.' });
-    const record = await run(flow({ ...parameters }), mode);
+    // A webhook-mode case is built behind a webhook trigger: behind the hosted chat's trigger it would refuse for that reason instead.
+    const record = await run(flow({ ...parameters }, mode === 'webhook' ? 'core.webhook' : 'core.chatTrigger'), mode);
     expect(record.status).toBe('success');
     expect(toolResults[0]).toContain("needs a person's approval");
+    expect(toolResults[0]).not.toContain(REFUSE_WHY.hostedChat);
     expect(out(record).steps).toEqual([expect.objectContaining({ tool: WRITE, status: 'denied' })]);
   });
 
@@ -348,6 +351,129 @@ describe('Run an Agent, Tool Approvals', () => {
     } finally {
       registerInboxPort(undefined as never);
     }
+  });
+
+  describe('wave ap1 fix pass 2: the refusal follows retries, re-runs and called workflows', () => {
+    const port = (opened: unknown[]) =>
+      registerInboxPort({ open: async (calls) => (opened.push(...calls), { ids: Object.fromEntries(calls.map((c) => [c.callId, 'ib_1'])), expiresAt: new Date(Date.now() + 3_600_000).toISOString(), minutes: 60 }), outcome: () => undefined, settle: async (_e, _c, to) => ({ won: false, outcome: { status: to } }), view: () => undefined });
+    const asks = () => (script = (t) => (t === 1 ? { toolCalls: [call(WRITE, { to: 'a' }, 'c_send')] } : { text: 'Could not send.' }));
+    const start = (wf: Workflow, over: Record<string, unknown> = {}) => {
+      turn = 0;
+      toolResults.length = 0;
+      return runWorkflow({ workflow: wf, mode: 'webhook', startNodeId: 'Agent', triggerItems: [{ json: { chatInput: 'Email oncall' } }], ...over } as never);
+    };
+    const failed = (id: string) => store.patchExecution(id, { status: 'error', error: { message: 'boom', nodeId: 'Agent' } });
+    const refused = (record: Awaited<ReturnType<typeof start>>, why: string) => {
+      expect(record.error?.message).toBeUndefined();
+      expect(record.status).toBe('success');
+      expect(toolResults[0]).toContain(why);
+    };
+
+    it('B1: an automatic retry of a failed hosted-chat run (from its failed node, and the plan from its checkpoint) and a whole re-run refuse, opening no request', async () => {
+      const opened: unknown[] = [];
+      port(opened);
+      try {
+        asks();
+        const wf = flow({ toolApprovals: 'askInChat' });
+        const source = await start(wf, { triggerType: 'core.chatTrigger' });
+        failed(source.executionId);
+        const plan = planRetry(source.executionId, { automatic: true });
+        expect(plan.partial).toBeTruthy();
+        expect(plan.triggerType).toBe('core.chatTrigger');
+        const retried = await start(wf, plan);
+        expect(retried.triggerType).toBe('core.chatTrigger');
+        refused(retried, 'the hosted chat page cannot show an approval');
+        // The plan that continues from the failed run's checkpoint carries it too.
+        store.saveCheckpoint(source.executionId, { stepId: 'start', steps: 0, state: {} as never });
+        expect(planRetry(source.executionId, { automatic: true }).triggerType).toBe('core.chatTrigger');
+        // A whole re-run of the roster-target run starts at the Run an Agent step, which is no trigger.
+        const again = await start(wf, planRerun(source.executionId, { scope: 'all' }));
+        expect(again.triggerType).toBe('core.chatTrigger');
+        refused(again, 'the hosted chat page cannot show an approval');
+        expect(opened).toEqual([]);
+      } finally {
+        registerInboxPort(undefined as never);
+      }
+    });
+
+    it('B1 twin: the same retry of a webhook run waits', async () => {
+      const opened: unknown[] = [];
+      port(opened);
+      try {
+        asks();
+        const wf = flow({ toolApprovals: 'askInChat' }, 'core.webhook');
+        const source = await start(wf, { startNodeId: 'Start', triggerType: undefined });
+        expect(source.status).toBe('waiting');
+        expect(opened).toHaveLength(1);
+        failed(source.executionId);
+        const retried = await start(wf, planRetry(source.executionId, { automatic: true }));
+        expect(retried.triggerType).toBe('core.webhook');
+        expect(retried.status).toBe('waiting');
+        expect(opened).toHaveLength(2);
+      } finally {
+        registerInboxPort(undefined as never);
+      }
+    });
+
+    it('B2: a workflow a hosted-chat run called refuses even when the parent record is gone, and when it is no longer readable at all', async () => {
+      const opened: unknown[] = [];
+      port(opened);
+      try {
+        asks();
+        const parent = await start(flow({ toolApprovals: 'refuse' }), { triggerType: 'core.chatTrigger' });
+        const child = flow({ toolApprovals: 'askInChat' }, 'core.workflowTrigger');
+        // Stamped from the parent while it is readable ...
+        store.deleteExecution(parent.executionId); // ... and deleted before the child reaches its agent (saveSuccessfulExecutions off)
+        const called = await start(child, { startNodeId: 'Start', triggerType: undefined, parent: { executionId: parent.executionId } });
+        refused(called, 'cannot show an approval');
+        expect(opened).toEqual([]);
+        // A readable parent hands its trigger over at creation.
+        const live = await start(flow({ toolApprovals: 'refuse' }), { triggerType: 'core.chatTrigger' });
+        const stamped = await start(child, { startNodeId: 'Start', triggerType: undefined, parent: { executionId: live.executionId } });
+        expect(stamped.triggerType).toBe('core.chatTrigger');
+        refused(stamped, 'the hosted chat page cannot show an approval');
+        // An MCP parent hands over MCP.
+        const mcp = await start(flow({ toolApprovals: 'refuse' }, 'core.mcpTrigger'), { mode: 'mcp', startNodeId: 'Start' });
+        const viaMcp = await start(child, { startNodeId: 'Start', triggerType: undefined, parent: { executionId: mcp.executionId } });
+        expect(viaMcp.triggerType).toBe('core.mcpTrigger');
+        // And a webhook parent's called workflow waits.
+        const hook = await start(flow({ toolApprovals: 'refuse' }, 'core.webhook'), { startNodeId: 'Start' });
+        const waits = await start(child, { startNodeId: 'Start', triggerType: undefined, parent: { executionId: hook.executionId } });
+        expect(waits.status).toBe('waiting');
+        expect(opened).toHaveLength(1);
+      } finally {
+        registerInboxPort(undefined as never);
+      }
+    });
+
+    it('a run from before the wave has no triggerType: the first node it ran decides, and a node that is no trigger refuses', async () => {
+      const opened: unknown[] = [];
+      port(opened);
+      try {
+        asks();
+        const unstamped = (id: string) => {
+          const { triggerType: _gone, ...old } = store.getExecution(id)!;
+          store.saveExecution(old as never);
+        };
+        // A webhook run (its first node is the webhook): replayed from its Agent step it still waits.
+        const hookFlow = flow({ toolApprovals: 'askInChat' }, 'core.webhook');
+        const hook = await start(hookFlow, { startNodeId: 'Start' });
+        unstamped(hook.executionId);
+        const again = await start(hookFlow, { partial: { executionId: hook.executionId, nodeId: 'Agent', scope: 'from' }, startNodeId: undefined, triggerItems: undefined });
+        expect(again.triggerType).toBeUndefined();
+        expect(again.status).toBe('waiting');
+        // A hosted-chat run that began at its roster target (the Agent step ran first): no stamp, so it refuses.
+        const chatFlow = flow({ toolApprovals: 'askInChat' });
+        const chat = await start(chatFlow, { triggerType: 'core.chatTrigger' });
+        unstamped(chat.executionId);
+        const replay = await start(chatFlow, { partial: { executionId: chat.executionId, nodeId: 'Agent', scope: 'from' }, startNodeId: undefined, triggerItems: undefined });
+        expect(replay.triggerType).toBeUndefined();
+        refused(replay, 'cannot show an approval');
+        expect(opened).toHaveLength(2); // the webhook run's own and its replay's; the hosted-chat replay opened none
+      } finally {
+        registerInboxPort(undefined as never);
+      }
+    });
   });
 
   it('the starter flow asks in the chat; a flow saved without the setting refuses', () => {
