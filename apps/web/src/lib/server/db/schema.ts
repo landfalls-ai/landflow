@@ -1947,7 +1947,7 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS approval_inbox_workflow ON approval_inbox (workflow_id)`,
     ],
   },
-  // NB03: a project's link to a Notion page and what the sync keeps about it (docs/features/notion-brain.md); nothing syncs until wave nb2
+  // NB03: a project's link to a Notion page and what the sync keeps about it (docs/features/notion-brain.md)
   {
     version: 2908,
     name: 'notion_brain_links',
