@@ -290,7 +290,7 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   or non-string query are no read, so a tool built on them asks first. A tool a design leaves on the node default becomes the node's
   Select. At run time a tool set up as a read (no approval, stored parameters only read) judges **each call** on the parameters it
   would run with (`holdReason` in `agents/tools.ts`, checked by `agents/runtime.ts`): a call that names another operation or brings SQL
-  that is not one read-only SELECT is held for a person, and an unattended run refuses it with the reason in the run log, and so does the kagent MCP endpoint (`kagent/mcp.ts`, which also serves the Claude Code harness): it cannot pause, so it answers *… kagent cannot pause this call*. The tool's
+  that is not one read-only SELECT is held for a person. In a run nobody watches whose step's Tool Approvals is *Ask* a held read waits in Needs you like any call that asks first ([approval-inbox.md](approval-inbox.md)); where nothing can wait (Tool Approvals *Refuse*, a manual run, the hosted chat, an MCP call) the run refuses it with the reason in the run log, and so does the kagent MCP endpoint (`kagent/mcp.ts`, which also serves the Claude Code harness): it cannot pause, so it answers *… kagent cannot pause this call*. The tool's
   input schema does not offer `operation`, and its SQLite connection is read-only (the plugin's Read Only: `mode=ro`, `_query_only=1`).
   **Pick it** shows on a change card after Apply too, and wherever a Left row says *pick a … credential*; its smoke result also
   reaches the applied build and change cards' status line (a change card still waiting for Apply is left alone).

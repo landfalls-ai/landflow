@@ -1,5 +1,5 @@
 /**
- * AG23, AP02: the asks-first tools a run nobody watches will wait for or refuse, said before publishing (docs/agents.md#production-approvals).
+ * AG23, AP02: the asks-first tools a run nobody watches will wait for or refuse, said before publishing (docs/agents.md#from-workflows).
  *
  * A webhook, schedule, app trigger or form starts a run with no person in the editor. The person's decision of 2026-11-18: a Run
  * an Agent step whose Tool Approvals is Ask pauses at a tool that asks first and waits in Needs you (the approval inbox,

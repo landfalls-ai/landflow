@@ -98,8 +98,7 @@ to run “Send Email”* and the detail the destination and *workflow v4*. A set
 
 ## What you see
 
-Shots are from a development host with made-up requests (the routes answered from fixtures; the server half was not on this
-branch), at 1440 by 900 and 390 by 844.
+Shots are from a development host with made-up requests, at 1440 by 900 and 390 by 844.
 
 - **Home, one and three requests.** *Waiting for your approval · 3* under the four tiles: each row is the tool, *Alert mailer v2 · Alert intake v4*, where it goes, *Waiting for your approval since 06:36 · expires 06:46*, then **Approve**, **Deny** and **Details**. Nothing shows when no request waits.
 - **Details.** The parameters it would run with as a two-column list (`smtpPassword` reads `••••••`), where it goes, *Started by a webhook run*, the agent, the workflow, **Open the run**, since and expires, and the same two buttons. A side-by-side dialog on a desk, a bottom sheet on a phone.
