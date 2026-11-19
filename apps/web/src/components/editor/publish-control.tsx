@@ -152,12 +152,12 @@ export function BlockNotice({ blocks, busy, onChoose, className }: { blocks: Pin
           Ask the owners of {foreign.map((b) => b.name).join(', ')} to publish {foreign.length === 1 ? 'it' : 'them'}: you can use {foreign.length === 1 ? 'it' : 'them'} but not change {foreign.length === 1 ? 'it' : 'them'}.
         </div>
       ) : (
-        <Button variant="primary" size="sm" loading={busy} onClick={() => onChoose('publish-first')}>
+        <Button variant="primary" size="sm" className="h-auto min-h-7 max-w-full self-start whitespace-normal py-1 text-left leading-snug [overflow-wrap:anywhere]" loading={busy} onClick={() => onChoose('publish-first')}>
           <Rocket className="size-3.5" /> Publish {label} first
         </Button>
       )}
       {!never && (
-        <Button variant="ghost" size="sm" disabled={busy} onClick={() => onChoose('as-published')} title="Not what the editor tested">
+        <Button variant="ghost" size="sm" className="h-auto min-h-7 max-w-full self-start whitespace-normal py-1 text-left leading-snug [overflow-wrap:anywhere]" disabled={busy} onClick={() => onChoose('as-published')} title="Not what the editor tested">
           Publish with {first ? `${first.name} v${first.published}` : 'the published versions'} as published
         </Button>
       )}

@@ -118,6 +118,16 @@ describe('the draft card', () => {
     expect(posts.find((p) => p.url.endsWith('/publish'))?.body).toEqual({ agents: 'publish-first' });
   });
 
+  it('the long button texts wrap inside the card (at any width) instead of running past its edge', async () => {
+    await mount({ ...draftOffer, blocks: [{ agentId: 'a1', name: 'Alert triager with a very long name for the card', published: 1, changes: ['Instructions'] }] });
+    for (const label of [/as published$/, /first$/]) {
+      const classes = (button(label)?.className ?? '').split(/\s+/);
+      expect(classes, String(label)).toContain('whitespace-normal');
+      expect(classes, String(label)).toContain('max-w-full');
+      expect(classes, String(label)).not.toContain('whitespace-nowrap');
+    }
+  });
+
   it('without a block the card has Publish', async () => {
     await mount({ ...draftOffer, blocks: undefined });
     await click(/^Publish$/);
