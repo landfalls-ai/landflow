@@ -19,8 +19,8 @@ import { readClient } from './sync';
 
 /** Thrown to end the work on a link whose status was just changed (the caller stops, the next tick sees the new status). */
 export class LinkStopped extends Error {
-  constructor(readonly status: LinkStatus) {
-    super(`The Notion link stopped: ${status}`);
+  constructor(readonly linkStatus: LinkStatus) {
+    super(`The Notion link stopped: ${linkStatus}`);
   }
 }
 

@@ -16,7 +16,7 @@ import { notionKnowledgeCollection } from '../../../shared/notion-brain';
 import { NOTION_DATA_NOTE } from './data-note';
 import { notionBrainLabel, PROJECT_KNOWLEDGE_TOOL, type NotionBrainKnowledge } from '../../../shared/project-policy';
 import type { VectorKnowledgeBaseConfig } from '../../../shared/agents';
-import { ollamaUrl } from '../../config';
+import { envString, ollamaUrl } from '../../config';
 import { database } from '../../db';
 import { notionId, sameId, type NotionClient, type NotionPage } from '../../notion/port';
 import { ollamaEmbeddings } from '../../rag/embeddings';
@@ -90,7 +90,7 @@ const writeCursor = (linkId: string, knowledge: KnowledgeCursor) => setCursors(l
 
 /** The brain's embeddings model (`LANDFLOW_BRAIN_EMBEDDINGS`, as `embedFacts` reads it): undefined when it is off. */
 export function brainEmbeddingsModel(): string | undefined {
-  const model = process.env.LANDFLOW_BRAIN_EMBEDDINGS?.trim();
+  const model = envString('LANDFLOW_BRAIN_EMBEDDINGS');
   return model?.toLowerCase() === 'off' ? undefined : model || 'nomic-embed-text';
 }
 
