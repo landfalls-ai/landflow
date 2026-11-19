@@ -11,6 +11,7 @@ import type { Workflow } from '@landflow/engine';
 import type { UnattendedApproval } from '../../shared/unattended';
 import { EXPIRY_VARIABLE, expiryMinutes, refusesLine, waitLine, type RefuseWhy } from '../../shared/approval-inbox'; // AP02:
 import { inboxPort } from '../approval-inbox/port'; // AP02:
+import { envString } from '../config';
 import { PIN_PARAM } from '../../shared/agent-versions';
 import { registry } from '../plugins/registry';
 import { publishedVersionId } from '../publications';
@@ -91,7 +92,7 @@ export function unattendedApprovals(workflowId: string, version?: number | 'draf
     if (!known || (known.why && !why)) triggers.set(word, { word, ...(why && { why }) });
   }
   if (!triggers.size) return [];
-  const minutes = expiryMinutes(process.env[EXPIRY_VARIABLE]);
+  const minutes = expiryMinutes(envString(EXPIRY_VARIABLE));
   const out: UnattendedApproval[] = [];
   const seen = new Set<string>();
   for (const node of graph.nodes) {

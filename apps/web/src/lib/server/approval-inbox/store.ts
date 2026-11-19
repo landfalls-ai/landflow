@@ -11,6 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import { closedAnswer, EXPIRY_VARIABLE, expiryMinutes, maskParams, type InboxOpen, type InboxRequestView, type InboxStatus, type InboxVia } from '../../shared/approval-inbox';
 import { database, type Database } from '../db';
+import { envString } from '../config';
 import { logger } from '../telemetry/logger';
 import { redactValue } from '../secrets/redact';
 import { store as executions } from '../store';
@@ -69,7 +70,7 @@ const parseJson = <T>(text: string | null | undefined, fallback: T): T => {
 
 /** Open one request per call, once per (execution, call). `new` says which calls got a row now (only those are nudged). */
 export function openRequests(calls: InboxOpen[], now = new Date()): { ids: Record<string, string>; expiresAt: string; minutes: number; created: InboxRow[] } {
-  const minutes = expiryMinutes(process.env[EXPIRY_VARIABLE]);
+  const minutes = expiryMinutes(envString(EXPIRY_VARIABLE));
   const fresh = new Date(now.getTime() + minutes * 60_000).toISOString();
   const ids: Record<string, string> = {};
   const created: InboxRow[] = [];

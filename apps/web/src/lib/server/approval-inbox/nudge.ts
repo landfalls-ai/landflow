@@ -146,7 +146,7 @@ export async function checkApprovalAlerts(now: number, send: (rule: AlertRule, n
   if (!rules.length) return;
   for (const row of rows) {
     if (Date.parse(row.expires_at) <= now) continue;
-    const record = store.getExecution(row.execution_id);
+    const record = await store.loadExecution(row.execution_id);
     if (!record) continue;
     let channels = 0;
     for (const rule of rules) {

@@ -193,7 +193,7 @@ export async function decideApproval(
     // The run may have been cancelled while the claim travelled (queue mode): then there is nothing to record or resume.
     // The row stays as claimed (the claim is one-way, and the cancel's own claim lost): its record says who answered and when, the
     // run's status says nothing ran. Accepted on purpose: undoing a claim would reopen the door the single claim exists to close.
-    const current = store.getExecution(executionId);
+    const current = await store.loadExecution(executionId);
     if (!current || current.status !== 'waiting' || !pendingApproval(current)) throw new ApprovalError(`This execution is ${current?.status ?? 'gone'}, not waiting for an approval`, 409);
     stored = current;
   }

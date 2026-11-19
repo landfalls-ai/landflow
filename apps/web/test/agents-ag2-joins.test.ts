@@ -152,6 +152,7 @@ const { listCases } = await import('@/lib/server/agents/eval-gate');
 const { store } = await import('@/lib/server/store');
 const { credentials } = await import('@/lib/server/credentials/vault');
 const { runWorkflow } = await import('@/lib/server/runner');
+const { waitingOfExecution } = await import('@/lib/server/approval-inbox/store'); // AP02 × AP01: a webhook run with Ask waits in the inbox
 const { enableTestAuth, TEST_OWNER } = await import('@/lib/server/auth/test-bypass');
 const designRoute = await import('@/app/api/agents/design/route');
 const importRoute = await import('@/app/api/agents/import/route');
@@ -440,7 +441,7 @@ describe('2. revise: add and remove, the steps follow (AG09 × AG07 × AG08)', (
 // ---------------------------------------------------------------------------
 
 describe('3. the editor’s chat approves the agent’s write (AG10 × AG08 × SB16)', () => {
-  it('the starter flow asks in the chat; Approve sends one email to the ask’s address with the model’s subject; a webhook run refuses', async () => {
+  it('the starter flow asks in the chat; Approve sends one email to the ask’s address with the model’s subject; a webhook run waits in Needs you (a Refuse twin refuses)', async () => {
     architect.design = propose({ ...AG1_TRIAGE, nodeTools: 'triage.normalizeAlert, triage.extractIocs, messaging.emailSend' });
     architect.cases = REAL_CASES;
     const { id, card } = await designOnEmpty('wf_ag2_chat', TRIAGE_ASK);
@@ -478,12 +479,22 @@ describe('3. the editor’s chat approves the agent’s write (AG10 × AG08 × S
     expect(smtp.mails[0].data).toMatch(/^Subject: Brute force on web-01/m);
     expect(json(smtp.mails[0])).not.toContain('attacker@example.net');
 
-    // The same flow from a webhook: refused, nothing more sent.
+    // The same flow from a webhook (wave ap1, AP02: the person's decision of 2026-11-18): it waits in Needs you, one
+    // approval-inbox request for the held call, nothing more sent until someone approves.
     agentSide.turns = 0;
     const trigger = flow.nodes.find((n) => n.type === 'core.chatTrigger')!;
     const hooked = await runWorkflow({ workflow: flow, mode: 'webhook', startNodeId: trigger.id, triggerItems: [{ json: { chatInput: WAZUH } }] });
-    expect(hooked.status).toBe('success');
-    expect(json(hooked.runData)).toMatch(/needs a person'?s approval|denied/);
+    expect(hooked.status).toBe('waiting');
+    expect(waitingOfExecution(hooked.executionId)).toHaveLength(1);
+    expect(smtp.mails).toHaveLength(1);
+
+    // Twin: the same flow with Tool Approvals Refuse still refuses from a webhook, nothing more sent.
+    agentSide.turns = 0;
+    const refusing = { ...flow, nodes: flow.nodes.map((n) => (n.type === 'core.messageAgent' ? { ...n, parameters: { ...n.parameters, toolApprovals: 'refuse' } } : n)) } as Workflow;
+    const refused = await runWorkflow({ workflow: refusing, mode: 'webhook', startNodeId: trigger.id, triggerItems: [{ json: { chatInput: WAZUH } }] });
+    expect(refused.status).toBe('success');
+    expect(json(refused.runData)).toMatch(/needs a person'?s approval|denied/);
+    expect(waitingOfExecution(refused.executionId)).toHaveLength(0);
     expect(smtp.mails).toHaveLength(1);
   });
 });
