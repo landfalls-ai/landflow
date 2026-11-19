@@ -49,8 +49,8 @@ it. It never calls `api.notion.com` from a test: the only Notion a test talks to
   returned as it came (`incomplete` past 10,000 results).
 - **Limits.** One token bucket per credential id, shared by every link that uses the key: the rate is the highest `rps` any of
   them asked for (2 by default, at most 8), burst 3, and data source queries also take from their own bucket (at most 2.5 a
-  second). Five 429s in a row halve the rate for ten minutes. Rich text is split at 2,000 characters a run, at most 100 runs
-  (beyond that cut with "…"); a page body is cut at a heading before about 4,500 blocks or 450 KB and ends with "Cut here: the
+  second). Five 429s in a row halve the rate for ten minutes. Rich text is split at 2,000 characters a run, counted in UTF-16
+  units as Notion counts them (an emoji is two) and never inside one, at most 100 runs (beyond that cut with "…"); a page body is cut at a heading before about 4,500 blocks or 450 KB and ends with "Cut here: the
   rest is in Landflow".
 - **Errors and retries.** 429 and 529 wait `Retry-After` (or `additional_data.retry_after`, at most 120 s) and go again;
   429 `public_api_request_blocked` is `blocked` and is never retried. 500 backs off with jitter from 1 s to 5 min, at most 6

@@ -194,6 +194,24 @@ describe('the client against the fake', () => {
     await capped.close();
   });
 
+  it('keeps paging after a page shorter than page_size while has_more is true', async () => {
+    const { client } = make();
+    const pages: Record<string, { results: string[]; next_cursor: string | null; has_more: boolean }> = {
+      start: { results: ['a', 'b', 'c'], next_cursor: 'c1', has_more: true },
+      c1: { results: ['d'], next_cursor: 'c2', has_more: true },
+      c2: { results: [], next_cursor: 'c3', has_more: true },
+      c3: { results: ['e', 'f'], next_cursor: null, has_more: false },
+    };
+    const asked: Array<string | undefined> = [];
+    const seen: string[] = [];
+    for await (const item of client.paginate<string>(async (cursor) => {
+      asked.push(cursor);
+      return { object: 'list', ...pages[cursor ?? 'start'] } as never;
+    })) seen.push(item);
+    expect(seen).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
+    expect(asked).toEqual([undefined, 'c1', 'c2', 'c3']);
+  });
+
   it('follows unknown blocks and keeps truncated past the cap', async () => {
     const { client } = make();
     const id = root();
@@ -247,6 +265,15 @@ describe('text, ids and logs', () => {
     expect(richText('a'.repeat(4500))).toHaveLength(3);
     expect(richText('a'.repeat(250_000))).toHaveLength(100);
     expect(richText('a'.repeat(250_000)).at(-1)!.text.content.endsWith('…')).toBe(true);
+    // Notion counts a run in UTF-16 units: 3,000 emoji are 6,000 units, so three runs, none longer than 2,000, no pair split.
+    const emoji = richText('🙂'.repeat(3000));
+    expect(emoji).toHaveLength(3);
+    expect(emoji.every((r) => r.text.content.length <= 2000 && !/^[\uDC00-\uDFFF]|[\uD800-\uDBFF]$/.test(r.text.content))).toBe(true);
+    expect(emoji.map((r) => r.text.content).join('')).toBe('🙂'.repeat(3000));
+    const mixed = richText(`a${'🙂'.repeat(150_000)}`);
+    expect(mixed).toHaveLength(100);
+    expect(mixed.every((r) => r.text.content.length <= 2000)).toBe(true);
+    expect(mixed.at(-1)!.text.content.endsWith('…')).toBe(true);
     expect(plainText([{ type: 'text', text: { content: 'x' }, plain_text: 'xy' }])).toBe('xy');
     const md = Array.from({ length: 1000 }, (_, i) => `## Section ${i}\n\n${'paragraph\n\n'.repeat(4)}`).join('');
     const fit = fitMarkdown(md);

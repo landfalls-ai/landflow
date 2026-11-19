@@ -7,15 +7,28 @@ export const MARKDOWN_BLOCKS = 4500;
 export const MARKDOWN_BYTES = 450_000;
 export const CUT_LINE = 'Cut here: the rest is in Landflow';
 
-/** Rich text for a property: runs of at most 2,000 characters, at most 100 runs; beyond that the text is cut with "…". */
+/**
+ * Rich text for a property: runs of at most 2,000 characters, at most 100 runs; beyond that the text is cut with "…".
+ * A run's length is counted as Notion counts it (UTF-16 units, JavaScript's `.length`), so a run of emoji is not twice too
+ * long, and a run never ends inside a surrogate pair.
+ */
 export function richText(text: string): Array<{ type: 'text'; text: { content: string } }> {
-  const chars = Array.from(text ?? '');
   const runs: string[] = [];
-  for (let i = 0; i < chars.length; i += RICH_TEXT_RUN) runs.push(chars.slice(i, i + RICH_TEXT_RUN).join(''));
+  let run = '';
+  for (const char of text ?? '') {
+    if (run.length + char.length > RICH_TEXT_RUN) {
+      runs.push(run);
+      run = '';
+      if (runs.length > RICH_TEXT_RUNS) break;
+    }
+    run += char;
+  }
+  if (run && runs.length <= RICH_TEXT_RUNS) runs.push(run);
   if (runs.length > RICH_TEXT_RUNS) {
     runs.length = RICH_TEXT_RUNS;
-    const last = Array.from(runs[RICH_TEXT_RUNS - 1]);
-    runs[RICH_TEXT_RUNS - 1] = `${last.slice(0, RICH_TEXT_RUN - 1).join('')}…`;
+    let last = runs[RICH_TEXT_RUNS - 1];
+    while (last.length > RICH_TEXT_RUN - 1) last = Array.from(last).slice(0, -1).join('');
+    runs[RICH_TEXT_RUNS - 1] = `${last}…`;
   }
   return runs.map((content) => ({ type: 'text' as const, text: { content } }));
 }
