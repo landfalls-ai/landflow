@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { useScrollToHash } from '@/lib/client/project-budget-api';
+import { notionLink } from '@/lib/client/notion-brain'; // NB07:
 import {
   fetchAgentSettings,
   parseAgentSettings,
@@ -101,6 +102,7 @@ export function ProjectAgentSettingsView({
   error,
   errorField,
   saved,
+  notionActive = false, // NB07:
 }: {
   state: AgentSettingsState;
   form: AgentSettingsForm;
@@ -111,6 +113,8 @@ export function ProjectAgentSettingsView({
   /** The field the refused PATCH sent (errorFieldOf); without one the error shows at the bottom. */
   errorField?: AgentSettingsErrorField;
   saved: AgentSettingsForm;
+  /** NB07: the project has an active Notion link, so its Notion brain is a choice for the knowledge base. */
+  notionActive?: boolean;
 }) {
   const [picking, setPicking] = useState(false);
   const edit = state.canEdit;
@@ -140,9 +144,22 @@ export function ProjectAgentSettingsView({
               <p className="text-[12px] text-t3">Every agent that runs in this project can search it, as {PROJECT_KNOWLEDGE_TOOL}.</p>
               <p className="mt-1 text-[12.5px] text-t2">{knowledge ? knowledgeLabel(knowledge.tool) : 'None chosen'}</p>
               {edit && (
-                <Button size="sm" variant="outline" className="mt-2 max-md:min-h-[44px]" onClick={() => setPicking(true)}>
-                  {knowledge ? 'Change…' : 'Choose…'}
-                </Button>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" className="max-md:min-h-[44px]" onClick={() => setPicking(true)}>
+                    {knowledge ? 'Change…' : 'Choose…'}
+                  </Button>
+                  {/* NB07: the project's own Notion brain, offered while its link is active. */}
+                  {notionActive && !(knowledge && isNotionBrainKnowledge(knowledge.tool)) && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="max-md:min-h-[44px]"
+                      onClick={() => set({ knowledge: { enabled: true, tool: { id: PROJECT_KNOWLEDGE_TOOL, type: 'knowledge', source: 'notion-brain', name: 'Notion brain', description: 'Search the company’s Notion pages for passages that help answer a question' } } })}
+                    >
+                      This project’s Notion brain
+                    </Button>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -218,6 +235,7 @@ export function ProjectAgentSettings({ projectId }: { projectId: string }) {
   const [error, setError] = useState<string>();
   const [errorField, setErrorField] = useState<AgentSettingsErrorField>();
   const [failed, setFailed] = useState(false);
+  const [notionActive, setNotionActive] = useState(false); // NB07:
   const show = (view: Parameters<typeof parseAgentSettings>[0]) => {
     const next = parseAgentSettings(view);
     setState(next);
@@ -229,6 +247,12 @@ export function ProjectAgentSettings({ projectId }: { projectId: string }) {
     fetchAgentSettings(projectId)
       .then(show)
       .catch(() => setFailed(true));
+  }, [projectId]);
+  // NB07: the Notion brain is a knowledge choice only while the project's link is active.
+  useEffect(() => {
+    notionLink(projectId, true)
+      .then((link) => setNotionActive(link.linked && link.status === 'active'))
+      .catch(() => setNotionActive(false));
   }, [projectId]);
   useScrollToHash('agents', Boolean(state) || failed);
   if (failed) return null;
@@ -245,5 +269,5 @@ export function ProjectAgentSettings({ projectId }: { projectId: string }) {
       setSaving(false);
     }
   };
-  return <ProjectAgentSettingsView state={state} saved={state.form} form={form} onForm={setForm} onSave={() => void save()} saving={saving} error={error} errorField={errorField} />;
+  return <ProjectAgentSettingsView state={state} saved={state.form} form={form} onForm={setForm} onSave={() => void save()} saving={saving} error={error} errorField={errorField} notionActive={notionActive} />;
 }

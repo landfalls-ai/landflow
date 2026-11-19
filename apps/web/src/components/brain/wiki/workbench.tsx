@@ -21,6 +21,7 @@ import { isPhone } from '@/lib/client/use-phone';
 import { cn } from '@/lib/utils';
 import { brainTree, INDEX, indexMarkdown, isPageRef, isPracticeRef, LOG, logMarkdown, outlineOf, pageMarkdown, practiceRef, SETTINGS, urlOf, type BrainTree, type FileRef, type OutlineItem } from '@/lib/shared/brain-files';
 import type { WikiHome, WikiPage, WikiSummary } from '@/lib/shared/brain-wiki';
+import type { LinkProblemView } from '@/lib/shared/notion-brain'; // NB07:
 import { CopyButton } from '../../ui/copy-button';
 import { BrainPanel } from '../brain-panel';
 import { ProposalCard, useProposalActions } from '../proposal-card';
@@ -31,6 +32,7 @@ import { usePracticeList } from './practices-api';
 import { practiceFileName } from './practices-logic';
 import { PracticesView } from './practices-view';
 import { WikiNav } from './parts';
+import { NotionChip, NotionProblems, useNotionBrain } from './notion-status'; // NB07:
 import { ExplorerView, FileIcon, SearchView, TimelineView, type Opener } from './side-views';
 import { lineId, SourceView } from './source-view';
 import { type SpotlightFile } from './spotlight';
@@ -171,6 +173,9 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
   const tree: BrainTree | undefined = useMemo(() => (home ? brainTree(home) : undefined), [home]);
   const loaded = active && isPage(active) ? pages[active] : undefined;
   const page = loaded && 'entity' in loaded ? loaded : undefined;
+  // NB07: the open page's project's Notion link (a chip, its problems); nothing when the project has none.
+  const notionProject = page?.entity.projectId;
+  const notion = useNotionBrain(notionProject);
   const markdown = useMemo(() => {
     if (!active || !home) return undefined;
     if (active === INDEX) return indexMarkdown(home);
@@ -236,7 +241,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
   const practiceName = (ref: FileRef) => practiceFileName(practices.data?.practices.find((p) => practiceRef(p.id) === ref)?.handle ?? practices.retired?.find((p) => practiceRef(p.id) === ref)?.handle ?? ref.slice(ref.indexOf('/') + 1));
   const nameOf = (ref: FileRef) => (ref === SETTINGS ? 'What Landflow knows' : isPracticeRef(ref) ? practiceName(ref) : (tree?.files.get(ref)?.name ?? `${ref.split('/').pop()}.md`));
   const problems = tree ? [...tree.files.values()].filter((f) => f.problems.length) : [];
-  const status = home && statusItems(home.entries.length, problems.length);
+  const status = home && statusItems(home.entries.length, problems.length + notion.problems.length); // NB07: the Notion sync problems count too
   const spotlightFile: SpotlightFile | undefined = active
     ? { ref: active, name: page?.entity.name ?? tree?.files.get(active)?.title ?? nameOf(active), page: isPage(active), ...(home?.shared[0] && { topShared: home.shared[0].name }) }
     : undefined;
@@ -296,6 +301,8 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
             <span className="truncate">Go to a page or run a command</span>
             <kbd className="ml-auto hidden rounded border border-hair px-1 text-[11px] sm:inline">⌘P</kbd>
           </button>
+          {/* NB07: */}
+          <NotionChip view={notion.view} onClick={() => setPanel('problems')} className="max-md:hidden" />
           <button
             type="button"
             onClick={() => (askOpen ? closeSpotlight() : openSpotlight('/brain'))}
@@ -457,6 +464,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
                 home={home}
                 onOpen={(ref) => open(ref, { pin: true })}
                 onChanged={loadHome}
+                notion={notionProject && notion.view ? { projectId: notionProject, problems: notion.problems, viewer: { canEdit: Boolean(page?.canEdit), canManage: notion.view.canManage }, onChanged: () => void notion.reload().then(loadHome) } : undefined} // NB07:
               />
             )}
           </div>
@@ -473,6 +481,8 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
                 <AlertTriangle className="size-3" aria-hidden />
                 {status[1]}
               </button>
+              {/* NB07: on a phone the chip sits here, where there is room. */}
+              <NotionChip view={notion.view} onClick={() => setPanel('problems')} className="ml-auto h-5 min-w-0 px-1.5 text-[11px] md:hidden" />
             </>
           )}
         </div>
@@ -618,6 +628,7 @@ function Panel({
   home,
   onOpen,
   onChanged,
+  notion, // NB07:
 }: {
   panel: 'problems' | 'suggestions';
   onPanel: (p?: 'problems' | 'suggestions') => void;
@@ -625,10 +636,12 @@ function Panel({
   home: WikiHome;
   onOpen: (ref: FileRef) => void;
   onChanged: () => void;
+  /** NB07: the open page's project's Notion sync problems, with the actions the viewer may press. */
+  notion?: { projectId: string; problems: LinkProblemView[]; viewer: { canEdit: boolean; canManage: boolean }; onChanged: () => void };
 }) {
   const actions = useProposalActions({ onDone: onChanged });
   const tabs = [
-    { id: 'problems' as const, label: 'Problems', count: problems.length },
+    { id: 'problems' as const, label: 'Problems', count: problems.length + (notion?.problems.length ?? 0) }, // NB07:
     { id: 'suggestions' as const, label: 'Suggestions', count: home.proposals.length },
   ];
   return (
@@ -645,6 +658,7 @@ function Panel({
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto pb-2">
+        {panel === 'problems' && notion && <NotionProblems projectId={notion.projectId} problems={notion.problems} viewer={notion.viewer} onChanged={notion.onChanged} />}
         {panel === 'problems' &&
           (problems.length ? (
             problems.flatMap((p) =>
@@ -658,7 +672,7 @@ function Panel({
                 </button>
               )),
             )
-          ) : (
+          ) : notion?.problems.length ? null : (
             <p className="px-3 py-1 text-[12px] text-t3">No problems: every page has an owner, work in the last 30 days and a current summary.</p>
           ))}
         {panel === 'suggestions' &&
