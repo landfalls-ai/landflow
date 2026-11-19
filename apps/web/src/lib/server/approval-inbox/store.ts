@@ -149,13 +149,20 @@ export interface ClaimBy {
 const asRow = (row: InboxRow) => row as unknown as Record<string, string | number | null>;
 
 /**
- * Take a row Postgres decided into this process's copy without replaying it: a replayed full row (`INSERT ... ON CONFLICT DO
+ * Take what Postgres decided into this process's copy without replaying a stale row: a replayed full row (`INSERT ... ON CONFLICT DO
  * UPDATE` of every column) could, when it reaches Postgres late, write an older status or nudge count over a newer one.
  * With replication the copy is read back (`refresh`) and the others are told by a key notice sent from the same connection
- * (`notify`, run inside `direct`); with one process there is no other writer, so the row is written as usual.
+ * (`tell`, run inside `direct`). With one process and Postgres there is no other writer but two async tasks of this one can
+ * finish out of order (a nudge's read, a claim's), so the copy takes only the columns that task changed (`status`: the decision,
+ * `nudged`: the counts) onto the copy as it is at that moment, in one synchronous step: the row that is replayed always holds
+ * both. SQLite and a missing copy write the row as given.
  */
-async function adopt(handle: Database, row: InboxRow): Promise<void> {
-  if (!(await handle.refresh('approval_inbox', { id: row.id }))) handle.upsert('approval_inbox', asRow(row));
+async function adopt(handle: Database, row: InboxRow, columns: 'status' | 'nudged'): Promise<void> {
+  if (await handle.refresh('approval_inbox', { id: row.id })) return;
+  const local = handle.get<InboxRow>('SELECT * FROM approval_inbox WHERE id = ?', row.id);
+  if (!local || handle.kind !== 'postgres') return void handle.upsert('approval_inbox', asRow(row));
+  const taken = columns === 'status' ? { status: row.status, decided_by: row.decided_by, decided_by_name: row.decided_by_name, decided_via: row.decided_via, decided_at: row.decided_at } : { nudged: row.nudged };
+  handle.upsert('approval_inbox', { ...asRow(local), ...taken });
 }
 
 /** Send the key notice for a row changed through `direct` (a no-op without replication). */
@@ -191,13 +198,13 @@ export async function claim(id: string, to: Exclude<InboxStatus, 'waiting'>, who
   // The winner's row comes from Postgres (a stale copy, or none yet, must not decide who won or carry old `nudged` counts).
   const won = result?.rows[0];
   if (won) {
-    await adopt(handle, won);
+    await adopt(handle, won, 'status');
     return { won: true, row: won };
   }
   // Someone else settled it first: take their word into this main's copy.
   const theirs = await handle.direct((client) => client.query<InboxRow>('SELECT * FROM approval_inbox WHERE id = $1', [id]));
   const settled = theirs?.rows[0];
-  if (settled) await adopt(handle, settled);
+  if (settled) await adopt(handle, settled, 'status');
   return { won: false, row: settled ?? read(id) };
 }
 
@@ -264,7 +271,7 @@ export function viewOf(row: InboxRow, mayDecide = false): InboxRequestView {
  */
 export async function reconcile(row: InboxRow): Promise<InboxRow> {
   if (row.status !== 'waiting') return row;
-  const record = executions.getExecution(row.execution_id);
+  const record = await executions.loadExecution(row.execution_id);
   let gone = !record || record.status === 'canceled' || record.status === 'error' || record.status === 'success';
   if (record?.status === 'waiting') {
     const ids = (record.wait?.data?.inbox as { ids?: Record<string, string> } | undefined)?.ids;
@@ -315,7 +322,7 @@ export async function recordNudge(id: string, counts: { email: number; channels:
     });
     const fresh = updated?.rows[0];
     if (fresh) {
-      await adopt(handle, fresh);
+      await adopt(handle, fresh, 'nudged');
       return;
     }
   }

@@ -349,11 +349,7 @@ export class Database {
     return this.sink?.flush(timeoutMs) ?? Promise.resolve();
   }
 
-  /**
-   * Postgres mode: run `fn` on a connection straight to Postgres, past the in-memory copy (a transaction-level lock or a
-   * one-use claim several processes must agree on: lib/server/audit/chain.ts, lib/server/auth/saml-state.ts). Undefined on
-   * SQLite, where the file itself is shared and `transaction` (BEGIN IMMEDIATE) already serializes writers.
-   */
+  /** Queue mode: read one row back from Postgres into this process's copy only (false without replication, nothing read). */
   async refresh(table: TableName, where: Record<string, SqlValue>): Promise<boolean> {
     return (await this.sink?.refresh?.(table, where)) ?? false;
   }
@@ -363,6 +359,11 @@ export class Database {
     return this.sink?.keyNotice?.(table, key);
   }
 
+  /**
+   * Postgres mode: run `fn` on a connection straight to Postgres, past the in-memory copy (a transaction-level lock or a
+   * one-use claim several processes must agree on: lib/server/audit/chain.ts, lib/server/auth/saml-state.ts). Undefined on
+   * SQLite, where the file itself is shared and `transaction` (BEGIN IMMEDIATE) already serializes writers.
+   */
   direct<T>(fn: (client: DirectClient) => Promise<T>): Promise<T> | undefined {
     const call = this.sink?.direct;
     if (!call) return undefined;

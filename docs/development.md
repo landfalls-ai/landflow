@@ -366,7 +366,7 @@ point at `ag4`, since wave ag4 replaced those two contracts). Wave ag3's package
 `unattended-approvals-ag5` (AG23), `flow-saved-agent-ag5` and `flow-saved-agent-ag5-editor` (AG25), `fix-autonomy-ag5`,
 `session-auto-ag5` and `session-stable-ag5` (AG22); its joins (`fix-path-ag5-joins`) drive the real editor stores and the
 route handlers together (each browser `api` call goes to the `route.ts` its path names) with a fake Anthropic, a scripted
-agent model and judge, a strict receiver and a fake SMTP server. Wave ap1's package tests are `approval-inbox-ap1` and `approval-inbox-nudge-ap1` (AP01, with `approval-inbox-cluster-ap1` under `LANDFLOW_INTEGRATION=queue`), `inbox-run-ap1`, `inbox-restart-ap1` and `inbox-lines-ap1` (AP02), and `approval-inbox-ui-ap1` (AP03); the integrator's joins are `approval-inbox-ap1-joins`.
+agent model and judge, a strict receiver and a fake SMTP server. Wave ap1's package tests are `approval-inbox-ap1`, `approval-inbox-nudge-ap1` and `approval-inbox-postgres-order-ap1` (AP01; the last runs a Postgres-mode `Database` over a fake Postgres, no server needed; and `approval-inbox-cluster-ap1` under `LANDFLOW_INTEGRATION=queue`), `inbox-run-ap1`, `inbox-restart-ap1` and `inbox-lines-ap1` (AP02), and `approval-inbox-ui-ap1` (AP03); the integrator's joins are `approval-inbox-ap1-joins`.
 
 `cluster-runtime.test.ts` always runs: a main and workers through the runner on the in-process coordinator.
 
