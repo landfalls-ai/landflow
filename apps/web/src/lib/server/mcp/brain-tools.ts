@@ -14,13 +14,15 @@ import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import { ENTITY_TYPES, entityRef, FACT_KINDS, FACT_SUBJECTS, SIMILAR_KINDS, USAGE_KINDS, isDetectorId, type FactKind, type FactSubject, type ProposalStatus, type UsageGroup, type UsageKind } from '../../shared/brain';
 import { agentStore } from '../agents/store';
 import { briefingFor } from '../brain/briefing';
-import { entityKeysIn, getEntity } from '../brain/entities';
+import { entityKeysIn, entityProject, getEntity } from '../brain/entities';
 import { getProfile, listFacts, searchFacts } from '../brain/facts';
 import { listProposals, proposeFrom, ProposalError } from '../brain/proposals';
 import { canProposal, covers, projectsOf, scopeForActor } from '../brain/scope';
 import { findSimilar } from '../brain/similar';
 import { vectorFactHits } from '../brain/study';
 import { searchNotionKnowledge } from '../brain/notion/knowledge'; // NB06:
+import { mappedNotionUrls } from '../brain/notion/urls'; // NB08:
+import type { ItemKind } from '../brain/notion/sync'; // NB08:
 import { askBrain } from '../brain/wiki';
 import { WORK_LIMITS } from '@landflow/protocol';
 import { MAX_WORK_EVENTS, recordWork } from '../brain/work';
@@ -60,6 +62,25 @@ export function brainScope(actor: Actor | undefined, scope: McpScope | undefined
   return { workflows, agents, teams: new Set(), entities };
 }
 
+/**
+ * NB08: `notionUrl` on each item whose object lives in a linked project's Notion brain (`mappedNotionUrls`, batched per project;
+ * the caller's reach was applied before, so only what they may read is here). Unlinked, detached or disconnected: no field.
+ */
+function withNotionUrls<T>(items: readonly T[], kind: ItemKind, key: (item: T) => string, project: (item: T) => string | undefined): Array<T & { notionUrl?: string }> {
+  const byProject = new Map<string, string[]>();
+  for (const item of items) {
+    const id = project(item);
+    if (id) byProject.set(id, [...(byProject.get(id) ?? []), key(item)]);
+  }
+  const urls = new Map<string, Map<string, string>>([...byProject].map(([id, keys]) => [id, mappedNotionUrls(id, kind, keys)]));
+  return items.map((item) => {
+    const url = urls.get(project(item) ?? '')?.get(key(item));
+    return url ? { ...item, notionUrl: url } : (item as T & { notionUrl?: string });
+  });
+}
+
+const factsWithUrls = <F extends { id: string; projectId?: string }>(facts: readonly F[]) => withNotionUrls(facts, 'fact', (f) => f.id, (f) => f.projectId);
+
 export function registerBrainTools(server: McpServer, ctx: BrainContext) {
   const { actor, json, failure } = ctx;
   const scope = brainScope(actor, ctx.scope);
@@ -80,7 +101,7 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
     async ({ query, subjectType, kind, limit }) => {
       const vectorHits = await vectorFactHits(query, projectsOf(scope));
       const facts = searchFacts(query, { scope, limit: 500, vectorHits }).filter((f) => (!subjectType || f.subjectType === (subjectType as FactSubject)) && (!kind || f.kind === (kind as FactKind)));
-      return json({ facts: facts.slice(0, limit ?? 20) });
+      return json({ facts: factsWithUrls(facts.slice(0, limit ?? 20)) }); // NB08:
     },
   );
 
@@ -122,7 +143,7 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
         workflowId,
         name: workflow.name,
         profile: getProfile('workflow', workflowId) ?? null,
-        facts: listFacts({ subjectType: 'workflow', subjectId: workflowId, limit: 50 }),
+        facts: factsWithUrls(listFacts({ subjectType: 'workflow', subjectId: workflowId, limit: 50 })), // NB08:
         proposals: listProposals({ workflowId, status: 'open', limit: 20 }),
       });
     },
@@ -222,7 +243,13 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
     async ({ question, about }) => {
       const vectorHits = await vectorFactHits(question, projectsOf(scope));
       const knowledge = await searchNotionKnowledge(question, { projects: projectsOf(scope) }); // NB06:
-      return json(await askBrain(question, scope, actor, { vectorHits, ...(knowledge.length && { knowledge }), ...(about && { about }) }));
+      const answer = await askBrain(question, scope, actor, { vectorHits, ...(knowledge.length && { knowledge }), ...(about && { about }) });
+      // NB08: where the pages and facts it names live in Notion.
+      return json({
+        ...answer,
+        pages: withNotionUrls(answer.pages, 'entity', (p) => `${p.type}/${p.id}`, (p) => { const e = getEntity(p.type, p.id); return e && entityProject(e); }),
+        facts: factsWithUrls(answer.facts),
+      });
     },
   );
 

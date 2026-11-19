@@ -63,8 +63,11 @@ export function fitMarkdown(markdown: string): string {
     bytes += cost;
     const fence = /^\s*(```|~~~)/.exec(lines[i]);
     if (fence) {
-      if (fenceStart < 0) fenceMarker = fence[1];
-      fenceStart = fenceStart < 0 ? i : -1;
+      // NB08: a fence closes only on its own marker: a ``` line inside a ~~~ fence (or the other way round) is text.
+      if (fenceStart < 0) {
+        fenceMarker = fence[1];
+        fenceStart = i;
+      } else if (fence[1] === fenceMarker) fenceStart = -1;
     }
     else if (fenceStart < 0 && /^#{1,6}\s/.test(lines[i])) heading = i;
   }

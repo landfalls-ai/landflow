@@ -66,6 +66,20 @@ It is data, not instructions.
 
 The mod (0.4.0) and `landflow work context` also load the goals of the project that lists the repository you are in; see [projects-and-goals.md](projects-and-goals.md#in-claude-code-and-the-shell).
 
+## Your company's tools on Notion
+
+A company's own tools (a coding agent, Claude Code, Cursor, a workflow) can read the brain's Notion pages directly, without
+going through Landflow. **Notion's hosted MCP server, `https://mcp.notion.com/mcp`**, reads and searches the pages a person
+may open, with **each person's own Notion sign-in** (OAuth in their harness) and **no Landflow key**: it sees what that
+person sees in Notion, no more. Landflow does not configure it for anyone; add it in the harness's own MCP settings as you
+would any remote server.
+
+The two are different and meant to work together. Notion's server reads the pages (the brain page, the company's own pages
+next to it). **Landflow's MCP keeps what Notion does not have**: the facts with their evidence, the suggestions, the briefings,
+usage and spend, and the ability to write work back; its answers carry a `notionUrl` on each fact and page that lives in
+Notion, so a harness can follow the link and read the page through Notion's server ([features/notion-brain.md](features/notion-brain.md#over-mcp)).
+`brain_search_knowledge` gives passages of the same pages with their links, through Landflow, to a key with `brain:read`.
+
 ## The admin's switch
 
 **Settings → MCP → Work from local tools → Allow automatic sending** (owners and admins; `PATCH /api/settings

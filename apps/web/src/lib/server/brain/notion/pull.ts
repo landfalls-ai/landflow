@@ -950,7 +950,7 @@ async function pullFact(ctx: Context, db: LinkDatabase, row: NotionPage, item: I
         const localDirty = outboxPending(ctx.link, 'fact', fact.id) || Boolean(item.pushed_at && fact.lastSeen > dirtyAfter(item));
         const editor = await editorOf(ctx, row);
         if (localDirty && !notionIsLater(row.last_edited_time, fact.lastSeen)) enqueue(ctx.link.id, 'fact', fact.id);
-        else
+        else {
           upsertFact(
             {
               id: fact.id,
@@ -968,7 +968,9 @@ async function pullFact(ctx: Context, db: LinkDatabase, row: NotionPage, item: I
             'notion',
             editor.userId,
           );
-        applied = getFact(fact.id)?.lastSeen ?? applied;
+          // NB08: only a Notion value that was applied counts as applied from Notion (a Landflow edit that won does not).
+          applied = getFact(fact.id)?.lastSeen ?? applied;
+        }
       }
     } else if (statement !== fact.statement || (base && base.landflow !== hashes.landflow)) {
       if (statement && statement !== fact.statement) {
