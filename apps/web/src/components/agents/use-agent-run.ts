@@ -122,9 +122,9 @@ export function useAgentRun(agentId: string, initial?: AgentSession, initialTrac
       return !failed;
     } catch (error) {
       if (c.signal.aborted) return false;
-      if (quiet && error instanceof ApiError && error.status === 409) {
-        // AP03: not a decision at all: the call waits in Needs you, so its buttons go and the session says where.
-        if (/Needs you/i.test(error.message) && !/^Already/.test(error.message)) {
+      if (quiet && error instanceof ApiError && (error.status === 409 || error.status === 410)) {
+        // AP03: not a decision at all: the call waits in Needs you (or its request expired there), so its buttons go and the session says where.
+        if (error.status === 410 || (/Needs you/i.test(error.message) && !/^Already/.test(error.message))) {
           const waiting = (body as { callId?: string }).callId;
           if (waiting)
             setDecisions((d) => {
