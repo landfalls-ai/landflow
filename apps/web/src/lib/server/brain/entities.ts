@@ -83,13 +83,13 @@ function fromRow(row: Row): LinkedEntity {
 export const entityKey = (entity: Pick<BrainEntity, 'type' | 'id'>) => entityRef(entity.type, entity.id);
 
 /** The project an entity belongs to: its own, else the default one. */
+export const entityProject = (entity: Pick<BrainEntity, 'projectId'>): string | undefined => entity.projectId ?? defaultProjectId();
+
 /** NB01: a change's project for an entity. */
 const entityScope = (entity: Pick<BrainEntity, 'projectId'>): { projectId?: string } => {
   const projectId = entityProject(entity);
   return projectId ? { projectId } : {};
 };
-
-export const entityProject = (entity: Pick<BrainEntity, 'projectId'>): string | undefined => entity.projectId ?? defaultProjectId();
 
 export function getEntity(type: string, id: string, db: Database = database()): LinkedEntity | undefined {
   const row = db.get<Row>('SELECT * FROM brain_entities WHERE type = ? AND id = ?', type, id);
@@ -197,10 +197,10 @@ export function upsertEntity(input: EntityInput, db: Database = database(), now 
   const email = entity.type === 'person' && typeof entity.attrs.email === 'string' ? entity.attrs.email : undefined;
   const userId = (email && findUserByEmail(email)?.id) || stored || null;
   database_upsert(db, entity, userId);
-  const stored2 = getEntity(entity.type, entity.id, db)!;
+  const saved = getEntity(entity.type, entity.id, db)!;
   // NB01: one change, after the write.
-  emitBrainChange({ kind: 'entity', key: entityKey(stored2), ...entityScope(stored2), op: 'upsert', ...changeOrigin(origin, by), at: now });
-  return { entity: stored2, created: !existing };
+  emitBrainChange({ kind: 'entity', key: entityKey(saved), ...entityScope(saved), op: 'upsert', ...changeOrigin(origin, by), at: now });
+  return { entity: saved, created: !existing };
 }
 
 function database_upsert(db: Database, e: BrainEntity, userId: string | null = null) {
