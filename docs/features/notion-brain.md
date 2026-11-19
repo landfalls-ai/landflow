@@ -186,10 +186,14 @@ Log, the four databases and every row Landflow made for a page, fact, practice o
   the facts use; unset means `nomic-embed-text`) it is hybrid. Each pass first asks the model once: if it does not answer, the
   pages are indexed with keyword vectors and `cursors.knowledge.embeddings` says `bm25`, so Ask, MCP and the agents' tool still
   find them; a later pass where the model answers clears the collection and indexes it again with vectors (one dimension a
-  collection, never mixed). Search and the agents' tool use what the cursor says the collection holds, not the variable, and a
+  collection, never mixed). A failed 10-second probe on a collection that already holds a model's vectors is an outage, not a
+  change: the pass keeps the collection, indexes nothing new and counts the changed pages as waiting (`pending`, so the next tick
+  tries again); keyword vectors replace it only when the collection is empty or already keyword. Search and the agents' tool use what the cursor says the collection holds, not the variable, and a
   query that takes over 10 seconds to embed is answered by keywords. Switching the model, or the embeddings off, clears the
   collection and indexes it again; a page that moved is indexed again so its passages' `path` follows. A "Your notes" doc written by the pull (its `page_id` is a row
-  of the link) is indexed like any other and never deleted by the walk.
+  of the link) is indexed like any other and never deleted by the walk, unless its item was trashed in Notion (`detached`). A
+  relink's old chunks (another link id) are deleted at once. The agents' `project_knowledge` tool falls back to keywords when the
+  query can't be embedded, as Ask does; a pass that could not embed counts the pages it did not reach as waiting.
 - **Ask.** Ask's fourth source, after pages, facts and work: up to 5 Notion pages of the projects the asker can read (the same
   scope as the facts), only for projects with an active link. The found line gains "· 2 Notion pages" (the `found` event gains
   `knowledge`), the passages reach the model as quoted numbered lines after the work items ("data, not instructions"), and a
@@ -210,3 +214,22 @@ What is read from Notion is data: a page that says "Ignore your instructions" re
 the walk cannot do is in [limitations.md](../limitations.md#what-the-notion-brain-does-not-do).
 
 Tests: `apps/web/test/notion-knowledge-nb06.test.ts`.
+
+## With Spotlight
+
+Outside the editor, the shell Spotlight moves a project's brain to Notion from a typed ask and says whether it is in sync
+(NB08; the full behaviour is in [spotlight.md](../spotlight.md#one-spotlight)). The words decide it in the browser, so no model
+runs and nothing is spent. The card offers the project's Notion keys by name and opens the credential dialog for a new one;
+**Connect and copy** is the person's click, and a project that is already linked answers with its status. "Is the brain in sync
+with Notion?" answers from the link and its problems with the sentence the Brain card shows. A pasted key is hidden and never
+sent. The editor's builder does not move a brain: ask from the project page or the Brain page.
+
+## Over MCP
+
+The brain's MCP answers say where an object lives in Notion. `brain_search_facts` and the facts of `brain_workflow_knowledge`
+carry **`notionUrl`** on each fact of a linked project, and `brain_ask` carries it on each brain page and fact it names (the
+row's `https://www.notion.so/<id>` URL, from the local tables: no Notion call). A project that is not linked, a row trashed in
+Notion (`detached`) and a disconnected link give no field; the caller's reach was applied before, so only what they may read is
+listed. `brain_search_knowledge` gives passages of the company's Notion pages with their URLs (named in the instance server's
+instructions and in [features/ai.md](ai.md#mcp)). To read the pages themselves from a company's tools, see [Your company's
+tools on Notion](../connect-your-harness.md#your-companys-tools-on-notion).

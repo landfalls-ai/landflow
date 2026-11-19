@@ -421,6 +421,8 @@ no hand-built MCP Server Trigger workflow:
 | `record_work` | save the caller's own work events, private |
 | `project_context` | the "Where this work fits" block of the project that lists a repository, or of a project you name (`repo`, `projectId`, `size`); the resource `project://{id}/context` is the full block ([connect-your-harness.md](connect-your-harness.md#project-context)) |
 
+On a project linked to Notion, each fact `brain_search_facts` and `brain_workflow_knowledge` list, and each page and fact `brain_ask` names, carries `notionUrl`, the Notion row it was copied to (none when the project is not linked, the row was trashed in Notion or the link is disconnected). To read the pages in Notion itself see [Your company's tools on Notion](connect-your-harness.md#your-companys-tools-on-notion).
+
 Practices: see [practices.md](practices.md#following) (`practices_for`, `practice_get`, `practice_cite`,
 `practice_draft` and the `practices://` resources).
 
