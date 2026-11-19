@@ -902,7 +902,7 @@ export async function decide(
   callId: string,
   approved: boolean,
   // AG10: toolImages keeps the run's image count the same on a resumed run as on the first.
-  options: { onEvent?: (event: AgentStreamEvent) => void; signal?: AbortSignal; by?: string; toolImages?: { keep?: number }; line?: string; refusal?: string /* AP02: the inbox's word on the call */ } = {},
+  options: { onEvent?: (event: AgentStreamEvent) => void; signal?: AbortSignal; by?: string; toolImages?: { keep?: number }; line?: string; refusal?: string /* AP02: the inbox's word on the call */; inbox?: true /* AP02: the resumed turn still holds asks-first calls in the inbox */ } = {},
 ): Promise<DecisionResult> {
   const session = agentStore.getSession(sessionId);
   if (!session || session.agentId !== agent.id) throw new DecisionError('Session not found', 404);

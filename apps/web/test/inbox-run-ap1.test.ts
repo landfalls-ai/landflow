@@ -296,6 +296,46 @@ describe('Run an Agent in a run nobody watches (the approval inbox)', () => {
     expect(smtp.mails).toHaveLength(0);
   });
 
+  it('a call held twice in a row keeps the inbox on the resumed turn: masked review, no agent-session mail, on both holds', async () => {
+    const twice = agentStore.create({
+      name: 'Twice mailer',
+      instructions: 'You email on-call.',
+      model: { provider: 'ollama', model: 'mailer-model', baseUrl: fake.url.replace(/\/v1$/, '') },
+      settings: { approvalEmails: ['ana@landflow.test'] },
+      tools: [{ id: 'tl_mail2', type: 'node', name: SEND, description: 'Email on-call', nodeType: 'messaging.emailSend', parameters: { fromEmail: 'landflow@landflow.test', toEmail: 'oncall@landflow.test', subject: 'Alert', emailFormat: 'text', text: 'Disk is full', apiKey: 'sk-fixed-looking-secret' }, credentials: { smtp: { id: smtpCredential, name: 'Mailpit SMTP' } }, requireApproval: true }],
+    } as never);
+    agentStore.publish(twice.id);
+    script = (t) => (t === 1 ? { toolCalls: [{ id: 'c_one', name: WRITE, arguments: {} }] } : t === 2 ? { toolCalls: [{ id: 'c_two', name: WRITE, arguments: {} }] } : { text: 'Done.' });
+    const wf = flow({ toolApprovals: 'askInChat', agentId: twice.id });
+    const first = await run(wf);
+    expect(first.status).toBe('waiting');
+    claim(first.executionId, callOf(first), 'approved');
+    const outcome = await decideApproval(first.executionId, callOf(first), true, { by: 'usr_owner' });
+    expect(outcome.status).toBe('resumed');
+    const second = (outcome as { record: Record_ }).record;
+    expect(second.status).toBe('waiting');
+    expect(inbox.opens).toHaveLength(2);
+    const [opened] = inbox.opens[1]!;
+    expect(opened).toMatchObject({ callId: callOf(second), params: expect.objectContaining({ toEmail: 'oncall@landflow.test', apiKey: MASK }) });
+    expect(opened!.destination).toContain('oncall@landflow.test');
+    expect(waitData(second).approval.calls).toEqual([{ id: callOf(second), tool: SEND, input: expect.objectContaining({ toEmail: 'oncall@landflow.test', apiKey: MASK }) }]);
+    expect(JSON.stringify([second.wait, inbox.opens])).not.toContain('sk-fixed-looking-secret');
+    // Only the one approved call mailed on-call, and no approval mail went to the agent's approvers on either hold.
+    expect(smtp.mails.filter((m) => m.to.includes('ana@landflow.test'))).toHaveLength(0);
+  });
+
+  it('a model wired to the step is refused at run time and opens nothing', async () => {
+    script = callThenReply();
+    const wf = flow({ toolApprovals: 'askInChat' });
+    wf.nodes.push(node('Model', 'core.ollamaChatModel', { baseUrl: fake.url.replace(/\/v1$/, ''), model: 'mailer-model', temperature: 0 }));
+    wf.connections.push({ id: 'w', type: 'ai_languageModel', source: 'Model', target: 'Agent', sourceIndex: 0, targetIndex: 0 });
+    store.saveWorkflow(wf);
+    const record = await run(wf);
+    expect(record.status).toBe('success');
+    expect(inbox.opens).toHaveLength(0);
+    expect(smtp.mails).toHaveLength(0);
+  });
+
   it('refuses as before when the host has no inbox, and the other triggers wait', async () => {
     script = callThenReply();
     registerInboxPort(undefined as never);

@@ -22,6 +22,8 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const call = session.pending?.calls.find((c) => c.callId === body.data.callId);
   if (!call) return error('That tool call is not waiting for approval', 409);
   if (call.decision) return error(`Already ${call.decision}`, 409);
+  // AP02: a call a workflow run holds in the approval inbox is decided there, never here (the tool would run outside the record).
+  if (call.review) return error('This call waits in the approval inbox: decide it in Needs you', 409);
   recordAudit({
     action: 'agent.tool_approval',
     target: { type: 'agent', id, name: agent.name },

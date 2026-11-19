@@ -244,6 +244,7 @@ export const messageAgentNode = defineNode({
     ctx.setNodeState?.(undefined);
     const waited = saved?.waiting && saved.$resume ? saved.waiting : undefined;
     const out: NodeItem[] = waited ? [...waited.out] : [];
+    const savedWithoutApprovals = await savedWithout(ctx, ctx.getNode().id, 'toolApprovals'); // AP02: once per run, not per item
     for (let i = waited?.itemIndex ?? 0; i < Math.max(items.length, 1); i++) {
       try {
         const agentId = ctx.getNodeParameter<string>('agentId', i);
@@ -283,7 +284,7 @@ export const messageAgentNode = defineNode({
           canWait: waitable,
         };
         // AP02: a step saved without Tool Approvals keeps refusing (the descriptor's default is for steps placed from now on).
-        const setting = (await savedWithout(ctx, node.id, 'toolApprovals')) ? 'refuse' : ctx.getNodeParameter<string>('toolApprovals', i, 'refuse');
+        const setting = savedWithoutApprovals ? 'refuse' : ctx.getNodeParameter<string>('toolApprovals', i, 'refuse');
         // AP02: a run nobody watches (not the editor's, not an MCP call or a tool call) that can pause waits in the approval inbox, when the host has one.
         const inbox = !editor && inboxMode(ctx.getMode()) === 'inbox' && setting === 'askInChat' && waitable ? inboxPort() : undefined;
         const askInChat = (setting === 'askInChat' && ctx.getMode() === 'chat' && waitable) || Boolean(spotlight?.canWait) || Boolean(inbox);
@@ -314,7 +315,7 @@ export const messageAgentNode = defineNode({
             const decision = decisions[pendingCall.callId];
             if (!decision) continue;
             if (settled && pendingCall.decision) continue; // AP02: a re-run never decides a call twice
-            resumed = await decide(agent, waited.sessionId, pendingCall.callId, decision.approved, { ...(decision.by && { by: decision.by }), ...settled?.extra[pendingCall.callId], toolImages: { keep: Number(ctx.getNodeParameter('toolImagesKept', i, 2)) }, ...(onEvent && { onEvent }), ...(ctx.signal && { signal: ctx.signal }) });
+            resumed = await decide(agent, waited.sessionId, pendingCall.callId, decision.approved, { ...(decision.by && { by: decision.by }), ...(waited.inbox && { inbox: true as const }), ...settled?.extra[pendingCall.callId], toolImages: { keep: Number(ctx.getNodeParameter('toolImagesKept', i, 2)) }, ...(onEvent && { onEvent }), ...(ctx.signal && { signal: ctx.signal }) });
           }
           if (!resumed || resumed.status !== 'resumed') throw new NodeOperationError('The approval was not decided for every tool call', { itemIndex: i });
           result = resumed;
@@ -512,7 +513,7 @@ async function inboxDecisions(
     let outcome = port.outcome(executionId, call.callId);
     if (outcome?.status === 'waiting' || !outcome) {
       if (resume?.kind === 'timeout' || !outcome) outcome = (await port.settle(executionId, call.callId, 'expired')).outcome;
-      else if (given[call.callId] && !given[call.callId].approved) outcome = { status: 'denied', ...(given[call.callId].by && { by: given[call.callId].by }), via: 'inbox', at: given[call.callId].at ?? new Date().toISOString() };
+      // A deny the record does not say fails closed too (AP01's claim settles the record first); the run never ends with a request still waiting.
       else throw new NodeOperationError('The approval inbox has no decision for this tool call', { itemIndex });
     }
     const label = labels.get(call.callId) ?? call.tool;
