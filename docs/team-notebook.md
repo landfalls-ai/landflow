@@ -57,7 +57,10 @@ A note is **tainted** when it gives a `url`, has a URL in its text, or its autho
 run (a conservative reading: the author may not have used what it read). A tainted note shows a warning, and it cannot be
 promoted until a person has **Verified** it. This stops a page's instructions from becoming the team's standing memory.
 A note pulled from Notion is the same: `unverified` and tainted, with `source.tool: notion` and the page's URL
-([features/notion-brain.md](features/notion-brain.md#how-it-is-built)).
+([features/notion-brain.md](features/notion-brain.md#how-it-is-built)). A row a person adds to the Notebook database in the linked
+Notion page with a Team of the project becomes such a note; its author is the Landflow user whose email Notion gave, else "A Notion
+user" (a note added without a user and not from Notion is authored "Landflow"), and an edit of it in Notion is put back
+([details](features/notion-brain.md#what-comes-back-from-notion)).
 
 ### Search by meaning
 
