@@ -31,6 +31,8 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
     const closed = closedOf(inboxRow);
     return error(closed.message, closed.status);
   }
+  // AP02: a call a workflow run holds in the approval inbox is decided there, never here (the tool would run outside the record).
+  if (call.review) return error('This call waits in the approval inbox: decide it in Needs you', 409);
   recordAudit({
     action: 'agent.tool_approval',
     target: { type: 'agent', id, name: agent.name },

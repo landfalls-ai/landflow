@@ -21,7 +21,7 @@ const { corePlugin } = await import('@/lib/server/nodes');
 const { store } = await import('@/lib/server/store');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { publishDraft } = await import('@/lib/server/publish');
-const { unattendedLine } = await import('@/lib/shared/fix-autonomy');
+const { refusesLine } = await import('@/lib/shared/approval-inbox'); // AP02: these steps carry no Tool Approvals value, so they still refuse and the line says why
 const { disableTestAuth, enableTestAuth, TEST_OWNER } = await import('@/lib/server/auth/test-bypass');
 const route = await import('@/app/api/workflows/[id]/unattended-approvals/route');
 const { UnattendedLines } = await import('@/components/editor/spotlight/unattended-line');
@@ -68,15 +68,15 @@ describe('GET /api/workflows/:id/unattended-approvals', () => {
     await publish(wf);
     const answer = await ask(wf.id);
     expect(answer.status).toBe(200);
-    expect(answer.body).toEqual([{ tool: 'Send Email', agent: 'Triager', node: 'Agent', trigger: 'webhook', line: unattendedLine('Send Email', 'webhook') }]);
-    expect(answer.body![0].line).toBe('In production nobody approves “Send Email”: a webhook run refuses it. Tell me where production approvals should go, or keep it refusing.');
+    expect(answer.body).toEqual([{ tool: 'Send Email', agent: 'Triager', node: 'Agent', trigger: 'webhook', line: refusesLine('Send Email', 'webhook', 'refuseSetting'), outcome: 'refuses', why: 'refuseSetting' }]);
+    expect(answer.body![0].line).toBe('In production “Send Email” is refused: a webhook run cannot wait for an approval here (Tool Approvals is set to Refuse on this step).');
   });
 
   it('counts the triggers nobody watches: schedule, chat, form (one line each), and not a manual trigger', async () => {
     for (const [type, word] of [['core.schedule', 'schedule'], ['core.chatTrigger', 'chat'], ['core.formTrigger', 'form']] as const) {
       const wf = flow(type, triager.id);
       const answer = await ask(wf.id, '?version=draft');
-      expect(answer.body, type).toEqual([expect.objectContaining({ tool: 'Send Email', trigger: word, line: unattendedLine('Send Email', word) })]);
+      expect(answer.body, type).toEqual([expect.objectContaining({ tool: 'Send Email', trigger: word, line: refusesLine('Send Email', word, 'refuseSetting') })]);
     }
     expect((await ask(flow('core.manualTrigger', triager.id).id, '?version=draft')).body).toEqual([]);
   });
@@ -94,7 +94,7 @@ describe('GET /api/workflows/:id/unattended-approvals', () => {
     ];
     for (const [type, word] of words) {
       const answer = await ask(flow(type, triager.id).id, '?version=draft');
-      expect(answer.body, type).toEqual([expect.objectContaining({ tool: 'Send Email', trigger: word, line: unattendedLine('Send Email', word) })]);
+      expect(answer.body, type).toEqual([expect.objectContaining({ tool: 'Send Email', trigger: word, line: refusesLine('Send Email', word, 'refuseSetting') })]);
     }
     expect((await ask(flow('core.evaluationTrigger', triager.id).id, '?version=draft')).body).toEqual([]);
   });
@@ -156,7 +156,7 @@ describe('the publish card and the menu say it', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) => {
-        const body = String(url).includes('/unattended-approvals') ? [{ tool: 'Send Email', agent: 'Triager', node: 'Agent', trigger: 'webhook', line: unattendedLine('Send Email', 'webhook') }] : {};
+        const body = String(url).includes('/unattended-approvals') ? [{ tool: 'Send Email', agent: 'Triager', node: 'Agent', trigger: 'webhook', line: refusesLine('Send Email', 'webhook', 'refuseSetting') }] : {};
         return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
       }),
     );
@@ -173,7 +173,7 @@ describe('the publish card and the menu say it', () => {
     const offer = { workflowId: 'wf1', kind: 'draft' as const, nextVersion: 7, pins: [{ nodeId: 'n1', agentId: 'a1', agentName: 'Triager', version: 1 }] };
     await act(async () => root.render(createElement(PublishCardView, { itemId: 'i1', offer })));
     await vi.waitFor(() => expect(host.querySelector('[data-testid="unattended-lines"]')).not.toBeNull());
-    expect(host.querySelector('[data-testid="unattended-lines"]')!.textContent).toBe(unattendedLine('Send Email', 'webhook'));
+    expect(host.querySelector('[data-testid="unattended-lines"]')!.textContent).toBe(refusesLine('Send Email', 'webhook', 'refuseSetting'));
     expect(host.querySelectorAll('[data-testid="unattended-lines"] > div')).toHaveLength(1);
   });
 

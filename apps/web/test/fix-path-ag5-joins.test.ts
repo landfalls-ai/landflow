@@ -222,7 +222,9 @@ const { PublishCardView } = await import('@/components/editor/spotlight/publish-
 const { publishChange, heldOf } = await import('@/lib/client/agent-change');
 const { heldLine: sessionHeldLine } = await import('@/components/editor/fix-session');
 const { heldLine: cardHeldLine } = await import('@/lib/shared/agent-eval');
-const { approvedByLine, keptOwnFixLine, pickedAloneLine, publishedLine, unattendedLine } = await import('@/lib/shared/fix-autonomy');
+const { approvedByLine, keptOwnFixLine, pickedAloneLine, publishedLine } = await import('@/lib/shared/fix-autonomy');
+const { waitLine, refusesLine } = await import('@/lib/shared/approval-inbox'); // AP02: the publish card's lines say the inbox's words now
+const { registerInboxPort } = await import('@/lib/server/approval-inbox/port'); // AP02:
 const { runVersionsLine } = await import('@/lib/shared/agent-versions');
 
 // ---------------------------------------------------------------------------
@@ -563,7 +565,7 @@ describe('1. the autonomous fix session finishes on a saved, published flow (AG2
 // ---------------------------------------------------------------------------
 
 describe('2. Spotlight’s approvals in a test run, and the production line (AG22 × AG23 × the runtime)', () => {
-  const mailer = async (name: string, to: string) => {
+  const mailer = async (name: string, to: string, toolApprovals = 'askInChat' /* AP02: a step placed or designed now asks; the twin below refuses */) => {
     const agent = agentStore.create({
       name,
       description: 'Emails a two-line summary to on-call',
@@ -574,7 +576,7 @@ describe('2. Spotlight’s approvals in a test run, and the production line (AG2
     addCase(agent.id, { input: 'Summarise: the deploy finished.', expected: 'A two-line summary.' });
     await api(`/api/agents/${agent.id}/publish`, 'POST', {});
     const id = `wf_ag5_mail_${++seq}`;
-    saveFlow({ id, name: `Mail ${id}`, nodes: [node('hook', 'core.webhook', { path: id, method: 'POST' }, 'Webhook'), node('agent', 'core.messageAgent', { agentId: agent.id, message: 'Summarise: the deploy finished.', conversation: 'new' }, name)], connections: [edge('hook', 'agent')], pinData: { hook: [{ json: { body: { text: 'the deploy finished' } } }] } } as never);
+    saveFlow({ id, name: `Mail ${id}`, nodes: [node('hook', 'core.webhook', { path: id, method: 'POST' }, 'Webhook'), node('agent', 'core.messageAgent', { agentId: agent.id, message: 'Summarise: the deploy finished.', conversation: 'new', toolApprovals }, name)], connections: [edge('hook', 'agent')], pinData: { hook: [{ json: { body: { text: 'the deploy finished' } } }] } } as never);
     return { agent, id };
   };
 
@@ -598,9 +600,27 @@ describe('2. Spotlight’s approvals in a test run, and the production line (AG2
     expect(actions).toContain('publish');
     expect(texts().some((l) => l.startsWith('Published: workflow v'))).toBe(false);
     expect(store.getWorkflow(id)!.active ?? false).toBe(false);
+    // AP02: with an inbox on the host the publish card says the run will wait (the person's decision of 2026-11-18); the draft's line and the published one agree.
+    registerInboxPort({ open: async (calls) => ({ ids: Object.fromEntries(calls.map((c) => [c.callId, `ib_${c.callId}`])), expiresAt: new Date(Date.now() + 86_400_000).toISOString(), minutes: 1440 }), outcome: () => undefined, settle: async (_e, _c, to) => ({ won: false, outcome: { status: to } }), view: () => undefined });
     const lines = await api<Array<{ tool: string; trigger: string; line: string }>>(`/api/workflows/${id}/unattended-approvals?version=draft`);
-    expect(lines).toEqual([expect.objectContaining({ tool: 'Send Email', trigger: 'webhook', line: unattendedLine('Send Email', 'webhook') })]);
-    // The person publishes; a trigger run of the published version still refuses it: nothing sent.
+    expect(lines).toEqual([expect.objectContaining({ tool: 'Send Email', trigger: 'webhook', outcome: 'waits', line: waitLine('Send Email', 'webhook', 1440) })]);
+    // The person publishes; a trigger run of the published version now waits in the inbox: nothing is sent until someone approves.
+    await api(`/api/workflows/${id}/publish`, 'POST', {});
+    smtp.mails.length = 0;
+    agentSide.mail = { subject: 'Summary' };
+    const prod = await production(id);
+    expect((await trace(prod)).status).toBe('waiting');
+    expect(smtp.mails).toHaveLength(0);
+    expect(await api<Array<{ line: string }>>(`/api/workflows/${id}/unattended-approvals`)).toEqual([expect.objectContaining({ outcome: 'waits', line: waitLine('Send Email', 'webhook', 1440) })]);
+    registerInboxPort(undefined as never);
+    void agent;
+  });
+
+  it('twin: the same flow with Tool Approvals Refuse says it is refused, and production refuses it', async () => {
+    const { id } = await mailer('Refusing mailer', 'oncall@landflow.test', 'refuse');
+    registerInboxPort({ open: async () => ({ ids: {}, expiresAt: '', minutes: 0 }), outcome: () => undefined, settle: async (_e, _c, to) => ({ won: false, outcome: { status: to } }), view: () => undefined });
+    const lines = await api<Array<{ tool: string; trigger: string; line: string }>>(`/api/workflows/${id}/unattended-approvals?version=draft`);
+    expect(lines).toEqual([expect.objectContaining({ tool: 'Send Email', trigger: 'webhook', outcome: 'refuses', why: 'refuseSetting', line: refusesLine('Send Email', 'webhook', 'refuseSetting') })]);
     await api(`/api/workflows/${id}/publish`, 'POST', {});
     smtp.mails.length = 0;
     agentSide.mail = { subject: 'Summary' };
@@ -608,7 +628,7 @@ describe('2. Spotlight’s approvals in a test run, and the production line (AG2
     const json = (await trace(prod)).runData.agent?.at(-1)?.outputs?.[0]?.[0]?.json as { steps: Array<{ status: string }> };
     expect(json.steps[0]!.status).toBe('denied');
     expect(smtp.mails).toHaveLength(0);
-    void agent;
+    registerInboxPort(undefined as never);
   });
 
   it('a call to an address nobody gave waits (Needs you); asks first sends no approvals; a viewer or the test-update run is refused the field', async () => {
