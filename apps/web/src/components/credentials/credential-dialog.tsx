@@ -270,7 +270,7 @@ export function CredentialDialog({
 
   const picking = !type && !credentialId;
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-6 animate-in max-md:items-end max-md:p-0" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-overlay p-6 animate-in max-md:items-end max-md:p-0" /* NB08: above the Spotlight sheet (z-[60]), which holds the card that opens it */ onMouseDown={onClose}>
       <div
         ref={panel}
         role="dialog"
