@@ -18,6 +18,17 @@ The brain's local SQL tables stay the working copy: runs, Ask, MCP and search re
 
 Tests: `apps/web/test/brain-store-nb01.test.ts`.
 
+### The sync that writes into Notion (NB04)
+
+- **The leader service `notion brain`** (`brain/notion/service.ts`, in `runtime.ts`'s table with the other leader services) ticks every 5 seconds. A tick takes each link that is not paused or stopped: `setting_up` and `copying` links run the copy, an `active` link drains its outbox (at most 200 rows a tick), and the once-an-hour and once-every-10-minutes jobs below run. With `LANDFLOW_NOTION_BRAIN=off` a tick sends nothing; the outbox still fills, and switching it on pushes what changed.
+- **The outbox** (`brain/notion/store.ts`) hears the change feed. Every change of a linked project, except one whose origin is `notion` (the puller's own), becomes one row in `notion_brain_outbox`, coalesced per (link, kind, key): ten changes of one page in a second are one row and one push. A fact about a page also queues that page, because the fact is a line on its body. Home is re-rendered at most every 10 minutes and the Log every hour; every 30 minutes each page is looked at again, because new work changes a page's Work section without a brain change. A push renders the object, hashes its properties and its region, and writes only what changed: a new description is one `PATCH` of the row and no body write.
+- **The initial copy** (`copy.ts`) makes the brain page, the Log page, the four databases, then the rows and their bodies, and is resumable: the link's `copy` progress and the saved ids say where it stopped; a database is adopted by title under the brain page and a row by its `Landflow ID` (one query per database), so a restart, a lost answer (`mayHaveLanded`) or a `createDatabase` whose follow-up read failed never makes a second one. Rows are made without a body and each body is written once, whole. A request budget of `copyRequests(counts)` plus 15 per restart is tested.
+- **One writer.** Everything goes through the scoped writer (`linkClient`): an item whose `notion_id` is not under the root gets no request, logs `[notion-brain] refused write <id>`, ends its outbox row with a `last_error`, and the next object's push still lands. A refused key (401, or a deleted credential: status 0, "The Notion key was deleted") sets the link `unauthorized` and files one notice for the project's admins; Notion blocking the key pauses it; a page that is no longer shared sets `unshared`. The outbox is kept, and a resume continues.
+- **Words and ids only in logs.** No key and no page text reaches a log line; `LANDFLOW_NOTION_WRITE_LOG` holds one line per write with no text.
+- **`contracts/nb/sync.ts`** (`brain/notion/sync.ts`, never edited here) holds the pure parts: the region markers, `pageBody`, `wholeBody`, `splitBody`, the items and outbox tables' helpers, `setRegionConflict` (NB05 hears a person's edit of the Landflow part; with no hook a `landflow_part_edited` problem is filed) and `forgetLink`. `render.ts` renders to the fixtures in `apps/web/test/fixtures/notion-render/` byte for byte.
+
+Tests: `apps/web/test/notion-push-nb04.test.ts`, `apps/web/test/notion-copy-nb04.test.ts`.
+
 ## How Landflow talks to Notion
 
 One client in the host (`apps/web/src/lib/server/notion/client.ts`) makes every Notion call the brain's sync needs. It is
@@ -85,3 +96,14 @@ check, link, change and sync routes answer 409 "The Notion brain is switched off
 (disconnecting still works). The tables are `notion_brain_links`, `notion_brain_items`, `notion_brain_outbox`,
 `notion_brain_problems` and `notion_knowledge_docs` (migrations 2908 to 2911). A project with a link that is not `unlinked`
 resolves to the `notion` backend in `brainStoreFor`; until the Notion store ships it reads and writes exactly like the local one.
+
+## What Landflow writes
+
+Under the page a person shared, one page named for the project, with these children.
+
+- **Home** (the brain page's body): a callout saying how this works, then the counts and the index, written with `update_content` so the child pages and databases are never replaced.
+- **Log**: the project's log, from its first heading on.
+- **Four databases**: Pages (initiatives, customers, people, systems, one row each, with a body per page), Facts, Practices and Notes. Every row has a `Landflow ID` property that keys it.
+- **The region and "Your notes".** Each page and practice body is `<!-- landflow:start -->`, Landflow's text, `<!-- landflow:end -->`, then `## Your notes`. Landflow rewrites only the region; a person's edit inside it is reported and put back, and what is under "Your notes" is never touched.
+- **How the text is rendered.** Starting from the project's own page, Markdown from `## Summary`: `[[type/id|Label]]` links become page mentions where the target is in Notion and the plain label elsewhere, `<` and `>` are escaped, and text over the limit is cut at a heading and never inside a code block. Practices show the approved version, with a callout while a draft from Notion waits.
+- **What never leaves.** Only org or ownerless work shows on a page (private and team work, and the actors of work, stay in Landflow); run notes, notes of other projects, facts of other projects or none, and org practices are not copied. Suggestions are titles with "Open in Landflow".
