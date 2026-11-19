@@ -35,6 +35,8 @@ import { listProposals } from './proposals';
 import { brainModel, brainModelName } from './writer';
 import { HttpError } from '../errors';
 import { queryEvents } from '../audit/store'; // NB05:
+import { mappedNotionUrl } from './notion/urls'; // NB07:
+import { getLink } from './notion/links'; // NB07:
 
 const DAY = 86_400_000;
 /** How far back the home's shared-work and team views look. */
@@ -340,6 +342,7 @@ export function wikiPage(entity: BrainEntity, scope: UsageScope | undefined, vie
     ...(brainModelName() && { model: brainModelName() }),
     canEdit,
     ...changedInNotion(ref, now), // NB05:
+    ...notionFields(entity, ref), // NB07:
   };
 }
 
@@ -348,6 +351,26 @@ function changedInNotion(ref: string, now: number): { changedInNotion?: { by: st
   try {
     const found = queryEvents({ action: ['notion-brain.overwrite'], targetType: 'entity', targetId: ref, from: new Date(now - 7 * 86_400_000).toISOString() }, { limit: 20 }).events.find((e) => e.details?.winner === 'notion');
     return found ? { changedInNotion: { by: String(found.details?.by ?? 'A Notion user'), at: found.at } } : {};
+  } catch {
+    return {};
+  }
+}
+
+/** NB07: this page's Notion row (its URL) and "Your notes" from it, for the Brain page's "Open in Notion". Local tables only; nothing when unlinked or detached. */
+function notionFields(entity: BrainEntity, ref: string): { notion?: { url: string; notes?: string } } {
+  try {
+    const projectId = entityProject(entity);
+    const url = mappedNotionUrl(projectId, 'entity', ref);
+    if (!url || !projectId) return {};
+    const link = getLink(projectId);
+    const pageId = url.slice(url.lastIndexOf('/') + 1);
+    const doc = link
+      ? database()
+          .all<{ page_id: string; markdown: string | null }>('SELECT page_id, markdown FROM notion_knowledge_docs WHERE link_id = ?', link.id)
+          .find((d) => d.page_id.replace(/-/g, '').toLowerCase() === pageId)
+      : undefined;
+    const notes = doc?.markdown?.trim().slice(0, 4_000);
+    return { notion: { url, ...(notes && { notes }) } };
   } catch {
     return {};
   }

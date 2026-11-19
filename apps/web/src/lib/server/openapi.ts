@@ -2446,10 +2446,10 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Second brain',
     id: 'updateProjectNotionLink',
     summary: 'Pause, resume or tune a project’s Notion link',
-    description: 'The project’s admins. `paused`, `rps` (1 to 8 requests a second) and `knowledgeScope` (`brain` or `root`); a field left out keeps its value.',
+    description: 'The project’s admins. `paused`, `rps` (1 to 8 requests a second) and `knowledgeScope` (`brain` or `root`); a field left out keeps its value. NB07: `credentialId` (another Notion key the project may use) checks the link’s page, and its brain page, with that key first and only then keeps it (a refused key is 400, a page it cannot see 404, a Notion that does not answer in 15 seconds 504; the link stays as it was), and a link stopped as `unauthorized` or `unshared` goes back to `active` after it. `paused: false` on an `unauthorized` or `unshared` link does the same check with the link’s own key (“Check again”); on a `paused` link it resumes it. A check running for the project answers 409.',
     pathParams: notionPath,
-    body: jsonBody(object({ paused: { type: 'boolean' }, rps: { type: 'integer', minimum: 1, maximum: 8 }, knowledgeScope: { type: 'string', enum: ['brain', 'root'] } })),
-    responses: { 200: reply('The link', notionLink), 400: invalid, 403: errorRef('Not an admin of the project'), 404: notFound, 409: notionOff },
+    body: jsonBody(object({ paused: { type: 'boolean' }, rps: { type: 'integer', minimum: 1, maximum: 8 }, knowledgeScope: { type: 'string', enum: ['brain', 'root'] }, credentialId: { type: 'string', description: 'Another Notion key for the same page' } })),
+    responses: { 200: reply('The link', notionLink), 400: invalid, 403: errorRef('Not an admin of the project'), 404: notFound, 409: notionOff, 504: errorRef('Notion did not answer the check in time; the link is unchanged') },
   });
   add('delete', '/api/projects/{id}/brain/notion', {
     tag: 'Second brain',
@@ -2463,10 +2463,10 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Second brain',
     id: 'checkNotionPage',
     summary: 'Check a Notion page before linking it',
-    description: 'The project’s admins. Reads Notion and writes nothing: the page’s title, whether a Landflow brain is already under it, what a copy of this project would send (pages, facts, practices, project notes) and about how many minutes it takes. 404 “Landflow can’t see this page” names the connection to add in Notion.',
+    description: 'The project’s admins. Reads Notion and writes nothing: the page’s title, whether a Landflow brain is already under it, what a copy of this project would send (pages, facts, practices, project notes) and about how many minutes it takes. 404 “Landflow can’t see this page” names the connection to add in Notion. NB07: 504 when Notion has not answered in 15 seconds (a brain found only by the deeper probe may be missed then); 409 “A check of this project is running” when another page or key is being checked (the same page and key share the running check’s answer).',
     pathParams: notionPath,
     body: jsonBody(object({ credentialId: { type: 'string' }, page: { type: 'string' } }, ['credentialId', 'page'])),
-    responses: { 200: reply('What the page is', object({ title: { type: 'string' }, url: { type: 'string' }, workspaceName: { type: 'string' }, botName: { type: 'string' }, existingBrain: object({ found: { type: 'boolean' }, pageId: { type: 'string' } }, ['found']), counts: object({ pages: { type: 'integer' }, facts: { type: 'integer' }, practices: { type: 'integer' }, notes: { type: 'integer' } }, ['pages', 'facts', 'practices', 'notes']), estimateMinutes: { type: 'integer' } }, ['title', 'url', 'existingBrain', 'counts', 'estimateMinutes'])), 400: invalid, 403: errorRef('Not an admin of the project, or the project may not use that credential'), 404: notFound, 409: notionOff },
+    responses: { 504: errorRef('Notion took too long to answer; try again in a moment'), 200: reply('What the page is', object({ title: { type: 'string' }, url: { type: 'string' }, workspaceName: { type: 'string' }, botName: { type: 'string' }, existingBrain: object({ found: { type: 'boolean' }, pageId: { type: 'string' } }, ['found']), counts: object({ pages: { type: 'integer' }, facts: { type: 'integer' }, practices: { type: 'integer' }, notes: { type: 'integer' } }, ['pages', 'facts', 'practices', 'notes']), estimateMinutes: { type: 'integer' } }, ['title', 'url', 'existingBrain', 'counts', 'estimateMinutes'])), 400: invalid, 403: errorRef('Not an admin of the project, or the project may not use that credential'), 404: notFound, 409: notionOff },
   });
   add('post', '/api/projects/{id}/brain/notion/sync', {
     tag: 'Second brain',
@@ -2480,7 +2480,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Second brain',
     id: 'listNotionProblems',
     summary: 'Open sync problems of a project’s Notion link',
-    description: 'Any role in the project. Each problem has its kind, Landflow’s words about it (never page text) and the actions it offers.',
+    description: 'Any role in the project; with an API key it needs the `brain:read` scope, like the link (NB07; it was `workflows:read`). Each problem has its kind, Landflow’s words about it (never page text), `notionUrl` when it names a Notion page, and the actions its kind offers (the client shows the ones the viewer’s role may press).',
     pathParams: notionPath,
     responses: { 200: reply('The problems', array({ type: 'object', additionalProperties: true, description: 'A LinkProblemView: id, kind, notionId, notionUrl, localKey, detail, at, actions' })), 404: notFound },
   });

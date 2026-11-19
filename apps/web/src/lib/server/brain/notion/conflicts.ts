@@ -159,7 +159,8 @@ export function suggestedText(link: LinkRow, localKey: string): { text: string; 
   const isFact = localKey.startsWith('entity:');
   const prefix = isFact ? `notion-brain:fact:${link.id}:${localKey}:` : `notion-brain:region:${link.id}:${localKey}:`;
   const rows = database().all<{ data: string }>('SELECT data FROM proposals WHERE fingerprint LIKE ? ORDER BY updated_at DESC', `${prefix}%`);
-  for (const row of rows) {
+  // NB07: only the newest suggestion of the family: an older day's text is never what a person saw last.
+  for (const row of rows.slice(0, 1)) {
     try {
       const proposal = JSON.parse(row.data) as {
         evidence?: Array<{
