@@ -3012,3 +3012,7 @@ The person decided on 2026-11-18 that production approvals go to an approval inb
 - The Agent architect added a Home suggestion *Build a tool for Model* from the *no local model is listed* note (91).
 - Decisions owed by the person: an error workflow fired by a failing hosted-chat or MCP run waits (its input carries the outsider's data); a workflow called from a chat or MCP run refuses though its own publish line says it waits (see [limitations.md](limitations.md#the-approval-inbox-wave-ap1)).
 - Not covered by the live pass: K1 (kagent and the Claude Code harness have no inbox) and K2 (Run a Team's members). F2: the SMTP dialog leaves SSL/TLS on, seen again (06, 07).
+
+## Notion as the brain
+
+- **NB03 (wave nb1): a project can be linked to a Notion page** with the existing Notion API credential: migrations 2908 to 2911, the link model and resolver, the check, link, change, sync, disconnect and problem routes, `LANDFLOW_NOTION_BRAIN`. Nothing syncs yet; the copy, the push and the pull are wave nb2 ([features/notion-brain.md](features/notion-brain.md#setting-it-up)).

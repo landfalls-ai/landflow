@@ -165,6 +165,7 @@ still works.
 | `LANDFLOW_BRAIN_EMBEDDINGS` | `nomic-embed-text` | the Ollama model that embeds its facts into `landflow-brain-<project>`; `off`: keyword search only |
 | `LANDFLOW_BRAIN_INTERVAL_MINUTES` | `60` | how often the leader rolls up, checks effects and runs the detectors (it studies once a day) |
 | `LANDFLOW_BRAIN_WEEKLY_CAP` | `3` | suggestions per workflow per week |
+| `LANDFLOW_NOTION_BRAIN` | `on` | `off` switches the [Notion brain](../features/notion-brain.md) off for the whole instance: every project's brain stays local, links read as paused, the link routes (check, link, change, sync) answer 409 and nothing calls Notion |
 | `LANDFLOW_TEAM_PAUSE_MINUTES` | `30` | how long a paused team member waits for a person's instruction before it carries on without one ([run-trace.md](../run-trace.md#pause-and-take-over)) |
 | `LANDFLOW_PROJECT_CONTEXT` | on | `off` stops the "Where this work fits" block (mission, goals, project brief) from being added to the system prompt of every agent Landflow runs; an agent's own setting (`projectContext`: full, compact or off) applies while this is on ([agents.md](../agents.md#project-context)) |
 | `LANDFLOW_NOTEBOOK_EMBEDDINGS` | on | `off` stops the team notebook from asking Ollama for embeddings; search then matches words ([team-notebook.md](../team-notebook.md#search-by-meaning)) |
