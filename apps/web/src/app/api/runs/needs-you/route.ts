@@ -5,7 +5,7 @@
  * actor?, spanId?, since. A `budget` item (a project's AI budget warning or stop, for its admins and the budget's owner) has
  * projectId, incidentId, incidentKind, href, canRaise and canResume too (docs/projects-and-goals.md#ai-budget). A `task` item (a
  * project task's run that waits for an Approve, or for a tool approval in the agent's session, for the project's editors and
- * admins) has projectId, taskId, taskRunId, taskRunStatus, href and canDecide (docs/projects-and-goals.md#tasks). A `spend` item (a
+ * admins) has projectId, taskId, taskRunId, taskRunStatus, href and canDecide (docs/projects-and-goals.md#tasks). An `approval` item of a run nobody watches that waits in the approval inbox (docs/approval-inbox.md) has requestId, inboxStatus, tool, agentName, agentVersion, workflowVersion, destination, expiresAt and canDecide (one item per waiting request). A `spend` item (a
  * forecast over a cap, or unusual AI spend of a day; for the people the spend is theirs to hear, docs/llm-gateway.md#forecasts-and-unusual-spend)
  * has flagId, flagKind (`anomaly` or `forecast`), href (the AI page at the day) and canAcknowledge.
  */
@@ -27,6 +27,6 @@ export const GET = handler(async () => {
   const actor = routeActor();
   // PC14: a project's AI budget incidents join the run items, newest first.
   // Budget items are added after needsYou() cut to its MAX_ITEMS, so the answer can pass it.
-  const items = [...(await needsYou(visible)), ...budgetItems(actor, aiUsageMeter()), ...taskItems(actor), ...spendItems(actor, aiUsageMeter().today())].sort((a, b) => b.since.localeCompare(a.since));
+  const items = [...(await needsYou(visible, Date.now(), actor)), ...budgetItems(actor, aiUsageMeter()), ...taskItems(actor), ...spendItems(actor, aiUsageMeter().today())].sort((a, b) => b.since.localeCompare(a.since));
   return json({ items });
 });

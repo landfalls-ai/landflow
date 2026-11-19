@@ -749,6 +749,37 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(object({ callId: { type: 'string' }, approved: { type: 'boolean' }, input: { type: 'object', additionalProperties: true, description: 'The tool’s input as edited; replaces the call’s own input. Approvals only.' }, text: { type: 'string', description: 'Ask a Person: the draft as edited. Approvals only.' }, comment: { type: 'string', description: 'Ask a Person: a note left with the decision' } }, ['callId', 'approved'])),
     responses: { 200: reply('The decision, then the resumed run', { type: 'string', description: '`event: <name>` and `data: <JSON>` lines' }, 'text/event-stream'), 400: invalid, 403: errorRef('Not one of the people who may answer'), 404: notFound, 409: errorRef('Already decided, or the run is not waiting for a tool approval') },
   });
+  // AP01: the approval inbox (docs/approval-inbox.md)
+  const inboxRequest = { type: 'object', additionalProperties: true, description: 'An `InboxRequestView` (lib/shared/approval-inbox.ts): id, status (waiting, approved, denied, expired, cancelled), executionId, callId, workflowId, workflowName, workflowVersion, nodeId, nodeName, agentId, agentName, agentVersion, tool, params (masked), destination, trigger, requestedAt, expiresAt, decidedBy, decidedByName, decidedVia, decidedAt, nudged ({ email, channels }: counts only) and canDecide.' };
+  add('get', '/api/approval-inbox', {
+    tag: 'Executions',
+    id: 'listApprovalInbox',
+    summary: 'The tool approvals waiting in Needs you',
+    description: 'Requests of runs nobody watches (a webhook, schedule or app trigger) that paused at a tool that asks first, newest first, for the workflows the caller can read. Parameters are masked; `canDecide` says whether the caller may approve or deny.',
+    query: [
+      { name: 'status', description: '`waiting` (default) or `all`', schema: { type: 'string', enum: ['waiting', 'all'] } },
+      { name: 'executionId', description: 'Only the requests of this run', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The requests', object({ requests: array(inboxRequest) }, ['requests'])), 400: invalid },
+  });
+  add('get', '/api/approval-inbox/{id}', {
+    tag: 'Executions',
+    id: 'getApprovalRequest',
+    summary: 'One approval request',
+    pathParams: { id: 'The request id' },
+    responses: { 200: reply('The request', object({ request: inboxRequest }, ['request'])), 404: notFound },
+  });
+  for (const decision of ['approve', 'deny'] as const) {
+    add('post', `/api/approval-inbox/{id}/${decision}`, {
+      tag: 'Executions',
+      id: decision === 'approve' ? 'approveApprovalRequest' : 'denyApprovalRequest',
+      summary: `${decision === 'approve' ? 'Approve' : 'Deny'} a waiting tool call`,
+      description: `A signed-in person with run access on the workflow decides (never an API key). The first decision wins; the run goes on in the background (${decision === 'approve' ? 'the call runs' : 'the agent hears the call was refused'}). 404: no read access or no such request; 403: an API key, or read without run access; 409: already decided by someone (or the run was cancelled); 410: the request expired.`,
+      pathParams: { id: 'The request id' },
+      body: jsonBody(object({ note: { type: 'string', maxLength: 500, description: 'Left with the decision' } })),
+      responses: { 200: reply('The settled request', object({ request: inboxRequest }, ['request'])), 403: errorRef('An API key, or no run access'), 404: notFound, 409: errorRef('Already decided, or the run was cancelled'), 410: errorRef('The request expired') },
+    });
+  }
   add('get', '/api/runs/needs-you', {
     tag: 'Executions',
     id: 'listRunsNeedingYou',

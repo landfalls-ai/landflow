@@ -1936,6 +1936,17 @@ export const MIGRATIONS: Migration[] = [
       `CREATE TABLE IF NOT EXISTS execution_agent_versions (execution_id TEXT NOT NULL, node_id TEXT NOT NULL, agent_id TEXT NOT NULL, agent_version BIGINT, draft BIGINT NOT NULL DEFAULT 0, source TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (execution_id, node_id, agent_id))`,
     ],
   },
+  // AP01: one durable record per waiting tool call of a run nobody watches (docs/approval-inbox.md); kept for the audit, read through its workflow
+  {
+    version: 2907,
+    name: 'approval_inbox',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS approval_inbox (id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, call_id TEXT NOT NULL, workflow_id TEXT NOT NULL, workflow_name TEXT NOT NULL, workflow_version BIGINT, node_id TEXT NOT NULL, node_name TEXT NOT NULL, agent_id TEXT NOT NULL, agent_name TEXT NOT NULL, agent_version TEXT, session_id TEXT NOT NULL, project_id TEXT, tool TEXT NOT NULL, params TEXT NOT NULL, destination TEXT, trigger_word TEXT NOT NULL, status TEXT NOT NULL, requested_at TEXT NOT NULL, expires_at TEXT NOT NULL, nudged TEXT, decided_by TEXT, decided_by_name TEXT, decided_via TEXT, decided_at TEXT)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS approval_inbox_call ON approval_inbox (execution_id, call_id)`,
+      `CREATE INDEX IF NOT EXISTS approval_inbox_status ON approval_inbox (status, expires_at)`,
+      `CREATE INDEX IF NOT EXISTS approval_inbox_workflow ON approval_inbox (workflow_id)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -2023,6 +2034,7 @@ export const TABLES = {
   mcp_project_servers: ['project_id'],
   scheduled_publishes: ['id'],
   approval_email_used: ['group_id'],
+  approval_inbox: ['id'], // AP01:
   chat_feedback: ['id'],
   agent_definitions: ['id'],
   agent_sessions: ['id'],

@@ -3,9 +3,13 @@
  * approval, a form, an agent's question; not timers, webhooks or sub-workflows) and failed checks of the last 7 days
  * nobody settled yet (read from the journal).
  */
+import type { InboxItemFields } from '../../shared/approval-inbox'; // AP01:
 import type { ExecutionRecord } from '../../shared/types';
 import type { JournalEvent, RunActor, RunCheck } from '../../shared/run-trace';
 import { openAsks } from '../a2a/agent-asks';
+import { canDecide } from '../approval-inbox/access'; // AP01:
+import { waitingOfExecution } from '../approval-inbox/store'; // AP01:
+import type { Actor } from '../projects/access'; // AP01:
 import { liveExecution } from '../runner';
 import { store } from '../store';
 import { openWaitSpan } from './decisions';
@@ -43,6 +47,15 @@ export interface NeedsYouItem {
   flagId?: string;
   flagKind?: 'anomaly' | 'forecast';
   canAcknowledge?: boolean;
+  // AP01: an `approval` item whose wait is an approval-inbox request (lib/shared/approval-inbox.ts `InboxItemFields`): one item per waiting request.
+  requestId?: InboxItemFields['requestId'];
+  inboxStatus?: InboxItemFields['inboxStatus'];
+  tool?: InboxItemFields['tool'];
+  agentName?: InboxItemFields['agentName'];
+  agentVersion?: InboxItemFields['agentVersion'];
+  workflowVersion?: InboxItemFields['workflowVersion'];
+  destination?: InboxItemFields['destination'];
+  expiresAt?: InboxItemFields['expiresAt'];
 }
 
 const DAY_MS = 86_400_000;
@@ -85,6 +98,43 @@ function waitItem(record: ExecutionRecord): NeedsYouItem | undefined {
   return undefined;
 }
 
+/** AP01: one item per request of an approval-inbox wait that still waits ("“Alert mailer” wants to run “Send Email”"). */
+function inboxItems(record: ExecutionRecord, actor: Actor | undefined): NeedsYouItem[] {
+  const wait = record.wait;
+  const inbox = (wait?.data as Record<string, unknown> | undefined)?.inbox;
+  if (!wait || !isObject(inbox) || !isObject(inbox.ids)) return [];
+  const node = record.workflow?.nodes.find((n) => n.id === wait.nodeId);
+  const actorOf: RunActor = { id: `node:${wait.nodeId}`, name: wait.nodeName, type: 'agent', ...(node && { nodeType: node.type }) };
+  const spanId = openWaitSpan(record.executionId);
+  const ids = new Set(Object.values(inbox.ids).map(String));
+  return waitingOfExecution(record.executionId)
+    .filter((row) => ids.has(row.id))
+    .map((row): NeedsYouItem => {
+      const version = row.agent_version === null ? undefined : row.agent_version === 'draft' ? 'draft' : Number(row.agent_version);
+      const workflowVersion = row.workflow_version === null ? undefined : Number(row.workflow_version);
+      return {
+        executionId: record.executionId,
+        workflowId: record.workflowId,
+        workflowName: record.workflowName,
+        kind: 'approval',
+        title: `“${row.agent_name}” wants to run “${row.tool}”`,
+        detail: [row.destination, workflowVersion !== undefined ? `${record.workflowName} v${workflowVersion}` : record.workflowName].filter(Boolean).join(' · '),
+        actor: actorOf,
+        ...(spanId && { spanId }),
+        since: row.requested_at,
+        requestId: row.id,
+        inboxStatus: row.status,
+        tool: row.tool,
+        agentName: row.agent_name,
+        ...(version !== undefined && { agentVersion: version as number | 'draft' }),
+        ...(workflowVersion !== undefined && { workflowVersion }),
+        ...(row.destination && { destination: row.destination }),
+        expiresAt: row.expires_at,
+        canDecide: canDecide(actor, row),
+      };
+    });
+}
+
 type CheckEvent = Extract<JournalEvent, { type: 'check' }>;
 
 /** Failed checks whose latest word is the failure: not passed since, not accepted or sent back. */
@@ -97,12 +147,19 @@ async function failedChecks(now: number): Promise<CheckEvent[]> {
 }
 
 /** The items for the executions `visible` allows (undefined: all), newest first. */
-export async function needsYou(visible: Set<string> | undefined, now = Date.now()): Promise<NeedsYouItem[]> {
+export async function needsYou(visible: Set<string> | undefined, now = Date.now(), actor?: Actor): Promise<NeedsYouItem[]> {
   const items: NeedsYouItem[] = [];
   // A run whose Run report waits on its failed checks shows them once, as that wait.
   const gated = new Set<string>();
   for (const record of store.waitingExecutions()) {
     if (visible && !visible.has(record.workflowId)) continue;
+    // AP01: an approval-inbox wait shows one item per waiting request; rows already settled never show.
+    const inbox = inboxItems(record, actor);
+    if (inbox.length) {
+      items.push(...inbox);
+      continue;
+    }
+    if ((record.wait?.data as Record<string, unknown> | undefined)?.inbox) continue;
     const item = waitItem(record);
     if (item) items.push(item);
     if (item?.kind === 'gate') gated.add(record.executionId);

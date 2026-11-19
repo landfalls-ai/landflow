@@ -392,7 +392,8 @@ export const alertStore = {
   pruneWaitingSent(stillWaiting: Set<string>) {
     const db = database();
     for (const row of db.all<{ rule_id: string; execution_id: string }>('SELECT rule_id, execution_id FROM alert_waiting_sent')) {
-      if (!stillWaiting.has(row.execution_id)) db.delete('alert_waiting_sent', { rule_id: row.rule_id, execution_id: row.execution_id });
+      // AP01: `approval:<request id>` markers belong to approval requests (approval-inbox/nudge.ts prunes them)
+      if (!row.execution_id.startsWith('approval:') && !stillWaiting.has(row.execution_id)) db.delete('alert_waiting_sent', { rule_id: row.rule_id, execution_id: row.execution_id });
     }
   },
 };

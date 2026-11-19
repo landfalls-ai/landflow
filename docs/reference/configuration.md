@@ -80,6 +80,7 @@ still works.
 | `LANDFLOW_EXECUTE_TIMEOUT_MS` | `120000` | per remote Execute call (and per call to the code runner); minimum 1000 for plugin calls |
 | `LANDFLOW_RETENTION_EVERY` | 50 | finished runs between retention passes (minimum 1: `0` or a fraction counts as 1); the hourly timer and Prune now run regardless, so the count may exceed its cap by up to N-1 between passes ([features/settings-and-data.md](../features/settings-and-data.md)) |
 | `LANDFLOW_APPROVAL_EMAIL_TTL_HOURS` | `24` | hours an Approve or Reject link in an approval email stays valid (minimum 1) |
+| `LANDFLOW_APPROVAL_INBOX_EXPIRY_MINUTES` | `1440` | minutes a production run waits for a tool approval in Needs you before the call is refused (1 to 43,200); read when the request opens |
 | `LANDFLOW_ROLE` | `main` | `main` (UI, API, webhooks) or `worker`; `pnpm worker` sets `worker` |
 | `LANDFLOW_VALKEY_SENTINEL_USERNAME` | – | user for the sentinels themselves, when they require AUTH |
 | `LANDFLOW_VALKEY_SENTINEL_PASSWORD` *(secret)* | – | password for the sentinels themselves, when they require AUTH |

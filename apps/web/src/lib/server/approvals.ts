@@ -12,6 +12,9 @@
 import type { JsonObject } from '@landflow/protocol';
 import type { ExecutionEvent } from '@landflow/engine';
 import type { ExecutionRecord } from '../shared/types';
+import { settledLine, type InboxVia } from '../shared/approval-inbox'; // AP01:
+import { claim, closedOf, rowFor, serverClock, viewOf } from './approval-inbox/store'; // AP01:
+import { requestAuth } from './auth/context'; // AP01:
 import { recordDecision } from './journal/decisions';
 import { liveExecution, resumeExecution } from './runner';
 import { confirmDecidedBlocks, decidedBlocks, slackCredentialFor, slackRefOf, updateMessage } from './slack';
@@ -90,6 +93,9 @@ export type DecisionOutcome = { status: 'waiting'; approval: PendingApproval } |
 
 const isJsonObject = (value: unknown): value is JsonObject => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
+// AP01: the fields `settledLine` reads from a settled request.
+const outcomeLine = (view: ReturnType<typeof viewOf>, tool: string) => ({ status: view.status, tool, decidedByName: view.decidedByName, decidedBy: view.decidedBy, decidedVia: view.decidedVia, decidedAt: view.decidedAt });
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
@@ -100,7 +106,23 @@ export async function decideApproval(
   executionId: string,
   callId: string,
   approved: boolean,
-  options: { by?: string; slackUser?: string; onEvent?: (event: ExecutionEvent) => void; streaming?: boolean; input?: JsonObject; text?: string; comment?: string } = {},
+  options: {
+    by?: string;
+    slackUser?: string;
+    onEvent?: (event: ExecutionEvent) => void;
+    streaming?: boolean;
+    input?: JsonObject;
+    text?: string;
+    comment?: string;
+    // AP01: who is deciding an approval-inbox request (docs/approval-inbox.md). `byName`: shown in the settled line; `via`: the
+    // door (default: `email` for a link, else `inbox`); `principal`: how the caller signed in (default: the request's);
+    // `note`: left with the decision; `background`: answer once the decision is recorded and resume without waiting.
+    byName?: string;
+    via?: InboxVia;
+    principal?: 'session' | 'api-key' | 'test' | 'mcp';
+    note?: string;
+    background?: boolean;
+  } = {},
 ): Promise<DecisionOutcome> {
   if (options.text !== undefined) {
     if (!approved) throw new ApprovalError('Only an approval can carry edited text', 400);
@@ -120,6 +142,24 @@ export async function decideApproval(
   }
   stored ??= await store.loadExecution(executionId);
   if (!stored) throw new ApprovalError('Execution not found', 404);
+  // AP01: a request in the approval inbox has a record every door claims first; a wait without one decides as before.
+  const requestRow = rowFor(executionId, callId);
+  if (requestRow) {
+    const principal = options.principal ?? requestAuth()?.principal?.via;
+    // A person decides: a signed-in session (or the person a signed email link was sent to), never an API key, an agent or Spotlight.
+    if (principal === 'api-key' || principal === 'mcp' || options.slackUser || !options.by) throw new ApprovalError('A person decides an approval in Needs you', 403);
+    if (requestRow.status !== 'waiting') {
+      const closed = closedOf(requestRow);
+      throw new ApprovalError(closed.message, closed.status);
+    }
+    // Expiry never approves: past its time a request is settled `expired` by whoever looks first, and this decision is refused.
+    if (Date.parse(requestRow.expires_at) <= Date.now()) {
+      const expired = await claim(requestRow.id, 'expired', { via: 'expiry' });
+      const closed = closedOf(expired.row ?? requestRow);
+      throw new ApprovalError(closed.message, closed.status);
+    }
+    if (options.text !== undefined || options.comment !== undefined) throw new ApprovalError('Only an Ask a Person request takes text or a comment', 400);
+  }
   const approval = pendingApproval(stored);
   if (!approval) throw new ApprovalError(stored.status === 'waiting' ? 'This execution is not waiting for a tool approval' : `This execution is ${stored.status}, not waiting for an approval`, 409);
   const call = approval.calls.find((c) => c.id === callId);
@@ -138,27 +178,53 @@ export async function decideApproval(
     throw new ApprovalError('Only an Ask a Person request takes text or a comment', 400);
   }
   const previous = approval.decisions?.[callId];
-  if (previous) throw new ApprovalError(`Already ${previous.approved ? 'approved' : 'rejected'}`, 409);
+  if (previous && !requestRow) throw new ApprovalError(`Already ${previous.approved ? 'approved' : 'rejected'}`, 409);
 
+  // AP01: claim the request first: one conditional update decides who is first, and a lost claim changes nothing.
+  let settled: ReturnType<typeof viewOf> | undefined;
+  if (requestRow) {
+    const via = options.via ?? (options.by?.startsWith('email:') ? 'email' : 'inbox');
+    const won = await claim(requestRow.id, approved ? 'approved' : 'denied', { by: options.by, byName: options.byName ?? options.by?.replace(/^email:/, ''), via });
+    if (!won.won) {
+      const closed = closedOf(won.row ?? requestRow);
+      throw new ApprovalError(closed.message, closed.status);
+    }
+    settled = viewOf(won.row!);
+    // The run may have been cancelled while the claim travelled (queue mode): then there is nothing to record or resume.
+    // The row stays as claimed (the claim is one-way, and the cancel's own claim lost): its record says who answered and when, the
+    // run's status says nothing ran. Accepted on purpose: undoing a claim would reopen the door the single claim exists to close.
+    const current = store.getExecution(executionId);
+    if (!current || current.status !== 'waiting' || !pendingApproval(current)) throw new ApprovalError(`This execution is ${current?.status ?? 'gone'}, not waiting for an approval`, 409);
+    stored = current;
+  }
   // Read, change and save in one synchronous step: two clicks can't overwrite each other.
   const by = options.by ?? (options.slackUser ? `slack:${options.slackUser}` : undefined);
-  const decisions = { ...approval.decisions, [callId]: { approved, ...(by && { by }), at: new Date().toISOString(), ...(options.input && { input: options.input }), ...(options.text !== undefined && { text: options.text }), ...(options.comment?.trim() && { comment: options.comment.trim() }) } };
+  const decisions = { ...approval.decisions, [callId]: { approved, ...(by && { by }), at: new Date().toISOString(), ...(options.input && { input: options.input }), ...(options.text !== undefined && { text: options.text }), ...((options.comment?.trim() || options.note?.trim()) && { comment: (options.comment ?? options.note)!.trim() }) } };
   const next: PendingApproval = { ...approval, decisions };
   store.saveExecution({ ...stored, wait: { ...stored.wait!, data: { ...stored.wait!.data, approval: next as unknown as JsonObject } } });
   // Said in the run's journal, in the wait it answers (before the resume ends that wait): web, Slack and email alike.
   const edited = options.input !== undefined || (options.text !== undefined && options.text !== approval.confirm?.text);
-  recordDecision(executionId, stored.workflowId, { id: by ?? 'unknown', name: by }, `${approved ? 'Approved' : 'Rejected'} ${approval.confirm ? `“${approval.confirm.title}”` : call.tool}${edited ? ' with changes' : ''}`, edited ? { editedBy: by ?? 'A person' } : undefined);
+  // AP01: an inbox request's row reads `settledLine` ("Approved by Owner in Needs you · …").
+  const said = settled ? settledLine(outcomeLine(settled, call.tool), serverClock) : `${approved ? 'Approved' : 'Rejected'} ${approval.confirm ? `“${approval.confirm.title}”` : call.tool}${edited ? ' with changes' : ''}`;
+  recordDecision(executionId, stored.workflowId, { id: by ?? 'unknown', name: settled?.decidedByName ?? by }, said, edited ? { editedBy: by ?? 'A person' } : undefined);
   void updateSlackMessage(stored, next, call, decisions[callId]).catch((error: Error) =>
     logger.warn('could not update the Slack approval message', { 'landflow.execution.id': executionId, error: error.message }),
   );
 
   if (approval.calls.some((c) => !decisions[c.id])) return { status: 'waiting', approval: next };
-  const record = await resumeExecution(executionId, {
-    kind: 'approval',
-    outputs: [[{ json: { decisions: decisions as unknown as JsonObject } }]],
-    ...(options.onEvent && { onEvent: options.onEvent }),
-    ...(options.streaming && { streaming: true }),
-  });
+  const resume = () =>
+    resumeExecution(executionId, {
+      kind: 'approval',
+      outputs: [[{ json: { decisions: decisions as unknown as JsonObject } }]],
+      ...(options.onEvent && { onEvent: options.onEvent }),
+      ...(options.streaming && { streaming: true }),
+    });
+  // AP01: the inbox routes answer once the decision is recorded; the run goes on (an error is logged, the record says what was decided).
+  if (options.background) {
+    void resume().catch((error: Error) => logger.warn('could not resume a run after an approval', { 'landflow.execution.id': executionId, error: error.message }));
+    return { status: 'resumed', record: stored };
+  }
+  const record = await resume();
   return { status: 'resumed', record };
 }
 

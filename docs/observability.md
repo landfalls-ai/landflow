@@ -558,6 +558,11 @@ the call may start, then prices and records what it used.
   reached: credential “Team OpenAI” today used 2,200 tokens of its 1,500 tokens limit (Settings → AI
   caps)*; a zero or empty limit means no cap. A cost alert for these caps links to `/settings#ai-caps`.
 - **AI usage of plugin nodes**: a remote plugin node that returns a `model` record ([protocol.md](protocol.md), `ctx.model`) is counted like the models node: priced, one `ai_usage` row (Insights, `ExecutionRecord.aiUsage`, the per-credential and per-user caps through the credential tag on the request, the `ai.call` ledger event) and the `landflow.ai.tokens` metric (`ai-usage/plugin.ts`, `withAiUsage`). A call over a cap fails the node and run with the same `UsageCapError`; a node with `meterAiUsage` is refused before it runs once a cap is reached. Several records in one response are all counted before the error is thrown. The record's span in Run Trace has `costUsd` from the same price table (overrides included); an unpriced model is $0 with a `costNote`, and a capped call keeps its span. Ollama's cache-read tokens are provider-reported, not an artefact.
+- **Approval alerts**: a *Runs* alert rule with the event **Waits for your approval** (`approval`; Settings → Alerts) sends one
+  message per approval request and rule through its channels (Slack, a signed webhook, Telegram, Teams, Discord, email) when a
+  run nobody watches pauses at a tool that asks first, from the alerts ticker on the leader. It names the tool, agent, workflow,
+  destination, expiry and a Needs you link, never a parameter value; a rule without the event hears nothing
+  ([approval-inbox.md](approval-inbox.md#nudges)).
 - **Cost alerts**: an alert rule of kind *AI cost* (Settings → Alerts, a threshold percent, default
   80) sends a message through its channels when a workflow, agent, credential or user cap reaches the
   threshold, once per cap per period (day or month; `alert_state`, migration 1820), checked when usage

@@ -162,6 +162,7 @@ const VERB: Record<AlertEvent, string> = {
   costForecast: 'AI cost forecast', // SP23:
   spendAnomaly: 'Unusual AI spend', // SP23:
   evaluationScore: 'Evaluation score',
+  approval: 'Waits for your approval', // AP01:
 };
 
 /** One line: the subject of an email, the first line elsewhere. */
