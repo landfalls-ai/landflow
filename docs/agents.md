@@ -807,9 +807,10 @@ request: the run goes on when the last one is decided). The Platform analyst's o
 
   **Production approvals** (AG23). Every trigger except the manual and the evaluation one starts a run nobody
   watches (webhook, schedule, channel, app trigger, hosted chat, form, usage event, suggestion decision, detector, cap raise, error
-  workflow, called workflow, MCP call), so a tool that asks first is still refused there (a Spotlight fix session's decision is about *fixing*; where a
-  production run's approvals should go, an approval inbox, approval at publish, or refusing, is the person's decision and is
-  not built). It is said before it bites: `GET /api/workflows/:id/unattended-approvals` lists each such tool with its trigger,
+  workflow, called workflow, MCP call), so a tool that asks first is still refused there until the Run an Agent step waits in the
+  approval inbox (a Spotlight fix session's decision is about *fixing*; the person decided on 2026-11-18 that production
+  approvals go to an approval inbox: its server side is built, see [approval-inbox.md](approval-inbox.md); the step that pauses and
+  the publish card's new line come with the rest of wave ap1). It is said before it bites: `GET /api/workflows/:id/unattended-approvals` lists each such tool with its trigger,
   and the publish card and the Publish menu show *In production nobody approves “Send Email”: a webhook run refuses it. Tell me
   where production approvals should go, or keep it refusing.* Each run is an agent session from the
   workflow. The node is `usableAsTool`, so an AI Agent node can delegate to an agent. It runs
