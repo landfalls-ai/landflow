@@ -10,6 +10,7 @@
  */
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { SquarePen, Sparkles, X } from 'lucide-react';
+import { usePathname } from 'next/navigation'; // NB08:
 import { nanoid } from 'nanoid';
 import { api, ApiError } from '@/lib/client/api';
 import { useConversation } from '@/lib/client/conversations';
@@ -27,6 +28,10 @@ import { MentionChips } from '../../ui/mention-picker';
 import { CHAT_ICON_BUTTON, ChatComposer, ChatEmpty, ChatError, ModelChip, ReplyMeta, UserBubble, type ReplyInfo } from '../../ui/chat';
 import { ChatList, ChatMotion, StatusSwap, StreamingText } from '../../ui/chat-motion';
 import { PageLink, WikiText, WorkRow } from './parts';
+import { notionBrainAsk, hideNotionKeys, type NotionBrainAsk } from '@/lib/shared/notion-brain-ask'; // NB08:
+import { notionBrainReply, type NotionBrainReply } from '../../spotlight/notion-brain-turn'; // NB08:
+import { NotionBrainCard } from '../../spotlight/notion-brain-card'; // NB08:
+import { useProjectStore } from '../../projects/use-projects'; // NB08:
 
 export const ASK_INPUT = 'brain-ask-input';
 
@@ -46,6 +51,16 @@ export interface AskTag {
 
 /** What tells two tags apart (type, workflow and id), so a tag counts once in a turn. */
 const tagKey = (tag: AskTag): string => `${tag.type}:${tag.workflowId ?? ''}:${tag.id}`;
+
+/** NB08: a typed message the shell decided is about the Notion brain: shown here, answered without a model, never stored. */
+export interface LocalTurn {
+  id: string;
+  at: number;
+  /** The typed text, with any key-shaped string hidden. */
+  text: string;
+  ask: NotionBrainAsk;
+  reply?: NotionBrainReply;
+}
 
 export interface AskItem {
   id: string;
@@ -296,6 +311,8 @@ export function useAskConversation() {
   const [items, setItems] = useState<AskItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [subject, setSubject] = useState<string>();
+  // NB08: Notion-brain turns are local: never sent to Ask, never stored in the conversation. `at` is how many Ask turns came before.
+  const [local, setLocal] = useState<LocalTurn[]>([]);
   const kept = useConversation(subject ? { surface: 'brain', subjectType: 'brainPage', subjectId: subject } : { surface: 'brain' });
   const keptRef = useRef(kept);
   const itemsRef = useRef(items);
@@ -398,7 +415,22 @@ export function useAskConversation() {
     else void storeElsewhere(beganAt, beganIn, current).catch(() => undefined);
   }, []);
   const stop = useCallback(() => reading.current?.abort(), []);
+  // NB08:
+  const askNotion = useCallback((text: string, ask: NotionBrainAsk, ctx: { projectId?: string }) => {
+    const id = nanoid(8);
+    setLocal((all) => [...all, { id, at: itemsRef.current.length, text: hideNotionKeys(text), ask }]);
+    void (async () => {
+      let projects = useProjectStore.getState().projects;
+      if (!projects && ask.kind !== 'key') {
+        await useProjectStore.getState().refresh();
+        projects = useProjectStore.getState().projects;
+      }
+      const reply = await notionBrainReply(ask, { ...ctx, projects: (projects ?? []).map((p) => ({ id: p.id, name: p.name, ...(p.role && { role: p.role }) })) });
+      setLocal((all) => all.map((t) => (t.id === id ? { ...t, reply } : t)));
+    })();
+  }, []);
   const clear = useCallback(() => {
+    setLocal([]); // NB08:
     epoch.current += 1;
     reading.current?.abort();
     want.current = null;
@@ -408,6 +440,7 @@ export function useAskConversation() {
   /** Show a kept conversation (from the history button). */
   const open = useCallback((id: string) => {
     if (reading.current) return;
+    setLocal([]); // NB08:
     epoch.current += 1;
     awaitItems(true);
     void keptRef.current.open(id).catch(() => {
@@ -421,7 +454,7 @@ export function useAskConversation() {
     },
     [ask],
   );
-  return { items, busy, ask, stop, clear, retry, open, setSubject };
+  return { items, busy, ask, stop, clear, retry, open, setSubject, local, askNotion };
 }
 /** A turn that finished on another page than the panel is on now: stored in the conversation it began in (or a new one for that page). */
 async function storeElsewhere(subject: string | undefined, id: string | undefined, item: AskItem): Promise<void> {
@@ -458,7 +491,11 @@ export function AskPanel({
   request?: { question: string; key: number };
 }) {
   const own = useAskConversation();
+  // NB08: a conversation made by a test or an older caller may not carry the local turns: the panel's own then.
+  const kept = (conversation as Partial<AskConversation> | undefined)?.askNotion ? conversation! : own;
   const { items, busy, ask, stop, clear, retry, open, setSubject } = conversation ?? own;
+  const { local: notionTurns, askNotion } = kept;
+  const projectPage = /^\/projects\/([^/?#]+)/.exec(usePathname() ?? '')?.[1];
   const [input, setInput] = useState('');
   const [aboutOff, setAboutOff] = useState(false);
   const [subjectOff, setSubjectOff] = useState(false);
@@ -490,6 +527,9 @@ export function AskPanel({
     // The thing it was sent about goes first, once.
     const tags = subjectChip && !picked.some((t) => tagKey(t) === tagKey(subjectChip)) ? [subjectChip, ...picked] : picked;
     picker.clear();
+    // NB08: a Notion-brain ask never goes to Ask or the conversation store: it becomes a local turn.
+    const notion = notionBrainAsk(text);
+    if (notion) return askNotion(text, notion, projectPage ? { projectId: decodeURIComponent(projectPage) } : {});
     void ask(text, chip, tags.slice(0, 8));
   };
   const asker = useRef(send);
@@ -524,7 +564,7 @@ export function AskPanel({
           </button>
         </div>
 
-        {items.length === 0 ? (
+        {items.length === 0 && notionTurns.length === 0 ? ( // NB08: local turns count
           <div className="flex min-h-0 flex-1 flex-col justify-center overflow-y-auto py-6">
             <ChatEmpty title="Ask the brain" help="It answers from the pages, facts and work you can open, and says where each answer comes from." starters={starters} onStarter={(s) => send(s)} />
           </div>
@@ -532,6 +572,7 @@ export function AskPanel({
           <ChatList className="min-h-0 flex-1 space-y-4 px-3 py-3">
             {items.map((item, i) => (
               <Fragment key={item.id}>
+                {notionTurns.filter((t) => Math.min(t.at, items.length) === i).map((t) => <LocalTurnView key={t.id} turn={t} />) /* NB08: */}
                 {item.earlier && !items[i - 1]?.earlier && (
                   <div role="separator" className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">
                     <span className="h-px flex-1 bg-hair" />
@@ -542,6 +583,7 @@ export function AskPanel({
                 <AskTurnView item={item} onRetry={busy ? undefined : () => retry(item)} />
               </Fragment>
             ))}
+            {notionTurns.filter((t) => t.at >= items.length).map((t) => <LocalTurnView key={t.id} turn={t} />) /* NB08: */}
           </ChatList>
         )}
 
@@ -624,6 +666,27 @@ export function AskPanel({
         </div>
       </div>
     </ChatMotion>
+  );
+}
+
+/** NB08: a Notion-brain turn: what was typed (a key hidden), then the words or the card. */
+function LocalTurnView({ turn }: { turn: LocalTurn }) {
+  const reply = turn.reply;
+  return (
+    <div className="space-y-2.5" data-testid="notion-turn">
+      <UserBubble>{turn.text}</UserBubble>
+      {!reply ? (
+        <p className="text-[12px] text-t3" role="status">
+          Looking…
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {reply.kind === 'card' && reply.text ? <p className="text-[13px] text-t1">{reply.text}</p> : null}
+          {reply.kind === 'text' || reply.kind === 'key' ? <p className="text-[13px] leading-relaxed text-t1 [overflow-wrap:anywhere]">{reply.text}</p> : null}
+          {reply.kind !== 'text' && <NotionBrainCard reply={reply} />}
+        </div>
+      )}
+    </div>
   );
 }
 

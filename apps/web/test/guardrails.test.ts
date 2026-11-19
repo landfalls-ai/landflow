@@ -97,6 +97,12 @@ describe('secret keys', () => {
     ['blob Zx9kQ2mN8pL4vR7tY1wB6cD3fG5hJ0aS', 'strict', ['HIGH_ENTROPY_STRING']],
     ['plain words only, nothing secret', 'strict', []],
   ] as const)('%s (%s)', async (text, level, expected) => expect(await found(text, at(level))).toEqual(expected));
+  // NB08: a Notion key (built at run time: no key-shaped literal in the source).
+  it('masks a Notion key at the permissive level', async () => {
+    const key = ['ntn', 'x'.repeat(8) + 'Ab1'.repeat(14)].join('_');
+    expect(await found(`use ${key} please`, at('permissive'))).toEqual(['NOTION_KEY']);
+    expect(await found(`use ${['ntn', 'short'].join('_')} please`, at('permissive'))).toEqual([]);
+  });
 
   it('replaces only the password of a connection string', async () => {
     const { text } = await runGuardrails('use postgres://app:s3cr3tpass@db:5432/x', at('balanced'), { mode: 'sanitize' });
