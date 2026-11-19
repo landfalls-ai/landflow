@@ -112,7 +112,7 @@ function SessionDetail({
   const run = useAgentRun(agentId, session, traceUrls);
   // AP03: a workflow session whose calls wait in the approval inbox says so, with a link, and has no Approve or Deny here.
   const inboxRequests = useExecutionRequests(session?.execution?.executionId ?? '', session?.status);
-  const waitingRequest = session?.execution && session.status === 'awaiting_approval' ? inboxRequests.find((r) => r.status === 'waiting') : undefined;
+  const waitingRequest = session?.execution && session.status === 'awaiting_approval' ? inboxRequests.find((r) => r.status === 'waiting' && r.agentId === agentId) : undefined;
   const inboxHref = waitingRequest ? `/?approval=${encodeURIComponent(waitingRequest.id)}` : run.waitsInNeedsYou && session?.execution ? `/runs/${session.execution.executionId}` : undefined;
 
   const load = useCallback(

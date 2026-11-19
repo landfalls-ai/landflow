@@ -244,12 +244,33 @@ describe('the Run Trace card', () => {
     expect(posts()).toEqual([{ method: 'POST', url: '/api/approval-inbox/req1/approve' }]);
   });
 
+  it('after Approve the card shows the settled line and no buttons', async () => {
+    routes.list = [view()];
+    await mount(card());
+    await click(host.querySelector('[data-testid="approval-approve"]')!);
+    expect(host.querySelector('[data-testid="approval-inbox-line"]')?.textContent).toBe(settledLine(view({ status: 'approved', decidedByName: 'Owner', decidedVia: 'inbox', decidedAt: iso(5) }), inboxClock));
+    expect(host.querySelector('[data-testid="approval-approve"]')).toBeNull();
+    expect(host.querySelector('[data-testid="approval-deny"]')).toBeNull();
+  });
+
+  it('after a 410 the card shows the closed message and no buttons', async () => {
+    routes.list = [view()];
+    routes.decide = () => json({ error: 'This approval expired at 14:12.' }, 410);
+    await mount(card());
+    await click(host.querySelector('[data-testid="approval-approve"]')!);
+    expect(host.querySelector('[data-testid="approval-closed"]')?.textContent).toContain('expired');
+    expect(host.querySelector('[data-testid="approval-approve"]')).toBeNull();
+    expect(host.querySelector('[data-testid="approval-deny"]')).toBeNull();
+  });
+
   it('a lost race says who won, and a wait without a request reads waiting since as before', async () => {
     routes.list = [view()];
     routes.decide = () => json({ error: 'Already denied by Owner at 14:05.' }, 409);
     await mount(card());
     await click(host.querySelector('[data-testid="approval-deny"]')!);
     expect(host.querySelector('[data-testid="approval-closed"]')?.textContent).toBe('Already denied by Owner at 14:05.');
+    expect(host.querySelector('[data-testid="approval-approve"]')).toBeNull();
+    expect(host.querySelector('[data-testid="approval-deny"]')).toBeNull();
     act(() => root.unmount());
     root = createRoot(host);
     routes.list = [];
