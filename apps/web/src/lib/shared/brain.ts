@@ -550,7 +550,7 @@ export interface BrainEntity {
   projectId?: string;
   /** Anything else worth knowing, as flat key/value pairs. */
   attrs: Record<string, string | number | boolean>;
-  /** Who put it there: api, workflow, agent, ui. */
+  /** Who put it there: api, workflow, agent, ui, notion (NB01: pulled from a linked Notion page). */
   source: string;
   createdAt: string;
   updatedAt: string;
@@ -762,3 +762,6 @@ export interface BacktestResult {
   partial?: boolean;
   durationMs: number;
 }
+
+/** NB01: a fact pulled from Notion carries an evidence item `{ label: NOTION_EVIDENCE_LABEL, href: <page url> }` (a fact has no `source` field). */
+export const NOTION_EVIDENCE_LABEL = 'Notion';

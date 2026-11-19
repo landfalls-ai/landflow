@@ -18,6 +18,9 @@ import { projectRole, visibleProjectIds, type Actor } from '../projects/access';
 import { defaultProjectId } from '../projects/store';
 import type { UsageScope } from '../usage/query';
 import { getProfile, listFacts, upsertFact } from './facts';
+import { changeOrigin } from './store/origin'; // NB01
+import { emitBrainChange } from './store/port'; // NB01
+import type { BrainChangeOrigin } from '../../shared/brain-store'; // NB01
 import { HttpError } from '../errors';
 
 export class EntityError extends HttpError {
@@ -80,6 +83,12 @@ function fromRow(row: Row): LinkedEntity {
 export const entityKey = (entity: Pick<BrainEntity, 'type' | 'id'>) => entityRef(entity.type, entity.id);
 
 /** The project an entity belongs to: its own, else the default one. */
+/** NB01: a change's project for an entity. */
+const entityScope = (entity: Pick<BrainEntity, 'projectId'>): { projectId?: string } => {
+  const projectId = entityProject(entity);
+  return projectId ? { projectId } : {};
+};
+
 export const entityProject = (entity: Pick<BrainEntity, 'projectId'>): string | undefined => entity.projectId ?? defaultProjectId();
 
 export function getEntity(type: string, id: string, db: Database = database()): LinkedEntity | undefined {
@@ -160,7 +169,7 @@ function cleanAttrs(current: BrainEntity['attrs'], given: Record<string, unknown
 const slugOf = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 
 /** Create an entity, or update the one with `input.id` (fields left out stay). */
-export function upsertEntity(input: EntityInput, db: Database = database(), now = new Date().toISOString()): { entity: BrainEntity; created: boolean } {
+export function upsertEntity(input: EntityInput, db: Database = database(), now = new Date().toISOString(), origin?: BrainChangeOrigin, by?: string): { entity: BrainEntity; created: boolean } {
   if (!isEntityType(input.type)) throw new EntityError(`Unknown entity type “${input.type}”`);
   const id = input.id?.trim() || undefined;
   if (id && !ENTITY_ID.test(id)) throw new EntityError('An entity id is lowercase letters, digits, “_”, “-” and “.” (64 at most)');
@@ -188,7 +197,10 @@ export function upsertEntity(input: EntityInput, db: Database = database(), now 
   const email = entity.type === 'person' && typeof entity.attrs.email === 'string' ? entity.attrs.email : undefined;
   const userId = (email && findUserByEmail(email)?.id) || stored || null;
   database_upsert(db, entity, userId);
-  return { entity: getEntity(entity.type, entity.id, db)!, created: !existing };
+  const stored2 = getEntity(entity.type, entity.id, db)!;
+  // NB01: one change, after the write.
+  emitBrainChange({ kind: 'entity', key: entityKey(stored2), ...entityScope(stored2), op: 'upsert', ...changeOrigin(origin, by), at: now });
+  return { entity: stored2, created: !existing };
 }
 
 function database_upsert(db: Database, e: BrainEntity, userId: string | null = null) {
@@ -227,10 +239,11 @@ export function personForUser(userId: string, db: Database = database()): Linked
 }
 
 /** Delete an entity with what the brain held about it: its facts and profile go, its open suggestions expire. */
-export function deleteEntity(type: string, id: string, db: Database = database()): boolean {
+export function deleteEntity(type: string, id: string, db: Database = database(), origin?: BrainChangeOrigin, by?: string): boolean {
   const entity = getEntity(type, id, db);
   if (!entity) return false;
   const ref = entityKey(entity);
+  const removedFacts = listFacts({ subjectType: 'entity', subjectId: ref, status: 'all', limit: 100_000 }, db); // NB01
   db.delete('brain_entities', { type, id });
   db.delete('brain_facts', { subject_type: 'entity', subject_id: ref });
   db.delete('brain_profiles', { subject_type: 'entity', subject_id: ref });
@@ -242,6 +255,11 @@ export function deleteEntity(type: string, id: string, db: Database = database()
     const next: Proposal = { ...p, status: 'expired', updatedAt: now, note: 'The entity was deleted' };
     db.upsert('proposals', { id: p.id, fingerprint: p.fingerprint, source: p.source, detector: p.detector ?? null, project_id: p.projectId ?? null, workflow_id: null, status: 'expired', score: p.score, created_at: p.createdAt, updated_at: now, data: JSON.stringify(next) });
   }
+  // NB01: the entity, each fact it held and its summary are gone.
+  const who = changeOrigin(origin, by);
+  emitBrainChange({ kind: 'entity', key: ref, ...entityScope(entity), op: 'delete', ...who, at: now });
+  for (const fact of removedFacts) emitBrainChange({ kind: 'fact', key: fact.id, ...(fact.projectId && { projectId: fact.projectId }), op: 'delete', ...who, at: now });
+  emitBrainChange({ kind: 'summary', key: ref, ...entityScope(entity), op: 'delete', ...who, at: now });
   return true;
 }
 
@@ -253,7 +271,7 @@ export function deleteEntity(type: string, id: string, db: Database = database()
 export const MANUAL_FACT = 'fact_';
 
 /** Add a statement about an entity (kept until someone deletes it). */
-export function addEntityFact(entity: BrainEntity, input: { kind: FactKind; statement: string; confidence?: number; evidence?: ProposalEvidence[] }, db: Database = database()): BrainFact {
+export function addEntityFact(entity: BrainEntity, input: { kind: FactKind; statement: string; confidence?: number; evidence?: ProposalEvidence[] }, db: Database = database(), origin?: BrainChangeOrigin, by?: string): BrainFact {
   const statement = input.statement.trim();
   if (!statement) throw new EntityError('A fact needs a statement');
   return upsertFact(
@@ -269,6 +287,9 @@ export function addEntityFact(entity: BrainEntity, input: { kind: FactKind; stat
       ...(entity.projectId && { projectId: entity.projectId }),
     },
     db,
+    undefined,
+    origin,
+    by,
   );
 }
 

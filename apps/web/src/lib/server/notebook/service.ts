@@ -13,6 +13,7 @@ import type { TraceContent } from '../../shared/run-trace';
 import { NOTE_KINDS, type NoteKind, type NoteHit, type NoteScope, type NoteSource, type TeamNote } from '../../shared/notebook';
 import { agentTeamStore } from '../agent-teams/store';
 import { fingerprintOf, upsertProposal } from '../brain/proposals';
+import type { BrainChangeOrigin } from '../../shared/brain-store'; // NB01
 import { homeProjectId } from '../projects/store';
 import { NoteError } from './approve';
 import { embedModel, embedTexts } from './embed';
@@ -238,7 +239,7 @@ function mustHave(teamId: string, id: string): TeamNote {
 }
 
 /** A person adds a note to the team's notebook (it stands as verified: they said it). */
-export async function personAdd(teamId: string, by: string, input: { kind?: unknown; text: unknown }): Promise<TeamNote> {
+export async function personAdd(teamId: string, by: string, input: { kind?: unknown; text: unknown; url?: string }, origin?: BrainChangeOrigin): Promise<TeamNote> {
   const text = clean(input.text);
   if (!text) throw new NoteError('Write the note first');
   if (text.length > MAX_TEXT) throw new NoteError(`Keep a note under ${MAX_TEXT} characters`);
@@ -249,10 +250,9 @@ export async function personAdd(teamId: string, by: string, input: { kind?: unkn
     kind,
     text,
     scope: 'team',
-    status: kind === 'open_question' ? 'open' : 'verified',
+    // NB01: a note pulled from Notion is unverified and tainted until a person verifies it.
+    ...(origin === 'notion' ? { status: 'unverified' as const, tainted: true, source: { tool: 'notion', ...(input.url && { url: input.url }) } } : { status: kind === 'open_question' ? ('open' as const) : ('verified' as const), verifiedBy: by, source: {} }),
     author: by,
-    verifiedBy: by,
-    source: {},
   });
   await embedNote(note);
   return noteStore.get(note.id)!;

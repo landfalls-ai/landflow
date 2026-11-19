@@ -3012,3 +3012,7 @@ The person decided on 2026-11-18 that production approvals go to an approval inb
 - The Agent architect added a Home suggestion *Build a tool for Model* from the *no local model is listed* note (91).
 - Decisions owed by the person: an error workflow fired by a failing hosted-chat or MCP run waits (its input carries the outsider's data); a workflow called from a chat or MCP run refuses though its own publish line says it waits (see [limitations.md](limitations.md#the-approval-inbox-wave-ap1)).
 - Not covered by the live pass: K1 (kagent and the Claude Code harness have no inbox) and K2 (Run a Team's members). F2: the SMTP dialog leaves SSL/TLS on, seen again (06, 07).
+
+## Notion as the brain
+
+- **NB01, the storage seam (wave nb1).** `brainStoreFor(projectId)` gives each project a `BrainStore` (the local one today, a resolver slot for linked projects), and every brain write (entities, facts, summaries, practices, notes) goes through one change feed with its project and origin (`person`, `landflow` or `notion`). Practice source `notion` is tainted and project-level only; a note from Notion is unverified and tainted. No screen changes; no reader moved onto the store. See [features/notion-brain.md](features/notion-brain.md#how-it-is-built).

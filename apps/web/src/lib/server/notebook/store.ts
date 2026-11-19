@@ -16,7 +16,14 @@ import {
   type NoteStatus,
   type TeamNote,
 } from '../../shared/notebook';
+import { changeOrigin } from '../brain/store/origin'; // NB01
+import { emitBrainChange } from '../brain/store/port'; // NB01
 import { database } from '../db';
+
+/** NB01: one change per note written, after it is stored. */
+function emitNote(note: { id: string; projectId?: string | null }, op: 'upsert' | 'delete', explicit?: 'notion'): void {
+  emitBrainChange({ kind: 'note', key: note.id, ...(note.projectId && { projectId: note.projectId }), op, ...changeOrigin(explicit), at: new Date().toISOString() });
+}
 
 const DAY_MS = 86_400_000;
 
@@ -171,7 +178,9 @@ export const noteStore = {
       expires_at: expiryOf(scope, verified, now) ?? null,
     };
     database().upsert('team_notes', row);
-    return this.get(row.id)!;
+    const stored = this.get(row.id)!;
+    emitNote(stored, 'upsert', input.source?.tool === 'notion' ? 'notion' : undefined); // NB01
+    return stored;
   },
 
   get(id: string): TeamNote | undefined {
@@ -223,11 +232,17 @@ export const noteStore = {
 
   /** A note's changes (columns by name): `updated_at` moves with them. */
   patch(id: string, columns: Record<string, string | number | null>): TeamNote | undefined {
-    return change(id, { ...columns, updated_at: iso(Date.now()) }) ? this.get(id) : undefined;
+    if (!change(id, { ...columns, updated_at: iso(Date.now()) })) return undefined;
+    const patched = this.get(id);
+    if (patched) emitNote(patched, 'upsert'); // NB01
+    return patched;
   },
 
   delete(id: string): boolean {
-    return database().delete('team_notes', { id }) > 0;
+    const note = this.get(id); // NB01
+    const removed = database().delete('team_notes', { id }) > 0;
+    if (removed && note) emitNote(note, 'delete');
+    return removed;
   },
 
   /** The vectors of some notes, by id (only those that have one). */
@@ -280,12 +295,24 @@ export const noteStore = {
     const db = database();
     const due = db.all<{ id: string }>("SELECT id FROM team_notes WHERE expires_at IS NOT NULL AND expires_at <= ? AND status <> 'expired'", iso(now));
     for (const { id } of due) change(id, { status: 'expired', updated_at: iso(now) });
+    // NB01: each note that expired, and each one deleted past its grace.
+    const gone = db.all<{ id: string; project_id: string | null }>('SELECT id, project_id FROM team_notes WHERE expires_at IS NOT NULL AND expires_at < ?', iso(now - EXPIRED_GRACE_DAYS * DAY_MS));
     const deleted = db.deleteBefore('team_notes', 'expires_at', iso(now - EXPIRED_GRACE_DAYS * DAY_MS));
+    const goneIds = new Set(gone.map((n) => n.id));
+    for (const { id } of due) {
+      if (goneIds.has(id)) continue;
+      const note = this.get(id);
+      if (note) emitNote(note, 'upsert');
+    }
+    for (const n of gone) emitNote({ id: n.id, projectId: n.project_id }, 'delete');
     return { expired: due.length, deleted };
   },
 
   /** Every note of a team (when it is deleted). */
   deleteTeam(teamId: string): number {
-    return database().delete('team_notes', { team_id: teamId });
+    const notes = this.all(teamId); // NB01
+    const removed = database().delete('team_notes', { team_id: teamId });
+    for (const note of notes) emitNote(note, 'delete');
+    return removed;
   },
 };
