@@ -92,6 +92,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/goals')) return { scope: read ? 'workflows:read' : 'workflows:write' };
   // PC19: a project task's run (docs/projects-and-goals.md#tasks); approving one starts an agent, so only a signed-in person does it.
   if (under('/api/task-runs')) return read ? { scope: 'workflows:read' } : { scope: 'workflows:write', sessionOnly: true };
+  // AP01: the approval inbox (docs/approval-inbox.md): reading is like reading executions; a decision needs a signed-in person (never an API key) with run access, which the route checks.
+  if (under('/api/approval-inbox')) return read ? { scope: 'executions:read' } : { scope: 'run', sessionOnly: true };
   if (path === '/api/projects/context') return { scope: 'brain:read' }; // PC10
   if (['/api/workflows', '/api/folders', '/api/data-tables', '/api/agents', '/api/agent-teams', '/api/agent-templates', '/api/skills', '/api/node-types', '/api/credential-types', '/api/expressions', '/api/projects', '/api/templates', '/api/composites', '/api/runbooks'].some(under)) {
     return { scope: read ? 'workflows:read' : 'workflows:write' };

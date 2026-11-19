@@ -125,8 +125,8 @@ call is answered with `POST /api/agents/$ID/sessions/<sid>/approvals { "callId":
 Add a **Run an Agent** node (type `core.messageAgent`) after a trigger. Parameters: `agentId`, `message` (default
 `{{ $json.chatInput ?? $json.text }}`), `conversation` (`new` or `key`, with `sessionKey`). Optional ports: Chat Model, Memory,
 Tool. The agent must be **published**, and available in the workflow's project. Tools that need approval ask in the
-editor's chat when Tool Approvals is 'Ask in the editor's chat' (new starter flows set it), otherwise they are refused
-(nobody can approve). Output: `{ reply, sessionId, agentId, version, model, endReason, usage, steps }`.
+editor's chat when Tool Approvals is 'Ask' (new steps and starter flows set it), and wait in Needs you (the approval inbox)
+in a webhook, schedule or app-trigger run; with 'Refuse' (or no value) they are refused. Output: `{ reply, sessionId, agentId, version, model, endReason, usage, steps }`.
 
 ```json
 { "id": "n2", "name": "Run an Agent", "type": "core.messageAgent", "position": [260, 0],

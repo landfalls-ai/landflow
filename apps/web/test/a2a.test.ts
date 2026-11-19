@@ -283,6 +283,22 @@ describe('agents: A2A capability', () => {
     expect(decision).toMatchObject({ type: 'tool_approval_response', approvals: [{ approved: false }] });
   });
 
+  it('AP02: a remote pause in the approval inbox is auto-rejected, and so is the next one after a decide resume', async () => {
+    const agent = makeAgent();
+    script.push(call('ask_texter', { message: 'upper none' }), reply('Could not.'));
+    const first = await runAgent({ agent, session: session(agent), message: 'x', approvals: 'ask', inbox: true });
+    expect(first).toMatchObject({ reason: 'completed', reply: 'Could not.' });
+    expect(fake.calls.at(-1)!.params.message?.metadata?.['https://kagent.dev/extensions/hitl/v1']).toMatchObject({ type: 'tool_approval_response', approvals: [{ approved: false }] });
+    // A held call decided with the flag still set: the turn after the resume keeps the gate.
+    script.push(call('ask_texter', { message: 'upper loud' }));
+    const paused = await runAgent({ agent, session: session(agent), message: 'make it loud' });
+    expect(paused.reason).toBe('awaiting_approval');
+    script.push(call('ask_texter', { message: 'upper again' }, 'call_again'), reply('Gave up.'));
+    const resumed = await decide(agent, paused.session.id, 'call_ask_texter', true, { inbox: true });
+    expect(resumed).toMatchObject({ status: 'resumed', reason: 'completed', reply: 'Gave up.' });
+    expect(fake.calls.at(-1)!.params.message?.metadata?.['https://kagent.dev/extensions/hitl/v1']).toMatchObject({ type: 'tool_approval_response', approvals: [{ approved: false }] });
+  });
+
   it('relays a remote question to the model and sends its next call as the answer', async () => {
     const agent = makeAgent();
     script.push(call('ask_texter', { message: 'ask' }, 'c1'), call('ask_texter', { message: 'blue' }, 'c2'), reply('Blue it is.'));

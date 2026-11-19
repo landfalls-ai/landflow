@@ -45,7 +45,10 @@ import { agentStore, configOf } from './store';
 import type { MemberPause } from '../agent-teams/pause';
 import type { ToolTarget } from '../../shared/tool-target';
 import { approvedByLine } from '../../shared/fix-autonomy'; // AG23:
-import { spotlightDestinations, spotlightVerdict, type SpotlightApprovals } from './spotlight-approvals'; // AG23:
+import { NOT_GIVEN, spotlightDestinations, spotlightVerdict, type SpotlightApprovals } from './spotlight-approvals'; // AG23:
+import { maskParams } from '../../shared/approval-inbox'; // AP02:
+import { targetLine } from '../../shared/tool-target'; // AP02:
+import { redactValue } from '../secrets/redact'; // AP02:
 import { buildToolset, binaryScopeFor, targetOfCall, dedupe, nodeKnowledgeTool, type BuiltTool, type ToolCaller, type ToolContext } from './tools';
 import { knowledgeTool } from './knowledge';
 import { agentNotAllowedMessage, projectAgentRules } from '../project-context/project-settings';
@@ -72,6 +75,10 @@ export interface RunRequest {
   approvals?: 'ask' | 'deny' | 'spotlight'; // AG23: 'spotlight' (with `spotlight`): a call that asks first is decided as Spotlight in a fix session's test run
   /** AG23: who decides as Spotlight, the destinations already given, and whether a call it leaves can wait for the person. Only with approvals 'spotlight'. */
   spotlight?: SpotlightApprovals;
+  /** AP02: a run nobody watches whose held calls wait in the approval inbox (Run an Agent, approvals 'ask'): each PendingCall carries its `review`, no agent-session approval mail goes out, and a remote agent's own pause stays auto-rejected. */
+  inbox?: true;
+  /** Wave ap1: with approvals 'deny', why this run cannot ask (`REFUSE_WHY`'s words, e.g. the hosted chat's), said in the refused call's result. */
+  refusedWhy?: string;
   signal?: AbortSignal;
   onEvent?: (event: AgentStreamEvent) => void;
   /** Who is calling, for the project block (docs/agents.md#which-project-a-run-is-in); absent: the session says. Not `caller`, which is whose tools run. */
@@ -327,6 +334,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
   // A session a Run an Agent node started also writes its entries into that run's journal (lib/server/journal).
   const journalEntry = agentSessionJournal(session, { id: agent.id, name: request.team?.title ?? agent.name }, { under: request.team?.under, inline: Boolean(request.team?.under) });
   const decidedBy = new Map<string, import('../../shared/fix-autonomy').ApprovalBy>(); // AG23: calls Spotlight approved in this run
+  const inboxLines = new Map<string, string>(); // AP02: the settled line of calls the approval inbox let run
   const upsert = (entry: TimelineEntry) => {
     const index = session.timeline.findIndex((e) => e.id === entry.id);
     if (index >= 0) session.timeline[index] = entry;
@@ -457,7 +465,8 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         });
         emit({ type: 'run.finished', sessionId: session.id, status: session.status, reason: result.reason, usage: session.usage, ...(result.reply !== undefined && { reply: result.reply }) });
         // Approvals by email: the addresses in the agent's settings get approve / reject links for each call that waits.
-        if (result.reason === 'awaiting_approval' && config.settings.approvalEmails?.length) void notifyApprovalEmails(agent, session, config.settings.approvalEmails);
+        // AP02: not for a workflow's session in the inbox: its link would decide outside the run (the inbox nudges instead).
+        if (result.reason === 'awaiting_approval' && config.settings.approvalEmails?.length && !(request.inbox && session.execution)) void notifyApprovalEmails(agent, session, config.settings.approvalEmails);
         return { session, reason: result.reason, usage: session.usage, ...(result.reply !== undefined && { reply: result.reply }) };
       },
     )));
@@ -554,7 +563,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       runId: `ar_${nanoid(10)}`,
       signal: request.signal,
       delegate: (target, task) => delegate(target, task),
-      approvals: request.approvals === 'spotlight' ? 'deny' : (request.approvals ?? 'ask'), // AG23: a remote pause is auto-rejected under spotlight too
+      approvals: request.approvals === 'spotlight' || request.inbox ? 'deny' : (request.approvals ?? 'ask'), // AG23: a remote pause is auto-rejected under spotlight too; AP02: and in the inbox
       caller,
     };
 
@@ -722,13 +731,15 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
           upsert(toolEntry(call, tool!, { status: 'denied', error: line, by: request.spotlight.by, decidedLine: line }));
           immediate.push({ id: call.id, name: call.name, content: message, isError: true });
         } else if ((tool.requireApproval || heldFor) && (request.approvals ?? 'ask') === 'deny') {
-          const message = `${heldFor ?? `"${tool.label}"`}${heldFor ? ' It' : ''} needs a person's approval, which isn't available in this kind of run. Don't retry it; explain what you would have done.`;
+          const message = `${heldFor ?? `"${tool.label}"`}${heldFor ? ' It' : ''} needs a person's approval, which isn't available in this kind of run${request.refusedWhy ? ` (${request.refusedWhy})` : ''}. Don't retry it; explain what you would have done.`;
           upsert(toolEntry(call, tool, { status: 'denied', error: message }));
           immediate.push({ id: call.id, name: call.name, content: message, isError: true });
         } else if (tool.requireApproval || heldFor) {
           // The waiting step shows what the card shows (what would run); the model's own call stays in the transcript. A held call shows everything it asked for.
           const shown = tool.shownInput && !heldFor ? tool.shownInput(call.input) : call.input;
-          waiting.push({ callId: call.id, tool: call.name, input: shown });
+          // AP02: in the inbox, what the person is asked about: the parameters it would run with, masked, and where it goes.
+          const review = request.inbox ? await reviewOf(tool, call.input, shown, ctx) : undefined;
+          waiting.push({ callId: call.id, tool: call.name, input: shown, ...(review && { review }) });
           upsert(toolEntry(call, tool, { status: 'awaiting_approval', input: shown }));
         } else runnable.push(call);
       }
@@ -768,6 +779,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       status: 'running',
       at: existing?.at ?? now(),
       ...(decidedBy.get(call.id) && { by: decidedBy.get(call.id), decidedLine: approvedByLine(decidedBy.get(call.id)!, true) }), // AG23:
+      ...(inboxLines.get(call.id) && { decidedLine: inboxLines.get(call.id) }), // AP02:
       ...patch,
     };
   }
@@ -826,6 +838,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     const person = call.decidedBy ? ({ kind: 'person', userId: call.decidedBy } as const) : undefined;
     if (person && call.decision === 'approved') decidedBy.set(call.callId, person);
     if (call.decision === 'approved') {
+      if (call.decidedLine) inboxLines.set(call.callId, call.decidedLine); // AP02: the entry says the inbox's word once it runs
       const result = await execute(asCall, tool, ctx);
       // A person's edit that added a field the tool does not take: said, not silently dropped.
       const ignored = tool.shownInput ? Object.keys(call.input).filter((k) => !(k in tool.shownInput!(call.input))) : [];
@@ -836,11 +849,11 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       }
       return result;
     }
-    upsert(toolEntry(asCall, tool, { status: 'denied', error: 'Denied by a person', ...(person && { by: person, decidedLine: approvedByLine(person, false) }) })); // AG23:
+    upsert(toolEntry(asCall, tool, { status: 'denied', error: call.decidedLine ?? 'Denied by a person', ...(person && { by: person, decidedLine: approvedByLine(person, false) }), ...(call.decidedLine && { decidedLine: call.decidedLine }) })); // AG23: AP02:
     return {
       id: call.callId,
       name: call.tool,
-      content: request.team
+      content: call.refusal ? call.refusal : request.team
         ? `A person rejected your call to ${tool.label}; it did not run. Don't call it again: go on with what you can do without it, and tell your manager what you couldn't do.`
         : `The user rejected the tool call to ${call.tool}. STOP what you are doing and wait for the user to tell you how to proceed. The tool is still available if needed.`,
       isError: true,
@@ -865,6 +878,14 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
 
 const isResult = (value: ToolResult | { pending: PendingCall }): value is ToolResult => !('pending' in value);
 
+/** AP02: a held call's review for the approval inbox: the parameters it would run with (the host's secret redaction, then the mask) and where it goes in plain words. */
+async function reviewOf(tool: BuiltTool, given: Record<string, unknown>, shown: Record<string, unknown>, ctx: ToolContext): Promise<NonNullable<PendingCall['review']>> {
+  const effective = tool.effectiveInput ? await tool.effectiveInput(given, ctx).catch(() => shown) : shown;
+  const destinations = (await spotlightDestinations(tool, given, ctx)).filter((d) => d !== NOT_GIVEN);
+  const destination = [destinations.join(', '), targetLine(targetOfCall(tool, given))].filter(Boolean).join(' · ');
+  return { params: maskParams(redactValue(effective)) as Record<string, unknown>, ...(destination && { destination }) };
+}
+
 /** Tool-call ids of the last assistant turn, in the order the model made them. */
 function pendingOrder(messages: AgentMessage[]): string[] {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -883,25 +904,29 @@ export async function decide(
   callId: string,
   approved: boolean,
   // AG10: toolImages keeps the run's image count the same on a resumed run as on the first.
-  options: { onEvent?: (event: AgentStreamEvent) => void; signal?: AbortSignal; by?: string; toolImages?: { keep?: number } } = {},
+  options: { onEvent?: (event: AgentStreamEvent) => void; signal?: AbortSignal; by?: string; toolImages?: { keep?: number }; line?: string; refusal?: string /* AP02: the inbox's word on the call */; inbox?: true /* AP02: the resumed turn still holds asks-first calls in the inbox */ } = {},
 ): Promise<DecisionResult> {
   const session = agentStore.getSession(sessionId);
   if (!session || session.agentId !== agent.id) throw new DecisionError('Session not found', 404);
   const call = session.pending?.calls.find((c) => c.callId === callId);
   if (!session.pending || !call) throw new DecisionError('That tool call is not waiting for approval', 409);
   if (call.decision) throw new DecisionError(`Already ${call.decision}`, 409);
+  // AP02: a call held in the approval inbox is decided by the record through the run's resume, never by a link, a click or the session route.
+  if (call.review && !options.inbox) throw new DecisionError('This call waits in the approval inbox: decide it in Needs you', 409);
   call.decision = approved ? 'approved' : 'denied';
   if (options.by) call.decidedBy = options.by;
+  if (options.line) call.decidedLine = options.line; // AP02:
+  if (options.refusal) call.refusal = options.refusal; // AP02:
   recordApproval({ agentId: agent.id, agentName: agent.name, tool: call.tool }, call.decision);
   if (session.pending.calls.some((c) => !c.decision)) {
     const entry = session.timeline.find((e) => e.type === 'tool' && e.callId === callId);
-    if (entry?.type === 'tool' && !approved) Object.assign(entry, { status: 'denied', error: 'Denied by a person' });
+    if (entry?.type === 'tool' && !approved) Object.assign(entry, { status: 'denied', error: options.line ?? 'Denied by a person', ...(options.line && { decidedLine: options.line }) });
     const saved = agentStore.saveSession(session);
     if (entry) options.onEvent?.({ type: 'entry', sessionId, entry });
     options.onEvent?.({ type: 'run.finished', sessionId, status: 'awaiting_approval', reason: 'awaiting_approval', usage: saved.usage });
     return { status: 'waiting', session: saved };
   }
-  const { by, ...runOptions } = options;
+  const { by, line: _line, refusal: _refusal, ...runOptions } = options;
   // The person deciding goes on with a chat; a workflow's session goes on for its run.
   const result = await runAgent({ agent, session, approvals: 'ask', ...runOptions, ...(!session.execution && by && { caller: { startedBy: by } }) });
   return { status: 'resumed', ...result };

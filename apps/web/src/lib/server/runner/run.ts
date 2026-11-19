@@ -27,6 +27,7 @@ import { contextDataSource, runContextProvider } from '../project-context/seam';
 import { parameterSecretOptions, redactRunData } from '../secrets/runtime';
 import { singleton } from '../singleton';
 import { store } from '../store';
+import { inheritedFrom } from './trigger';
 import { logger, recordRuntimeEvent } from '../telemetry';
 import { variables } from '../variables';
 import { dispatchSegment, preflight, shouldDispatch } from '../cluster/dispatch';
@@ -101,11 +102,16 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
   let depth = 0;
   let evaluation = options.evaluation;
   let parentStarter: string | undefined;
+  // Wave ap1: a run an outsider started that cannot wait (the hosted chat, an MCP call) hands that to the workflows it calls, stamped
+  // now while its record is readable; a parent that cannot be read refuses too (fail closed), never opens an approval request.
+  let inheritedTrigger: string | undefined;
   if (options.parent) {
     const parentEntry = live.get(options.parent.executionId);
     const parentRecord = parentEntry?.record ?? store.getExecution(options.parent.executionId);
     depth = (parentRecord?.depth ?? 0) + 1;
     parentStarter = parentRecord?.startedBy;
+    // A parent from before the wave has no `triggerType`: it is judged like the agent node does (its parent's, else its first node); one that cannot wait hands the hosted chat's refusal down, and one that cannot be read hands down `core.unknownOrigin`.
+    inheritedTrigger = inheritedFrom(parentRecord);
     evaluation ??= parentRecord?.evaluation;
     if (depth > MAX_WORKFLOW_DEPTH) throw new Error(`Sub-workflows can be nested at most ${MAX_WORKFLOW_DEPTH} levels deep`);
     // Linked both ways: the parent lists its sub-executions, the child names its parent.
@@ -118,6 +124,14 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
   const version = versionFor(options.workflow);
   const versionId = version?.id;
   const startedBy = options.parent ? parentStarter : starterOf(options);
+  const startId = options.triggerOutput?.nodeId ?? options.startNodeId;
+  // A retry or re-run keeps the trigger type of the run it replays (`options.triggerType` from the plan; else its source's record), not its start node's.
+  const triggerType =
+    inheritedTrigger ?? // a refusing inherited trigger wins over the one the caller passed
+    options.triggerType ??
+    source?.triggerType ??
+    (options.fromCheckpoint ? store.getExecution(options.fromCheckpoint.executionId)?.triggerType : undefined) ??
+    (startId ? options.workflow.nodes.find((n) => n.id === startId)?.type : undefined);
   const record: ExecutionRecord = {
     executionId,
     workflowId: options.workflow.id,
@@ -143,6 +157,7 @@ export async function runWorkflow(options: RunOptions): Promise<ExecutionRecord>
     ...(options.buffered && { buffered: { kind: options.buffered.kind, count: options.buffered.count } }),
     ...(options.mcp && { mcp: options.mcp }),
     ...(options.spotlightApprovals && { spotlightApprovals: options.spotlightApprovals }), // AG23:
+    ...(triggerType && { triggerType }), // wave ap1: a hosted-chat or MCP-trigger run never waits in Needs you
   };
   if (idempotencyKey) rememberIdempotent(options.workflow.id, idempotencyKey, executionId);
   if (!admitted.run) return enqueue(record, options);

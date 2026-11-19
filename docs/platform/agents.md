@@ -113,7 +113,7 @@ until the chart is valid) and a flow runs it with the **Run a Team** node. Code:
 
 | Node | Type id | What it does |
 |---|---|---|
-| Run an Agent | `core.messageAgent` | runs a **published** agent as one step; optional ports for a chat model, memory and tools; also usable as a tool (takes `message` and `reason`). Runs on Landflow's runtime even if the agent is deployed to kagent. Tools that need approval ask in the editor's chat when Tool Approvals is set to 'Ask in the editor's chat' (new starter flows set it), and are refused otherwise, because a flow run has nobody to approve |
+| Run an Agent | `core.messageAgent` | runs a **published** agent as one step; optional ports for a chat model, memory and tools; also usable as a tool (takes `message` and `reason`). Runs on Landflow's runtime even if the agent is deployed to kagent. Tools that need approval ask in the editor's chat when Tool Approvals is set to 'Ask' (new steps and starter flows set it), wait in Needs you (the approval inbox) in a webhook, schedule or app-trigger run, and are refused with 'Refuse', a saved step with no value, or a wired model or tools |
 | Run a Team | `core.runTeam` | runs a published team; outputs **Done** and **Needs a person** |
 | A2A Agent | `core.a2aAgent` | sends a message to a remote A2A agent (a kagent agent, say), answers its pauses, gets or cancels a task |
 | When Called by a Workflow or Agent | `core.workflowTrigger` | makes a workflow an agent tool; its arguments become the tool's JSON schema |

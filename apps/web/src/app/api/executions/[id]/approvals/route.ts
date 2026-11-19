@@ -10,6 +10,7 @@
  */
 import { z } from 'zod';
 import type { JsonObject } from '@landflow/protocol';
+import { claim, closedOf, rowFor } from '@/lib/server/approval-inbox/store'; // AP01:
 import { ApprovalError, decideApproval, pendingApproval } from '@/lib/server/approvals';
 import { currentPrincipal } from '@/lib/server/auth/guard';
 import { error, handler, json, parseBody } from '@/lib/server/http';
@@ -39,6 +40,22 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   if (!body.ok) return body.response;
   const record = await store.loadExecution(id);
   if (!record) return error('Execution not found', 404);
+  // AP01: a request in the approval inbox: only a person decides, and a settled one answers who won (409) or that it expired (410).
+  const inboxRow = rowFor(id, body.data.callId);
+  if (inboxRow) {
+    if (currentPrincipal()?.via === 'api-key' || currentPrincipal()?.via === 'mcp') return error('A person decides an approval in Needs you', 403);
+    if (inboxRow.status !== 'waiting') {
+      const closed = closedOf(inboxRow);
+      return error(closed.message, closed.status);
+    }
+    // Past its time a request is closed (410) before any other answer: expiry never approves, and an edit is no reason to say 400 about a request nobody can decide.
+    if (Date.parse(inboxRow.expires_at) <= Date.now()) {
+      const expired = await claim(inboxRow.id, 'expired', { via: 'expiry' });
+      const closed = closedOf(expired.row ?? inboxRow);
+      return error(closed.message, closed.status);
+    }
+    if (body.data.input !== undefined) return error('A request in Needs you runs as reviewed and takes no edited input', 400);
+  }
   const approval = pendingApproval(record);
   if (!approval) return error(`This execution is ${record.status}, not waiting for a tool approval`, 409);
   if (!approval.calls.some((c) => c.id === body.data.callId)) return error('That tool call is not waiting for approval', 404);
@@ -51,7 +68,9 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
     try {
       let announced = false;
       const outcome = await decideApproval(id, body.data.callId, body.data.approved, {
-        ...(user && { by: user.email || user.name }),
+        ...(user && { by: user.email || user.name, byName: user.name || user.email }), // AP01: byName
+        via: 'run-trace', // AP01:
+        ...(currentPrincipal()?.via && { principal: currentPrincipal()!.via }), // AP01:
         streaming: true,
         ...(body.data.input && { input: body.data.input as JsonObject }),
         ...(body.data.text !== undefined && { text: body.data.text }),

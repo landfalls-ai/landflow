@@ -108,6 +108,7 @@ export const CONFIG_CATALOG: readonly ConfigVariable[] = [
   { name: 'LANDFLOW_EXECUTE_TIMEOUT_MS', group: 'execution', default: '`120000`', description: 'per remote Execute call (and per call to the code runner); minimum 1000 for plugin calls' },
   { name: 'LANDFLOW_RETENTION_EVERY', group: 'execution', default: '50', description: 'finished runs between retention passes (minimum 1: `0` or a fraction counts as 1); the hourly timer and Prune now run regardless, so the count may exceed its cap by up to N-1 between passes ([features/settings-and-data.md](../features/settings-and-data.md))' },
   { name: 'LANDFLOW_APPROVAL_EMAIL_TTL_HOURS', group: 'execution', default: '`24`', description: 'hours an Approve or Reject link in an approval email stays valid (minimum 1)' },
+  { name: 'LANDFLOW_APPROVAL_INBOX_EXPIRY_MINUTES', group: 'execution', default: '`1440`', description: 'minutes a production run waits for a tool approval in Needs you before the call is refused (1 to 43,200); read when the request opens' }, // AP01:
   { name: 'LANDFLOW_ROLE', group: 'execution', default: '`main`', description: '`main` (UI, API, webhooks) or `worker`; `pnpm worker` sets `worker`' },
   { name: 'LANDFLOW_VALKEY_SENTINEL_USERNAME', group: 'execution', default: '–', description: 'user for the sentinels themselves, when they require AUTH' },
   { name: 'LANDFLOW_VALKEY_SENTINEL_PASSWORD', group: 'execution', default: '–', description: 'password for the sentinels themselves, when they require AUTH', secret: true },

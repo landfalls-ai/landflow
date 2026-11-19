@@ -59,6 +59,10 @@ export interface WriteSink {
   close(): Promise<void>;
   /** Run `fn` on a Postgres connection of its own (Postgres mode). */
   direct?<T>(fn: (client: DirectClient) => Promise<T>): Promise<T>;
+  /** Queue mode: read rows from Postgres into this process's copy only, queuing nothing. False without replication. */
+  refresh?(table: TableName, where: Record<string, SqlValue>): Promise<boolean>;
+  /** Queue mode: the pg_notify payload telling the other processes to read one row back (a key notice), if there are any. */
+  keyNotice?(table: TableName, key: SqlValue[]): string | undefined;
   health?(): WriteHealth;
   /**
    * Tables the in-memory copy holds only in part (Postgres mode: the data and events of cold runs, ./hot-mirror). A delete
@@ -183,6 +187,17 @@ export class Database {
   /** Insert a row or replace the columns it names (by primary key). */
   upsert(table: TableName, row: Row) {
     this.write({ op: 'upsert', table, row: clean(filtered(table, row)) });
+  }
+
+  /**
+   * Postgres mode: write a row into this process's copy only (nothing is queued, no observer hears of it), for a row a direct
+   * Postgres statement already changed there. A write the copy must not send on (it could replay a column Postgres has moved past).
+   */
+  upsertLocal(table: TableName, row: Row) {
+    const clear = clean(filtered(table, row));
+    const columns = Object.keys(clear);
+    const sql = upsertSql(table, columns, 'upsert', () => '?');
+    this.timed('upsert', sql, () => this.statement(sql).run(...columns.map((c) => clear[c] as SQLInputValue)));
   }
 
   /** Insert a row unless its primary key exists. Returns whether it was inserted. */
@@ -343,6 +358,16 @@ export class Database {
   /** Postgres mode: wait until every committed write reached Postgres. SQLite: nothing to do. */
   flush(timeoutMs?: number): Promise<void> {
     return this.sink?.flush(timeoutMs) ?? Promise.resolve();
+  }
+
+  /** Queue mode: read one row back from Postgres into this process's copy only (false without replication, nothing read). */
+  async refresh(table: TableName, where: Record<string, SqlValue>): Promise<boolean> {
+    return (await this.sink?.refresh?.(table, where)) ?? false;
+  }
+
+  /** The notice (pg_notify payload) that makes the other processes read one row back, or undefined (SQLite, one process). */
+  keyNotice(table: TableName, key: SqlValue[]): string | undefined {
+    return this.sink?.keyNotice?.(table, key);
   }
 
   /**

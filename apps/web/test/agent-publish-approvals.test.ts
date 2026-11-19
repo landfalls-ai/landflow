@@ -151,6 +151,18 @@ describe('approval cards settle (AG05)', () => {
     expect(container.textContent).not.toContain('Already');
   });
 
+  it('a 410 (the request expired in Needs you) is quiet too: no error row, no toast, the call has no buttons and the session says where', async () => {
+    await mount(session());
+    wire.streamFails = () => new ApiError('This approval expired at 14:12: “Send Email” did not run.', 410);
+    await act(async () => {
+      await run.decide('c1', true);
+    });
+    expect(run.entries.some((e) => e.type === 'error')).toBe(false);
+    expect(run.waitsInNeedsYou).toBe(true);
+    expect(run.decisions.c1).toBeUndefined();
+    expect(container.textContent).not.toContain('expired');
+  });
+
   it('a failed decision (500) puts the buttons back and Approve all stops at the first failure', async () => {
     await mount(session());
     wire.streamFails = () => new ApiError('boom', 500);

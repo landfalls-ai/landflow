@@ -30,6 +30,8 @@ import './practices/register';
 import './practices/context-source';
 // SP03: writes the parts of each recorded model call's prompt (docs/llm-gateway.md#what-a-prompt-was-made-of).
 import './ai-usage/parts-register';
+// AP01: registers the approval inbox's port and settles a cancelled run's requests (docs/approval-inbox.md).
+import './approval-inbox';
 import { agentTriggers } from './agents/triggers';
 import { taskWakeups } from './tasks/wakeups';
 import { alerts } from './alerts/service';

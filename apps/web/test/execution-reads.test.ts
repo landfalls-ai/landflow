@@ -92,7 +92,7 @@ describe('the sync getExecution guard', () => {
     const offenders = walk(root)
       .map((file) => relative(root, file).split(sep).join('/'))
       .filter((file) => !ALLOWED.some((allowed) => file === allowed || (allowed.endsWith('/') && file.startsWith(allowed))))
-      .filter((file) => readFileSync(join(root, file), 'utf8').includes('store.getExecution('));
+      .filter((file) => /\b(?!this\b)\w+\.getExecution\(/.test(readFileSync(join(root, file), 'utf8'))); // also an aliased import of the store (`store as executions`)
     expect(offenders).toEqual([]);
   });
 });

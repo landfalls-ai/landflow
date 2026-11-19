@@ -5,13 +5,14 @@
  * Shown on Spotlight's publish card and in the Publish menu; nothing when no such tool is bound to a trigger that runs unattended.
  */
 import { useEffect, useState } from 'react';
-import { ShieldAlert } from 'lucide-react';
+import { Clock, ShieldAlert } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import type { UnattendedApproval } from '@/lib/shared/unattended';
+import type { PublishLine } from '@/lib/shared/approval-inbox'; // AP03:
 
 export function UnattendedLines({ workflowId, version, update, className }: { workflowId: string; version?: number | 'draft'; update?: string[]; className?: string }) {
-  const [lines, setLines] = useState<UnattendedApproval[]>([]);
+  const [lines, setLines] = useState<Array<UnattendedApproval & Partial<PublishLine>>>([]);
   const updateKey = update?.join(',') ?? '';
   useEffect(() => {
     let live = true;
@@ -28,8 +29,9 @@ export function UnattendedLines({ workflowId, version, update, className }: { wo
     <div data-testid="unattended-lines" className={cn('flex flex-col gap-1 text-[11px] leading-snug text-t3', className)}>
       {lines.map((l) => (
         <div key={`${l.node}|${l.tool}|${l.trigger}`} className="flex items-start gap-1.5 [overflow-wrap:anywhere]">
-          <ShieldAlert className="mt-px size-3 shrink-0" aria-hidden />
-          <span>{l.line}</span>
+          {/* AP03: a step that will wait in Needs you reads with a clock; one that still refuses keeps the shield. The text is the server's. */}
+          {l.outcome === 'waits' ? <Clock className="mt-px size-3 shrink-0 text-t2" aria-hidden data-outcome="waits" /> : <ShieldAlert className="mt-px size-3 shrink-0" aria-hidden data-outcome="refuses" />}
+          <span className={l.outcome === 'waits' ? 'text-t2' : undefined}>{l.line}</span>
         </div>
       ))}
     </div>

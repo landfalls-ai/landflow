@@ -289,7 +289,7 @@ Start the matching infra services first ([deployment.md](deployment.md)), then r
 | Flag | Needs | Test files |
 |---|---|---|
 | `postgres` | the infra Postgres, database `landflow_test` (or `LANDFLOW_PG_URL`, `LANDFLOW_TEST_DATABASE_URL`) | `pgvector.test.ts`, `postgres.test.ts` (the store, schema `landflow_runtime_test`), `postgres-hot-mirror.test.ts` (the hot mirror: eviction, cold reads through the async seam, promotion, schema `landflow_hot_test`; run it in its own vitest call, as the two share `landflow_test`), `projects-migration.test.ts`, `project-folders-variables.test.ts` |
-| `queue` | the infra Valkey (`LANDFLOW_TEST_VALKEY_URL`, under a throwaway key prefix) and Postgres | `cluster-coordinator.test.ts` (coordinator, leader election, stalled-job takeover, relay), `cluster-postgres.test.ts` (processes following each other's writes, schema `landflow_queue_test`), `config-store-postgres.test.ts` (credentials and settings shared by two processes, in a database it creates and drops), `rotate-key-postgres.test.ts` (the `rotate-key` script re-sealing a credential and a settings row in Postgres, in a database it creates and drops), `audit-chain.postgres.test.ts` (the hash chain sealed by two processes at once, SAML state shared by mains), `transports.postgres.test.ts` |
+| `queue` | the infra Valkey (`LANDFLOW_TEST_VALKEY_URL`, under a throwaway key prefix) and Postgres | `cluster-coordinator.test.ts` (coordinator, leader election, stalled-job takeover, relay), `cluster-postgres.test.ts` (processes following each other's writes, schema `landflow_queue_test`), `config-store-postgres.test.ts` (credentials and settings shared by two processes, in a database it creates and drops), `rotate-key-postgres.test.ts` (the `rotate-key` script re-sealing a credential and a settings row in Postgres, in a database it creates and drops), `audit-chain.postgres.test.ts` (the hash chain sealed by two processes at once, SAML state shared by mains), `transports.postgres.test.ts`, `approval-inbox-cluster-ap1.test.ts` (two processes claim one approval-inbox row in Postgres, exactly one wins; wave ap1) |
 | `sentinel` | `deploy/compose.sentinel.yml` | `valkey-sentinel.integration.test.ts` (the primary is killed; a run in flight and new runs finish on the promoted replica) |
 | `valkey-cluster` | the infra `valkey-cluster` profile | `valkey-cluster.integration.test.ts` |
 | `oidc` | Keycloak (`auth` profile) | `oidc.integration.test.ts` (fills in its login form as alice and bob) |
@@ -356,7 +356,7 @@ repository (wave ag4's: `lib/shared/agent-card.ts`, `lib/shared/tenant-catalog.t
 `lib/shared/agent-versions.ts`, `components/canvas/bubble-view.tsx`, `test/spotlight-scenarios/scenario.ts` and
 `test/fixtures/legacy-agent-flow.json`; wave ag3's `lib/shared/tool-target.ts` and the runbooks in
 `test/spotlight-scenarios/fixtures/runbooks/`) byte for byte with the program's contracts folder, and runs only when
-`LANDFLOW_BACKBONE_CONTRACTS` names that folder (it holds `ag3/`, `ag4/` and `ag5/`, whose `fix-autonomy.ts` is `lib/shared/fix-autonomy.ts`; the older joins' card and scenario checks
+`LANDFLOW_BACKBONE_CONTRACTS` names that folder (it holds `ag3/`, `ag4/`, `ag5/`, whose `fix-autonomy.ts` is `lib/shared/fix-autonomy.ts`, and `ap1/`, whose `approval-inbox.ts` and `inbox-port.ts` are `lib/shared/approval-inbox.ts` and `lib/server/approval-inbox/port.ts`, checked by `approval-inbox-ap1`; the older joins' card and scenario checks
 point at `ag4`, since wave ag4 replaced those two contracts). Wave ag3's package tests are `agent-gate-ag3`, `tool-proof-ag3`, `tool-proof-ui-ag3`,
 `agent-knowledge-ag3` and `agent-connections-ag3` (`apps/web/test/`; `agent-node-band-ag3` went with the band), and
 `packages/sdk/test/stream-target.test.ts`; wave ag4's are `agent-bubbles-ag4`, `agent-layout-ag4` and
@@ -366,7 +366,7 @@ point at `ag4`, since wave ag4 replaced those two contracts). Wave ag3's package
 `unattended-approvals-ag5` (AG23), `flow-saved-agent-ag5` and `flow-saved-agent-ag5-editor` (AG25), `fix-autonomy-ag5`,
 `session-auto-ag5` and `session-stable-ag5` (AG22); its joins (`fix-path-ag5-joins`) drive the real editor stores and the
 route handlers together (each browser `api` call goes to the `route.ts` its path names) with a fake Anthropic, a scripted
-agent model and judge, a strict receiver and a fake SMTP server.
+agent model and judge, a strict receiver and a fake SMTP server. Wave ap1's package tests are `approval-inbox-ap1`, `approval-inbox-nudge-ap1` and `approval-inbox-postgres-order-ap1` (AP01; the last runs a Postgres-mode `Database` over a fake Postgres, no server needed; and `approval-inbox-cluster-ap1` under `LANDFLOW_INTEGRATION=queue`), `inbox-run-ap1`, `inbox-restart-ap1` and `inbox-lines-ap1` (AP02), and `approval-inbox-ui-ap1` (AP03); the integrator's joins are `approval-inbox-ap1-joins`.
 
 `cluster-runtime.test.ts` always runs: a main and workers through the runner on the in-process coordinator.
 

@@ -553,6 +553,7 @@ export function createTranslator(options: TranslatorOptions) {
       attrs.wait = 'approval';
       attrs.channel = approval.channel;
       attrs.calls = calls.map((c) => ({ id: c.id, tool: c.tool, input: c.input }));
+      if (isObject(data.inbox)) attrs.inbox = true; // AP03: a request in the approval inbox: the card offers no edit of its input
       const tools = calls.map((c) => String(c.tool)).filter(Boolean);
       name = tools.length ? `Approve ${tools.join(', ')}` : 'Approve a tool call';
       // Ask a Person: the question and the draft, answered with Approve, Edit or Reject.

@@ -252,6 +252,12 @@ function Entry({ entry, model, open }: { entry: StoryEntry; model: RunModel; ope
               <ResultChip span={s} />
             </div>
           )}
+          {/* AP03: an approval nobody answered in time says so in the inbox's words (when, and that it did not run). */}
+          {!running && s.attrs.expired === true && typeof s.attrs.settled === 'string' && (
+            <p className="mt-1 text-[12px] text-warn" data-testid="wait-expired">
+              {s.attrs.settled}
+            </p>
+          )}
         </Ev>
       );
     }

@@ -2,7 +2,7 @@
 /** A session's timeline: chat bubbles, expandable tool calls, approvals, errors. Shared by the test chat and the Sessions tab. */
 import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { Ban, Bot, Check, ChevronRight, Copy, ExternalLink, Hand, Info, Loader2, RadioTower, ShieldAlert, ThumbsDown, ThumbsUp, TriangleAlert, User, Waypoints, X } from 'lucide-react';
+import { Ban, Bot, Check, ChevronRight, Clock, Copy, ExternalLink, Hand, Info, Loader2, RadioTower, ShieldAlert, ThumbsDown, ThumbsUp, TriangleAlert, User, Waypoints, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { duration } from '@/lib/client/format';
@@ -117,6 +117,8 @@ export interface TimelineProps {
    * stays a full row). `running` while the run is live; `traceUrl` becomes the last line's "Open trace".
    */
   trace?: { running: boolean; traceUrl?: string };
+  /** AP03: the session belongs to a workflow run whose calls wait in the approval inbox: no buttons here, a link to Needs you instead. */
+  inboxHref?: string;
 }
 
 const KIND_ICON: Record<ToolKind, string> = {
@@ -239,8 +241,11 @@ function ToolRow({
   deciding,
   decision,
   live,
+  inboxHref,
 }: {
   entry: ToolEntry;
+  /** AP03: the call waits in Needs you (a workflow's run nobody watches). */
+  inboxHref?: string;
   /** AG05: this call was decided already. */
   decision?: 'approved' | 'denied';
   /** The tool is a workflow sub-node reporting progress (no `remote` of its own): its steps so far. */
@@ -307,6 +312,14 @@ function ToolRow({
             <p className="mt-2 text-[12px] font-semibold text-t2" data-testid="tool-decision">
               {decision === 'approved' ? 'Approved' : 'Denied'}
               <span className="font-normal text-t3"> · it goes on once every call this turn is decided</span>
+            </p>
+          )}
+          {inboxHref && waiting && (
+            <p className="mt-2 flex items-center gap-1.5 text-[12px] font-semibold text-t2" data-testid="waiting-in-needs-you">
+              <Clock className="size-3.5 shrink-0" aria-hidden /> Waiting in Needs you
+              <Link href={inboxHref} className="font-normal text-ac hover:underline">
+                Open it
+              </Link>
             </p>
           )}
           {onDecide && !decision && (
@@ -386,7 +399,7 @@ function ToolRow({
 }
 
 /** The timeline as keyed items, for a list that animates each one (ChatList) or a plain stack (TimelineView). */
-export function timelineItems({ entries, childHref, onDecide, deciding, decisions, onDecideAll, wide, feedback, onRate, liveSteps, trace }: TimelineProps): ReactNode[] {
+export function timelineItems({ entries, childHref, onDecide, deciding, decisions, onDecideAll, wide, feedback, onRate, liveSteps, trace, inboxHref /* AP03: */ }: TimelineProps): ReactNode[] {
   // The Sessions tab is wide: a reply keeps a readable line length.
   const measure = wide ? 'max-w-[680px]' : undefined;
   const items: ReactNode[] = [];
@@ -450,7 +463,7 @@ export function timelineItems({ entries, childHref, onDecide, deciding, decision
         break;
       case 'tool':
         // AG05: one bar above the first of two or more waiting calls.
-        if (onDecide && onDecideAll && undecided.length >= 2 && undecided[0] === entry.callId) {
+        if (!inboxHref /* AP03: */ && onDecide && onDecideAll && undecided.length >= 2 && undecided[0] === entry.callId) {
           items.push(
             <div key={`all-${entry.id}`} className={cn('flex items-center gap-2 pl-7', !wide && 'pr-1', measure)} data-testid="decide-all">
               <Button size="sm" variant="primary" className="max-md:min-h-11" loading={deciding} onClick={() => onDecideAll(undecided, true)}>
@@ -464,7 +477,7 @@ export function timelineItems({ entries, childHref, onDecide, deciding, decision
         }
         items.push(
           <div key={entry.id} className={cn('pl-7', !wide && 'pr-1', measure)}>
-            <ToolRow entry={entry} childHref={childHref} onDecide={onDecide} deciding={deciding} decision={decisions?.[entry.callId]} live={liveSteps?.(entry)} />
+            <ToolRow entry={entry} childHref={childHref} onDecide={inboxHref ? undefined : onDecide} inboxHref={inboxHref} deciding={deciding} decision={decisions?.[entry.callId]} live={liveSteps?.(entry)} />
           </div>,
         );
         break;

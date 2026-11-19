@@ -103,7 +103,7 @@ the run in its workflow's Runs tab (`/workflows/<id>/runs/<executionId>`, no red
   **Send back for a fix**), a form wait such as a team member's question (**Answer** opens the run's form page,
   `/form/waiting/<executionId>`), other waits (**Open to answer**), and failed checks nobody has decided on.
 - **Story** (the default): the run as a conversation. It shows messages, requests between agents (with **Why** they
-  were asked) and their result (Delivered, Answered, Left undelivered, Working, Waiting), waits for people, round
+  were asked) and their result (Delivered, Answered, Left undelivered, Working, Waiting; an approval nobody answered in time reads *Expired*, with the inbox's line *Expired at …: nobody approved “Send Email” in time, so it did not run*), waits for people, round
   dividers when the flow loops, and artifacts as cards. Failed steps and
   failed checks appear inline. Tool and model calls fold into "n steps" rows that open; each tool call there says what
   it did, in the agent's own words when it gave a `description` (Claude Code does with every command), else in plain
@@ -255,6 +255,12 @@ on the result opens it (a pull request on GitHub); the rest of the row opens the
 - The lines come from `GET /api/runs/lines?ids=…` (at most 20 runs), folded on the server from each run's journal and
   cached by its last event like the run digests.
 
+### Approval requests in Needs you
+
+A run nobody watches that reaches a tool that asks first waits in the approval inbox ([approval-inbox.md](approval-inbox.md), wave ap1), and its question is a row in **Needs you** with these facts (the `InboxRow`, on Home's **Waiting for your approval · n** panel and in the Runs list's **Needs you**): the tool's label, the agent and its version (*Alert mailer v2*), the workflow and its version (*Alert intake v4*), where it goes in one line, and *Waiting for your approval since 14:02 · expires 14:12*. **Approve** and **Deny** sit on the row for people who can run the workflow (everyone else reads *Only people who can run this workflow decide it*), each click is one POST, and the row then says what happened for four seconds (*Approved by Owner in Needs you · 14:05*) and leaves. When somebody or the clock decided first, the row shows the server's words instead (*Already approved by Owner at 14:05.*, *This approval expired at …*). **Details** opens the parameters the call would run with (secret-looking keys read `••••••`, here and on the server; never a credential field), where it goes, what started the run, the agent and the workflow, **Open the run**, since and expires, with the same two buttons. `/?approval=<id>` (the nudge's Needs you link) opens that request's Details, or says how it ended when it is no longer waiting. There is no *Approve all*, no select-many and no shortcut that approves.
+
+In the Run Trace the approval card of such a wait reads the same *Waiting for your approval since … · expires …* line instead of *waiting since*, shows the versions and the destination, and its **Approve** and **Deny** go through the inbox's one claim (a race answers with who won); there is no **Edit** on it, because the inbox decides what was asked, not an edit of it. A settled call says *Approved by …*, *Denied by …*, *Expired at …* or *Cancelled with the run …* on its sheet (the `approvedBy` badge; the last two read as warnings). Waits without an inbox request render as before.
+
 ### Who approved a tool call
 
 A tool call's sheet names who decided its approval (AG23, wave ag5): *Approved by Spotlight (autonomous fix session)* when
@@ -286,6 +292,7 @@ instead of a title and two buttons, so the person decides with the reasons in fr
   member's own. The journal marks the wait `edited: true` with `editedBy`, says "Approved … with changes", and the
   Approval check says it too; the wait's detail sheet shows an **Edited by you** badge. A guard's ask (a command) sends the
   edited command: the mod's poll hands it back and the mod runs it instead (still stopped by the rules nobody can allow).
+  A call that waits in the approval inbox has no **Edit**: it runs as it was reviewed, and the route refuses an edited input with 400.
 
 The card is the Needs you section's, and the waiting node's: from the editor, **Review** next to Approve / Deny on the node
 opens it in a sheet, and the execution view's phone card is it (both read the run's journal). Needs you also gets a row of

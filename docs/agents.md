@@ -290,7 +290,7 @@ The card says what applying does and follows the agent (wave ag2, AG09):
   or non-string query are no read, so a tool built on them asks first. A tool a design leaves on the node default becomes the node's
   Select. At run time a tool set up as a read (no approval, stored parameters only read) judges **each call** on the parameters it
   would run with (`holdReason` in `agents/tools.ts`, checked by `agents/runtime.ts`): a call that names another operation or brings SQL
-  that is not one read-only SELECT is held for a person, and an unattended run refuses it with the reason in the run log, and so does the kagent MCP endpoint (`kagent/mcp.ts`, which also serves the Claude Code harness): it cannot pause, so it answers *… kagent cannot pause this call*. The tool's
+  that is not one read-only SELECT is held for a person. In a run nobody watches whose step's Tool Approvals is *Ask* a held read waits in Needs you like any call that asks first ([approval-inbox.md](approval-inbox.md)); where nothing can wait (Tool Approvals *Refuse*, a manual run, the hosted chat, an MCP call) the run refuses it with the reason in the run log, and so does the kagent MCP endpoint (`kagent/mcp.ts`, which also serves the Claude Code harness): it cannot pause, so it answers *… kagent cannot pause this call*. The tool's
   input schema does not offer `operation`, and its SQLite connection is read-only (the plugin's Read Only: `mode=ro`, `_query_only=1`).
   **Pick it** shows on a change card after Apply too, and wherever a Left row says *pick a … credential*; its smoke result also
   reaches the applied build and change cards' status line (a change card still waiting for Apply is left alone).
@@ -782,12 +782,13 @@ request: the run goes on when the last one is decided). The Platform analyst's o
 
   It outputs `{ reply, sessionId, agentId, version, model, endReason, usage, steps }`, where
   `steps` lists each tool call with its kind and status. Answers and tool calls stream to the
-  editor's chat panel and to streaming triggers. Tools that require approval are refused,
-  because a workflow run has nobody to approve them, unless **Tool Approvals** is *Ask in the editor's chat*
-  (default *Refuse*, so a saved flow runs as before): then, in a run started from the editor's Chat only, the
-  execution waits with the approval card in the chat, and Approve or Reject resumes the same agent session (a second
-  approval waits again). In the chat's step list the waiting call reads *Waiting for approval*, then *Done* after Approve and *Denied* after Reject (it never reads *Failed*; the hosted chat page says the same). The hosted chat page, webhooks, schedules and manual runs still refuse, and so does a node
-  with a chat model or tools connected to it.
+  editor's chat panel and to streaming triggers. A tool that asks first (requires approval) is decided by a person, and
+  **Tool Approvals** says where. *Ask (the editor's chat; Needs you when nobody watches)* is the default for steps placed from now
+  on: in a run started from the editor's Chat the execution waits with the approval card in the chat, and Approve or Reject resumes the
+  same agent session (a second approval waits again); in a run nobody watches (webhook, schedule, app trigger, form, error or called
+  workflow) it waits in **Needs you** ([approval-inbox.md](approval-inbox.md): *Production approvals* below). *Refuse* refuses the call, as
+  before; a step saved without the value also refuses (a saved flow runs as before). In the chat's step list the waiting call reads *Waiting for approval*, then *Done* after Approve and *Denied* after Reject (it never reads *Failed*; the hosted chat page says the same). A node
+  with a chat model or tools connected to it, a manual run, the hosted chat page, an MCP call and a workflow an agent calls as a tool still refuse (nothing to decide the call, or it must answer its caller at once).
 
   **Spotlight approves its own test runs** (AG23, wave ag5). The person's decision of 2026-11-18: *"We can let Spotlight approve
   automatically when he's fixing. It doesn't have to wait for permission in autonomous mode."* In an Autonomous test-and-fix
@@ -805,13 +806,29 @@ request: the run goes on when the last one is decided). The Platform analyst's o
   decides the later calls of that session, each waits for the person. A sub-agent's call, a remote A2A agent's pause, the smoke test and the eval
   gate keep refusing. Without the field every run is as before. A person's own decision reads *Approved by you* / *Denied by you*.
 
-  **Production approvals** (AG23). Every trigger except the manual and the evaluation one starts a run nobody
+  **Production approvals** (AG23, AP02). Every trigger except the manual and the evaluation one starts a run nobody
   watches (webhook, schedule, channel, app trigger, hosted chat, form, usage event, suggestion decision, detector, cap raise, error
-  workflow, called workflow, MCP call), so a tool that asks first is still refused there (a Spotlight fix session's decision is about *fixing*; where a
-  production run's approvals should go, an approval inbox, approval at publish, or refusing, is the person's decision and is
-  not built). It is said before it bites: `GET /api/workflows/:id/unattended-approvals` lists each such tool with its trigger,
-  and the publish card and the Publish menu show *In production nobody approves “Send Email”: a webhook run refuses it. Tell me
-  where production approvals should go, or keep it refusing.* Each run is an agent session from the
+  workflow, called workflow, MCP call). The person's decision of 2026-11-18: such a run **pauses** at a tool that asks first and
+  waits in Needs you instead of refusing. A Run an Agent step with Tool Approvals *Ask* (nothing wired to it that bypasses a decision, and a host
+  with the approval inbox) runs its agent with `approvals: 'ask'` and `inbox: true`; each held call becomes one inbox request
+  ([approval-inbox.md](approval-inbox.md)) carrying the tool, the parameters it would run with (its fixed parameters and the model's
+  arguments, after the host's secret redaction and a mask over secret-looking keys), where it goes (recipients, URLs, the target's
+  host and port), the workflow and agent versions, and the trigger word. The execution waits (`status: 'waiting'`; a webhook answers
+  `{ status: 'waiting', executionId }`) with the request's expiry as the wait's `until`, saved with the agent session and the node's
+  state, so it survives a restart (`waits.start()` re-arms the expiry at boot) and works in queue mode (the leader keeps the timer, a
+  worker resumes). On every resume the node reads the **inbox record** first: *approved* runs the call once; *denied*, *expired* or
+  *cancelled* is refused (the agent hears why, the run goes on and the step succeeds); a timeout resume with the record still
+  waiting settles it *expired*; if another door settled it first, that word stands. An approval the record does not say is never run.
+  A remote (A2A) agent's own pause in such a run is still auto-rejected, and no agent-session approval email goes out for a workflow's
+  session (the inbox nudges instead). It is said before it bites: `GET /api/workflows/:id/unattended-approvals` returns one
+  `PublishLine` per such tool and trigger: `waitLine` (*In production “Send Email” will wait for your approval in Needs you: a webhook
+  run pauses until someone approves or denies it, and the request expires after 24 h.*) or `refusesLine` with why (Tool Approvals is Refuse,
+  a model or tools wired to the step, an MCP trigger, the hosted chat, no inbox on the host); the publish card, the Publish menu and the
+  session's last line read the same line, and the runtime does what the line says: a run the hosted chat page started (mode `webhook`,
+  with its chat trigger kept on the execution as `triggerType`, also when it starts at a roster target), an MCP trigger's run, and a
+  workflow either of them calls refuse even with *Ask*, and the tool's answer to the agent names the reason. So an anonymous chat
+  visitor never opens a request or sends a nudge. A Spotlight fix session still decides its own test runs as above; a Run a Team member and a
+  kagent agent's pause are not in the inbox yet ([limitations](limitations.md)). Each run is an agent session from the
   workflow. The node is `usableAsTool`, so an AI Agent node can delegate to an agent. It runs
   the agent on Landflow's runtime, also when the agent is deployed to kagent; to call it there,
   use the **A2A Agent** node ([a2a.md](a2a.md)).
