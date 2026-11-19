@@ -105,7 +105,7 @@ export function actorWords(by?: string): string {
   return kind === 'agent' ? 'an agent' : kind === 'workflow' ? 'a flow' : 'a person';
 }
 
-export const SOURCE_WORDS = { person: 'written by a person', learned: 'read from a repository', agent: 'written by an agent' } as const;
+export const SOURCE_WORDS = { person: 'written by a person', learned: 'read from a repository', agent: 'written by an agent', notion: 'pulled from Notion' } as const; // NB01: notion
 
 /** The text of a version as lines, for the review's diff: its scope and strength, its summary, its checks and its rules. */
 export function versionText(v: Pick<PracticeVersion, 'title' | 'strength' | 'topics' | 'repos' | 'paths' | 'summary' | 'body' | 'checks'>): string {

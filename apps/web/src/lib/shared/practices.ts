@@ -23,7 +23,8 @@ export type PracticeStatus = (typeof PRACTICE_STATUSES)[number];
 export const PRACTICE_STATUS_LABELS: Record<PracticeStatus, string> = { draft: 'Draft', approved: 'Approved', retired: 'Retired' };
 
 /** Who wrote a version: a signed-in person (`person`), read from a repository (`learned`), an agent from its run (`agent`). The last two are tainted. */
-export const PRACTICE_SOURCES = ['person', 'learned', 'agent'] as const;
+// NB01: `notion` is a version pulled from a linked Notion page: tainted like `learned` and `agent`, project level only; no route accepts it from a caller.
+export const PRACTICE_SOURCES = ['person', 'learned', 'agent', 'notion'] as const;
 export type PracticeSource = (typeof PRACTICE_SOURCES)[number];
 
 /** `waived` is written only by the waiver route; the others by delivery, citing and checks. */

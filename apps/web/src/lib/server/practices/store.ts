@@ -30,6 +30,8 @@ import {
 } from '../../shared/practices';
 import { recordAudit } from '../audit';
 import { currentPrincipal } from '../auth/guard';
+import { changeOrigin } from '../brain/store/origin'; // NB01
+import { emitBrainChange } from '../brain/store/port'; // NB01
 import { database } from '../db';
 import { homeProjectId, getProject } from '../projects/store';
 import { projectRole, type Actor } from '../projects/access';
@@ -434,6 +436,11 @@ export function approvedPractices(scope: { projectIds: readonly string[] | 'all'
   return out;
 }
 
+/** NB01: one change for a practice (the project it lives in; none for org). */
+function emitPractice(practice: Practice, version: number, op: 'upsert' | 'delete', explicit?: 'notion'): void {
+  emitBrainChange({ kind: 'practice', key: practice.id, ...(practice.projectId && { projectId: practice.projectId }), op, version, ...changeOrigin(explicit), at: new Date().toISOString() });
+}
+
 /* ------------------------------------------------------------------------------------------------------ drafting */
 
 /** Whether `actor` may draft at this level and project (an org practice: anyone signed in). */
@@ -443,6 +450,8 @@ export function canDraftAt(actor: Actor | undefined, level: PracticeLevel, proje
 }
 
 function mayDraft(level: PracticeLevel, projectId: string | undefined, origin: PracticeDraftOrigin): boolean {
+  // NB01: the Notion puller (server code acting for a link a project admin made) drafts at project level only; org practices are never pulled.
+  if (origin.source === 'notion') return level === 'project' && Boolean(projectId);
   if (canDraftAt(origin.actor, level, projectId)) return true;
   if (!origin.workflowId) return false;
   return level === 'org' || homeProjectId('workflow', origin.workflowId) === projectId;
@@ -585,6 +594,7 @@ export function draftPractice(input: PracticeDraftInput, origin: PracticeDraftOr
     project: saved.practice.projectId ?? null,
   });
   fileDraftSuggestion(saved.practice, saved.version); // PR09: the draft waits in the inbox
+  emitPractice(saved.practice, saved.version.version, 'upsert', origin.source === 'notion' ? 'notion' : undefined); // NB01
   return saved;
 }
 
@@ -616,18 +626,24 @@ export function markApproved(practice: Practice, version: PracticeVersion, by: s
     supersedes: superseded[0] ?? practice.supersedes ?? null,
     updated_at: now,
   });
-  return getPractice(practice.id)!;
+  const approved = getPractice(practice.id)!;
+  emitPractice(approved, version.version, 'upsert'); // NB01
+  return approved;
 }
 
 export function markRejected(practiceId: string, version: number, by: string, reason: string): void {
   const now = new Date().toISOString();
   patchVersion(practiceId, version, { rejected_by: by, rejected_at: now, reject_reason: reason });
   patchPractice(practiceId, { updated_at: now });
+  const practice = getPractice(practiceId); // NB01
+  if (practice) emitPractice(practice, version, 'upsert');
 }
 
 export function markRetired(practiceId: string): Practice {
   patchPractice(practiceId, { status: 'retired', updated_at: new Date().toISOString() });
-  return getPractice(practiceId)!;
+  const retired = getPractice(practiceId)!;
+  emitPractice(retired, retired.approvedVersion ?? versionsOf(practiceId)[0]?.version ?? 0, 'upsert'); // NB01
+  return retired;
 }
 
 /* -------------------------------------------------------------------------------------------------- applications */

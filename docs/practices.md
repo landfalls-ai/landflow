@@ -46,6 +46,9 @@ pattern must be a regular expression, or the request answers 400 and names it.
   by MCP, from the mod or by a flow is `learned` (it has citations) or `agent`, and is **tainted**: it was read from
   outside, so its approver must read it against its sources. A person who edits a draft nobody has reviewed yet does not
   clear the taint.
+- **A draft pulled from Notion** (`source: notion`, written only by the Notion puller, never accepted from a route) is
+  tainted like `learned` and `agent`, and it is drafted at **project level only**: org practices are never pulled, and an
+  org draft with source `notion` is refused with 403 ([features/notion-brain.md](features/notion-brain.md#how-it-is-built)).
 - **Org practices are approved by instance owners and admins.** **Project practices are approved by that project's
   admins** (instance owners and admins count as admins everywhere). The drafter may approve their own: there is no
   four-eyes setting. Approving, rejecting, retiring and waiving need a session; an API key gets 403.

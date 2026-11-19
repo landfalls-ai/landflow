@@ -10,6 +10,9 @@
 import type { BrainFact, BrainProfile, FactKind, FactSubject } from '../../shared/brain';
 import { database, type Database } from '../db';
 import { bm25Scores } from '../rag/search';
+import type { BrainChangeOrigin } from '../../shared/brain-store'; // NB01
+import { changeOrigin } from './store/origin'; // NB01
+import { emitBrainChange } from './store/port'; // NB01
 import type { UsageScope } from '../usage/query';
 
 export type FactInput = Omit<BrainFact, 'id' | 'firstSeen' | 'lastSeen' | 'status'> & { id?: string };
@@ -30,7 +33,7 @@ export function getFact(id: string, db: Database = database()): BrainFact | unde
 }
 
 /** Add a fact, or refresh the one with its id (first seen stays). */
-export function upsertFact(input: FactInput, db: Database = database(), now = new Date().toISOString()): BrainFact {
+export function upsertFact(input: FactInput, db: Database = database(), now = new Date().toISOString(), origin?: BrainChangeOrigin, by?: string): BrainFact {
   const id = input.id ?? factId(input.subjectType, input.subjectId, input.kind);
   const existing = getFact(id, db);
   const fact: BrainFact = {
@@ -48,6 +51,7 @@ export function upsertFact(input: FactInput, db: Database = database(), now = ne
     status: 'active',
   };
   db.upsert('brain_facts', { id, subject_type: fact.subjectType, subject_id: fact.subjectId, kind: fact.kind, project_id: fact.projectId ?? null, status: 'active', last_seen: now, data: JSON.stringify(fact) });
+  emitBrainChange({ kind: 'fact', key: id, ...(fact.projectId && { projectId: fact.projectId }), op: 'upsert', ...changeOrigin(origin, by), at: now }); // NB01
   return fact;
 }
 
@@ -58,16 +62,21 @@ export function staleFactsBefore(before: string, db: Database = database()): num
     "SELECT id, subject_type, subject_id, kind, project_id, last_seen, data FROM brain_facts WHERE status = 'active' AND last_seen < ? AND kind <> 'intended' AND id NOT LIKE '%:change:pr_%' AND id NOT LIKE 'entity:%:fact_%'",
     before,
   );
+  const who = changeOrigin(); // NB01
   for (const row of rows) {
     const fact = parse<BrainFact>(row.data);
     if (!fact) continue;
     db.upsert('brain_facts', { id: row.id, subject_type: row.subject_type, subject_id: row.subject_id, kind: row.kind, project_id: row.project_id, status: 'stale', last_seen: row.last_seen, data: JSON.stringify({ ...fact, status: 'stale' }) });
+    emitBrainChange({ kind: 'fact', key: row.id, ...(row.project_id && { projectId: row.project_id }), op: 'upsert', ...who, at: new Date().toISOString() }); // NB01
   }
   return rows.length;
 }
 
 export function deleteFact(id: string, db: Database = database()): boolean {
-  return db.delete('brain_facts', { id }) > 0;
+  const fact = getFact(id, db); // NB01
+  const removed = db.delete('brain_facts', { id }) > 0;
+  if (removed) emitBrainChange({ kind: 'fact', key: id, ...(fact?.projectId && { projectId: fact.projectId }), op: 'delete', ...changeOrigin(), at: new Date().toISOString() }); // NB01
+  return removed;
 }
 
 function inScope(fact: { subjectType: FactSubject; subjectId: string }, scope?: UsageScope): boolean {
