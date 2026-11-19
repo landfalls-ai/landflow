@@ -225,6 +225,7 @@ export const TOOL_SCOPES = {
   brain_usage_report: 'brain:read',
   check_overlap: 'brain:read',
   brain_ask: 'brain:read',
+  brain_search_knowledge: 'brain:read', // NB06
   my_briefing: 'brain:read',
   my_ai_spend: 'brain:read', // SP14
   brain_suggest: 'brain:write',
