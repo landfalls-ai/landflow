@@ -17,7 +17,7 @@ import { database, type Database } from '../db';
 import { projectRole, visibleProjectIds, type Actor } from '../projects/access';
 import { defaultProjectId } from '../projects/store';
 import type { UsageScope } from '../usage/query';
-import { getProfile, listFacts, upsertFact } from './facts';
+import { checkForgetAfter, getProfile, listFacts, upsertFact } from './facts';
 import { changeOrigin } from './store/origin'; // NB01
 import { emitBrainChange } from './store/port'; // NB01
 import type { BrainChangeOrigin } from '../../shared/brain-store'; // NB01
@@ -271,7 +271,13 @@ export function deleteEntity(type: string, id: string, db: Database = database()
 export const MANUAL_FACT = 'fact_';
 
 /** Add a statement about an entity (kept until someone deletes it). */
-export function addEntityFact(entity: BrainEntity, input: { kind: FactKind; statement: string; confidence?: number; evidence?: ProposalEvidence[] }, db: Database = database(), origin?: BrainChangeOrigin, by?: string): BrainFact {
+export function addEntityFact(
+  entity: BrainEntity,
+  input: { kind: FactKind; statement: string; confidence?: number; evidence?: ProposalEvidence[]; isStatic?: boolean; parentId?: string; relation?: 'extends' | 'derives'; forgetAfter?: string },
+  db: Database = database(),
+  origin?: BrainChangeOrigin,
+  by?: string,
+): BrainFact {
   const statement = input.statement.trim();
   if (!statement) throw new EntityError('A fact needs a statement');
   return upsertFact(
@@ -290,6 +296,7 @@ export function addEntityFact(entity: BrainEntity, input: { kind: FactKind; stat
     undefined,
     origin,
     by,
+    { ...(input.isStatic && { isStatic: true }), ...(input.parentId && input.relation && { parentId: input.parentId, relation: input.relation }), ...(input.forgetAfter && { forgetAfter: checkForgetAfter(input.forgetAfter) }) },
   );
 }
 

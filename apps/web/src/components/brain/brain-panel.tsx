@@ -8,20 +8,27 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Brain, Search } from 'lucide-react';
+import { Brain, History, RotateCcw, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
 import type { BacktestResult, BrainFact, BrainStatus, DetectorId } from '@/lib/shared/brain';
 import { Card } from '../shell/page-header';
+import { FilterChip } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Input, SectionLabel } from '../ui/inputs';
+import { FactHistory, ForgetDialog } from './fact-history';
 
 export function BrainPanel() {
   const router = useRouter();
   const [status, setStatus] = useState<BrainStatus>();
   const [facts, setFacts] = useState<BrainFact[]>();
   const [query, setQuery] = useState('');
+  // C01/C02: a fact's history, the fact being forgotten, and the Forgotten list.
+  const [history, setHistory] = useState<BrainFact>();
+  const [forgetting, setForgetting] = useState<BrainFact>();
+  const [showForgotten, setShowForgotten] = useState(false);
+  const [reload, setReload] = useState(0);
   const [running, setRunning] = useState(false);
   const [creating, setCreating] = useState(false);
   const [canRun, setCanRun] = useState(true);
@@ -38,12 +45,29 @@ export function BrainPanel() {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      api<{ facts: BrainFact[] }>(`/api/brain/facts?q=${encodeURIComponent(query.trim())}&limit=20`)
+      api<{ facts: BrainFact[] }>(showForgotten ? '/api/brain/facts?forgotten=1&limit=50' : `/api/brain/facts?q=${encodeURIComponent(query.trim())}&limit=20`)
         .then((r) => setFacts(r.facts))
         .catch(() => setFacts([]));
     }, 250);
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, showForgotten, reload]);
+
+  const forget = async (fact: BrainFact, reason: string, forgetAfter?: string) => {
+    await api(`/api/brain/facts/${encodeURIComponent(fact.id)}/forget`, { method: 'POST', json: { reason, ...(forgetAfter && { forgetAfter }) } });
+    setReload((n) => n + 1);
+    loadStatus();
+    toast.success(forgetAfter ? 'It will be forgotten then' : 'Forgotten');
+  };
+  const restore = async (fact: BrainFact) => {
+    try {
+      await api(`/api/brain/facts/${encodeURIComponent(fact.id)}/restore`, { method: 'POST' });
+      setReload((n) => n + 1);
+      loadStatus();
+      toast.success('Restored');
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
 
   const run = async () => {
     setRunning(true);
@@ -127,7 +151,12 @@ export function BrainPanel() {
         <Search className="size-3.5 text-t3" />
         <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search what it knows" aria-label="Search facts" className="h-auto border-0 bg-transparent p-0 shadow-none" />
       </label>
-      {facts && facts.length === 0 && <p className="text-[12px] text-t3">{query ? 'No facts match.' : 'Nothing learned yet.'}</p>}
+      <div className="flex flex-wrap items-center gap-2">
+        <FilterChip size="sm" active={showForgotten} onClick={() => setShowForgotten((v) => !v)} title="Facts you forgot, with why; restore one to bring it back">
+          Forgotten
+        </FilterChip>
+      </div>
+      {facts && facts.length === 0 && <p className="text-[12px] text-t3">{showForgotten ? 'Nothing forgotten.' : query ? 'No facts match.' : 'Nothing learned yet.'}</p>}
       {facts && facts.length > 0 && (
         <div className="divide-y divide-hair rounded-xl border border-hair">
           {facts.map((f) => (
@@ -145,6 +174,23 @@ export function BrainPanel() {
               <div className="w-[64px] shrink-0 text-t3">{f.kind}</div>
               <div className="min-w-0 basis-full text-t2 [overflow-wrap:anywhere] sm:basis-0 sm:flex-1">{f.statement}</div>
               <div className="shrink-0 text-t3">{timeAgo(f.lastSeen)}</div>
+              {showForgotten && f.forgetReason && <div className="basis-full text-t3 [overflow-wrap:anywhere]">Forgotten: {f.forgetReason}</div>}
+              <div className="flex basis-full items-center gap-1.5">
+                {!showForgotten && (
+                  <Button size="sm" variant="ghost" onClick={() => setHistory(f)} aria-label={`History of ${f.subjectName ?? f.subjectId}: ${f.kind}`}>
+                    <History className="size-3.5" /> History
+                  </Button>
+                )}
+                {showForgotten ? (
+                  <Button size="sm" variant="ghost" onClick={() => void restore(f)}>
+                    <RotateCcw className="size-3.5" /> Restore
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="ghost" onClick={() => setForgetting(f)} aria-label={`Forget ${f.subjectName ?? f.subjectId}: ${f.kind}`}>
+                    Forget
+                  </Button>
+                )}
+              </div>
             </div>
           ))}
         </div>
@@ -185,6 +231,10 @@ export function BrainPanel() {
         </ul>
       )}
       {detectors.map((d) => backtests[d.id] && <BacktestCard key={d.id} result={backtests[d.id]!} onClose={() => setBacktests((all) => ({ ...all, [d.id]: undefined }))} />)}
+      {history && <FactHistory fact={history} onClose={() => setHistory(undefined)} />}
+      {forgetting && (
+        <ForgetDialog what={`${forgetting.subjectName ?? forgetting.subjectId}: ${forgetting.statement}`} onClose={() => setForgetting(undefined)} onForget={(reason, after) => forget(forgetting, reason, after)} />
+      )}
     </Card>
   );
 }

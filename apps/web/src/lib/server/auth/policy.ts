@@ -122,6 +122,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (path === '/api/brain/briefing' || path === '/api/brain/ask') return { scope: 'brain:read' };
   // SP14: your own AI spend, for a brain key (the CLI, the mod's status line); /api/insights/** stays executions:read.
   if (path === '/api/brain/my-spend') return { scope: 'brain:read' };
+  // C02: forgetting and restoring a fact change what agents recall, so they are editing, not reading; the route checks the subject.
+  if (/^\/api\/brain\/facts\/[^/]+\/(forget|restore)$/.test(path)) return { scope: 'workflows:write' };
   if (under('/api/brain')) return { scope: 'executions:read' };
   if (under('/api/proposals')) return { scope: read ? 'workflows:read' : 'workflows:write' };
   // B04: the @ picker's search lists only what the caller can open (lib/server/mentions/search.ts).

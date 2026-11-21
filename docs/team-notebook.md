@@ -30,8 +30,9 @@ One row of `team_notes` (migration 2010; `lib/shared/notebook.ts`):
   files a suggestion in the second brain's inbox ([second-brain.md](second-brain.md)), with the note as the proposal, and
   **Keep it** there writes it. Kept until deleted.
 
-An expired note stays for 14 days (hidden unless asked for with `expired=1`) before it is deleted. A boot and a daily job in
-`maintenance.ts` do the expiring.
+A note past its `expires_at` is gone from every read at once, not at the next sweep (the notebook tab, the search and the
+prompt block); `expired=1` brings it back into the list. An expired note then stays for 14 days before it is deleted: a boot and a
+daily job in `maintenance.ts` mark and delete them. A forgotten note (below) is never deleted by that job.
 
 ## What a member can do
 
@@ -120,11 +121,23 @@ kagent, not in the host, so it cannot be handed host functions. It gets the same
 Redeploy an agent after upgrading for kagent's own runtime to list the new tool names. Claude Code reads the tool list from
 the MCP server at the start of each session, so it needs nothing.
 
+## Forgetting a note
+
+**Forget** (the tab, `POST /api/agent-teams/:id/notes/:noteId { action: 'forget', reason, forgetAfter? }`) takes a note out of
+every list, search and prompt block without deleting it: it stays with the reason (1 to 500 characters, required) and who, and the
+sweeper never deletes it. **Forgotten** on the tab lists them with **Restore** (`{ action: 'restore' }`). With `forgetAfter` (a
+minute to five years ahead) it only sets the note's expiry to that time. Both are audited (`notebook.note_forgotten`,
+`notebook.note_restored`). Delete stays for removing a note for good. It is the same words as forgetting a brain fact
+([second-brain.md](second-brain.md#forgetting-a-fact)); the reason never goes into a prompt.
+
+Settling a dispute (`resolve`) writes both notes in one transaction: the one that loses is marked replaced and expires, the one
+that holds is verified, or neither changes.
+
 ## The routes
 
 See [reference/api.md](reference/api.md). `GET /api/agent-teams/:id/notes` lists (`scope`, `kind`, `status`, `q`, `run`,
-`expired=1`) and returns the counts; `POST` adds a person's note; `POST /api/agent-teams/:id/notes/:noteId { action }` does
-`verify`, `answer`, `reopen`, `dispute`, `resolve`, `promote` or `edit`; `DELETE` forgets a note. They follow the team's
+`expired=1`, `forgotten=1`) and returns the counts; `POST` adds a person's note; `POST /api/agent-teams/:id/notes/:noteId { action }` does
+`verify`, `answer`, `reopen`, `dispute`, `resolve`, `promote`, `edit`, `forget` or `restore`; `DELETE` deletes a note. They follow the team's
 access (`agentTeam` resource).
 
 ## Settings

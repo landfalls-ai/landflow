@@ -64,6 +64,10 @@ export interface TeamNote {
   lastAccessAt: string;
   /** When it goes if nobody uses or verifies it. */
   expiresAt?: string;
+  /** C02: a person forgot it (it stays, out of every read, until restored or deleted). */
+  forgottenAt?: string;
+  forgetReason?: string;
+  forgottenBy?: string;
   /** Whether it can be found by meaning (an embedding was made). */
   embedded: boolean;
 }

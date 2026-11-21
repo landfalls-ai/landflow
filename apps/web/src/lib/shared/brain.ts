@@ -573,6 +573,10 @@ export type FactSubject = (typeof FACT_SUBJECTS)[number];
 export const FACT_KINDS = ['purpose', 'health', 'cost', 'failure', 'slow', 'change', 'dependency', 'usage', 'quality', 'intended'] as const;
 export type FactKind = (typeof FACT_KINDS)[number];
 
+/** How a new fact relates to the one it follows (C01): only `updates` moves a chain forward; the others start a new chain. */
+export const FACT_RELATIONS = ['updates', 'extends', 'derives'] as const;
+export type FactRelation = (typeof FACT_RELATIONS)[number];
+
 export interface BrainFact {
   id: string;
   subjectType: FactSubject;
@@ -586,6 +590,23 @@ export interface BrainFact {
   firstSeen: string;
   lastSeen: string;
   status: 'active' | 'stale';
+  // C01: the version chain. A fact written before it reads as version 1, latest, its own root.
+  version?: number;
+  latest?: boolean;
+  parentId?: string;
+  rootId?: string;
+  /** A fact that never changes: the study never stales or rewrites it. */
+  static?: boolean;
+  relation?: FactRelation;
+  /** The text was dropped to keep the chain bounded (statement is ''). */
+  trimmed?: boolean;
+  /** Who or what wrote this version. */
+  writtenBy?: { origin: 'landflow' | 'person' | 'notion'; by?: string };
+  // C02: soft forgetting. `forgetAfter` hides the fact from that time on, with no sweep.
+  forgottenAt?: string;
+  forgetReason?: string;
+  forgottenBy?: string;
+  forgetAfter?: string;
 }
 
 export interface ProfileStats {

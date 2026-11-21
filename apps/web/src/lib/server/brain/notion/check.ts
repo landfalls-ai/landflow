@@ -7,6 +7,7 @@ import { brainPageTitle, estimateMinutes, LANDFLOW_ID, RPS_DEFAULT, type BrainCo
 import { credentials } from '../../credentials/vault';
 import { database } from '../../db';
 import { singleton } from '../../singleton';
+import { LIVE_FACT } from '../facts';
 import { credentialUsableBy } from '../../projects/access';
 import { ProjectError, type ProjectRecord } from '../../projects/store';
 import { isNotionError, notionClientFor, notionId, type NotionClient, type NotionPage } from '../../notion/port';
@@ -16,12 +17,13 @@ export const NOTION_CREDENTIAL_TYPES = ['productivity.notionApi', 'productivity.
 
 /** What the project holds that a copy would send (private and team-only work never goes: only project-scope notes). */
 export function projectCounts(projectId: string): BrainCounts {
-  const count = (sql: string) => database().get<{ n: number }>(sql, projectId)?.n ?? 0;
+  const count = (sql: string, ...more: string[]) => database().get<{ n: number }>(sql, projectId, ...more)?.n ?? 0;
   return {
     pages: count('SELECT COUNT(*) AS n FROM brain_entities WHERE project_id = ?'),
-    facts: count("SELECT COUNT(*) AS n FROM brain_facts WHERE project_id = ? AND status = 'active'"),
+    // C01/C02: only what a copy would send: the latest version of a fact that is not forgotten.
+    facts: count(`SELECT COUNT(*) AS n FROM brain_facts WHERE project_id = ? AND status = 'active' AND ${LIVE_FACT}`, new Date().toISOString()),
     practices: count("SELECT COUNT(*) AS n FROM practices WHERE project_id = ? AND status <> 'retired'"),
-    notes: count("SELECT COUNT(*) AS n FROM team_notes WHERE project_id = ? AND scope = 'project'"),
+    notes: count("SELECT COUNT(*) AS n FROM team_notes WHERE project_id = ? AND scope = 'project' AND forgotten_at IS NULL"),
   };
 }
 

@@ -15,6 +15,7 @@ import { agentTeamStore } from '../agent-teams/store';
 import { fingerprintOf, upsertProposal } from '../brain/proposals';
 import type { BrainChangeOrigin } from '../../shared/brain-store'; // NB01
 import { homeProjectId } from '../projects/store';
+import { supersedeNote } from './lifecycle';
 import { NoteError } from './approve';
 import { embedModel, embedTexts } from './embed';
 import { wrapMemory } from '../../shared/memory-fence';
@@ -316,16 +317,8 @@ export function resolveDispute(teamId: string, id: string, keep: string, by: str
   if (!second) throw new NoteError('Nothing disputes this note', 409);
   if (keep !== first.id && keep !== second.id) throw new NoteError('Keep one of the two notes in the dispute', 400);
   const dropped = keep === first.id ? second : first;
-  const now = new Date().toISOString();
-  noteStore.patch(dropped.id, { status: 'expired', superseded_by: keep, expires_at: now });
-  const kept = noteStore.patch(keep, {
-    status: 'verified',
-    verified_at: now,
-    verified_by: by,
-    dispute_of: null,
-    ...((first.id === keep ? first : second).scope === 'team' && { expires_at: null }),
-  })!;
-  return { kept, dropped: noteStore.get(dropped.id)! };
+  // C02: both writes in one transaction, so a failure leaves neither note changed (notebook/lifecycle.ts).
+  return supersedeNote(keep === first.id ? first : second, dropped, by);
 }
 
 export function remove(teamId: string, id: string): void {

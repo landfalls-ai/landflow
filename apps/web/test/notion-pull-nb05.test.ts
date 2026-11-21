@@ -488,6 +488,24 @@ describe('facts', () => {
     expect(item.pulled_hash).not.toContain('|');
   });
 
+  it('C01: a person’s Notion edit of a static manual fact is a new version, not refused', async () => {
+    const s = await setup();
+    await seed.seedPage(s, { type: 'customer', id: 'statics', name: 'Statics' });
+    const { upsertFact } = await import('@/lib/server/brain/facts');
+    const own = brainStoreFor(s.project).addFact(getEntity('customer', 'statics')!, { kind: 'purpose', statement: 'Never changes' });
+    upsertFact({ ...own, statement: own.statement }, database(), undefined, undefined, undefined, { isStatic: true });
+    const row = await s.client.createPage({
+      parent: { data_source_id: s.dbs.facts!.dataSourceId },
+      properties: { Statement: title(own.statement), Kind: select('purpose'), [LANDFLOW_ID]: rt(own.id) },
+    });
+    seed.seedItem(s, 'fact', own.id, row.id, null);
+    await s.pull();
+    tick();
+    fake.editAsPerson(row.id, { properties: { Statement: title('A person changed it in Notion') } });
+    await s.pull();
+    expect(getFact(own.id)).toMatchObject({ statement: 'A person changed it in Notion', version: 2, static: true });
+  });
+
   it('a change to a study fact’s statement is put back and offers "Keep as a fact"; a person’s own fact takes the edit', async () => {
     const s = await setup();
     const page = await seed.seedPage(s, {

@@ -1,9 +1,10 @@
 /**
  * The team notebook (docs/team-notebook.md#the-routes).
  *
- * GET  /api/agent-teams/:id/notes?scope=&kind=&status=&q=&run=&expired=1 — `{ notes, counts }`: the team's notes of every run
+ * GET  /api/agent-teams/:id/notes?scope=&kind=&status=&q=&run=&expired=1&forgotten=1 — `{ notes, counts }`: the team's notes of every run
  *   (and its project's), newest first. `q` searches them by meaning (words when the embedding model is down) and adds `via`
- *   and each note's `score`. `run` limits to one execution's notes.
+ *   and each note's `score`. `run` limits to one execution's notes. A note past its expiry is left out unless `expired=1`;
+ *   `forgotten=1` lists the forgotten notes with their reason instead of the live ones.
  * POST /api/agent-teams/:id/notes { kind?, text } — a person writes a note; it stands as verified, in the team's scope.
  */
 import { z } from 'zod';
@@ -35,6 +36,7 @@ export const GET = handler(async (request: Request, { params }: Ctx) => {
     ...(projectId && { projectId }),
     allRuns: true,
     expired: url.searchParams.get('expired') === '1',
+    ...(url.searchParams.get('forgotten') === '1' && { forgotten: 'only' as const }),
     ...(scopes && { scopes }),
     ...(kinds && { kinds }),
     ...(statuses && { statuses }),
@@ -51,7 +53,7 @@ export const GET = handler(async (request: Request, { params }: Ctx) => {
     notes = noteStore.list(run ? { ...filter, onlyRun: run } : filter);
   }
   // The headline counts what the list holds under the same scope, run and expiry, whatever kind or status is picked.
-  const counts = noteStore.counts(id, projectId, { expired: filter.expired, ...(scopes && { scopes }), ...(run && { onlyRun: run }) });
+  const counts = noteStore.counts(id, projectId, { expired: filter.expired, ...(filter.forgotten && { forgotten: filter.forgotten }), ...(scopes && { scopes }), ...(run && { onlyRun: run }) });
   return json({ notes, counts, ...(via && { via }) });
 });
 

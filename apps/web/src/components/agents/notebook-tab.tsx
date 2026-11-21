@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Check, ChevronsUp, CircleHelp, Clock, ExternalLink, Flag, Gavel, Inbox, Link2, MessageCircleReply, NotebookPen, Plus, RotateCcw, Scale, Search, ShieldCheck, Sparkles, Trash2, TriangleAlert } from 'lucide-react';
+import { Check, ChevronsUp, CircleHelp, Clock, ExternalLink, Flag, Gavel, Inbox, Link2, MessageCircleReply, NotebookPen, EyeOff, Plus, RotateCcw, Scale, Search, ShieldCheck, Sparkles, Trash2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, ApiError } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
@@ -16,7 +16,8 @@ import type { AgentSummary } from '@/lib/shared/agents';
 import { NOTE_KINDS, NOTE_KIND_LABEL, type NoteCounts, type NoteKind, type NoteScope, type TeamNote } from '@/lib/shared/notebook';
 import { expiryView, groupNotes, hostOf, sourceParts, statusLabel, type DisputePair } from '@/lib/shared/notebook-view';
 import { cn } from '@/lib/utils';
-import { Badge, Chip, type Tone } from '../ui/badge';
+import { ForgetDialog } from '../brain/fact-history';
+import { Badge, Chip, FilterChip, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Input, Select, Textarea } from '../ui/inputs';
 import { AgentAvatar } from './avatar';
@@ -50,6 +51,9 @@ export function NotebookTab({ teamId, faces }: { teamId: string; faces: Face[] }
   const [asked, setAsked] = useState('');
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState<string>();
+  // C02: a note being forgotten (the dialog asks why), and the Forgotten list.
+  const [forgetting, setForgetting] = useState<TeamNote>();
+  const [showForgotten, setShowForgotten] = useState(false);
   // Notes that arrived while the tab was open ring once; the ones fading after a dispute was settled.
   const [fresh, setFresh] = useState<Set<string>>(new Set());
   const [fading, setFading] = useState<Set<string>>(new Set());
@@ -65,6 +69,7 @@ export function NotebookTab({ teamId, faces }: { teamId: string; faces: Face[] }
     if (scope !== 'all') params.set('scope', scope);
     if (kind) params.set('kind', kind);
     if (asked) params.set('q', asked);
+    if (showForgotten) params.set('forgotten', '1');
     try {
       const next = await api<Listed>(`/api/agent-teams/${teamId}/notes${params.size ? `?${params}` : ''}`, { background: true });
       setData(next);
@@ -81,7 +86,7 @@ export function NotebookTab({ teamId, faces }: { teamId: string; faces: Face[] }
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [teamId, scope, kind, asked]);
+  }, [teamId, scope, kind, asked, showForgotten]);
 
   useEffect(() => {
     void load();
@@ -143,6 +148,8 @@ export function NotebookTab({ teamId, faces }: { teamId: string; faces: Face[] }
       onAction={(body, done) => act(note, body, done)}
       onPromote={() => void promote(note)}
       onDelete={() => void forget(note)}
+      onForget={() => setForgetting(note)}
+      onRestore={() => void act(note, { action: 'restore' }, () => toast.success('Restored'))}
     />
   );
 
@@ -178,6 +185,9 @@ export function NotebookTab({ teamId, faces }: { teamId: string; faces: Face[] }
               <span className="size-1.5 animate-pulse-soft rounded-full bg-gn" /> Live
             </span>
           )}
+          <FilterChip size="sm" active={showForgotten} onClick={() => setShowForgotten((v) => !v)} title="Notes you forgot, with why; restore one to bring it back">
+            Forgotten
+          </FilterChip>
           <Button size="sm" onClick={() => setAdding((a) => !a)} aria-expanded={adding}>
             <Plus className="size-3.5" strokeWidth={2} /> Note
           </Button>
@@ -237,6 +247,17 @@ export function NotebookTab({ teamId, faces }: { teamId: string; faces: Face[] }
             </Group>
           )}
         </>
+      )}
+      {forgetting && (
+        <ForgetDialog
+          what={forgetting.text}
+          onClose={() => setForgetting(undefined)}
+          onForget={async (reason, forgetAfter) => {
+            await api(`/api/agent-teams/${teamId}/notes/${forgetting.id}`, { method: 'POST', json: { action: 'forget', reason, ...(forgetAfter && { forgetAfter }) } });
+            toast.success(forgetAfter ? 'It will be forgotten then' : 'Forgotten');
+            await load();
+          }}
+        />
       )}
     </section>
   );
@@ -343,9 +364,11 @@ interface CardProps {
   onAction: (body: Record<string, unknown>, done?: (result: Record<string, unknown>) => void) => Promise<void>;
   onPromote: () => void;
   onDelete: () => void;
+  onForget: () => void;
+  onRestore: () => void;
 }
 
-function NoteCard({ note, face, busy, fresh, fading, side, onAction, onPromote, onDelete }: CardProps) {
+function NoteCard({ note, face, busy, fresh, fading, side, onAction, onPromote, onDelete, onForget, onRestore }: CardProps) {
   const [mode, setMode] = useState<'answer' | 'dispute' | 'delete'>();
   const [draft, setDraft] = useState('');
   const expiry = expiryView(note);
@@ -436,7 +459,16 @@ function NoteCard({ note, face, busy, fresh, fading, side, onAction, onPromote, 
         </Link>
       )}
 
-      {!side && note.status !== 'expired' && (
+      {note.forgottenAt && (
+        <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[12px] text-t3">
+          <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">Forgotten{note.forgetReason ? `: ${note.forgetReason}` : ''}</span>
+          <Button size="sm" disabled={busy} onClick={onRestore}>
+            <RotateCcw className="size-3.5" /> Restore
+          </Button>
+        </div>
+      )}
+
+      {!side && !note.forgottenAt && note.status !== 'expired' && (
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
           {isQuestion && note.status === 'open' && (
             <Button size="sm" variant="primary" onClick={() => setMode(mode === 'answer' ? undefined : 'answer')} aria-expanded={mode === 'answer'}>
@@ -468,7 +500,10 @@ function NoteCard({ note, face, busy, fresh, fading, side, onAction, onPromote, 
               <ChevronsUp className="size-3.5" /> {note.scope === 'run' ? 'Promote' : 'To project'}
             </Button>
           )}
-          <Button size="sm" variant="ghost" className="ml-auto text-t3 hover:text-rd" aria-label="Delete the note" disabled={busy} onClick={() => (mode === 'delete' ? onDelete() : setMode('delete'))}>
+          <Button size="sm" variant="ghost" className="ml-auto text-t3" aria-label="Forget the note" disabled={busy} onClick={onForget}>
+            <EyeOff className="size-3.5" /> Forget
+          </Button>
+          <Button size="sm" variant="ghost" className="text-t3 hover:text-rd" aria-label="Delete the note" disabled={busy} onClick={() => (mode === 'delete' ? onDelete() : setMode('delete'))}>
             <Trash2 className="size-3.5" /> {mode === 'delete' ? 'Really?' : ''}
           </Button>
         </div>

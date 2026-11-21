@@ -8,7 +8,7 @@
  * open more, what the creator sees. New ones go to the workflow's project.
  */
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '@landflow/sdk';
-import { ENTITY_LABELS, ENTITY_TYPES, entityRef, FACT_KINDS, isEntityType, type FactKind } from '../../shared/brain';
+import { ENTITY_LABELS, ENTITY_TYPES, entityRef, FACT_KINDS, isEntityType, parseEntityRef, type FactKind } from '../../shared/brain';
 import { homeProjectId } from '../projects/store';
 import { store } from '../store';
 
@@ -56,6 +56,9 @@ export const brainEntityNode = defineNode({
       { name: 'text', displayName: 'Words', type: 'string', default: '', description: 'Only entities whose name, description, owner or attributes have all these words', displayOptions: { show: { operation: ['list'] } } },
       { name: 'factKind', displayName: 'Kind', type: 'options', default: 'purpose', options: FACT_KINDS.map((k) => ({ name: k, value: k })), displayOptions: { show: { operation: ['addFact'] } } },
       { name: 'statement', displayName: 'Statement', type: 'string', default: '', typeOptions: { rows: 3 }, displayOptions: { show: { operation: ['addFact'] } } },
+      { name: 'factStatic', displayName: 'Static', type: 'boolean', default: false, description: 'A fact that never changes: the study never marks it stale or rewrites it', displayOptions: { show: { operation: ['addFact'] } } },
+      { name: 'linkedFactId', displayName: 'Linked Fact ID', type: 'string', default: '', description: 'A fact this one follows. Empty: no link', displayOptions: { show: { operation: ['addFact'] } } },
+      { name: 'factLink', displayName: 'Link', type: 'options', default: 'extends', options: [{ name: 'Extends', value: 'extends' }, { name: 'Derives From', value: 'derives' }], displayOptions: { show: { operation: ['addFact'] } } },
       { name: 'limit', displayName: 'Limit', type: 'number', default: 50, typeOptions: { minValue: 1, maxValue: 500 }, displayOptions: { show: { operation: ['list'] } } },
       { name: 'oneItem', displayName: 'As One Item', type: 'boolean', default: false, description: 'Output the whole list as one item', displayOptions: { show: { operation: ['list'] } } },
     ],
@@ -63,6 +66,7 @@ export const brainEntityNode = defineNode({
   async execute(ctx) {
     const { addEntityFact, deleteEntity, EntityError, entityKey, entityKnowledge, getEntity, listEntities, upsertEntity } = await import('../brain/entities');
     const { listProposals } = await import('../brain/proposals');
+    const { getFact } = await import('../brain/facts');
     const { covers, scopeForWorkflow } = await import('../brain/scope');
     const runId = ctx.getWorkflowId();
     const scope = scopeForWorkflow(runId);
@@ -129,7 +133,25 @@ export const brainEntityNode = defineNode({
             if (!entity) throw fail(`No ${type} ${id}`);
             const kind = String(ctx.getNodeParameter('factKind', i, 'purpose')) as FactKind;
             if (!(FACT_KINDS as readonly string[]).includes(kind)) throw fail(`Unknown fact kind “${kind}”`);
-            const fact = addEntityFact(entity, { kind, statement: String(ctx.getNodeParameter('statement', i, '') ?? '') });
+            const linked = String(ctx.getNodeParameter('linkedFactId', i, '') ?? '').trim();
+            if (linked) {
+              // What a flow can't see doesn't exist for it: the linked fact must be one its scope covers.
+              const parent = getFact(linked);
+              const ref = parent?.subjectType === 'entity' ? parseEntityRef(parent.subjectId) : undefined;
+              const subject = parent?.subjectType;
+              const seen =
+                parent !== undefined &&
+                parent.latest !== false &&
+                (subject === 'entity' ? Boolean(ref) && visible(ref!.type, ref!.id) : subject === 'workflow' ? covers(scope, { workflowId: parent.subjectId }) : subject === 'agent' ? covers(scope, { agentId: parent.subjectId }) : !scope.workflows && !scope.agents);
+              if (!seen) throw fail(`No fact ${linked}`);
+            }
+            const link = String(ctx.getNodeParameter('factLink', i, 'extends'));
+            const fact = addEntityFact(entity, {
+              kind,
+              statement: String(ctx.getNodeParameter('statement', i, '') ?? ''),
+              ...(Boolean(ctx.getNodeParameter<boolean>('factStatic', i, false)) && { isStatic: true }),
+              ...(linked && { parentId: linked, relation: link === 'derives' ? ('derives' as const) : ('extends' as const) }),
+            });
             out.push({ json: json({ fact, entity: entityKey(entity) }), pairedItem: { item: i } });
             break;
           }
