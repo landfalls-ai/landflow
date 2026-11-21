@@ -495,9 +495,10 @@ most 50). Hover a node for its words (always as text), kind, version, confidence
 a fact to see its [versions](#fact-versions). Drag to pan, scroll or **+** and **-** to zoom, **0** or **Fit** to see everything,
 arrows to pan. The layout settles in the browser in about two seconds and then stops, and it pauses while the tab is hidden.
 
-It shows 500 facts at a time (**Load more** adds the next 500; the layout keeps where the first ones settled). What you see is
-what the facts list shows you: facts about workflows, agents and pages you cannot open are left out in the query, and a person's
-private agent memory is never in it. A phone shows a list grouped by subject instead, each later version indented under the one it
+It shows 500 facts at a time (**Load more** adds the next 500; the layout keeps where the first ones settled). Facts about
+workflows, agents and pages you cannot open are left out in the query, and a person's private agent memory is never in it. A
+project's memories appear in that project's own graph (`about=project/<id>`) for its members, and in the whole-brain graph only
+for owners and admins. A phone shows a list grouped by subject instead, each later version indented under the one it
 replaced (a **List** switch gives the same on a desktop, which is also the way to read it with a screen reader).
 `GET /api/brain/graph` ([api.md](reference/api.md)) serves it. The layout code is adapted from Supermemory's MIT-licensed
 `memory-graph`; its notice is in `apps/web/src/components/brain/graph/NOTICE.md` and the repository's `THIRD_PARTY_NOTICES.md`.

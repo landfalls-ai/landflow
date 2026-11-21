@@ -76,7 +76,7 @@ export function GraphView({ about, onOpenPage }: { about?: string; onOpenPage: (
 
   const facts = data.nodes.filter((n) => n.kind === 'fact').length;
   const openVersions = (fact: GraphFactNode, subject?: GraphSubjectNode) =>
-    setVersions({ id: fact.factId, subjectType: subject?.subjectType === 'project' || !subject ? 'instance' : subject.subjectType, subjectId: subject?.subjectId ?? '', subjectName: subject?.label, kind: fact.factKind, statement: fact.statement, evidence: [], confidence: fact.confidence, firstSeen: fact.firstSeen, lastSeen: fact.lastSeen, status: fact.status });
+    setVersions({ id: fact.factId, subjectType: subject?.subjectType ?? 'instance', subjectId: subject?.subjectId ?? '', subjectName: subject?.label, kind: fact.factKind, statement: fact.statement, evidence: [], confidence: fact.confidence, firstSeen: fact.firstSeen, lastSeen: fact.lastSeen, status: fact.status });
   const showList = phone || mode === 'list';
 
   return (

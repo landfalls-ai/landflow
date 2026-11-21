@@ -1,7 +1,7 @@
 /**
  * GET /api/brain/graph — the memory graph: a page of facts as nodes with their subjects, `about` edges and, with
  * `?history=1`, version edges (`updates`, `extends`, `derives`). `?about=<subject>` limits it to one subject
- * (`workflow/<id>`, `agent/<id>`, `entity/<type>/<id>` or an entity page's `<type>/<id>`; `depth=2` adds the subjects one
+ * (`workflow/<id>`, `agent/<id>`, `entity/<type>/<id>`, `project/<id>` or an entity page's `<type>/<id>`; `depth=2` adds the subjects one
  * link away); without it, the whole brain the caller may see. At most `limit` facts a page (500), paged by an opaque
  * `cursor`. `?forgotten=1` adds the forgotten facts the caller may restore. Anyone who can read executions may call it;
  * what they see is what the facts list shows them (docs/second-brain.md#the-graph).

@@ -1,5 +1,5 @@
 /**
- * C10: the Graph tab's client modules (components/brain/graph/): the version-chain index, the layout simulation and its
+ * C10: the Graph tab's client modules (components/brain/graph/): the layout simulation and its
  * 2 s budget, the viewport (fit, keys), the hit test, joining pages, the popover (text, never HTML), the list a phone gets,
  * the legend, and the CSP rule that no module builds a zod schema.
  */

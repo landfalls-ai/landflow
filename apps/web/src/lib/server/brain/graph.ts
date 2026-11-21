@@ -10,7 +10,7 @@ import { getProject } from '../projects/store';
 import { agentStore } from '../agents/store';
 import { type Actor } from '../projects/access';
 import { store } from '../store';
-import { getProfile, pageFacts } from './facts';
+import { getProfile, pageFacts, type FactFilter } from './facts';
 import { getEntity } from './entities';
 import { canFact, scopeForActor } from './scope';
 import { wikiPage } from './wiki';
@@ -26,7 +26,7 @@ export interface SubjectKey {
 }
 
 /**
- * A subject key as the route takes it: `workflow/<id>`, `agent/<id>`, `entity/<type>/<id>`, or an entity page's own
+ * A subject key as the route takes it: `workflow/<id>`, `agent/<id>`, `entity/<type>/<id>`, `project/<id>`, or an entity page's own
  * `<type>/<id>` (`customer/acme`). Undefined when it names nothing this module knows.
  */
 export function parseSubject(key: string): SubjectKey | undefined {
@@ -58,19 +58,26 @@ function nameOf(s: SubjectKey, hint?: string): string {
 /** Whether a fact is hidden (forgotten, or past its forget-after time). */
 const isForgotten = (f: BrainFact, now: string) => Boolean(f.forgottenAt || (f.forgetAfter && f.forgetAfter <= now));
 
-/** One page of the facts the caller may see for `query`, with the scope, subject and history in SQL (`pageFacts`). */
+/** At most this many `pageFacts` reads fill one graph page when forgotten facts the caller may not restore are dropped. */
+const MAX_ROUNDS = 5;
+
+/**
+ * One page of the facts the caller may see for `query`, with the scope, subject and history in SQL (`pageFacts`). Forgotten
+ * facts the caller may not restore are dropped after a read, so it reads on from the cursor until the page holds `limit`
+ * facts or there is nothing more (a page of only hidden facts is never empty while later ones exist).
+ */
 function readFacts(actor: Actor | undefined, query: GraphQuery, subjects: SubjectKey[], now: string): { facts: BrainFact[]; nextCursor?: string } {
   const filter = { status: 'all' as const, history: query.history, forgotten: query.forgotten ? ('include' as const) : ('exclude' as const), now };
-  let page;
+  let scoped: Omit<FactFilter, 'limit'>;
   if (subjects.length === 1) {
     // One subject the route already checked (a project's facts are not in a member's scope, so no scope is added).
-    page = pageFacts({ ...filter, subjectType: subjects[0]!.subjectType, subjectId: subjects[0]!.subjectId }, { limit: query.limit, cursor: query.cursor });
+    scoped = { ...filter, subjectType: subjects[0]!.subjectType, subjectId: subjects[0]!.subjectId };
   } else if (subjects.length > 1) {
     // The page's subject and its neighbours, each checked by `neighbours`: their ids are the scope.
     const ids = (type: FactSubject) => new Set(subjects.filter((s) => s.subjectType === type).map((s) => s.subjectId));
-    page = pageFacts({ ...filter, scope: { workflows: ids('workflow'), agents: ids('agent'), entities: ids('entity') } }, { limit: query.limit, cursor: query.cursor });
+    scoped = { ...filter, scope: { workflows: ids('workflow'), agents: ids('agent'), entities: ids('entity') } };
   } else {
-    page = pageFacts({ ...filter, scope: actor && scopeForActor(actor) }, { limit: query.limit, cursor: query.cursor });
+    scoped = { ...filter, scope: actor && scopeForActor(actor) };
   }
   // Whether the caller may restore a subject's facts is decided once per subject, and only for forgotten facts.
   const mayRestore = new Map<string, boolean>();
@@ -80,10 +87,21 @@ function readFacts(actor: Actor | undefined, query: GraphQuery, subjects: Subjec
     if (!mayRestore.has(key)) mayRestore.set(key, canFact(actor, f, 'update'));
     return mayRestore.get(key)!;
   };
-  const facts = page.facts
-    .filter((f) => f.subjectType !== 'agent-user') // a person's private notes about an agent never enter a shared graph
-    .filter((f) => !isForgotten(f, now) || canRestore(f));
-  return { facts, nextCursor: page.nextCursor };
+  const kept: BrainFact[] = [];
+  let cursor = query.cursor;
+  let nextCursor: string | undefined;
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const page = pageFacts(scoped, { limit: query.limit - kept.length, cursor });
+    kept.push(
+      ...page.facts
+        .filter((f) => f.subjectType !== 'agent-user') // a person's private notes about an agent never enter a shared graph
+        .filter((f) => !isForgotten(f, now) || canRestore(f)),
+    );
+    nextCursor = page.nextCursor;
+    cursor = page.nextCursor;
+    if (!cursor || kept.length >= query.limit) break;
+  }
+  return { facts: kept, nextCursor };
 }
 
 /** The subjects one link away from `s` that `actor` may read (at most `MAX_NEIGHBOURS`). */

@@ -32,6 +32,10 @@ const alice = await createUser({ email: 'alice@graph.test', name: 'Alice', role:
 const teamA = createTeamProject({ name: 'Alpha', createdBy: owner.id });
 const teamB = createTeamProject({ name: 'Beta', createdBy: owner.id });
 setMember(teamA.id, alice.id, 'editor');
+const viewer = await createUser({ email: 'viewer@graph.test', name: 'Viewer', role: 'member', password: 'viewer-password-1' });
+setMember(teamA.id, viewer.id, 'viewer');
+const outsider = await createUser({ email: 'outsider@graph.test', name: 'Outsider', role: 'member', password: 'outsider-password-1' });
+setMember(teamB.id, outsider.id, 'editor');
 
 afterAll(() => {
   enableTestAuth();
@@ -109,8 +113,6 @@ describe('the builder', () => {
   });
 
   it('shows no forgotten node to a member who can read the page but not change it', async () => {
-    const viewer = await createUser({ email: 'viewer@graph.test', name: 'Viewer', role: 'member', password: 'viewer-password-1' });
-    setMember(teamA.id, viewer.id, 'viewer');
     await forgetFact('entity:customer/acme:cost', { reason: 'secret reason words' }, { userId: owner.id });
     enableTestAuth(viewer);
     const plain = await get('?about=customer/acme&forgotten=1');
@@ -133,6 +135,28 @@ describe('the builder', () => {
     const one = await get(`?about=project/${teamA.id}`);
     expect(one.status).toBe(200);
     expect(one.body.nodes.filter((n) => n.kind === 'fact').map((n) => (n as { factKind: string }).factKind)).toEqual(['memory']);
+  });
+
+  it('shows a project’s memories in its own graph to its members, and in the whole-brain graph only to owners', async () => {
+    facts.upsertFact({ subjectType: 'project', subjectId: teamA.id, kind: 'memory', statement: 'Alpha ships on Fridays', confidence: 0.9, evidence: [], projectId: teamA.id } as never, database(), at(40));
+    enableTestAuth(alice);
+    expect((await get(`?about=project/${teamA.id}`)).status).toBe(200);
+    expect((await get()).body.nodes.some((n) => n.kind === 'subject' && n.subjectType === 'project')).toBe(false);
+    enableTestAuth(outsider);
+    expect((await get(`?about=project/${teamA.id}`)).status).toBe(404);
+    enableTestAuth(owner);
+    expect((await get()).body.nodes.some((n) => n.kind === 'subject' && n.subjectType === 'project')).toBe(true);
+  });
+
+  it('reads on past a raw page of only forgotten facts the viewer may not restore', async () => {
+    await forgetFact('entity:customer/acme:health', { reason: 'r' }, { userId: owner.id });
+    await forgetFact('entity:customer/acme:failure', { reason: 'r' }, { userId: owner.id });
+    enableTestAuth(viewer);
+    // Newest first: the two forgotten facts fill the first raw page of 2; the live ones follow.
+    const { body } = await get('?about=customer/acme&forgotten=1&limit=2');
+    expect(body.nodes.filter((n) => n.kind === 'fact').map((n) => (n as { factKind: string }).factKind).sort()).toEqual(['cost', 'purpose']);
+    expect(body.nextCursor).toBeUndefined();
+    expect(body.nodes.some((n) => n.kind === 'fact' && n.forgotten)).toBe(false);
   });
 
   it('refuses agent-user as a subject, even to name it', async () => {
