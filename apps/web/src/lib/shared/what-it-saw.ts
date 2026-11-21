@@ -61,6 +61,9 @@ export interface SawAttrs {
   memory?: SawMemorySource[];
   /** The exact fenced memory block(s) the prompt got, joined by a blank line; trace content `full` only. */
   memoryText?: string;
+  /** Whose memory `memoryText` is and which agent's (so the reader of the journal can be checked): the text is shown to that person and the agent's editors only. */
+  memoryFor?: string;
+  memoryAgent?: string;
 }
 
 /** The line prefixes of the project block (lib/server/project-context/build.ts), in the order they appear. */

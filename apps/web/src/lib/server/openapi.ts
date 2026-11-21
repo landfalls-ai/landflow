@@ -2935,6 +2935,29 @@ function paths(): Record<string, Record<string, Json>> {
     ],
     responses: { 200: reply('The sessions', object({ sessions: array({ type: 'object', additionalProperties: true }), nextCursor: { type: ['string', 'null'] } }, ['sessions'])), 404: notFound },
   });
+  add('get', '/api/agents/{id}/memories', {
+    tag: 'Agents',
+    id: 'listAgentMemories',
+    summary: 'What an agent remembers about a person',
+    description: 'Newest first, paged by `cursor`. Anyone who can read the agent lists their own memories (`user` defaults to them); the agent’s editors name another person with `user`, and without it get `users`, the people the agent has memories of. Another person’s memories are 404 to everyone else. `forgotten=1` lists the forgotten ones. `recall` says how the next run finds the relevant memories: `meaning` when the embedding model answers, else `words`.',
+    pathParams: { id: 'The agent id' },
+    query: [
+      { name: 'user', description: 'Whose memories (default: the caller)', schema: { type: 'string' } },
+      { name: 'forgotten', description: '`1`: the forgotten memories', schema: { type: 'string', enum: ['0', '1'] } },
+      { name: 'limit', description: 'Page size (up to 100)', schema: { type: 'integer' } },
+      { name: 'cursor', description: 'From `nextCursor`', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The memories', object({ items: array({ type: 'object', additionalProperties: true }), nextCursor: { type: 'string' }, users: array({ type: 'string' }), recall: { type: 'string', enum: ['meaning', 'words'] } }, ['items', 'recall'])), 404: notFound },
+  });
+  add('post', '/api/agents/{id}/memories/{memoryId}', {
+    tag: 'Agents',
+    id: 'changeAgentMemory',
+    summary: 'Forget or restore one memory',
+    description: '`{ action: "forget", reason }` forgets softly (the agent stops recalling it; it can be restored); `{ action: "restore" }` brings it back. A person acts on their own memories; the agent’s editors name another person with `user`. Anyone else, or a memory that is not that person’s, gets 404.',
+    pathParams: { id: 'The agent id', memoryId: 'The memory handle (m_…) the agent’s prompt and the list show' },
+    body: jsonBody(object({ action: { type: 'string', enum: ['forget', 'restore'] }, reason: { type: 'string', description: 'Required to forget (up to 500 characters)' }, user: { type: 'string', description: 'Another person (editors only)' } }, ['action'])),
+    responses: { 200: reply('The memory', object({ item: { type: 'object', additionalProperties: true } }, ['item'])), 400: invalid, 404: notFound },
+  });
   add('get', '/api/agents/{id}/sessions/{sid}', {
     tag: 'Agents',
     id: 'getAgentSession',

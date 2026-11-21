@@ -33,7 +33,9 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   }
   if (session && (isRunning(session.id) || session.status === 'running')) return error('This session is still answering — wait for the reply', 409);
   if (session?.status === 'awaiting_approval') return error('Approve or deny the pending tool calls first', 409);
-  session ??= newSession(agent, { source: 'test', userId: 'you', version: 'draft' });
+  // C09: the test chat's memory is the person's own (their user id), not one pool shared by every editor. A session someone else opened stays theirs: this run only reads and writes the memory of the person now chatting (`memoryUser`).
+  const chatter = currentActorId() ?? 'you';
+  session ??= newSession(agent, { source: 'test', userId: chatter, version: 'draft' });
   const start = session;
   // A follow-up message stays in the project the test chat began in (a message that names another was refused above).
   const projectId = session.messages.length ? (session.context?.projectId ?? asked) : asked;
@@ -41,5 +43,5 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const by = currentActorId();
   // AG15: the test chat wrote no surface before (its calls fell under "workflow and agent runs"); now `agent-test`.
   const testScope = assistantScope({ surface: 'agent-test', agentId: agent.id, ...(by && { userId: by }) });
-  return agentEventStream((onEvent) => runInUsageScope(testScope, () => runAgent({ agent, session: start, message: body.data.message, onEvent, rootTrace: true, ...(projectId && { context: { caller: 'chat', agentId: agent.id, projectId } }), ...(by && { caller: { startedBy: by } }) })));
+  return agentEventStream((onEvent) => runInUsageScope(testScope, () => runAgent({ agent, session: start, message: body.data.message, onEvent, rootTrace: true, memoryUser: chatter, ...(projectId && { context: { caller: 'chat', agentId: agent.id, projectId } }), ...(by && { caller: { startedBy: by } }) })));
 });

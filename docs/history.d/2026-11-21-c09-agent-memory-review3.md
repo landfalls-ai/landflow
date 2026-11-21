@@ -1,0 +1,2 @@
+section: 2026-11-21: combined wave 2
+| (this change) | C09 agent memory, third review: the live journal stream hides a run's memory text from anyone but the person it is for, the agent's editors and admins; a run that paused for approval goes on with the memory of the person it ran for, whoever approves; a memory key's shape is a pattern rule of the central redactor in every process; the mod's trace text is scrubbed before it is cut | [agents.md](agents.md#agent-capabilities) |

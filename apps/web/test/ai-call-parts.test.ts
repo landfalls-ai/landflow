@@ -16,6 +16,7 @@ type Step = () => Partial<ModelTurn>;
 const script: Step[] = [];
 let modelProvider = 'anthropic';
 let usageSeq = 0;
+const seenSystems: string[] = [];
 
 vi.setConfig({ testTimeout: 20_000 });
 const dataDir = mkdtempSync(join(tmpdir(), 'landflow-call-parts-'));
@@ -51,7 +52,7 @@ vi.mock('@/lib/server/agents/models', () => ({
         cacheWriteTokens: turn.usage!.cacheWriteTokens ?? 0,
         note: { ...(draft && { draft }) },
       });
-      void input;
+      seenSystems.push(typeof input.system === 'string' ? input.system : '');
       return turn;
     },
   }),
@@ -60,7 +61,7 @@ vi.mock('@/lib/server/agents/models', () => ({
 const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
 const { agentStore } = await import('@/lib/server/agents/store');
-const { newSession, runAgent, systemPromptParts, configFor } = await import('@/lib/server/agents/runtime');
+const { newSession, runAgent, systemPromptParts, configFor, decide } = await import('@/lib/server/agents/runtime');
 const { withPractices } = await import('@/lib/server/project-context/practices');
 const { database } = await import('@/lib/server/db');
 const { credentials } = await import('@/lib/server/credentials/vault');
@@ -194,11 +195,13 @@ describe('the system prompt and its segments', () => {
     expect(withP.practicesText).toBe('## Practices\n- use helm');
     const out = systemPromptParts(agent, configFor(agent, 'draft'), sessionOf(agent), withP);
     const day = new Date().toISOString().slice(0, 10);
+    const handle = /\[(m_[\w-]+)\]/.exec(out.text)![1];
+    const HINT = 'Use the remember tool for durable facts worth knowing next time; pass replaces with an id above to correct one, and forget_memory to drop one. These memories belong to the person speaking now: do not save facts about other people.';
     const expected = [
       'Be brief.',
       '## Skills\nSkills are step-by-step instructions for specific tasks. When a task matches a skill, call load_skill first and follow it.\n- triage: when asked to triage',
       '## Where this work fits\nProject P\n\n## Practices\n- use helm',
-      `## What you remember about this user\n${wrapMemory('agent-memory', [`- likes tea (${day})`])}\nUse the remember tool for durable facts worth knowing next time.`,
+      `## What you remember about this user\n${wrapMemory('agent-memory', ['Profile:', `- [${handle}] likes tea (${day})`])}\n${HINT}`,
       `You are “Helper”: Helps. Current date and time: ${AT}.`,
     ].join('\n\n');
     expect(out.text).toBe(expected);
@@ -266,7 +269,7 @@ describe('an agent run', () => {
       expect(parts.userMessage).toBeGreaterThan(0);
     }
     expect(JSON.parse(String(rows[1]!.parts)).toolResults).toBeGreaterThan(0);
-    expect(JSON.parse(String(rows[0]!.tool_names))).toEqual(['Echo', 'remember']);
+    expect(JSON.parse(String(rows[0]!.tool_names))).toEqual(['Echo', 'remember', 'forget_memory']);
     expect(rows[0]!.prefix_hash).toBe(rows[1]!.prefix_hash);
     expect(rows[0]!.prompt_hash).not.toBe(rows[1]!.prompt_hash);
     const everything = rows.flatMap((r) => Object.values(r).map(String)).join(' ').toLowerCase();
@@ -316,6 +319,73 @@ describe('an agent run', () => {
   });
 });
 
+describe('C09 the run recalls memory and records it', () => {
+  const memoryAgent = () => agentOf({ memory: { crossSession: true } as AgentConfig['memory'] });
+  const withTrace = async (mode: string | undefined, fn: () => Promise<void>) => {
+    const before = process.env.LANDFLOW_TRACE_CONTENT;
+    if (mode) process.env.LANDFLOW_TRACE_CONTENT = mode;
+    try {
+      await fn();
+    } finally {
+      if (before === undefined) delete process.env.LANDFLOW_TRACE_CONTENT;
+      else process.env.LANDFLOW_TRACE_CONTENT = before;
+    }
+  };
+
+  it('puts what is relevant to the first message in the prompt, and records it on the session (full)', async () => {
+    const agent = memoryAgent();
+    const { rememberMemory } = await import('@/lib/server/agents/memory');
+    await rememberMemory(agent.id, 'you', { fact: 'My name is Dana', static: true });
+    for (let i = 0; i < 12; i++) await rememberMemory(agent.id, 'you', { fact: `Filler fact ${i}` });
+    // The oldest non-static memories fall out of the ten newest: this one is found only by the question.
+    const { upsertFact } = await import('@/lib/server/brain/facts');
+    upsertFact({ id: `agent-user:${agent.id}/you:memory:m_wombat`, subjectType: 'agent-user', subjectId: `${agent.id}/you`, kind: 'memory', statement: 'Wombats hibernate in burrows', confidence: 1, evidence: [] }, database(), '2020-01-01T00:00:00.000Z', 'landflow', 'you');
+    script.push(() => ({ text: 'In burrows.' }));
+    const session = sessionOf(agent);
+    seenSystems.length = 0;
+    await withTrace(undefined, async () => {
+      await runAgent({ agent, session, message: 'Where do wombats hibernate?', sawMemory: [{ source: 'team-notebook', count: 1, items: [{ id: 'note_1' }] }], sawMemoryText: 'NOTEBOOK BLOCK' });
+    });
+    expect(seenSystems[0]).toContain('Wombats hibernate in burrows');
+    expect(seenSystems[0]).toContain('My name is Dana');
+    expect(seenSystems[0]!.indexOf('Profile:')).toBeLessThan(seenSystems[0]!.indexOf('Relevant to this request:'));
+    expect(session.memory?.map((m) => m.source)).toEqual(['agent-profile', 'agent-relevant', 'team-notebook']);
+    expect(session.memory?.[1]).toMatchObject({ mode: 'keywords', count: 1 });
+    // The record anyone who can read the session gets holds the sources, never the text (the journal's span has it, on full).
+    expect(session.memoryText).toBeUndefined();
+    expect(JSON.stringify(session)).not.toContain('Wombats hibernate');
+    expect(JSON.stringify(session)).not.toContain('NOTEBOOK BLOCK');
+    expect(JSON.stringify(agentStore.getSession(session.id))).not.toContain('Wombats hibernate');
+  });
+
+  it('keeps the sources but not the block on summaries, and neither on off, as the journal does', async () => {
+    for (const [mode, memory, text] of [['summaries', true, false], ['off', false, false]] as const) {
+      const agent = memoryAgent();
+      const { rememberMemory } = await import('@/lib/server/agents/memory');
+      await rememberMemory(agent.id, 'you', { fact: 'Likes marmalade', static: true });
+      script.push(() => ({ text: 'ok' }));
+      const session = sessionOf(agent);
+      await withTrace(mode, async () => {
+        await runAgent({ agent, session, message: 'hello' });
+      });
+      expect(Boolean(session.memory?.length), mode).toBe(memory);
+      expect(session.memoryText !== undefined, mode).toBe(text);
+    }
+  });
+
+  it('an evaluation run reads no memory', async () => {
+    const agent = memoryAgent();
+    const { rememberMemory } = await import('@/lib/server/agents/memory');
+    await rememberMemory(agent.id, 'evaluation', { fact: 'never recalled' }).catch(() => undefined);
+    script.push(() => ({ text: 'ok' }));
+    const session = newSession(agent, { source: 'test', userId: 'evaluation', version: 'draft' });
+    seenSystems.length = 0;
+    await runAgent({ agent, session, message: 'hello' });
+    expect(session.memory).toBeUndefined();
+    expect(seenSystems[0]).not.toContain('never recalled');
+  });
+});
+
 describe('retention', () => {
   it('prunes rows older than the retention and keeps newer ones', () => {
     const db = database();
@@ -333,4 +403,36 @@ afterAll(() => {
     if (previousEnv[k] === undefined) delete process.env[k];
     else process.env[k] = previousEnv[k];
   }
+});
+
+describe('C09 a run that paused goes on with the memory of the person it ran for', () => {
+  it('A opened the session, B chatted, a tool paused, B approved: recall, remember and the writes are B’s', async () => {
+    const { registry } = await import('@/lib/server/plugins/registry');
+    const { corePlugin } = await import('@/lib/server/nodes');
+    registry.registerBuiltin(corePlugin);
+    const { rememberMemory } = await import('@/lib/server/agents/memory');
+    const facts = await import('@/lib/server/brain/facts');
+    const agent = agentOf({ memory: { crossSession: true } as AgentConfig['memory'], tools: [{ id: 't1', type: 'node', name: 'Echo', description: 'Echo', nodeType: 'core.noOp', parameters: {}, requireApproval: true }] } as never);
+    await rememberMemory(agent.id, 'u_a', { fact: 'A likes tea', static: true });
+    await rememberMemory(agent.id, 'u_b', { fact: 'B likes coffee', static: true });
+    const session = newSession(agent, { source: 'test', userId: 'u_a', version: 'draft' });
+    script.push(() => ({ toolCalls: [{ id: 'c1', name: 'Echo', input: {} }], stopReason: 'tool_use' }));
+    seenSystems.length = 0;
+    const paused = await runAgent({ agent, session, message: 'do it', memoryUser: 'u_b' });
+    expect(paused.reason).toBe('awaiting_approval');
+    expect(seenSystems[0]).toContain('B likes coffee');
+    expect(seenSystems[0]).not.toContain('A likes tea');
+    // B approves (the approvals route passes no memory user): the resumed run is still B's.
+    script.push(() => ({ toolCalls: [{ id: 'c2', name: 'remember', input: { fact: 'B moved to Porto' } }], stopReason: 'tool_use' }), () => ({ text: 'done' }));
+    seenSystems.length = 0;
+    await decide(agent, paused.session.id, 'c1', true, { by: 'u_b' });
+    expect(seenSystems.length).toBeGreaterThan(0);
+    for (const system of seenSystems) {
+      expect(system).toContain('B likes coffee');
+      expect(system).not.toContain('A likes tea');
+    }
+    const live = (user: string) => facts.listFacts({ subjectType: 'agent-user', subjectId: `${agent.id}/${user}`, limit: 50 }, database()).map((f) => f.statement);
+    expect(live('u_b')).toContain('B moved to Porto');
+    expect(live('u_a')).toEqual(['A likes tea']);
+  });
 });

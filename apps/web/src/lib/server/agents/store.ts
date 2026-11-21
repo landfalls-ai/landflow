@@ -39,6 +39,8 @@ import { singleton } from '../singleton';
 import { store } from '../store';
 import type { Cursor } from '../pagination';
 import { recordAgentVersion } from './version-rows'; // AG21:
+import { deleteAgentMemories, importAgentMemories, profileNotes, rememberSync } from './memory-store'; // C09:
+import { logger } from '../telemetry/logger';
 
 /** A `running` session no process has saved for this long is idle again (its process died; files mode resets them at boot). */
 const STALE_RUNNING_MS = 30 * 60_000;
@@ -47,7 +49,6 @@ const MAX_SESSIONS_PER_AGENT = 200;
 /** Mirrored harness sessions (ids `hs_…`, lib/server/harness) have a cap of their own, so 200 Claude Code sessions never evict a Slack, Telegram or test one (and the other way round). */
 const MAX_HARNESS_SESSIONS_PER_AGENT = 200;
 const isHarnessId = (id: string) => id.startsWith('hs_');
-const MAX_MEMORIES = 50;
 
 export interface MemoryNote {
   text: string;
@@ -142,7 +143,8 @@ export const audienceSources = (audience?: SessionAudience): readonly SessionSou
 /** What `listSessions` narrows to: some sources, one user, and the page after a cursor (`s` the last row's updatedAt, `i` its id). */
 export interface SessionFilter {
   sources?: readonly SessionSource[];
-  userId?: string;
+  /** One user, or any of several (the test chat lists the person's own and the old shared "you"). */
+  userId?: string | readonly string[];
   /** PC13: only sessions of these projects (the caller's; undefined: all). A summary without a project counts as `homeProjectId`. */
   projectIds?: ReadonlySet<string>;
   /** PC13: the agent's home project now, for summaries saved without a project. */
@@ -154,7 +156,7 @@ export interface SessionFilter {
 function sessionMatches(s: SessionSummary, filter?: SessionFilter): boolean {
   if (!filter) return true;
   if (filter.sources && !filter.sources.includes(s.source)) return false;
-  if (filter.userId && s.userId !== filter.userId) return false;
+  if (filter.userId && !([] as string[]).concat(filter.userId as string[]).includes(s.userId)) return false;
   if (filter.projectIds && !filter.projectIds.has(s.projectId ?? filter.homeProjectId ?? '')) return false;
   const after = filter.cursor;
   return !after || s.updatedAt < after.s || (s.updatedAt === after.s && s.id < after.i);
@@ -174,8 +176,6 @@ interface AgentBackend {
   findConversation(agentId: string, conversationKey: string): AgentSession | undefined;
   saveSession(session: AgentSession): void;
   deleteSession(agentId: string, id: string): boolean;
-  memories(agentId: string, userId: string): MemoryNote[];
-  remember(agentId: string, userId: string, text: string): MemoryNote[];
 }
 
 const revive = (agent: Agent): Agent => ({ ...agent, ...normalizeConfig(agent), history: agent.history ?? [] });
@@ -287,21 +287,7 @@ class FileAgents implements AgentBackend {
     releaseSessionImages(id);
     return true;
   }
-
-  memories(agentId: string, userId: string): MemoryNote[] {
-    return readJson<Record<string, MemoryNote[]>>(join(this.memoryDir, `${agentId}.json`))?.[userId] ?? [];
-  }
-
-  remember(agentId: string, userId: string, text: string): MemoryNote[] {
-    const path = join(this.memoryDir, `${agentId}.json`);
-    const all = readJson<Record<string, MemoryNote[]>>(path) ?? {};
-    all[userId] = withNote(all[userId] ?? [], text);
-    atomicWrite(path, all);
-    return all[userId];
-  }
 }
-
-const withNote = (notes: MemoryNote[], text: string): MemoryNote[] => [...notes.filter((note) => note.text !== text), { text, at: new Date().toISOString() }].slice(-MAX_MEMORIES);
 
 interface SessionRow {
   id: string;
@@ -368,7 +354,7 @@ class DatabaseAgents implements AgentBackend {
     return db.transaction(() => {
       for (const { id: sessionId } of db.all<{ id: string }>('SELECT id FROM agent_sessions WHERE agent_id = ?', id)) releaseSessionImages(sessionId);
       db.delete('agent_sessions', { agent_id: id });
-      db.delete('agent_memory', { agent_id: id });
+      db.delete('agent_memory', { agent_id: id }); // the old table (read-only for one release); the memories themselves are facts
       return db.delete('agent_definitions', { id }) > 0;
     });
   }
@@ -434,19 +420,6 @@ class DatabaseAgents implements AgentBackend {
     const removed = this.sql.delete('agent_sessions', { id }) > 0;
     if (removed) releaseSessionImages(id);
     return removed;
-  }
-
-  memories(agentId: string, userId: string): MemoryNote[] {
-    return parsed<MemoryNote[]>(this.sql.get<{ data: string }>('SELECT data FROM agent_memory WHERE agent_id = ? AND user_id = ?', agentId, userId)?.data) ?? [];
-  }
-
-  remember(agentId: string, userId: string, text: string): MemoryNote[] {
-    const db = this.sql;
-    return db.transaction(() => {
-      const notes = withNote(this.memories(agentId, userId), text);
-      db.upsert('agent_memory', { agent_id: agentId, user_id: userId, data: JSON.stringify(notes), updated_at: new Date().toISOString() });
-      return notes;
-    });
   }
 }
 
@@ -599,7 +572,10 @@ class AgentStore {
   }
 
   delete(id: string): boolean {
-    return this.backend.remove(id);
+    const removed = this.backend.remove(id);
+    // C09: what the agent remembered about people goes with it (private facts, and their vectors in the background).
+    if (removed) void deleteAgentMemories(id).catch(() => undefined);
+    return removed;
   }
 
   /** Store an agent exactly as given (no new `updatedAt`): key rotation re-seals values inside a definition. */
@@ -641,12 +617,31 @@ class AgentStore {
 
   // ---- cross-session memory ----------------------------------------------
 
-  memories(agentId: string, userId: string): MemoryNote[] {
-    return this.backend.memories(agentId, userId);
+  /** The old notes are imported into the memory backend once per database, on first use (agents/memory.ts, C09 FR-6). */
+  private importedMemories = false;
+  /** Public: the boot step, `recallFor` and `rememberMemory` call it, so no caller depends on `memories()` having run first. */
+  importMemories() {
+    if (this.importedMemories) return;
+    // A failed import is logged once and not tried again in this process: it must never fail every run (the rows stay, the import runs again at the next boot).
+    this.importedMemories = true;
+    try {
+      importOnce(database(), 'agent-memory-facts', () => importAgentMemories(database(), store.dir));
+    } catch (error) {
+      logger.warn('the old agent memories could not be imported', { error: (error as Error).message });
+    }
   }
 
+  /** The profile (every static memory, then the newest others) as plain notes; a run's block comes from `recallForRun`. */
+  memories(agentId: string, userId: string): MemoryNote[] {
+    this.importMemories();
+    return profileNotes(agentId, userId);
+  }
+
+  /** A plain add (the same words refresh the old one); the model's `remember` tool uses `rememberMemory` (static, replaces, the bound). */
   remember(agentId: string, userId: string, text: string): MemoryNote[] {
-    return this.backend.remember(agentId, userId, text);
+    this.importMemories();
+    rememberSync(agentId, userId, text);
+    return profileNotes(agentId, userId);
   }
 
   // ---- channel poll state (e.g. the Telegram update offset) -------------

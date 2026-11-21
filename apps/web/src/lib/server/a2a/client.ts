@@ -11,6 +11,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { RemoteSaid } from '../../shared/agents';
 import { httpUrlBlocked } from '../governance/policy';
 import { singleton } from '../singleton';
+import { memoryArgs, memoryOutput, memoryToolOf, scrubKeys, scrubValue } from '../kagent/memory-scrub';
 
 export const A2A_PROTOCOL_VERSION = '1.0';
 export const KAGENT_HITL_EXTENSION = 'https://kagent.dev/extensions/hitl/v1';
@@ -128,7 +129,7 @@ export class A2aError extends Error {
     message: string,
     readonly code?: number,
   ) {
-    super(message);
+    super(scrubKeys(message)); // a remote's error text can echo a memory key
   }
 }
 
@@ -283,12 +284,16 @@ export interface OutgoingMessage {
   taskId?: string;
   metadata?: Record<string, unknown>;
   extensions?: string[];
+  /** Landflow's own memory-key line inside `text` (kagent/memory-line.ts): the one place a memory key may leave. */
+  keyLine?: string;
 }
 
 function toMessage(message: OutgoingMessage): A2aMessage {
   const parts: Part[] = [];
-  if (message.text) parts.push({ text: message.text });
-  if (message.data) parts.push({ data: message.data });
+  // Everything that leaves goes through the scrub once (answers, rejection reasons, the metadata): a pasted memory key never reaches the remote agent. Best effort: it matches the key's shape.
+  const { keyLine } = message;
+  if (message.text) parts.push({ text: keyLine && message.text.includes(keyLine) ? message.text.split(keyLine).map(scrubKeys).join(keyLine) : scrubKeys(message.text) });
+  if (message.data) parts.push({ data: scrubValue(message.data) });
   if (!parts.length) throw new A2aError('The message is empty');
   return {
     messageId: randomUUID(),
@@ -296,7 +301,7 @@ function toMessage(message: OutgoingMessage): A2aMessage {
     parts,
     ...(message.contextId && { contextId: message.contextId }),
     ...(message.taskId && { taskId: message.taskId }),
-    ...(message.metadata && { metadata: message.metadata }),
+    ...(message.metadata && { metadata: scrubValue(message.metadata) }),
     ...(message.extensions?.length && { extensions: message.extensions }),
   };
 }
@@ -442,6 +447,11 @@ const texts = (parts: Part[] = []) => parts.flatMap((p) => (typeof p.text === 's
 
 /** The agent's answer: the text of its last artifact with text, else the status message's, else the message's. */
 export function replyOf(result: A2aResult): string | undefined {
+  const reply = rawReplyOf(result);
+  return reply === undefined ? undefined : scrubKeys(reply);
+}
+
+function rawReplyOf(result: A2aResult): string | undefined {
   if (result.kind === 'message') return texts(result.message.parts).join('\n\n') || undefined;
   const { task } = result;
   const withText = (task.artifacts ?? []).filter((a) => texts(a.parts).length).at(-1);
@@ -451,7 +461,20 @@ export function replyOf(result: A2aResult): string | undefined {
 
 /** Data parts of the task's artifacts (kagent puts each tool call and result there), for the node's output. */
 export function dataOf(task: A2aTask): unknown[] {
-  return (task.artifacts ?? []).flatMap((a) => a.parts.flatMap((p) => (p.data !== undefined ? [p.metadata ? { ...(p.data as object), _meta: p.metadata } : p.data] : [])));
+  // A memory key and what a recall returned stay out of the node's output (kagent/memory-scrub.ts).
+  const safe = (data: unknown) => {
+    const part = data as { name?: unknown; args?: unknown; response?: unknown } | undefined;
+    if (part && typeof part === 'object' && memoryToolOf(part.name)) {
+      const response = part.response as { output?: unknown } | undefined;
+      return {
+        ...scrubValue({ ...part, args: undefined, response: undefined }),
+        ...(part.args !== undefined && { args: isObject(part.args) ? memoryArgs(part.name, part.args) : scrubValue(part.args) }),
+        ...(part.response !== undefined && { response: { output: memoryOutput(part.name, response && typeof response === 'object' && 'output' in response ? response.output : response) } }),
+      };
+    }
+    return scrubValue(data);
+  };
+  return (task.artifacts ?? []).flatMap((a) => a.parts.flatMap((p) => (p.data !== undefined ? [p.metadata ? { ...(safe(p.data) as object), _meta: scrubValue(p.metadata) } : safe(p.data)] : [])));
 }
 
 /** kagent's token usage for the task, when it reports it. */
@@ -510,6 +533,9 @@ function stepFailure(response: unknown): string | undefined {
   return undefined;
 }
 
+/** A step's output as stored: a recall shows how many memories came back, never their words; anything else loses a memory key. */
+const stepOutput = memoryOutput;
+
 /** The remote agent's tool calls so far, in order: what it called, with what, what came back. Calls a pause waits on are `awaiting_approval`. */
 export function remoteStepsOf(task: A2aTask): RemoteStep[] {
   const steps = new Map<string, RemoteStep>();
@@ -521,7 +547,7 @@ export function remoteStepsOf(task: A2aTask): RemoteStep[] {
       if (!data || typeof data.id !== 'string' || (kind !== 'function_call' && kind !== 'function_response')) continue;
       const name = String(data.name ?? 'tool');
       if (kind === 'function_call') {
-        steps.set(data.id, { id: data.id, name, status: 'running', ...(isObject(data.args) && { args: data.args }), ...(at && { startedAt: at }) });
+        steps.set(data.id, { id: data.id, name, status: 'running', ...(isObject(data.args) && { args: memoryArgs(name, data.args) }), ...(at && { startedAt: at }) });
         continue;
       }
       const step = steps.get(data.id) ?? { id: data.id, name, status: 'running' as const };
@@ -530,7 +556,9 @@ export function remoteStepsOf(task: A2aTask): RemoteStep[] {
       steps.set(data.id, {
         ...step,
         status: failure !== undefined ? 'error' : 'success',
-        ...(failure !== undefined ? { error: failure, output: undefined } : { output: response && typeof response === 'object' && 'output' in response ? response.output : response, error: undefined }),
+        ...(failure !== undefined
+          ? { error: scrubKeys(failure), output: undefined }
+          : { output: stepOutput(step.name, response && typeof response === 'object' && 'output' in response ? response.output : response), error: undefined }),
         ...(at && { endedAt: at }),
       });
     }
@@ -559,7 +587,7 @@ export function remoteSaidOf(task: A2aTask): RemoteSaid[] {
     const at = typeof artifact.metadata?.[TIMELINE_POSITION] === 'string' ? (artifact.metadata[TIMELINE_POSITION] as string) : undefined;
     let words: RemoteSaid | undefined;
     const flush = () => {
-      if (words?.text.trim()) said.push({ ...words, text: words.text.trim() });
+      if (words?.text.trim()) said.push({ ...words, text: scrubKeys(words.text.trim()) });
       words = undefined;
     };
     artifact.parts.forEach((part, partIndex) => {
@@ -589,19 +617,22 @@ export function hitlRequestOf(task: A2aTask): HitlRequest | undefined {
       .map((t) => ({
         id: String(t.id),
         name: String(t.name ?? 'tool'),
-        ...(isObject(t.args) && { args: t.args }),
+        ...(isObject(t.args) && { args: scrubValue(t.args) }),
         ...(typeof t.call_id === 'string' && { callId: t.call_id }),
       }));
-    return { type: 'tool_approval_request', tools, ...(typeof payload.hint === 'string' && { hint: payload.hint }) };
+    return { type: 'tool_approval_request', tools, ...(typeof payload.hint === 'string' && { hint: scrubKeys(payload.hint) }) };
   }
   if (payload?.type === 'ask_user_request' && typeof payload.id === 'string') {
-    return { type: 'ask_user_request', id: payload.id, questions: Array.isArray(payload.questions) ? payload.questions : [] };
+    return { type: 'ask_user_request', id: payload.id, questions: Array.isArray(payload.questions) ? scrubValue(payload.questions) : [] };
   }
   return undefined;
 }
 
 /** The text of a task's status message (why it stopped or failed). */
-export const statusText = (task: A2aTask) => texts(task.status.message?.parts).join('\n') || undefined;
+export const statusText = (task: A2aTask) => {
+  const text = texts(task.status.message?.parts).join('\n');
+  return text ? scrubKeys(text) : undefined;
+};
 
 // ---------------------------------------------------------------------------
 // Answering a pause (kagent HITL)
