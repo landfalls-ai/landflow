@@ -23,6 +23,7 @@ import { logger } from '../telemetry';
 import { agentTeamStore } from '../agent-teams/store';
 import { isTeamMember } from '../notebook/binding';
 import { notebookStubs } from '../notebook/tools';
+import { memoryStubs } from './memory-tools';
 import { a2aUrlOf, clusterFrom, KAGENT_API, KAGENT_CREDENTIAL, type KagentCluster } from './cluster';
 import { applyObject, deleteObject, getObject, listObjects, type KubeObject } from './kube';
 import { BUILTIN_URL, builtinPin, imageRef, packPlugin } from './oci';
@@ -105,18 +106,14 @@ async function clusterOf(credential: CredentialRef): Promise<KagentCluster> {
   return clusterFrom(await credentials.dataWithSecrets(credential, KAGENT_CREDENTIAL));
 }
 
-/** The config kagent runs: the deployed version's, else the published one. */
-export function deployedConfig(agent: Agent): { config: AgentConfig; version: number } | undefined {
-  const version = agent.kagent?.version;
-  const found = version !== undefined ? (agent.published?.version === version ? agent.published : agent.history.find((v) => v.version === version)) : undefined;
-  const chosen = found ?? agent.published;
-  return chosen && { config: chosen.config, version: chosen.version };
-}
+export { deployedConfig } from './deployed-config';
+import { deployedConfig } from './deployed-config';
 
-/** The tools kagent binds: those the runtime builds from the config, without memory (it needs the person the agent talks to). */
+/** The tools kagent binds: those the runtime builds from the config, and with cross-session memory on, the three memory tools that take a signed key (./memory-tools.ts). */
 export async function kagentTools(agent: Agent, config: AgentConfig) {
   const toolset = await buildToolset({ ...agent, ...config }, config);
-  const tools = toolset.tools.filter((tool) => tool.kind !== 'memory');
+  // The runtime's own memory tools need the person the run is for; on kagent the three below take a signed key for that person instead.
+  const tools = [...toolset.tools.filter((tool) => tool.kind !== 'memory'), ...(config.memory.crossSession ? memoryStubs() : [])];
   // An agent a team calls as a remote member also serves the team notebook's tools (docs/team-notebook.md): the stubs only
   // name them, kagent/mcp.ts binds a call to the run that is asking the agent.
   const inTeam = agentTeamStore.list().some((team) => [team.draft, team.published].some((c) => c && isTeamMember(agent, c.members)));
@@ -312,6 +309,7 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
     version,
     deployedAt: new Date().toISOString(),
     token: credentials.sealSecret(token),
+    ...(a2aUrlOf(cluster, name) && { a2aUrl: a2aUrlOf(cluster, name) }),
     ...(plugins.length && { plugins }),
     ...(input.egressPolicies !== undefined || egressPolicies.length ? { egressPolicies } : {}),
     ...(guard !== 'enforce' && plugins.some((pin) => pin.url === BUILTIN_URL) && { guard }),

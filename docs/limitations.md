@@ -817,3 +817,48 @@ Seen in AG18's live pass (production profile, Claude): a create-an-agent ask in 
 - **In queue mode the Notion index lives on one pod.** `landflow-notion-<project>` is in the SQLite vector store's per-process file, which is an `emptyDir` per pod, so only the leader that runs the walk has it: Ask on another main and `project_knowledge` in agent runs on workers find no Notion passages (there is no SQL fallback, unlike facts).
 - **A leader handover can duplicate a new row.** `stop()` waits for the tick in flight, which may be a long walk; if a new leader's tick starts first, both can create the same new object's Notion row (the row is looked up only when there is no item yet). Unlikely with a single main.
 - **Not checked live yet.** The live check (one test page, the person's key) covers the copy, the look, edits both ways and Disconnect, not: a restart mid-copy, a brain over 4,500 blocks, a trashed row's Put back, a row added without a Landflow ID in each database, `LANDFLOW_NOTION_BRAIN=off` on the cluster, `brain_search_knowledge` over MCP with a real key, the Run Trace's Notion connection and an agent's `project_knowledge` call. Embeddings on with a real model stay owed (Ollama stays off).
+
+## Combined wave 1 (2026-11-21)
+
+### Brain fact versions and forgetting (C01, C02)
+
+- A brain fact's visibility scope (which workflows, agents and entities a person may read) is still applied in JS after the SQL page of facts, so a scoped list reads every live latest fact and filters, as before; only the latest-live rule and the limit (for unscoped reads) moved into the query.
+- Old versions of a fact are not mirrored to Notion (the copy holds the latest of each fact); a forgotten fact's or project note's Notion row is trashed.
+- `supersedeFact` (the all-or-nothing supersede for a person or an agent) has no production caller yet: C07 and C08 wire it (memory backend, `update_memory`); today it is exercised by tests and by the two-process integration test (`brain-fact-cluster.test.ts`, `LANDFLOW_INTEGRATION=queue`).
+- A new version's vector is written after the commit (the database transaction is synchronous, the vector store is another SQLite file); if that write fails it is logged and the next study re-embeds. The study itself writes rows synchronously and rebuilds the vectors once at its end, so the all-or-nothing vector write covers people and agents, not each study write.
+- A chain past 50 versions loses the oldest version after the root with its row (not only its text).
+- A forgotten fact is left out of the vector index only at the next study (its vector is dropped at once on a forget, and the search ignores ids it cannot map), and "forget after" has no sweeper by design: reads hide the fact from that time.
+- Notebook "forget after" is the note's expiry (a note forgotten with a time is deleted by the sweeper after the grace period; one forgotten without a time is kept until a person deletes it).
+
+### The memory fence (C03)
+
+- The memory fence marks recalled text as data; it does not detect or judge prompt injection. Not fenced yet: brain facts returned by tools (the MCP `brain_*` tools in `mcp/brain-tools.ts`, the Brain usage and entities nodes), the stored page summaries that `askPrompt` includes, knowledge-base passages and web results.
+
+### Blocked calls (C05, A2A path)
+
+- A Blocked call is not retried or waited on: the step fails with the Blocked wording and a flow routes it through `blocked` / `blockedKind`. A kagent Codex Harness may not pass `codex_error_info` through A2A; the classifier then matches the status words (`usage limit`, `out of credits`, `credits depleted`) and this has only been checked against a local fake agent, not a live kagent Codex run. Blocked has no span status of its own (it is `attrs.blocked` on an error span). A person's local Codex session is not watched (the CLI watch and C04's `quota_blocked` event are W2).
+- The engine's `retryOnFail` re-calls a blocked provider (it cannot tell a Blocked failure from any other); within one node execute and within a team run a blocked agent is not asked again, but across retries and runs it is. The text fallback matches provider phrasing only, so an unusual wording is an ordinary failure.
+- A plain agent (not a team) calling a blocked A2A tool shows the error row without the Run Trace badge; the member badge is put on its call span by `agent-teams/runtime.ts`.
+
+### CI JWT bound claims (C18, first slice)
+
+- Bound Claims on JWT Auth are a text field (`claim: pattern` per line, top-level claims only, a claim name cannot contain `:`). Single use of a token (`jti`), the GitHub and GitLab presets, the claims editor, the token payload in run data and the API workload login are not built yet (C18, wave W4a).
+- Only `repository`, `project_path`, `sub` and the id claims (`repository_id`, `repository_owner_id`, `project_id`, `namespace_id`) with a literal owner count as binding; a self-managed GitLab issuer is not recognised as a public CI issuer (only gitlab.com, GitHub Actions and GitHub Enterprise Cloud hosts are). Other shared CI issuers (Buildkite, Terraform Cloud) are not covered: a credential for them needs no binding.
+
+### Claude Code live status (C04, C15)
+
+- Only Claude Code sends status. Codex (wrapper) and OpenCode (plugin) are registry entries with no event names until verified live; `POST /api/harness/codex/hooks` is 404. The hook names were checked against Claude Code 2.1.330; kagent's pinned 2.1.285 was not installed here.
+- A session's order kind (seq or time) is fixed by its first event. An event of the other kind never moves the status (it is stored). Without `X-Landflow-Hook-Seq` (an HTTP hook, not the generated command hook) events are ordered by receive time, so two events in flight at once can swap. The generated order number is one clock in microseconds; two hooks in the same microsecond could still tie, and a tie never moves a status backwards.
+- An older event is stored but does not count toward a session's prompt and tool counts.
+- Error and Blocked sessions stay Error or Blocked while quiet (only Idle-by-silence is shown stale); both close after 24 hours.
+- Own sessions carry no prompt, tool input or output, file path or `cwd`; the repository is only what the sender names in a `repository` field (the server cannot check the brain mod's allow-list). Agent sessions follow the instance content setting (`LANDFLOW_TRACE_CONTENT`), not a per-agent one. A hook sends only strings (cut to 300 characters) and finite numbers; `error_details` leaves the machine only for a session with an agent picked.
+- An agent session binds only through an `X-Landflow-Agent: <agent id>` header on its first `SessionStart`, and only for an agent the key's owner may run; `agent_type` is never read. Binding is fixed by the session's first event; the stored row decides, and the event's view (content or status only) is chosen after that write. To bind you pick the agent on `/connect` and use that setup only in the project where you run it; every session that setup reports binds to it. The picker lists every agent the person can see; whether they may run one is checked by the server, and a session that may not bind stays their own.
+- The hook route is exempt from the API rate limit; its own limits are per key and per key owner, per second (shared across mains in queue mode). The open-session cap is per key owner and its count is cached 5 seconds per main, so mains can overshoot it by a few sessions.
+- Past 5,000 applied events a session stores only event names (status and counts still move); a late event counts toward the cap too.
+- The agent mirror keeps the newest 500 timeline entries and rebuilds from the newest 500 events, at most once a second (a late event inside the throttle gets one trailing rebuild; a closed session is rebuilt at once); the timeline is cut to about 2 MB, counted in bytes. Harness mirrors have their own 200-per-agent cap and never evict other sources' sessions. The mirror's read-modify-write is not safe when two mains take events of one session at the same moment: a rare lost entry shows until a late event rebuilds the timeline.
+- `X-Landflow-Hook-Time` more than 5 minutes ahead of the server is ignored (receive time is used).
+- Own sessions reach Landflow only through the pasted `/connect` hooks block or the brain mod with `/brain status-sharing on` (default off); a person who does neither is invisible, by design. The brain mod reports under a session id it makes itself, and only in a listed repository.
+- The Agents page chip shows only agent sessions; a person's own sessions are on `/connect` only.
+- The `/connect` hooks block needs Node 18 or later (Claude Code ships with it); the hooks run `async`, so a slow Landflow never delays Claude Code, but a hook that cannot reach Landflow in 1.5 seconds drops its event.
+- The hook key's default expiry is 30 days (every program Claude Code starts can read the variable).
+- Screens are checked at 1440x900 and 390x844 by a person in a live check; the layout has no unit test.

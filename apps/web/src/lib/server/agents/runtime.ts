@@ -34,6 +34,8 @@ import { singleton } from '../singleton';
 import { activeTraceIds, logger, recordAgentTokens, recordApproval, traceAgentRun, traceToolCall, traceUrl } from '../telemetry';
 import { applyGuardrail, guardrailEntry, ruleActive } from './guardrails';
 import { agentSessionJournal } from '../journal/agent-session';
+import { profileBlock, recallForRun, sessionMemory, type RecalledMemory } from './memory';
+import type { SawMemorySource } from '../../shared/what-it-saw';
 import { uncacheable } from '../../shared/agent-cache';
 import { chooseTier } from '../../shared/agent-router';
 import { cacheKey, responseCache } from './response-cache';
@@ -58,7 +60,6 @@ import { notionBrainKnowledgeConfig } from '../brain/notion/knowledge'; // NB06:
 import { hostBinaryClient, storeBinary } from '../binary/access';
 import { DEFAULT_KEPT_TOOL_IMAGES, hydrateToolImages, imageSizeLabel, storeToolImages, type ToolImageMode } from '../nodes/tool-images';
 import { HttpError } from '../errors';
-import { wrapMemory } from '../../shared/memory-fence';
 import { store } from '../store';
 import { agentVersionRow } from './version-rows'; // AG21:
 
@@ -105,6 +106,12 @@ export interface RunRequest {
    * delegating agent's own caller. Absent: the workflow run the session belongs to (Run an Agent), else nobody.
    */
   caller?: ToolCaller;
+  /** C09: memory sources a caller gave this run besides the agent's own (a team's notebook block), appended to what the run records (C11). */
+  /** Whose memory this run reads and writes, when it is not the session's user (the test chat: the person chatting, whoever opened the session). Never changes the session. */
+  memoryUser?: string;
+  sawMemory?: SawMemorySource[];
+  /** The text of those sources, joined after the agent's own block in `saw.memoryText`. */
+  sawMemoryText?: string;
 }
 
 export interface TeamRole {
@@ -237,16 +244,27 @@ export function systemPromptParts(agent: Agent, config: AgentConfig, session: Ag
   return { text: extra ? `${prompt}\n\n${extra}` : prompt, segments: cut, cacheBreak };
 }
 
-/** SP19: the cross-session memory as the prompt shows it, read once at the run's start (a `remember` mid-run reaches the next run). */
-export function memoryBlock(agent: Agent, config: AgentConfig, session: AgentSession): string | undefined {
+/**
+ * SP19: the cross-session memory as the prompt shows it when no recall was made (the text-only caller and the tests): the profile
+ * part, read now. A run reads its block once at its start through `recallForRun` (C09) and passes it as `memoryText`.
+ */
+export function memoryBlock(agent: Agent, config: AgentConfig, session: Pick<AgentSession, 'userId'>): string | undefined {
   if (!config.memory.crossSession) return undefined;
-  const notes = agentStore.memories(agent.id, session.userId);
-  return [
-    '## What you remember about this user',
-    // C03: the notes are quoted data inside one fence; without notes there is no fence, only the line.
-    notes.length ? wrapMemory('agent-memory', notes.map((n) => `- ${n.text.replace(/\s+/g, ' ')} (${n.at.slice(0, 10)})`)) : '(nothing yet)',
-    'Use the remember tool for durable facts worth knowing next time.',
-  ].join('\n');
+  return profileBlock(agent.id, session.userId);
+}
+
+/** `saw.memory` and `saw.memoryText` for a run: what it recalled, then what its caller gave it (a team's notebook block). */
+function sawMemoryOf(recalled: RecalledMemory | undefined, request: RunRequest): { memory?: SawMemorySource[]; memoryText?: string } {
+  const memory = [...(recalled?.saw ?? []), ...(request.sawMemory ?? [])];
+  const text = [recalled?.text, request.sawMemoryText].filter(Boolean).join('\n\n');
+  return { ...(memory.length && { memory }), ...(text && memory.length && { memoryText: text }) };
+}
+
+/** The question a recall is made against: the run's message, else (a resume) the session's first user message. */
+function recallQuestion(request: { message?: string }, session: AgentSession): string | undefined {
+  if (request.message?.trim()) return request.message;
+  const first = session.messages.find((m) => m.role === 'user');
+  return first && typeof first.content === 'string' ? first.content : undefined;
 }
 
 const CONTEXT_MARK = '\u0000project-block\u0000';
@@ -389,7 +407,13 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
   }
   session.context = runCtx;
   // SP19: the memory is read once for the run (a `remember` during it is in the conversation and reaches the prompt next run).
-  const runMemory = memoryBlock(agent, config, session);
+  // C09: the profile and what is relevant to the first question, one fenced block after the cache breakpoint.
+  const memoryUser = request.memoryUser ?? session.userId;
+  const recalled = await recallForRun(agent, config, { userId: memoryUser }, recallQuestion(request, session)).catch((error) => {
+    logger.warn('could not recall the agent’s memory; the run goes on with the profile', { 'gen_ai.agent.id': agent.id, error });
+    return undefined;
+  });
+  const runMemory = recalled?.text ?? memoryBlock(agent, config, { userId: memoryUser });
   // PC13: the project's settings for agents, read once for the run (undefined: none on, the run is as it was).
   const rules = projectAgentRules(runCtx.projectId);
   const notAllowed = rules && !rules.agentAllowed(agent.id) ? agentNotAllowedMessage(config.name, rules.projectName) : undefined;
@@ -398,6 +422,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
   const cacheConfig = rules?.settings.defaultModel && !config.model ? { ...config, model: rules.settings.defaultModel } : config;
   // PC08: what the agent saw, once per run (a resume reuses the first run's block and records nothing).
   if (!resumed) {
+    const sawMem = sawMemoryOf(recalled, request);
     journalEntry.saw({
       mode: runCtx.mode,
       text: runCtx.text,
@@ -408,7 +433,14 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       at: runCtx.at,
       persona: sawPersona(cleanPersona(config.persona)),
       practices: runCtx.practices,
+      ...sawMem,
+      ...(recalled?.text && sawMem.memoryText && { memoryFor: memoryUser, memoryAgent: agent.id }),
     });
+    // The session record keeps what the run recalled by the same content rule as the journal (applyContent).
+    const kept = sessionMemory(sawMem.memory ?? [], sawMem.memoryText, session.execution ? store.getWorkflow(session.execution.workflowId)?.settings?.traceContent : undefined);
+    // Only the sources (ids, versions, scores, a hash) stay on the session record, which everyone who can read the session reads. The text is in the journal's span (saw.memoryText, on `full`), which the reader's access to the person's memories decides (journal read).
+    session.memory = kept.memory;
+    session.memoryText = undefined;
   }
   const userId = currentActorId();
   // The scope is created inside the run's context: it reads the run's own project and goal (not an outer run's).
@@ -504,8 +536,8 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       }
       toolsOffered = toolset.tools.length;
       // Tool access by caller: tools this caller may not use are withheld; some may need a person's approval for them.
-      const role = requestAuth()?.principal?.user.id === session.userId ? requestAuth()?.principal?.user.role : undefined;
-      const access = await applyToolPolicy(toolset.tools, { agentId: agent.id, caller: { id: session.userId, ...(role && { role }), source: session.source }, access: config.access, ...(request.signal && { signal: request.signal }) });
+      const role = requestAuth()?.principal?.user.id === memoryUser ? requestAuth()?.principal?.user.role : undefined;
+      const access = await applyToolPolicy(toolset.tools, { agentId: agent.id, caller: { id: memoryUser, ...(role && { role }), source: session.source }, access: config.access, ...(request.signal && { signal: request.signal }) });
       toolset = { ...toolset, tools: access.tools };
       accessNotes = access.notes;
       // PC13: the project's tool kinds, then its knowledge base (never withheld by the kinds).
@@ -563,6 +595,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     const ctx: ToolContext = {
       agent: { ...agent, ...config },
       session,
+      memoryUser,
       depth,
       maxDepth,
       runId: `ar_${nanoid(10)}`,
@@ -584,7 +617,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       // A remote agent that paused again: wait for the next decision, keeping what is settled.
       const again = decided.filter((d): d is { pending: PendingCall } => !isResult(d)).map((d) => d.pending);
       if (again.length) {
-        session.pending = { calls: again, results: settled, iterations };
+        session.pending = { calls: again, results: settled, iterations, memoryUser };
         return { reason: 'awaiting_approval' };
       }
       const order = pendingOrder(session.messages);
@@ -753,7 +786,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       // Remote agents that paused for an approval of their own tool calls wait with the calls that need one.
       waiting.push(...ran.filter((r): r is { pending: PendingCall } => !isResult(r)).map((r) => r.pending));
       if (waiting.length) {
-        session.pending = { calls: waiting, results, iterations };
+        session.pending = { calls: waiting, results, iterations, memoryUser };
         return { reason: 'awaiting_approval' };
       }
       const order = turn.toolCalls.map((c) => c.id);
@@ -932,8 +965,9 @@ export async function decide(
     return { status: 'waiting', session: saved };
   }
   const { by, line: _line, refusal: _refusal, ...runOptions } = options;
+  const resumeFor = session.pending?.memoryUser;
   // The person deciding goes on with a chat; a workflow's session goes on for its run.
-  const result = await runAgent({ agent, session, approvals: 'ask', ...runOptions, ...(!session.execution && by && { caller: { startedBy: by } }) });
+  const result = await runAgent({ agent, session, approvals: 'ask', ...(resumeFor && { memoryUser: resumeFor }), ...runOptions, ...(!session.execution && by && { caller: { startedBy: by } }) });
   return { status: 'resumed', ...result };
 }
 

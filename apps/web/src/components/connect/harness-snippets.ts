@@ -86,10 +86,13 @@ export const WORKFLOW_SCOPES: readonly { scope: ApiKeyScope; label: string }[] =
 /** The scope that lets a key send live status, offered only for a harness that sends events (C04). */
 export const STATUS_SCOPE: { scope: ApiKeyScope; label: string } = { scope: 'harness:write', label: 'Send live status' };
 
-/** Whether `/connect` has a live-status step for the harness: the registry says it sends events. */
+/**
+ * Whether `/connect` has a live-status step (hooks and a hook key) for the harness: the registry says it sends events through native
+ * hooks. Codex sends one event too, but from a wrapper (`landflow harness watch codex`, C08), so it has no hooks block here.
+ */
 export function sendsStatus(harness: HarnessId): boolean {
   const entry = harnessById(harness);
-  return Boolean(entry && sendsEvents(entry));
+  return Boolean(entry && entry.strategy === 'native-hooks' && sendsEvents(entry));
 }
 
 /** The body of the key request: the brain scopes and the chosen workflow ones, 90 days unless told otherwise. The live-status scope is never here: the hooks have a key of their own (`hookKeyBody`). */
@@ -113,7 +116,8 @@ const AGENT_ONLY_FIELDS: readonly string[] = ['error_details'];
 /**
  * The one-line Node script a hook runs (Claude Code needs Node, so it is there; `jq` may not be). It reads the event JSON from
  * stdin and keeps only HOOK_FIELDS, and of those only strings (cut to 300 characters) and finite numbers. It sends them with the
- * key from the environment, an order number from one clock (`performance.timeOrigin + performance.now()`, in microseconds, so
+ * key from the environment, an order number from one clock (`performance.timeOrigin + performance.now()`, in microseconds, plus
+ * two random digits so two hooks started in the same microsecond still differ; 18 digits, the most the server reads, so
  * parallel hooks get different numbers and no counter file is needed) and, when an agent was picked, its id in `X-Landflow-Agent`.
  * It gives up after 1.5 seconds and always exits quietly. No single quotes: it sits inside `node -e '…'`.
  *
@@ -131,7 +135,7 @@ export function hookFilterScript(origin: string, agentId?: string): string {
   if (agentId !== undefined && !/^[\w-]{1,100}$/.test(agentId)) throw new Error('The agent id has characters a hook cannot carry');
   const target = `${origin}/api/harness/claude-code/hooks`;
   const fields = HOOK_FIELDS.filter((field) => agentId || !AGENT_ONLY_FIELDS.includes(field));
-  const headers = `{"content-type":"application/json",authorization:"Bearer "+process.${ENV_OBJECT}[${JSON.stringify(HOOK_KEY_ENV)}],"x-landflow-hook-seq":String(Math.round((performance.timeOrigin+performance.now())*1000))${agentId ? `,"x-landflow-agent":${JSON.stringify(agentId)}` : ''}}`;
+  const headers = `{"content-type":"application/json",authorization:"Bearer "+process.${ENV_OBJECT}[${JSON.stringify(HOOK_KEY_ENV)}],"x-landflow-hook-seq":String(Math.round((performance.timeOrigin+performance.now())*1000))+String(Math.floor(Math.random()*100)).padStart(2,"0")${agentId ? `,"x-landflow-agent":${JSON.stringify(agentId)}` : ''}}`;
   return [
     'let d="";',
     'process.stdin.on("data",c=>d+=c).on("end",()=>{try{',

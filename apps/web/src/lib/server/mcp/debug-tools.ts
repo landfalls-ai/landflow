@@ -15,6 +15,7 @@ import { ExpressionResolver, type NodeRun, type Workflow } from '@landflow/engin
 import type { ExecutionRecord } from '../../shared/types';
 import { credentials } from '../credentials/vault';
 import { journalStore, rebuildJournal } from '../journal';
+import { hideMemoryText } from '../journal/memory-visibility';
 import { marketplace } from '../marketplace/service';
 import { registry } from '../plugins/registry';
 import { RerunError, liveExecution, newExecutionId, runWorkflow, startRetry } from '../runner';
@@ -263,7 +264,7 @@ export function registerDebugTools(server: McpServer, ctx: DebugContext) {
       if (stored && !after) rebuildJournal(stored, workflow);
       const max = limit ?? 200;
       const rows = await journalStore.readEventsAsync(id, after ?? 0, max + 1);
-      const events = rows.slice(0, max);
+      const events = hideMemoryText(rows.slice(0, max), ctx.actor);
       return json(redactorFor(workflow)({ executionId: id, status: record.status, events, last: events.at(-1)?.seq ?? after ?? 0, more: rows.length > max }));
     },
   );

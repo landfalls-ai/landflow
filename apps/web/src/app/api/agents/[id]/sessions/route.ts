@@ -57,7 +57,7 @@ export const GET = handler(async (request: Request, { params }: Ctx) => {
   // One more than asked tells whether there is a next page.
   const rows = agentStore.listSessions(id, limit + 1, {
     ...(sources && { sources }),
-    ...(source === 'test' && { userId: 'you' }),
+    ...(source === 'test' && { userId: [actor.id, 'you'] }), // C09: the person's own test chats, and the ones saved under the old shared "you"
     ...(projectIds && { projectIds }),
     ...(home && { homeProjectId: home }),
     ...(cursor && { cursor: decodeCursor(cursor) }),

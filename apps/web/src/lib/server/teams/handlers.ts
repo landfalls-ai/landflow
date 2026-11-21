@@ -10,6 +10,7 @@
  * runtime.ts `decide`) carries on the run in the background. Hosts without Universal Actions fall back to `Action.Submit`:
  * a message activity with the action's data as its `value`, after which the card is replaced through the Bot Connector.
  */
+import { asAuthor } from '../agents/author';
 import type { JsonObject } from '@landflow/protocol';
 import { approvalSubject, type Agent, type AgentChannel } from '../../shared/agents';
 import { allowed } from '../agents/triggers';
@@ -125,6 +126,8 @@ async function answer(agent: Agent, version: number, channel: AgentChannel, cred
     return;
   }
   session ??= newSession(agent, { source: 'teams', userId, version, conversationKey: key, title: text.slice(0, 80) });
+  // A conversation is shared: this message's author is who memory recalls for and writes to, not whoever opened it (C09).
+  session = asAuthor(session, userId);
   agentStore.setChannelState(refKey(key), { serviceUrl: to.serviceUrl, conversationId: to.conversationId, ...(to.bot && { bot: { id: to.bot.id ?? null, name: to.bot.name ?? null } }) });
   const result = await runAgent({ agent, session, message: text, approvals: 'ask', rootTrace: true });
   await deliver(agent, channel, credential, to, result);

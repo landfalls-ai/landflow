@@ -2350,6 +2350,14 @@ function paths(): Record<string, Record<string, Json>> {
     query: [text('q', 'Search'), text('subjectType', 'workflow, agent, nodeType, credential, instance or entity (subjectId is then <type>/<id>)'), text('subjectId', 'One subject'), text('kind', 'purpose, health, cost, failure, slow, change, dependency, usage, quality or intended'), text('status', 'active (default), stale or all'), text('limit', 'At most this many (1 to 500, default 100)'), text('history', '1 to include earlier versions'), text('forgotten', '1 to list forgotten facts')],
     responses: { 200: reply('The facts', object({ facts: array({ type: 'object' }) }, ['facts'])), 400: invalid },
   });
+  add('get', '/api/brain/graph', {
+    tag: 'Second brain',
+    id: 'brainGraph',
+    summary: 'The memory graph: facts and their subjects',
+    description: 'A page of facts as nodes with the subjects they are about (workflow, agent, entity, project) and edges: `about` from a fact to its subject and, with `history=1`, `updates`, `extends` or `derives` from a version to the one that follows. `about` limits it to one subject (`workflow/<id>`, `agent/<id>`, `entity/<type>/<id>`, `project/<id>` or a page’s `<type>/<id>`; 404 when you may not read it) and `depth=2` adds the subjects one link away (at most 50). Up to `limit` facts a page (500), newest first, paged by `cursor`; facts you may not see are left out in SQL. `forgotten=1` adds the forgotten facts you may restore, marked. Statements are plain text. A person’s private agent memory never appears.',
+    query: [text('about', 'One subject'), text('depth', '1 (default) or 2'), text('history', '1 adds earlier versions and version edges'), text('forgotten', '1 adds forgotten facts you may restore'), text('limit', '1 to 500 (default 500)'), text('cursor', 'nextCursor of the page before')],
+    responses: { 200: reply('The graph page', object({ nodes: array({ type: 'object' }), edges: array({ type: 'object' }), nextCursor: { type: 'string' } }, ['nodes', 'edges'])), 400: invalid, 404: notFound },
+  });
   add('get', '/api/brain/facts/{id}/versions', {
     tag: 'Second brain',
     id: 'listFactVersions',
@@ -2926,6 +2934,29 @@ function paths(): Record<string, Record<string, Json>> {
       { name: 'executionId', description: 'Only the sessions this run started (in full, oldest first)', schema: { type: 'string' } },
     ],
     responses: { 200: reply('The sessions', object({ sessions: array({ type: 'object', additionalProperties: true }), nextCursor: { type: ['string', 'null'] } }, ['sessions'])), 404: notFound },
+  });
+  add('get', '/api/agents/{id}/memories', {
+    tag: 'Agents',
+    id: 'listAgentMemories',
+    summary: 'What an agent remembers about a person',
+    description: 'Newest first, paged by `cursor`. Anyone who can read the agent lists their own memories (`user` defaults to them); the agent’s editors name another person with `user`, and without it get `users`, the people the agent has memories of. Another person’s memories are 404 to everyone else. `forgotten=1` lists the forgotten ones. `recall` says how the next run finds the relevant memories: `meaning` when the embedding model answers, else `words`.',
+    pathParams: { id: 'The agent id' },
+    query: [
+      { name: 'user', description: 'Whose memories (default: the caller)', schema: { type: 'string' } },
+      { name: 'forgotten', description: '`1`: the forgotten memories', schema: { type: 'string', enum: ['0', '1'] } },
+      { name: 'limit', description: 'Page size (up to 100)', schema: { type: 'integer' } },
+      { name: 'cursor', description: 'From `nextCursor`', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The memories', object({ items: array({ type: 'object', additionalProperties: true }), nextCursor: { type: 'string' }, users: array({ type: 'string' }), recall: { type: 'string', enum: ['meaning', 'words'] } }, ['items', 'recall'])), 404: notFound },
+  });
+  add('post', '/api/agents/{id}/memories/{memoryId}', {
+    tag: 'Agents',
+    id: 'changeAgentMemory',
+    summary: 'Forget or restore one memory',
+    description: '`{ action: "forget", reason }` forgets softly (the agent stops recalling it; it can be restored); `{ action: "restore" }` brings it back. A person acts on their own memories; the agent’s editors name another person with `user`. Anyone else, or a memory that is not that person’s, gets 404.',
+    pathParams: { id: 'The agent id', memoryId: 'The memory handle (m_…) the agent’s prompt and the list show' },
+    body: jsonBody(object({ action: { type: 'string', enum: ['forget', 'restore'] }, reason: { type: 'string', description: 'Required to forget (up to 500 characters)' }, user: { type: 'string', description: 'Another person (editors only)' } }, ['action'])),
+    responses: { 200: reply('The memory', object({ item: { type: 'object', additionalProperties: true } }, ['item'])), 400: invalid, 404: notFound },
   });
   add('get', '/api/agents/{id}/sessions/{sid}', {
     tag: 'Agents',

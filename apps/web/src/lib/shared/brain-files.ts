@@ -19,17 +19,25 @@ export const SETTINGS: FileRef = 'settings';
 export const PRACTICES = 'practices';
 export const practiceRef = (id: string): FileRef => `${PRACTICES}/${id}`;
 export const isPracticeRef = (ref: FileRef) => ref.startsWith(`${PRACTICES}/`);
-/** A file the wiki routes serve (`type/id`): index, log, settings and practices are not. */
-export const isPageRef = (ref: FileRef) => ref.includes('/') && !isPracticeRef(ref);
+/** The memory graph (C10), opened as a tab: `graph` is the whole visible brain, `graph:<type>/<id>` one subject's facts. */
+export const GRAPH: FileRef = 'graph';
+const GRAPH_PREFIX = 'graph:';
+export const graphRef = (subjectKey: string): FileRef => `${GRAPH_PREFIX}${subjectKey}`;
+export const isGraphRef = (ref: FileRef) => ref === GRAPH || ref.startsWith(GRAPH_PREFIX);
+/** The subject a graph tab is about (`customer/acme`), undefined for the whole brain. */
+export const graphSubject = (ref: FileRef): string | undefined => (ref.startsWith(GRAPH_PREFIX) ? ref.slice(GRAPH_PREFIX.length) || undefined : undefined);
 
-/** The address of a file. */
-export const urlOf = (ref: FileRef) => (ref === INDEX ? '/brain' : `/brain/${ref}`);
+/** A file the wiki routes serve (`type/id`): index, log, settings, graph tabs and practices are not. */
+export const isPageRef = (ref: FileRef) => ref.includes('/') && !isPracticeRef(ref) && !isGraphRef(ref);
+
+/** The address of a file (every graph tab is `/brain/graph`: the subject lives in the tab, not the address). */
+export const urlOf = (ref: FileRef) => (ref === INDEX ? '/brain' : isGraphRef(ref) ? `/brain/${GRAPH}` : `/brain/${ref}`);
 
 /** The file a `/brain/...` path opens: index.md for anything it doesn't know. */
 export function refOfPath(path: string[] | undefined): FileRef {
   if (!path?.length) return INDEX;
   if (path.length >= 2) return `${path[0]}/${decodeURIComponent(path[1])}`;
-  return path[0] === LOG || path[0] === SETTINGS ? path[0] : INDEX;
+  return path[0] === LOG || path[0] === SETTINGS || path[0] === GRAPH ? path[0] : INDEX;
 }
 
 export const FOLDERS: Array<{ type: EntityType; folder: string }> = [
