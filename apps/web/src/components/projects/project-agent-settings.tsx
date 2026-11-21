@@ -99,7 +99,8 @@ function ModeChoice({ label, edit, value, onChange, off }: { label: string; edit
 function MemoryChoice({ form, state, edit, set, error }: { form: AgentSettingsForm; state: AgentSettingsState; edit: boolean; set: (patch: Partial<AgentSettingsForm>) => void; error?: string }) {
   const { credentials } = useCredentials();
   const memory = form.memory;
-  const provider = memory?.backend === 'provider' ? state.memoryProviders.find((p) => p.type === memory.nodeType) : undefined;
+  const providers = state.memoryProviders ?? []; // an older caller's state has none
+  const provider = memory?.backend === 'provider' ? providers.find((p) => p.type === memory.nodeType) : undefined;
   const label = memory?.backend === 'provider' ? (provider ? `${provider.displayName} (${provider.pluginName})` : `${memory.nodeType} (not installed)`) : 'Built-in';
   // The credentials the provider's node declares: those of its credential types.
   const options = provider ? (credentials ?? []).filter((c) => provider.credentialTypes.includes(c.type)) : [];
@@ -117,7 +118,7 @@ function MemoryChoice({ form, state, edit, set, error }: { form: AgentSettingsFo
             onChange={(e) => set({ memory: e.target.value ? { backend: 'provider', nodeType: e.target.value } : undefined })}
           >
             <option value="">Built-in</option>
-            {state.memoryProviders.map((p) => (
+            {providers.map((p) => (
               <option key={p.type} value={p.type}>
                 {p.displayName} ({p.pluginName})
               </option>
@@ -140,7 +141,7 @@ function MemoryChoice({ form, state, edit, set, error }: { form: AgentSettingsFo
           )}
         </div>
       )}
-      {state.memoryProviders.length === 0 && edit && <p className="mt-2 text-[12px] text-t3">No installed plugin provides memory yet.</p>}
+      {providers.length === 0 && edit && <p className="mt-2 text-[12px] text-t3">No installed plugin provides memory yet.</p>}
       {error && <p className="mt-2 text-[12px] text-rd">{error}</p>}
     </div>
   );
