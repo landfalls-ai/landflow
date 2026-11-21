@@ -249,11 +249,11 @@ export function upsertFact(input: FactInput, db: Database = database(), now = ne
   return fact;
 }
 
-/** Facts not refreshed since `before` go stale (intended facts, static facts, the outcomes of applied suggestions and the statements people and flows added about an entity stay). */
+/** Facts not refreshed since `before` go stale (intended facts, memories people and flows added (kind memory, subjects project and agent-user: the study never writes them, so it must never stale them), static facts, the outcomes of applied suggestions and the statements people and flows added about an entity stay). */
 export function staleFactsBefore(before: string, db: Database = database()): number {
   // SP13: the whole row goes back (subject_type is NOT NULL, and the check runs before ON CONFLICT), `last_seen` unchanged.
   const rows = db.all<FactRow & { id: string }>(
-    `SELECT id, ${FACT_COLUMNS} FROM brain_facts WHERE status = 'active' AND is_latest = 1 AND is_static = 0 AND last_seen < ? AND kind <> 'intended' AND id NOT LIKE '%:change:pr_%' AND id NOT LIKE 'entity:%:fact_%'`,
+    `SELECT id, ${FACT_COLUMNS} FROM brain_facts WHERE status = 'active' AND is_latest = 1 AND is_static = 0 AND last_seen < ? AND kind <> 'intended' AND kind <> 'memory' AND subject_type NOT IN ('project', 'agent-user') AND id NOT LIKE '%:change:pr_%' AND id NOT LIKE 'entity:%:fact_%'`,
     before,
   );
   const who = changeOrigin(); // NB01

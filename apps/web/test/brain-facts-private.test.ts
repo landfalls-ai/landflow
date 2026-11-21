@@ -233,3 +233,20 @@ describe('T-4 canFact for project and agent-user', () => {
     expect(canFact(outsider, fact, 'read')).toBe(false);
   });
 });
+
+describe('review fixes: the facts route and private subjects', () => {
+  it('never lists another person’s private memory, however the subject is named', async () => {
+    const route = await import('@/app/api/brain/facts/route');
+    const { withAuth } = await import('@/lib/server/auth/context');
+    const mallory = await createUser({ email: 'mallory@priv.test', name: 'Mallory', role: 'member', password: 'mallory-password-1' });
+    const victim = await createUser({ email: 'victim@priv.test', name: 'Victim', role: 'member', password: 'victim-password-1' });
+    put(`agent-user:ag9/${victim.id}:memory:s1`, 'agent-user', `ag9/${victim.id}`, 'Victim’s secret preference', undefined, 9);
+    const get = async (query: string) => {
+      const response = await withAuth({ principal: { user: mallory, via: 'test' } } as never, () => route.GET(new Request(`http://landflow.test/api/brain/facts?${query}`)));
+      return (await response.json()) as { facts: Array<{ id: string }> };
+    };
+    for (const query of [`subjectType=agent-user&subjectId=ag9/${victim.id}`, `subjectType=agent-user&subjectId=ag9/${victim.id}&status=all`, 'subjectType=agent-user']) {
+      expect((await get(query)).facts.filter((f) => f.id.startsWith('agent-user:')), query).toEqual([]);
+    }
+  });
+});

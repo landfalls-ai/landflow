@@ -18,7 +18,7 @@ export { MemoryNotFoundError, MemoryProviderError, MemoryWriteRefusedError, type
 /** The backend that serves a container: a project's chosen provider (./remote), else the built-in one. Teams and agents are always built in (C07 D5). */
 function backendFor(container: MemoryContainer): MemoryBackend {
   const provider = container.kind === 'project' ? providerSetting(container.id) : undefined;
-  return provider ? providerBackend(provider) : builtInBackend;
+  return provider ? providerBackend(provider, container.id) : builtInBackend;
 }
 
 async function run<T>(operation: string, container: MemoryContainer, action: 'read' | 'write', caller: MemoryCaller, call: (backend: MemoryBackend) => Promise<T>, count?: (result: T) => number): Promise<T> {

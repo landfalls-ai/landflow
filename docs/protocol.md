@@ -1295,8 +1295,10 @@ the project chose; it reads the first output item.
 | `search` | `{ container, query, mode: keyword\|meaning\|hybrid, limit, threshold }` | `{ items }` |
 | `profile` | `{ container }` | `{ static: [...], recent: [...] }` |
 | `add` | `{ container, text, kind?, static?, forgetAfter?, replaces? }` | `{ item }` |
-| `forget` | `{ id, reason }` | `{ item }` |
+| `forget` | `{ container, id, reason }` | `{ item }` |
 | `list` | `{ container, cursor?, limit }` | `{ items, nextCursor? }` |
+
+A provider's answers are untrusted: the host refuses an item whose `id` is not 1 to 200 of letters, digits and `: . / # @ _ -`, whose `kind` is not 1 to 40 of letters, digits, `_` and `-`, or whose `version` is not a whole number, clips `text` to 2,000 characters, and keeps at most `limit` items of a search or list and 50 of each profile half. `forget` carries the container so a provider that serves several projects must refuse an id that is not in it (the host cannot know which project an external id belongs to).
 
 `container` is `project:<id>`. An item is `{ id, text, kind?, score?, version?, static?, createdAt?, updatedAt? }` with `score` 0..1.
 A provider that errors, does not answer in 10 s or answers an item without `id` and `text` fails the call; Landflow never falls back to

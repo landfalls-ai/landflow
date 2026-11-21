@@ -9,6 +9,7 @@ import { checkMemoryProvider, defaultVersionOf, PROTOCOL_VERSION, type ExecuteRe
 import { containerKey, MEMORY_LIMITS, type MemoryAddInput, type MemoryContainer, type MemoryItem, type MemoryPage, type MemoryProfile, type MemorySearchResult } from '../../shared/memory';
 import type { ProjectMemory } from '../../shared/project-policy';
 import { credentials } from '../credentials/vault';
+import { credentialUsableBy } from '../projects/access';
 import { getProjectSettings } from '../governance/scopes';
 import { registry } from '../plugins/registry';
 import { MemoryProviderError, type MemoryBackend, type MemoryCaller } from './backend';
@@ -27,40 +28,58 @@ export function providerSetting(projectId: string): Extract<ProjectMemory, { bac
   return memory?.backend === 'provider' ? memory : undefined;
 }
 
-const text = (value: unknown, fallback = '') => (typeof value === 'string' ? value : fallback);
 const when = (value: unknown, fallback: string) => (typeof value === 'string' && value ? value : fallback);
+
+/** What a provider's item may carry (its answer is untrusted: the id and kind reach a model, so they are shaped here, not trusted). */
+const ID = /^[\w:./#@-]{1,200}$/;
+const KIND = /^[\w-]{1,40}$/;
+const MAX_TEXT = 2_000;
+/** A profile half: the built-in profile reads 50 static facts, so a provider gets no more. */
+const PROFILE_HALF = 50;
 
 function toItem(raw: unknown, at: string): MemoryItem {
   const wire = (raw && typeof raw === 'object' ? raw : {}) as Partial<MemoryItemWire>;
   if (typeof wire.id !== 'string' || typeof wire.text !== 'string') throw new MemoryProviderError('the memory provider answered an item without an id and text');
+  if (!ID.test(wire.id)) throw new MemoryProviderError('the memory provider answered an item whose id is not a plain id (letters, digits and : . / # @ _ -, up to 200)');
+  const kind = wire.kind === undefined ? 'memory' : wire.kind;
+  if (typeof kind !== 'string' || !KIND.test(kind)) throw new MemoryProviderError('the memory provider answered an item whose kind is not a plain word (up to 40 characters)');
+  if (wire.version !== undefined && !(Number.isInteger(wire.version) && (wire.version as number) >= 1)) throw new MemoryProviderError('the memory provider answered an item whose version is not a whole number');
   const score = typeof wire.score === 'number' && Number.isFinite(wire.score) ? Math.max(0, Math.min(1, wire.score)) : undefined;
   return {
     id: wire.id,
-    text: wire.text,
-    kind: text(wire.kind, 'memory'),
+    text: wire.text.length > MAX_TEXT ? `${wire.text.slice(0, MAX_TEXT - 1)}…` : wire.text,
+    kind,
     source: 'provider',
     ...(score !== undefined && { score }),
-    ...(typeof wire.version === 'number' && { version: wire.version }),
+    ...(wire.version !== undefined && { version: wire.version }),
     ...(wire.static === true && { static: true }),
     createdAt: when(wire.createdAt, at),
     updatedAt: when(wire.updatedAt, when(wire.createdAt, at)),
   };
 }
 
-const items = (value: unknown, at: string): MemoryItem[] => (Array.isArray(value) ? value.map((raw) => toItem(raw, at)) : []);
+/** The items of an answer, at most `cap` of them (a provider that sends more is cut, not trusted). */
+const items = (value: unknown, at: string, cap: number): MemoryItem[] => (Array.isArray(value) ? value.slice(0, cap).map((raw) => toItem(raw, at)) : []);
 
 /** Make the backend of a project's chosen provider. */
-export function providerBackend(setting: Extract<ProjectMemory, { backend: 'provider' }>): MemoryBackend {
+export function providerBackend(setting: Extract<ProjectMemory, { backend: 'provider' }>, projectId: string): MemoryBackend {
   async function call(request: MemoryRequestWire, caller: MemoryCaller): Promise<JsonObject> {
     const resolved = registry.resolve(setting.nodeType);
     if ('error' in resolved) throw new MemoryProviderError(`the memory provider “${setting.nodeType}” is not installed`);
     const descriptor: NodeDescriptor = resolved.descriptor;
     const problem = descriptor.memoryProvider ? checkMemoryProvider(descriptor) : `node “${descriptor.displayName}” is no longer a memory provider`;
     if (problem) throw new MemoryProviderError(problem);
+    // The credential was checked when the project saved it; it may have moved or been unshared since (docs/projects-and-goals.md).
+    if (setting.credentialId && !credentialUsableBy(setting.credentialId, projectId)) throw new MemoryProviderError('the memory provider’s credential is no longer usable by this project');
     const parameters = { operation: request.operation } as JsonObject;
     // The credential the project chose goes to every credential the node declares (a provider names one); resolved right before the call.
     const refs = setting.credentialId ? Object.fromEntries((descriptor.credentials ?? []).map((c) => [c.name, { id: setting.credentialId!, name: setting.credentialId! }])) : undefined;
-    const creds = { ...credentials.resolveFor({ type: setting.nodeType, credentials: refs, parameters }, descriptor) };
+    let creds: Record<string, JsonObject>;
+    try {
+      creds = { ...credentials.resolveFor({ type: setting.nodeType, credentials: refs, parameters }, descriptor) };
+    } catch (error) {
+      throw new MemoryProviderError(`the memory provider’s credential could not be read: ${(error as Error).message}`);
+    }
     const executionId = caller.run?.executionId ?? `memory_${request.operation}`;
     const payload = { protocol: PROTOCOL_VERSION } as const;
     const execute: ExecuteRequest = {
@@ -99,14 +118,14 @@ export function providerBackend(setting: Extract<ProjectMemory, { backend: 'prov
       const limit = Math.max(MEMORY_LIMITS.search.min, Math.min(MEMORY_LIMITS.search.max, options.limit ?? MEMORY_LIMITS.search.default));
       const out = await call({ operation: 'search', container: containerKey(c), query, mode: options.mode ?? 'hybrid', limit, threshold: options.threshold ?? 0 }, caller);
       const threshold = options.threshold ?? 0;
-      const found = items(required(out, 'search', 'items'), now());
+      const found = items(required(out, 'search', 'items'), now(), limit);
       // The provider is asked for the threshold; an item it scored under it anyway is dropped here and counted.
       const under = found.filter((i) => i.score !== undefined && i.score < threshold);
       return { items: found.filter((i) => !under.includes(i)).slice(0, limit), via: 'meaning', dropped: { count: under.length, ...(under.length && { best: Math.max(...under.map((i) => i.score!)) }) } };
     },
     async profile(c, caller): Promise<MemoryProfile> {
       const out = await call({ operation: 'profile', container: containerKey(c) }, caller);
-      return { static: items(required(out, 'profile', 'static'), now()), recent: items(required(out, 'profile', 'recent'), now()) };
+      return { static: items(required(out, 'profile', 'static'), now(), PROFILE_HALF), recent: items(required(out, 'profile', 'recent'), now(), PROFILE_HALF) };
     },
     async add(c, input: MemoryAddInput, caller): Promise<MemoryItem> {
       const out = await call(
@@ -115,14 +134,15 @@ export function providerBackend(setting: Extract<ProjectMemory, { backend: 'prov
       );
       return toItem(required(out, 'add', 'item'), now());
     },
-    async forget(_c: MemoryContainer, id, reason, caller): Promise<MemoryItem> {
-      const out = await call({ operation: 'forget', id, reason }, caller);
+    async forget(c: MemoryContainer, id, reason, caller): Promise<MemoryItem> {
+      // The container goes too: a provider serving two projects refuses an id that is not in this one.
+      const out = await call({ operation: 'forget', container: containerKey(c), id, reason }, caller);
       return toItem(required(out, 'forget', 'item'), now());
     },
     async list(c, page, caller): Promise<MemoryPage> {
       const limit = Math.max(MEMORY_LIMITS.list.min, Math.min(MEMORY_LIMITS.list.max, page.limit ?? MEMORY_LIMITS.list.default));
       const out = await call({ operation: 'list', container: containerKey(c), ...(page.cursor && { cursor: page.cursor }), limit }, caller);
-      return { items: items(required(out, 'list', 'items'), now()), ...(typeof out.nextCursor === 'string' && out.nextCursor && { nextCursor: out.nextCursor }) };
+      return { items: items(required(out, 'list', 'items'), now(), limit), ...(typeof out.nextCursor === 'string' && out.nextCursor && { nextCursor: out.nextCursor }) };
     },
   };
 }

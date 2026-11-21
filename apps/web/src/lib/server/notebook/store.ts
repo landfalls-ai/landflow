@@ -155,6 +155,8 @@ export interface NoteFilter {
   expired?: boolean;
   /** C02: `exclude` (default) leaves forgotten notes out, `only` lists just them, `include` lists both. */
   forgotten?: 'exclude' | 'include' | 'only';
+  /** Keyset paging: only notes older than this position (`created_at DESC, id DESC`). */
+  before?: { createdAt: string; id: string };
   limit?: number;
 }
 
@@ -234,6 +236,10 @@ export const noteStore = {
     if (!filter.expired && !filter.statuses?.includes('expired') && filter.forgotten !== 'only') {
       where.push('(expires_at IS NULL OR expires_at > ?)');
       params.push(iso(Date.now()));
+    }
+    if (filter.before) {
+      where.push('(created_at < ? OR (created_at = ? AND id < ?))');
+      params.push(filter.before.createdAt, filter.before.createdAt, filter.before.id);
     }
     const forgotten = filter.forgotten ?? 'exclude';
     if (forgotten === 'exclude') where.push('forgotten_at IS NULL');

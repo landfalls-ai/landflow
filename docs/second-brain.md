@@ -174,7 +174,7 @@ Four core nodes use the backend, as steps and as agent tools (`apps/web/src/lib/
 or a team). In a step, Search returns one item per hit (`id`, `text`, `kind`, `source`, `score`, `version`); as a tool every node
 answers a short JSON, and Search and Profile put the text inside the memory fence. Search and Profile are read-only; Forget is a
 destructive change (its operation is `delete`), so an agent's Tool Approvals apply as for any other change. A flow cannot add to an
-agent's own memory: only that agent's run writes it.
+agent's own memory: only that agent's run writes it. A flow reads any project or team its creator can, but Add and Forget write only into the flow's home project or a team homed there (the flow is its creator's deputy, so it never writes into another project the creator happens to edit). Replacing or forgetting works only on a project's or an agent's own memory, never on a fact the study wrote, and the study's stale sweep never stales a memory.
 
 ### 3. The loop
 

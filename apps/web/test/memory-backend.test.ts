@@ -256,3 +256,67 @@ describe('T-6 built-in backend', () => {
     expect(spanAttrs().some((s) => s.name === 'memory.add')).toBe(true);
   });
 });
+
+describe('review fixes: the study, study facts, and team paging', () => {
+  type Caller = import('@/lib/server/memory').MemoryCaller;
+  let p = '';
+  let editor: Caller;
+  let agentId = '';
+  let teamId = '';
+
+  beforeAll(async () => {
+    const u = await createUser({ email: 'rv@mem.test', name: 'Rv', role: 'member', password: 'rv-password-1' });
+    p = createTeamProject({ name: 'Review', createdBy: u.id }).id;
+    setMember(p, u.id, 'editor');
+    editor = { actor: { id: u.id, role: 'member' }, origin: 'person', userId: u.id };
+    agentId = agentStore.create({ name: 'Rv agent' }).id;
+    setHomeProject('agent', agentId, p);
+    teamId = agentTeamStore.create({ name: 'Rv team', members: [{ id: 'm_lead', kind: 'agent', agentId, title: 'Lead' }] }).id;
+    setHomeProject('agentTeam', teamId, p);
+  });
+
+  it('the study’s stale sweep leaves memories alone (project and agent-user), but still stales study facts', async () => {
+    const mem = await memory.add({ kind: 'project', id: p }, { text: 'Kept through the study' }, editor);
+    const mine = await memory.add({ kind: 'agent', id: agentId, userId: editor.userId! }, { text: 'My private preference' }, editor);
+    facts.upsertFact({ id: `workflow:w_rv:health`, subjectType: 'workflow', subjectId: 'w_rv', kind: 'health', statement: 'Fails often', confidence: 1, evidence: [], projectId: p } as never, database(), '2020-01-01T00:00:00.000Z');
+    facts.staleFactsBefore(new Date(Date.now() + 86_400_000).toISOString(), database());
+    expect(facts.getFact('workflow:w_rv:health', database())?.status).toBe('stale');
+    expect(facts.getFact(mem.id, database())?.status).toBe('active');
+    expect(facts.getFact(mine.id, database())?.status).toBe('active');
+    expect((await memory.search({ kind: 'project', id: p }, 'study', { mode: 'keyword' }, editor)).items.map((i) => i.id)).toContain(mem.id);
+    expect((await memory.profile({ kind: 'agent', id: agentId, userId: editor.userId! }, editor)).recent.map((i) => i.id)).toContain(mine.id);
+  });
+
+  it('replaces and forget refuse a study fact, even one of this project', async () => {
+    facts.upsertFact({ id: `workflow:w_rv2:health`, subjectType: 'workflow', subjectId: 'w_rv2', kind: 'health', statement: 'Study says healthy', confidence: 1, evidence: [], projectId: p } as never, database(), new Date().toISOString());
+    const c = { kind: 'project' as const, id: p };
+    await expect(memory.add(c, { text: 'rewritten', replaces: 'workflow:w_rv2:health' }, editor)).rejects.toMatchObject({ name: 'MemoryNotFoundError' });
+    await expect(memory.forget(c, 'workflow:w_rv2:health', 'no', editor)).rejects.toMatchObject({ name: 'MemoryNotFoundError' });
+    expect(facts.getFact('workflow:w_rv2:health', database())).toMatchObject({ statement: 'Study says healthy', status: 'active' });
+  });
+
+  it('a team’s list pages by (created, id): all notes once, and a stale cursor does not restart', async () => {
+    const ids: string[] = [];
+    for (let n = 0; n < 5; n++) {
+      const note = noteStore.insert({ teamId, projectId: p, kind: 'fact', text: `Paged note ${n}`, scope: 'team', author: 'Lead' });
+      noteStore.patch(note.id, { created_at: `2026-02-0${n + 1}T00:00:00.000Z` });
+      ids.push(note.id);
+    }
+    const c = { kind: 'team' as const, id: teamId };
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let guard = 0; guard < 10; guard++) {
+      const page = await memory.list(c, { limit: 2, ...(cursor && { cursor }) }, editor);
+      seen.push(...page.items.map((i) => i.id));
+      cursor = page.nextCursor;
+      if (!cursor) break;
+    }
+    expect(seen).toEqual([...ids].reverse());
+    // the note a cursor names is deleted: the next page still continues after it
+    const first = await memory.list(c, { limit: 2 }, editor);
+    const stale = first.nextCursor!;
+    database().delete('team_notes', { id: first.items[1].id });
+    const next = await memory.list(c, { limit: 2, cursor: stale }, editor);
+    expect(next.items.map((i) => i.id)).toEqual([ids[2], ids[1]]);
+  });
+});

@@ -45,6 +45,7 @@ const { newSession, runAgent } = await import('@/lib/server/agents/runtime');
 const { buildToolset } = await import('@/lib/server/agents/tools');
 const { configOf } = await import('@/lib/server/agents/store');
 const facts = await import('@/lib/server/brain/facts');
+const { writesOutside } = await import('@/lib/shared/run-check');
 const { database } = await import('@/lib/server/db');
 
 registry.registerBuiltin(corePlugin);
@@ -200,10 +201,65 @@ describe('T-8 as an agent tool', () => {
 
   it('Memory Forget as a tool that asks first waits for approval (AS-5)', async () => {
     const mem = (await step('memoryAddNode', `agent:${agentOf([]).id}`, { operation: 'add', text: 'Something to forget' }, 'tool')).json[0].saved as string;
-    const agent = agentOf([{ id: 't1', type: 'node', name: 'forget', description: 'f', nodeType: 'core.memoryForget', parameters: { operation: 'delete' }, requireApproval: true }]);
+    // The tool asks first because Forget classes as a write (run-check `writesOutside`, the judgement Spotlight and the Architect use to
+    // set `requireApproval`), not because the test sets the flag: the flag comes from the classification, and the call's operation
+    // is not annotated idempotent, so a read-configured tool would hold it too.
+    const forgets = writesOutside({ type: 'core.memoryForget', parameters: { operation: 'delete' } });
+    expect(forgets).toBe(true);
+    expect(writesOutside({ type: 'core.memorySearch', parameters: { operation: 'search' } })).toBe(false);
+    const agent = agentOf([{ id: 't1', type: 'node', name: 'forget', description: 'f', nodeType: 'core.memoryForget', parameters: { operation: 'delete' }, ...(forgets && { requireApproval: true }) }]);
     script.push(() => ({ toolCalls: [{ id: 'c1', name: 'forget', input: { memoryId: mem, reason: 'because' } }] }));
     const result = await runAgent({ agent, session: newSession(agent, { source: 'test', userId: 'you', version: 'draft' }), message: 'forget it' });
     expect(result).toMatchObject({ reason: 'awaiting_approval' });
     expect(facts.getFact(mem, database())).toBeDefined(); // not forgotten yet
+  });
+});
+
+describe('review fixes: who may write where, and which teams are listed', () => {
+  let carol: Awaited<ReturnType<typeof createUser>>;
+  let agentTeamStore: typeof import('@/lib/server/agent-teams/store').agentTeamStore;
+  let withAuth: typeof import('@/lib/server/auth/context').withAuth;
+
+  beforeAll(async () => {
+    carol = await createUser({ email: 'carol@memnodes.test', name: 'Carol', role: 'member', password: 'carol-password-1' });
+    setMember(alpha.id, carol.id, 'editor');
+    setMember(beta.id, carol.id, 'editor');
+    ({ agentTeamStore } = await import('@/lib/server/agent-teams/store'));
+    ({ withAuth } = await import('@/lib/server/auth/context'));
+    flow('wf_carol', carol.id, beta.id);
+  });
+
+  it('a flow reads any project its creator can, but writes only into its home project', async () => {
+    expect((await step('memorySearchNode', 'wf_carol', { operation: 'search', query: 'x', projectId: alpha.id })).error).toBeUndefined();
+    expect((await step('memoryAddNode', 'wf_carol', { operation: 'add', text: 'planted', projectId: alpha.id })).error).toBe('Memory not found');
+    const own = await step('memoryAddNode', 'wf_carol', { operation: 'add', text: 'home write' });
+    expect(own.error).toBeUndefined();
+    const fact = facts.listFacts({ projectId: alpha.id, limit: 500 }).find((f) => f.statement === 'planted');
+    expect(fact).toBeUndefined();
+    expect((await step('memoryForgetNode', 'wf_carol', { operation: 'delete', memoryId: own.json[0].id, reason: 'r', projectId: alpha.id })).error).toBe('Memory not found');
+    expect((await step('memoryForgetNode', 'wf_carol', { operation: 'delete', memoryId: own.json[0].id, reason: 'r' })).error).toBeUndefined();
+  });
+
+  it('a team write needs the team homed in the flow’s project', async () => {
+    const lead = agentStore.create({ name: 'Lead' });
+    const away = agentTeamStore.create({ name: 'Away', members: [{ id: 'm1', kind: 'agent', agentId: lead.id, title: 'Lead' }] });
+    setHomeProject('agentTeam', away.id, alpha.id);
+    const home = agentTeamStore.create({ name: 'Home', members: [{ id: 'm1', kind: 'agent', agentId: lead.id, title: 'Lead' }] });
+    setHomeProject('agentTeam', home.id, beta.id);
+    expect((await step('memoryAddNode', 'wf_carol', { operation: 'add', text: 'x', container: 'team', teamId: away.id })).error).toBe('Memory not found');
+    expect((await step('memoryAddNode', 'wf_carol', { operation: 'add', text: 'x', container: 'team', teamId: home.id })).error).toMatch(/written by a team run/);
+  });
+
+  it('the Team picker lists only teams the user can read', async () => {
+    const lead = agentStore.create({ name: 'Lead 2' });
+    const hidden = agentTeamStore.create({ name: 'Bob only', members: [{ id: 'm1', kind: 'agent', agentId: lead.id, title: 'Lead' }] });
+    setHomeProject('agentTeam', hidden.id, beta.id);
+    const mine = agentTeamStore.create({ name: 'Alpha team', members: [{ id: 'm1', kind: 'agent', agentId: lead.id, title: 'Lead' }] });
+    setHomeProject('agentTeam', mine.id, alpha.id);
+    const principal = { user: alice, via: 'test' as const };
+    const options = await withAuth({ principal } as never, () => (memorySearchNode as unknown as { methods: { loadOptions: { teams: () => Promise<Array<{ value: string }>> } } }).methods.loadOptions.teams());
+    const values = options.map((o) => o.value);
+    expect(values).toContain(mine.id);
+    expect(values).not.toContain(hidden.id);
   });
 });

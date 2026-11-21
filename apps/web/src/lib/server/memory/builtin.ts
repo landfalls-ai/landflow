@@ -10,6 +10,7 @@ import type { NoteHit, TeamNote } from '../../shared/notebook';
 import { recordAudit } from '../audit';
 import { checkForgetAfter, getFact, listFacts, pageFacts, scoredFactSearch, upsertFact, type FactFilter } from '../brain/facts';
 import { forgetFact, indexFact, supersedeFact } from '../brain/fact-lifecycle';
+import { canFact } from '../brain/scope';
 import { vectorFactScores } from '../brain/study';
 import { database } from '../db';
 import { decodeCursor, encodeCursor } from '../pagination';
@@ -73,6 +74,17 @@ function factIn(c: MemoryContainer, id: string, options: { includeForgotten?: bo
   const fact = getFact(id, database(), options);
   const mine = fact && (c.kind === 'project' ? fact.projectId === c.id : c.kind === 'agent' && fact.subjectType === 'agent-user' && fact.subjectId === `${c.id}/${c.userId}`);
   if (!fact || !mine || fact.latest === false) throw new MemoryNotFoundError();
+  return fact;
+}
+
+/**
+ * The fact a caller may rewrite or forget: one of this container's own memories (a project's or an agent-user's, never a fact
+ * the study wrote), which an actor may also update (`canFact`). Anything else is not found, as an id from another container is.
+ */
+function writableFact(c: MemoryContainer, id: string, caller: MemoryCaller): BrainFact {
+  const fact = factIn(c, id);
+  const memoryKind = fact.subjectType === 'project' || fact.subjectType === 'agent-user';
+  if (!memoryKind || (STUDY_FACT_KINDS as readonly string[]).includes(fact.kind) || (caller.actor && !canFact(caller.actor, fact, 'update'))) throw new MemoryNotFoundError();
   return fact;
 }
 
@@ -142,7 +154,7 @@ export const builtInBackend: MemoryBackend = {
       // `<id>` replaces the latest version; `<id>#v<n>` says "I read version n", and a chain that moved on is 409.
       const match = /^(.*)#v(\d+)$/.exec(input.replaces);
       const chainId = match ? match[1] : input.replaces;
-      factIn(c, chainId); // not found when it is not this container's
+      writableFact(c, chainId, caller); // not found when it is not this container's, or the study's
       const written = await supersedeFact(chainId, { statement: text, ...(match && { expectedVersion: Number(match[2]) }), ...(caller.origin === 'person' && caller.actor && { replaceStatic: true }) }, who, database());
       auditAdded(c, written, caller, true);
       return factItem(written);
@@ -178,19 +190,19 @@ export const builtInBackend: MemoryBackend = {
       if (!note || note.teamId !== c.id) throw new MemoryNotFoundError();
       return noteItem(forgetNote(c.id, id, { reason }, by.userId));
     }
-    factIn(c, id);
+    writableFact(c, id, caller);
     return factItem(await forgetFact(id, { reason }, by, database()));
   },
 
   async list(c, page, caller): Promise<MemoryPage> {
     const limit = clamp(page.limit, MEMORY_LIMITS.list);
     if (c.kind === 'team') {
-      const notes = noteStore.list({ ...teamFilter(c, caller), limit: 1000 });
+      // Keyset by (created, id) in SQL: a cursor whose note is gone still continues after its position, never at page 1.
       const cursor = page.cursor ? decodeCursor(page.cursor) : undefined;
-      const rest = cursor ? notes.slice(notes.findIndex((n) => n.id === cursor.i) + 1) : notes;
-      const shown = rest.slice(0, limit);
+      const notes = noteStore.list({ ...teamFilter(c, caller), limit: limit + 1, ...(cursor && { before: { createdAt: cursor.s, id: cursor.i } }) });
+      const shown = notes.slice(0, limit);
       const last = shown.at(-1);
-      return { items: shown.map((n) => noteItem(n)), ...(rest.length > limit && last && { nextCursor: encodeCursor({ s: last.createdAt, i: last.id }) }) };
+      return { items: shown.map((n) => noteItem(n)), ...(notes.length > limit && last && { nextCursor: encodeCursor({ s: last.createdAt, i: last.id }) }) };
     }
     const { facts, nextCursor } = pageFacts(factFilter(c), { limit, cursor: page.cursor }, database());
     return { items: facts.map((f) => factItem(f)), ...(nextCursor && { nextCursor }) };

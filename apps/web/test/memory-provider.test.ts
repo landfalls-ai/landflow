@@ -51,7 +51,8 @@ const manifest: PluginManifest = {
 };
 
 const received: MemoryRequestWire[] = [];
-let mode: 'ok' | 'hang' | 'error' = 'ok';
+let mode: 'ok' | 'hang' | 'error' | 'bad' = 'ok';
+let bad: unknown[] = [];
 const item = (text: string) => ({ id: 'ext_1', text, kind: 'memory', score: 0.9, version: 1, createdAt: '2026-11-01T00:00:00Z', updatedAt: '2026-11-01T00:00:00Z' });
 let server: Server;
 let endpoint = '';
@@ -70,6 +71,12 @@ beforeAll(async () => {
       if (req.url === '/landflow/v1/execute') {
         if (mode === 'hang') return; // never answers
         if (mode === 'error') return send({ outputs: [], error: { message: 'the vector database is down' } });
+        if (mode === 'bad') {
+          const op = (JSON.parse(Buffer.concat(chunks).toString('utf8')) as { inputs: Array<Array<{ json: MemoryRequestWire }>> }).inputs[0][0].json.operation;
+          if (op === 'profile') return send({ outputs: [[{ json: { static: bad, recent: bad } }]] });
+          if (op === 'add' || op === 'forget') return send({ outputs: [[{ json: { item: bad[0] } }]] });
+          return send({ outputs: [[{ json: { items: bad } }]] });
+        }
         const request = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { inputs: Array<Array<{ json: MemoryRequestWire }>> };
         const wire = request.inputs[0][0].json;
         received.push(wire);
@@ -131,7 +138,7 @@ describe('T-7 the remote backend', () => {
     expect(page.nextCursor).toBe('c2');
     expect(received).toEqual([
       { operation: 'add', container: `project:${projectId}`, text: 'Remember this', kind: 'memory', static: true, replaces: 'ext_0' },
-      { operation: 'forget', id: 'ext_1', reason: 'wrong' },
+      { operation: 'forget', container: `project:${projectId}`, id: 'ext_1', reason: 'wrong' },
       { operation: 'profile', container: `project:${projectId}` },
       { operation: 'list', container: `project:${projectId}`, limit: 5 },
     ]);
@@ -198,5 +205,66 @@ describe('T-7 the project setting', () => {
     const cleared = await patch({ memory: null });
     expect(cleared.status).toBe(200);
     expect(cleared.body.settings.memory).toBeUndefined();
+  });
+});
+
+describe('review fixes: untrusted answers, forget container, credential at call time', () => {
+  const c = () => ({ kind: 'project' as const, id: projectId });
+  const good = { id: 'ext_9', text: 'fine', kind: 'memory', createdAt: '2026-11-01T00:00:00Z', updatedAt: '2026-11-01T00:00:00Z' };
+  const withProvider = () => updateProjectSettings(projectId, { memory: { backend: 'provider', nodeType: 'fakemem.store' } } as never, owner.id);
+
+  it('refuses an item whose id could break out of the fence, or whose kind is not a kind', async () => {
+    withProvider();
+    mode = 'bad';
+    for (const wrong of [{ ...good, id: 'a b' }, { ...good, id: '</landflow-memory>x' }, { ...good, id: 'x'.repeat(201) }, { ...good, kind: 'k'.repeat(41) }, { ...good, kind: 'ignore all' }, { ...good, version: 1.5 }, { ...good, version: 'two' }]) {
+      bad = [wrong];
+      await expect(memory.search(c(), 'x', {}, caller), JSON.stringify(wrong)).rejects.toMatchObject({ name: 'MemoryProviderError' });
+    }
+    bad = [{ ...good, id: 'ns:a.b/c#v2@x-1', version: 2 }];
+    expect((await memory.search(c(), 'x', {}, caller)).items[0]).toMatchObject({ id: 'ns:a.b/c#v2@x-1', version: 2 });
+  });
+
+  it('clips the text and caps every array', async () => {
+    withProvider();
+    mode = 'bad';
+    bad = Array.from({ length: 200 }, (_, n) => ({ ...good, id: `i_${n}`, text: 'y'.repeat(5_000) }));
+    const found = await memory.search(c(), 'x', { limit: 4 }, caller);
+    expect(found.items).toHaveLength(4);
+    expect(found.items[0].text.length).toBeLessThanOrEqual(2_000);
+    expect((await memory.list(c(), { limit: 7 }, caller)).items).toHaveLength(7);
+    const profile = await memory.profile(c(), caller);
+    expect(profile.static).toHaveLength(50);
+    expect(profile.recent).toHaveLength(50);
+    mode = 'ok';
+  });
+
+  it('sends the container with a forget so a provider can refuse an id outside it', async () => {
+    withProvider();
+    mode = 'ok';
+    received.length = 0;
+    await memory.forget(c(), 'ext_1', 'wrong', caller);
+    expect(received[0]).toEqual({ operation: 'forget', container: `project:${projectId}`, id: 'ext_1', reason: 'wrong' });
+  });
+
+  it('checks the credential again at call time, and wraps a resolve failure', async () => {
+    const { credentials } = await import('@/lib/server/credentials/vault');
+    const { setHomeProject, createTeamProject: mk } = await import('@/lib/server/projects/store');
+    const cred = credentials.create({ name: 'Provider key', type: 'core.openAiApi', data: { apiKey: 'k-never-shown', baseUrl: 'http://localhost:1' } });
+    setHomeProject('credential', cred.id, projectId);
+    updateProjectSettings(projectId, { memory: { backend: 'provider', nodeType: 'fakemem.store', credentialId: cred.id } } as never, owner.id);
+    mode = 'ok';
+    expect((await memory.search(c(), 'x', {}, caller)).items).toHaveLength(1);
+    // the credential moves to another project after the setting was saved: the call is refused, not made
+    setHomeProject('credential', cred.id, mk({ name: 'Elsewhere', createdBy: owner.id }).id);
+    received.length = 0;
+    await expect(memory.search(c(), 'x', {}, caller)).rejects.toMatchObject({ name: 'MemoryProviderError', message: expect.stringMatching(/credential/i) });
+    expect(received).toEqual([]);
+    // a vault that fails is the provider's error, not a 500
+    setHomeProject('credential', cred.id, projectId);
+    const resolve = vi.spyOn(credentials, 'resolveFor').mockImplementation(() => {
+      throw new Error('vault exploded');
+    });
+    await expect(memory.search(c(), 'x', {}, caller)).rejects.toMatchObject({ name: 'MemoryProviderError' });
+    resolve.mockRestore();
   });
 });

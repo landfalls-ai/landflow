@@ -24,7 +24,7 @@ export type MemoryRequestWire =
   | { operation: 'search'; container: string; query: string; mode: 'keyword' | 'meaning' | 'hybrid'; limit: number; threshold: number }
   | { operation: 'profile'; container: string }
   | { operation: 'add'; container: string; text: string; kind?: string; static?: boolean; forgetAfter?: string; replaces?: string }
-  | { operation: 'forget'; id: string; reason: string }
+  | { operation: 'forget'; container: string; id: string; reason: string }
   | { operation: 'list'; container: string; cursor?: string; limit: number };
 
 /** The keys the first output item's `json` must carry, per operation: `search` and `list` answer `{ items }`, `profile` `{ static, recent }`, `add` and `forget` `{ item }`. */

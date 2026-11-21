@@ -66,15 +66,21 @@ async function whoIs(workflowId: string | undefined, executionId: string): Promi
   return { home, caller: { system: true, origin: 'landflow', ...(home && { projectId: home }), run: { executionId } } };
 }
 
-function containerOf(read: (name: string, fallback?: unknown) => unknown, who: Who): MemoryContainer {
+/**
+ * The container a step names. A read may reach any project or team the flow's creator may; a write only the flow's own project,
+ * or a team homed there: a flow is a deputy of its creator, and must not write into other projects the creator happens to edit.
+ */
+function containerOf(read: (name: string, fallback?: unknown) => unknown, who: Who, access: 'read' | 'write' = 'read'): MemoryContainer {
   const kind = String(read('container', 'project'));
   if (kind === 'team') {
     const id = String(read('teamId', '') ?? '').trim();
     if (!id) throw new NodeOperationError('Choose a team');
+    if (access === 'write' && who.home !== homeProjectId('agentTeam', id)) throw new NodeOperationError('Memory not found');
     return { kind: 'team', id };
   }
   const id = String(read('projectId', '') ?? '').trim() || who.home;
   if (!id) throw new NodeOperationError('This workflow has no project: choose one');
+  if (access === 'write' && id !== who.home) throw new NodeOperationError('Memory not found');
   return { kind: 'project', id };
 }
 
@@ -102,7 +108,13 @@ const loadOptions = {
   },
   async teams() {
     const { agentTeamStore } = await import('../agent-teams/store');
-    return agentTeamStore.list().map((team) => ({ name: team.draft.name || 'Untitled team', value: team.id }));
+    const { currentPrincipal } = await import('../auth/guard');
+    const { canResource } = await import('../projects/access');
+    const principal = currentPrincipal();
+    return agentTeamStore
+      .list()
+      .filter((team) => !principal || canResource({ id: principal.user.id, role: principal.user.role }, 'agentTeam', team.id, 'read'))
+      .map((team) => ({ name: team.draft.name || 'Untitled team', value: team.id }));
   },
 };
 
@@ -217,7 +229,7 @@ export const memoryAddNode = defineNode({
     const out: NodeItem[] = [];
     for (let i = 0; i < Math.max(inputs.length, 1); i++) {
       const read = (name: string, fallback?: unknown) => ctx.getNodeParameter(name, i, fallback);
-      const container = containerOf(read, who);
+      const container = containerOf(read, who, 'write');
       const forgetAfter = String(read('forgetAfter', '') ?? '').trim();
       const replaces = String(read('replaces', '') ?? '').trim();
       const item = await guarded(i, () =>
@@ -267,7 +279,7 @@ export const memoryForgetNode = defineNode({
     const out: NodeItem[] = [];
     for (let i = 0; i < Math.max(inputs.length, 1); i++) {
       const read = (name: string, fallback?: unknown) => ctx.getNodeParameter(name, i, fallback);
-      const container = containerOf(read, who);
+      const container = containerOf(read, who, 'write');
       const id = String(read('memoryId', '') ?? '').trim();
       if (!id) throw new NodeOperationError('Say which memory: its ID', { itemIndex: i });
       const item = await guarded(i, () => memory.forget(container, id, String(read('reason', '') ?? ''), who.caller));

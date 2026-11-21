@@ -6,7 +6,7 @@
  * `?forgotten=1` lists the forgotten facts the caller may restore (docs/second-brain.md#fact-versions).
  */
 import { z } from 'zod';
-import { FACT_KINDS, FACT_SUBJECTS, type FactKind, type FactSubject } from '@/lib/shared/brain';
+import { FACT_KINDS, FACT_SUBJECTS, PRIVATE_FACT_SUBJECTS, type FactKind, type FactSubject } from '@/lib/shared/brain';
 import { listFacts, searchFacts } from '@/lib/server/brain/facts';
 import { canFact, projectsOf, scopeForActor } from '@/lib/server/brain/scope';
 import { vectorFactHits } from '@/lib/server/brain/study';
@@ -28,7 +28,8 @@ export const GET = handler(async (request: Request) => {
   const { limit, history, forgotten } = query.data;
   /** The ids among `list` the caller may forget (the Brain page hides Forget from everyone else). */
   const editableIds = (list: Array<{ id: string; subjectType: FactSubject; subjectId: string }>) => list.filter((f) => canFact(actor, f, 'update')).map((f) => f.id);
-  const subjectType = (FACT_SUBJECTS as readonly string[]).includes(param('subjectType') ?? '') ? (param('subjectType') as FactSubject) : undefined;
+  // A private subject (an agent and one person's memory) is not a Brain filter: the memory nodes read it, nobody browses it here.
+  const subjectType = (FACT_SUBJECTS as readonly string[]).includes(param('subjectType') ?? '') && !(PRIVATE_FACT_SUBJECTS as readonly string[]).includes(param('subjectType') ?? '') ? (param('subjectType') as FactSubject) : undefined;
   const kind = (FACT_KINDS as readonly string[]).includes(param('kind') ?? '') ? (param('kind') as FactKind) : undefined;
   const q = param('q');
   if (q) {
