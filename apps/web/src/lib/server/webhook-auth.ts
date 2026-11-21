@@ -18,7 +18,8 @@ import type { JsonObject } from '@landflow/protocol';
 import type { WorkflowNode } from '@landflow/engine';
 import { sameSecret } from './auth/passwords';
 import { credentials } from './credentials/vault';
-import { deniedReadDue, deniedReadUnderCap } from './audit/http';
+import { metrics } from '@opentelemetry/api';
+import { deniedReadDue } from './audit/http';
 import { recordAudit } from './audit';
 import { error } from './http';
 import { checkBoundClaims, checkCredentialClaims, type ClaimsCheck } from './jwt-claims';
@@ -234,15 +235,20 @@ export async function checkWebhookAuth(request: Request, workflowId: string, nod
   }
 }
 
+/** Refused claim checks by reason: counted always, so a throttled or capped audit row never leaves the refusal silent. */
+const claimsRefused = () => metrics.getMeter('landflow-webhook').createCounter('landflow.webhook.jwt_claims_refused', { description: 'JWT claim checks refused, by reason' });
+
 /**
- * The answer for a refused claim check, and its audit row (the route layer skips webhooks, so it is recorded here):
- * the reason, the claim's name and the issuer, never the token or a claim's value; once a minute per webhook and reason
- * so a caller hammering a bound webhook cannot flood the log.
+ * The answer for a refused claim check. Every refusal is counted (`landflow.webhook.jwt_claims_refused{reason}`, a
+ * bounded label); the audit row (the route layer skips webhooks) and the log line are written once a minute per webhook
+ * and reason, outside the shared denied-read cap so other denied reads cannot crowd them out. They hold the reason, the
+ * claim's name and the issuer, never the token or a claim's value.
  */
 function claimsRefusal(check: Exclude<ClaimsCheck, { ok: true }>, workflowId: string, label: string, credential: JsonObject, verifiedIss?: string): Response {
   const { reason, claim } = check;
   if (reason === 'claims_invalid') return error(`The ${label}’s JWT Auth credential: ${check.message}`, 500);
-  if (deniedReadDue(`webhook:${workflowId}`, `${label}:${reason}`) && deniedReadUnderCap()) {
+  claimsRefused().add(1, { reason });
+  if (deniedReadDue(`webhook:${workflowId}`, `${label}:${reason}`)) {
     recordAudit({
       action: 'api.denied',
       outcome: 'denied',
@@ -252,10 +258,13 @@ function claimsRefusal(check: Exclude<ClaimsCheck, { ok: true }>, workflowId: st
       summary: 'JWT claims refused',
       details: { reason, ...(claim && { claim }), iss: verifiedIss ?? String(credential.issuer ?? '') },
     });
+    logger.warn(
+      reason === 'claims_required'
+        ? 'trigger call refused: its JWT Auth credential trusts a public CI issuer and binds no repository'
+        : 'trigger call refused: a verified JWT failed a bound claim',
+      { 'landflow.workflow.id': workflowId, 'landflow.reason': reason, ...(claim && { 'landflow.jwt.claim': claim }) },
+    );
   }
-  if (reason === 'claims_required') {
-    logger.warn('trigger call refused: its JWT Auth credential trusts a public CI issuer and binds no repository', { 'landflow.workflow.id': workflowId, 'landflow.reason': reason });
-    return error(`Forbidden: the ${label}’s JWT Auth credential is unsafe. ${check.message}`, 403);
-  }
+  if (reason === 'claims_required') return error(`Forbidden: the ${label}’s JWT Auth credential is unsafe. ${check.message}`, 403);
   return error(`Forbidden: the token does not match the “${claim}” claim this ${label} is bound to`, 403);
 }

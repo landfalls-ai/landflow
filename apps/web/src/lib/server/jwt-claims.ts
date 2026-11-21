@@ -15,12 +15,14 @@ export interface BoundClaim {
   pattern: string;
 }
 
-/** Issuers that sign tokens for every customer's jobs, so a valid signature says nothing about whose job it was. */
+/** Hosts whose tokens come from every customer's jobs, so a valid signature says nothing about whose job it was. */
 export const PUBLIC_CI_ISSUERS: readonly string[] = ['https://token.actions.githubusercontent.com', 'https://gitlab.com'];
-const PUBLIC_CI_HOSTS: readonly string[] = PUBLIC_CI_ISSUERS.map((issuer) => new URL(issuer).host);
 
-/** Claims that name the repository or project (GitHub's `repository`, GitLab's `project_path`) or the job's subject. */
-export const BINDING_CLAIMS: readonly string[] = ['sub', 'repository', 'project_path'];
+/** GitHub Actions (also GitHub Enterprise Cloud: `token.actions.<slug>.ghe.com`) and GitLab.com; compared by host. */
+const isPublicCiHost = (host: string) => host === 'token.actions.githubusercontent.com' || host === 'gitlab.com' || /^token\.actions\.[^.]+\.ghe\.com$/.test(host);
+
+/** Claims that name the repository, project or owner by id or path, or the job's subject. */
+export const BINDING_CLAIMS: readonly string[] = ['sub', 'repository', 'project_path', 'repository_id', 'repository_owner_id', 'project_id', 'namespace_id'];
 
 const LINE = /^([^\s:]+)\s*:\s*(\S.*)$/;
 
@@ -49,32 +51,38 @@ export function matchesGlob(pattern: string, value: string): boolean {
   return new RegExp(`^${source}$`).test(value);
 }
 
-const trimSlash = (value: string) => value.replace(/\/+$/, '').toLowerCase();
-
-/** Whether the credential trusts a public CI issuer: by its issuer, by its JWKS host, or by the verified token's `iss`. */
-export function isPublicCiIssuer(credential: JsonObject, verifiedIss?: string): boolean {
-  const issuers = PUBLIC_CI_ISSUERS.map(trimSlash);
-  for (const candidate of [credential.issuer, verifiedIss]) {
-    if (typeof candidate === 'string' && issuers.includes(trimSlash(candidate))) return true;
-  }
-  const url = String(credential.jwksUrl ?? '').trim();
-  if (!url) return false;
+/** The host of an issuer or JWKS URL, lower case with a trailing dot removed (`GitLab.com.` is `gitlab.com`). */
+function hostOf(value: unknown): string {
   try {
-    return PUBLIC_CI_HOSTS.includes(new URL(url).host.toLowerCase());
+    return new URL(String(value ?? '').trim()).hostname.toLowerCase().replace(/\.$/, '');
   } catch {
-    return false;
+    return '';
   }
 }
 
-/** A bound claim narrows to one repository only when it is a binding claim and its pattern does not open with `*`. */
-const binds = ({ claim, pattern }: BoundClaim) => BINDING_CLAIMS.includes(claim) && !pattern.startsWith('*');
+/** Whether the credential trusts a public CI issuer: by its issuer, by its JWKS host, or by the verified token's `iss`. */
+export function isPublicCiIssuer(credential: JsonObject, verifiedIss?: string): boolean {
+  return [credential.issuer, credential.jwksUrl, verifiedIss].some((value) => isPublicCiHost(hostOf(value)));
+}
+
+/**
+ * A bound claim narrows to one owner only when its pattern has a literal owner: `repository` and `project_path` need a
+ * `/` with no `*` before it (`my-org/` then a star is fine; a star inside the owner, as in `e*` or `my-org*`, is not); `sub` must open `repo:` or
+ * `project_path:` followed by a literal owner and `/`; the id claims must contain no `*` at all.
+ */
+function binds({ claim, pattern }: BoundClaim): boolean {
+  if (!BINDING_CLAIMS.includes(claim)) return false;
+  if (claim === 'repository' || claim === 'project_path') return pattern.includes('/') && !pattern.slice(0, pattern.indexOf('/')).includes('*') && pattern.indexOf('/') > 0;
+  if (claim === 'sub') return /^(repo|project_path):[^*/:]+\//.test(pattern);
+  return !pattern.includes('*');
+}
 
 /** What a refused CI credential tells whoever sets it up: exactly what to add, and where. */
 export function claimsRequiredMessage(): string {
   return (
     'A GitHub Actions or GitLab token needs a bound claim, or a token from any repository could start this workflow. ' +
     'Open the JWT Auth credential, find Bound Claims and add a line such as “repository: my-org/my-repo” (GitHub) or ' +
-    '“project_path: my-group/my-project” (GitLab); a “sub” line also works. The pattern must not start with *.'
+    '“project_path: my-group/my-project” (GitLab); a “sub” line starting “repo:my-org/” also works. The owner before the first / must be written out: no * in it.'
   );
 }
 

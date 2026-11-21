@@ -452,6 +452,20 @@ describe('JWT Auth bound claims and the JWKS fetch (C18)', () => {
     expect(denied().some((event) => event.details?.reason === 'claims_required')).toBe(true);
   });
 
+  it('still records the refusal when other denied reads have used the instance-wide cap, and logs once a minute', async () => {
+    const { deniedReadUnderCap } = await import('@/lib/server/audit/http');
+    for (let i = 0; i < 80; i++) deniedReadUnderCap();
+    const credential = credentials.create({ name: 'CI capped', type: 'core.jwtAuth', data: { keyType: 'jwks', jwksUrl, algorithm: 'RS256', issuer: GITHUB, audience: 'landflow' } });
+    await hook('ci-capped', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential) });
+    const warn = vi.spyOn(logger, 'warn');
+    for (let i = 0; i < 20; i++) expect((await call('ci-capped')).status).toBe(401);
+    const token = await github('anyone/anything');
+    for (let i = 0; i < 20; i++) expect((await call('ci-capped', { authorization: `Bearer ${token}` })).status).toBe(403);
+    expect(denied().filter((event) => event.target?.id === 'wf_auth_ci_capped')).toHaveLength(1);
+    expect(warn.mock.calls.filter(([message]) => /binds no repository/.test(String(message)))).toHaveLength(1);
+    warn.mockRestore();
+  });
+
   it('treats GitHub’s JWKS host with no issuer the same way', async () => {
     const credential = credentials.create({ name: 'CI host', type: 'core.jwtAuth', data: { keyType: 'jwks', jwksUrl: `${GITHUB}/.well-known/jwks`, algorithm: 'RS256' } });
     await hook('ci-host', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential) });

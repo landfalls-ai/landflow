@@ -5,7 +5,7 @@
  */
 import Anthropic from '@anthropic-ai/sdk';
 import { defineCredentialType, type NodeOperationError } from '@landflow/sdk';
-import { checkCredentialClaims } from '../jwt-claims';
+import { checkCredentialClaims, parseBoundClaims } from '../jwt-claims';
 import { testGatewayCredential } from '../llm-gateway/models';
 import { OPENAI_BASE_URL, openAiConnection, openAiModels } from './models';
 import { STRANDS_BASE_URL, TYPESAFE_BASE_URL, strandsConnection, systemOneDecide, typesafeConnection, typesafeModels } from './systemone';
@@ -204,6 +204,25 @@ export const httpBasicAuthCredential = defineCredentialType({
   ],
 });
 
+/** The response body as text, or undefined when it runs past `limit` bytes. */
+async function readCapped(response: Response, limit: number): Promise<string | undefined> {
+  const reader = response.body?.getReader();
+  if (!reader) return '';
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      return undefined;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 /** n8n's JWT Auth: how a Webhook or Form Trigger verifies the JWT callers send as a Bearer token. */
 export const jwtAuthCredential = defineCredentialType({
   name: 'jwtAuth',
@@ -243,18 +262,28 @@ export const jwtAuthCredential = defineCredentialType({
       typeOptions: { rows: 4 },
       placeholder: 'repository: my-org/my-repo\nref: refs/heads/main',
       description:
-        'One “claim: value” per line; every line must match the token. * matches within one segment (repo:my-org/app:ref:refs/heads/*). Required for GitHub Actions and GitLab tokens: add repository, project_path or sub.',
+        'One “claim: value” per line; every line must match the token. * matches within one segment and stops at / and : (repo:my-org/app:ref:refs/heads/*; GitHub’s repo:my-org/app:* never matches). Required for GitHub Actions and GitLab tokens: bind repository, project_path or sub with the owner written out (no * before the first /).',
     },
   ],
   async test(data, ctx) {
     const rules = checkCredentialClaims(data);
     if (!rules.ok) return { ok: false, message: rules.message };
+    const endsInStar = parseBoundClaims(String(data.boundClaims ?? '')).claims.find(({ claim, pattern }) => claim === 'sub' && pattern.endsWith(':*'));
+    if (endsInStar) return { ok: false, message: `“sub: ${endsInStar.pattern}” never matches: * stops at a colon, so write each segment (repo:my-org/app:ref:refs/heads/*) or bind repository instead` };
     const url = String(data.jwksUrl ?? '').trim();
     if (data.keyType !== 'jwks' || !url) return { ok: true, message: 'The credential is complete' };
     try {
-      const response = await ctx.http(url, { headers: { accept: 'application/json' } });
+      // As the trigger fetches it: no redirects followed, and a bounded read.
+      const response = await ctx.http(url, { headers: { accept: 'application/json' }, redirect: 'manual' });
       if (!response.ok) return { ok: false, message: `The JWKS URL answered ${response.status}` };
-      const keys = ((await response.json()) as { keys?: unknown[] }).keys;
+      const body = await readCapped(response, 1_000_000);
+      if (body === undefined) return { ok: false, message: 'The JWKS URL answered with a body that is too large to be a key set' };
+      let keys: unknown;
+      try {
+        keys = (JSON.parse(body) as { keys?: unknown[] }).keys;
+      } catch {
+        return { ok: false, message: 'The JWKS URL did not return a key set' };
+      }
       if (!Array.isArray(keys)) return { ok: false, message: 'The JWKS URL did not return a key set' };
       return { ok: true, message: `The JWKS URL answered with ${keys.length} key${keys.length === 1 ? '' : 's'}` };
     } catch (caught) {

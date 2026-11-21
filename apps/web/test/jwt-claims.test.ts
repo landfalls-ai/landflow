@@ -58,6 +58,10 @@ describe('isPublicCiIssuer', () => {
     expect(isPublicCiIssuer({ keyType: 'jwks', jwksUrl: GITHUB_JWKS })).toBe(true);
     expect(isPublicCiIssuer({ keyType: 'jwks', jwksUrl: 'https://gitlab.com/oauth/discovery/keys' })).toBe(true);
     expect(isPublicCiIssuer({ keyType: 'pemKey' }, GITHUB)).toBe(true);
+    expect(isPublicCiIssuer({ keyType: 'jwks', issuer: `${GITHUB}/my-enterprise` })).toBe(true);
+    expect(isPublicCiIssuer({ keyType: 'jwks', issuer: 'https://token.actions.githubusercontent.com./' })).toBe(true);
+    expect(isPublicCiIssuer({ keyType: 'jwks', jwksUrl: 'https://TOKEN.actions.githubusercontent.com./.well-known/jwks' })).toBe(true);
+    expect(isPublicCiIssuer({ keyType: 'jwks', issuer: 'https://token.actions.acme.ghe.com' })).toBe(true);
   });
 
   it('leaves other issuers alone', () => {
@@ -76,6 +80,24 @@ describe('checkBoundClaims', () => {
     // A pattern that starts with * matches every repository: not a binding.
     expect(checkBoundClaims({ ...github, boundClaims: 'repository: *' }, { iss: GITHUB, repository: 'x/y' })).toMatchObject({ ok: false, reason: 'claims_required' });
     expect(checkBoundClaims({ ...github, boundClaims: 'repository: */app' }, { iss: GITHUB, repository: 'x/app' })).toMatchObject({ ok: false, reason: 'claims_required' });
+  });
+
+  it('wants a literal owner in a binding', () => {
+    const weak = [
+      'sub: repo:*/*:ref:refs/heads/main',
+      'sub: *',
+      'sub: repo:e*/app:ref:refs/heads/main',
+      'repository: e*/*',
+      'repository: my-org*/app',
+      'repository: my-org',
+      'repository_id: *',
+      'project_path: grp*/x',
+      'sub: project_path:*/*:ref_type:branch:ref:main',
+      'repository_owner_id: 1*',
+    ];
+    for (const boundClaims of weak) expect(checkBoundClaims({ ...github, boundClaims }, { iss: GITHUB }), boundClaims).toMatchObject({ ok: false, reason: 'claims_required' });
+    const strong = ['repository: my-org/*', 'repository: my-org/app', 'sub: repo:my-org/*', 'sub: project_path:grp/x:ref_type:branch:ref:main', 'project_path: grp/*', 'repository_id: 123456', 'repository_owner_id: 42', 'project_id: 9', 'namespace_id: 3'];
+    for (const boundClaims of strong) expect(checkBoundClaims({ ...github, boundClaims }, { iss: GITHUB }), boundClaims).not.toMatchObject({ reason: 'claims_required' });
   });
 
   it('answers claim_mismatch with the claim name', () => {
@@ -134,6 +156,23 @@ describe('the JWT Auth credential', () => {
     );
     expect(result).toMatchObject({ ok: true });
     expect(result.message).toMatch(/2 keys/);
+  });
+
+  it('fetches the JWKS without following redirects and reads a capped body', async () => {
+    let init: RequestInit | undefined;
+    const result = await test({ keyType: 'jwks', jwksUrl: 'https://issuer.example/jwks', boundClaims: 'groups: ops' }, async (_url, i) => {
+      init = i;
+      return new Response('x'.repeat(2_000_000));
+    });
+    expect(init?.redirect).toBe('manual');
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/too large|key set/);
+  });
+
+  it('warns that a sub pattern ending in :* never matches', async () => {
+    const result = await test({ keyType: 'passphrase', secret: 's', boundClaims: 'sub: repo:my-org/app:*' });
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/:\*/);
   });
 
   it('passes a plain secret credential', async () => {
