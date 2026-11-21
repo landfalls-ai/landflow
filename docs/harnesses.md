@@ -269,8 +269,8 @@ in the agent's Sessions and, for your own sessions, on `/connect`.
 - **Sending.** `POST /api/harness/claude-code/hooks` with an API key that has `harness:write` (**Send live status** on
   `/connect`). The `/connect` page gives a `hooks` block for `.claude/settings.local.json` (or `~/.claude/settings.json`, never the committed
   project settings): one background (`async`) command hook per event that runs a small `node -e` filter. The filter forwards
-  only `hook_event_name`, `session_id`, `tool_name`, `notification_type`, `duration_ms` and `error` / `error_details` (cut to 300
-  characters), so no prompt, tool input or output, working directory, transcript path or `agent_type` ever leaves the machine,
+  only `hook_event_name`, `session_id`, `tool_name`, `notification_type`, `duration_ms` and `error` (and `error_details` only when an agent was picked), only strings and numbers, strings cut to 300
+  characters, so no prompt, tool input or output, working directory, transcript path or `agent_type` ever leaves the machine,
   and gives up after 1.5 seconds. It reads the key from `$LANDFLOW_HOOK_KEY` (a key of its own with only `harness:write`, made
   on `/connect`), and puts an order number from the clock in `X-Landflow-Hook-Seq`, because each event arrives on its own
   connection and a later one can arrive first; the number needs no counter file, so parallel hooks never share one. The brain mod can send the same events for you

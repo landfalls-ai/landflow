@@ -74,20 +74,80 @@ const empty = (row: SessionRow, agentName: string, title: string): AgentSession 
 
 /** The mirrored timeline's serialized size is capped (the oldest entries go first): many large tool outputs must not make a huge row. */
 export const MIRROR_MAX_BYTES = 2_000_000;
-/** A session's timeline is rebuilt at most this often (ms); a late event inside the throttle marks it for the next chance. */
+/** A session's timeline is rebuilt at most this often (ms); a late event inside the throttle gets one trailing rebuild. */
 export const REBUILD_EVERY_MS = 1000;
+
+const bytesOf = (value: unknown): number => Buffer.byteLength(JSON.stringify(value), 'utf8');
+
+/** The timeline's serialized size in bytes (array brackets and commas included). */
+export const timelineBytes = (timeline: readonly TimelineEntry[]): number => timeline.reduce((total, entry) => total + bytesOf(entry) + 1, 2);
 
 /** Drop the oldest entries until the timeline serializes within `max` bytes (always keeps the newest entry). */
 export function capTimelineSize(timeline: TimelineEntry[], max = MIRROR_MAX_BYTES): TimelineEntry[] {
-  const sizes = timeline.map((entry) => JSON.stringify(entry).length + 1);
+  const sizes = timeline.map((entry) => bytesOf(entry) + 1);
   let total = sizes.reduce((a, b) => a + b, 2);
   let drop = 0;
   while (total > max && drop < timeline.length - 1) total -= sizes[drop++]!;
   return drop ? timeline.slice(drop) : timeline;
 }
 
-/** Per session: when it was last rebuilt, and whether a late event is waiting for the next rebuild. */
-const rebuilds = singleton('harness.mirror.rebuilds', () => new Map<string, { at: number; dirty: boolean }>());
+/**
+ * Per session: when it was last rebuilt, whether a late event is waiting for a rebuild (with its one pending timer) and a running
+ * estimate of the timeline's bytes, so an event does not serialize every entry again: the estimate only grows by what an event
+ * adds, and an exact pass runs only when it passes the cap (or the first time the session is seen by this process).
+ */
+interface MirrorState {
+  at: number;
+  dirty: boolean;
+  timer?: ReturnType<typeof setTimeout>;
+  bytes?: number;
+}
+const rebuilds = singleton('harness.mirror.rebuilds', () => new Map<string, MirrorState>());
+
+/** The timeline read back from the newest stored events, in order-key order. */
+function rebuiltTimeline(sessionId: string): TimelineEntry[] {
+  const timeline: TimelineEntry[] = [];
+  // Only the newest events are read back: a long session's rebuild stays bounded.
+  for (const stored of eventsOf(sessionId, MIRROR_TAIL)) applyToTimeline(timeline, stored.name, stored.data, stored.id, stored.receivedAt);
+  return timeline;
+}
+
+/** Keep the newest MIRROR_TAIL entries within the byte cap; `state.bytes` is exact afterwards. */
+function bound(session: AgentSession, state: MirrorState): void {
+  if (session.timeline.length > MIRROR_TAIL) {
+    session.timeline = session.timeline.slice(-MIRROR_TAIL);
+    state.bytes = undefined;
+  }
+  if (state.bytes === undefined || state.bytes > MIRROR_MAX_BYTES) {
+    session.timeline = capTimelineSize(session.timeline);
+    state.bytes = timelineBytes(session.timeline);
+  }
+}
+
+/**
+ * The one trailing rebuild of a session whose late event was throttled: it runs when the second is over, so the mirror is right
+ * even when no event follows (a `Stop` after `SessionEnd` is the usual case with background hooks).
+ */
+function trailing(row: SessionRow, state: MirrorState, delay: number): void {
+  if (state.timer) return;
+  state.timer = setTimeout(() => {
+    state.timer = undefined;
+    if (!state.dirty) return;
+    state.dirty = false;
+    state.at = Date.now();
+    try {
+      const session = agentStore.getSession(row.id);
+      if (!session) return;
+      session.timeline = rebuiltTimeline(row.id);
+      state.bytes = undefined;
+      bound(session, state);
+      agentStore.saveSession(session);
+    } catch {
+      // The events are stored; the next event or rebuild shows them.
+    }
+  }, delay);
+  state.timer.unref?.();
+}
 
 /**
  * Mirror one stored event into its agent session. `late`: the event was not newer than the last applied one, so the whole
@@ -98,32 +158,36 @@ export function mirrorEvent(row: SessionRow, event: { id: string; name: string; 
   const agent = agentStore.get(row.agent_id);
   if (!agent) return undefined;
   const session = agentStore.getSession(row.id) ?? empty(row, agent.name, 'Claude Code session');
-  // A late event only matters to the mirror when it falls inside the newest MIRROR_TAIL events, and a session is rebuilt at most once a second.
+  // A late event only matters to the mirror when it falls inside the newest MIRROR_TAIL events; a session is rebuilt at most once
+  // a second, a throttled one gets a single trailing rebuild, and a closed session is rebuilt at once (no event will follow).
   const state = rebuilds.get(row.id) ?? { at: 0, dirty: false };
+  if (rebuilds.size > 5000) rebuilds.clear();
+  rebuilds.set(row.id, state);
   let rebuild = false;
+  const ready = Boolean(row.closed_at) || now - state.at >= REBUILD_EVERY_MS;
   if (late) {
     const start = event.orderKey ? tailStartKey(row.id, MIRROR_TAIL) : undefined;
     if (!event.orderKey || start === undefined || event.orderKey >= start) {
-      if (now - state.at >= REBUILD_EVERY_MS) rebuild = true;
-      else state.dirty = true;
+      if (ready) rebuild = true;
+      else {
+        state.dirty = true;
+        trailing(row, state, Math.max(0, Math.min(REBUILD_EVERY_MS, state.at + REBUILD_EVERY_MS - now)) + 10);
+      }
     }
-  } else if (state.dirty && now - state.at >= REBUILD_EVERY_MS) rebuild = true;
+  } else if (state.dirty && ready) rebuild = true;
   if (rebuild) {
     state.at = now;
     state.dirty = false;
-  }
-  if (rebuilds.size > 5000) rebuilds.clear();
-  rebuilds.set(row.id, state);
-  if (rebuild) {
-    session.timeline = [];
-    // Only the newest events are read back: a long session's rebuild stays bounded.
-    for (const stored of eventsOf(row.id, MIRROR_TAIL)) applyToTimeline(session.timeline, stored.name, stored.data, stored.id, stored.receivedAt);
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = undefined;
+    session.timeline = rebuiltTimeline(row.id);
+    state.bytes = undefined;
   } else if (!late) {
+    if (state.bytes === undefined) state.bytes = timelineBytes(session.timeline);
     applyToTimeline(session.timeline, event.name, event.view, event.id, event.at);
+    state.bytes += bytesOf(event.view);
   }
-  // The mirror keeps the newest entries only (the events table keeps the rest until pruned), within a size bound.
-  if (session.timeline.length > MIRROR_TAIL) session.timeline = session.timeline.slice(-MIRROR_TAIL);
-  session.timeline = capTimelineSize(session.timeline);
+  bound(session, state);
   const firstPrompt = session.timeline.find((entry) => entry.type === 'user');
   if (firstPrompt && firstPrompt.type === 'user' && firstPrompt.text !== '[content off]') session.title = firstPrompt.text.replace(/\s+/g, ' ').slice(0, 80);
   session.status = sessionStatusOf(row.status);

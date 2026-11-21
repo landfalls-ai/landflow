@@ -12,7 +12,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { ConnectSteps } from '@/components/connect/connect-harness';
-import { HARNESS_IDS, HARNESSES, KEY_PLACEHOLDER, harnessKeyBody, hookKeyBody, hookKeySnippet, hookSnippetFor, originOf, sendsStatus, snippetFor, toolNames } from '@/components/connect/harness-snippets';
+import { HARNESS_IDS, HARNESSES, KEY_PLACEHOLDER, harnessKeyBody, hookKeyBody, hookFilterScript, hookKeySnippet, hookSnippetFor, originOf, sendsStatus, snippetFor, toolNames } from '@/components/connect/harness-snippets';
 import { McpSections } from '@/components/settings/mcp-sections';
 import { HARNESS_REGISTRY } from '@landflow/protocol/harnesses';
 import { TOOL_SCOPES } from '@/lib/shared/mcp';
@@ -80,7 +80,7 @@ describe('hookSnippetFor (C04)', () => {
     expect(hookKeySnippet().text).toContain(KEY_PLACEHOLDER);
   });
   it('the hooks key may send live status and nothing else; the page key never has that scope', () => {
-    expect(hookKeyBody()).toEqual({ label: 'Harness · Claude Code live status', scopes: ['harness:write'], expiresInDays: 90 });
+    expect(hookKeyBody()).toEqual({ label: 'Harness · Claude Code live status', scopes: ['harness:write'], expiresInDays: 30 });
     expect(harnessKeyBody('claude-code', ['harness:write', 'run']).scopes).toEqual(['brain:read', 'brain:write', 'run']);
     expect(sendsStatus('claude-code')).toBe(true);
     for (const h of HARNESSES.filter((x) => x.id !== 'claude-code')) expect(sendsStatus(h.id), h.id).toBe(false);
@@ -118,11 +118,24 @@ describe('hookSnippetFor (C04)', () => {
     expect(sent?.headers['x-landflow-agent']).toBeUndefined();
     expect(sent?.headers['x-landflow-hook-seq']).toMatch(/^\d{10,18}$/);
   });
-  it('cuts an error’s words and keeps StopFailure fields', async () => {
-    const [sent] = await run({ hook_event_name: 'StopFailure', session_id: 's-2', error: 'rate_limit', error_details: 'x'.repeat(900), last_assistant_message: 'a long reply' });
-    expect(sent?.body).toMatchObject({ error: 'rate_limit' });
-    expect((sent?.body.error_details as string).length).toBe(300);
-    expect(sent?.body.last_assistant_message).toBeUndefined();
+  it('an own session sends the error but not its details; an agent session sends both, cut to 300 characters', async () => {
+    const event = { hook_event_name: 'StopFailure', session_id: 's-2', error: 'rate_limit', error_details: 'x'.repeat(900), last_assistant_message: 'a long reply' };
+    const [own] = await run(event);
+    expect(own?.body).toEqual({ hook_event_name: 'StopFailure', session_id: 's-2', error: 'rate_limit' });
+    const [bound] = await run(event, 'agent_abc123');
+    expect((bound?.body.error_details as string).length).toBe(300);
+    expect(bound?.body.last_assistant_message).toBeUndefined();
+  });
+  it('forwards only strings and finite numbers: objects, arrays, booleans and null are dropped', async () => {
+    const [sent] = await run({ hook_event_name: 'PostToolUse', session_id: 's-3', tool_name: { name: 'x' }, notification_type: ['a'], duration_ms: 12.5, error: true });
+    expect(sent?.body).toEqual({ hook_event_name: 'PostToolUse', session_id: 's-3', duration_ms: 12.5 });
+    const [none] = await run({ hook_event_name: 'PostToolUse', session_id: 's-4', duration_ms: null, error: 5 });
+    expect(none?.body).toEqual({ hook_event_name: 'PostToolUse', session_id: 's-4', error: 5 });
+  });
+  it('refuses an origin or agent id a shell command could not carry', () => {
+    for (const bad of ["https://x.test'; rm -rf ~; '", 'https://x.test/path', 'https://x.test ', 'not a url', 'https://x.test/']) expect(() => hookFilterScript(bad), bad).toThrow();
+    for (const bad of ["a'b", 'a b', '', 'x'.repeat(101), 'a;b']) expect(() => hookFilterScript('https://x.test', bad), bad).toThrow();
+    expect(() => hookFilterScript('https://x.test:8443', 'agent_abc-123')).not.toThrow();
   });
   it('picking an agent adds its id as a header and nothing else', async () => {
     const [sent] = await run(FULL, 'agent_abc123');

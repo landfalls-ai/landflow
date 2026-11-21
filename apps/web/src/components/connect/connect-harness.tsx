@@ -6,6 +6,7 @@
  */
 import { useEffect, useState } from 'react';
 import { Check, CircleAlert, PlugZap } from 'lucide-react';
+import Link from 'next/link';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -173,13 +174,16 @@ export function ConnectSteps({ harness, onHarness, scopes, onScopes, days, onDay
             </p>
             <div className="space-y-2 rounded-[10px] border border-hair p-3">
               <p className="text-[12px] text-t2">
-                The hooks use a key of their own that may only send live status ({STATUS_SCOPE.scope}), not the key above. It goes in an environment variable, not in a settings file.
+                The hooks use a key of their own that may only send live status ({STATUS_SCOPE.scope}), not the key above. It goes in an environment variable, not in a settings file. Every program Claude Code starts, its Bash tool included, can read that variable, so the key is limited to sending status and expires in 30 days.
               </p>
               <div className="flex flex-wrap items-center gap-3">
                 <Button onClick={onMakeHookKey} loading={makingHook} className="max-md:min-h-11">
                   {hookToken ? 'Make another hook key' : 'Make a hook key'}
                 </Button>
-                <span className="text-[12px] text-t3">{hookToken ? 'Shown once; Landflow keeps only its hash.' : 'You can also paste a key you already have in place of the placeholder.'}</span>
+                <span className="text-[12px] text-t3">
+                  {hookToken ? 'Shown once; Landflow keeps only its hash. ' : 'You can also paste a key you already have in place of the placeholder. '}
+                  A key you made earlier keeps working until you revoke it in <Link href="/settings#api-keys" className="text-ac underline">Settings → API keys</Link>.
+                </span>
               </div>
               <SnippetBox snippet={hookKeySnippet(hookToken)} />
             </div>
@@ -194,7 +198,7 @@ export function ConnectSteps({ harness, onHarness, scopes, onScopes, days, onDay
                     </option>
                   ))}
                 </Select>
-                <p className="mt-1 text-[12px] text-t3">With an agent picked, the sessions this setup reports show on that agent’s card, if you may run it. Use it in the settings of the project where you run that agent.</p>
+                <p className="mt-1 text-[12px] text-t3">The list shows every agent you can see; Landflow checks that you may run the one you pick. If you may not, the sessions stay your own and nothing shows on the agent. With an agent picked, the sessions this setup reports show on its card and its error details (up to 300 characters) are sent too. Use it in the settings of the project where you run that agent.</p>
               </div>
             )}
             <SnippetBox snippet={hookSnippetFor({ url: mcpUrl, ...(agentId && { agentId }) })} />

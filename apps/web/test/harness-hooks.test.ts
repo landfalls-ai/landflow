@@ -485,6 +485,48 @@ describe('late events, the mirror bounds and the kind filter (review round 2)', 
     expect(JSON.stringify(agentStore.getSession(row.id)!.timeline)).toContain('p5001');
   });
 
+  it('a late event inside the throttle is rebuilt by one trailing rebuild, with no later event needed', async () => {
+    vi.useFakeTimers();
+    try {
+      const { mirrorEvent } = await import('@/lib/server/harness/mirror');
+      const agent = agentStore.create({ name: 'Trailing Helper', instructions: 'x', model: { provider: 'ollama', model: 'm' } });
+      const row = { id: 'hs_trailing', owner_id: alice.id, harness: 'claude-code', session_key: 'tr', agent_id: agent.id, project_id: null, status: 'ended', order_kind: 'seq', last_order: '9', last_event_at: '2026-11-21T10:00:00.000Z', opened_at: '2026-11-21T10:00:00.000Z', closed_at: null, data: '{}' } as store.SessionRow;
+      const ev = (n: number) => database().insertNew('harness_events', { id: `he_tr_${n}`, session_id: row.id, order_key: String(n).padStart(20, '0'), name: 'UserPromptSubmit', received_at: '2026-11-21T10:00:00.000Z', data: JSON.stringify({ prompt: `t${n}` }) });
+      const t = Date.now();
+      ev(10);
+      mirrorEvent(row, { id: 'he_tr_10', name: 'UserPromptSubmit', view: { prompt: 't10' }, at: 'x', orderKey: '10'.padStart(20, '0') }, true, t);
+      ev(11);
+      mirrorEvent(row, { id: 'he_tr_11', name: 'UserPromptSubmit', view: { prompt: 't11' }, at: 'x', orderKey: '11'.padStart(20, '0') }, true, t + 100);
+      expect(JSON.stringify(agentStore.getSession(row.id)!.timeline)).not.toContain('t11');
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(JSON.stringify(agentStore.getSession(row.id)!.timeline)).toContain('t11');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a closed session is rebuilt at once, throttle or not', async () => {
+    const { mirrorEvent } = await import('@/lib/server/harness/mirror');
+    const agent = agentStore.create({ name: 'Closed Helper', instructions: 'x', model: { provider: 'ollama', model: 'm' } });
+    const row = { id: 'hs_closed', owner_id: alice.id, harness: 'claude-code', session_key: 'cl', agent_id: agent.id, project_id: null, status: 'ended', order_kind: 'seq', last_order: '9', last_event_at: '2026-11-21T10:00:00.000Z', opened_at: '2026-11-21T10:00:00.000Z', closed_at: '2026-11-21T10:00:01.000Z', data: '{}' } as store.SessionRow;
+    const ev = (n: number) => database().insertNew('harness_events', { id: `he_cl_${n}`, session_id: row.id, order_key: String(n).padStart(20, '0'), name: 'UserPromptSubmit', received_at: '2026-11-21T10:00:00.000Z', data: JSON.stringify({ prompt: `c${n}` }) });
+    const t = Date.now();
+    ev(10);
+    mirrorEvent(row, { id: 'he_cl_10', name: 'UserPromptSubmit', view: { prompt: 'c10' }, at: 'x', orderKey: '10'.padStart(20, '0') }, true, t);
+    ev(11);
+    mirrorEvent(row, { id: 'he_cl_11', name: 'UserPromptSubmit', view: { prompt: 'c11' }, at: 'x', orderKey: '11'.padStart(20, '0') }, true, t + 10);
+    expect(JSON.stringify(agentStore.getSession(row.id)!.timeline)).toContain('c11');
+  });
+
+  it('counts the size cap in bytes, not characters', async () => {
+    const { capTimelineSize, timelineBytes } = await import('@/lib/server/harness/mirror');
+    const entries = Array.from({ length: 4 }, (_, i) => ({ id: `u${i}`, type: 'user' as const, text: 'é'.repeat(300_000), at: 'a' }));
+    expect(timelineBytes(entries)).toBeGreaterThan(JSON.stringify(entries).length);
+    const kept = capTimelineSize(entries, 1_000_000);
+    expect(timelineBytes(kept)).toBeLessThanOrEqual(1_000_000);
+    expect(kept.at(-1)!.id).toBe('u3');
+  });
+
   it('caps the mirrored timeline by size, dropping the oldest', async () => {
     const { capTimelineSize } = await import('@/lib/server/harness/mirror');
     const entries = Array.from({ length: 10 }, (_, i) => ({ id: `u${i}`, type: 'user' as const, text: 'x'.repeat(300_000), at: 'a' }));

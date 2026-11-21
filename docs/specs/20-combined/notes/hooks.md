@@ -45,9 +45,12 @@ hand. Codex, OpenCode, Cursor, Gemini, VS Code and Claude Desktop stay `verified
 - Screens are checked at 1440x900 and 390x844 by a person in a live check; the layout has no unit test.
 
 - The `/connect` hooks block needs Node on the machine (Claude Code ships with it) and Node 18 or later for `fetch`; the hooks run `async`, so a slow Landflow never delays Claude Code, but a hook that cannot reach Landflow in 1.5 seconds drops its event.
-- The agent mirror rebuilds a session's timeline at most once a second, and only when a late event falls inside the newest 500; a late event inside the throttle marks the session, and the next event after the second rebuilds it. The mirrored timeline is also cut to about 2 MB (oldest entries first).
+- The agent mirror rebuilds a session's timeline at most once a second, and only when a late event falls inside the newest 500; a late event inside the throttle gets one trailing rebuild when the second is over (so it shows even when no event follows), and a closed session is rebuilt at once. The mirrored timeline is also cut to about 2 MB, counted in bytes (oldest entries first), from a running size that is made exact only when it passes the cap.
 - To bind a session to an agent you pick the agent on `/connect` and use that setup only in the project where you run it; every session that setup reports binds to it.
-- The order number is the clock in microseconds (`Date.now()` times 1000 plus a sub-millisecond part of a monotonic timer); two hooks within the same microsecond on different cores could still tie, and a tie never moves a status backwards.
+- The order number is one clock in microseconds (`performance.timeOrigin + performance.now()`); two hooks in the same microsecond could still tie, and a tie never moves a status backwards.
+
+- The hook key's default expiry is 30 days (every program Claude Code starts can read the variable). The agent picker lists every agent the person can see: whether they may run one is checked by the server, and a session that may not bind stays their own.
+- A hook sends only strings (cut to 300 characters) and finite numbers; `error_details` leaves the machine only for a session with an agent picked.
 
 ## Roadmap lines
 

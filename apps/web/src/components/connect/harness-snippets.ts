@@ -105,21 +105,37 @@ export function harnessKeyBody(harness: HarnessId, workflowScopes: readonly ApiK
 export const HOOK_KEY_ENV = ['LANDFLOW', 'HOOK', 'KEY'].join('_');
 const ENV_OBJECT = 'env';
 
-/** The fields of a hook event the filter forwards: names, ids and a duration, never text, input, output, paths or `agent_type`. */
+/** The fields of a hook event the filter forwards: names, ids, a duration and an error's words, never prompts, input, output, paths or `agent_type`. */
 export const HOOK_FIELDS = ['hook_event_name', 'session_id', 'tool_name', 'notification_type', 'duration_ms', 'error', 'error_details'] as const;
+/** `error_details` (up to 300 characters of the error's text) is sent only for a session bound to an agent; an own session sends `error` only. */
+const AGENT_ONLY_FIELDS: readonly string[] = ['error_details'];
 
 /**
  * The one-line Node script a hook runs (Claude Code needs Node, so it is there; `jq` may not be). It reads the event JSON from
- * stdin, keeps only HOOK_FIELDS (an error's words cut to 300 characters), and sends them with the key from the environment, an
- * order number from the clock (so parallel hooks never share one and no counter file is needed) and, when an agent was picked,
- * its id in `X-Landflow-Agent`. It gives up after 1.5 seconds and always exits quietly. No single quotes: it sits inside `node -e '…'`.
+ * stdin and keeps only HOOK_FIELDS, and of those only strings (cut to 300 characters) and finite numbers. It sends them with the
+ * key from the environment, an order number from one clock (`performance.timeOrigin + performance.now()`, in microseconds, so
+ * parallel hooks get different numbers and no counter file is needed) and, when an agent was picked, its id in `X-Landflow-Agent`.
+ * It gives up after 1.5 seconds and always exits quietly. No single quotes: it sits inside `node -e '…'`.
+ *
+ * `origin` and `agentId` end up inside a shell command, so both are checked and the call throws on anything else: the origin must
+ * be exactly what `new URL(origin).origin` gives (no path, no quote, no space) and an agent id is word characters and dashes.
  */
-export function hookFilterScript(target: string, agentId?: string): string {
-  const headers = `{"content-type":"application/json",authorization:"Bearer "+process.${ENV_OBJECT}[${JSON.stringify(HOOK_KEY_ENV)}],"x-landflow-hook-seq":String(Date.now()*1000+Number(process.hrtime.bigint()/1000n%1000n))${agentId ? `,"x-landflow-agent":${JSON.stringify(agentId)}` : ''}}`;
+export function hookFilterScript(origin: string, agentId?: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    throw new Error('The Landflow address is not a URL');
+  }
+  if (parsed.origin !== origin || /['\s"\\]/.test(origin)) throw new Error('The Landflow address must be an origin such as https://landflow.example.com');
+  if (agentId !== undefined && !/^[\w-]{1,100}$/.test(agentId)) throw new Error('The agent id has characters a hook cannot carry');
+  const target = `${origin}/api/harness/claude-code/hooks`;
+  const fields = HOOK_FIELDS.filter((field) => agentId || !AGENT_ONLY_FIELDS.includes(field));
+  const headers = `{"content-type":"application/json",authorization:"Bearer "+process.${ENV_OBJECT}[${JSON.stringify(HOOK_KEY_ENV)}],"x-landflow-hook-seq":String(Math.round((performance.timeOrigin+performance.now())*1000))${agentId ? `,"x-landflow-agent":${JSON.stringify(agentId)}` : ''}}`;
   return [
     'let d="";',
     'process.stdin.on("data",c=>d+=c).on("end",()=>{try{',
-    `const e=JSON.parse(d),o={};for(const k of ${JSON.stringify(HOOK_FIELDS)})if(e[k]!==undefined)o[k]=typeof e[k]==="string"?e[k].slice(0,300):e[k];`,
+    `const e=JSON.parse(d),o={};for(const k of ${JSON.stringify(fields)}){const v=e[k];if(typeof v==="string")o[k]=v.slice(0,300);else if(typeof v==="number"&&Number.isFinite(v))o[k]=v}`,
     `fetch(${JSON.stringify(target)},{method:"POST",headers:${headers},body:JSON.stringify(o),signal:AbortSignal.timeout(1500)}).catch(()=>{})`,
     '}catch{}})',
   ].join('');
@@ -133,7 +149,7 @@ export function hookFilterScript(target: string, agentId?: string): string {
  */
 export function hookSnippetFor({ url, agentId }: { url: string; agentId?: string }): Snippet {
   const entry = harnessById('claude-code');
-  const command = `node -e '${hookFilterScript(`${originOf(url)}/api/harness/claude-code/hooks`, agentId)}'`;
+  const command = `node -e '${hookFilterScript(originOf(url), agentId)}'`;
   const hooks = Object.fromEntries(Object.keys(entry?.hookEvents ?? {}).map((event) => [event, [{ hooks: [{ type: 'command', command, async: true }] }]]));
   return {
     label: 'Live status hooks',
@@ -148,8 +164,8 @@ export function hookKeySnippet(token?: string): Snippet {
   return { label: 'Your hook key', where: 'Add to ~/.zshrc or ~/.bashrc and open a new terminal, so Claude Code starts with it', language: 'bash', text: `export ${HOOK_KEY_ENV}=${token ?? KEY_PLACEHOLDER}` };
 }
 
-/** The body of the request for the hooks' own key: it may send live status and nothing else, 90 days unless told otherwise. */
-export function hookKeyBody(expiresInDays = 90) {
+/** The body of the request for the hooks' own key: it may send live status and nothing else, 30 days unless told otherwise (every program Claude Code starts can read it). */
+export function hookKeyBody(expiresInDays = 30) {
   return { label: 'Harness · Claude Code live status', scopes: [STATUS_SCOPE.scope], ...(expiresInDays > 0 && { expiresInDays }) };
 }
 

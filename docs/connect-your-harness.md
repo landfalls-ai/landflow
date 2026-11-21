@@ -22,19 +22,23 @@ For Claude Code a fourth, optional step appears: **Live status**.
 
 1. **Make a hook key.** The hooks do not use the key from step 2. They get a key of their own that may only send live status
    (`harness:write`), shown once. Put it in an environment variable (the page shows the `export LANDFLOW_HOOK_KEY=…` line for
-   `~/.zshrc` or `~/.bashrc`), so no settings file holds a key.
+   `~/.zshrc` or `~/.bashrc`), so no settings file holds a key. An exported variable reaches every program Claude Code starts,
+   its Bash tool included, so anything an agent runs there can read it. That is why the key can do one thing only (send live
+   status, scope `harness:write`) and expires after 30 days by default; keep it short. Making another key does not remove an
+   earlier one: it works until you revoke it in Settings → API keys.
 2. **Merge the hooks block** into `.claude/settings.local.json` in your project (Claude Code keeps that file out of Git) or
    `~/.claude/settings.json` for every project. Never into the committed `.claude/settings.json`.
 3. Optionally **pick a Landflow agent** if you run one in that project (see below).
 
 Each hook runs a small `node -e` filter (Claude Code needs Node, so it is there) in the background, so Claude Code never waits.
-The filter sends only the event's name, the session id, a tool's name, a duration and an error's words (cut to 300
-characters). It sends no prompt, no tool input or output, no file path, no working directory, no transcript path and no
+The filter sends only the event's name, the session id, a tool's name, a duration and an error (strings cut to 300 characters,
+and only strings and numbers at all). `error_details`, which can hold up to 300 characters of an error's text, is sent only when you picked
+an agent; an own session sends `error` alone. It sends no prompt, no tool input or output, no file path, no working directory, no transcript path and no
 `agent_type`. Each event carries an order number from the clock in `X-Landflow-Hook-Seq`, so parallel hooks never share one; no
 temporary files are written. **Your sessions** lists your open sessions live: **Thinking**, **Working**, **Waiting for you**,
 **Idle**, with the repository when one was named and counts of prompts and tool calls.
 
-Your own sessions keep status, times, tool names and counts, and no one else sees them, admins included. A session binds to a
+Your own sessions keep status, times, tool names and counts, and no one else sees them, admins included. The agent list shows every agent you can see; Landflow checks that you may run the one you pick, and if you may not the sessions stay your own. A session binds to a
 Landflow agent only when the `SessionStart` carries an `X-Landflow-Agent: <agent id>` header naming an agent you may run, which
 the page adds when you pick the agent. Nothing in the event itself can bind a session: a plugin of any author can call its
 agent `code-reviewer:code-reviewer`, so `agent_type` is never read. Later events never bind or rebind a session. A bound session
