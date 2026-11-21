@@ -16,7 +16,7 @@ export type AssignableRole = (typeof ASSIGNABLE_ROLES)[number];
 export const ROLE_LABELS: Record<Role, string> = { owner: 'Owner', admin: 'Admin', member: 'Member' };
 
 /** What an API key may do. `admin` includes every other scope (and admin-only routes, if its user is an admin). */
-export const API_KEY_SCOPES = ['workflows:read', 'workflows:write', 'executions:read', 'executions:write', 'run', 'admin', 'scim', 'audit:read', 'brain:read', 'brain:write'] as const;
+export const API_KEY_SCOPES = ['workflows:read', 'workflows:write', 'executions:read', 'executions:write', 'run', 'admin', 'scim', 'audit:read', 'brain:read', 'brain:write', 'harness:write'] as const;
 export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
 
 export const SCOPE_LABELS: Record<ApiKeyScope, string> = {
@@ -29,6 +29,7 @@ export const SCOPE_LABELS: Record<ApiKeyScope, string> = {
   scim: 'SCIM provisioning by an identity provider (Okta, Entra ID); nothing else',
   'brain:read': 'Brain: read your briefing and ask',
   'brain:write': 'Brain: record your work',
+  'harness:write': 'Send harness status (Claude Code hooks)',
   'audit:read': 'Read and export the audit log (owners and admins: every event; project admins: their projects’ events)',
 };
 

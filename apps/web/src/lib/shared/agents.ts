@@ -664,7 +664,8 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = { maxIterations: 12, toolCo
 // Sessions
 // ---------------------------------------------------------------------------
 
-export type SessionSource = 'test' | 'schedule' | 'telegram' | 'slack' | 'teams' | 'workflow' | 'agent' | 'api' | 'task';
+/** `harness`: a Claude Code session mirrored from its hooks (docs/harnesses.md#live-status). */
+export type SessionSource = 'test' | 'schedule' | 'telegram' | 'slack' | 'teams' | 'workflow' | 'agent' | 'api' | 'task' | 'harness';
 export type SessionStatus = 'idle' | 'running' | 'awaiting_approval' | 'error';
 /** `flow`: a tool connected to the agent's node in a workflow (Run an Agent), for that run only. `notebook`: a team run's notebook tools (docs/team-notebook.md). */
 export type ToolKind = 'node' | 'workflow' | 'agent' | 'skill' | 'memory' | 'a2a' | 'flow' | 'notebook';

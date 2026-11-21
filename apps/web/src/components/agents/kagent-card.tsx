@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Eye, Lock, RefreshCw, ShieldCheck, ShipWheel, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { KAGENT_RUNTIME_LABELS } from '@landflow/protocol/harnesses';
 import { api } from '@/lib/client/api';
 import { cn } from '@/lib/utils';
 import type { Agent, KagentGuard, KagentHarness, KagentRuntime, KagentStatus } from '@/lib/shared/agents';
@@ -32,7 +33,7 @@ const slug = (name: string) =>
     .slice(0, 50)
     .replace(/-+$/, '') || 'landflow-agent';
 
-const RUNTIME_LABEL: Record<KagentRuntime, string> = { kagent: 'kagent (ADK)', claude: 'Claude Code', codex: 'Codex', byo: 'Own image' };
+const RUNTIME_LABEL = KAGENT_RUNTIME_LABELS;
 const SUPPORTED: KagentRuntime[] = ['kagent', 'claude'];
 
 const FIELD_LABEL: Record<string, string> = {

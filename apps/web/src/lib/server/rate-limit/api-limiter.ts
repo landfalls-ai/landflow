@@ -22,6 +22,8 @@ export const MAX_LOCAL_KEYS = 50_000;
 /** Never limited: liveness probes, plugin heartbeats and the metrics scrape. */
 const EXEMPT = ['/api/health', '/api/plugins/announce', '/api/metrics'];
 
+const HARNESS_HOOK = /^\/api\/harness\/[^/]+\/hooks$/;
+
 /** The public trigger groups: a prefix matches itself and everything below it. */
 const PUBLIC_GROUPS: Array<[group: string, prefix: string]> = [
   ['webhook', '/api/webhook'],
@@ -88,7 +90,8 @@ export async function limitRequest(request: Request, principalId: string | undef
   } catch {
     return undefined;
   }
-  if (EXEMPT.some((prefix) => under(path, prefix))) return undefined;
+  // Hook events have their own per-second limit (harness/limits.ts): a tool-heavy session sends two a call.
+  if (EXEMPT.some((prefix) => under(path, prefix)) || HARNESS_HOOK.test(path)) return undefined;
   let bucket: 'api' | 'public';
   let key: string;
   if (principalId) {

@@ -1,6 +1,7 @@
 import type { ExecutionEvent } from '@landflow/engine';
 import type { AgentStreamEvent } from '../shared/agents';
 import type { EditLockView } from '../shared/auth';
+import type { HarnessSessionView } from '../shared/harness';
 import type { JournalEvent } from '../shared/run-trace';
 import type { RegistryEvent } from '../shared/types';
 import { singleton } from './singleton';
@@ -19,7 +20,9 @@ export type BusEvent =
       events: JournalEvent[];
     }
   /** Someone opened, took over or left a workflow in the editor (lib/server/auth/edit-locks.ts); null = free. */
-  | { channel: 'lock'; workflowId: string; lock: EditLockView | null };
+  | { channel: 'lock'; workflowId: string; lock: EditLockView | null }
+  /** A harness session's status changed (lib/server/harness, C04). Without `agentId` it is the owner's own session: only `ownerId` sees it, an admin included. */
+  | { channel: 'harness'; ownerId: string; agentId?: string; projectId?: string; session: HarnessSessionView };
 
 /** Events another process published (queue mode relays them, lib/server/cluster/relay.ts). */
 const RELAYED = Symbol.for('landflow.bus.relayed');

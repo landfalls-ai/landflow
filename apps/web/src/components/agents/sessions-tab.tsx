@@ -30,6 +30,7 @@ const SOURCE: Record<SessionSource, { label: string; icon: typeof Bot; tone: Ton
   agent: { label: 'Agent', icon: Bot, tone: 'neutral' },
   api: { label: 'API', icon: Code, tone: 'neutral' },
   task: { label: 'Task', icon: ListTodo, tone: 'neutral' },
+  harness: { label: 'Claude Code', icon: Bot, tone: 'neutral' },
 };
 
 const STATUS: Record<SessionStatus, { label: string; tone: Tone }> = {

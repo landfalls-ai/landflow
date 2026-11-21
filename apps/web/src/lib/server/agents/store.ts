@@ -131,7 +131,7 @@ function summarizeSession(session: AgentSession): SessionSummary {
 }
 
 /** Sources a person talks through (the Sessions tab's People) and those that run without one (Automations). */
-export const PEOPLE_SOURCES: readonly SessionSource[] = ['test', 'telegram', 'slack', 'teams'];
+export const PEOPLE_SOURCES: readonly SessionSource[] = ['test', 'telegram', 'slack', 'teams', 'harness'];
 export const AUTOMATION_SOURCES: readonly SessionSource[] = ['schedule', 'workflow', 'agent', 'api'];
 export type SessionAudience = 'people' | 'automations';
 export const audienceSources = (audience?: SessionAudience): readonly SessionSource[] | undefined => (audience === 'people' ? PEOPLE_SOURCES : audience === 'automations' ? AUTOMATION_SOURCES : undefined);
