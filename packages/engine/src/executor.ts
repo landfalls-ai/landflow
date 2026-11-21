@@ -1247,7 +1247,7 @@ class WorkflowRun {
     try {
       // SP01: the host's hook knows the active node.
       const run = () => resolved.execute(request, extras);
-      const response = await this.raceAbort(context.with(spanContext, () => (this.options.aroundNode ? this.options.aroundNode({ id: node.id, name: node.name, type: node.type }, run) : run())), limit);
+      const response = await this.raceAbort(context.with(spanContext, () => (this.options.aroundNode ? this.options.aroundNode({ id: node.id, name: node.name, type: node.type, report: (record) => this.emitRecord(node, record) }, run) : run())), limit);
       this.emitRecords(node, response);
       return { response, ...(wait && { wait }) };
     } finally {
@@ -1526,7 +1526,7 @@ class WorkflowRun {
     const base = { startedAt: new Date(started).toISOString(), source, inputs: [[input]], parentNodeId: root.id, ...(ids && { spanId: ids.spanId }) };
     try {
       // SP01: the host's hook knows the active node.
-      const { result, output } = await context.with(telemetry.context, () => (this.options.aroundNode ? this.options.aroundNode({ id: subNode.id, name: subNode.name, type: subNode.type }, work) : work()));
+      const { result, output } = await context.with(telemetry.context, () => (this.options.aroundNode ? this.options.aroundNode({ id: subNode.id, name: subNode.name, type: subNode.type, report: (record) => this.emitRecord(subNode, record, root.id) }, work) : work()));
       const run: NodeRun = { ...base, durationMs: Date.now() - started, status: 'success', outputs: [[output]] };
       this.endNodeSpan(telemetry, run);
       this.record(subNode, run);

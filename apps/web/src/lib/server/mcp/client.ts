@@ -347,6 +347,7 @@ export function agentToolsFrom(endpoint: McpEndpoint, tools: Tool[]): AgentTool[
     name: toToolName(tool.name),
     description: tool.description || tool.title || tool.annotations?.title || `The “${tool.name}” tool of an MCP server`,
     inputSchema: toolSchema(tool),
+    ...(tool.annotations?.readOnlyHint === true && { readOnlyHint: true }),
     invoke: async (input, signal) => toolOutput(await callMcpTool(endpoint, tool.name, input, signal)),
   }));
 }
@@ -456,15 +457,16 @@ export function resourceAndPromptTools(endpoint: McpEndpoint, extras: ReadonlyAr
   const tools: AgentTool[] = [];
   if (extras.includes('resources')) {
     tools.push(
-      { name: 'list_resources', description: 'List the resources (documents, files, data) this MCP server offers: each with a uri, a name and a description. Read one with read_resource.', inputSchema: { type: 'object', properties: {} }, invoke: async () => ({ resources: await listMcpResources(endpoint), templates: await listMcpResourceTemplates(endpoint).catch(() => []) }) },
-      { name: 'read_resource', description: 'Read a resource of this MCP server by its uri (from list_resources, or a URI template filled in).', inputSchema: { type: 'object', properties: { uri: { type: 'string', description: 'The resource URI' } }, required: ['uri'] }, invoke: async (input) => ({ contents: await readMcpResource(endpoint, String(input.uri ?? '')) }) },
+      { name: 'list_resources', readOnlyHint: true, description: 'List the resources (documents, files, data) this MCP server offers: each with a uri, a name and a description. Read one with read_resource.', inputSchema: { type: 'object', properties: {} }, invoke: async () => ({ resources: await listMcpResources(endpoint), templates: await listMcpResourceTemplates(endpoint).catch(() => []) }) },
+      { name: 'read_resource', readOnlyHint: true, description: 'Read a resource of this MCP server by its uri (from list_resources, or a URI template filled in).', inputSchema: { type: 'object', properties: { uri: { type: 'string', description: 'The resource URI' } }, required: ['uri'] }, invoke: async (input) => ({ contents: await readMcpResource(endpoint, String(input.uri ?? '')) }) },
     );
   }
   if (extras.includes('prompts')) {
     tools.push(
-      { name: 'list_prompts', description: 'List the prompt templates this MCP server offers, with their arguments. Use one with get_prompt.', inputSchema: { type: 'object', properties: {} }, invoke: async () => ({ prompts: await listMcpPrompts(endpoint) }) },
+      { name: 'list_prompts', readOnlyHint: true, description: 'List the prompt templates this MCP server offers, with their arguments. Use one with get_prompt.', inputSchema: { type: 'object', properties: {} }, invoke: async () => ({ prompts: await listMcpPrompts(endpoint) }) },
       {
         name: 'get_prompt',
+        readOnlyHint: true,
         description: 'Get a prompt template of this MCP server with its arguments filled in: answers with the prompt messages to follow.',
         inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'The prompt name' }, arguments: { type: 'object', description: 'The prompt arguments, name to string value', additionalProperties: { type: 'string' } } }, required: ['name'] },
         invoke: async (input) => promptText(await getMcpPrompt(endpoint, String(input.name ?? ''), stringRecord(input.arguments))),

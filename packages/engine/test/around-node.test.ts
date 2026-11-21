@@ -114,4 +114,22 @@ describe('aroundNode', () => {
     expect(result.status).toBe('success');
     expect(result.runData.e[0]).toMatchObject({ source: 'embedding', parentNodeId: 's' });
   });
+
+  it('hands the hook a report that emits a node.record for that node', async () => {
+    const events: Array<{ nodeId: string; parentNodeId?: string; record: { name?: string; status?: string } }> = [];
+    await executeWorkflow({
+      workflow, resolver, executionId: 'ex', mode: 'manual',
+      onEvent: (event) => {
+        if (event.type === 'node.record') events.push(event as never);
+      },
+      aroundNode: async (node, fn) => {
+        node.report?.({ type: 'check', name: `x-${node.id}`, status: 'pass' });
+        return fn();
+      },
+    });
+    // A root node's record has no parent; a sub-node's (the embedding under the retriever) names the node it runs under.
+    expect(events.find((e) => e.nodeId === 'r')).toMatchObject({ record: { name: 'x-r', status: 'pass' } });
+    expect(events.find((e) => e.nodeId === 'r')?.parentNodeId).toBeUndefined();
+    expect(events.find((e) => e.nodeId === 'e')).toMatchObject({ parentNodeId: 's', record: { name: 'x-e' } });
+  });
 });
