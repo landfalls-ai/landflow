@@ -18,6 +18,8 @@ import { homeProjectId } from '../projects/store';
 import { supersedeNote } from './lifecycle';
 import { NoteError } from './approve';
 import { embedModel, embedTexts } from './embed';
+import { createHash } from 'node:crypto';
+import { SAW_MEMORY_MAX_ITEMS, type SawMemorySource } from '../../shared/what-it-saw';
 import { wrapMemory } from '../../shared/memory-fence';
 import { searchNotes } from './search';
 import { expiryOf, noteStore } from './store';
@@ -349,14 +351,22 @@ const outsideMark = (n: TeamNote) => (n.tainted && !n.verifiedAt ? ' (from outsi
  * Empty when the notebook has neither. Reading them counts as using them.
  */
 export function notebookBlock(binding: NotebookBinding): string {
+  return notebookBlockFor(binding).text;
+}
+
+/**
+ * `notebookBlock` with what What it saw records of it (C11): the shown notes' ids and kinds, the number shown and a hash
+ * of the text (SHA-256, 16 hex). `saw` is absent when nothing was shown. The text is byte for byte `notebookBlock`'s.
+ */
+export function notebookBlockFor(binding: NotebookBinding): { text: string; saw?: SawMemorySource } {
   const visibleNotes = noteStore.list({ teamId: binding.team.id, ...(binding.projectId && { projectId: binding.projectId }), runId: binding.runId, limit: 200 });
   const open = visibleNotes.filter((n) => n.kind === 'open_question' && n.status === 'open').slice(0, 5);
   const decisions = visibleNotes.filter((n) => n.kind === 'decision' && n.status !== 'disputed').slice(0, 5);
   const disputed = visibleNotes.filter((n) => n.status === 'disputed' && n.kind !== 'open_question').slice(0, 3);
-  if (!open.length && !decisions.length && !disputed.length) return '';
+  if (!open.length && !decisions.length && !disputed.length) return { text: '' };
   noteStore.touch([...open, ...decisions]);
   // C03: the intro line stays outside; the groups sit in one fence, each line escaped whole.
-  return [
+  const text = [
     'Team notebook (shared notes: search it with note_search before you start, add what you learn with note_add):',
     wrapMemory('team-notebook', [
       ...(decisions.length ? ['Decisions so far:', ...decisions.map((n) => `- ${n.text}${outsideMark(n)}`)] : []),
@@ -364,4 +374,9 @@ export function notebookBlock(binding: NotebookBinding): string {
       ...(disputed.length ? ['Disputed (do not rely on these):', ...disputed.map((n) => `- ${n.text}${outsideMark(n)}`)] : []),
     ]),
   ].join('\n');
+  const shown = [...decisions, ...open, ...disputed];
+  return {
+    text,
+    saw: { source: 'team-notebook', count: shown.length, items: shown.slice(0, SAW_MEMORY_MAX_ITEMS).map((n) => ({ id: n.id, kind: n.kind })), hash: createHash('sha256').update(text).digest('hex').slice(0, 16) },
+  };
 }

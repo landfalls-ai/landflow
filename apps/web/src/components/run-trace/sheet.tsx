@@ -236,7 +236,7 @@ function SpanSheet({
         )}{/* AG14: passages with their source, the raw output behind Raw */}
         <Value label="Error" value={span.error} tone="error" repo={repo} />
       </div>
-      {saw && <WhatItSaw mode={saw.mode} text={saw.text} persona={saw.persona} practices={saw.practices} executionId={model.executionId} withheld={saw.withheld} />}
+      {saw && <WhatItSaw mode={saw.mode} text={saw.text} persona={saw.persona} practices={saw.practices} memory={saw.memory} memoryText={saw.memoryText} executionId={model.executionId} withheld={saw.withheld} />}
       {span.id !== 'run' && span.kind !== 'wait' && span.kind !== 'model' && <RerunPanel model={model} spanId={span.id} />}
       {span.checks.length > 0 && (
         <>

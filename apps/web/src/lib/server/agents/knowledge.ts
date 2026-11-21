@@ -11,7 +11,7 @@ import type { VectorKnowledgeBaseConfig as KnowledgeBaseToolConfig } from '../..
 import { credentials } from '../credentials/vault';
 import { openAiConnection } from '../nodes/models';
 import { resolveInFilesDir } from '../nodes/files';
-import { pgConfig, search } from '../nodes/vector-stores';
+import { pgConfig, search, type Searcher } from '../nodes/vector-stores';
 import { registry } from '../plugins/registry';
 import { ollamaEmbeddings, openAiCompatibleEmbeddings } from '../rag/embeddings';
 import { fileDocuments, fileKind, type FileInput } from '../rag/files';
@@ -77,6 +77,15 @@ function embeddingsFor(config: KnowledgeBaseToolConfig['embeddings']): Embedding
   });
 }
 
+/**
+ * The store, collection, embeddings and search mode `knowledgeTool` searches with, for a caller that searches without a tool
+ * (the memory playground, C11). `internal` is the runtime's only (the reserved collections stay closed to a saved config).
+ */
+export function knowledgeSearcher(config: KnowledgeBaseToolConfig, internal?: KnowledgeInternal): Searcher & { embeddings: Embeddings } {
+  if (!config.collection?.trim()) throw new Error('The knowledge base has no collection');
+  return { store: openStore(config, internal), collection: config.collection.trim(), embeddings: embeddingsFor(config.embeddings), options: { searchMode: config.searchMode ?? 'vector' } };
+}
+
 /** The knowledge base as a tool: `{ query }` in, the best-matching passages out. */
 export function knowledgeTool(config: KnowledgeBaseToolConfig, internal?: KnowledgeInternal): BuiltTool | { error: string } {
   const label = config.name || config.collection || 'Knowledge base';
@@ -107,7 +116,7 @@ export function knowledgeTool(config: KnowledgeBaseToolConfig, internal?: Knowle
     requireApproval: Boolean(config.requireApproval),
     async invoke(input, ctx) {
       const query = String(input.query ?? '');
-      const searcher = { store, collection: config.collection.trim(), embeddings, options: { searchMode: config.searchMode ?? 'vector' }, ...(ctx.signal && { signal: ctx.signal }) };
+      const searcher = { store, collection: config.collection.trim(), embeddings, options: { searchMode: config.searchMode ?? 'vector' }, ...(ctx.signal && { signal: ctx.signal }) } satisfies Searcher;
       let documents;
       try {
         documents = await search(searcher, query, topK);

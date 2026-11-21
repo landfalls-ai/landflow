@@ -7,10 +7,11 @@ import type { ReactNode } from 'react';
 import { ChevronRight } from 'lucide-react';
 import type { ContextMode, RunPractice } from '@/lib/shared/project-context';
 import { PRACTICES_HEADING } from '@/lib/shared/practices';
-import type { SawPersona } from '@/lib/shared/what-it-saw';
-import { sawSections } from '@/lib/shared/what-it-saw-sections';
+import type { SawMemorySource, SawPersona } from '@/lib/shared/what-it-saw';
+import { sawMemoryOf, sawSections } from '@/lib/shared/what-it-saw-sections';
 import { Badge } from '../ui/badge';
 import { SectionTitle } from './parts';
+import { SawMemory } from './saw-memory';
 import { SawPracticesRow } from './saw-practices';
 
 export interface WhatItSawProps {
@@ -18,6 +19,10 @@ export interface WhatItSawProps {
   text: string;
   persona?: SawPersona;
   practices?: RunPractice[];
+  /** The memory the run was given (C11); none for an old run or content `off`. */
+  memory?: SawMemorySource[];
+  /** The exact fenced memory block(s), content `full` only. */
+  memoryText?: string;
   /** The run, when there is one: the practices row then says, per practice, whether the run cited it and how its checks went. */
   executionId?: string;
   /** The journal's content setting kept the text and persona out (`off`). */
@@ -35,12 +40,12 @@ function Part({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-export function WhatItSaw({ mode, text, persona, practices = [], executionId, withheld, bare }: WhatItSawProps) {
+export function WhatItSaw({ mode, text, persona, practices = [], memory = [], memoryText, executionId, withheld, bare }: WhatItSawProps) {
   const s = sawSections(text);
   const heading = s.practices[0]?.trim() === PRACTICES_HEADING;
   const practiceLines = (heading ? s.practices.slice(1) : s.practices).map((l) => l.trim()).filter(Boolean);
   const who = persona && (persona.role || persona.mission || persona.whatIDo) ? persona : undefined;
-  const nothing = !withheld && mode !== 'off' && !text.trim() && !who && practices.length === 0;
+  const nothing = !withheld && mode !== 'off' && !text.trim() && !who && practices.length === 0 && memory.length === 0;
   if (nothing) return null;
   return (
     <section aria-label="What it saw" data-testid="what-it-saw" className={bare ? undefined : 'mt-4'}>
@@ -86,6 +91,11 @@ export function WhatItSaw({ mode, text, persona, practices = [], executionId, wi
         )}
         {/* PR09: the practices given as handle@version, with cited and check per practice when there is a run. */}
         <SawPracticesRow practices={practices} executionId={executionId} />
+        {memory.length > 0 && (
+          <Part label="Memory">
+            <SawMemory memory={memory} memoryText={memoryText} />
+          </Part>
+        )}
         {who && (
           <Part label="Persona">
             {who.role && <p>{who.role}</p>}
@@ -116,6 +126,8 @@ export function sawOf(value: unknown): (WhatItSawProps & { at?: string }) | unde
     text: v.text,
     persona: v.persona && typeof v.persona === 'object' ? (v.persona as SawPersona) : undefined,
     practices: Array.isArray(v.practices) ? (v.practices as RunPractice[]) : [],
+    memory: sawMemoryOf(v.memory),
+    ...(typeof v.memoryText === 'string' && v.memoryText && { memoryText: v.memoryText }),
     ...(v.withheld === true && { withheld: true }),
     ...(typeof v.at === 'string' && { at: v.at }),
   };

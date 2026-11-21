@@ -91,12 +91,19 @@ A disagreement is a pair, not an edit: the Notebook tab shows the two notes side
   note** form are always there.
 - A note that arrives while the tab is open rings once and a deleted one fades out.
 
+### Try a search
+
+**Try** beside the notebook's search opens the memory playground (docs/run-trace.md#memory-playground): the same ranking as the
+tab and the notebook tools with mode, threshold and an optional rerank, showing each note's score. It never moves a note's expiry or
+last-access time, so looking does not keep a note alive.
+
 ## On the canvas and in the Run Trace
 
 When a member writes, searches or disputes a note, the team node and the live strip (`team-live.tsx`) say so in plain words
 ("Noting a fact", "Noting a decision", "Searching the notebook · 3 found", "Disputing a note") with a notebook-pen icon and an entrance animation, and the run's headlines
 include note moments (`shared/run-headlines.ts`, `shared/team-progress.ts`). In the Run Trace each note tool call is a
-step of its member.
+step of its member, and the notebook block the member was given (the open questions and decisions, with the note ids) is listed under
+**What it saw → Memory** on each member's span that got it (docs/run-trace.md#what-it-saw).
 
 ## Claude Code members: the notebook over MCP
 
