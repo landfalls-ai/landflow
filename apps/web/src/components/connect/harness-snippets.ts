@@ -113,7 +113,8 @@ const AGENT_ONLY_FIELDS: readonly string[] = ['error_details'];
 /**
  * The one-line Node script a hook runs (Claude Code needs Node, so it is there; `jq` may not be). It reads the event JSON from
  * stdin and keeps only HOOK_FIELDS, and of those only strings (cut to 300 characters) and finite numbers. It sends them with the
- * key from the environment, an order number from one clock (`performance.timeOrigin + performance.now()`, in microseconds, so
+ * key from the environment, an order number from one clock (`performance.timeOrigin + performance.now()`, in microseconds, plus
+ * two random digits so two hooks started in the same microsecond still differ; 18 digits, the most the server reads, so
  * parallel hooks get different numbers and no counter file is needed) and, when an agent was picked, its id in `X-Landflow-Agent`.
  * It gives up after 1.5 seconds and always exits quietly. No single quotes: it sits inside `node -e '…'`.
  *
@@ -131,7 +132,7 @@ export function hookFilterScript(origin: string, agentId?: string): string {
   if (agentId !== undefined && !/^[\w-]{1,100}$/.test(agentId)) throw new Error('The agent id has characters a hook cannot carry');
   const target = `${origin}/api/harness/claude-code/hooks`;
   const fields = HOOK_FIELDS.filter((field) => agentId || !AGENT_ONLY_FIELDS.includes(field));
-  const headers = `{"content-type":"application/json",authorization:"Bearer "+process.${ENV_OBJECT}[${JSON.stringify(HOOK_KEY_ENV)}],"x-landflow-hook-seq":String(Math.round((performance.timeOrigin+performance.now())*1000))${agentId ? `,"x-landflow-agent":${JSON.stringify(agentId)}` : ''}}`;
+  const headers = `{"content-type":"application/json",authorization:"Bearer "+process.${ENV_OBJECT}[${JSON.stringify(HOOK_KEY_ENV)}],"x-landflow-hook-seq":String(Math.round((performance.timeOrigin+performance.now())*1000))+String(Math.floor(Math.random()*100)).padStart(2,"0")${agentId ? `,"x-landflow-agent":${JSON.stringify(agentId)}` : ''}}`;
   return [
     'let d="";',
     'process.stdin.on("data",c=>d+=c).on("end",()=>{try{',
