@@ -2958,6 +2958,40 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(object({ action: { type: 'string', enum: ['forget', 'restore'] }, reason: { type: 'string', description: 'Required to forget (up to 500 characters)' }, user: { type: 'string', description: 'Another person (editors only)' } }, ['action'])),
     responses: { 200: reply('The memory', object({ item: { type: 'object', additionalProperties: true } }, ['item'])), 400: invalid, 404: notFound },
   });
+  // C11: the memory playground and the inspector's item states
+  add('post', '/api/memory/search', {
+    tag: 'Second brain',
+    id: 'searchMemoryPlayground',
+    summary: 'Try a memory search',
+    description: 'One search over an agent’s knowledge base (`source: { kind: "kb", agentId, toolId }`, edit access to the agent), a team’s notebook (`{ kind: "notebook", teamId }`, team access) or a project’s facts (`{ kind: "facts", projectId? }`, only the facts the caller may read), with `mode` (`keyword`, `meaning`, `hybrid`), `limit` (1-50), `threshold` (0-1) and an optional `rerank` (a Cohere credential the source’s project may use, or a local chat model). It changes nothing: no note is touched, no store written, no usage recorded, nothing audited. Answers each result’s score and its score after rerank, what the threshold dropped, and the time per stage; `error` says "The embedding model is unreachable" in meaning mode with the model down. A source the caller may not reach is 404; 20 searches a minute a person (429, `Retry-After`).',
+    body: jsonBody(
+      object(
+        {
+          source: { type: 'object', additionalProperties: true, description: '`{ kind: "kb", agentId, toolId }`, `{ kind: "notebook", teamId }` or `{ kind: "facts", projectId? }`' },
+          query: { type: 'string', description: '1 to 2,000 characters' },
+          mode: { type: 'string', enum: ['keyword', 'meaning', 'hybrid'] },
+          limit: { type: 'integer', description: '1-50 (default 10)' },
+          threshold: { type: 'number', description: '0-1 (default 0)' },
+          rerank: { type: 'object', additionalProperties: true, description: '`{ kind: "cohere", credentialId, model? }` or `{ kind: "llm", model }`' },
+        },
+        ['source', 'query'],
+      ),
+    ),
+    responses: {
+      200: reply('The results', object({ results: array({ type: 'object', additionalProperties: true }), dropped: { type: 'object', additionalProperties: true }, via: { type: 'string', enum: ['meaning', 'keywords'] }, timings: { type: 'object', additionalProperties: true }, error: { type: 'string' } }, ['results', 'dropped', 'via', 'timings'])),
+      400: invalid,
+      404: notFound,
+      429: { description: 'More than 20 searches in a minute', content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } },
+    },
+  });
+  add('get', '/api/memory/items', {
+    tag: 'Second brain',
+    id: 'memoryItemsState',
+    summary: 'Memories as they are now',
+    description: 'The state of memories a run was given (What it saw → Memory), by `ids` (comma separated, at most 50; 400 above): `{ id, live, version?, text?, forgottenAt?, reason?, canChange?, teamId? }`. A forgotten item (and its reason) is for people who may change it; an id the caller may not see, or that does not exist, is left out.',
+    query: [{ name: 'ids', description: 'Fact chain ids or note ids, comma separated (at most 50)', schema: { type: 'string' } }],
+    responses: { 200: reply('The states', object({ items: array({ type: 'object', additionalProperties: true }) }, ['items'])), 400: invalid },
+  });
   add('get', '/api/agents/{id}/sessions/{sid}', {
     tag: 'Agents',
     id: 'getAgentSession',

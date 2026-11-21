@@ -102,7 +102,8 @@ last-access time, so looking does not keep a note alive.
 When a member writes, searches or disputes a note, the team node and the live strip (`team-live.tsx`) say so in plain words
 ("Noting a fact", "Noting a decision", "Searching the notebook · 3 found", "Disputing a note") with a notebook-pen icon and an entrance animation, and the run's headlines
 include note moments (`shared/run-headlines.ts`, `shared/team-progress.ts`). In the Run Trace each note tool call is a
-step of its member. (Coming with the agent-memory work: the notebook block each member was given, listed under **What it saw → Memory**.)
+step of its member, and the notebook block the member was given (the open questions and decisions, with the note ids) is listed under
+**What it saw → Memory** on each member's span that got it (run-trace.md#what-it-saw), as a `team-notebook` source; the block's text shows only to those who may read memory text there.
 
 ## Claude Code members: the notebook over MCP
 

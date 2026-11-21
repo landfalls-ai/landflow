@@ -394,8 +394,11 @@ cut to 300 characters; never the instructions) and `practices` (handle and versi
   `memoryText`; `off` keeps neither `memory` nor `memoryText`. A run recorded before this, or with no memory, draws no Memory part.
   On open the part asks `GET /api/memory/items?ids=` (at most 50) for each item's state now: one forgotten since says "forgotten since
   <date>: <reason>", and a person who may change it gets **Forget** and **Versions**. An item the caller may not see is left as recorded.
-  The notebook block will be recorded on each member's span that got it, and the agent's profile and relevant memories come with the
-  agent-memory work (the session's `memory` and `memoryText`).
+  The notebook block is recorded on the lead's and each agent member's span that got it (a `team-notebook` source with the
+  note ids, and the text on `full`); the agent's profile and relevant memories are recorded by the agent's run (C09). Memory text is read
+  through `journal/memory-visibility.ts`: only the person it was for, the agent's editors and admins get `memoryText`; anyone else who can
+  read the run sees the sources (ids, versions, scores) and no text, so the part then has no exact-text fold. A notebook block names no
+  person, so its text is for admins; the Memory part still lists its notes. The sessions tab shows the sources only (`memory`), never the text.
 - **On the run.** The root span's sheet shows **Project** and **Goal** chips from `attrs.project` and `attrs.goal`.
 - **In sessions.** An agent's **Sessions** tab has the same section as a fold, built from the session's saved context
   and the agent's persona now.

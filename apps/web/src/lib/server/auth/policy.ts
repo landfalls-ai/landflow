@@ -70,6 +70,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/audit')) return { scope: 'audit:read' };
   if (under('/api/settings/audit')) return { scope: 'admin', action: read ? 'audit:read' : 'settings:manage' };
   // Four-eyes publish requests: builders list, ask and decide (who may approve is checked by lib/server/governance).
+  // C11: the memory playground and the inspector's item states only read; each handler checks its source (404 otherwise).
+  if (under('/api/memory')) return { scope: 'workflows:read' };
   if (under('/api/publish-requests')) return { scope: read ? 'workflows:read' : 'workflows:write' };
   // LL: the LLM gateway (docs/llm-gateway.md). Syncing budgets and minting keys change LiteLLM: admins. The status is for
   // anyone signed in (the route leaves out the admin detail). Cap-raise requests: anyone who reads runs may see theirs,

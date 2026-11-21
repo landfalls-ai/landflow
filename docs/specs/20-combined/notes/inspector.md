@@ -39,3 +39,9 @@ No new page.
   caller may read and never an agent-user memory; a Cohere credential must be usable by the searched source's project
   (`credentialUsableBy`); the facts source falls back to the caller's personal project. The notebook playground takes no project.
 - `dropped.best` of a facts search may count a hit the caller may not read (a score only).
+
+## T-9 (done after the P8 and P9 merge)
+
+- `auth/policy.ts`: `/api/memory` is `workflows:read`; two OpenAPI operations (`searchMemoryPlayground`, `memoryItemsState`); two `api.md` rows;
+  lines in `agents.md` and `second-brain.md`; `agent-teams/runtime.ts` records the notebook block through `sawMemory` / `sawMemoryText` for the lead and each agent member
+  (a remote A2A member is not a Landflow run, so none). No `memoryFor` / `memoryAgent`: the notebook is not a person's memory, so its text is for admins only (P9's `hideMemoryText`).

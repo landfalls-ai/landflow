@@ -24,7 +24,7 @@ import { liveJournal } from '../journal/writer';
 import { nanoid } from 'nanoid';
 import { contentOf } from '../journal/content';
 import { agentAtEndpoint, openNotebookCall } from '../notebook/binding';
-import { notebookBlock, projectOf, type NotebookBinding } from '../notebook/service';
+import { notebookBlockFor, projectOf, type NotebookBinding } from '../notebook/service';
 import { notebookTools } from '../notebook/tools';
 import { store } from '../store';
 import { holdMember } from './pause';
@@ -435,14 +435,19 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     return usage.costUsd !== undefined ? { ...usage, costUsd: Math.round(usage.costUsd * 1e6) / 1e6 } : usage;
   };
 
-  /** The goal and the manager's own task, in front of every request. */
-  const withAncestry = (manager: TeamMember, message: string) => {
-    const notebook = notebookBlock(notebookFor(manager));
-    return [teamCtx?.line ?? '', config.goal ? `Team goal: ${config.goal}` : '', state.tasks[manager.id] ? `${manager.title}'s current task: ${cut(state.tasks[manager.id], TASK_CHARS)}` : '', ...(notebook ? [notebook] : []), '', message]
+  /**
+   * The goal and the manager's own task, in front of every request, and what What it saw records of the notebook block in it
+   * (C11): the block's text and its source. The notebook is the team's, not a person's memory, so no `memoryFor` goes with it.
+   */
+  const ancestry = (manager: TeamMember, message: string) => {
+    const { text: notebook, saw } = notebookBlockFor(notebookFor(manager));
+    const text = [teamCtx?.line ?? '', config.goal ? `Team goal: ${config.goal}` : '', state.tasks[manager.id] ? `${manager.title}'s current task: ${cut(state.tasks[manager.id], TASK_CHARS)}` : '', ...(notebook ? [notebook] : []), '', message]
       .filter((line, i) => line || i > 0)
       .join('\n')
       .trim();
+    return { text, ...(saw && { sawMemory: [saw], sawMemoryText: notebook }) };
   };
+  const withAncestry = (manager: TeamMember, message: string) => ancestry(manager, message).text;
 
   const byId = new Map(config.members.map((m) => [m.id, m]));
   /** A member's managers, nearest first. */
@@ -728,12 +733,14 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
         ...(held && { pause: held }),
       };
       running.add(report.id);
+      const framed = text !== undefined ? ancestry(manager, text) : undefined;
       const result = await runAgent({
         agent,
         session,
         // The team's model for this member, in place of its agent's.
         ...(report.model && { flow: { model: await agentModel(report.model) } }),
-        ...(text !== undefined && { message: manages ? `${withAncestry(manager, text)}\n\n${REPORT_RULE}` : withAncestry(manager, text) }),
+        ...(framed && { message: manages ? `${framed.text}\n\n${REPORT_RULE}` : framed.text }),
+        ...(framed?.sawMemory && { sawMemory: framed.sawMemory, sawMemoryText: framed.sawMemoryText }),
         depth: ctx.depth + 1,
         maxDepth: ctx.maxDepth,
         approvals,
@@ -1034,13 +1041,15 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   const heldLead = request.execution && holdMember(request.execution.executionId, root.title, 'agent', { under: nodeSpan(), actor: { id: `agent:${leadAgent.id}`, name: root.title, type: 'agent' } });
   const role: TeamRole = { ...roleFor(root), tools: await toolsFor(root), ...(heldLead && { pause: heldLead }) };
   const leadStarted = Date.now();
+  const leadNotebook = request.resume ? undefined : notebookBlockFor(notebookFor(root));
   const result = await runAgent({
     agent: leadAgent,
     session,
     // The lead's session is a workflow's, so say it is the team's run: the team's project and goal, and the run line.
     context: { caller: 'team', teamId: request.team.id, agentId: leadAgent.id, ...(request.execution && { workflowId: request.execution.workflowId, executionId: request.execution.executionId, nodeName: request.execution.nodeName }) },
     ...(request.toolImages && { toolImages: request.toolImages }),
-    ...(!request.resume && { message: [config.goal ? `Team goal: ${config.goal}` : '', notebookBlock(notebookFor(root)), request.message, reportsOf(config, root.id).length ? REPORT_RULE : ''].filter(Boolean).join('\n\n') }),
+    ...(!request.resume && { message: [config.goal ? `Team goal: ${config.goal}` : '', leadNotebook?.text ?? '', request.message, reportsOf(config, root.id).length ? REPORT_RULE : ''].filter(Boolean).join('\n\n') }),
+    ...(leadNotebook?.saw && { sawMemory: [leadNotebook.saw], sawMemoryText: leadNotebook.text }),
     approvals,
     signal: request.signal,
     // A model connected to the node wins; else the team's model for the lead, else its agent's.

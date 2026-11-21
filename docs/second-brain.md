@@ -279,6 +279,7 @@ The detector `work-overlap` (`lib/server/brain/overlap.ts`) introduces two peopl
 - **Brain → What Landflow knows** (the gear at the foot of the Brain page's activity bar; it was on Insights):
   - the ledger's size, the facts, the model, and when the brain last studied and detected;
   - a search over the facts;
+  - **Try a search**: the memory playground over the facts the caller may read (keywords, meaning or hybrid, threshold, rerank), with scores and what the threshold dropped; it changes nothing ([run-trace.md](run-trace.md#memory-playground));
   - each detector's record (made, applied, dismissed, quieted) with **Run**, which runs that detector alone, and
     **Backtest** ([below](#backtesting-a-detector)), which shows a small card of how it would have fared. Flow
     detectors are listed from the moment they exist, linked to their workflow; one not yet published says so and has
