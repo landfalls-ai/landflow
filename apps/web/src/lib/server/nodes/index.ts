@@ -18,6 +18,7 @@ import { detectorTriggerNode, findSimilarNode, landflowUsageNode, recordEventNod
 import { practiceDraftNode } from './practices'; // PR03:
 import { practiceCheckNode } from './practice-check'; // PR08:
 import { aiAgentNode, anthropicChatModelNode, calculatorToolNode, ollamaChatModelNode, simpleMemoryNode } from './ai';
+import { aiJudgeNode } from './judge'; // C13:
 import { chainLlmNode, informationExtractorNode, textClassifierNode } from './chains';
 import { aiStep } from './composites';
 import { anthropicApiCredential, cohereApiCredential, httpBasicAuthCredential, httpBearerAuthCredential, httpHeaderAuthCredential, jwtAuthCredential, openAiApiCredential, strandsDeciderApiCredential, typesafeApiCredential } from './credentials';
@@ -132,6 +133,7 @@ export const corePlugin = definePlugin({
     ...briefingNodes,
     chainLlmNode,
     textClassifierNode,
+    aiJudgeNode, // C13:
     informationExtractorNode,
     openAiNode,
     anthropicChatModelNode,

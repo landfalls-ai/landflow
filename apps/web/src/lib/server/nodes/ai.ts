@@ -684,6 +684,8 @@ export const calculatorToolNode = defineNode({
     color: '#f472b6',
     inputs: [],
     outputs: [{ type: 'ai_tool', displayName: 'Tool' }],
+    // C13: pure arithmetic changes nothing, so an AI Judge may use it.
+    toolAnnotations: { readOnlyHint: true },
     properties: [],
   },
   supplyData(ctx): AgentTool {

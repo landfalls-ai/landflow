@@ -11,10 +11,10 @@ import { approvalSubject, type Agent, type AgentSession, type AgentStreamEvent }
 import { agentAllowedBy } from '../../shared/project-policy';
 // AG10: the chat approval (the AI Agent node's own wait, reused).
 import { approvalSettings, askForApproval, decisionsOf, toolTargets } from './ai';
-import { inboxMode, maskParams, REFUSE_WHY, refusedResult, settledLine, type InboxOpen, type RefuseWhy } from '../../shared/approval-inbox'; // AP02:
+import { inboxMode, maskParams, REFUSE_WHY, refusedResult, settledLine, type InboxOpen } from '../../shared/approval-inbox'; // AP02:
 import { inboxPort } from '../approval-inbox/port'; // AP02:
 import { redactValue } from '../secrets/redact'; // AP02:
-import type { ExecutionRecord } from '../../shared/types'; // wave ap1:
+import { runGraph, triggerRefusal } from './inbox-run'; // C13: moved so the AI Judge shares them
 
 const main = [{ type: 'main' as const }];
 
@@ -428,49 +428,6 @@ export const messageAgentNode = defineNode({
     },
   },
 });
-
-/** AP02: the graph this run uses: its own record's, else the saved version it started with, else the saved workflow. */
-async function runGraph(executionId: string, workflowId: string | undefined) {
-  const { liveExecution } = await import('../runner');
-  const { store } = await import('../store');
-  const record = liveExecution(executionId) ?? (await store.loadExecution(executionId));
-  const id = workflowId ?? record?.workflowId;
-  const versionId = record?.versionId ?? (await import('../agents/versions')).runVersions(executionId, record)?.workflow.versionId;
-  const snapshot = record?.workflow ?? (versionId && id ? (await import('../versions')).getVersion(id, versionId)?.workflow : undefined) ?? (id ? store.getWorkflow(id) : undefined);
-  return { record, workflow: snapshot, workflowId: id };
-}
-
-/**
- * Wave ap1: why a run that is no editor's cannot wait for an approval, whatever its execution mode: the hosted chat page
- * (`core.chatTrigger`, started in mode 'webhook') cannot show one and an MCP call answers its caller at once. Read from the run's
- * own record only: a workflow such a run called was stamped with that trigger when it started (runner/run.ts), so no parent has to
- * be found later. A run with no `triggerType` (one that waits across the upgrade) is judged by the first node it ran, and a stamped type is checked the same way: unless that
- * is a known trigger that can wait, it refuses (fail closed); undefined for every trigger that can wait.
- */
-async function triggerRefusal(executionId: string): Promise<RefuseWhy | undefined> {
-  const { liveExecution } = await import('../runner');
-  const { store } = await import('../store');
-  const record: ExecutionRecord | undefined = liveExecution(executionId) ?? (await store.loadExecution(executionId));
-  if (!record) return 'unknownOrigin';
-  if (record.mode === 'mcp') return 'mcp';
-  const { recordTrigger, triggerCanWait } = await import('../runner/trigger');
-  const { MAX_WORKFLOW_DEPTH } = await import('../runner/types');
-  // A record from before the wave has no stamp: its parent's verdict, else its first node. Read from the live run first, then the saved one.
-  // The ancestors are read first (async, live then saved), so the sync verdict never reads the store's cache.
-  const known = new Map<string, ExecutionRecord>([[record.executionId, record]]);
-  for (let at = record, hops = 0; !record.triggerType && at.parentExecutionId && !known.has(at.parentExecutionId) && hops <= MAX_WORKFLOW_DEPTH; hops++) {
-    const parent = liveExecution(at.parentExecutionId) ?? (await store.loadExecution(at.parentExecutionId));
-    if (!parent) break;
-    known.set(parent.executionId, parent);
-    at = parent;
-  }
-  const type = recordTrigger(record, (id) => known.get(id));
-  // Fail closed on whatever type it ends with, stamped or derived: only a known trigger that can wait (or the manual one) waits.
-  if (type !== 'core.mcpTrigger' && type !== 'core.chatTrigger' && !triggerCanWait(type)) return 'unknownOrigin';
-  if (type === 'core.mcpTrigger') return 'mcp';
-  if (type === 'core.chatTrigger') return 'hostedChat';
-  return undefined;
-}
 
 /** AP02: whether the run's workflow has no value saved for this parameter of the node (the descriptor's default would apply). False when the graph is not found. */
 async function savedWithout(ctx: IExecuteContext, nodeId: string, name: string): Promise<boolean> {

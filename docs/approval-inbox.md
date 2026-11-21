@@ -20,6 +20,7 @@ Run Trace card are AP03's: see [What you see](#what-you-see). Part of the [Landf
   approval*, *an MCP call answers its caller at once*). A step set to *Refuse* keeps refusing. Spotlight's own test runs, the editor's chat, manual runs, the eval gate and sub-agents are unchanged. The publish line for a *called workflow* reads that workflow alone, so it says *waits* even though a call from a hosted chat or MCP run refuses; an error workflow fired by a failing hosted-chat run, or by a failing MCP run, waits (its input carries the caller's data; a decision for the person to confirm); a plugin's chat trigger has its own word, *chat app*, and waits.
   Not covered: an agent deployed to kagent (its pause lives in kagent's own task) and Run a Team's members (they already wait in
   production with no expiry and no nudge).
+- **Judge requests** (C13): an [AI Judge](features/ai.md#ai-judge) step that could not decide (low confidence, no or invalid decision, an error, a limit) and whose fallback is *Ask a person* opens one request of kind `judge` per undecided item, in the same runs and with the same expiry, claim and access rules. A run that cannot wait denies instead. See [Judge requests](#judge-requests).
 - **Who decides**: a signed-in person with run access on the workflow (its project's editors and admins, an editor share, instance
   owners and admins), the same people who may decide a run's approval today. Never an API key, an agent, Spotlight or the MCP
   server. There is no four-eyes rule on top: that is a different mechanism for publishing.
@@ -35,7 +36,7 @@ address) and who settled it, by which door and when. Parameters pass the host's 
 becomes `[redacted]`) and then `maskParams` (a key such as `password`, `token`, `api-key`, `authorization` becomes `••••••`)
 before they are stored; they are masked again when shown, so a row, a view, a list, a mail and an alert never hold a secret.
 
-Rows are **kept** (the audit of who decided). A deleted workflow keeps its rows, which then only instance owners and admins read; a
+Migration **2920** adds `kind` (`judge`; NULL, every older row, is a tool request) and `evidence` (JSON, judge requests only). Rows are **kept** (the audit of who decided). A deleted workflow keeps its rows, which then only instance owners and admins read; a
 transferred workflow's rows follow it, because visibility is worked out from the workflow at request time.
 
 ## One claim behind every door
@@ -68,6 +69,14 @@ See [reference/api.md](reference/api.md). `GET /api/approval-inbox` (`?status=wa
 Approve and deny answer `200 { request }` (the settled view) as soon as the claim is won; the run goes on in the background.
 `404` for a request on a workflow you cannot read, `403` for one you can read but not run (or an API key).
 
+## Judge requests
+
+A judge request is a row with `kind = 'judge'`. It is asked about the request itself, not a tool: `tool` is the judge step's name, `call_id` is `judge:<item number>`, the agent and session columns hold `''` and `agent_name` reads *AI Judge*; `params` is the **item** the judge read. **Approve** lets that item continue on the judge's Approved output (`decidedBy` the person); **Deny**, expiry and a cancelled run continue on Denied, and the settled line says so (*nobody decided “Refund check” in time, so it was denied*).
+
+`evidence` (the view's `evidence`) holds `fallbackReason` (one of *no decision, invalid decision, two decisions, low confidence, round limit, tool call limit, model error, tool error, usage cap*), `rounds`, `toolCalls`, the judge's `reason`, `confidence` and the way it leaned (`decision`) when it gave a valid one, and `steps` (each tool call: tool, input, output cut to 500 characters, whether it failed). It passes the host's secret redaction and the key mask like `params`, and is at most 16 KB (steps are dropped from the end past it).
+
+It follows the run's **trace content mode**: with `full` the item and evidence are kept as above; with `summaries` every text is cut to 400 characters; with `off` the item is **not kept at all** (`params` is empty), and the evidence keeps only the reason code, the counts and the tool names. The row never holds more of the item than the Run Trace does. Who may see and decide it is the same as for a tool request: run access on the workflow decides.
+
 ## Nudges
 
 Existing channels only, only ones that are set up, once per request (the call that inserts the row nudges; a re-open sends
@@ -79,6 +88,7 @@ nothing), in the background, never failing the run.
   agent versions, the expiry, **Approve** and **Deny** links (signed, one use per recipient, expiring with the request) and the
   Needs you link (`<public URL>/?approval=<id>`). A link opens a confirmation page (mail scanners fetch links); the page's button
   decides. After the request settled the page says who won (409) or that it expired (410); a link used after its time says *This approval link has expired at <time>* (the request's expiry).
+- **A judge request** mails *Decision needed: “Refund check” in “Refund flow”*: which judge could not decide and why in fixed words, the masked item, the judge's reason (cut to 500 characters) and the same links; the Approve link means *the item continues as approved*.
 - **Slack, a signed webhook, Telegram, Teams, Discord or an alert email**: only through an **alert rule you add** (Settings →
   Alerts → New rule, event *Waits for your approval*). The alert service's ticker sends one message per request and rule; it names
   the tool, agent, workflow, destination, expiry and the link, **never a parameter value**. Nothing is sent when no rule has the
@@ -94,7 +104,7 @@ expire at the same time. Expiry **refuses** the call and never approves it.
 
 `GET /api/runs/needs-you` lists one `approval` item per waiting request, with `requestId`, `inboxStatus`, `tool`, `agentName`,
 `agentVersion`, `workflowVersion`, `destination`, `expiresAt` and `canDecide` for the caller; the title reads *“Alert mailer” wants
-to run “Send Email”* and the detail the destination and *workflow v4*. A settled request never shows.
+to run “Send Email”* and the detail the destination and *workflow v4*. A settled request never shows. A judge request adds `inboxKind: 'judge'` and `judgeWhy` (the fixed reason code) and reads *“Refund check” could not decide: it was not sure enough (0.52)*.
 
 ## What you see
 
@@ -109,6 +119,8 @@ Shots are from a development host with made-up requests, at 1440 by 900 and 390 
 - **The Run Trace card.** *Waiting for your approval since … · expires …*, the versions and the destination, **Approve: Send Email** and **Deny**, no **Edit**.
 - **The publish card and the Publish menu.** A clock line for a step that will wait, the shield line for one that still refuses.
 - **The agent page's session.** *Waiting in Needs you · Open it* under the waiting call, no **Approve** or **Deny**.
+
+- **A judge request.** The row is badged *Decision* and reads *“Refund check” could not decide: it was not sure enough (0.52)* with the workflow, no agent. **Details** list the item (a `token` key reads `••••••`; *This run keeps no item text* when its trace content is off), what the judge concluded with its confidence, and each tool it used. The Run Trace card shows the same under the judge's title. Everything is shown as text.
 
 There is no *Approve all*, no select-many and no keyboard shortcut that approves.
 

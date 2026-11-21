@@ -9,6 +9,7 @@
  * visibility is worked out from `workflow_id` at request time.
  */
 import { randomUUID } from 'node:crypto';
+import { EVIDENCE_MAX_BYTES, EVIDENCE_OUTPUT_CHARS, JUDGE_LIMITS, type JudgeEvidence } from '../../shared/judge';
 import { closedAnswer, EXPIRY_VARIABLE, expiryMinutes, maskParams, type InboxOpen, type InboxRequestView, type InboxStatus, type InboxVia } from '../../shared/approval-inbox';
 import { database, type Database } from '../db';
 import { envString } from '../config';
@@ -43,6 +44,10 @@ export interface InboxRow {
   decided_by_name: string | null;
   decided_via: InboxVia | null;
   decided_at: string | null;
+  /** C13 (migration 2920): `judge` for an AI Judge's request; NULL (every older row) is a tool request. */
+  kind: string | null;
+  /** C13: the judge's evidence as JSON (masked, at most 16 KB); NULL for a tool request. */
+  evidence: string | null;
 }
 
 const db = (): Database => database();
@@ -67,6 +72,18 @@ const parseJson = <T>(text: string | null | undefined, fallback: T): T => {
     return fallback;
   }
 };
+
+/**
+ * What a judge's request keeps of the judge's work (C13): the host's redaction and the key mask over every step, each output cut to
+ * 500 characters, and the whole at most 16 KB (steps dropped from the end past it). The row never holds a secret or a full tool answer.
+ */
+export function evidenceJson(evidence: JudgeEvidence): string {
+  const safe = maskParams(redactValue(evidence)) as JudgeEvidence;
+  const steps = safe.steps.map((step) => ({ ...step, output: String(step.output ?? '').slice(0, EVIDENCE_OUTPUT_CHARS) }));
+  const base: JudgeEvidence = { ...safe, ...(safe.reason !== undefined && { reason: String(safe.reason).slice(0, JUDGE_LIMITS.reasonChars) }), steps };
+  while (steps.length && Buffer.byteLength(JSON.stringify({ ...base, steps }), 'utf8') > EVIDENCE_MAX_BYTES) steps.pop();
+  return JSON.stringify({ ...base, steps });
+}
 
 /** Open one request per call, once per (execution, call). `new` says which calls got a row now (only those are nudged). */
 export function openRequests(calls: InboxOpen[], now = new Date()): { ids: Record<string, string>; expiresAt: string; minutes: number; created: InboxRow[] } {
@@ -121,6 +138,8 @@ export function openRequests(calls: InboxOpen[], now = new Date()): { ids: Recor
         decided_by_name: null,
         decided_via: null,
         decided_at: null,
+        kind: call.kind === 'judge' ? 'judge' : null,
+        evidence: call.kind === 'judge' && call.evidence ? evidenceJson(call.evidence) : null,
       };
       // Postgres mode: the replayed insert is `ON CONFLICT (id) DO NOTHING`, while the table is also UNIQUE (execution_id, call_id).
       // Two processes opening the same call before replication catches up would make the later batch a unique violation, not a
@@ -227,17 +246,23 @@ export function outcomeOf(row: InboxRow): InboxOutcome {
 /** The closed answer for a row that is not waiting (409 already decided, 410 expired, 409 cancelled). */
 export function closedOf(row: InboxRow): { status: 409 | 410; message: string } {
   return closedAnswer(
-    { status: row.status, tool: row.tool, decidedByName: row.decided_by_name ?? undefined, decidedBy: row.decided_by ?? undefined, decidedAt: row.decided_at ?? undefined, expiresAt: row.expires_at },
+    { status: row.status, tool: row.tool, decidedByName: row.decided_by_name ?? undefined, decidedBy: row.decided_by ?? undefined, decidedAt: row.decided_at ?? undefined, expiresAt: row.expires_at, kind: kindOf(row) },
     serverClock,
   );
 }
+
+/** The request's kind: a row with no kind is a tool request. */
+export const kindOf = (row: Pick<InboxRow, 'kind'>): 'tool' | 'judge' => (row.kind === 'judge' ? 'judge' : 'tool');
 
 /** The request as the routes show it (`mayDecide`: access.ts works it out for the viewer). Nothing secret: `params` was masked when it was written and is masked again here. */
 export function viewOf(row: InboxRow, mayDecide = false): InboxRequestView {
   const nudged = parseJson<{ email?: number; channels?: number } | undefined>(row.nudged, undefined);
   const version = row.agent_version === null ? undefined : row.agent_version === 'draft' ? 'draft' : Number(row.agent_version);
+  const evidence = row.kind === 'judge' ? parseJson<JudgeEvidence | undefined>(row.evidence, undefined) : undefined;
   return {
     id: row.id,
+    kind: kindOf(row),
+    ...(evidence && { evidence: maskParams(evidence) }),
     status: row.status,
     executionId: row.execution_id,
     callId: row.call_id,

@@ -81,6 +81,7 @@ still works.
 | `LANDFLOW_RETENTION_EVERY` | 50 | finished runs between retention passes (minimum 1: `0` or a fraction counts as 1); the hourly timer and Prune now run regardless, so the count may exceed its cap by up to N-1 between passes ([features/settings-and-data.md](../features/settings-and-data.md)) |
 | `LANDFLOW_APPROVAL_EMAIL_TTL_HOURS` | `24` | hours an Approve or Reject link in an approval email stays valid (minimum 1) |
 | `LANDFLOW_APPROVAL_INBOX_EXPIRY_MINUTES` | `1440` | minutes a production run waits for a tool approval in Needs you before the call is refused (1 to 43,200); read when the request opens |
+| `LANDFLOW_JUDGE_TRUSTED_MCP` | – | comma-separated MCP server URLs (an origin trusts every path under it) whose `readOnlyHint` tools the AI Judge may use; a server says for itself that a tool only reads, so without an admin listing it here the judge refuses its tools |
 | `LANDFLOW_ROLE` | `main` | `main` (UI, API, webhooks) or `worker`; `pnpm worker` sets `worker` |
 | `LANDFLOW_VALKEY_SENTINEL_USERNAME` | – | user for the sentinels themselves, when they require AUTH |
 | `LANDFLOW_VALKEY_SENTINEL_PASSWORD` *(secret)* | – | password for the sentinels themselves, when they require AUTH |

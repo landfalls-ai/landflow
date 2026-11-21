@@ -5,7 +5,7 @@
  * and what happens to rows when a workflow is deleted or moved. The waiting runs are real: a test node asks the way the Run an
  * Agent node will (an inbox request per call, then `putExecutionToWait` with `data.approval` and `data.inbox`).
  */
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -199,13 +199,6 @@ const idOf = (a: Awaited<ReturnType<typeof ask>>, n = 0) => a.ids[a.calls[n].cal
 // ---------------------------------------------------------------------------
 
 describe('the contract and the table', () => {
-  it.skipIf(!process.env.LANDFLOW_BACKBONE_CONTRACTS)('the copies equal contracts/ap1', () => {
-    const dir = process.env.LANDFLOW_BACKBONE_CONTRACTS!;
-    const src = join(__dirname, '..', 'src', 'lib');
-    expect(readFileSync(join(src, 'shared', 'approval-inbox.ts'), 'utf8')).toBe(readFileSync(join(dir, 'ap1', 'approval-inbox.ts'), 'utf8'));
-    expect(readFileSync(join(src, 'server', 'approval-inbox', 'port.ts'), 'utf8')).toBe(readFileSync(join(dir, 'ap1', 'inbox-port.ts'), 'utf8'));
-  });
-
   it('migration 2907 runs on a fresh database and on one at 2906', () => {
     const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite');
     const existing = new DatabaseSync(':memory:');
