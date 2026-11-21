@@ -59,3 +59,24 @@ export const hookAnswer = z.object({
   ruleId: z.string().max(200).optional(),
 });
 export type HookAnswer = z.infer<typeof hookAnswer>;
+
+/** The stored document, checked on every read: one invalid hook makes the whole row unreadable (never a silent gap in the guard). */
+export const storedHooks = z.object({
+  hooks: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        name: z.string().min(1),
+        enabled: z.boolean(),
+        url: z.string().min(1),
+        auth: z.enum(['hmac', 'bearer', 'none']),
+        credentialId: z.string().optional(),
+        timeoutMs: z.number().int().min(MIN_HOOK_TIMEOUT_MS).max(MAX_HOOK_TIMEOUT_MS),
+        failureMode: z.enum(['closed', 'open']),
+        match: z.object({ hosts: z.array(z.string()), pathPrefix: z.string().optional(), tools: z.array(z.string()), methods: z.array(methods).min(1), projects: z.array(z.string()) }),
+        createdAt: z.string(),
+        updatedAt: z.string(),
+      }),
+    )
+    .max(100),
+});

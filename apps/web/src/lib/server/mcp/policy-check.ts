@@ -21,9 +21,10 @@ import { redactValue } from '../secrets/redact';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry';
 import { hostMetrics } from '../telemetry/metrics';
-import { maskParams } from '../../shared/approval-inbox';
+import { isProduction } from '../config';
+import { SECRET_KEY } from '../telemetry/config';
 import { UNAVAILABLE, type McpPolicyHook, type McpPolicyMethod } from '../../shared/mcp-policy';
-import { HOOK_CREDENTIAL_TYPE, listPolicyHooks } from './policy-hooks';
+import { HOOK_CREDENTIAL_TYPE, listPolicyHooks, policyHooksUnreadable } from './policy-hooks';
 import { hookAnswer } from './policy-hooks-schema';
 
 export interface McpCallSubject {
@@ -94,9 +95,50 @@ function publicUrl(serverUrl: string): string {
   return `${url.origin}${url.pathname}`;
 }
 
-/** The request body: what the service decides on. Arguments redacted (known secret values) and masked (secret-looking keys). */
+const MASK = '••••••';
+/** A whole value shaped like an auth header ("Bearer eyJ…"). */
+const BEARER = /^(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}$/i;
+/** The whole request, as JSON bytes. A larger one is never sent and counts as a failure (the failure mode decides). */
+export const MAX_REQUEST_BYTES = 256 * 1024;
+
+/**
+ * The arguments as a hook may see them: known secret values replaced (`redactValue`), secret-looking keys and auth-header
+ * strings masked, and NEVER cut: a decision made on half of an argument is no decision. Every masked place is listed in
+ * `masked` (as `a.b[0].c`), so a service that cannot judge what it cannot see can deny it.
+ */
+export function maskForHook(args: Record<string, unknown>): { arguments: unknown; masked: string[] } {
+  const masked: string[] = [];
+  const walk = (value: unknown, path: string, depth: number): unknown => {
+    if (typeof value === 'string') {
+      if (BEARER.test(value) || redactValue(value) !== value) {
+        masked.push(path);
+        return BEARER.test(value) ? MASK : redactValue(value);
+      }
+      return value;
+    }
+    if (!value || typeof value !== 'object') return value;
+    if (depth > 32) {
+      masked.push(path);
+      return MASK;
+    }
+    if (Array.isArray(value)) return value.map((entry, i) => walk(entry, `${path}[${i}]`, depth + 1));
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      const here = path ? `${path}.${key}` : key;
+      if (SECRET_KEY.test(key) && entry !== '' && entry != null) {
+        masked.push(here);
+        out[key] = MASK;
+      } else out[key] = walk(entry, here, depth + 1);
+    }
+    return out;
+  };
+  return { arguments: walk(args, '', 0), masked };
+}
+
+/** The request body: what the service decides on. `truncated` is always false: an oversized request is not sent at all. */
 export function hookRequestBody(subject: McpCallSubject, ctx: McpCallContext, extra: { test?: boolean } = {}) {
   const { projectId, ...caller } = ctx;
+  const { arguments: args, masked } = maskForHook(subject.args);
   return {
     requestId: randomUUID(),
     time: new Date().toISOString(),
@@ -105,7 +147,9 @@ export function hookRequestBody(subject: McpCallSubject, ctx: McpCallContext, ex
     ...(subject.tool !== undefined && { tool: subject.tool }),
     ...(subject.uri !== undefined && { uri: subject.uri }),
     ...(subject.prompt !== undefined && { prompt: subject.prompt }),
-    arguments: maskParams(redactValue(subject.args)),
+    arguments: args,
+    masked,
+    truncated: false,
     caller,
     ...(projectId && { projectId }),
     ...(extra.test && { test: true }),
@@ -154,6 +198,7 @@ export async function askHook(hook: McpPolicyHook, body: object, signal?: AbortS
   const ms = () => Date.now() - started;
   try {
     const text = JSON.stringify(body);
+    if (Buffer.byteLength(text) > MAX_REQUEST_BYTES) return { ok: false, error: `the request is larger than ${MAX_REQUEST_BYTES / 1024} KB`, ms: ms() };
     const headers: Record<string, string> = { 'content-type': 'application/json', 'user-agent': 'Landflow-MCP-Policy/1' };
     if (hook.auth !== 'none') {
       const token = await hookToken(hook);
@@ -180,6 +225,8 @@ export async function askHook(hook: McpPolicyHook, body: object, signal?: AbortS
     if (!parsed.success) return { ok: false, status: response.status, error: 'the answer is not { decision: "allow" | "deny" }', ms: ms() };
     return { ok: true, status: response.status, ...parsed.data, ms: ms() };
   } catch (error) {
+    // A cancelled run is not an outage: the abort goes on up, with no check, no audit and no failure mode.
+    if (signal?.aborted) throw signal.reason ?? error;
     const timedOut = (error as Error).name === 'TimeoutError';
     const cause = (error as Error & { cause?: Error }).cause?.message ?? (error as Error).message;
     return { ok: false, error: timedOut ? `no answer within ${hook.timeoutMs} ms` : cause, ms: ms() };
@@ -237,13 +284,13 @@ function record(outcome: HookOutcome, subject: McpCallSubject, ctx: McpCallConte
   const label = outcome.kind === 'allow' ? 'allow' : outcome.kind === 'deny' ? 'deny' : failedClosed ? 'failed_closed' : 'failed_open';
   hostMetrics().mcpPolicyDecisions.add(1, { decision: label, hook: hook.name });
   const status = outcome.kind === 'allow' ? 'pass' : failedClosed ? 'fail' : 'warn';
-  const message = outcome.kind === 'allow' ? `Allowed by ${hook.name}` : outcome.kind === 'deny' ? `Denied by ${hook.name}: ${outcome.reason}` : `${hook.name}: ${UNAVAILABLE} (${outcome.error}); the call ${failedClosed ? 'was blocked' : 'went ahead'}`;
+  const message = outcome.kind === 'allow' ? `Allowed by ${hook.name}` : outcome.kind === 'deny' ? `Denied by ${hook.name}: ${outcome.reason}` : `${hook.name}: ${UNAVAILABLE}; the call ${failedClosed ? 'was blocked' : 'went ahead'}`;
   try {
     activeNode()?.report?.({ type: 'check', name: 'policy', status, message, subject: name, evidence: { hook: hook.name, decision: label, ...(ruleId && { ruleId }) } });
   } catch {
     // A report that can't be stored never changes the decision.
   }
-  logger.info('mcp policy decision', { hook: hook.id, decision: label, method: subject.method, ...(ctx.executionId && { executionId: ctx.executionId }) });
+  logger.info('mcp policy decision', { hook: hook.id, decision: label, ...(outcome.kind === 'failed' && { error: outcome.error }), method: subject.method, ...(ctx.executionId && { executionId: ctx.executionId }) });
   if (outcome.kind === 'allow') return;
   const host = new URL(subject.serverUrl).host;
   recordAudit({
@@ -262,6 +309,13 @@ function record(outcome: HookOutcome, subject: McpCallSubject, ctx: McpCallConte
  * With no hook configured this is one cached read.
  */
 export async function checkMcpCall(subject: McpCallSubject, ctx: McpCallContext = callContext(), signal?: AbortSignal): Promise<PolicyVerdict> {
+  signal?.throwIfAborted();
+  // Hooks that cannot be read are not "no hooks": in production the call is blocked, elsewhere it goes ahead (logged and counted on read).
+  if (policyHooksUnreadable() && isProduction()) {
+    hostMetrics().mcpPolicyDecisions.add(1, { decision: 'failed_closed', hook: 'store' });
+    recordAudit({ action: 'mcp.policy.failed', outcome: 'denied', actor: ctx.userId ? { id: ctx.userId } : 'system', target: { type: 'mcp-server', id: new URL(subject.serverUrl).host, name: new URL(subject.serverUrl).host }, project: ctx.projectId ?? null, summary: 'The MCP policy hooks could not be read; the call was blocked', details: { hook: 'store', method: subject.method, tool: target(subject), failureMode: 'closed', ...(ctx.executionId && { executionId: ctx.executionId }) } });
+    return { decision: 'deny', hook: 'policy hooks', reason: UNAVAILABLE, failed: true };
+  }
   const hooks = listPolicyHooks().filter((hook) => matches(hook, subject, ctx));
   if (!hooks.length) return { decision: 'allow', hooks: [] };
   const outcomes = await Promise.all(hooks.map((hook) => decide(hook, subject, ctx, signal)));

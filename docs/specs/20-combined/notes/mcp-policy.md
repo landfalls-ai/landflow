@@ -4,8 +4,10 @@
 
 - MCP policy hooks cover what goes through Landflow's MCP client (`callMcpTool`, `readMcpResource`, `getMcpPrompt`): not kagent agents' direct MCP calls, not calls through the agentgateway, not inbound calls to Landflow's own MCP server, not non-MCP tools.
 - A standalone agent chat (no workflow node) has no span: the model reads the denial and the audit event and counter still record it, but there is no `policy` check (`activeNode()` is empty there).
+- Where the `policy` check does not land on a span: `aroundNode` is passed only by `runner/run.ts` and `mcp/trigger.ts` (every `executeWorkflow` caller in the host), so workflow runs, sub-workflows and tool sub-runs are covered. Not covered, the check is missing but the audit event and counter still record the decision: standalone agent sessions (test chat, A2A, channels, schedules of an agent), team runs on the agent runtime, and Spotlight or architect calls outside a run (`activeNode()` is empty there).
 - The request carries no agent version or team (the usage scope does not hold them yet).
 - The allow cache (60 s) is per process and per run: a worker that did not see the allow asks the hook again.
+- Arguments reach the hook whole (never cut, 256 KB cap for the request); values under secret-looking keys are masked and listed in `masked`, so a service cannot see them. Receivers must reject stale timestamps (over 5 min) and repeated `requestId`s.
 - A hook cannot rewrite arguments, only allow or deny; credential injection is C26.
 - A tool's read-only flag (`AgentTool.readOnlyHint`) is the MCP server's own hint, not a guarantee; nothing here relies on it for safety.
 - `mcp/approval-mode.ts` still reads `process.env` directly.

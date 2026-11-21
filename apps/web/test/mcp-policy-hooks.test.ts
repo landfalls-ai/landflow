@@ -27,10 +27,11 @@ const { credentials } = await import('@/lib/server/credentials/vault');
 const { agentToolsFrom, callMcpTool, closeMcpClients, endpointFrom, getMcpPrompt, listMcpTools, readMcpResource, toolOutput } = await import('@/lib/server/mcp/client');
 const { runInNode, activeNode } = await import('@/lib/server/ai-usage/node-context');
 const { runInUsageScope, UsageScope } = await import('@/lib/server/ai-usage/scope');
-const { createPolicyHook, deletePolicyHook, listPolicyHooks, updatePolicyHook, PolicyHookError } = await import('@/lib/server/mcp/policy-hooks');
+const { createPolicyHook, deletePolicyHook, invalidatePolicyHooks, listPolicyHooks, policyHooksUnreadable, updatePolicyHook, PolicyHookError, HOOKS_SETTINGS_KEY } = await import('@/lib/server/mcp/policy-hooks');
 const { checkMcpCall, matches, resetPolicyCache } = await import('@/lib/server/mcp/policy-check');
 const { signature } = await import('@/lib/server/alerts/channels');
 const { queryEvents } = await import('@/lib/server/audit/store');
+const { database } = await import('@/lib/server/db');
 const { hostMetrics } = await import('@/lib/server/telemetry/metrics');
 const { createTranslator } = await import('@/lib/server/journal/translator');
 const { buildToolset } = await import('@/lib/server/agents/tools');
@@ -116,7 +117,10 @@ afterAll(async () => {
   }
 });
 
-const clearHooks = () => listPolicyHooks().forEach((h) => deletePolicyHook(h.id));
+const clearHooks = () => {
+  database().upsert('settings', { key: HOOKS_SETTINGS_KEY, value: JSON.stringify({ hooks: [] }) });
+  invalidatePolicyHooks();
+};
 let secret: { id: string; name: string };
 
 beforeEach(() => {
@@ -208,6 +212,8 @@ describe('the store', () => {
       expect(() => createPolicyHook(hookInput())).toThrow(/private address/);
       vi.stubEnv('LANDFLOW_OUTBOUND_ALLOW', '127.0.0.1');
       expect(createPolicyHook(hookInput()).failureMode).toBe('closed');
+      // A bearer token over plain http is refused in production; HMAC (the key is not sent) is fine.
+      expect(() => createPolicyHook(hookInput({ auth: 'bearer' }))).toThrow(/https/);
     } finally {
       vi.unstubAllEnvs();
     }
@@ -367,6 +373,117 @@ describe('the request to the service', () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review fixes: what the service sees, the store, cancellation, the trace text
+// ---------------------------------------------------------------------------
+
+describe('what the service sees (never cut, masked places listed)', () => {
+  it('sends a long argument whole, so a padded query cannot hide what follows', async () => {
+    createPolicyHook(hookInput());
+    const query = `${' '.repeat(5_000)}DROP TABLE users`;
+    await checkMcpCall(subject('run_sql', { query }), {});
+    const [seen] = seenByPolicy;
+    expect((seen.body.arguments as { query: string }).query).toBe(query);
+    expect(seen.body).toMatchObject({ masked: [], truncated: false });
+  });
+
+  it('masks secret-looking keys but lists each masked path, nested ones too', async () => {
+    createPolicyHook(hookInput());
+    await checkMcpCall(subject('x', { password: 'hunter2', nested: { list: [{ apiToken: 'abc', ok: 'fine' }] }, auth: 'Bearer abcdefghij123' }), {});
+    const body = seenByPolicy[0].body as { arguments: Record<string, any>; masked: string[] };
+    expect(body.arguments.password).toBe('••••••');
+    expect(body.arguments.nested.list[0]).toEqual({ apiToken: '••••••', ok: 'fine' });
+    expect(body.masked.sort()).toEqual(['auth', 'nested.list[0].apiToken', 'password']);
+    expect(seenByPolicy[0].raw).not.toContain('hunter2');
+  });
+
+  it('counts a request over 256 KB as a failure, never sends it, and lets the failure mode decide', async () => {
+    const hook = createPolicyHook(hookInput({ failureMode: 'closed' }));
+    const big = { text: 'a'.repeat(300 * 1024) };
+    expect(await checkMcpCall(subject('x', big), {})).toMatchObject({ decision: 'deny', failed: true, reason: 'policy service unavailable' });
+    expect(seenByPolicy).toHaveLength(0);
+    updatePolicyHook(hook.id, { failureMode: 'open' });
+    expect((await checkMcpCall(subject('x', big), {})).decision).toBe('allow');
+    expect(seenByPolicy).toHaveLength(0);
+  });
+});
+
+describe('the store', () => {
+  it('writes from a fresh read, so a change made behind the cache is not lost', () => {
+    const first = createPolicyHook(hookInput({ name: 'A' }));
+    expect(listPolicyHooks()).toHaveLength(1); // the cache now holds [A]
+    // Another process adds B; this process's cache is stale.
+    const row = JSON.parse(database().get<{ value: string }>('SELECT value FROM settings WHERE key = ?', HOOKS_SETTINGS_KEY)!.value);
+    row.hooks.push({ ...first, id: 'ph_other', name: 'B' });
+    database().upsert('settings', { key: HOOKS_SETTINGS_KEY, value: JSON.stringify(row) });
+    createPolicyHook(hookInput({ name: 'C' }));
+    expect(listPolicyHooks().map((h) => h.name)).toEqual(['A', 'B', 'C']);
+    deletePolicyHook(first.id);
+    expect(listPolicyHooks().map((h) => h.name)).toEqual(['B', 'C']);
+  });
+
+  it('rolls back the write when the audit or a check throws inside it', () => {
+    createPolicyHook(hookInput({ name: 'Keep' }));
+    expect(() => createPolicyHook(hookInput({ name: 'Bad', credentialId: 'missing' }))).toThrow();
+    expect(listPolicyHooks().map((h) => h.name)).toEqual(['Keep']);
+  });
+
+  it.each([
+    ['not JSON', 'not json at all'],
+    ['an invalid hook', JSON.stringify({ hooks: [{ id: 'x', name: 'broken' }] })],
+    ['the wrong shape', JSON.stringify({ hooks: 'nope' })],
+  ])('treats a settings row that is %s as unreadable: logged, counted, and blocking in production', async (_label, value) => {
+    database().upsert('settings', { key: HOOKS_SETTINGS_KEY, value });
+    invalidatePolicyHooks();
+    const counted = vi.spyOn(hostMetrics().mcpPolicyStoreErrors, 'add');
+    expect(listPolicyHooks()).toEqual([]);
+    expect(policyHooksUnreadable()).toBe(true);
+    expect(counted).toHaveBeenCalled();
+    // Development: the call goes ahead (nothing can be asked), production: blocked.
+    expect((await checkMcpCall(subject('x'), {})).decision).toBe('allow');
+    vi.stubEnv('LANDFLOW_PROFILE', 'production');
+    try {
+      expect(await checkMcpCall(subject('x'), { userId: 'u1' })).toMatchObject({ decision: 'deny', failed: true, reason: 'policy service unavailable' });
+      expect(audits('mcp.policy.failed').some((e) => e.details?.hook === 'store')).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    // An admin can recover by saving a hook.
+    createPolicyHook(hookInput({ name: 'Recovered' }));
+    expect(policyHooksUnreadable()).toBe(false);
+  });
+});
+
+describe('a cancelled run', () => {
+  it('rethrows the abort: no check, no audit, no count, and an open hook does not allow the call', async () => {
+    createPolicyHook(hookInput({ failureMode: 'open', timeoutMs: 3000 }));
+    answer = () => ({ json: { decision: 'allow' }, delayMs: 1500 });
+    const reports: unknown[] = [];
+    const counted = vi.spyOn(hostMetrics().mcpPolicyDecisions, 'add');
+    const failedBefore = audits('mcp.policy.failed').length;
+    const controller = new AbortController();
+    const pending = runInNode({ id: 'n', name: 'N', type: 't', report: (r) => void reports.push(r) }, () => checkMcpCall(subject('x'), {}, controller.signal));
+    setTimeout(() => controller.abort(new Error('run cancelled')), 100);
+    await expect(pending).rejects.toThrow('run cancelled');
+    expect(reports).toEqual([]);
+    expect(counted).not.toHaveBeenCalled();
+    expect(audits('mcp.policy.failed')).toHaveLength(failedBefore);
+    await expect(checkMcpCall(subject('x'), {}, controller.signal)).rejects.toThrow();
+  });
+});
+
+describe('the trace text', () => {
+  it('keeps network detail out of the Run Trace check (audit and log only)', async () => {
+    createPolicyHook(hookInput({ failureMode: 'closed', url: 'http://127.0.0.1:9/nothing' }));
+    const reports: Array<Record<string, any>> = [];
+    await runInNode({ id: 'n', name: 'N', type: 't', report: (r) => void reports.push(r) }, () => checkMcpCall(subject('x'), {}));
+    expect(reports[0].status).toBe('fail');
+    expect(JSON.stringify(reports[0])).not.toMatch(/127\.0\.0\.1|ECONN|refused/);
+    expect(reports[0].message).toContain('policy service unavailable');
+    expect(audits('mcp.policy.failed')[0].details?.error).toBeDefined();
   });
 });
 

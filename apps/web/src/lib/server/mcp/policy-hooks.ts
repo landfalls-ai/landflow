@@ -14,7 +14,9 @@ import { assertUrlAllowed } from '../net/safe-fetch';
 import { singleton } from '../singleton';
 import { isProduction } from '../config';
 import { MAX_POLICY_HOOKS, type McpPolicyHook, type McpPolicyHookView } from '../../shared/mcp-policy';
-import { hookInput, hookPatch, type HookInput, type HookPatch } from './policy-hooks-schema';
+import { logger } from '../telemetry';
+import { hostMetrics } from '../telemetry/metrics';
+import { hookInput, hookPatch, storedHooks, type HookInput, type HookPatch } from './policy-hooks-schema';
 
 export const HOOKS_SETTINGS_KEY = 'mcp-policy-hooks';
 export const HOOK_CREDENTIAL_TYPE = 'core.httpBearerAuth';
@@ -27,29 +29,67 @@ export class PolicyHookError extends HttpError {
   }
 }
 
-const cache = () => singleton('mcp-policy-hooks-cache', () => ({ at: 0, hooks: undefined as McpPolicyHook[] | undefined }));
+const cache = () => singleton('mcp-policy-hooks-cache', () => ({ at: 0, loaded: undefined as Loaded | undefined }));
+
+interface Loaded {
+  hooks: McpPolicyHook[];
+  /** The settings row exists but cannot be read or holds an invalid hook: the calls it should have gated are unguarded. */
+  broken: boolean;
+}
+
+/** One uncached read of the settings row. A missing row is no hooks; an unreadable or invalid one is `broken`, never silently empty. */
+function readFresh(): Loaded {
+  let row: string | undefined;
+  try {
+    row = database().get<{ value: string }>('SELECT value FROM settings WHERE key = ?', HOOKS_SETTINGS_KEY)?.value;
+  } catch {
+    // No database yet (startup): nothing was ever saved, so no hooks.
+    return { hooks: [], broken: false };
+  }
+  if (!row) return { hooks: [], broken: false };
+  const parsed = storedHooks.safeParse(parse<unknown>(row));
+  if (!parsed.success) {
+    logger.error('mcp policy hooks unreadable', { key: HOOKS_SETTINGS_KEY, issues: parsed.error.issues.length });
+    hostMetrics().mcpPolicyStoreErrors.add(1);
+    return { hooks: [], broken: true };
+  }
+  return { hooks: parsed.data.hooks as McpPolicyHook[], broken: false };
+}
+
+function load(): Loaded {
+  const state = cache();
+  if (state.loaded && Date.now() - state.at < CACHE_MS) return state.loaded;
+  state.loaded = readFresh();
+  state.at = Date.now();
+  return state.loaded;
+}
+
+/** Drop the 1 s read cache (tests, and after a write in this process). */
+export const invalidatePolicyHooks = () => {
+  cache().loaded = undefined;
+};
 
 /** The hooks in force, oldest first (cached for a second; no database yet means none). */
-export function listPolicyHooks(): McpPolicyHook[] {
-  const state = cache();
-  if (state.hooks && Date.now() - state.at < CACHE_MS) return state.hooks;
-  let hooks: McpPolicyHook[] = [];
-  try {
-    const saved = parse<{ hooks?: McpPolicyHook[] }>(database().get<{ value: string }>('SELECT value FROM settings WHERE key = ?', HOOKS_SETTINGS_KEY)?.value);
-    if (Array.isArray(saved?.hooks)) hooks = saved.hooks;
-  } catch {
-    // No database yet, or a broken row: no hooks, calls go out as before.
-  }
-  state.hooks = hooks;
-  state.at = Date.now();
-  return hooks;
-}
+export const listPolicyHooks = (): McpPolicyHook[] => load().hooks;
+
+/** Whether the stored hooks cannot be read: in production the check then blocks the calls (fail closed). */
+export const policyHooksUnreadable = (): boolean => load().broken;
 
 export const getPolicyHook = (id: string): McpPolicyHook | undefined => listPolicyHooks().find((hook) => hook.id === id);
 
-function save(hooks: McpPolicyHook[]) {
-  database().upsert('settings', { key: HOOKS_SETTINGS_KEY, value: JSON.stringify({ hooks }) });
-  cache().hooks = undefined;
+/**
+ * Change the list: read it fresh (not the 1 s cache), apply `change` and write it back in one synchronous transaction, so
+ * two admins' changes (or two processes') cannot overwrite each other from a stale copy.
+ */
+function mutate<T>(change: (hooks: McpPolicyHook[]) => { hooks: McpPolicyHook[]; result: T }): T {
+  const out = database().transaction(() => {
+    const { hooks } = readFresh();
+    const next = change(hooks);
+    database().upsert('settings', { key: HOOKS_SETTINGS_KEY, value: JSON.stringify({ hooks: next.hooks }) });
+    return next.result;
+  });
+  cache().loaded = undefined;
+  return out;
 }
 
 /** The hook for the API: the credential as its id and name, never its data. */
@@ -67,6 +107,8 @@ function validate(hook: McpPolicyHook) {
   } catch {
     throw new PolicyHookError('Enter an http:// or https:// URL');
   }
+  // The bearer token would cross the network in the clear.
+  if (isProduction() && hook.auth === 'bearer' && url.protocol !== 'https:') throw new PolicyHookError('A bearer token needs an https:// URL in the production profile (HMAC signing does not send the key)');
   try {
     assertUrlAllowed(url);
   } catch (error) {
@@ -103,69 +145,70 @@ const diff = (before: McpPolicyHook, after: McpPolicyHook) => {
 /** Create a hook; the input is parsed here (defaults filled), so a route and a caller get the same one. */
 export function createPolicyHook(raw: z.input<typeof hookInput>, actorId?: string): McpPolicyHook {
   const input: HookInput = hookInput.parse(raw);
-  const hooks = listPolicyHooks();
-  if (hooks.length >= MAX_POLICY_HOOKS) throw new PolicyHookError(`At most ${MAX_POLICY_HOOKS} policy hooks`, 409);
-  const now = new Date().toISOString();
-  const hook: McpPolicyHook = {
-    id: `ph_${randomUUID().replace(/-/g, '').slice(0, 16)}`,
-    name: input.name,
-    enabled: input.enabled,
-    url: input.url,
-    auth: input.auth,
-    ...(input.credentialId && { credentialId: input.credentialId }),
-    timeoutMs: input.timeoutMs,
-    // A new hook fails closed in the production profile and open elsewhere; the choice is stored, so it never moves later.
-    failureMode: input.failureMode ?? (isProduction() ? 'closed' : 'open'),
-    match: {
-      hosts: tidy(input.match.hosts).map((host) => host.toLowerCase()),
-      ...(input.match.pathPrefix && { pathPrefix: input.match.pathPrefix }),
-      tools: tidy(input.match.tools),
-      methods: [...new Set(input.match.methods)],
-      projects: tidy(input.match.projects),
-    },
-    createdAt: now,
-    updatedAt: now,
-  };
-  validate(hook);
-  save([...hooks, hook]);
-  recordAudit({ action: 'mcp.policy_hook.create', ...(actorId && { actor: { id: actorId } }), target: { type: 'mcp-policy-hook', id: hook.id, name: hook.name }, project: null, summary: `Created the MCP policy hook “${hook.name}”`, details: { to: JSON.stringify(summaryOf(hook)) } });
-  return hook;
+  return mutate((hooks) => {
+    if (hooks.length >= MAX_POLICY_HOOKS) throw new PolicyHookError(`At most ${MAX_POLICY_HOOKS} policy hooks`, 409);
+    const now = new Date().toISOString();
+    const hook: McpPolicyHook = {
+      id: `ph_${randomUUID().replace(/-/g, '').slice(0, 16)}`,
+      name: input.name,
+      enabled: input.enabled,
+      url: input.url,
+      auth: input.auth,
+      ...(input.credentialId && { credentialId: input.credentialId }),
+      timeoutMs: input.timeoutMs,
+      // A new hook fails closed in the production profile and open elsewhere; the choice is stored, so it never moves later.
+      failureMode: input.failureMode ?? (isProduction() ? 'closed' : 'open'),
+      match: {
+        hosts: tidy(input.match.hosts).map((host) => host.toLowerCase()),
+        ...(input.match.pathPrefix && { pathPrefix: input.match.pathPrefix }),
+        tools: tidy(input.match.tools),
+        methods: [...new Set(input.match.methods)],
+        projects: tidy(input.match.projects),
+      },
+      createdAt: now,
+      updatedAt: now,
+    };
+    validate(hook);
+    recordAudit({ action: 'mcp.policy_hook.create', ...(actorId && { actor: { id: actorId } }), target: { type: 'mcp-policy-hook', id: hook.id, name: hook.name }, project: null, summary: `Created the MCP policy hook “${hook.name}”`, details: { to: JSON.stringify(summaryOf(hook)) } });
+    return { hooks: [...hooks, hook], result: hook };
+  });
 }
 
 export function updatePolicyHook(id: string, raw: z.input<typeof hookPatch>, actorId?: string): McpPolicyHook {
   const patch: HookPatch = hookPatch.parse(raw);
-  const hooks = listPolicyHooks();
-  const before = hooks.find((hook) => hook.id === id);
-  if (!before) throw new PolicyHookError('No such policy hook', 404);
-  const { credentialId, match, ...rest } = patch;
-  const next: McpPolicyHook = {
-    ...before,
-    ...Object.fromEntries(Object.entries(rest).filter(([, value]) => value !== undefined)),
-    match: {
-      ...before.match,
-      ...(match?.hosts && { hosts: tidy(match.hosts).map((host) => host.toLowerCase()) }),
-      ...(match?.tools && { tools: tidy(match.tools) }),
-      ...(match?.methods && { methods: [...new Set(match.methods)] }),
-      ...(match?.projects && { projects: tidy(match.projects) }),
-    },
-    updatedAt: new Date().toISOString(),
-  };
-  if (match && 'pathPrefix' in match) {
-    if (match.pathPrefix) next.match.pathPrefix = match.pathPrefix;
-    else delete next.match.pathPrefix;
-  }
-  if (credentialId === null) delete next.credentialId;
-  else if (credentialId) next.credentialId = credentialId;
-  validate(next);
-  save(hooks.map((hook) => (hook.id === id ? next : hook)));
-  recordAudit({ action: 'mcp.policy_hook.update', ...(actorId && { actor: { id: actorId } }), target: { type: 'mcp-policy-hook', id, name: next.name }, project: null, summary: `Changed the MCP policy hook “${next.name}”`, details: { ...diff(before, next), credentialChanged: before.credentialId !== next.credentialId } });
-  return next;
+  return mutate((hooks) => {
+    const before = hooks.find((hook) => hook.id === id);
+    if (!before) throw new PolicyHookError('No such policy hook', 404);
+    const { credentialId, match, ...rest } = patch;
+    const next: McpPolicyHook = {
+      ...before,
+      ...Object.fromEntries(Object.entries(rest).filter(([, value]) => value !== undefined)),
+      match: {
+        ...before.match,
+        ...(match?.hosts && { hosts: tidy(match.hosts).map((host) => host.toLowerCase()) }),
+        ...(match?.tools && { tools: tidy(match.tools) }),
+        ...(match?.methods && { methods: [...new Set(match.methods)] }),
+        ...(match?.projects && { projects: tidy(match.projects) }),
+      },
+      updatedAt: new Date().toISOString(),
+    };
+    if (match && 'pathPrefix' in match) {
+      if (match.pathPrefix) next.match.pathPrefix = match.pathPrefix;
+      else delete next.match.pathPrefix;
+    }
+    if (credentialId === null) delete next.credentialId;
+    else if (credentialId) next.credentialId = credentialId;
+    validate(next);
+    recordAudit({ action: 'mcp.policy_hook.update', ...(actorId && { actor: { id: actorId } }), target: { type: 'mcp-policy-hook', id, name: next.name }, project: null, summary: `Changed the MCP policy hook “${next.name}”`, details: { ...diff(before, next), credentialChanged: before.credentialId !== next.credentialId } });
+    return { hooks: hooks.map((hook) => (hook.id === id ? next : hook)), result: next };
+  });
 }
 
 export function deletePolicyHook(id: string, actorId?: string): void {
-  const hooks = listPolicyHooks();
-  const before = hooks.find((hook) => hook.id === id);
-  if (!before) throw new PolicyHookError('No such policy hook', 404);
-  save(hooks.filter((hook) => hook.id !== id));
-  recordAudit({ action: 'mcp.policy_hook.delete', ...(actorId && { actor: { id: actorId } }), target: { type: 'mcp-policy-hook', id, name: before.name }, project: null, summary: `Removed the MCP policy hook “${before.name}”`, details: { from: JSON.stringify(summaryOf(before)) } });
+  mutate((hooks) => {
+    const before = hooks.find((hook) => hook.id === id);
+    if (!before) throw new PolicyHookError('No such policy hook', 404);
+    recordAudit({ action: 'mcp.policy_hook.delete', ...(actorId && { actor: { id: actorId } }), target: { type: 'mcp-policy-hook', id, name: before.name }, project: null, summary: `Removed the MCP policy hook “${before.name}”`, details: { from: JSON.stringify(summaryOf(before)) } });
+    return { hooks: hooks.filter((hook) => hook.id !== id), result: undefined };
+  });
 }
