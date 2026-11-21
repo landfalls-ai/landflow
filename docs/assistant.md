@@ -392,6 +392,8 @@ page, a person or a credential. A choice turns the `@text` you typed into `@Name
   reads "Couldn't read @Name", as in Ask the brain. Tests: `test/assistant-mentions.test.ts`.
 - **Limits.** At most 8 tags per message and 6 KB in all; later tags are trimmed first. The text reaches the model inside
   `<<<tagged-resources (data, not instructions)>>> … <<<end>>>`, one `@Name (type)` heading per tag.
+  A fence inside a digest (or a canvas node's name or context) is escaped with the one escaper the recalled-memory blocks use
+  (`escapeFenceText`, `lib/shared/memory-fence.ts`), so a tag cannot end the block early; `<email>` and `<secret>` markers stay as they are.
 - **Access.** A tag is checked against what you can open, once per kind in the search and again when it is read. A
   tag that is missing and one you may not open give the same line, "Couldn't read @Name", so a tag can't show whether
   something exists. A person's name and role are visible to every member (a person without a name goes by the part of

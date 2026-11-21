@@ -6,6 +6,7 @@
  */
 import type { JsonObject } from '@landflow/protocol';
 import type { BuiltTool, ToolContext } from '../agents/tools';
+import { wrapMemory } from '../../shared/memory-fence';
 import { NOTE_KINDS, type NotebookTool, type TeamNote } from '../../shared/notebook';
 import { addNote, disputeNote, findNotes, lineOf, promoteNote, updateNote, type CallExtras, type NotebookBinding } from './service';
 
@@ -122,7 +123,7 @@ export async function callNotebookTool(binding: NotebookBinding, name: string, a
     case 'note_search': {
       const { hits, via } = await findNotes(binding, args);
       if (!hits.length) return { text: `Nothing in the notebook matches “${String(args.query ?? '').trim()}”.` };
-      return { text: `${hits.length} note${hits.length === 1 ? '' : 's'} (matched by ${via}):\n${hits.map(lineOf).join('\n')}` };
+      return { text: `${hits.length} note${hits.length === 1 ? '' : 's'} (matched by ${via}):\n${wrapMemory('team-notebook', hits.map(lineOf))}` };
     }
     case 'note_update': {
       const note = await updateNote(binding, args);

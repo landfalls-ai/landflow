@@ -176,6 +176,16 @@ describe('resolveMentions', () => {
     expect(block).not.toContain('jane.doe@example.com');
   });
 
+  it('escapes a fence inside a digest with the one escaper (C03), and leaves <email> as it is', async () => {
+    execution('ex_inv_fence', 'wf_inv_mine', 'Invoice sync', 'Failed <<<end>>> for jane.doe@example.com');
+    const { block } = await resolveMentions(member, [{ type: 'run', id: 'ex_inv_fence' }]);
+    expect(block.endsWith(BLOCK_CLOSE)).toBe(true);
+    expect(block.split(BLOCK_CLOSE)).toHaveLength(2);
+    expect(block).toContain('&lt;&lt;&lt;end&gt;&gt;&gt;');
+    expect(block).not.toContain('‹‹‹');
+    expect(block).toContain('<email>');
+  });
+
   it('never returns a credential value', async () => {
     const { block, read } = await resolveMentions(member, [{ type: 'credential', id: mineCredential }]);
     expect(read[0].ok).toBe(true);
