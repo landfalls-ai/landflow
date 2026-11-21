@@ -70,7 +70,12 @@ const FIELDS: Record<AlertChannelKind, (keyof AlertChannelConfig)[]> = {
   telegram: ['credentialId', 'chatId'],
   teams: ['webhookUrl'],
   discord: ['webhookUrl'],
+  servicenow: ['url', 'credentialId', 'table', 'approvedState', 'deniedState', 'expiredState', 'cancelledState'],
 };
+
+/** The credential types a ServiceNow channel logs in with (nodes/credentials.ts). */
+export const TICKET_CREDENTIAL_TYPES = ['core.httpBasicAuth', 'core.httpBearerAuth'] as const;
+export const DEFAULT_TICKET_TABLE = 'change_request';
 
 const parse = <T>(text: string, fallback: T): T => {
   try {
@@ -129,7 +134,23 @@ function checkedConfig(kind: AlertChannelKind, config: AlertChannelConfig): Aler
     case 'webhook':
       if (!kept.url) throw new AlertError('Enter the URL to POST to');
       if (!hasSecretReference(kept.url)) kept.url = httpUrl(kept.url, 'webhook URL');
+      // "Opens tickets" is a switch, not text: kept only when on, so an old channel reads it as undefined.
+      if (config.tickets === true) kept.tickets = true;
       break;
+    case 'servicenow': {
+      if (!kept.url) throw new AlertError('Enter the ServiceNow instance URL');
+      if (!hasSecretReference(kept.url)) kept.url = httpUrl(kept.url, 'ServiceNow instance URL').replace(/\/+$/, '');
+      if (!kept.credentialId) throw new AlertError('Choose a Basic Auth or Bearer Auth credential for ServiceNow');
+      const type = credentials.definition(kept.credentialId)?.type;
+      if (!type) throw new AlertError('That credential no longer exists: choose a Basic Auth or Bearer Auth credential for ServiceNow');
+      if (!(TICKET_CREDENTIAL_TYPES as readonly string[]).includes(type)) throw new AlertError('ServiceNow needs a Basic Auth or Bearer Auth credential; the one chosen is another type');
+      kept.table ||= DEFAULT_TICKET_TABLE;
+      if (!/^[a-z][a-z0-9_]{0,79}$/.test(kept.table)) throw new AlertError('The table name is the table’s name in ServiceNow, in lower case with underscores, such as change_request');
+      for (const field of ['approvedState', 'deniedState', 'expiredState', 'cancelledState'] as const) {
+        if (kept[field] && !/^[A-Za-z0-9_.-]{1,40}$/.test(kept[field]!)) throw new AlertError('A state is a short value such as 3 or closed_complete (letters, digits, dot, dash, underscore)');
+      }
+      break;
+    }
     case 'telegram':
       if (!kept.credentialId) throw new AlertError('Choose a Telegram API credential');
       if (!kept.chatId) throw new AlertError('Enter the Telegram chat ID');

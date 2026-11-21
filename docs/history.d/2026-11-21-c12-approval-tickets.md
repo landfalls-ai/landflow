@@ -1,0 +1,2 @@
+section: 2026-11-21: combined wave 3
+| (this change) | Alert channels can open tickets for approval requests: a ServiceNow channel (Table API, a Basic or Bearer login from the vault, a table and optional states) and a webhook channel with Opens tickets that answers with the ticket's id and link; Test opens a test ticket and adds a note. A ticket never carries parameter values and never decides. Tested against a local fake of ServiceNow | [features/engine.md](features/engine.md) |

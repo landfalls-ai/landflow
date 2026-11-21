@@ -6,7 +6,7 @@ import { CredentialError } from '../credentials/vault';
 import { error } from '../http';
 import { AlertError, alertStore } from './store';
 
-const kind = z.enum(['email', 'slack', 'webhook', 'telegram', 'teams', 'discord']);
+const kind = z.enum(['email', 'slack', 'webhook', 'telegram', 'teams', 'discord', 'servicenow']);
 const event = z.enum(['failed', 'timedOut', 'retriesExhausted', 'waiting', 'approval']); // AP01: approval
 const ruleKind = z.enum(['runs', 'failureRate', 'plugin', 'cost', 'evaluation']);
 
@@ -18,6 +18,12 @@ const config = z
     secret: z.string().max(500),
     credentialId: z.string().max(200),
     chatId: z.string().max(200),
+    tickets: z.boolean(), // C12
+    table: z.string().max(100),
+    approvedState: z.string().max(100),
+    deniedState: z.string().max(100),
+    expiredState: z.string().max(100),
+    cancelledState: z.string().max(100),
   })
   .partial();
 
