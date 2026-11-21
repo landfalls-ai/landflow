@@ -66,6 +66,7 @@ export function deniedReadUnderCap(now = Date.now()): boolean {
   return ++window.count <= DENIED_PER_WINDOW;
 }
 
+const HARNESS_HOOK = /^\/api\/harness\/[^/]+\/hooks$/;
 const REQUEST_ID = /^[\w.:-]{1,128}$/;
 
 /** Changes the generic layer leaves out (see the module comment). */
@@ -84,6 +85,7 @@ const SKIP: RegExp[] = [
   /^\/api\/agents\/[^/]+\/sessions\//,
   /^\/api\/binary(\/|$)/,
   /^\/api\/agent-trace\//,
+  HARNESS_HOOK,
   /^\/api\/auth\/saml\/acs$/,
 ];
 
@@ -190,7 +192,9 @@ export async function auditRequest(args: unknown[], run: () => Promise<Response>
   const denied = response.status === 401 || response.status === 403;
   if (!MUTATING.has(method) && !(denied && (method === 'GET' || method === 'HEAD'))) return response;
   // The skip list is about the volume of changes: a refused read is rate-limited below and recorded anyway.
-  if (MUTATING.has(method) && auditSkipped(path)) return response;
+  // A refused hook event is the exception (C04 AS-1): one row a minute per key, like a refused read, never one per tool call.
+  const hookDenied = denied && HARNESS_HOOK.test(path);
+  if (MUTATING.has(method) && auditSkipped(path) && !hookDenied) return response;
   try {
     const outcome = outcomeOf(response.status);
     // Refused by the guard: find out who it was (the guard doesn't hand the principal over when it refuses).
@@ -202,7 +206,7 @@ export async function auditRequest(args: unknown[], run: () => Promise<Response>
     }
     if (principal) ctx.principal = principal;
     const target = targetOf(ctx.route, params);
-    if (!MUTATING.has(method)) {
+    if (!MUTATING.has(method) || hookDenied) {
       if (!deniedReadDue(principal ? `user:${principal.user.id}` : `ip:${ctx.ip ?? 'unknown'}`, ctx.route) || !deniedReadUnderCap()) return response;
       withAuditRequest(ctx, () =>
         recordAudit({ action: 'api.denied', outcome: 'denied', status: response.status, ...(target && { target }), summary: `${method} ${ctx.route} → ${response.status}` }),

@@ -8,11 +8,12 @@
  * not at all. The hooks only observe: none denies a tool call or changes a result.
  */
 import type { EngineInterface, Register } from 'claude-code'
-import { BRIEFING_TIMEOUT_MS, QUEUE_MAX, VISIBILITIES, backoffMs, callBrain, confirmAndPost, deleteWork, due, emptyQueue, enqueue, getBriefing, getMySpend, getProjectContext, keyFingerprint, liftStop, postWork, serverUrl, settle, shareRequest, visibilityRequest, type Briefing, type Config, type OutEvent, type Queue, type WorkVisibility } from './client'
+import { BRIEFING_TIMEOUT_MS, QUEUE_MAX, sendStatus, VISIBILITIES, backoffMs, callBrain, confirmAndPost, deleteWork, due, emptyQueue, enqueue, getBriefing, getMySpend, getProjectContext, keyFingerprint, liftStop, postWork, serverUrl, settle, shareRequest, visibilityRequest, type Briefing, type Config, type OutEvent, type Queue, type WorkVisibility } from './client'
 import { addArea, addPrs, areaOf, bandLine, bashFacts, canPost, isAllowed, localDay, newEntry, parseRepos, repoSlug, statusLine, syncText, type Entry, type View } from './journal'
 import type { MySpendTotals } from './my-spend-wire'
 import { PANE_ID, drawBand, drawPane } from './pane'
 import { titleFrom, toEvent } from './summary'
+import { parseSharing, sharingOn, statusBody, statusRequest, type StatusEvent } from './status'
 import { SECTION_PROJECT, projectReply, projectSection, type ProjectContext } from './project'
 import { LEARN_DEFAULT_PATHS, SECTION_PRACTICES, learnPrompt, practicesInput } from './practices'
 import { BRAIN_ASK_FULL, BRAIN_ASK_SPEC, PRACTICES_FULL, PRACTICES_SPEC, PRACTICE_DRAFT_FULL, PRACTICE_DRAFT_SPEC, brainAsk, practiceDraftTool, practicesApplicable, practicesTool, questionOf } from './tools'
@@ -76,6 +77,42 @@ const inFlight = new Set<string>()
 let allowed: { repo: string; branch?: string } | undefined
 let fingerprint = ''
 let seq = 0
+/** Status sharing (hooks/status.ts): on only after `/brain status-sharing on`; read at each session start. */
+let sharing = false
+/** The id this session reports under (the mod is not told Claude Code's own until the end) and its order number. */
+let statusId = ''
+let statusSeq = 0
+/** A random id for the session, which no one can guess or share across people (the mod is told Claude Code's own id only at the end). */
+declare const crypto: { randomUUID(): string }
+const newStatusId = () => `st-${crypto.randomUUID()}`
+let scopeWarned = false
+
+/** Tell Landflow the session's status, when the person turned sharing on and the session is in a listed repository. Fire and forget. */
+function report($: EngineInterface, event: StatusEvent, tool?: string) {
+  if (!sharing || !config || !allowed || !statusId) return
+  const request = statusRequest(config, statusBody(event, { sessionId: statusId, repository: allowed.repo, ...(tool && { tool }) }), ++statusSeq)
+  // /brain pause stops this too: nothing about a paused session leaves the machine.
+  void paused($)
+    .then(isPaused => (isPaused ? undefined : sendStatus($, request)))
+    .then(status => {
+      if (status === 403 && !scopeWarned) {
+        scopeWarned = true
+        $.ui.toast('Your key needs the harness:write scope to share status')
+      }
+    })
+    .catch(() => undefined)
+}
+
+/** `/brain status-sharing [on|off]`: whether this session tells Landflow its status (never prompts or tool output). */
+async function sharingCommand($: EngineInterface, arg: string): Promise<string> {
+  const choice = parseSharing(arg)
+  if (arg.trim() && !choice) return '/brain status-sharing on|off'
+  if (choice) {
+    sharing = choice === 'on'
+    await $.store.set('statusSharing', sharing)
+  }
+  return `Status sharing is ${sharing ? 'on' : 'off'}. ${sharing ? 'Sessions in your listed repositories tell Landflow when Claude is thinking, working or idle, with the repository name and counts, never prompts or tool output.' : 'Nothing is sent about your sessions.'}`
+}
 
 async function load($: EngineInterface): Promise<Entry[]> {
   return (((await $.store.get('journal')) as Entry[] | undefined) ?? []).filter(Boolean)
@@ -429,6 +466,8 @@ export const register: Register = (on, options) => {
   spendAt = 0
   config = url && key ? { url, key } : undefined
   fingerprint = keyFingerprint(key)
+  sharing = false
+  scopeWarned = false
   allowed = undefined
   current = undefined
   flushing = undefined
@@ -445,9 +484,12 @@ export const register: Register = (on, options) => {
     practices = undefined
     repoHere = undefined
     project = undefined
+    sharing = sharingOn(await $.store.get('statusSharing'))
+    statusId = newStatusId()
+    statusSeq = 0
     // The model's own way in: only with a key, and never failing the session.
     if (config) for (const spec of [BRAIN_ASK_SPEC, PRACTICES_SPEC, PRACTICE_DRAFT_SPEC]) await $.tool.register(spec as never).catch(() => undefined)
-    await $.command.register({ name: 'brain', description: 'Your work in the company brain: sync, today, review, status, pause, resume, forget <id>, visibility <id> private|team|org, post <id>; practices, learn [paths], project', argumentHint: 'sync | today | review | status | pause | resume | forget <id> | visibility <id> <who> | post <id> | practices | learn [paths] | project' })
+    await $.command.register({ name: 'brain', description: 'Your work in the company brain: sync, today, review, status, pause, resume, forget <id>, visibility <id> private|team|org, post <id>; practices, learn [paths], project, status-sharing on|off', argumentHint: 'sync | today | review | status | pause | resume | forget <id> | visibility <id> <who> | post <id> | practices | learn [paths] | project | status-sharing on|off' })
     // Git runs beside the briefing and the practices, so one 2 s bound holds for all three.
     const gitFacts = Promise.all([gitOut($, ['git', 'remote', 'get-url', 'origin']), gitOut($, ['git', 'rev-parse', '--show-toplevel']), gitOut($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD'])])
     // Practices are read in any mode (reading records nothing); the repository is sent only when the person listed it.
@@ -491,6 +533,7 @@ export const register: Register = (on, options) => {
         allowed = { repo: slug, ...(branch && branch !== 'HEAD' && { branch }) }
         // Paused or brain off: nothing is opened now; /brain resume opens it.
         if (!(await paused($))) await openEntry($, allowed.repo, allowed.branch)
+        report($, 'session.start')
       }
       void $.clock.every(FLUSH_MS, () => flush($))
     }
@@ -514,6 +557,7 @@ export const register: Register = (on, options) => {
       return next(e)
     }
     if (!current && allowed && config && mode !== 'off' && !e.command && !e.isMeta && !(await paused($))) await openEntry($, allowed.repo, allowed.branch).catch(() => undefined)
+    if (!e.command && !e.isMeta) report($, 'prompt.submit')
     if (current && !e.command && !e.isMeta) {
       current.turns += 1
       // The first prompt is read once, for the title; it is kept nowhere.
@@ -544,7 +588,9 @@ export const register: Register = (on, options) => {
 
   on('tool.call', async ($, e, next) => {
     // Observe after the call: never deny, never change what the tool answers.
+    report($, 'tool.before', e.tool)
     const result = await next(e)
+    report($, 'tool.after', e.tool)
     try {
       if (current && result.deny === undefined) {
         const input = e as unknown as Record<string, unknown>
@@ -565,6 +611,7 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => next(e))
 
   on('turn.complete', async ($, e, next) => {
+    if (!e.agentId) report($, 'turn.complete')
     if (current && !e.agentId) await upsert($, current).catch(() => undefined)
     if (config && showSpend && mode !== 'off' && !e.agentId) {
       const now = await $.clock.now()
@@ -581,7 +628,11 @@ export const register: Register = (on, options) => {
       // /clear and an in-process resume end the session id but not the process, and no session.start follows: open the next entry here.
       const goesOn = (e.reason === 'clear' || e.reason === 'resume') && allowed
       const where = allowed
+      report($, 'session.end')
       await closeCurrent($, e.sessionId, true)
+      // The next session after /clear or a resume is a new one for Landflow too.
+      statusId = newStatusId()
+      statusSeq = 0
       if (!goesOn) allowed = undefined
       else if (where && !(await paused($))) await openEntry($, where.repo, where.branch)
     } catch {
@@ -617,6 +668,7 @@ export const register: Register = (on, options) => {
     // Practices need only the URL and key: reading records nothing, and learning sends nothing from the checkout but drafts.
     if (config && sub === 'practices') return reply(await practicesCommand($))
     if (config && sub === 'project') return reply(await projectCommand($))
+    if (config && sub === 'status-sharing') return reply(await sharingCommand($, arg))
     if (config && sub === 'learn') return reply(await learnCommand($, rest.filter(Boolean)))
     if (!config || mode === 'off') return reply('landflow-brain is not set up: it needs the Landflow URL (https, or http://localhost), an API key with the brain:write scope, and a mode other than off. Nothing is recorded or sent.')
     const journal = await load($)

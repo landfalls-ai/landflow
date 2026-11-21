@@ -94,6 +94,9 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/task-runs')) return read ? { scope: 'workflows:read' } : { scope: 'workflows:write', sessionOnly: true };
   // AP01: the approval inbox (docs/approval-inbox.md): reading is like reading executions; a decision needs a signed-in person (never an API key) with run access, which the route checks.
   if (under('/api/approval-inbox')) return read ? { scope: 'executions:read' } : { scope: 'run', sessionOnly: true };
+  // C04: a harness's hook events need the `harness:write` key scope (docs/harnesses.md#live-status); the route refuses a cookie session. Listing sessions reads like runs.
+  if (/^\/api\/harness\/[^/]+\/hooks$/.test(path)) return { scope: 'harness:write' };
+  if (path === '/api/harness/sessions') return { scope: 'executions:read' };
   if (path === '/api/projects/context') return { scope: 'brain:read' }; // PC10
   // NB03: a project's Notion link status (docs/features/notion-brain.md); every write stays session-or-workflows:write like /api/projects.
   // NB07: the problems list is words and ids, so it reads like the link it belongs to.

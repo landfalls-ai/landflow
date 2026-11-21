@@ -7,6 +7,8 @@ import { api } from '@/lib/client/api';
 import { plural } from '@/lib/client/format';
 import { cn } from '@/lib/utils';
 import type { Agent, AgentSummary, AgentTemplate } from '@/lib/shared/agents';
+import { mergeHarnessSession, newestByAgent, type HarnessSessionView } from '@/lib/shared/harness';
+import { useLiveEvents } from '@/lib/client/live';
 import { AgentAvatar } from '@/components/agents/avatar';
 import { TeamsView, NewTeamButton } from '@/components/agents/teams-view';
 import type { TeamSummary } from '@/lib/shared/agent-teams';
@@ -48,6 +50,12 @@ export default function AgentsPage() {
   const [group, setGroup] = useState<Group>('team');
   const [view, setViewState] = useState<View>('agents');
   const [agentTeams, setAgentTeams] = useState<TeamSummary[]>();
+  const [harnessSessions, setHarnessSessions] = useState<HarnessSessionView[]>([]);
+  const harnessByAgent = useMemo(() => newestByAgent(harnessSessions), [harnessSessions]);
+  // The cards' Claude Code status chips: the open sessions once, then each live `harness` event (C04).
+  useLiveEvents((event) => {
+    if (event.channel === 'harness' && event.session.agentId) setHarnessSessions((list) => mergeHarnessSession(list, event.session));
+  });
 
   const setView = (next: View) => {
     setViewState(next);
@@ -59,6 +67,9 @@ export default function AgentsPage() {
     api<{ teams: TeamSummary[] }>('/api/agent-teams')
       .then((r) => setAgentTeams(r.teams))
       .catch(() => setAgentTeams([]));
+    api<{ sessions: HarnessSessionView[] }>('/api/harness/sessions?open=1&kind=agent&limit=100', { background: true })
+      .then((r) => setHarnessSessions(r.sessions))
+      .catch(() => {});
     void useAgentData.getState().loadAgents().finally(() => setLoaded(true));
     api<{ templates: AgentTemplate[] }>('/api/agent-templates')
       .then((r) => setTemplates(r.templates))
@@ -240,7 +251,7 @@ export default function AgentsPage() {
                   )}
                   <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3">
                     {s.agents.map((agent, i) => (
-                      <AgentCard key={agent.id} agent={agent} index={i} onSave={() => setSaving(agent)} onExport={() => void exportAgent(agent)} />
+                      <AgentCard key={agent.id} agent={agent} index={i} harnessStatus={harnessByAgent.get(agent.id)} onSave={() => setSaving(agent)} onExport={() => void exportAgent(agent)} />
                     ))}
                   </div>
                 </section>

@@ -9,7 +9,10 @@ import { canResource, isInstanceAdmin, projectRole, resourceAccess, type Actor }
 const TTL_MS = 5_000;
 
 export function liveEventFilter(actor: Actor): (event: BusEvent) => boolean {
-  if (isInstanceAdmin(actor)) return () => true;
+  // An own harness session (C04) is private to its owner: this check comes before the admin short-cut.
+  const admin = isInstanceAdmin(actor);
+  const mine = (event: BusEvent) => event.channel === 'harness' && !event.agentId && event.ownerId === actor.id;
+  if (admin) return (event) => (event.channel === 'harness' && !event.agentId ? mine(event) : true);
   const cache = new Map<string, { ok: boolean; at: number }>();
   const sees = (kind: 'workflow' | 'agent', id: string, projectId?: string) => {
     const key = `${kind}:${id}${projectId ? `@${projectId}` : ''}`;
@@ -27,6 +30,7 @@ export function liveEventFilter(actor: Actor): (event: BusEvent) => boolean {
     return ok;
   };
   return (event) => {
+    if (event.channel === 'harness' && !event.agentId) return mine(event);
     if ('workflowId' in event && typeof event.workflowId === 'string') return sees('workflow', event.workflowId);
     if ('agentId' in event && typeof event.agentId === 'string') return sees('agent', event.agentId, 'projectId' in event && typeof event.projectId === 'string' ? event.projectId : undefined);
     return true;

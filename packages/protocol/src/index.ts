@@ -7,3 +7,4 @@ export * from './mcp-tools';
 export * from './sync-format';
 export * from './work-events';
 export * from './practice-checks'; // PR08:
+export * from './harnesses'; // C15: the harness registry

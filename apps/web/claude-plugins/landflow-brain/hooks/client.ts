@@ -146,6 +146,21 @@ async function postOnce($: EngineInterface, config: Config, events: readonly Out
   }
 }
 
+/** A status event's bound: the request is fire and forget, and a host that hangs must never slow a prompt. */
+export const STATUS_TIMEOUT_MS = 2000
+
+/** Send one status request (hooks/status.ts) within 2 s; the HTTP status, or undefined when it failed or timed out. Never throws. */
+export function sendStatus($: EngineInterface, request: { url: string; init: { method: string; headers: Record<string, string>; body: string } }): Promise<number | undefined> {
+  const once = async () => {
+    try {
+      return (await $.http.fetch(request.url, request.init)).status
+    } catch {
+      return undefined
+    }
+  }
+  return within($, once(), undefined, STATUS_TIMEOUT_MS)
+}
+
 /** DELETE /api/brain/work/:sourceId. 204 and 404 both mean it is gone. */
 export function deleteWork($: EngineInterface, config: Config, sourceId: string): Promise<number | undefined> {
   return within($, deleteOnce($, config, sourceId), undefined)
