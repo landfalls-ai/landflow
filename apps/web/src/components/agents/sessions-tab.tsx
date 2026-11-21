@@ -17,7 +17,7 @@ import { EmptyState } from '../ui/empty-state';
 import { Segmented } from '../ui/segmented';
 import { cleanPersona } from '@/lib/shared/persona';
 import type { SawMemorySource } from '@/lib/shared/what-it-saw';
-import { sawPersona } from '@/lib/shared/what-it-saw-sections';
+import { sawMemoryOf, sawPersona } from '@/lib/shared/what-it-saw-sections';
 import { WhatItSaw } from '../run-trace/what-it-saw';
 import { TimelineView, TraceChip, type ToolEntry } from './timeline';
 import { REASON_LABEL, useAgentRun } from './use-agent-run';
@@ -90,7 +90,7 @@ function SawFold({ session, agentId }: { session: AgentSession; agentId: string 
         <ChevronRight className="size-3.5 text-t3 transition-transform group-open:rotate-90" /> What it saw
       </summary>
       <div className="pb-1.5">
-        <WhatItSaw bare mode={context.mode} text={context.text} practices={context.practices} memory={memory} memoryText={memoryText} executionId={session.execution?.executionId} persona={persona} />
+        <WhatItSaw bare mode={context.mode} text={context.text} practices={context.practices} memory={sawMemoryOf(memory)} memoryText={memoryText} executionId={session.execution?.executionId} persona={persona} />
       </div>
     </details>
   );

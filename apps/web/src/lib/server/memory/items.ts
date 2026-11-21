@@ -45,8 +45,11 @@ export function memoryItemStates(actor: Actor, ids: readonly string[]): MemoryIt
     const note = noteStore.get(id, { withForget: true });
     if (!note || !canResource(actor, 'agentTeam', note.teamId, 'read')) continue;
     const change = canResource(actor, 'agentTeam', note.teamId, 'update');
-    if (note.forgottenAt && !change) continue;
-    out.push({ id, live: !note.forgottenAt, teamId: note.teamId, ...(change && { canChange: true }), ...(!note.forgottenAt && { text: note.text }), ...(note.forgottenAt && { forgottenAt: note.forgottenAt, ...(note.forgetReason && { reason: note.forgetReason }) }) });
+    // A note forgotten "after" a time is forgotten once that time has passed, whether or not the sweep has run.
+    const lapsed = Boolean(note.forgottenAt || (note.forgetReason && note.expiresAt && note.expiresAt <= now()));
+    if (lapsed && !change) continue;
+    const forgottenAt = note.forgottenAt ?? (lapsed ? note.expiresAt : undefined);
+    out.push({ id, live: !lapsed, teamId: note.teamId, ...(change && { canChange: true }), ...(!lapsed && { text: note.text }), ...(forgottenAt && { forgottenAt, ...(note.forgetReason && { reason: note.forgetReason }) }) });
   }
   return out;
 }

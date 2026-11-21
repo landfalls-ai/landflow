@@ -15,10 +15,12 @@ import { credentials } from '../credentials/vault';
 import { HttpError } from '../errors';
 import { ollamaModel } from '../nodes/models';
 import { search } from '../nodes/vector-stores';
-import { getFact } from '../brain/facts';
+import { listFacts } from '../brain/facts';
 import { canFact } from '../brain/scope';
-import { canResource, credentialUsableBy, type Actor } from '../projects/access';
-import { ensurePersonalProject, homeProjectId } from '../projects/store';
+import { vectorFactScores } from '../brain/study';
+import { fuseScores, keywordScore } from '../notebook/search';
+import { canResource, credentialUsableBy, projectRole, type Actor } from '../projects/access';
+import { getProject, homeProjectId } from '../projects/store';
 import { cohereReranker, llmReranker } from '../rag/rerank';
 import { withSpan } from '../telemetry';
 import { memory } from './index';
@@ -37,7 +39,7 @@ function makeReranker(rerank: NonNullable<PlaygroundRequest['rerank']>, actor: A
   if (rerank.kind === 'llm') return llmReranker(ollamaModel({ baseUrl: ollamaUrl(), model: rerank.model }));
   // The credential must be one the caller reads and the searched source's project may use (its home, or shared with it).
   if (!canResource(actor, 'credential', rerank.credentialId, 'read') || !credentialUsableBy(rerank.credentialId, projectId)) throw notFound('Credential');
-  const data = credentials.dataFor({ id: rerank.credentialId, name: rerank.credentialId }, 'cohereApi') as { apiKey?: string; baseUrl?: string };
+  const data = credentials.dataFor({ id: rerank.credentialId, name: rerank.credentialId }, 'core.cohereApi') as { apiKey?: string; baseUrl?: string };
   return cohereReranker({ ...(data.baseUrl && { baseUrl: data.baseUrl }), ...(data.apiKey && { apiKey: data.apiKey }), ...(rerank.model && { model: rerank.model }) });
 }
 
@@ -49,7 +51,7 @@ async function rerankResults(query: string, results: PlaygroundResult[], reranke
   return ranked.flatMap((doc) => {
     const base = byId.get(String(doc.metadata.id));
     if (!base) return [];
-    // A reranker that kept the order (a failed call) returns the old score: no second score then.
+    // A reranker that falls back (a failed call keeps the retrieval order and its scores) adds no second score: a score equal to the first is not one.
     return [{ ...base, ...(doc.score !== undefined && doc.score !== base.score && { rerankScore: doc.score }) }];
   });
 }
@@ -107,34 +109,54 @@ async function searchKnowledge(actor: Actor, request: PlaygroundRequest & { sour
   return { results: kept, dropped: { count: dropped.length, ...(dropped.length && { best: Math.max(...dropped) }) }, via, ...(embedMs !== undefined && { embedMs }) };
 }
 
+/**
+ * Facts the caller may read, scored: the candidates are filtered BEFORE scoring (never an agent's memory of a person, and only
+ * what `canFact` allows), so the threshold, the dropped count and the limit see visible facts only and say nothing about a hidden
+ * one. Scores are the facts search's (words, meaning, their fusion; `scoredFactSearch`'s rules). With no project, every fact the
+ * caller may read; with one, that project's (project read access, else 404).
+ */
+async function searchFacts(actor: Actor, request: PlaygroundRequest & { source: { kind: 'facts' } }, candidates: number): Promise<Omit<PlaygroundAnswer, 'timings'>> {
+  const { projectId } = request.source;
+  if (projectId && (!getProject(projectId) || projectRole(actor, projectId) === undefined)) throw notFound('Project');
+  const visible = listFacts({ ...(projectId && { projectId }), limit: 5_000 }).filter((f) => f.subjectType !== 'agent-user' && canFact(actor, f, 'read'));
+  const projects = new Set(visible.flatMap((f) => (f.projectId ? [f.projectId] : [])));
+  const vector = request.mode !== 'keyword' && projects.size ? await vectorFactScores(request.query, projects, 50) : [];
+  const similarity = new Map(vector.map((v) => [v.factId, v.similarity]));
+  const useVector = similarity.size > 0;
+  if (request.mode === 'meaning' && !useVector) return { results: [], dropped: { count: 0 }, via: 'keywords', error: EMBEDDER_DOWN };
+  const scored = visible.map((fact) => {
+    const words = keywordScore(request.query, [fact.subjectName ?? '', fact.kind, fact.statement].join(' ')); // scoring input, never a prompt
+    const meaning = similarity.get(fact.id);
+    const score = request.mode === 'keyword' ? words : request.mode === 'meaning' ? (meaning ?? 0) : fuseScores(useVector ? (meaning ?? 0) : undefined, words);
+    return { fact, score: Math.min(1, score) };
+  });
+  const matched = scored.filter((r) => r.score > 0);
+  const hits = matched.filter((r) => r.score >= request.threshold).sort((a, b) => b.score - a.score || b.fact.lastSeen.localeCompare(a.fact.lastSeen));
+  const dropped = matched.filter((r) => r.score < request.threshold).map((r) => r.score);
+  return {
+    results: hits.slice(0, candidates).map((h): PlaygroundResult => ({ id: h.fact.id, text: h.fact.statement, score: h.score, sourceId: h.fact.id, kind: h.fact.kind })),
+    dropped: { count: dropped.length, ...(dropped.length && { best: Math.max(...dropped) }) },
+    via: useVector ? 'meaning' : 'keywords',
+  };
+}
+
 async function searchMemory(actor: Actor, request: PlaygroundRequest & { source: { kind: 'notebook' | 'facts' } }, candidates: number): Promise<Omit<PlaygroundAnswer, 'timings'>> {
-  let container: MemoryContainer;
-  if (request.source.kind === 'notebook') container = { kind: 'team', id: request.source.teamId };
-  else {
-    const projectId = request.source.projectId ?? ensurePersonalProject(actor.id);
-    if (!projectId) throw notFound('Project');
-    container = { kind: 'project', id: projectId };
-  }
+  if (request.source.kind === 'facts') return searchFacts(actor, request as never, candidates);
+  const container: MemoryContainer = { kind: 'team', id: request.source.teamId };
   // `touch` stays unset: a playground reads, it does not keep a note alive.
   const found = await memory.search(container, request.query, { mode: request.mode, limit: candidates, threshold: request.threshold }, { actor, origin: 'person', userId: actor.id });
   if (request.mode === 'meaning' && found.via === 'keywords' && request.query.trim()) return { results: [], dropped: found.dropped, via: found.via, error: EMBEDDER_DOWN };
-  // Facts of a project are filtered once more by each fact's own subject (a workflow's, an agent's) as the facts list does, and an
-  // agent's memory of one person is never a project's: only what the caller may read is shown.
-  const visible = request.source.kind === 'facts' ? found.items.filter((i) => {
-    if (i.source === 'agent-memory') return false;
-    const fact = getFact(i.id);
-    return Boolean(fact) && fact!.subjectType !== 'agent-user' && canFact(actor, fact!, 'read');
-  }) : found.items;
-  const results = visible.map((i): PlaygroundResult => ({ id: i.id, text: i.text, score: i.score ?? 0, sourceId: i.id, kind: i.kind }));
+  const results = found.items.map((i): PlaygroundResult => ({ id: i.id, text: i.text, score: i.score ?? 0, sourceId: i.id, kind: i.kind }));
   return { results, dropped: found.dropped, via: found.via };
 }
 
 /** The project the searched source belongs to (a knowledge base's agent's, a team's, the facts'), for the reranker credential's rule. */
-function sourceProject(actor: Actor, request: PlaygroundRequest): string | undefined {
+function sourceProject(_actor: Actor, request: PlaygroundRequest): string | undefined {
   const { source } = request;
   if (source.kind === 'kb') return homeProjectId('agent', source.agentId);
   if (source.kind === 'notebook') return homeProjectId('agentTeam', source.teamId);
-  return source.projectId ?? ensurePersonalProject(actor.id);
+  // No project named: no single project to test a credential against (a Cohere rerank needs one).
+  return source.projectId;
 }
 
 /** One search for `actor`. A source the caller may not reach is a 404 (a knowledge base needs edit access to its agent). */

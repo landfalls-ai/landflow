@@ -13,6 +13,11 @@ import type { AiDocument, Reranker } from '@landflow/engine';
 import type { PlaygroundAnswer } from '@/lib/shared/memory-playground';
 
 vi.setConfig({ testTimeout: 20_000 });
+// An embeddings model that answers when its base URL says `stub`, so a test can fail the store while the embedding succeeds.
+vi.mock('@/lib/server/rag/embeddings', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/lib/server/rag/embeddings')>();
+  return { ...real, ollamaEmbeddings: ((options: { baseUrl: string }) => (options.baseUrl.includes('stub') ? { provider: 'ollama', model: 'stub', embedDocuments: async (t: string[]) => t.map(() => [0]), embedQuery: async () => [0] } : real.ollamaEmbeddings(options as never))) as typeof real.ollamaEmbeddings };
+});
 
 const dataDir = mkdtempSync(join(tmpdir(), 'landflow-playground-'));
 const ENV = { LANDFLOW_DATA_DIR: dataDir, LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '', LANDFLOW_BRAIN_MODEL: 'off', LANDFLOW_BRAIN_EMBEDDINGS: 'off' };
@@ -134,6 +139,7 @@ describe('T-6 access, a project’s facts and a knowledge base', () => {
       tools: [
         { id: 'kb1', type: 'knowledge', name: 'search_runbooks', description: 'runbooks', store: 'sqlite', collection: COLLECTION, embeddings: { provider: 'none', model: 'bm25' } },
         { id: 'kb2', type: 'knowledge', source: 'node', name: 'n', description: '', nodeType: 'x.y', parameters: {} },
+        { id: 'kb4', type: 'knowledge', name: 'search_stub', description: '', store: 'sqlite', collection: COLLECTION, embeddings: { provider: 'ollama', model: 'stub', baseUrl: 'http://stub.invalid' } },
         { id: 'kb3', type: 'knowledge', name: 'search_down', description: '', store: 'sqlite', collection: COLLECTION, embeddings: { provider: 'ollama', model: 'nomic-embed-text', baseUrl: 'http://127.0.0.1:1' } },
       ],
     } as never);
@@ -166,14 +172,43 @@ describe('T-6 access, a project’s facts and a knowledge base', () => {
     expect(answer.results.length).toBeGreaterThan(0);
   });
 
-  it('refuses a Cohere credential the source’s project may not use, and a blank query is 400 (blocker 7, 6)', async () => {
+  it('a Cohere credential must be usable by the searched source’s project (blocker 7)', async () => {
     const { credentials } = await import('@/lib/server/credentials/vault');
     const { registry } = await import('@/lib/server/plugins/registry');
     const { corePlugin } = await import('@/lib/server/nodes');
     registry.registerBuiltin(corePlugin);
-    const cred = credentials.create({ name: 'cohere elsewhere', type: 'core.cohereApi', data: { apiKey: 'k', baseUrl: 'http://127.0.0.1:1' } });
-    await expect(runPlayground(editor, { ...base, source: { kind: 'facts', projectId: pid }, query: 'deploy', mode: 'keyword', rerank: { kind: 'cohere', credentialId: cred.id } })).rejects.toMatchObject({ status: 404 });
+    const second = createTeamProject({ name: 'Second', createdBy: editor.id }).id;
+    setMember(second, editor.id, 'editor');
+    const cred = credentials.create({ name: 'cohere second', type: 'core.cohereApi', data: { apiKey: 'k', baseUrl: 'http://127.0.0.1:1' } });
+    setHomeProject('credential', cred.id, second);
+    const rerank = { kind: 'cohere' as const, credentialId: cred.id };
+    // The editor may read it, but the first project may not use it.
+    await expect(runPlayground(editor, { ...base, source: { kind: 'facts', projectId: pid }, query: 'deploy', mode: 'keyword', rerank })).rejects.toMatchObject({ status: 404 });
+    // Its own project passes the check (no facts there, so the reranker is never called).
+    await expect(runPlayground(editor, { ...base, source: { kind: 'facts', projectId: second }, query: 'deploy', mode: 'keyword', rerank })).resolves.toMatchObject({ results: [] });
     expect(playgroundSchema.safeParse({ source: { kind: 'facts' }, query: '   ' }).success).toBe(false);
+  });
+
+  it('scores only the facts the caller may read: a hidden fact changes no count and takes no slot (re-review 1)', async () => {
+    // A workflow's fact the editor may not see, scoring higher than the visible ones for this query.
+    facts.upsertFact({ id: 'workflow:w_hidden_pg:health', subjectType: 'workflow', subjectId: 'w_hidden_pg', kind: 'health', statement: 'zebra quokka narwhal tapir', confidence: 1, evidence: [], projectId: pid } as never, database(), new Date().toISOString());
+    facts.upsertFact({ id: `project:${pid}:memory:zq`, subjectType: 'project', subjectId: pid, kind: 'memory', statement: 'zebra visible note', confidence: 1, evidence: [], projectId: pid } as never, database(), new Date().toISOString());
+    const dropped = await runPlayground(editor, { ...base, source: { kind: 'facts', projectId: pid }, query: 'zebra quokka narwhal', mode: 'keyword', threshold: 1 });
+    expect(dropped.results).toEqual([]);
+    // The visible fact has one of three words (0.33): dropped counts it, never the hidden one (which has all three).
+    expect(dropped.dropped).toMatchObject({ count: 1 });
+    expect(dropped.dropped.best).toBeLessThan(0.5);
+    const one = await runPlayground(editor, { ...base, source: { kind: 'facts', projectId: pid }, query: 'zebra quokka', mode: 'keyword', limit: 1 });
+    expect(one.results.map((r) => r.text)).toEqual(['zebra visible note']);
+  });
+
+  it('creates nothing when no project is named (re-review 5)', async () => {
+    const { getProject } = await import('@/lib/server/projects/store');
+    const { personalProjectId } = await import('@/lib/shared/projects');
+    const solo = await createUser({ email: 'solo@pg.test', name: 'Solo', role: 'member', password: 'solo-password-1' });
+    const before = getProject(personalProjectId(solo.id));
+    await runPlayground({ id: solo.id, role: 'member' }, { ...base, source: { kind: 'facts' }, query: 'deploy', mode: 'keyword' });
+    expect(getProject(personalProjectId(solo.id))).toEqual(before);
   });
 
   it('a knowledge base needs edit access to the agent (AS-7)', async () => {
@@ -198,6 +233,12 @@ describe('T-6 access, a project’s facts and a knowledge base', () => {
     expect(answer.timings.rerankMs).toBeGreaterThanOrEqual(0);
     for (const spy of spies) expect(spy).not.toHaveBeenCalled();
     vi.restoreAllMocks();
+  });
+
+  it('raises a store failure instead of saying the embedding model is unreachable (re-review 4)', async () => {
+    const spy = vi.spyOn(SqliteVectorStore.prototype, 'similaritySearch').mockRejectedValue(new Error('the store broke'));
+    await expect(runPlayground(editor, { ...base, source: { kind: 'kb', agentId, toolId: 'kb4' }, query: 'worker', mode: 'meaning' })).rejects.toThrow('the store broke');
+    spy.mockRestore();
   });
 
   it('says the embedding model is unreachable for a knowledge base in meaning mode (AS-6)', async () => {

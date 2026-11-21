@@ -208,6 +208,13 @@ describe('T-3 the items’ current state', () => {
     const states = memoryItemStates(reader, [`project:${pid}:memory:i0`, `project:${pid}:memory:i1`, gone.id, pending.id]);
     expect(states.map((i) => i.id).sort()).toEqual([`project:${pid}:memory:i0`, pending.id].sort());
     expect(JSON.stringify(states)).not.toMatch(/reason/);
+    // A note forgotten "after" a time that has passed is forgotten now, before any sweep (re-review 2).
+    const lapsed = noteStore.insert({ teamId: team.id, kind: 'fact', text: 'Lapsed note', scope: 'team', author: 'Lead' });
+    forgetNote(team.id, lapsed.id, { reason: 'lapsed reason', forgetAfter: new Date(Date.now() + 3_600_000).toISOString() }, 'someone');
+    noteStore.patch(lapsed.id, { expires_at: '2020-01-01T00:00:00.000Z' });
+    expect(memoryItemStates(reader, [lapsed.id])).toEqual([]);
+    expect(memoryItemStates({ id: editor.id, role: 'member' }, [lapsed.id])).toMatchObject([{ id: lapsed.id, live: false, reason: 'lapsed reason' }]);
+    expect(memoryItemStates({ id: editor.id, role: 'member' }, [lapsed.id])[0].text).toBeUndefined();
     // The editor still sees both forgotten items with their reasons.
     const full = memoryItemStates({ id: editor.id, role: 'member' }, [`project:${pid}:memory:i1`, gone.id]);
     expect(full.map((i) => i.reason).sort()).toEqual(['private reason', 'was wrong']);
