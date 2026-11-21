@@ -21,6 +21,7 @@ import {
   listMcpResourceTemplates,
   listMcpTools,
   McpClientError,
+  POLICY_BLOCK_META,
   readMcpResource,
   resourceAndPromptTools,
   resultText,
@@ -380,6 +381,8 @@ export const mcpClientNode = defineNode({
           throw new NodeOperationError(error.message, { itemIndex: i });
         });
         const text = resultText(result);
+        // C14: a call a policy hook blocked says why, as it is.
+        if (result.isError && result._meta?.[POLICY_BLOCK_META]) throw new NodeOperationError(text, { itemIndex: i });
         if (result.isError) throw new NodeOperationError(`${tool} returned an error: ${text || 'no details'}`, { itemIndex: i });
         out.push({
           json: { tool, text, content: compactContent(result), ...(result.structuredContent !== undefined && { structuredContent: result.structuredContent as JsonObject }) },

@@ -9,6 +9,8 @@
  * The agent's rules always apply as well, and the most restrictive answer wins. If an external engine can't be reached the tool is
  * denied (`LANDFLOW_TOOL_POLICY_FAIL=open` allows it instead).
  */
+import { envString } from '../config';
+import { safeFetch } from '../net/safe-fetch';
 import { decideByRules, mostRestrictive, type AgentAccess, type Caller, type ToolDecision } from '../../shared/agent-access';
 import type { BuiltTool } from './tools';
 
@@ -22,16 +24,18 @@ export interface PolicyRequest {
 /** An external engine: answers `allow`, `ask` or `deny`, or throws when it can't. */
 export type PolicyEngine = (request: PolicyRequest, signal?: AbortSignal) => Promise<ToolDecision>;
 
-const env = (name: string) => process.env[name]?.trim() ?? '';
+const env = (name: string) => envString(name) ?? '';
 const TIMEOUT_MS = 3_000;
 
 async function post(url: string, body: unknown, signal?: AbortSignal): Promise<unknown> {
   const token = env('LANDFLOW_TOOL_POLICY_TOKEN');
   const timeout = AbortSignal.timeout(TIMEOUT_MS);
-  const response = await fetch(url, {
+  // Through safeFetch (the outbound rules; LANDFLOW_TOOL_POLICY_URL's own endpoint is exempt like OLLAMA_URL), never following a redirect.
+  const response = await safeFetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(token && { authorization: `Bearer ${token}` }) },
     body: JSON.stringify(body),
+    redirect: 'manual',
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   });
   if (!response.ok) throw new Error(`the policy engine answered ${response.status}`);

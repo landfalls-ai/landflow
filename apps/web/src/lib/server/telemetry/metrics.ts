@@ -31,6 +31,7 @@ function create(provider: MeterProvider) {
     rpcDuration: meter.createHistogram('landflow.plugin.rpc.duration', { description: 'Host to plugin RPC duration', unit: 'ms', advice }),
     heartbeats: meter.createCounter('landflow.plugin.heartbeats', { description: 'Plugin announces and heartbeats received' }),
     mcpToolCalls: meter.createCounter('landflow.mcp.tool.calls', { description: 'Tool calls on the per-plugin MCP endpoints, by plugin, tool and outcome' }),
+    mcpPolicyDecisions: meter.createCounter('landflow.mcp.policy.decisions', { description: 'Outbound MCP calls a policy hook looked at, by decision (allow, deny, failed_open, failed_closed) and hook name' }),
     aiRequests: meter.createCounter('landflow.ai.requests', { description: 'Model requests (chat and embeddings)' }),
     aiDuration: meter.createHistogram('landflow.ai.duration', { description: 'Model request duration (chat and embeddings)', unit: 'ms', advice }),
     aiTokens: meter.createCounter('landflow.ai.tokens', { description: 'Model tokens by type: input (the whole prompt), output, cache_read and cache_write (parts of input), and purpose; embeddings count input tokens only' }),
