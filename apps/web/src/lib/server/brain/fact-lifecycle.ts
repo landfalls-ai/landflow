@@ -16,7 +16,7 @@ import { envString, ollamaUrl } from '../config';
 import { ollamaEmbeddings } from '../rag/embeddings';
 import { SqliteVectorStore } from '../rag/stores';
 import { logger } from '../telemetry/logger';
-import { checkForgetAfter, FactInputError, factRow, FactNotFoundError, getFact, MemoryIndexError, sameStatement, StaleChainError, StaticFactError, upsertFact, versionFact } from './facts';
+import { checkForgetAfter, nextVersionRows, FactInputError, factRow, FactNotFoundError, getFact, MemoryIndexError, sameStatement, StaleChainError, StaticFactError, upsertFact, versionFact } from './facts';
 import { changeOrigin } from './store/origin';
 import { emitBrainChange } from './store/port';
 import { canFact } from './scope';
@@ -31,7 +31,8 @@ const MAX_REASON = 500;
 async function embed(fact: BrainFact): Promise<{ collection: string; text: string; embedding: number[] } | undefined> {
   const model = envString('LANDFLOW_BRAIN_EMBEDDINGS');
   if (model?.toLowerCase() === 'off') return undefined;
-  const text = `${fact.subjectName ?? fact.subjectId}: ${fact.statement}`;
+  // Embedding input, never a prompt (the same text the study embeds).
+  const text = [fact.subjectName ?? fact.subjectId, fact.statement].join(': ');
   try {
     const embeddings = ollamaEmbeddings({ baseUrl: ollamaUrl(), model: model || 'nomic-embed-text', documentPrefix: 'search_document: ', queryPrefix: 'search_query: ' });
     const [embedding] = await embeddings.embedDocuments([text]);
@@ -58,8 +59,9 @@ export interface SupersedeInput {
  * transaction (in Postgres one conditional write, so two writers of the same version cannot both win), then the vector.
  */
 export async function supersedeFact(chainId: string, next: SupersedeInput, who: { origin?: BrainChangeOrigin; by?: string } = {}, db: Database = database()): Promise<BrainFact> {
-  const current = getFact(chainId, db);
-  if (!current || current.latest === false) throw new FactNotFoundError();
+  // The whole row (forget fields too) so a new version of a fact with a pending forget-after keeps them.
+  const current = getFact(chainId, db, { includeForgotten: true });
+  if (!current || current.latest === false || current.forgottenAt) throw new FactNotFoundError();
   if (current.static && !next.replaceStatic) throw new StaticFactError();
   const expected = next.expectedVersion ?? current.version ?? 1;
   const now = new Date().toISOString();
@@ -68,7 +70,8 @@ export async function supersedeFact(chainId: string, next: SupersedeInput, who: 
     // Same words: only the sightings move, as the study's refresh does.
     return upsertFact({ ...current, statement: current.statement, evidence: next.evidence ?? current.evidence, confidence: next.confidence ?? current.confidence }, db, now, who.origin, who.by, { replaceStatic: next.replaceStatic });
   }
-  const proposed: BrainFact = { ...current, statement: next.statement.trim(), evidence: next.evidence ?? current.evidence, confidence: Math.max(0, Math.min(1, next.confidence ?? current.confidence)), firstSeen: now, lastSeen: now, status: 'active' };
+  const { relation: _relation, parentId: _parentId, ...kept } = current; // an update never inherits the chain start's link
+  const proposed: BrainFact = { ...kept, statement: next.statement.trim(), evidence: next.evidence ?? current.evidence, confidence: Math.max(0, Math.min(1, next.confidence ?? current.confidence)), firstSeen: now, lastSeen: now, status: 'active' };
   const vector = await embed(proposed); // before any row is written
   const written = db.kind === 'postgres' ? await supersedePostgres(db, current, proposed, expected, who) : db.transaction(() => {
     const row = getFact(chainId, db, { includeForgotten: true });
@@ -90,10 +93,7 @@ export async function supersedeFact(chainId: string, next: SupersedeInput, who: 
 /** The conditional write in Postgres (the `claim()` pattern): the archive row is new and the chain row still holds the version read. */
 async function supersedePostgres(db: Database, current: BrainFact, proposed: BrainFact, expected: number, who: { origin?: BrainChangeOrigin; by?: string }): Promise<BrainFact> {
   await db.flush();
-  // The same rows `versionFact` writes on SQLite, composed here because Postgres decides the race in one SQL transaction.
-  const n = current.version ?? 1;
-  const archive: BrainFact = { ...current, id: `${current.id}#v${n}`, rootId: current.id, latest: false, version: n };
-  const written: BrainFact = { ...proposed, id: current.id, rootId: current.id, version: n + 1, latest: true, parentId: archive.id, relation: 'updates', writtenBy: { ...changeOrigin(who.origin, who.by) } };
+  const { archive, written, dropId } = nextVersionRows(current, proposed, who.origin, who.by);
   const archiveRow = factRow(archive);
   const chainRow = factRow(written);
   const columns = Object.keys(chainRow);
@@ -107,6 +107,12 @@ async function supersedePostgres(db: Database, current: BrainFact, proposed: Bra
         await client.query('ROLLBACK');
         return undefined;
       }
+      if (dropId) await client.query('DELETE FROM brain_facts WHERE id = $1', [dropId]);
+      // Other mains drop their copies of both rows (a no-op without replication), from this same transaction.
+      for (const id of [archive.id, written.id]) {
+        const payload = db.keyNotice('brain_facts', [id]);
+        if (payload) await client.query('SELECT pg_notify($1, $2)', ['landflow_changes', payload]);
+      }
       await client.query('COMMIT');
       return true;
     } catch (error) {
@@ -118,6 +124,7 @@ async function supersedePostgres(db: Database, current: BrainFact, proposed: Bra
   // This process's copy follows (nothing is queued: Postgres already holds both rows).
   db.upsertLocal('brain_facts', archiveRow);
   db.upsertLocal('brain_facts', chainRow);
+  if (dropId) db.delete('brain_facts', { id: dropId }); // already gone in Postgres; this drops the copy's row (the replayed delete is a no-op)
   return written;
 }
 
@@ -157,10 +164,10 @@ export async function forgetFact(id: string, input: { reason: string; forgetAfte
 export function restoreFact(id: string, by: ForgetBy, db: Database = database()): BrainFact {
   const fact = getFact(id, db, { includeForgotten: true });
   if (!fact) throw new FactNotFoundError();
+  if (!fact.forgottenAt && !fact.forgetAfter && !fact.forgetReason) throw new HttpError('This fact is not forgotten', 409);
   const { forgottenAt, forgetReason, forgottenBy, forgetAfter, ...rest } = fact;
-  const was = forgottenAt || forgetAfter || forgetReason || forgottenBy;
   const restored: BrainFact = rest;
-  if (was) db.upsert('brain_facts', factRow(restored));
+  db.upsert('brain_facts', factRow(restored));
   recordAudit({
     action: 'brain.fact_restored',
     target: { type: 'brain_fact', id, name: fact.subjectName ?? fact.subjectId },

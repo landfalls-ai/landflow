@@ -4,7 +4,8 @@
  * `nextCursor` (the last version of the page) opens the next. Anyone who may read the fact's subject; others get 404.
  */
 import { z } from 'zod';
-import { factVersions } from '@/lib/server/brain/facts';
+import { FactNotFoundError, factVersions, getFact } from '@/lib/server/brain/facts';
+import { canFact } from '@/lib/server/brain/scope';
 import { factFor } from '@/lib/server/brain/fact-lifecycle';
 import { handler, json, parseQuery } from '@/lib/server/http';
 import { limitParam } from '@/lib/server/pagination';
@@ -18,7 +19,12 @@ export const GET = handler(async (request: Request, ctx: { params: Promise<{ id:
   const query = parseQuery(request, Query);
   if (!query.ok) return query.response;
   const id = decodeURIComponent((await ctx.params).id);
-  factFor(routeActor(), id, 'read');
-  const page = factVersions(id, { limit: query.data.limit, after: query.data.cursor });
+  const actor = routeActor();
+  const asked = factFor(actor, id, 'read');
+  // A forgotten chain is for the people who may restore it; to anyone else it is gone, and a reason never goes to a reader.
+  const latest = getFact(asked.rootId ?? id, undefined, { includeForgotten: true }) ?? asked;
+  const editor = canFact(actor, latest, 'update');
+  if ((latest.forgottenAt || asked.forgottenAt) && !editor) throw new FactNotFoundError();
+  const page = factVersions(id, { limit: query.data.limit, after: query.data.cursor, withForget: editor });
   return json({ versions: page.versions, ...(page.next !== undefined && { nextCursor: String(page.next) }) });
 });

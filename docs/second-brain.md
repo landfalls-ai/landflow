@@ -104,9 +104,9 @@ A fact is a chain of versions, so a reworded fact keeps what it said before (`ap
   Landflow Usage node, the Brain page and the Notion copy. The latest, not-forgotten, not-past-its-forget-after rule is in the
   SQL (`LIVE_FACT`), so a long history never reaches memory. `?history=1` on `GET /api/brain/facts` adds the old versions.
 - **History**: `GET /api/brain/facts/:id/versions` (the id URL-encoded: entity fact ids hold `/`) lists the chain oldest first
-  with the same visibility rule as the fact (404 when you may not see it); the Brain page's **History** button opens it.
-- **At most 50 versions with text.** A chain keeps its first version and its newest 49; the version dropped past that keeps its
-  row with no words and a `trimmed` mark.
+  with the same visibility rule as the fact (404 when you may not see it; the versions of a forgotten fact only for people who
+  may restore it); the Brain page's **History** button opens it.
+- **At most 50 versions.** A chain keeps its first version and its newest 49; the oldest one past that is deleted with its row.
 - **Static facts.** A fact added with `isStatic` (the Add Fact node's **Static**, the facts route's `isStatic`) never goes stale
   and the study, a suggestion's outcome and any other synchronous write leave it unchanged (logging `brain fact is static` with its id). A person's edit (Notion's pull of a person's own fact, `supersedeFact` with
   `replaceStatic`) changes it as a new version.
@@ -131,8 +131,8 @@ the instance); a caller who cannot see the fact gets 404.
   leaves the fact out, with no sweep. With it, **Forget** only sets that time.
 - A forgotten fact stays forgotten when the study writes it again (a reworded statement still becomes a new version of it);
   restoring brings the current version back. A past version never becomes the latest again.
-- A forgotten fact leaves the Notion copy: the next push trashes its row, and a restore writes it back as a new row.
-- The reason is a person's words: the audit log keeps it, no prompt ever carries it.
+- A forgotten fact leaves the Notion copy: the next push trashes its row, and a restore writes it back as a new row. Restoring a fact that is not forgotten answers 409.
+- The reason is a person's words: the audit log keeps it, and it comes back only in the forgotten list and an editor's history, never in a search, an MCP tool, the Usage node or a prompt (a live fact with a forget-after pending does not carry it either).
 
 ### 3. The loop
 

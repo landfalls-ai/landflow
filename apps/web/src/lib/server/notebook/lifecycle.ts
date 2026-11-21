@@ -3,22 +3,23 @@
  * reason, restore it, and settle a dispute so the loser leaves recall in the same transaction as the winner's verify. It is
  * the same vocabulary as a brain fact's forget (brain/fact-lifecycle.ts); a note keeps its own columns and `superseded_by`.
  */
+import { agentTeamStore } from '../agent-teams/store';
 import { recordAudit } from '../audit';
 import { checkForgetAfter } from '../brain/facts';
-import { noteStore } from './store';
+import { expiryOf, noteStore } from './store';
 import { NoteError } from './approve';
 import type { TeamNote } from '../../shared/notebook';
 
 const MAX_REASON = 500;
 
 function mustHave(teamId: string, id: string): TeamNote {
-  const note = noteStore.get(id);
+  const note = noteStore.get(id, { withForget: true });
   if (!note || note.teamId !== teamId) throw new NoteError('Note not found', 404);
   return note;
 }
 
 const audit = (action: 'notebook.note_forgotten' | 'notebook.note_restored', note: TeamNote, details: Record<string, string | number | boolean>) =>
-  recordAudit({ action, target: { type: 'team_note', id: note.id, name: note.teamId }, project: note.projectId ?? null, details: { team: note.teamId, ...details } });
+  recordAudit({ action, target: { type: 'team_note', id: note.id, name: agentTeamStore.get(note.teamId)?.draft.name ?? note.teamId }, project: note.projectId ?? null, details: { team: note.teamId, ...details } });
 
 /**
  * Forget a note: it leaves every read and the prompt block but stays (with who and why) until restored or deleted, and the
@@ -35,7 +36,8 @@ export function forgetNote(teamId: string, id: string, input: { reason: string; 
     throw new NoteError((caught as Error).message);
   }
   const columns: Record<string, string> = forgetAfter ? { expires_at: forgetAfter, forget_reason: reason, forgotten_by: by } : { forgotten_at: new Date().toISOString(), forget_reason: reason, forgotten_by: by };
-  const forgotten = noteStore.patch(id, columns)!;
+  noteStore.patch(id, columns);
+  const forgotten = noteStore.get(id, { withForget: true })!;
   audit('notebook.note_forgotten', note, { reason, from: 'live', to: forgetAfter ? 'expiring' : 'forgotten', ...(forgetAfter && { forgetAfter }) });
   return forgotten;
 }
@@ -44,7 +46,10 @@ export function forgetNote(teamId: string, id: string, input: { reason: string; 
 export function restoreNote(teamId: string, id: string, _by: string): TeamNote {
   const note = mustHave(teamId, id);
   if (!note.forgottenAt && !note.forgetReason) throw new NoteError('This note is not forgotten', 409);
-  const restored = noteStore.patch(id, { forgotten_at: null, forget_reason: null, forgotten_by: null })!;
+  if (note.status === 'expired') throw new NoteError('This note has already expired', 409);
+  // A forget-after set the expiry: put back the one its scope and standing give (a project note never expires).
+  const expires = expiryOf(note.scope, note.status === 'verified') ?? null;
+  const restored = noteStore.patch(id, { forgotten_at: null, forget_reason: null, forgotten_by: null, ...(note.forgottenAt ? {} : { expires_at: expires }) })!;
   audit('notebook.note_restored', note, { from: 'forgotten', to: 'live' });
   return restored;
 }

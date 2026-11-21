@@ -29,6 +29,7 @@ export function BrainPanel() {
   const [forgetting, setForgetting] = useState<BrainFact>();
   const [showForgotten, setShowForgotten] = useState(false);
   const [reload, setReload] = useState(0);
+  const [editable, setEditable] = useState<Set<string>>(new Set());
   const [running, setRunning] = useState(false);
   const [creating, setCreating] = useState(false);
   const [canRun, setCanRun] = useState(true);
@@ -45,8 +46,8 @@ export function BrainPanel() {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      api<{ facts: BrainFact[] }>(showForgotten ? '/api/brain/facts?forgotten=1&limit=50' : `/api/brain/facts?q=${encodeURIComponent(query.trim())}&limit=20`)
-        .then((r) => setFacts(r.facts))
+      api<{ facts: BrainFact[]; editable?: string[] }>(showForgotten ? '/api/brain/facts?forgotten=1&limit=50' : `/api/brain/facts?q=${encodeURIComponent(query.trim())}&limit=20`)
+        .then((r) => (setFacts(r.facts), setEditable(new Set(r.editable ?? []))))
         .catch(() => setFacts([]));
     }, 250);
     return () => clearTimeout(timer);
@@ -185,7 +186,7 @@ export function BrainPanel() {
                   <Button size="sm" variant="ghost" onClick={() => void restore(f)}>
                     <RotateCcw className="size-3.5" /> Restore
                   </Button>
-                ) : (
+                ) : editable.has(f.id) && (
                   <Button size="sm" variant="ghost" onClick={() => setForgetting(f)} aria-label={`Forget ${f.subjectName ?? f.subjectId}: ${f.kind}`}>
                     Forget
                   </Button>

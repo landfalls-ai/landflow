@@ -84,6 +84,39 @@ describe('T-8 forget', () => {
   });
 });
 
+describe('C02 review: reasons and forget-after', () => {
+  it('a reader never gets the reason; the forgotten list does, and it holds a note with a forget-after pending', () => {
+    const live = add('pending');
+    const gone = add('gone now');
+    forgetNote(team.id, live.id, { reason: 'private words', forgetAfter: new Date(Date.now() + 3_600_000).toISOString() }, 'Tester');
+    forgetNote(team.id, gone.id, { reason: 'other private words' }, 'Tester');
+    const seen = noteStore.list({ teamId: team.id, allRuns: true });
+    expect(JSON.stringify(seen)).not.toContain('private words');
+    expect(JSON.stringify(noteStore.get(live.id))).not.toContain('private words');
+    const only = noteStore.list({ teamId: team.id, allRuns: true, forgotten: 'only' });
+    expect(texts(only)).toEqual(['gone now', 'pending']);
+    expect(JSON.stringify(only)).toContain('private words');
+  });
+
+  it('restoring a note forgotten with a forget-after puts its scope’s expiry back', () => {
+    const note = add('temporary', { scope: 'team' });
+    forgetNote(team.id, note.id, { reason: 'x', forgetAfter: new Date(Date.now() + 3_600_000).toISOString() }, 'T');
+    const restored = restoreNote(team.id, note.id, 'T');
+    expect(restored.forgetReason).toBeUndefined();
+    expect(Date.parse(restored.expiresAt!)).toBeGreaterThan(Date.now() + 20 * 86_400_000);
+    const project = add('kept', { scope: 'project' });
+    forgetNote(team.id, project.id, { reason: 'x', forgetAfter: new Date(Date.now() + 3_600_000).toISOString() }, 'T');
+    expect(restoreNote(team.id, project.id, 'T').expiresAt).toBeUndefined();
+  });
+
+  it('audits with the team’s name as the target', () => {
+    const note = add('audited');
+    forgetNote(team.id, note.id, { reason: 'x' }, 'T');
+    const row = database().get<{ target_name: string }>("SELECT target_name FROM audit_events WHERE action = 'notebook.note_forgotten' ORDER BY at DESC, id DESC");
+    expect(row?.target_name).toBe('Lifecycle team');
+  });
+});
+
 describe('T-8 settling a dispute', () => {
   it('patchMany writes every note or none', () => {
     const a = add('a');

@@ -28,21 +28,32 @@ afterAll(() => {
   }
 });
 
-const columns = (table: string) => (database().all<{ name: string }>(`PRAGMA table_info(${table})`)).map((c) => c.name);
+const columns = (table: string) =>
+  database()
+    .all<{ name: string }>(`PRAGMA table_info(${table})`)
+    .map((c) => c.name);
 const base = { subjectType: 'workflow', subjectId: 'w1', kind: 'health', confidence: 0.6 } as const;
 const input = (statement: string) => ({ ...base, statement }) as never;
 const at = (n: number) => new Date(Date.UTC(2026, 10, 1, 0, 0, n)).toISOString();
 
 describe('T-1 migrations', () => {
   it('adds the version and forget columns', () => {
-    for (const c of ['version', 'is_latest', 'parent_id', 'root_id', 'is_static', 'relation', 'forgotten_at', 'forget_reason', 'forgotten_by', 'forget_after']) expect(columns('brain_facts'), c).toContain(c);
+    for (const c of ['version', 'is_latest', 'parent_id', 'root_id', 'is_static', 'relation', 'forgotten_at', 'forget_reason', 'forgotten_by', 'forget_after'])
+      expect(columns('brain_facts'), c).toContain(c);
     for (const c of ['forgotten_at', 'forget_reason', 'forgotten_by']) expect(columns('team_notes'), c).toContain(c);
   });
 
   it('migrates a fact written before 2912 as version 1, latest, its own root', () => {
     const sqlite = new DatabaseSync(':memory:');
-    migrateSqlite(sqlite, MIGRATIONS.filter((m) => m.version < 2912));
-    sqlite.prepare("INSERT INTO brain_facts (id, subject_type, subject_id, kind, project_id, status, last_seen, data) VALUES ('workflow:old:health', 'workflow', 'old', 'health', NULL, 'active', 'x', '{}')").run();
+    migrateSqlite(
+      sqlite,
+      MIGRATIONS.filter((m) => m.version < 2912),
+    );
+    sqlite
+      .prepare(
+        "INSERT INTO brain_facts (id, subject_type, subject_id, kind, project_id, status, last_seen, data) VALUES ('workflow:old:health', 'workflow', 'old', 'health', NULL, 'active', 'x', '{}')",
+      )
+      .run();
     expect(migrateSqlite(sqlite, MIGRATIONS)).toEqual([2912, 2913]);
     const row = sqlite.prepare("SELECT version, is_latest, root_id, is_static, parent_id, relation FROM brain_facts WHERE id = 'workflow:old:health'").get();
     expect({ ...row }).toEqual({ version: 1, is_latest: 1, root_id: 'workflow:old:health', is_static: 0, parent_id: null, relation: null });
@@ -55,17 +66,45 @@ describe('T-3 reads filter in SQL', () => {
     facts.upsertFact(input('fails 2 percent of runs'), db, at(1));
     facts.upsertFact(input('fails 9 percent of runs'), db, at(2));
     facts.upsertFact({ ...base, subjectId: 'w2', statement: 'forgotten one' } as never, db, at(1));
-    db.upsert('brain_facts', { id: 'workflow:w2:health', subject_type: 'workflow', subject_id: 'w2', kind: 'health', status: 'active', last_seen: at(1), data: JSON.stringify(facts.getFact('workflow:w2:health')), forgotten_at: at(3) });
+    db.upsert('brain_facts', {
+      id: 'workflow:w2:health',
+      subject_type: 'workflow',
+      subject_id: 'w2',
+      kind: 'health',
+      status: 'active',
+      last_seen: at(1),
+      data: JSON.stringify(facts.getFact('workflow:w2:health')),
+      forgotten_at: at(3),
+    });
     facts.upsertFact({ ...base, subjectId: 'w3', statement: 'lapsed one' } as never, db, at(1));
-    db.upsert('brain_facts', { id: 'workflow:w3:health', subject_type: 'workflow', subject_id: 'w3', kind: 'health', status: 'active', last_seen: at(1), data: JSON.stringify(facts.getFact('workflow:w3:health')), forget_after: '2000-01-01T00:00:00.000Z' });
+    db.upsert('brain_facts', {
+      id: 'workflow:w3:health',
+      subject_type: 'workflow',
+      subject_id: 'w3',
+      kind: 'health',
+      status: 'active',
+      last_seen: at(1),
+      data: JSON.stringify(facts.getFact('workflow:w3:health')),
+      forget_after: '2000-01-01T00:00:00.000Z',
+    });
 
     expect(facts.listFacts({}, db).map((f) => f.id)).toEqual(['workflow:w1:health']);
     expect(facts.searchFacts('fails', {}, db).map((f) => f.statement)).toEqual(['fails 9 percent of runs']);
     expect(facts.countFacts(db).facts).toBe(1);
     expect(facts.getFact('workflow:w2:health', db)).toBeUndefined();
     expect(facts.getFact('workflow:w2:health', db, { includeForgotten: true })?.id).toBe('workflow:w2:health');
-    expect(facts.listFacts({ history: true, subjectId: 'w1' }, db).map((f) => f.id).sort()).toEqual(['workflow:w1:health', 'workflow:w1:health#v1']);
-    expect(facts.listFacts({ forgotten: 'only' }, db).map((f) => f.id).sort()).toEqual(['workflow:w2:health', 'workflow:w3:health']);
+    expect(
+      facts
+        .listFacts({ history: true, subjectId: 'w1' }, db)
+        .map((f) => f.id)
+        .sort(),
+    ).toEqual(['workflow:w1:health', 'workflow:w1:health#v1']);
+    expect(
+      facts
+        .listFacts({ forgotten: 'only' }, db)
+        .map((f) => f.id)
+        .sort(),
+    ).toEqual(['workflow:w2:health', 'workflow:w3:health']);
   });
 
   it('puts the filter and the limit in the query', () => {
@@ -108,15 +147,58 @@ describe('T-4 versioned writes', () => {
     expect(facts.listFacts({ history: true, subjectId: 'v2' }, db)).toHaveLength(1);
   });
 
-  it('bounds a chain at 50 versions, keeping the root and the newest text', () => {
+  it('bounds a chain at 50 versions: the root and the newest 49 stay, older rows are deleted', () => {
     const db = database();
     for (let i = 1; i <= 60; i++) facts.upsertFact({ ...base, subjectId: 'cap', statement: `statement ${i}` } as never, db, at(i));
     const all = facts.factVersions('workflow:cap:health', { limit: 100 }, db).versions;
-    expect(all).toHaveLength(60);
+    expect(all).toHaveLength(50);
     expect(all[0]).toMatchObject({ version: 1, statement: 'statement 1' });
-    expect(all.filter((v) => v.statement !== '')).toHaveLength(50);
-    expect(all.filter((v) => v.trimmed)).toHaveLength(10);
+    expect(all[1].version).toBe(12);
     expect(all.at(-1)).toMatchObject({ version: 60, statement: 'statement 60' });
+    expect(db.get<{ n: number }>("SELECT COUNT(*) AS n FROM brain_facts WHERE root_id = 'workflow:cap:health'")?.n).toBe(50);
+  });
+
+  it('a static fact that refuses a write sends no change event', async () => {
+    const db = database();
+    facts.upsertFact({ ...base, subjectId: 'ev', statement: 'fixed' } as never, db, at(1), undefined, undefined, { isStatic: true });
+    await Promise.resolve();
+    const events: string[] = [];
+    const off = onBrainChange((e) => events.push(e.key));
+    facts.upsertFact({ ...base, subjectId: 'ev', statement: 'other' } as never, db, at(2));
+    await Promise.resolve();
+    off();
+    expect(events).toEqual([]);
+  });
+
+  it('a live fact with a pending forget-after never carries the reason to a reader', () => {
+    const db = database();
+    facts.upsertFact({ ...base, subjectId: 'pend', statement: 'soon gone' } as never, db, at(1));
+    const row = db.get<{ data: string }>("SELECT data FROM brain_facts WHERE id = 'workflow:pend:health'")!;
+    db.upsert('brain_facts', {
+      id: 'workflow:pend:health',
+      subject_type: 'workflow',
+      subject_id: 'pend',
+      kind: 'health',
+      status: 'active',
+      last_seen: at(1),
+      data: row.data,
+      forget_after: '2099-01-01T00:00:00.000Z',
+      forget_reason: 'a secret reason',
+      forgotten_by: 'usr_1',
+    });
+    for (const f of [
+      facts.getFact('workflow:pend:health', db),
+      facts.listFacts({ subjectId: 'pend' }, db)[0],
+      facts.searchFacts('soon', {}, db)[0],
+      facts.factVersions('workflow:pend:health', { limit: 5 }, db).versions[0],
+    ]) {
+      expect(f).toBeDefined();
+      expect(JSON.stringify(f)).not.toContain('secret reason');
+      expect(JSON.stringify(f)).not.toContain('usr_1');
+    }
+    expect(facts.getFact('workflow:pend:health', db, { includeForgotten: true })?.forgetReason).toBe('a secret reason');
+    // A new version of it keeps the pending forget.
+    expect(facts.upsertFact({ ...base, subjectId: 'pend', statement: 'still soon gone' } as never, db, at(2))).toMatchObject({ version: 2, forgetReason: 'a secret reason' });
   });
 
   it('keeps a static fact unchanged without replaceStatic, and writes it with it', () => {
@@ -160,7 +242,10 @@ describe('T-4 versioned writes', () => {
   it('an extends link starts a new chain pointing at the linked fact', () => {
     const db = database();
     facts.upsertFact({ ...base, subjectId: 'ln', statement: 'parent' } as never, db, at(1));
-    const child = facts.upsertFact({ ...base, subjectId: 'ln', kind: 'purpose', statement: 'child' } as never, db, at(2), undefined, undefined, { parentId: 'workflow:ln:health', relation: 'extends' });
+    const child = facts.upsertFact({ ...base, subjectId: 'ln', kind: 'purpose', statement: 'child' } as never, db, at(2), undefined, undefined, {
+      parentId: 'workflow:ln:health',
+      relation: 'extends',
+    });
     expect(child).toMatchObject({ version: 1, parentId: 'workflow:ln:health', relation: 'extends', rootId: 'workflow:ln:purpose' });
   });
 });

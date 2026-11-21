@@ -10,6 +10,8 @@
 import { z } from 'zod';
 import { agentTeamStore } from '@/lib/server/agent-teams/store';
 import { error, handler, json, parseBody } from '@/lib/server/http';
+import { canResource } from '@/lib/server/projects/access';
+import { routeActor } from '@/lib/server/projects/http';
 import { personOf } from '@/lib/server/notebook/http';
 import { searchNotes } from '@/lib/server/notebook/search';
 import { personAdd, projectOf } from '@/lib/server/notebook/service';
@@ -54,7 +56,7 @@ export const GET = handler(async (request: Request, { params }: Ctx) => {
   }
   // The headline counts what the list holds under the same scope, run and expiry, whatever kind or status is picked.
   const counts = noteStore.counts(id, projectId, { expired: filter.expired, ...(filter.forgotten && { forgotten: filter.forgotten }), ...(scopes && { scopes }), ...(run && { onlyRun: run }) });
-  return json({ notes, counts, ...(via && { via }) });
+  return json({ notes, counts, canEdit: canResource(routeActor(), 'agentTeam', id, 'update'), ...(via && { via }) });
 });
 
 const addSchema = z.object({ kind: z.enum(NOTE_KINDS).optional(), text: z.string().min(1).max(2000) });

@@ -126,7 +126,7 @@ the MCP server at the start of each session, so it needs nothing.
 **Forget** (the tab, `POST /api/agent-teams/:id/notes/:noteId { action: 'forget', reason, forgetAfter? }`) takes a note out of
 every list, search and prompt block without deleting it: it stays with the reason (1 to 500 characters, required) and who, and the
 sweeper never deletes it. **Forgotten** on the tab lists them with **Restore** (`{ action: 'restore' }`). With `forgetAfter` (a
-minute to five years ahead) it only sets the note's expiry to that time. Both are audited (`notebook.note_forgotten`,
+minute to five years ahead) it only sets the note's expiry to that time; **Restore** then puts back the expiry its scope and standing give (a project note never expires), and the **Forgotten** list holds such a note too. The reason shows only in that list, never to a reader or in a prompt, and the Forget button is for people who may edit the team. Both are audited (`notebook.note_forgotten`,
 `notebook.note_restored`). Delete stays for removing a note for good. It is the same words as forgetting a brain fact
 ([second-brain.md](second-brain.md#forgetting-a-fact)); the reason never goes into a prompt.
 

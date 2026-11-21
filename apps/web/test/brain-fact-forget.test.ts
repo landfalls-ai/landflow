@@ -260,6 +260,18 @@ describe('T-5 forget and restore', () => {
     });
   });
 
+  it('restoring a fact that is not forgotten answers 409', () => {
+    put('closes in 4 days');
+    expect(() => lifecycle.restoreFact(ID, { userId: editor.id }, db())).toThrow(/not forgotten/);
+  });
+
+  it('a supersede of a chain that started with an extends link is an update', async () => {
+    put('parent');
+    const child = facts.upsertFact({ ...base, kind: 'purpose', statement: 'child' } as never, db(), new Date().toISOString(), undefined, undefined, { parentId: ID, relation: 'extends' });
+    const next = await lifecycle.supersedeFact(child.id, { statement: 'child v2' }, {}, db());
+    expect(next).toMatchObject({ version: 2, relation: 'updates', parentId: `${child.id}#v1` });
+  });
+
   it('canFact follows the subject', () => {
     expect(canFact(actorOf(editor), { subjectType: 'workflow', subjectId: 'wf_f' }, 'update')).toBe(true);
     expect(canFact(actorOf(viewer), { subjectType: 'workflow', subjectId: 'wf_f' }, 'read')).toBe(true);
@@ -284,6 +296,27 @@ describe('T-9 routes', () => {
     expect((await call(factsRoute.GET, '/api/brain/facts?forgotten=1')).body.facts.map((f: any) => f.id)).toEqual([ID]);
     enableTestAuth(outsider);
     expect((await call(factsRoute.GET, '/api/brain/facts?forgotten=1')).body.facts).toEqual([]);
+  });
+
+  it('the versions of a forgotten fact are for editors only, and carry the reason only to them', async () => {
+    put('closes in 4 days');
+    put('closes in 2 days');
+    await lifecycle.forgetFact(ID, { reason: 'private words' }, { userId: owner.id }, db());
+    const url = `/api/brain/facts/${enc(ID)}/versions`;
+    enableTestAuth(viewer);
+    expect((await call(versionsRoute.GET, url, undefined, { id: enc(ID) })).status).toBe(404);
+    enableTestAuth(editor);
+    const seen = await call(versionsRoute.GET, url, undefined, { id: enc(ID) });
+    expect(seen.status).toBe(200);
+    expect(JSON.stringify(seen.body)).toContain('private words');
+  });
+
+  it('the list route says which facts the caller may forget', async () => {
+    put('closes in 4 days');
+    enableTestAuth(viewer);
+    expect((await call(factsRoute.GET, '/api/brain/facts')).body.editable).toEqual([]);
+    enableTestAuth(editor);
+    expect((await call(factsRoute.GET, '/api/brain/facts')).body.editable).toEqual([ID]);
   });
 
   it('GET versions lists a chain oldest first and pages by cursor', async () => {
@@ -427,6 +460,13 @@ describe('T-5 conditional supersede in Postgres mode', () => {
             for (const m of text.split(' WHERE ')[0].matchAll(/(\w+) = \$(\d+)/g)) row[m[1]] = values[Number(m[2]) - 1];
             return { rows: [{ id }] as never[], rowCount: 1 };
           }
+          if (text.startsWith('DELETE FROM brain_facts WHERE id')) {
+            const before = remote.get(String(values[0]));
+            remote.delete(String(values[0]));
+            if (before) undo.push(() => remote.set(String(values[0]), before));
+            return { rows: [], rowCount: before ? 1 : 0 };
+          }
+          if (text.startsWith('SELECT pg_notify')) return { rows: [], rowCount: 1 };
           throw new Error(`fake postgres: unexpected query ${text}`);
         },
       };
@@ -434,12 +474,12 @@ describe('T-5 conditional supersede in Postgres mode', () => {
     const sink: import('@/lib/server/db/database').WriteSink = {
       enqueue: (ops) => void queued.push(...ops),
       flush: async () => {
-        for (const op of queued.splice(0))
-          if (op.op === 'upsert' && op.table === 'brain_facts')
-            remote.set(String(op.row.id), {
-              ...remote.get(String(op.row.id)),
-              ...op.row,
-            });
+        for (const op of queued.splice(0)) {
+          if (op.table !== 'brain_facts') continue;
+          if (op.op === 'upsert') remote.set(String(op.row.id), { ...remote.get(String(op.row.id)), ...op.row });
+          else if (op.op === 'insert') remote.has(String(op.row.id)) || remote.set(String(op.row.id), { ...op.row });
+          else if (op.op === 'delete') remote.delete(String(op.where.id));
+        }
       },
       close: async () => {},
       direct: (fn) => fn(connection()),
@@ -466,5 +506,21 @@ describe('T-5 conditional supersede in Postgres mode', () => {
     ]);
     expect(facts.getFact(ID, handle)?.version).toBe(2);
     expect(facts.getFact(`${ID}#v1`, handle)?.latest).toBe(false);
+  });
+
+  it('the 50-version trim and the key notice happen inside the transaction', async () => {
+    const { handle, remote } = await fake();
+    for (let i = 1; i <= 50; i++) facts.upsertFact({ ...base, statement: `s ${i}` } as never, handle, new Date().toISOString());
+    await handle.flush();
+    const notices: string[] = [];
+    (handle as unknown as { sink: { keyNotice: (t: string, k: unknown[]) => string } }).sink.keyNotice = (_t, k) => `notice:${String(k[0])}`;
+    const orig = (handle as unknown as { sink: { direct: (fn: (c: { query: (t: string, v?: unknown[]) => Promise<unknown> }) => Promise<unknown>) => Promise<unknown> } }).sink.direct;
+    (handle as unknown as { sink: { direct: typeof orig } }).sink.direct = (fn) =>
+      orig((c) => fn({ query: (t, v) => (t.startsWith('SELECT pg_notify') && notices.push(String(v?.[1])), c.query(t, v)) }));
+    const next = await lifecycle.supersedeFact(ID, { statement: 'the 51st' }, {}, handle);
+    expect(next.version).toBe(51);
+    expect(remote.has(`${ID}#v2`)).toBe(false);
+    expect(remote.has(`${ID}#v1`)).toBe(true);
+    expect(notices.sort()).toEqual([`notice:${ID}`, `notice:${ID}#v50`]);
   });
 });

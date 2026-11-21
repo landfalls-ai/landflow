@@ -64,7 +64,7 @@ export function checkForgetAfter(value: string | undefined, nowMs = Date.now()):
   return new Date(at).toISOString();
 }
 
-/** A chain keeps at most this many versions with text (C01 FR-10); older ones lose their text, the root keeps it. */
+/** A chain keeps at most this many versions (C01 FR-10): the root and the newest ones; older rows are deleted. */
 export const MAX_FACT_VERSIONS = 50;
 
 const parse = <T>(text: string): T | undefined => {
@@ -99,8 +99,12 @@ interface FactRow {
 }
 const FACT_COLUMNS = 'data, version, is_latest, parent_id, root_id, is_static, relation, forgotten_at, forget_reason, forgotten_by, forget_after';
 
-/** The fact a row holds: the columns are the truth for the chain and forget fields, `data` mirrors them. */
-function fromRow(row: FactRow): BrainFact | undefined {
+/**
+ * The fact a row holds: the columns are the truth for the chain and forget fields, `data` mirrors them. The reason and who
+ * forgot it are a person's words and leave only with `withForget` (the forgotten list, the lifecycle, an editor's history):
+ * a live fact with a pending forget-after must not carry them to MCP tools, the Usage node or the list route.
+ */
+function fromRow(row: FactRow, withForget = false): BrainFact | undefined {
   const fact = parse<BrainFact>(row.data);
   if (!fact) return undefined;
   const rest = { ...fact };
@@ -114,8 +118,8 @@ function fromRow(row: FactRow): BrainFact | undefined {
     ...(Number(row.is_static ?? 0) === 1 && { static: true }),
     ...(row.relation && { relation: row.relation as FactRelation }),
     ...(row.forgotten_at && { forgottenAt: row.forgotten_at }),
-    ...(row.forget_reason && { forgetReason: row.forget_reason }),
-    ...(row.forgotten_by && { forgottenBy: row.forgotten_by }),
+    ...(withForget && row.forget_reason && { forgetReason: row.forget_reason }),
+    ...(withForget && row.forgotten_by && { forgottenBy: row.forgotten_by }),
     ...(row.forget_after && { forgetAfter: row.forget_after }),
   };
 }
@@ -152,7 +156,7 @@ const lapsed = (fact: BrainFact, now: string) => Boolean(fact.forgottenAt || (fa
  */
 export function getFact(id: string, db: Database = database(), options: { includeForgotten?: boolean; now?: string } = {}): BrainFact | undefined {
   const row = db.get<FactRow>(`SELECT ${FACT_COLUMNS} FROM brain_facts WHERE id = ?`, id);
-  const fact = row ? fromRow(row) : undefined;
+  const fact = row ? fromRow(row, options.includeForgotten) : undefined;
   if (!fact) return undefined;
   return !options.includeForgotten && lapsed(fact, options.now ?? new Date().toISOString()) ? undefined : fact;
 }
@@ -172,23 +176,28 @@ export interface FactWriteOptions {
  * latest), the chain row becomes version n+1, and a chain past `MAX_FACT_VERSIONS` drops the text of one old version. A
  * writer that lost a race finds the archive row there and gets `StaleChainError`.
  */
-export function versionFact(db: Database, current: BrainFact, next: BrainFact, origin?: BrainChangeOrigin, by?: string): BrainFact {
+export function nextVersionRows(current: BrainFact, next: BrainFact, origin?: BrainChangeOrigin, by?: string): { archive: BrainFact; written: BrainFact; dropId?: string } {
   const n = current.version ?? 1;
   const archive: BrainFact = { ...current, id: `${current.id}#v${n}`, rootId: current.id, latest: false, version: n };
-  if (!db.insertNew('brain_facts', factRow(archive))) throw new StaleChainError();
-  const written = { ...next, id: current.id, rootId: current.id, version: n + 1, latest: true, parentId: archive.id, relation: next.relation ?? 'updates', writtenBy: { ...changeOrigin(origin, by) } } satisfies BrainFact;
-  db.upsert('brain_facts', factRow(written));
+  // A supersede is always an update: `relation`/`parentId` of the chain's start (an extends link) never carry onto a later version.
+  const written: BrainFact = { ...next, id: current.id, rootId: current.id, version: n + 1, latest: true, parentId: archive.id, relation: 'updates', writtenBy: { ...changeOrigin(origin, by) } };
+  // Past the cap the oldest version after the root is dropped with its row (FR-10: the root and the newest 49 stay).
   const drop = n + 1 - (MAX_FACT_VERSIONS - 1);
-  if (n + 1 > MAX_FACT_VERSIONS && drop > 1) {
-    const old = getFact(`${current.id}#v${drop}`, db, { includeForgotten: true });
-    if (old && !old.trimmed) db.upsert('brain_facts', factRow({ ...old, statement: '', trimmed: true }));
-  }
+  return { archive, written, ...(n + 1 > MAX_FACT_VERSIONS && drop > 1 && { dropId: `${current.id}#v${drop}` }) };
+}
+
+export function versionFact(db: Database, current: BrainFact, next: BrainFact, origin?: BrainChangeOrigin, by?: string): BrainFact {
+  const { archive, written, dropId } = nextVersionRows(current, next, origin, by);
+  if (!db.insertNew('brain_facts', factRow(archive))) throw new StaleChainError();
+  db.upsert('brain_facts', factRow(written));
+  if (dropId) db.delete('brain_facts', { id: dropId });
   return written;
 }
 
 /** Add a fact, or refresh the one with its id (first seen stays); a reworded statement becomes a new version of the chain. */
 export function upsertFact(input: FactInput, db: Database = database(), now = new Date().toISOString(), origin?: BrainChangeOrigin, by?: string, options: FactWriteOptions = {}): BrainFact {
   const id = input.id ?? factId(input.subjectType, input.subjectId, input.kind);
+  let refused = false;
   const fact = db.transaction((): BrainFact => {
     const existing = getFact(id, db, { includeForgotten: true });
     const writer = changeOrigin(origin, by);
@@ -228,11 +237,12 @@ export function upsertFact(input: FactInput, db: Database = database(), now = ne
     }
     if (existing.static && !options.replaceStatic) {
       logger.warn('brain fact is static', { id });
+      refused = true;
       return existing;
     }
     return versionFact(db, existing, { ...base, firstSeen: now, ...forgotten, ...(forgetAfter && { forgetAfter }) }, origin, by);
   });
-  emitBrainChange({ kind: 'fact', key: id, ...(fact.projectId && { projectId: fact.projectId }), op: 'upsert', ...changeOrigin(origin, by), at: now }); // NB01
+  if (!refused) emitBrainChange({ kind: 'fact', key: id, ...(fact.projectId && { projectId: fact.projectId }), op: 'upsert', ...changeOrigin(origin, by), at: now }); // NB01
   return fact;
 }
 
@@ -246,7 +256,7 @@ export function staleFactsBefore(before: string, db: Database = database()): num
   const who = changeOrigin(); // NB01
   let staled = 0;
   for (const row of rows) {
-    const fact = fromRow(row);
+    const fact = fromRow(row, true); // the whole row goes back, forget fields included
     if (!fact) continue;
     db.upsert('brain_facts', factRow({ ...fact, status: 'stale' }));
     staled++;
@@ -324,18 +334,18 @@ export function listFacts(
   const sql = `SELECT ${FACT_COLUMNS} FROM brain_facts ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY last_seen DESC${scoped ? '' : ` LIMIT ${Math.max(0, Math.floor(limit))}`}`;
   return db
     .all<FactRow>(sql, ...params)
-    .flatMap((r) => fromRow(r) ?? [])
+    .flatMap((r) => fromRow(r, forgotten !== 'exclude') ?? [])
     .filter((f) => inScope(f, filter.scope))
     .slice(0, limit);
 }
 
 /** A chain, oldest version first, from any of its ids, paged by version (`after` is the last version of the page before). */
-export function factVersions(id: string, page: { limit: number; after?: number }, db: Database = database()): { versions: BrainFact[]; next?: number } {
+export function factVersions(id: string, page: { limit: number; after?: number; withForget?: boolean }, db: Database = database()): { versions: BrainFact[]; next?: number } {
   const row = db.get<{ root_id: string | null }>('SELECT root_id FROM brain_facts WHERE id = ?', id);
   if (!row) return { versions: [] };
   const limit = Math.max(1, Math.min(100, Math.floor(page.limit)));
   const rows = db.all<FactRow>(`SELECT ${FACT_COLUMNS} FROM brain_facts WHERE root_id = ? AND version > ? ORDER BY version ASC LIMIT ${limit + 1}`, row.root_id ?? id, page.after ?? 0);
-  const versions = rows.slice(0, limit).flatMap((r) => fromRow(r) ?? []);
+  const versions = rows.slice(0, limit).flatMap((r) => fromRow(r, page.withForget) ?? []);
   return { versions, ...(rows.length > limit && { next: versions.at(-1)?.version }) };
 }
 

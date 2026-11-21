@@ -26,20 +26,23 @@ export const GET = handler(async (request: Request) => {
   const actor = routeActor();
   const scope = scopeForActor(actor);
   const { limit, history, forgotten } = query.data;
+  /** The ids among `list` the caller may forget (the Brain page hides Forget from everyone else). */
+  const editableIds = (list: Array<{ id: string; subjectType: FactSubject; subjectId: string }>) => list.filter((f) => canFact(actor, f, 'update')).map((f) => f.id);
   const subjectType = (FACT_SUBJECTS as readonly string[]).includes(param('subjectType') ?? '') ? (param('subjectType') as FactSubject) : undefined;
   const kind = (FACT_KINDS as readonly string[]).includes(param('kind') ?? '') ? (param('kind') as FactKind) : undefined;
   const q = param('q');
   if (q) {
     const vectorHits = await vectorFactHits(q, projectsOf(scope));
-    const facts = searchFacts(q, { scope, limit: 500, vectorHits }).filter((f) => (!subjectType || f.subjectType === subjectType) && (!kind || f.kind === kind));
-    return json({ facts: facts.slice(0, limit) });
+    const facts = searchFacts(q, { scope, limit: 500, vectorHits }).filter((f) => (!subjectType || f.subjectType === subjectType) && (!kind || f.kind === kind)).slice(0, limit);
+    return json({ facts, editable: editableIds(facts) });
   }
   if (forgotten) {
     // Forgotten facts are for the people who may restore them.
     const facts = listFacts({ subjectType, subjectId: param('subjectId'), kind, status: 'all', scope, limit: 5_000, forgotten: 'only' }).filter((f) => canFact(actor, f, 'update'));
-    return json({ facts: facts.slice(0, limit) });
+    return json({ facts: facts.slice(0, limit), editable: facts.slice(0, limit).map((f) => f.id) });
   }
   const requested = param('status');
   const status = requested === 'stale' || requested === 'all' ? requested : 'active';
-  return json({ facts: listFacts({ subjectType, subjectId: param('subjectId'), kind, status, scope, limit, history: Boolean(history) }) });
+  const facts = listFacts({ subjectType, subjectId: param('subjectId'), kind, status, scope, limit, history: Boolean(history) });
+  return json({ facts, editable: editableIds(facts) });
 });

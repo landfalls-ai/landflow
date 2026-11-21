@@ -28,7 +28,7 @@ interface Face {
   agent?: AgentSummary;
 }
 
-type Listed = { notes: Array<TeamNote & { score?: number }>; counts: NoteCounts; via?: 'meaning' | 'keywords' };
+type Listed = { notes: Array<TeamNote & { score?: number }>; counts: NoteCounts; via?: 'meaning' | 'keywords'; canEdit?: boolean };
 type Scope = 'all' | NoteScope;
 
 const STATUS_TONE: Record<string, Tone> = { verified: 'success', unverified: 'warning', unchecked: 'warning', disputed: 'danger', open: 'warning', answered: 'success', expired: 'muted' };
@@ -148,7 +148,7 @@ export function NotebookTab({ teamId, faces }: { teamId: string; faces: Face[] }
       onAction={(body, done) => act(note, body, done)}
       onPromote={() => void promote(note)}
       onDelete={() => void forget(note)}
-      onForget={() => setForgetting(note)}
+      onForget={data?.canEdit === false ? undefined : () => setForgetting(note)}
       onRestore={() => void act(note, { action: 'restore' }, () => toast.success('Restored'))}
     />
   );
@@ -364,7 +364,7 @@ interface CardProps {
   onAction: (body: Record<string, unknown>, done?: (result: Record<string, unknown>) => void) => Promise<void>;
   onPromote: () => void;
   onDelete: () => void;
-  onForget: () => void;
+  onForget?: () => void;
   onRestore: () => void;
 }
 
@@ -500,10 +500,12 @@ function NoteCard({ note, face, busy, fresh, fading, side, onAction, onPromote, 
               <ChevronsUp className="size-3.5" /> {note.scope === 'run' ? 'Promote' : 'To project'}
             </Button>
           )}
-          <Button size="sm" variant="ghost" className="ml-auto text-t3" aria-label="Forget the note" disabled={busy} onClick={onForget}>
-            <EyeOff className="size-3.5" /> Forget
-          </Button>
-          <Button size="sm" variant="ghost" className="text-t3 hover:text-rd" aria-label="Delete the note" disabled={busy} onClick={() => (mode === 'delete' ? onDelete() : setMode('delete'))}>
+          {onForget && (
+            <Button size="sm" variant="ghost" className="ml-auto text-t3" aria-label="Forget the note" disabled={busy} onClick={onForget}>
+              <EyeOff className="size-3.5" /> Forget
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" className={cn('text-t3 hover:text-rd', !onForget && 'ml-auto')} aria-label="Delete the note" disabled={busy} onClick={() => (mode === 'delete' ? onDelete() : setMode('delete'))}>
             <Trash2 className="size-3.5" /> {mode === 'delete' ? 'Really?' : ''}
           </Button>
         </div>

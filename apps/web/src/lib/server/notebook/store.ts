@@ -65,7 +65,8 @@ const COLUMNS =
 
 type ListRow = Omit<Row, 'embedding' | 'embedding_model'> & { embedded: number };
 
-function revive(row: ListRow): TeamNote {
+/** `withForget`: the reason and who forgot it are a person's words and go only to the forgotten list and the lifecycle, never to a reader or a prompt. */
+function revive(row: ListRow, withForget = false): TeamNote {
   let source: NoteSource = {};
   try {
     source = JSON.parse(row.source) as NoteSource;
@@ -98,8 +99,8 @@ function revive(row: ListRow): TeamNote {
     lastAccessAt: row.last_access_at,
     ...(row.expires_at && { expiresAt: row.expires_at }),
     ...(row.forgotten_at && { forgottenAt: row.forgotten_at }),
-    ...(row.forget_reason && { forgetReason: row.forget_reason }),
-    ...(row.forgotten_by && { forgottenBy: row.forgotten_by }),
+    ...(withForget && row.forget_reason && { forgetReason: row.forget_reason }),
+    ...(withForget && row.forgotten_by && { forgottenBy: row.forgotten_by }),
     embedded: Boolean(row.embedded),
   };
 }
@@ -191,9 +192,9 @@ export const noteStore = {
     return stored;
   },
 
-  get(id: string): TeamNote | undefined {
+  get(id: string, options: { withForget?: boolean } = {}): TeamNote | undefined {
     const row = database().get<ListRow>(`SELECT ${COLUMNS} FROM team_notes WHERE id = ?`, id);
-    return row ? revive(row) : undefined;
+    return row ? revive(row, options.withForget) : undefined;
   },
 
   /** The notes a team (and, for run-scope ones, a run) sees, newest first. */
@@ -230,20 +231,21 @@ export const noteStore = {
       params.push(...filter.statuses);
     } else if (!filter.expired) where.push("status <> 'expired'");
     // C02: a note past its expiry is gone now, not at the next sweep (the sweeper only marks and deletes). `expired` asks for them.
-    if (!filter.expired && !filter.statuses?.includes('expired')) {
+    if (!filter.expired && !filter.statuses?.includes('expired') && filter.forgotten !== 'only') {
       where.push('(expires_at IS NULL OR expires_at > ?)');
       params.push(iso(Date.now()));
     }
     const forgotten = filter.forgotten ?? 'exclude';
     if (forgotten === 'exclude') where.push('forgotten_at IS NULL');
-    else if (forgotten === 'only') where.push('forgotten_at IS NOT NULL');
+    // `only` also lists a note with a forget-after pending (its reason is set, its time not reached) so it can be restored.
+    else if (forgotten === 'only') where.push('(forgotten_at IS NOT NULL OR forget_reason IS NOT NULL)');
     const rows = database().all<ListRow>(`SELECT ${COLUMNS} FROM team_notes WHERE ${where.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT ${Math.max(1, Math.min(1000, filter.limit ?? 500))}`, ...params);
-    return rows.map(revive);
+    return rows.map((r) => revive(r, forgotten !== 'exclude'));
   },
 
   /** Every note a team wrote, whatever its scope or standing (for settling disputes and deleting). */
   all(teamId: string): TeamNote[] {
-    return database().all<ListRow>(`SELECT ${COLUMNS} FROM team_notes WHERE team_id = ? ORDER BY created_at DESC LIMIT 5000`, teamId).map(revive);
+    return database().all<ListRow>(`SELECT ${COLUMNS} FROM team_notes WHERE team_id = ? ORDER BY created_at DESC LIMIT 5000`, teamId).map((r) => revive(r));
   },
 
   /** A note's changes (columns by name): `updated_at` moves with them. */

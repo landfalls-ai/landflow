@@ -8,11 +8,15 @@ Apply these after the last merge of the wave; P3 edited no shared doc (`docs/his
 - A brain fact's visibility scope (which workflows, agents and entities a person may read) is still applied in JS after the
   SQL page of facts, so a scoped list reads every live latest fact and filters, as before; only the latest-live rule and the
   limit (for unscoped reads) moved into the query.
-- Old versions of a fact are not mirrored to Notion (the copy holds the latest of each fact); a forgotten fact's Notion row is
-  trashed, and the team notes' Notion push (`brain/notion/push.ts`) does not yet skip a forgotten project-scope note.
+- Old versions of a fact are not mirrored to Notion (the copy holds the latest of each fact); a forgotten fact's or project
+  note's Notion row is trashed.
+- `supersedeFact` (the all-or-nothing supersede for a person or an agent) has no production caller yet: C07 and C08 wire it
+  (memory backend, `update_memory`); today it is exercised by tests and by the two-process integration test
+  (`brain-fact-cluster.test.ts`, `LANDFLOW_INTEGRATION=queue`).
 - A new version's vector is written after the commit (the database transaction is synchronous, the vector store is another
   SQLite file); if that write fails it is logged and the next study re-embeds. The study itself writes rows synchronously and
   rebuilds the vectors once at its end, so the all-or-nothing vector write covers people and agents, not each study write.
+- A chain past 50 versions loses the oldest version after the root with its row (not only its text).
 - A forgotten fact is left out of the vector index only at the next study (its vector is dropped at once on a forget, and the
   search ignores ids it cannot map), and "forget after" has no sweeper by design: reads hide the fact from that time.
 - Notebook "forget after" is the note's expiry (a note forgotten with a time is deleted by the sweeper after the grace
