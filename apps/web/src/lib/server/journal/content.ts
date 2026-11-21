@@ -2,6 +2,7 @@
  * How much of an event's content the journal keeps (`traceContent`, docs/run-trace.md): `full` keeps it whole but cuts an
  * event to 32 KB, `summaries` cuts every text to 400 characters, `off` keeps names, statuses and errors only.
  */
+import { SAW_MEMORY_MAX_ITEMS } from '../../shared/what-it-saw';
 import { JOURNAL_EVENT_MAX_BYTES, JOURNAL_SUMMARY_CHARS, type JournalEvent, type TraceContent } from '../../shared/run-trace';
 
 export const CUT = '…[cut]';
@@ -77,6 +78,24 @@ export function applyContent(event: JournalEvent, mode: TraceContent): JournalEv
   const e = copy as unknown as Record<string, unknown> & { type: JournalEvent['type'] };
   // What an agent saw (`attrs.saw`, docs/run-trace.md#what-it-saw): the block and persona are prompt content, so they follow the mode.
   const saw = e.attrs && typeof e.attrs === 'object' ? (e.attrs as Record<string, unknown>).saw : undefined;
+  if (saw && typeof saw === 'object') {
+    // The memory the run was given: ids and short fields follow the mode (gone on `off`), the exact block only on `full`.
+    const m = saw as Record<string, unknown>;
+    if (mode === 'off') {
+      delete m.memory;
+      delete m.memoryText;
+    } else {
+      if (mode === 'summaries') delete m.memoryText;
+      if (Array.isArray(m.memory)) {
+        for (const source of m.memory as Array<Record<string, unknown>>) {
+          if (source && Array.isArray(source.items) && source.items.length > SAW_MEMORY_MAX_ITEMS) {
+            source.count = typeof source.count === 'number' ? source.count : source.items.length;
+            source.items = source.items.slice(0, SAW_MEMORY_MAX_ITEMS);
+          }
+        }
+      }
+    }
+  }
   if (saw && typeof saw === 'object' && mode !== 'full') {
     const s = saw as Record<string, unknown>;
     if (mode === 'off') {
