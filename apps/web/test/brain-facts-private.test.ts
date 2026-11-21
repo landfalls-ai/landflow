@@ -15,6 +15,13 @@ const previousEnv = { ...process.env };
 Object.assign(process.env, ENV);
 
 const { database } = await import('@/lib/server/db');
+const { createUser } = await import('@/lib/server/auth/users');
+const { createTeamProject, setMember } = await import('@/lib/server/projects/store');
+const { agentStore } = await import('@/lib/server/agents/store');
+const lifecycle = await import('@/lib/server/brain/fact-lifecycle');
+const { canFact } = await import('@/lib/server/brain/scope');
+const { embedFacts } = await import('@/lib/server/brain/study');
+const { SqliteVectorStore } = await import('@/lib/server/rag/stores');
 const facts = await import('@/lib/server/brain/facts');
 const { fuseScores } = await import('@/lib/server/notebook/search');
 
@@ -136,5 +143,93 @@ describe('T-3 fuseScores', () => {
     expect(fuseScores(0.5, 0)).toBe(0.5);
     expect(fuseScores(undefined, 0.5)).toBeCloseTo(0.4, 5);
     expect(fuseScores(0.3, 0.5)).toBeCloseTo(Math.min(1, 0.4 + 0.05), 5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T-4: lifecycle and access for the new subjects
+// ---------------------------------------------------------------------------
+
+describe('T-4 vectors of private facts', () => {
+  const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ embeddings: [[1, 0, 0]] }), { status: 200, headers: { 'content-type': 'application/json' } }));
+  const ID = 'agent-user:ag1/us1:memory:v1';
+  const prior = { fetch: globalThis.fetch, model: process.env.LANDFLOW_BRAIN_EMBEDDINGS };
+
+  beforeAll(() => {
+    process.env.LANDFLOW_BRAIN_EMBEDDINGS = 'nomic-embed-text';
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    put(ID, 'agent-user', 'ag1/us1', 'Likes tea', undefined, 50);
+  });
+  afterAll(() => {
+    globalThis.fetch = prior.fetch;
+    process.env.LANDFLOW_BRAIN_EMBEDDINGS = prior.model;
+  });
+
+  it('stores the vector of a superseded agent-user fact in its own collection, with agentId and userId', async () => {
+    await lifecycle.supersedeFact(ID, { statement: 'Likes green tea' }, { origin: 'person', by: 'us1' }, database());
+    const vectors = new SqliteVectorStore();
+    expect(await vectors.count('landflow-agent-memory')).toBe(1);
+    expect(await vectors.count('landflow-brain')).toBe(0);
+    const [hit] = await vectors.similaritySearch('landflow-agent-memory', [1, 0, 0], 1);
+    expect(hit.metadata).toMatchObject({ agentId: 'ag1', userId: 'us1', factId: ID });
+  });
+
+  it('keeps it through a study re-embed', async () => {
+    await embedFacts(database());
+    expect(await new SqliteVectorStore().count('landflow-agent-memory')).toBe(1);
+  });
+
+  it('drops it when the fact is forgotten', async () => {
+    await lifecycle.forgetFact(ID, { reason: 'wrong person' }, { userId: 'us1' }, database());
+    expect(await new SqliteVectorStore().count('landflow-agent-memory')).toBe(0);
+  });
+});
+
+describe('T-4 canFact for project and agent-user', () => {
+  const owner = { id: 'o', role: 'owner' as const };
+  let editor: { id: string; role: 'member' };
+  let viewer: { id: string; role: 'member' };
+  let outsider: { id: string; role: 'member' };
+  let projectId: string;
+  let agentId: string;
+
+  beforeAll(async () => {
+    const mk = async (n: string) => {
+      const u = await createUser({ email: `${n}@priv.test`, name: n, role: 'member', password: `${n}-password-1` });
+      return { id: u.id, role: 'member' as const };
+    };
+    editor = await mk('editor');
+    viewer = await mk('viewer');
+    outsider = await mk('outsider');
+    const project = createTeamProject({ name: 'Priv', createdBy: editor.id });
+    projectId = project.id;
+    setMember(projectId, editor.id, 'editor');
+    setMember(projectId, viewer.id, 'viewer');
+    const agent = agentStore.create({ name: 'Mem agent', model: 'ollama/x', instructions: 'x' } as never);
+    agentId = agent.id;
+    const { setHomeProject } = await import('@/lib/server/projects/store');
+    setHomeProject('agent', agentId, projectId);
+  });
+
+  it('project: a viewer reads, an editor updates, an outsider neither', () => {
+    const subject = { subjectType: 'project', subjectId: 'x' } as const;
+    const fact = { ...subject, subjectId: projectId };
+    expect(canFact(viewer, fact, 'read')).toBe(true);
+    expect(canFact(viewer, fact, 'update')).toBe(false);
+    expect(canFact(editor, fact, 'update')).toBe(true);
+    expect(canFact(outsider, fact, 'read')).toBe(false);
+    expect(canFact(outsider, fact, 'update')).toBe(false);
+    expect(canFact(owner, fact, 'update')).toBe(true);
+  });
+
+  it('agent-user: the person reads and updates; another member with agent read cannot read; the agent editor can', () => {
+    const fact = { subjectType: 'agent-user', subjectId: `${agentId}/${viewer.id}` } as const;
+    expect(canFact(viewer, fact, 'read')).toBe(true);
+    expect(canFact(viewer, fact, 'update')).toBe(true);
+    const other = { subjectType: 'agent-user', subjectId: `${agentId}/${outsider.id}` } as const;
+    expect(canFact(viewer, other, 'read')).toBe(false); // agent read through the project is not enough
+    expect(canFact(editor, other, 'read')).toBe(true);
+    expect(canFact(editor, other, 'update')).toBe(true);
+    expect(canFact(outsider, fact, 'read')).toBe(false);
   });
 });

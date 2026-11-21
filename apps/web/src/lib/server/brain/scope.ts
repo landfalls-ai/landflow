@@ -7,13 +7,14 @@
 import { agentTeamStore } from '../agent-teams/store';
 import { agentStore } from '../agents/store';
 import { getUser } from '../auth/users';
-import { canResource, isInstanceAdmin, visibleIds } from '../projects/access';
+import { canResource, isInstanceAdmin, projectRole, visibleIds } from '../projects/access';
 import { canEntity, entityKeysFor, entityKeysIn, entityKey, entityProject, getEntity, listEntities } from './entities';
 import { homeProjectId, resourceIdsIn } from '../projects/store';
 import type { Actor } from '../projects/access';
 import { store } from '../store';
 import type { UsageScope } from '../usage/query';
 import { parseEntityRef, type BrainFact, type Proposal } from '../../shared/brain';
+import { projectRoleCan } from '../../shared/projects';
 
 /**
  * What `actor` sees (undefined: no restriction on workflows and agents, for owners and admins). A member's scope names
@@ -113,6 +114,16 @@ export function canFact(actor: Actor, fact: Pick<BrainFact, 'subjectType' | 'sub
     const ref = parseEntityRef(fact.subjectId);
     const entity = ref && getEntity(ref.type, ref.id);
     return entity ? canEntity(actor, entity, action) : isInstanceAdmin(actor);
+  }
+  // C07: a project's own memories: any member reads, editors change.
+  if (fact.subjectType === 'project') {
+    const role = projectRole(actor, fact.subjectId);
+    return action === 'read' ? role !== undefined : projectRoleCan.create(role);
+  }
+  // C07 D3: what an agent remembers about one person (`<agentId>/<userId>`): that person, and the agent's editors.
+  if (fact.subjectType === 'agent-user') {
+    const [agentId, userId] = fact.subjectId.split('/');
+    return actor.id === userId || canResource(actor, 'agent', agentId ?? '', 'update');
   }
   return isInstanceAdmin(actor);
 }

@@ -294,6 +294,8 @@ export interface FactFilter {
   scope?: UsageScope;
   /** Only this project's facts (C07; indexed). */
   projectId?: string;
+  /** Only static facts (`true`) or only the others (`false`). */
+  static?: boolean;
   limit?: number;
   /** Include earlier versions of a chain (default: the latest only). */
   history?: boolean;
@@ -331,6 +333,7 @@ function factWhere(filter: FactFilter, now: string): { where: string[]; params: 
     where.push('kind = ?');
     params.push(filter.kind);
   }
+  if (filter.static !== undefined) where.push(`is_static = ${filter.static ? 1 : 0}`);
   if ((filter.status ?? 'active') !== 'all') {
     where.push('status = ?');
     params.push(filter.status ?? 'active');
