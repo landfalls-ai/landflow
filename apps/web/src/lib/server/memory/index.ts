@@ -11,12 +11,14 @@ import { withSpan } from '../telemetry';
 import { assertContainer } from './access';
 import { MemoryNotFoundError, type MemoryBackend, type MemoryCaller } from './backend';
 import { builtInBackend } from './builtin';
+import { providerBackend, providerSetting } from './remote';
 
 export { MemoryNotFoundError, MemoryProviderError, MemoryWriteRefusedError, type MemoryBackend, type MemoryCaller } from './backend';
 
 /** The backend that serves a container: a project's chosen provider (./remote), else the built-in one. Teams and agents are always built in (C07 D5). */
-function backendFor(_container: MemoryContainer): MemoryBackend {
-  return builtInBackend;
+function backendFor(container: MemoryContainer): MemoryBackend {
+  const provider = container.kind === 'project' ? providerSetting(container.id) : undefined;
+  return provider ? providerBackend(provider) : builtInBackend;
 }
 
 async function run<T>(operation: string, container: MemoryContainer, action: 'read' | 'write', caller: MemoryCaller, call: (backend: MemoryBackend) => Promise<T>, count?: (result: T) => number): Promise<T> {

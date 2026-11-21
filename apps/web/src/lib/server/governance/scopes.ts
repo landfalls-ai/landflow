@@ -89,6 +89,11 @@ const agentIdList = z.array(z.string().trim().min(1).max(200)).max(200);
 
 export const scopedNodePolicySchema = z.strictObject({ mode: z.enum(['off', 'allow']), plugins: list, types: list });
 
+const projectMemorySchema = z.discriminatedUnion('backend', [
+  z.strictObject({ backend: z.literal('built-in') }),
+  z.strictObject({ backend: z.literal('provider'), nodeType: z.string().trim().min(1).max(200), credentialId: z.string().trim().min(1).max(200).optional() }),
+]);
+
 export const projectSettingsPatchSchema = z.strictObject({
   nodes: scopedNodePolicySchema.partial().optional(),
   approvers: z.enum(['default', 'admins', 'editors', 'instance']).optional(),
@@ -98,6 +103,7 @@ export const projectSettingsPatchSchema = z.strictObject({
   knowledge: z.strictObject({ enabled: z.boolean(), tool: projectKnowledgeToolSchema }).nullable().optional(),
   agents: z.strictObject({ mode: z.enum(['off', 'allow']), ids: agentIdList }).optional(),
   agentTools: z.strictObject({ mode: z.enum(['off', 'allow']), kinds: z.array(z.enum(PROJECT_TOOL_KINDS)).max(PROJECT_TOOL_KINDS.length) }).optional(),
+  memory: projectMemorySchema.nullable().optional(),
 });
 
 export const workflowPolicyPatchSchema = z.strictObject({
@@ -151,7 +157,7 @@ function readRow(table: 'project_settings' | 'workflow_policies', column: 'proje
 }
 
 /** PC13: the agent fields of a saved row; a broken value reads as absent. */
-function agentSettings(saved: Partial<Record<'defaultModel' | 'knowledge' | 'agents' | 'agentTools', unknown>> | undefined): Partial<ProjectSettings> {
+function agentSettings(saved: Partial<Record<'defaultModel' | 'knowledge' | 'agents' | 'agentTools' | 'memory', unknown>> | undefined): Partial<ProjectSettings> {
   const out: Partial<ProjectSettings> = {};
   const model = agentModelSchema.safeParse(saved?.defaultModel);
   if (model.success) out.defaultModel = model.data;
@@ -161,6 +167,8 @@ function agentSettings(saved: Partial<Record<'defaultModel' | 'knowledge' | 'age
   if (agents.success) out.agents = { mode: agents.data.mode, ids: tidy(agents.data.ids) };
   const tools = projectSettingsPatchSchema.shape.agentTools.safeParse(saved?.agentTools);
   if (tools.success && tools.data) out.agentTools = { mode: tools.data.mode, kinds: [...new Set(tools.data.kinds)] };
+  const memory = projectMemorySchema.safeParse(saved?.memory); // C07
+  if (memory.success) out.memory = memory.data;
   return out;
 }
 
@@ -200,6 +208,7 @@ export function updateProjectSettings(projectId: string, patch: z.infer<typeof p
       knowledge: patch.knowledge === undefined ? current.knowledge : (patch.knowledge ?? undefined),
       agents: patch.agents ?? current.agents,
       agentTools: patch.agentTools ?? current.agentTools,
+      memory: patch.memory === undefined ? current.memory : (patch.memory ?? undefined),
     }),
     updatedAt: now,
     ...(by && { updatedBy: by }),
