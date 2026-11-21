@@ -3,7 +3,7 @@
  * the API (lib/server/alerts, /api/settings/alerts) and Settings → Alerts. No runtime imports beyond plain data.
  */
 
-export type AlertChannelKind = 'email' | 'slack' | 'webhook' | 'telegram' | 'teams' | 'discord';
+export type AlertChannelKind = 'email' | 'slack' | 'webhook' | 'telegram' | 'teams' | 'discord' | 'servicenow'; // C12: servicenow
 
 /**
  * What a rule reacts to. `failed`: a production run ended in error (after its last automatic retry); `timedOut`: it
@@ -53,6 +53,7 @@ export const ALERT_CHANNEL_KINDS: readonly { id: AlertChannelKind; label: string
   { id: 'telegram', label: 'Telegram', hint: 'A saved Telegram API credential and a chat ID' },
   { id: 'teams', label: 'Microsoft Teams', hint: 'A Workflows (or incoming) webhook URL; sends an Adaptive Card' },
   { id: 'discord', label: 'Discord', hint: 'A channel webhook URL; sends an embed' },
+  { id: 'servicenow', label: 'ServiceNow', hint: 'Opens a ticket for each approval request and adds the decision as a work note' },
 ];
 
 /** Channel settings; secret ones (`webhookUrl`, `secret`) never come back from the API, `secretsSet` lists those set. */
@@ -69,7 +70,19 @@ export interface AlertChannelConfig {
   credentialId?: string;
   /** telegram: the chat, group or channel ID (or @channelusername). */
   chatId?: string;
+  /** webhook: opens a ticket per approval request (the receiver answers `{ ticket: { id, url? } }`) and hears when it settles. */
+  tickets?: boolean;
+  /** servicenow: the table a ticket goes into (default `change_request`); `url` is the instance and `credentialId` a Basic or Bearer login. */
+  table?: string;
+  /** servicenow: the `state` to set when the request is approved, denied, expired or cancelled; none = leave the state alone. */
+  approvedState?: string;
+  deniedState?: string;
+  expiredState?: string;
+  cancelledState?: string;
 }
+
+/** Whether a channel opens a ticket for an approval request: ServiceNow, and a webhook with "Opens tickets" ticked. */
+export const opensTickets = (channel: Pick<AlertChannel, 'kind'> & { config: AlertChannelConfig }): boolean => channel.kind === 'servicenow' || (channel.kind === 'webhook' && channel.config.tickets === true);
 
 /** The secret settings of a channel: stored encrypted, masked in the API. */
 export const ALERT_SECRET_FIELDS = ['webhookUrl', 'secret'] as const;

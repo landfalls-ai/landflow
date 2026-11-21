@@ -6,7 +6,7 @@
  * often (one alert per workflow per window, the rest as a digest). Admins change them; everyone else sees them.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { BellRing, Check, Mail, MessageCircle, MessageSquare, Pencil, Plus, Search, Send, Trash2, TriangleAlert, Users, Webhook, X } from 'lucide-react';
+import { BellRing, Check, Mail, MessageCircle, MessageSquare, Pencil, Plus, Search, Send, Ticket, Trash2, TriangleAlert, Users, Webhook, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -34,6 +34,7 @@ import {
 import type { PluginSummary, WorkflowSummary } from '@/lib/shared/types';
 import { useViewer } from '@/components/auth/viewer';
 import { useCredentials } from '@/components/credentials/use-credentials';
+import { AlertTicketFields } from '@/components/settings/alert-ticket-fields';
 import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -41,7 +42,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { HelpTip } from '@/components/ui/help-tip';
 import { FieldLabel, Input, SectionLabel, Select, Switch } from '@/components/ui/inputs';
 
-const KIND_ICON: Record<AlertChannelKind, typeof Mail> = { email: Mail, slack: MessageSquare, webhook: Webhook, telegram: Send, teams: Users, discord: MessageCircle };
+const KIND_ICON: Record<AlertChannelKind, typeof Mail> = { email: Mail, slack: MessageSquare, webhook: Webhook, telegram: Send, teams: Users, discord: MessageCircle, servicenow: Ticket };
 const THROTTLES = [
   { value: 0, label: 'Every alert' },
   { value: 5, label: 'At most one per 5 min' },
@@ -64,6 +65,8 @@ function channelTarget(channel: AlertChannel, telegramName?: string): string {
       return channel.secretsSet.includes('webhookUrl') ? 'Incoming webhook (saved)' : 'No webhook URL';
     case 'webhook':
       return `${channel.config.url ?? ''}${channel.secretsSet.includes('secret') ? ' · signed' : ''}`;
+    case 'servicenow':
+      return `${channel.config.url ?? ''} · ${channel.config.table ?? 'change_request'}`;
     case 'telegram':
       return `Chat ${channel.config.chatId ?? '?'}${telegramName ? ` via ${telegramName}` : ''}`;
   }
@@ -211,6 +214,7 @@ function ChannelEditor({
           </div>
         </div>
       )}
+      <AlertTicketFields kind={kind} config={config} set={set} credentials={credentials ?? []} />
       {kind === 'email' && !emailConfigured && (
         <p className="flex items-start gap-1.5 text-[12px] text-warn">
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
