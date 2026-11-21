@@ -267,14 +267,18 @@ in the agent's Sessions and, for your own sessions, on `/connect`.
   (`apps/web/test/harness-registry-scan.test.ts`) fails when another module declares its own list. Only Claude Code sends
   events today; the others are `mcp-only` until their event names are checked against a live install.
 - **Sending.** `POST /api/harness/claude-code/hooks` with an API key that has `harness:write` (**Send live status** on
-  `/connect`). The `/connect` page gives a `settings.json` `hooks` block: one command hook per event that runs `curl` with
-  `--max-time 2`, so Claude Code never waits, and an `X-Landflow-Hook-Seq` counter, because each event arrives on its own
-  connection and a later one can arrive first. The brain mod can send the same events for you
+  `/connect`). The `/connect` page gives a `hooks` block for `.claude/settings.local.json` (or `~/.claude/settings.json`, never the committed
+  project settings): one background (`async`) command hook per event that runs a small `node -e` filter. The filter forwards
+  only `hook_event_name`, `session_id`, `tool_name`, `notification_type`, `duration_ms` and `error` / `error_details` (cut to 300
+  characters), so no prompt, tool input or output, working directory, transcript path or `agent_type` ever leaves the machine,
+  and gives up after 1.5 seconds. It reads the key from `$LANDFLOW_HOOK_KEY` (a key of its own with only `harness:write`, made
+  on `/connect`), and puts an order number from the clock in `X-Landflow-Hook-Seq`, because each event arrives on its own
+  connection and a later one can arrive first; the number needs no counter file, so parallel hooks never share one. The brain mod can send the same events for you
   ([`/brain status-sharing`](landflow-brain-mod.md#status-sharing)).
 - **Statuses.** Thinking, Working, Compacting, Waiting for you, Idle, Error, Blocked, Ended. A session with no event for
   30 minutes reads **Idle (stale)** and closes after 24 hours. Error and Blocked stay until a newer prompt, tool use or
   session start.
-- **Who sees what.** A session binds to a Landflow agent only through its first event, a `SessionStart` whose `agent_type` names an agent you may run (Claude Code puts it there when started with `--agent <slug>:<slug>`); `agent_type` on any later event is ignored, and a session that began as your own never becomes an agent's. A bound session: its card shows the chip and its
+- **Who sees what.** A session binds to a Landflow agent only through its first event, a `SessionStart` sent with an `X-Landflow-Agent: <agent id>` header naming an agent you may run: `/connect` adds the header when you pick the agent in the Live status step. Nothing in the event itself binds a session, `agent_type` included, because a plugin of any author can use any name; a later event never binds or rebinds, and a session that began as your own never becomes an agent's. A bound session: its card shows the chip and its
   Sessions tab lists a **Claude Code** session. Any other session is yours alone, an admin's view included: it keeps the
   status, times, tool names, counts and (when you or the brain mod name it) the repository, never prompt text, tool input or
   output, a file path or the working directory.

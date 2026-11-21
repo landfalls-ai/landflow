@@ -67,7 +67,7 @@ export default function AgentsPage() {
     api<{ teams: TeamSummary[] }>('/api/agent-teams')
       .then((r) => setAgentTeams(r.teams))
       .catch(() => setAgentTeams([]));
-    api<{ sessions: HarnessSessionView[] }>('/api/harness/sessions?open=1&limit=100', { background: true })
+    api<{ sessions: HarnessSessionView[] }>('/api/harness/sessions?open=1&kind=agent&limit=100', { background: true })
       .then((r) => setHarnessSessions(r.sessions))
       .catch(() => {});
     void useAgentData.getState().loadAgents().finally(() => setLoaded(true));

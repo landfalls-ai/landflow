@@ -2160,6 +2160,7 @@ function paths(): Record<string, Record<string, Json>> {
     query: [
       { name: 'agentId', description: 'Only this agent’s sessions', schema: { type: 'string' } },
       { name: 'open', description: '`1`: leave out closed sessions', schema: { type: 'string', enum: ['1', 'true', '0', 'false'] } },
+      { name: 'kind', description: '`own`: only your own sessions; `agent`: only sessions of Landflow agents you may read', schema: { type: 'string', enum: ['own', 'agent'] } },
       { name: 'limit', description: 'At most this many per page (default 100, at most 500)', schema: { type: 'integer', minimum: 1, maximum: 500, default: 100 } },
       { name: 'cursor', description: 'Opaque; the previous page’s nextCursor', schema: { type: 'string' } },
     ],

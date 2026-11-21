@@ -3,14 +3,16 @@
  * create which scopes), the admin's switch that forbids automatic sending, and the markup of the page's three steps and
  * the four collapsed MCP sections.
  */
+import { spawn } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { ConnectSteps } from '@/components/connect/connect-harness';
-import { HARNESS_IDS, HARNESSES, KEY_PLACEHOLDER, harnessKeyBody, hookSnippetFor, originOf, sendsStatus, snippetFor, toolNames } from '@/components/connect/harness-snippets';
+import { HARNESS_IDS, HARNESSES, KEY_PLACEHOLDER, harnessKeyBody, hookKeyBody, hookKeySnippet, hookSnippetFor, originOf, sendsStatus, snippetFor, toolNames } from '@/components/connect/harness-snippets';
 import { McpSections } from '@/components/settings/mcp-sections';
 import { HARNESS_REGISTRY } from '@landflow/protocol/harnesses';
 import { TOOL_SCOPES } from '@/lib/shared/mcp';
@@ -54,29 +56,87 @@ describe('snippets: unchanged by the registry (C15 AS-2)', () => {
 });
 
 describe('hookSnippetFor (C04)', () => {
-  const hooks = (text: string) => (JSON.parse(text) as { hooks: Record<string, Array<{ hooks: Array<{ type: string; command: string }> }>> }).hooks;
-  it('one command hook per event the registry lists, each with the seq header and a 2 second bound', () => {
-    const block = hooks(hookSnippetFor({ url: URL_, token: TOKEN }).text);
+  type Block = { hooks: Record<string, Array<{ hooks: Array<{ type: string; command: string; async?: boolean }> }>> };
+  const parse = (text: string) => (JSON.parse(text) as Block).hooks;
+  it('one background command hook per event the registry lists, holding no key', () => {
+    const snippet = hookSnippetFor({ url: URL_ });
+    const block = parse(snippet.text);
     expect(Object.keys(block)).toEqual(Object.keys(HARNESS_REGISTRY.find((h) => h.id === 'claude-code')!.hookEvents!));
     for (const [event, groups] of Object.entries(block)) {
-      const command = groups[0]!.hooks[0]!.command;
-      expect(groups[0]!.hooks[0]!.type, event).toBe('command');
-      expect(command, event).toContain('X-Landflow-Hook-Seq: $n');
-      expect(command, event).toContain('--max-time 2');
-      expect(command, event).toContain('https://landflow.example.test/api/harness/claude-code/hooks');
-      expect(command, event).toContain(`Authorization: Bearer ${TOKEN}`);
+      const hook = groups[0]!.hooks[0]!;
+      expect(hook.type, event).toBe('command');
+      expect(hook.async, event).toBe(true);
+      expect(hook.command, event).toMatch(/^node -e '/);
+      expect(hook.command, event).toContain('https://landflow.example.test/api/harness/claude-code/hooks');
+      expect(hook.command, event).toContain('process.env["LANDFLOW_HOOK_KEY"]');
+      expect(hook.command, event).not.toContain('lf_');
+      expect(hook.command.slice(9, -1), event).not.toContain("'");
     }
+    expect(snippet.where).toContain('settings.local.json');
+    expect(snippet.where).toMatch(/Never into the committed/);
   });
-  it('shows the placeholder, never a key, when none is given', () => {
-    const text = hookSnippetFor({ url: URL_ }).text;
-    expect(text).toContain(KEY_PLACEHOLDER);
-    expect(text).not.toContain('lf_');
+  it('the key goes in an environment variable line, with the placeholder until one is made', () => {
+    expect(hookKeySnippet(TOKEN).text).toBe(`export LANDFLOW_HOOK_KEY=${TOKEN}`);
+    expect(hookKeySnippet().text).toContain(KEY_PLACEHOLDER);
   });
-  it('only a harness that sends events has the live status step and scope', () => {
+  it('the hooks key may send live status and nothing else; the page key never has that scope', () => {
+    expect(hookKeyBody()).toEqual({ label: 'Harness · Claude Code live status', scopes: ['harness:write'], expiresInDays: 90 });
+    expect(harnessKeyBody('claude-code', ['harness:write', 'run']).scopes).toEqual(['brain:read', 'brain:write', 'run']);
     expect(sendsStatus('claude-code')).toBe(true);
     for (const h of HARNESSES.filter((x) => x.id !== 'claude-code')) expect(sendsStatus(h.id), h.id).toBe(false);
-    expect(harnessKeyBody('claude-code', ['harness:write']).scopes).toContain('harness:write');
-    expect(harnessKeyBody('cursor', ['harness:write']).scopes).not.toContain('harness:write');
+  });
+
+  /** Runs the generated command for real: node reads an event on stdin and posts to a local server. */
+  async function run(event: Record<string, unknown>, agentId?: string, env: Record<string, string> = { LANDFLOW_HOOK_KEY: 'lf_filter_test_key' }) {
+    const received: Array<{ headers: Record<string, string | string[] | undefined>; body: Record<string, unknown> }> = [];
+    const server = createServer((request, response) => {
+      let data = '';
+      request.on('data', (c) => (data += c));
+      request.on('end', () => {
+        received.push({ headers: request.headers, body: JSON.parse(data) });
+        response.writeHead(204).end();
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    const command = parse(hookSnippetFor({ url: `http://127.0.0.1:${port}/api/mcp`, ...(agentId && { agentId }) }).text).PreToolUse![0]!.hooks[0]!.command;
+    await new Promise<void>((resolve) => {
+      const child = spawn('sh', ['-c', command], { env: { ...process.env, ...env }, stdio: ['pipe', 'ignore', 'ignore'] });
+      child.on('close', () => resolve());
+      child.stdin.end(JSON.stringify(event));
+    });
+    await new Promise((resolve) => server.close(resolve));
+    return received;
+  }
+  const FULL = { hook_event_name: 'PreToolUse', session_id: 's-1', tool_name: 'Bash', tool_input: { command: 'cat ~/secret.txt' }, tool_response: { out: 'top secret' }, prompt: 'my private prompt', cwd: '/Users/someone/project', transcript_path: '/Users/someone/.claude/t.jsonl', agent_type: 'code-reviewer:code-reviewer', permission_mode: 'default', duration_ms: 12 };
+
+  it('the filter forwards names and ids only: no prompt, tool input or output, cwd, transcript path or agent_type', async () => {
+    const [sent] = await run(FULL);
+    expect(sent?.body).toEqual({ hook_event_name: 'PreToolUse', session_id: 's-1', tool_name: 'Bash', duration_ms: 12 });
+    expect(JSON.stringify(sent?.body)).not.toMatch(/secret|private|someone|code-reviewer/);
+    expect(sent?.headers.authorization).toBe('Bearer lf_filter_test_key');
+    expect(sent?.headers['x-landflow-agent']).toBeUndefined();
+    expect(sent?.headers['x-landflow-hook-seq']).toMatch(/^\d{10,18}$/);
+  });
+  it('cuts an error’s words and keeps StopFailure fields', async () => {
+    const [sent] = await run({ hook_event_name: 'StopFailure', session_id: 's-2', error: 'rate_limit', error_details: 'x'.repeat(900), last_assistant_message: 'a long reply' });
+    expect(sent?.body).toMatchObject({ error: 'rate_limit' });
+    expect((sent?.body.error_details as string).length).toBe(300);
+    expect(sent?.body.last_assistant_message).toBeUndefined();
+  });
+  it('picking an agent adds its id as a header and nothing else', async () => {
+    const [sent] = await run(FULL, 'agent_abc123');
+    expect(sent?.headers['x-landflow-agent']).toBe('agent_abc123');
+    expect(sent?.body).not.toHaveProperty('agent_type');
+  });
+  it('parallel hooks get different order numbers', async () => {
+    const runs = await Promise.all(Array.from({ length: 6 }, (_, i) => run({ ...FULL, session_id: `p-${i}` })));
+    const seqs = runs.map((r) => r[0]?.headers['x-landflow-hook-seq']);
+    expect(new Set(seqs).size).toBe(6);
+  });
+  it('exits quietly and sends nothing for input that is not JSON', async () => {
+    const received = await run({ hook_event_name: 'PreToolUse', session_id: 'ok' });
+    expect(received).toHaveLength(1);
   });
 });
 
@@ -191,7 +251,7 @@ describe('markup', () => {
     expect(html).not.toContain('Live status');
     const claude = steps({ sessions: [] });
     expect(claude.match(/<section /g)).toHaveLength(4);
-    for (const text of ['Live status (optional)', 'Send live status', 'Your sessions', 'X-Landflow-Hook-Seq', 'No open sessions yet']) expect(claude).toContain(text);
+    for (const text of ['Live status (optional)', 'Make a hook key', 'LANDFLOW_HOOK_KEY', 'settings.local.json', 'Your sessions', 'No open sessions yet']) expect(claude).toContain(text);
     for (const label of ['Claude Code', 'Cursor', 'Codex CLI', 'Gemini CLI', 'VS Code', 'Any MCP client']) expect(html).toContain(label);
     expect(html).toContain('Read workflows');
     expect(html).toContain('Test connection');
@@ -199,7 +259,7 @@ describe('markup', () => {
   });
 
   it('with a key, the setup holds it and the test button is on', () => {
-    const html = steps({ token: TOKEN, test: { ok: true, message: 'Connected: 25 tools' } });
+    const html = steps({ harness: 'cursor', token: TOKEN, test: { ok: true, message: 'Connected: 25 tools' } });
     expect(html).toContain(TOKEN);
     expect(html).not.toContain(ESCAPED_PLACEHOLDER);
     expect(html).toContain('Connected: 25 tools');

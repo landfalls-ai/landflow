@@ -31,19 +31,23 @@ hand. Codex, OpenCode, Cursor, Gemini, VS Code and Claude Desktop stay `verified
 - Error and Blocked sessions stay Error or Blocked while quiet (only Idle-by-silence is shown stale); both close after 24 hours.
 - Own sessions carry no prompt, tool input or output, file path or `cwd`; the repository is only what the sender names in a `repository` field (the server cannot check the brain mod's allow-list).
 - Agent sessions follow the instance content setting (`LANDFLOW_TRACE_CONTENT`), not a per-agent one: agents have none.
-- An agent session binds only when `agent_type` is `<slug>:<slug>` of exactly one agent the key's owner may run (editor access); a slug shared by two agents is an own session. Binding is fixed by the session's first event.
+- An agent session binds only through an `X-Landflow-Agent: <agent id>` header on its first `SessionStart`, and only for an agent the key's owner may run. `agent_type` is never read (any plugin author can reuse a name; P4b review round 2). Binding is fixed by the session's first event.
 - The hook route is exempt from the API rate limit; its own limits are per key and per key owner, per second (shared across mains in queue mode). The open-session cap is per key owner and its count is cached 5 seconds per main, so mains can overshoot it by a few sessions.
 - A session binds to an agent only on its first event, and only a `SessionStart` that names one the owner may run; the stored row decides, and the event's view (content or status only) is chosen after that write.
-- Past 5,000 applied events a session stores only event names (status and counts still move). Late (older) events are not counted toward that cap, only bounded by the rate limits.
+- Past 5,000 applied events a session stores only event names (status and counts still move). A late (older) event counts toward the cap too (the stored events are counted); past it only its name is stored.
 - The agent mirror keeps the newest 500 timeline entries and rebuilds from the newest 500 events; harness mirrors have their own 200-per-agent cap and never evict other sources' sessions.
 - The mirror's read-modify-write is not safe when two mains take events of one session at the same moment: a rare lost entry shows until a late event rebuilds the timeline.
 - `X-Landflow-Hook-Time` more than 5 minutes ahead of the server is ignored (receive time is used).
 
 - Own sessions reach Landflow only through the pasted `/connect` hooks block or the brain mod with `/brain status-sharing on` (default off); a person who does neither is invisible, by design.
-- The hooks block counts events per Claude Code process (`$PPID` counter file under `$TMPDIR`); two hooks that run at the same instant (parallel tool calls) can read the same counter and share a number, and a stale counter file is reused if the OS reuses a pid. A tie never moves the status backwards (an equal key is not newer).
 - The brain mod reports under a session id it makes itself (Claude Code's own id reaches it only at the end), and only in a listed repository.
 - The Agents page chip shows only agent sessions; a person's own sessions are on `/connect` only.
 - Screens are checked at 1440x900 and 390x844 by a person in a live check; the layout has no unit test.
+
+- The `/connect` hooks block needs Node on the machine (Claude Code ships with it) and Node 18 or later for `fetch`; the hooks run `async`, so a slow Landflow never delays Claude Code, but a hook that cannot reach Landflow in 1.5 seconds drops its event.
+- The agent mirror rebuilds a session's timeline at most once a second, and only when a late event falls inside the newest 500; a late event inside the throttle marks the session, and the next event after the second rebuilds it. The mirrored timeline is also cut to about 2 MB (oldest entries first).
+- To bind a session to an agent you pick the agent on `/connect` and use that setup only in the project where you run it; every session that setup reports binds to it.
+- The order number is the clock in microseconds (`Date.now()` times 1000 plus a sub-millisecond part of a monotonic timer); two hooks within the same microsecond on different cores could still tie, and a tie never moves a status backwards.
 
 ## Roadmap lines
 
@@ -64,4 +68,4 @@ hand. Codex, OpenCode, Cursor, Gemini, VS Code and Claude Desktop stay `verified
 - `docs/observability.md` has the two harness counters; P5's `landflow.harness.blocked` row (see `blocked.md`) was not added here.
 - `docs/harnesses.md` "Live status", `docs/connect-your-harness.md`, `docs/landflow-brain-mod.md`, `docs/features/cli.md`: written in P4b.
 - P4b: the key made on `/connect` gets `harness:write` only when **Send live status** is ticked (shown for harnesses that send events), not by default, so the existing brain-key body is unchanged.
-- P4b: the hooks block uses `$PPID` for the order counter (the hook does not know the session id before it reads stdin).
+- P4b review round 2: the hooks block is a `node -e` filter (no `jq`, no `curl`), with the key in `$LANDFLOW_HOOK_KEY` and a clock-based order number, replacing the first version's `curl` and `$PPID` counter; agents bind through `X-Landflow-Agent`, not `agent_type` (the coordinator offered both options; the header needs no change to exported plugins or their names).

@@ -18,20 +18,31 @@ The harnesses on the page come from the registry (`@landflow/protocol/harnesses`
 
 ## Live status (Claude Code)
 
-For Claude Code a fourth, optional step appears: **Live status**. Tick **Send live status** (`harness:write`) in step 2,
-make the key, then merge the **Live status hooks** block into `.claude/settings.json` in your project (or
-`~/.claude/settings.json` for every project; do not commit it, it holds your key). Claude Code then reports each event to
-`POST /api/harness/claude-code/hooks` through a short `curl` (2 second bound, an order counter in
-`X-Landflow-Hook-Seq`). **Your sessions** lists your open sessions live: **Thinking**, **Working**, **Waiting for you**,
+For Claude Code a fourth, optional step appears: **Live status**.
+
+1. **Make a hook key.** The hooks do not use the key from step 2. They get a key of their own that may only send live status
+   (`harness:write`), shown once. Put it in an environment variable (the page shows the `export LANDFLOW_HOOK_KEY=…` line for
+   `~/.zshrc` or `~/.bashrc`), so no settings file holds a key.
+2. **Merge the hooks block** into `.claude/settings.local.json` in your project (Claude Code keeps that file out of Git) or
+   `~/.claude/settings.json` for every project. Never into the committed `.claude/settings.json`.
+3. Optionally **pick a Landflow agent** if you run one in that project (see below).
+
+Each hook runs a small `node -e` filter (Claude Code needs Node, so it is there) in the background, so Claude Code never waits.
+The filter sends only the event's name, the session id, a tool's name, a duration and an error's words (cut to 300
+characters). It sends no prompt, no tool input or output, no file path, no working directory, no transcript path and no
+`agent_type`. Each event carries an order number from the clock in `X-Landflow-Hook-Seq`, so parallel hooks never share one; no
+temporary files are written. **Your sessions** lists your open sessions live: **Thinking**, **Working**, **Waiting for you**,
 **Idle**, with the repository when one was named and counts of prompts and tool calls.
 
-Your own sessions keep status, times, tool names and counts. They never keep what you typed, what a tool returned, a file
-path or your working directory, and no one else sees them, admins included. A session of a Landflow agent (started with
-`claude --agent <slug>:<slug>` from its exported plugin) shows as a chip on that agent's card for everyone who may read the
-agent. The hooks block forwards Claude Code's own event JSON, so the binding comes from the `agent_type` on the session's
-first event (`SessionStart`) and only when you may run that agent; later events cannot bind or rebind it. Limits: 20 events a
-second per key (`LANDFLOW_HARNESS_EVENTS_PER_SECOND`) and 100 a second for all of your keys together
-(`LANDFLOW_HARNESS_OWNER_EVENTS_PER_SECOND`); past either, Landflow answers 429 and the status may lag. The brain mod can send the same status instead of the hooks block: [Status sharing](landflow-brain-mod.md#status-sharing).
+Your own sessions keep status, times, tool names and counts, and no one else sees them, admins included. A session binds to a
+Landflow agent only when the `SessionStart` carries an `X-Landflow-Agent: <agent id>` header naming an agent you may run, which
+the page adds when you pick the agent. Nothing in the event itself can bind a session: a plugin of any author can call its
+agent `code-reviewer:code-reviewer`, so `agent_type` is never read. Later events never bind or rebind a session. A bound session
+shows as a chip on that agent's card for everyone who may read the agent (tool names and status only, since the filter drops
+content). The brain mod can send the same status instead of the hooks block: [Status sharing](landflow-brain-mod.md#status-sharing).
+
+Limits: 20 events a second per key (`LANDFLOW_HARNESS_EVENTS_PER_SECOND`) and 100 a second for all of your keys together
+(`LANDFLOW_HARNESS_OWNER_EVENTS_PER_SECOND`); past either, Landflow answers 429 and the status may lag.
 
 ## Setup for each harness
 

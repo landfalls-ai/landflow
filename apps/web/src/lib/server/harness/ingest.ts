@@ -1,7 +1,7 @@
 /**
  * The hook ingest (C04, C15): one Claude Code hook event in, a session's status out. In order: the registry says whether the
  * harness sends events (else 404); the per-key limits (else 429 with `retryAfter`); the binding of the event to a session by
- * (key owner, `session_id`), a Landflow agent's when `agent_type` names one the owner may run, else the owner's own; the
+ * (key owner, `session_id`), a Landflow agent's when the `X-Landflow-Agent` header on its first SessionStart names one the owner may run, else the owner's own; the
  * order key and the status machine (status.ts); the privacy view (privacy.ts); the store (store.ts, a conditional write);
  * the mirror into the agent's sessions; the live event. Never logs the payload: `cwd`, `transcript_path` and prompt text stay out.
  */
@@ -10,7 +10,6 @@ import { HttpError } from '../errors';
 import { agentStore } from '../agents/store';
 import { bus } from '../bus';
 import { contentOf } from '../journal/content';
-import { slugOf } from '../marketplace/export';
 import { canResource, type Actor } from '../projects/access';
 import { classifyText } from '../../shared/quota-block';
 import { logger } from '../telemetry/logger';
@@ -31,16 +30,18 @@ export class HookPayloadError extends HttpError {
   }
 }
 
-/** `<slug>:<slug>` (a Landflow agent plugin and its agent), as exported by marketplace/export.ts. */
-const AGENT_TYPE = /^([a-z0-9][a-z0-9-]{0,59}):([a-z0-9][a-z0-9-]{0,59})$/;
+/** The header a person's hook setup adds on purpose to say "this Claude Code runs this Landflow agent" (picked on /connect). */
+export const AGENT_HEADER = 'x-landflow-agent';
 
-/** The one agent `agentType` names that `actor` may run, or undefined (no such agent, several, or not theirs to run). */
-export function agentForType(actor: Actor, agentType: unknown): { id: string; name: string } | undefined {
-  const match = typeof agentType === 'string' ? AGENT_TYPE.exec(agentType) : null;
-  if (!match || match[1] !== match[2]) return undefined;
-  const named = agentStore.list().filter((agent) => slugOf(agent.name) === match[1]);
-  const runnable = named.filter((agent) => canResource(actor, 'agent', agent.id, 'run'));
-  return runnable.length === 1 && named.length === 1 ? { id: runnable[0].id, name: runnable[0].name } : undefined;
+/**
+ * The agent a session may bind to: the one the `X-Landflow-Agent` header names, when it exists and `actor` may run it. Nothing
+ * in the payload can bind a session (a plugin's `agent_type` is just a name that anyone can reuse), only this explicit header.
+ */
+export function agentForHeader(actor: Actor, value: string | null | undefined): { id: string; name: string } | undefined {
+  const id = value?.trim();
+  if (!id || id.length > 100) return undefined;
+  const agent = agentStore.get(id);
+  return agent && canResource(actor, 'agent', agent.id, 'run') ? { id: agent.id, name: agent.name } : undefined;
 }
 
 /** Blocked from a quota signal: an explicit `quota_blocked` field, or a StopFailure whose words say a usage limit or no credits. */
@@ -86,11 +87,11 @@ export async function ingestHookEvent(input: IngestInput): Promise<IngestResult>
     countHarnessEvent(entry.id, 'limited');
     return { status: 429, retryAfter: 30 };
   }
-  // A session belongs to an agent only when its first event is a SessionStart that names one the owner may run (`claude --agent
-  // x:x`, the main thread): any other first event, or an agent the owner may not run (AS-7), makes the owner's own session.
-  // Subagent events carry `agent_type` too, so it is never read from another event. This is only the proposal: the row the
+  // A session belongs to an agent only when its first event is a SessionStart sent with an `X-Landflow-Agent` header naming an
+  // agent the owner may run: any other first event, or an agent the owner may not run (AS-7), makes the owner's own session.
+  // The payload's `agent_type` never binds (a plugin of any author can use any name). This is only the proposal: the row the
   // write resolves decides the binding and the view (store.ts `applyEvent`), so a race cannot leak content into an own session.
-  const agent = existing || name !== 'SessionStart' ? undefined : agentForType(input.actor, payload.agent_type);
+  const agent = existing || name !== 'SessionStart' ? undefined : agentForHeader(input.actor, input.headers.get(AGENT_HEADER));
   const receivedAt = new Date(now);
   let verdict: StatusVerdict | undefined = statusFor(entry, name, payload);
   if (verdict === undefined) countUnknownEvent(entry.id);
@@ -119,7 +120,7 @@ export async function ingestHookEvent(input: IngestInput): Promise<IngestResult>
   countHarnessEvent(entry.id, applied.applied ? 'applied' : 'late');
   if (applied.session.agent_id) {
     try {
-      mirrorEvent(applied.session, { id: applied.eventId, name, view: applied.view, at: receivedAt.toISOString() }, !applied.applied);
+      mirrorEvent(applied.session, { id: applied.eventId, name, view: applied.view, at: receivedAt.toISOString(), orderKey: orderKeyOf(input.headers, receivedAt).value }, !applied.applied);
     } catch (error) {
       logger.warn('harness mirror failed', { error });
     }

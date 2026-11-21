@@ -82,13 +82,18 @@ let sharing = false
 /** The id this session reports under (the mod is not told Claude Code's own until the end) and its order number. */
 let statusId = ''
 let statusSeq = 0
+/** A random id for the session, which no one can guess or share across people (the mod is told Claude Code's own id only at the end). */
+declare const crypto: { randomUUID(): string }
+const newStatusId = () => `st-${crypto.randomUUID()}`
 let scopeWarned = false
 
 /** Tell Landflow the session's status, when the person turned sharing on and the session is in a listed repository. Fire and forget. */
 function report($: EngineInterface, event: StatusEvent, tool?: string) {
   if (!sharing || !config || !allowed || !statusId) return
   const request = statusRequest(config, statusBody(event, { sessionId: statusId, repository: allowed.repo, ...(tool && { tool }) }), ++statusSeq)
-  void sendStatus($, request)
+  // /brain pause stops this too: nothing about a paused session leaves the machine.
+  void paused($)
+    .then(isPaused => (isPaused ? undefined : sendStatus($, request)))
     .then(status => {
       if (status === 403 && !scopeWarned) {
         scopeWarned = true
@@ -480,7 +485,7 @@ export const register: Register = (on, options) => {
     repoHere = undefined
     project = undefined
     sharing = sharingOn(await $.store.get('statusSharing'))
-    statusId = `st-${(await $.clock.now()).toString(36)}${(seq++).toString(36)}`
+    statusId = newStatusId()
     statusSeq = 0
     // The model's own way in: only with a key, and never failing the session.
     if (config) for (const spec of [BRAIN_ASK_SPEC, PRACTICES_SPEC, PRACTICE_DRAFT_SPEC]) await $.tool.register(spec as never).catch(() => undefined)
@@ -626,7 +631,7 @@ export const register: Register = (on, options) => {
       report($, 'session.end')
       await closeCurrent($, e.sessionId, true)
       // The next session after /clear or a resume is a new one for Landflow too.
-      statusId = `st-${(await $.clock.now()).toString(36)}${(seq++).toString(36)}`
+      statusId = newStatusId()
       statusSeq = 0
       if (!goesOn) allowed = undefined
       else if (where && !(await paused($))) await openEntry($, where.repo, where.branch)

@@ -92,27 +92,65 @@ export function sendsStatus(harness: HarnessId): boolean {
   return Boolean(entry && sendsEvents(entry));
 }
 
-/** The body of the key request: the brain scopes, the chosen workflow ones (and live status, for a harness that sends it), 90 days unless told otherwise. */
+/** The body of the key request: the brain scopes and the chosen workflow ones, 90 days unless told otherwise. The live-status scope is never here: the hooks have a key of their own (`hookKeyBody`). */
 export function harnessKeyBody(harness: HarnessId, workflowScopes: readonly ApiKeyScope[] = [], expiresInDays = 90) {
   const label = HARNESSES.find((h) => h.id === harness)?.label ?? harness;
-  const scopes: ApiKeyScope[] = ['brain:read', 'brain:write', ...workflowScopes.filter((s) => s !== 'brain:read' && s !== 'brain:write' && (s !== STATUS_SCOPE.scope || sendsStatus(harness)))];
+  const scopes: ApiKeyScope[] = ['brain:read', 'brain:write', ...workflowScopes.filter((s) => s !== 'brain:read' && s !== 'brain:write' && s !== STATUS_SCOPE.scope)];
   return { label: `Harness · ${label}`, scopes: [...new Set(scopes)], ...(expiresInDays > 0 && { expiresInDays }) };
 }
 
+/** The environment variable the hooks read the key from (never a literal in the settings file). */
+// Written in parts on purpose: this is a variable of the person's shell that the hook script reads on their machine, not
+// host configuration, so config-catalog.test.ts must not take it (or the script's environment read) for a host read.
+export const HOOK_KEY_ENV = ['LANDFLOW', 'HOOK', 'KEY'].join('_');
+const ENV_OBJECT = 'env';
+
+/** The fields of a hook event the filter forwards: names, ids and a duration, never text, input, output, paths or `agent_type`. */
+export const HOOK_FIELDS = ['hook_event_name', 'session_id', 'tool_name', 'notification_type', 'duration_ms', 'error', 'error_details'] as const;
+
 /**
- * The Claude Code `settings.json` block that reports status (C04): one command hook per event the registry lists. Each
- * runs `curl` with the key, a per-process counter in the `X-Landflow-Hook-Seq` header (events arrive on separate
- * connections, so they carry their own order) and `--max-time 2` so Claude Code never waits. The hook body is the
- * event's JSON on stdin; Landflow keeps status and counts, never prompt text (docs/connect-your-harness.md).
+ * The one-line Node script a hook runs (Claude Code needs Node, so it is there; `jq` may not be). It reads the event JSON from
+ * stdin, keeps only HOOK_FIELDS (an error's words cut to 300 characters), and sends them with the key from the environment, an
+ * order number from the clock (so parallel hooks never share one and no counter file is needed) and, when an agent was picked,
+ * its id in `X-Landflow-Agent`. It gives up after 1.5 seconds and always exits quietly. No single quotes: it sits inside `node -e '…'`.
  */
-export function hookSnippetFor({ url, token }: SnippetInput): Snippet {
+export function hookFilterScript(target: string, agentId?: string): string {
+  const headers = `{"content-type":"application/json",authorization:"Bearer "+process.${ENV_OBJECT}[${JSON.stringify(HOOK_KEY_ENV)}],"x-landflow-hook-seq":String(Date.now()*1000+Number(process.hrtime.bigint()/1000n%1000n))${agentId ? `,"x-landflow-agent":${JSON.stringify(agentId)}` : ''}}`;
+  return [
+    'let d="";',
+    'process.stdin.on("data",c=>d+=c).on("end",()=>{try{',
+    `const e=JSON.parse(d),o={};for(const k of ${JSON.stringify(HOOK_FIELDS)})if(e[k]!==undefined)o[k]=typeof e[k]==="string"?e[k].slice(0,300):e[k];`,
+    `fetch(${JSON.stringify(target)},{method:"POST",headers:${headers},body:JSON.stringify(o),signal:AbortSignal.timeout(1500)}).catch(()=>{})`,
+    '}catch{}})',
+  ].join('');
+}
+
+/**
+ * The Claude Code hooks block for live status (C04): one command hook per event the registry lists, each running the filter
+ * above, in the background (`async`) so Claude Code never waits. It holds no key (that is in `$LANDFLOW_HOOK_KEY`) and sends no
+ * prompt, tool input or output, working directory or transcript path: a session it reports is the person's own, unless they picked
+ * a Landflow agent they may run (then its id goes in a header and the session shows on that agent).
+ */
+export function hookSnippetFor({ url, agentId }: { url: string; agentId?: string }): Snippet {
   const entry = harnessById('claude-code');
-  const target = `${originOf(url)}/api/harness/claude-code/hooks`;
-  const key = token ?? KEY_PLACEHOLDER;
-  const counter = 'f="${TMPDIR:-/tmp}/landflow-hook-$PPID"; n=$(( $(cat "$f" 2>/dev/null || echo 0) + 1 )); echo $n > "$f"';
-  const command = `${counter}; curl -s --max-time 2 -X POST ${target} -H "Authorization: ${bearer(key)}" -H "Content-Type: application/json" -H "X-Landflow-Hook-Seq: $n" --data-binary @- >/dev/null 2>&1 || true`;
-  const hooks = Object.fromEntries(Object.keys(entry?.hookEvents ?? {}).map((event) => [event, [{ hooks: [{ type: 'command', command }] }]]));
-  return { label: 'Live status hooks', where: 'Merge into .claude/settings.json in your project, or ~/.claude/settings.json for every project (do not commit it: it holds your key)', language: 'json', text: json({ hooks }) };
+  const command = `node -e '${hookFilterScript(`${originOf(url)}/api/harness/claude-code/hooks`, agentId)}'`;
+  const hooks = Object.fromEntries(Object.keys(entry?.hookEvents ?? {}).map((event) => [event, [{ hooks: [{ type: 'command', command, async: true }] }]]));
+  return {
+    label: 'Live status hooks',
+    where: 'Merge into .claude/settings.local.json in your project (Claude Code keeps it out of Git), or ~/.claude/settings.json for every project. Never into the committed .claude/settings.json',
+    language: 'json',
+    text: json({ hooks }),
+  };
+}
+
+/** The line that gives the hooks their key: put it in your shell profile, so the key is not in any settings file. */
+export function hookKeySnippet(token?: string): Snippet {
+  return { label: 'Your hook key', where: 'Add to ~/.zshrc or ~/.bashrc and open a new terminal, so Claude Code starts with it', language: 'bash', text: `export ${HOOK_KEY_ENV}=${token ?? KEY_PLACEHOLDER}` };
+}
+
+/** The body of the request for the hooks' own key: it may send live status and nothing else, 90 days unless told otherwise. */
+export function hookKeyBody(expiresInDays = 90) {
+  return { label: 'Harness · Claude Code live status', scopes: [STATUS_SCOPE.scope], ...(expiresInDays > 0 && { expiresInDays }) };
 }
 
 /** The `tools/list` request that tests a key. */

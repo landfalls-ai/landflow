@@ -321,28 +321,40 @@ describe('binding to agents and the mirror', () => {
   const evePost = createApiKey(eve, { label: 'eve', scopes: ['harness:write', 'executions:read'] }).token;
 
   it('stores a session on an agent the owner may not run as their own (AS-7)', async () => {
-    await post('claude-code', { hook_event_name: 'SessionStart', session_id: 'agent-no', agent_type: 'hidden-helper:hidden-helper', prompt: 'secret prompt' }, { 'x-landflow-hook-seq': '1' }, evePost);
+    await post('claude-code', { hook_event_name: 'SessionStart', session_id: 'agent-no', prompt: 'secret prompt' }, { 'x-landflow-hook-seq': '1', 'x-landflow-agent': hidden.id }, evePost);
     const row = rowOf('agent-no', eve.id)!;
     expect(row.agent_id).toBeNull();
     expect(JSON.stringify(store.eventsOf(row.id))).not.toContain('secret prompt');
     expect(agentStore.getSession(row.id)).toBeUndefined();
   });
   it('a viewer of the agent (read, not run) gets an own session too', async () => {
-    await post('claude-code', { hook_event_name: 'SessionStart', session_id: 'viewer-1', agent_type: 'open-helper:open-helper' }, { 'x-landflow-hook-seq': '1' });
+    await post('claude-code', { hook_event_name: 'SessionStart', session_id: 'viewer-1' }, { 'x-landflow-hook-seq': '1', 'x-landflow-agent': shared.id });
     expect(rowOf('viewer-1')!.agent_id).toBeNull();
   });
   it('binds only on a SessionStart: another first event with agent_type is an own session without content (privacy)', async () => {
     for (const first of ['UserPromptSubmit', 'PreToolUse', 'SubagentStart']) {
       const session = `nobind-${first}`;
-      await post('claude-code', { hook_event_name: first, session_id: session, agent_type: 'open-helper:open-helper', prompt: 'private prompt', tool_name: 'Bash', tool_input: { command: 'cat ~/notes' } }, { 'x-landflow-hook-seq': '1' }, evePost);
+      await post('claude-code', { hook_event_name: first, session_id: session, prompt: 'private prompt', tool_name: 'Bash', tool_input: { command: 'cat ~/notes' } }, { 'x-landflow-hook-seq': '1', 'x-landflow-agent': shared.id }, evePost);
       const row = rowOf(session, eve.id)!;
       expect(row.agent_id).toBeNull();
       expect(JSON.stringify(store.eventsOf(row.id))).not.toMatch(/private prompt|cat ~/);
     }
   });
-  it('an own session never stores content when a later event carries agent_type', async () => {
+  it('a bare slug:slug agent_type never binds, even for an agent the owner may run (any plugin can use any name)', async () => {
+    await post('claude-code', { hook_event_name: 'SessionStart', session_id: 'bare-slug', agent_type: 'open-helper:open-helper', cwd: '/home/eve/secret' }, { 'x-landflow-hook-seq': '1' }, evePost);
+    await post('claude-code', { hook_event_name: 'UserPromptSubmit', session_id: 'bare-slug', agent_type: 'landflow-open-helper:open-helper', prompt: 'private bare prompt' }, { 'x-landflow-hook-seq': '2' }, evePost);
+    const row = rowOf('bare-slug', eve.id)!;
+    expect(row.agent_id).toBeNull();
+    expect(JSON.stringify(store.eventsOf(row.id))).not.toMatch(/private bare prompt|secret/);
+    expect(agentStore.getSession(row.id)).toBeUndefined();
+  });
+  it('an unknown agent id in the header is an own session', async () => {
+    await post('claude-code', { hook_event_name: 'SessionStart', session_id: 'bad-header' }, { 'x-landflow-hook-seq': '1', 'x-landflow-agent': 'agent_nope' }, evePost);
+    expect(rowOf('bad-header', eve.id)!.agent_id).toBeNull();
+  });
+  it('an own session never stores content when a later event carries the agent header', async () => {
     await post('claude-code', { hook_event_name: 'SessionStart', session_id: 'own-then-agent' }, { 'x-landflow-hook-seq': '1' }, evePost);
-    await post('claude-code', { hook_event_name: 'UserPromptSubmit', session_id: 'own-then-agent', agent_type: 'open-helper:open-helper', prompt: 'private prompt two' }, { 'x-landflow-hook-seq': '2' }, evePost);
+    await post('claude-code', { hook_event_name: 'UserPromptSubmit', session_id: 'own-then-agent', prompt: 'private prompt two' }, { 'x-landflow-hook-seq': '2', 'x-landflow-agent': shared.id }, evePost);
     const row = rowOf('own-then-agent', eve.id)!;
     expect(row.agent_id).toBeNull();
     expect(JSON.stringify(store.eventsOf(row.id))).not.toContain('private prompt two');
@@ -364,8 +376,8 @@ describe('binding to agents and the mirror', () => {
   });
   it('mirrors a session of an agent the owner may run, with the reply cut under summaries (AS-6)', async () => {
     process.env.LANDFLOW_TRACE_CONTENT = 'summaries';
-    const body = (extra: Record<string, unknown>) => ({ session_id: 'agent-yes', agent_type: 'open-helper:open-helper', ...extra });
-    await post('claude-code', body({ hook_event_name: 'SessionStart' }), { 'x-landflow-hook-seq': '1' }, evePost);
+    const body = (extra: Record<string, unknown>) => ({ session_id: 'agent-yes', ...extra });
+    await post('claude-code', body({ hook_event_name: 'SessionStart' }), { 'x-landflow-hook-seq': '1', 'x-landflow-agent': shared.id }, evePost);
     await post('claude-code', body({ hook_event_name: 'UserPromptSubmit', prompt: 'List files' }), { 'x-landflow-hook-seq': '2' }, evePost);
     await post('claude-code', body({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'tu_1', tool_input: { command: 'ls' } }), { 'x-landflow-hook-seq': '3' }, evePost);
     await post('claude-code', body({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'tu_1', tool_input: { command: 'ls' }, tool_response: { out: 'a b c' }, duration_ms: 12 }), { 'x-landflow-hook-seq': '4' }, evePost);
@@ -435,6 +447,62 @@ describe('live events (T-7)', () => {
     await send('bus-1', 'UserPromptSubmit');
     stop();
     expect(seen.find((e) => e.channel === 'harness')?.session?.status).toBe('thinking');
+  });
+});
+
+describe('late events, the mirror bounds and the kind filter (review round 2)', () => {
+  it('counts late events toward the per-session cap: past it only the name is stored', async () => {
+    await send('late-cap', 'SessionStart');
+    await send('late-cap', 'UserPromptSubmit', { prompt: 'x' });
+    const row = rowOf('late-cap')!;
+    const insert = (n: number) => database().insertNew('harness_events', { id: `he_fill_${n}`, session_id: row.id, order_key: String(1000 + n).padStart(20, '0'), name: 'PreToolUse', received_at: '2026-11-21T10:00:00.000Z', data: '{}' });
+    for (let i = 0; i < store.MAX_EVENTS_PER_SESSION; i++) insert(i);
+    await post('claude-code', { hook_event_name: 'UserPromptSubmit', session_id: 'late-cap', prompt: 'a late secret' }, { 'x-landflow-hook-seq': '1' });
+    const late = eventsOfSession('late-cap').find((e) => e.orderKey === '1'.padStart(20, '0'))!;
+    expect(late.data).toEqual({ event: 'UserPromptSubmit' });
+  });
+
+  it('rebuilds the mirror only for a late event inside the tail, and at most once a second per session', async () => {
+    const { mirrorEvent } = await import('@/lib/server/harness/mirror');
+    const agent = agentStore.create({ name: 'Rebuild Helper', instructions: 'x', model: { provider: 'ollama', model: 'm' } });
+    const row = { id: 'hs_rebuild', owner_id: alice.id, harness: 'claude-code', session_key: 'rb', agent_id: agent.id, project_id: null, status: 'thinking', order_kind: 'seq', last_order: '9', last_event_at: '2026-11-21T10:00:00.000Z', opened_at: '2026-11-21T10:00:00.000Z', closed_at: null, data: '{}' } as store.SessionRow;
+    const ev = (n: number) => database().insertNew('harness_events', { id: `he_rb_${n}`, session_id: row.id, order_key: String(n).padStart(20, '0'), name: 'UserPromptSubmit', received_at: '2026-11-21T10:00:00.000Z', data: JSON.stringify({ prompt: `p${n}` }) });
+    for (let n = 10; n < 10 + store.MIRROR_TAIL; n++) ev(n);
+    const t = Date.parse('2026-11-21T12:00:00.000Z');
+    // Older than the whole tail: nothing is rebuilt (the mirror does not show it anyway).
+    ev(1);
+    mirrorEvent(row, { id: 'he_rb_1', name: 'UserPromptSubmit', view: { prompt: 'p1' }, at: 'x', orderKey: '1'.padStart(20, '0') }, true, t);
+    expect(agentStore.getSession(row.id)!.timeline).toHaveLength(0);
+    // Inside the tail: rebuilt once, and a second one inside the same second waits for the next chance.
+    ev(5000);
+    mirrorEvent(row, { id: 'he_rb_5000', name: 'UserPromptSubmit', view: { prompt: 'p5000' }, at: 'x', orderKey: '5000'.padStart(20, '0') }, true, t + 10);
+    expect(agentStore.getSession(row.id)!.timeline).toHaveLength(store.MIRROR_TAIL);
+    ev(5001);
+    mirrorEvent(row, { id: 'he_rb_5001', name: 'UserPromptSubmit', view: { prompt: 'p5001' }, at: 'x', orderKey: '5001'.padStart(20, '0') }, true, t + 500);
+    expect(JSON.stringify(agentStore.getSession(row.id)!.timeline)).not.toContain('p5001');
+    ev(5002);
+    mirrorEvent(row, { id: 'he_rb_5002', name: 'UserPromptSubmit', view: { prompt: 'p5002' }, at: 'x', orderKey: '5002'.padStart(20, '0') }, false, t + 1500);
+    expect(JSON.stringify(agentStore.getSession(row.id)!.timeline)).toContain('p5001');
+  });
+
+  it('caps the mirrored timeline by size, dropping the oldest', async () => {
+    const { capTimelineSize } = await import('@/lib/server/harness/mirror');
+    const entries = Array.from({ length: 10 }, (_, i) => ({ id: `u${i}`, type: 'user' as const, text: 'x'.repeat(300_000), at: 'a' }));
+    const kept = capTimelineSize(entries);
+    expect(JSON.stringify(kept).length).toBeLessThanOrEqual(2_000_000);
+    expect(kept.at(-1)!.id).toBe('u9');
+    expect(kept.length).toBeLessThan(10);
+    expect(capTimelineSize([entries[0]!], 10)).toHaveLength(1);
+  });
+
+  it('filters the list by kind in the query', () => {
+    const own = harnessSessions(eve, { limit: 100, kind: 'own' }).sessions;
+    expect(own.length).toBeGreaterThan(0);
+    expect(own.every((s) => !s.agentId)).toBe(true);
+    const agents = harnessSessions(eve, { limit: 100, kind: 'agent' }).sessions;
+    expect(agents.length).toBeGreaterThan(0);
+    expect(agents.every((s) => s.agentId)).toBe(true);
+    expect(harnessSessions(eve, { limit: 100, kind: 'own', agentId: 'x' }).sessions).toEqual([]);
   });
 });
 

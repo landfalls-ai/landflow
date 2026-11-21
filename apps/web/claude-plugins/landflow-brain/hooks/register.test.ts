@@ -1004,3 +1004,23 @@ test('a 403 from the hook route says once that the key needs harness:write', { o
   await new Promise(resolve => setTimeout(resolve, 50))
   expect(toasts.filter(t => t.includes('harness:write'))).toHaveLength(1)
 })
+
+test('/brain pause stops status sharing too', { options: OPTIONS }, async ($, on) => {
+  const { hooks } = world(on)
+  await command($, 'status-sharing on')
+  await $.session.start({ cwd: '/work/widgets', surface: 'terminal', isInteractive: true })
+  await command($, 'pause')
+  await $.prompt.submit({ text: 'Do a thing' } as never)
+  await $.turn.complete({ answer: 'done', durationMs: 1000, isAborted: false, turnId: 't1', reason: 'answer' })
+  await new Promise(resolve => setTimeout(resolve, 50))
+  expect(hooks.map(h => h.body.hook_event_name)).not.toContain('UserPromptSubmit')
+  expect(hooks.map(h => h.body.hook_event_name)).not.toContain('Stop')
+})
+
+test('the status session id is random, not guessable from the clock', { options: OPTIONS }, async ($, on) => {
+  const { hooks } = world(on)
+  await command($, 'status-sharing on')
+  await work($)
+  await new Promise(resolve => setTimeout(resolve, 50))
+  expect(String(hooks[0]?.body.session_id)).toMatch(/^st-[0-9a-f]{8}-[0-9a-f]{4}-/)
+})

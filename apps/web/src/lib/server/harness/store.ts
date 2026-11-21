@@ -220,7 +220,8 @@ export async function applyEvent(input: EventInput, handle: Database = db()): Pr
     }
     const eventId = `he_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
     // The view follows the row that won, not a read made before the write (two first events can race to create it).
-    const over = parse(session!.data).events > MAX_EVENTS_PER_SESSION;
+    // A late event counts toward the cap too (its row is not rewritten, so the stored events are counted): past it, only the name.
+    const over = applied ? parse(session!.data).events > MAX_EVENTS_PER_SESSION : eventCount(handle, session!.id) >= MAX_EVENTS_PER_SESSION;
     const view = over ? { event: input.name } : input.viewFor(Boolean(session!.agent_id));
     handle.insertNew('harness_events', { id: eventId, session_id: session!.id, order_key: input.orderKey.value, name: input.name, received_at: input.receivedAt, data: JSON.stringify(view) });
     const woke = Boolean(before) && Date.parse(input.receivedAt) - Date.parse(before!.last_event_at) >= STALE_AFTER_MS;
@@ -256,6 +257,8 @@ export interface ListFilter {
   readableAgents: ReadonlySet<string> | undefined;
   agentId?: string;
   open?: boolean;
+  /** `own`: the viewer's own sessions only; `agent`: sessions of Landflow agents only (filtered in SQL, so a page is never short). */
+  kind?: 'own' | 'agent';
   limit: number;
   cursor?: string;
 }
@@ -265,10 +268,20 @@ export function listSessions(filter: ListFilter): { rows: SessionRow[]; nextCurs
   const where: string[] = [];
   const args: Array<string | number> = [];
   const agents = filter.readableAgents ? [...filter.readableAgents] : undefined;
-  if (filter.agentId) {
+  if (filter.kind === 'own') {
+    if (filter.agentId) return { rows: [] };
+    where.push('(agent_id IS NULL AND owner_id = ?)');
+    args.push(filter.userId);
+  } else if (filter.agentId) {
     if (agents && !agents.includes(filter.agentId)) return { rows: [] };
     where.push('agent_id = ?');
     args.push(filter.agentId);
+  } else if (filter.kind === 'agent') {
+    if (agents) {
+      if (!agents.length) return { rows: [] };
+      where.push(`agent_id IN (${agents.map(() => '?').join(',')})`);
+      args.push(...agents);
+    } else where.push('agent_id IS NOT NULL');
   } else if (agents) {
     // Chunked IN lists are not needed: one clause, bounded by the agents the viewer may read.
     where.push(`((agent_id IS NULL AND owner_id = ?)${agents.length ? ` OR agent_id IN (${agents.map(() => '?').join(',')})` : ''})`);
@@ -287,6 +300,14 @@ export function listSessions(filter: ListFilter): { rows: SessionRow[]; nextCurs
   const page = rows.slice(0, filter.limit);
   const last = page.at(-1);
   return { rows: page, ...(rows.length > filter.limit && last && { nextCursor: encodeCursor({ s: last.last_event_at, i: last.id }) }) };
+}
+
+/** How many events are stored for a session. */
+const eventCount = (handle: Database, sessionId: string): number => Number(handle.get<{ n: number }>('SELECT COUNT(*) AS n FROM harness_events WHERE session_id = ?', sessionId)?.n ?? 0);
+
+/** The order key of the oldest event the mirror still shows (the `tail`-th newest), or undefined when fewer are stored. */
+export function tailStartKey(sessionId: string, tail: number): string | undefined {
+  return db().get<{ order_key: string }>('SELECT order_key FROM harness_events WHERE session_id = ? ORDER BY order_key DESC, received_at DESC, id DESC LIMIT 1 OFFSET ?', sessionId, tail - 1)?.order_key;
 }
 
 /** The events of one session in order-key order (a late event sits in its own place). */

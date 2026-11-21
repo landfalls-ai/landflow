@@ -14,8 +14,9 @@ import { Card } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { CopyButton } from '@/components/ui/copy-button';
 import { FieldLabel, Select } from '@/components/ui/inputs';
-import { HARNESSES, STATUS_SCOPE, TOOLS_LIST_REQUEST, WORKFLOW_SCOPES, harnessKeyBody, hookSnippetFor, sendsStatus, snippetFor, toolNames, type HarnessId, type Snippet } from './harness-snippets';
+import { HARNESSES, STATUS_SCOPE, TOOLS_LIST_REQUEST, WORKFLOW_SCOPES, harnessKeyBody, hookKeyBody, hookKeySnippet, hookSnippetFor, sendsStatus, snippetFor, toolNames, type HarnessId, type Snippet } from './harness-snippets';
 import { YourSessions } from './your-sessions';
+import { useAgentData } from '@/components/agents/use-agent-data';
 import { mergeHarnessSession, type HarnessSessionView } from '@/lib/shared/harness';
 import { useLiveEvents } from '@/lib/client/live';
 
@@ -50,7 +51,7 @@ function SnippetBox({ snippet }: { snippet: Snippet }) {
 }
 
 /** What the page needs, so a test can render it without a host. */
-export function ConnectSteps({ harness, onHarness, scopes, onScopes, days, onDays, onMake, making, token, mcpUrl, test, onTest, testing, sessions }: {
+export function ConnectSteps({ harness, onHarness, scopes, onScopes, days, onDays, onMake, making, token, mcpUrl, test, onTest, testing, sessions, hookToken, onMakeHookKey, makingHook, agents = [], agentId, onAgent }: {
   harness: HarnessId;
   onHarness: (id: HarnessId) => void;
   scopes: ApiKeyScope[];
@@ -66,12 +67,19 @@ export function ConnectSteps({ harness, onHarness, scopes, onScopes, days, onDay
   testing: boolean;
   /** The person's own open Claude Code sessions (live status step). */
   sessions?: HarnessSessionView[];
+  /** The live-status key (its own, `harness:write` only), shown once. */
+  hookToken?: string;
+  onMakeHookKey?: () => void;
+  makingHook?: boolean;
+  /** Agents the person can pick to bind the sessions of this setup to (the server checks they may run it). */
+  agents?: Array<{ id: string; name: string }>;
+  agentId?: string;
+  onAgent?: (id: string | undefined) => void;
 }) {
   const toggle = (scope: ApiKeyScope) => onScopes(scopes.includes(scope) ? scopes.filter((s) => s !== scope) : [...scopes, scope]);
   const input = { url: mcpUrl, ...(token && { token }) };
   const snippets = snippetFor(harness, input);
   const status = sendsStatus(harness);
-  const scopeOptions = status ? [...WORKFLOW_SCOPES, STATUS_SCOPE] : WORKFLOW_SCOPES;
   return (
     <div className="space-y-6">
       <section aria-label="Pick your harness">
@@ -105,7 +113,7 @@ export function ConnectSteps({ harness, onHarness, scopes, onScopes, days, onDay
                   <span className="block text-[11px] text-t3">Read your briefing, ask, and record your work</span>
                 </span>
               </label>
-              {scopeOptions.map(({ scope, label }) => (
+              {WORKFLOW_SCOPES.map(({ scope, label }) => (
                 <label key={scope} className={cn('flex min-h-11 cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-2', scopes.includes(scope) ? 'border-acbd bg-acdim' : 'border-hair hover:bg-sf2')}>
                   <input type="checkbox" checked={scopes.includes(scope)} onChange={() => toggle(scope)} className="mt-0.5" aria-label={label} />
                   <span className="min-w-0">
@@ -161,9 +169,35 @@ export function ConnectSteps({ harness, onHarness, scopes, onScopes, days, onDay
           <StepTitle n={4}>Live status (optional)</StepTitle>
           <Card className="space-y-4 px-5 py-4">
             <p className="text-[12px] text-t2">
-              Claude Code can tell Landflow when it is thinking, working or waiting for you. Landflow keeps the status, the time and counts of prompts and tool calls, never what you typed or what a tool returned. The key needs “{STATUS_SCOPE.label}” ticked in step 2.
+              Claude Code can tell Landflow when it is thinking, working or waiting for you. A small Node filter in each hook sends only the event’s name, the session id, a tool’s name, a duration and an error’s words, never what you typed, what a tool read or returned, a file path or your working directory.
             </p>
-            <SnippetBox snippet={hookSnippetFor(input)} />
+            <div className="space-y-2 rounded-[10px] border border-hair p-3">
+              <p className="text-[12px] text-t2">
+                The hooks use a key of their own that may only send live status ({STATUS_SCOPE.scope}), not the key above. It goes in an environment variable, not in a settings file.
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button onClick={onMakeHookKey} loading={makingHook} className="max-md:min-h-11">
+                  {hookToken ? 'Make another hook key' : 'Make a hook key'}
+                </Button>
+                <span className="text-[12px] text-t3">{hookToken ? 'Shown once; Landflow keeps only its hash.' : 'You can also paste a key you already have in place of the placeholder.'}</span>
+              </div>
+              <SnippetBox snippet={hookKeySnippet(hookToken)} />
+            </div>
+            {agents.length > 0 && onAgent && (
+              <div className="max-w-[320px]">
+                <FieldLabel>Running a Landflow agent here? (optional)</FieldLabel>
+                <Select value={agentId ?? ''} onChange={(e) => onAgent(e.target.value || undefined)} aria-label="Landflow agent">
+                  <option value="">None: these are my own sessions</option>
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </Select>
+                <p className="mt-1 text-[12px] text-t3">With an agent picked, the sessions this setup reports show on that agent’s card, if you may run it. Use it in the settings of the project where you run that agent.</p>
+              </div>
+            )}
+            <SnippetBox snippet={hookSnippetFor({ url: mcpUrl, ...(agentId && { agentId }) })} />
             <div>
               <h3 className="mb-1.5 text-[12px] font-semibold text-t2">Your sessions</h3>
               <YourSessions sessions={sessions} />
@@ -186,11 +220,30 @@ export function ConnectHarness() {
   const [origin, setOrigin] = useState('http://localhost:3000');
   useEffect(() => setOrigin(window.location.origin), []);
   const [sessions, setSessions] = useState<HarnessSessionView[]>();
+  const [hookToken, setHookToken] = useState<string>();
+  const [makingHook, setMakingHook] = useState(false);
+  const [agentId, setAgentId] = useState<string>();
+  const agents = useAgentData((s) => s.agents);
+  useEffect(() => {
+    void useAgentData.getState().loadAgents();
+  }, []);
+  const makeHookKey = async () => {
+    setMakingHook(true);
+    try {
+      const result = await api<{ key: ApiKeyView; token: string }>('/api/api-keys', { method: 'POST', json: hookKeyBody() });
+      setHookToken(result.token);
+      toast.success(`Made the key “${result.key.label}”`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setMakingHook(false);
+    }
+  };
   // The person's own open sessions: read once when the harness sends status, then kept current by `harness` events.
   useEffect(() => {
     if (!sendsStatus(harness)) return;
-    api<{ sessions: HarnessSessionView[] }>('/api/harness/sessions?open=1&limit=50', { background: true })
-      .then((r) => setSessions(r.sessions.filter((x) => !x.agentId)))
+    api<{ sessions: HarnessSessionView[] }>('/api/harness/sessions?open=1&kind=own&limit=50', { background: true })
+      .then((r) => setSessions(r.sessions))
       .catch(() => setSessions([]));
   }, [harness]);
   useLiveEvents((event) => {
@@ -241,6 +294,6 @@ export function ConnectHarness() {
     }
   };
 
-  return <ConnectSteps harness={harness} onHarness={setHarness} scopes={scopes} onScopes={setScopes} days={days} onDays={setDays} onMake={() => void make()} making={making} token={token} mcpUrl={`${origin}/api/mcp`} test={test} onTest={() => void runTest()} testing={testing} sessions={sessions} />;
+  return <ConnectSteps harness={harness} onHarness={setHarness} scopes={scopes} onScopes={setScopes} days={days} onDays={setDays} onMake={() => void make()} making={making} token={token} mcpUrl={`${origin}/api/mcp`} test={test} onTest={() => void runTest()} testing={testing} sessions={sessions} hookToken={hookToken} onMakeHookKey={() => void makeHookKey()} makingHook={makingHook} agents={(agents ?? []).map((a) => ({ id: a.id, name: a.name }))} agentId={agentId} onAgent={setAgentId} />;
 }
 

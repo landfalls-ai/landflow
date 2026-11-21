@@ -7,7 +7,8 @@
 import type { HarnessStatus } from '@landflow/protocol/harnesses';
 import type { AgentSession, SessionStatus, TimelineEntry } from '../../shared/agents';
 import { agentStore } from '../agents/store';
-import { eventsOf, MIRROR_TAIL, type SessionRow } from './store';
+import { singleton } from '../singleton';
+import { eventsOf, MIRROR_TAIL, tailStartKey, type SessionRow } from './store';
 
 type View = Record<string, unknown>;
 const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
@@ -71,24 +72,58 @@ const empty = (row: SessionRow, agentName: string, title: string): AgentSession 
   updatedAt: row.last_event_at,
 });
 
+/** The mirrored timeline's serialized size is capped (the oldest entries go first): many large tool outputs must not make a huge row. */
+export const MIRROR_MAX_BYTES = 2_000_000;
+/** A session's timeline is rebuilt at most this often (ms); a late event inside the throttle marks it for the next chance. */
+export const REBUILD_EVERY_MS = 1000;
+
+/** Drop the oldest entries until the timeline serializes within `max` bytes (always keeps the newest entry). */
+export function capTimelineSize(timeline: TimelineEntry[], max = MIRROR_MAX_BYTES): TimelineEntry[] {
+  const sizes = timeline.map((entry) => JSON.stringify(entry).length + 1);
+  let total = sizes.reduce((a, b) => a + b, 2);
+  let drop = 0;
+  while (total > max && drop < timeline.length - 1) total -= sizes[drop++]!;
+  return drop ? timeline.slice(drop) : timeline;
+}
+
+/** Per session: when it was last rebuilt, and whether a late event is waiting for the next rebuild. */
+const rebuilds = singleton('harness.mirror.rebuilds', () => new Map<string, { at: number; dirty: boolean }>());
+
 /**
  * Mirror one stored event into its agent session. `late`: the event was not newer than the last applied one, so the whole
  * timeline is rebuilt from the stored events in order-key order.
  */
-export function mirrorEvent(row: SessionRow, event: { id: string; name: string; view: View; at: string }, late: boolean): AgentSession | undefined {
+export function mirrorEvent(row: SessionRow, event: { id: string; name: string; view: View; at: string; orderKey?: string }, late: boolean, now = Date.now()): AgentSession | undefined {
   if (!row.agent_id) return undefined;
   const agent = agentStore.get(row.agent_id);
   if (!agent) return undefined;
   const session = agentStore.getSession(row.id) ?? empty(row, agent.name, 'Claude Code session');
+  // A late event only matters to the mirror when it falls inside the newest MIRROR_TAIL events, and a session is rebuilt at most once a second.
+  const state = rebuilds.get(row.id) ?? { at: 0, dirty: false };
+  let rebuild = false;
   if (late) {
+    const start = event.orderKey ? tailStartKey(row.id, MIRROR_TAIL) : undefined;
+    if (!event.orderKey || start === undefined || event.orderKey >= start) {
+      if (now - state.at >= REBUILD_EVERY_MS) rebuild = true;
+      else state.dirty = true;
+    }
+  } else if (state.dirty && now - state.at >= REBUILD_EVERY_MS) rebuild = true;
+  if (rebuild) {
+    state.at = now;
+    state.dirty = false;
+  }
+  if (rebuilds.size > 5000) rebuilds.clear();
+  rebuilds.set(row.id, state);
+  if (rebuild) {
     session.timeline = [];
     // Only the newest events are read back: a long session's rebuild stays bounded.
     for (const stored of eventsOf(row.id, MIRROR_TAIL)) applyToTimeline(session.timeline, stored.name, stored.data, stored.id, stored.receivedAt);
-  } else {
+  } else if (!late) {
     applyToTimeline(session.timeline, event.name, event.view, event.id, event.at);
   }
-  // The mirror keeps the newest entries only (the events table keeps the rest until pruned).
+  // The mirror keeps the newest entries only (the events table keeps the rest until pruned), within a size bound.
   if (session.timeline.length > MIRROR_TAIL) session.timeline = session.timeline.slice(-MIRROR_TAIL);
+  session.timeline = capTimelineSize(session.timeline);
   const firstPrompt = session.timeline.find((entry) => entry.type === 'user');
   if (firstPrompt && firstPrompt.type === 'user' && firstPrompt.text !== '[content off]') session.title = firstPrompt.text.replace(/\s+/g, ' ').slice(0, 80);
   session.status = sessionStatusOf(row.status);
