@@ -1,2 +1,0 @@
-section: 2026-11-21: combined wave 1
-| (this change) | C03: recalled memory is fenced. One helper (`lib/shared/memory-fence.ts`: `escapeFenceText`, `unescapeFenceText`, `wrapMemory`) quotes an agent's cross-session notes, the team notebook (block and `note_search`) and the brain's facts (Ask and page summary) inside `<landflow-memory source="…">`, escaping fence-like text so a note cannot close the block; the mentions fence and the canvas context use the same escaper; a source scan test keeps new memory sources honest | [agents.md](agents.md), [assistant.md](assistant.md) |
