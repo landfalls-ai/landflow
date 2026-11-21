@@ -26,6 +26,7 @@ import type { ItemKind } from '../brain/notion/sync'; // NB08:
 import { askBrain } from '../brain/wiki';
 import { WORK_LIMITS } from '@landflow/protocol';
 import { MAX_WORK_EVENTS, recordWork } from '../brain/work';
+import { escapeMemoryFields } from '../../shared/memory-fence';
 import { briefingMarkdown, dayArgument } from './brain-prompts';
 import { mySpend } from '../ai-usage/my-spend'; // SP14
 import { MY_SPEND_PERIODS } from '../../shared/my-spend-wire';
@@ -101,7 +102,7 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
     async ({ query, subjectType, kind, limit }) => {
       const vectorHits = await vectorFactHits(query, projectsOf(scope));
       const facts = searchFacts(query, { scope, limit: 500, vectorHits }).filter((f) => (!subjectType || f.subjectType === (subjectType as FactSubject)) && (!kind || f.kind === (kind as FactKind)));
-      return json({ facts: factsWithUrls(facts.slice(0, limit ?? 20)) }); // NB08:
+      return json(escapeMemoryFields({ facts: factsWithUrls(facts.slice(0, limit ?? 20)) })); // NB08: (C08 D1: statements escaped in place, the JSON shape unchanged)
     },
   );
 
@@ -139,13 +140,15 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
       if (!workflow) return failure(`Workflow ${workflowId} not found`);
       const refused = ctx.denied(workflowId, 'read');
       if (refused) return refused;
-      return json({
-        workflowId,
-        name: workflow.name,
-        profile: getProfile('workflow', workflowId) ?? null,
-        facts: factsWithUrls(listFacts({ subjectType: 'workflow', subjectId: workflowId, limit: 50 })), // NB08:
-        proposals: listProposals({ workflowId, status: 'open', limit: 20 }),
-      });
+      return json(
+        escapeMemoryFields({
+          workflowId,
+          name: workflow.name,
+          profile: getProfile('workflow', workflowId) ?? null,
+          facts: factsWithUrls(listFacts({ subjectType: 'workflow', subjectId: workflowId, limit: 50 })), // NB08:
+          proposals: listProposals({ workflowId, status: 'open', limit: 20 }),
+        }),
+      );
     },
   );
 
@@ -187,7 +190,8 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
       }),
       annotations: READ_ONLY,
     },
-    async ({ text, what, limit, minScore, includeOthers }) => json({ matches: await findSimilar(text, { scope, kinds: what, limit, minScore, includeOthers: includeOthers ?? true }) }),
+    // A fact match carries its statement as `statement` and `goal`: both escaped in place.
+    async ({ text, what, limit, minScore, includeOthers }) => json(escapeMemoryFields({ matches: await findSimilar(text, { scope, kinds: what, limit, minScore, includeOthers: includeOthers ?? true }) }, ['statement', 'summary', 'goal'])),
   );
 
   server.registerTool(
@@ -245,11 +249,13 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
       const knowledge = await searchNotionKnowledge(question, { projects: projectsOf(scope) }); // NB06:
       const answer = await askBrain(question, scope, actor, { vectorHits, ...(knowledge.length && { knowledge }), ...(about && { about }) });
       // NB08: where the pages and facts it names live in Notion.
-      return json({
-        ...answer,
-        pages: withNotionUrls(answer.pages, 'entity', (p) => `${p.type}/${p.id}`, (p) => { const e = getEntity(p.type, p.id); return e && entityProject(e); }),
-        facts: factsWithUrls(answer.facts),
-      });
+      return json(
+        escapeMemoryFields({
+          ...answer,
+          pages: withNotionUrls(answer.pages, 'entity', (p) => `${p.type}/${p.id}`, (p) => { const e = getEntity(p.type, p.id); return e && entityProject(e); }),
+          facts: factsWithUrls(answer.facts),
+        }),
+      );
     },
   );
 

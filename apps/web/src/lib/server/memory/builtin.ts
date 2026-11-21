@@ -97,7 +97,7 @@ function auditAdded(c: MemoryContainer, fact: BrainFact, caller: MemoryCaller, r
     action: 'brain.memory_added',
     target: { type: 'brain_fact', id: fact.id },
     project: c.kind === 'project' ? c.id : null,
-    details: { container: c.kind, origin: caller.origin, version: fact.version ?? 1, ...(replaced && { replaced: true }), ...(caller.keyId && { keyId: caller.keyId }), ...(caller.run?.agentId && { agent: caller.run.agentId }) },
+    details: { container: c.kind, origin: caller.origin, version: fact.version ?? 1, ...(replaced && { replaced: true }), ...(caller.keyId && { keyId: caller.keyId }), ...(caller.via && { via: caller.via }), ...(caller.run?.agentId && { agent: caller.run.agentId }) },
     ...(!caller.actor && { actor: 'system' as const }),
   });
 }

@@ -41,6 +41,8 @@ export interface McpCaller {
   scopes: string[];
   /** B13: an API key's own scopes (`workflows:read`, `brain:write`…); the instance MCP server shows and allows only the tools they cover. Absent for every other caller: all tools. */
   keyScopes?: ApiKeyScope[];
+  /** The API key's id (C08): audit rows of what it wrote name it. Never the key. */
+  keyId?: string;
   tokenId?: string;
   /** The project a Landflow MCP token is scoped to (the instance server then shows only that project's workflows). */
   projectId?: string;
@@ -277,7 +279,7 @@ export async function authenticateMcpRequest(request: Request, resource: { plugi
     if (bearer.startsWith(API_KEY_PREFIX)) {
       const checked = verifyApiKey(bearer);
       if (!checked.ok) throw new McpAuthError(checked.reason === 'expired' ? 'This API key has expired' : 'Invalid API key', 401, challenge);
-      return userCaller('apiKey', checked.user, { issuer: instanceUrl(), keyScopes: checked.key.scopes });
+      return userCaller('apiKey', checked.user, { issuer: instanceUrl(), keyScopes: checked.key.scopes, keyId: checked.key.id });
     }
     const claims = unverifiedClaims(bearer);
     if (!claims) throw new McpAuthError('Send a Landflow MCP token, an access token of the identity provider, or an API key as “Authorization: Bearer …”', 401, challenge);

@@ -4,7 +4,7 @@
 // Adapted in spirit from Supermemory's `wrapMemoryContext` / `escapeMemoryContextDelimiters` (MIT).
 
 export const MEMORY_TAG = 'landflow-memory';
-export type MemorySource = 'agent-memory' | 'team-notebook' | 'brain-facts' | 'memory';
+export type MemorySource = 'agent-memory' | 'team-notebook' | 'brain-facts' | 'brain-summaries' | 'memory';
 
 // A `<` that starts any tag of the landflow- family (open or close, whole or cut, with look-alike spacing).
 // Invisible format characters (zero-width space, soft hyphen, ...: \p{Cf}) count as spacing, as a model may read through them.
@@ -42,4 +42,18 @@ export const MEMORY_CLOSE = `</${MEMORY_TAG}>`;
 export function wrapMemory(source: MemorySource, lines: readonly string[]): string {
   if (!lines.length) return '';
   return [memoryOpen(source), escapeFenceText(lines.join('\n')), MEMORY_CLOSE].join('\n');
+}
+
+/**
+ * A copy of `value` with the named string fields escaped (`escapeFenceText`) wherever they sit in the tree, and every other
+ * value as it was. For tool answers that are JSON a client parses (the brain's MCP tools, the Brain nodes in tool mode): the
+ * shape cannot be wrapped in a fence, so the text a person or the study wrote is neutralised in place (C08 D1). Honest text is
+ * unchanged.
+ */
+export function escapeMemoryFields<T>(value: T, keys: readonly string[] = ['statement', 'summary']): T {
+  if (Array.isArray(value)) return value.map((entry) => escapeMemoryFields(entry, keys)) as T;
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, typeof entry === 'string' && keys.includes(key) ? escapeFenceText(entry) : escapeMemoryFields(entry, keys)])) as T;
+  }
+  return value;
 }

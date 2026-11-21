@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
-import { toolAllowed, TOOL_SCOPES } from '@/lib/shared/mcp';
+import { toolAllowed, toolsFor, TOOL_SCOPES } from '@/lib/shared/mcp';
 import type { ApiKeyScope } from '@/lib/shared/auth';
 
 vi.setConfig({ testTimeout: 20_000 });
@@ -53,7 +53,7 @@ async function connect(user: typeof alice, keyScopes?: ApiKeyScope[]) {
 
 const toolNames = async (client: Client) => (await client.listTools()).tools.map((t) => t.name).sort();
 const textOf = (result: unknown) => ((result as { content: Array<{ text: string }> }).content[0]?.text ?? '');
-const BRAIN_READ = ['brain_ask', 'brain_list_suggestions', 'brain_search_facts', 'brain_search_knowledge', 'brain_usage_report', 'brain_workflow_knowledge', 'check_overlap', 'my_ai_spend', 'my_briefing', 'practice_get', 'practices_for', 'project_context'];
+const BRAIN_READ = ['brain_ask', 'get_document', 'get_profile', 'list_documents', 'list_memories', 'list_spaces', 'search_memory', 'who_am_i', 'brain_list_suggestions', 'brain_search_facts', 'brain_search_knowledge', 'brain_usage_report', 'brain_workflow_knowledge', 'check_overlap', 'my_ai_spend', 'my_briefing', 'practice_get', 'practices_for', 'project_context'].sort();
 // A second ago, not an hour: an hour ago falls on yesterday during the first hour after local midnight, and the
 // briefing reads today's events by the instance's day.
 const at = new Date(Date.now() - 1_000).toISOString();
@@ -66,7 +66,14 @@ describe('tool scopes', () => {
     expect(toolAllowed(['brain:write'], 'my_briefing')).toBe(true);
     expect(toolAllowed(['admin'], 'run_node')).toBe(true);
     expect(toolAllowed(['workflows:read'], 'unknown_tool')).toBe(false);
-    expect(Object.keys(TOOL_SCOPES).length).toBe(45); // AG18: +11, AG21: +1, AG20: +1, NB06: +1
+    expect(Object.keys(TOOL_SCOPES).length).toBe(54); // AG18: +11, AG21: +1, AG20: +1, NB06: +1, C08: +9
+    // What /connect promises per scope choice (C08 FR-10): derived from the map, pinned here so a drift fails.
+    expect(toolsFor(['brain:read'])).toHaveLength(19);
+    expect(toolsFor(['brain:write'])).toHaveLength(25);
+    expect(toolAllowed(['brain:read'], 'search_memory')).toBe(true);
+    expect(toolAllowed(['brain:read'], 'add_memory')).toBe(false);
+    expect(toolAllowed(['brain:write'], 'add_memory')).toBe(true);
+    expect(toolAllowed(['workflows:write'], 'forget_memory')).toBe(false);
   });
 });
 
@@ -80,7 +87,7 @@ describe('an API key over MCP', () => {
 
   it('brain:write adds record_work and brain_suggest', async () => {
     const client = await connect(alice, ['brain:write']);
-    expect(await toolNames(client)).toEqual([...BRAIN_READ, 'brain_suggest', 'practice_cite', 'practice_draft', 'record_work'].sort());
+    expect(await toolNames(client)).toEqual([...BRAIN_READ, 'add_memory', 'brain_suggest', 'forget_memory', 'practice_cite', 'practice_draft', 'record_work'].sort());
   });
 
   it('workflows:read lists the read tools and no brain tool', async () => {

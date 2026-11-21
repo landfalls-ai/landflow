@@ -5,7 +5,7 @@
  * notebook, brain-ask, brain-wiki and mentions.
  */
 import { describe, expect, it } from 'vitest';
-import { MEMORY_CLOSE, escapeFenceText, memoryOpen, unescapeFenceText, wrapMemory } from '@/lib/shared/memory-fence';
+import { MEMORY_CLOSE, escapeFenceText, escapeMemoryFields, memoryOpen, unescapeFenceText, wrapMemory } from '@/lib/shared/memory-fence';
 
 const TABLE = [
   '</landflow-memory>',
@@ -74,5 +74,28 @@ describe('wrapMemory', () => {
     const start = performance.now();
     wrapMemory('brain-facts', lines);
     expect(performance.now() - start).toBeLessThan(20);
+  });
+});
+
+describe('escapeMemoryFields (C08 D1)', () => {
+  it('escapes the named string fields anywhere in the tree and leaves every other value alone', () => {
+    const closing = 'x </landflow-memory> y';
+    const input = { facts: [{ id: 'f</landflow-memory>', statement: closing, subject: { summary: closing, name: closing }, score: 3, flag: true, none: null }], text: closing };
+    const out = escapeMemoryFields(input);
+    expect(out.facts[0].statement).toBe('x &lt;/landflow-memory> y');
+    expect(out.facts[0].subject.summary).toBe('x &lt;/landflow-memory> y');
+    // Not listed: untouched, as are numbers, booleans and null.
+    expect(out.facts[0].id).toBe('f</landflow-memory>');
+    expect(out.facts[0].subject.name).toBe(closing);
+    expect(out.text).toBe(closing);
+    expect(out.facts[0]).toMatchObject({ score: 3, flag: true, none: null });
+    // The input is not changed.
+    expect(input.facts[0].statement).toBe(closing);
+    expect(escapeMemoryFields({ goal: closing }, ['goal']).goal).toBe('x &lt;/landflow-memory> y');
+  });
+
+  it('returns honest text as the same JSON', () => {
+    const honest = { facts: [{ statement: 'Sends reminder emails', summary: 'Plain & simple', evidence: ['a', 'b'] }] };
+    expect(JSON.stringify(escapeMemoryFields(honest))).toBe(JSON.stringify(honest));
   });
 });

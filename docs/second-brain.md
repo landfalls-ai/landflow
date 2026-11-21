@@ -160,7 +160,7 @@ can choose a plugin instead.
   study and its vector rebuild) unless the filter names both its type and its id.
 - **No side effects.** A search from a playground or the API does not move a note's expiry; only a run that uses the result does.
 - **Spans.** `memory.search`, `memory.add`, ... carry the backend, the container kind, the count and `landflow.memory.denied`; never text.
-- **Fence.** Text returned to a model (the Memory nodes in tool mode) is inside the memory fence, so nothing in a memory can open or close a block.
+- **Fence.** Text returned to a model (the Memory nodes and the memory MCP tools) is inside the memory fence, so nothing in a memory can open or close a block.
 - **Provider.** **Project → Settings → Agents in this project → Memory** (`memory` in `PATCH /api/projects/:id/settings`) chooses
   Built-in or a plugin node that declares `memoryProvider` ([protocol](protocol.md#memory-providers)) and the credential it uses. A
   provider serves the project container only. An error or a 10 s timeout fails the call with the provider's message; nothing falls
@@ -520,6 +520,39 @@ On a project linked to Notion, each fact `brain_search_facts` and `brain_workflo
 
 Practices: see [practices.md](practices.md#following) (`practices_for`, `practice_get`, `practice_cite`,
 `practice_draft` and the `practices://` resources).
+
+**What these tools return is quoted data.** The JSON of `brain_search_facts`, `brain_workflow_knowledge`, `check_overlap` and
+`brain_ask` keeps its shape (a client parses it), and each `statement`, `summary` (and, in `check_overlap`, `goal`) string in it
+goes through the memory fence's escaper, so a stored `</landflow-memory>` arrives as `&lt;/landflow-memory>` and honest text is
+unchanged. The Brain Usage and Entities nodes do the same in tool mode (a flow's own step still sees the original). The Ask
+prompt puts its pages block, with each stored summary, in one `<landflow-memory source="brain-summaries">` fence.
+
+##### Memory over MCP
+
+The instance server also answers to Supermemory's nine memory tool names, so a harness prompt that already knows them works
+against a local Landflow ([C08](specs/20-combined/C08-memory-mcp/spec.md)). Each is a thin mapping onto the
+[memory backend](#memory-backend): its access checks, its provider choice and its spans. A **space** is a memory container:
+`project:<id>`, `team:<id>` or `agent:<id>` (a bare project id works); on a project server (`/api/mcp/projects/<id>`) every
+tool acts in that project whatever `space` says.
+
+| Tool | Scope | Does |
+|---|---|---|
+| `search_memory { query, space?, mode?, limit?, threshold? }` | `brain:read` | best matches, by keywords and meaning; with no space, every project you can open (the 20 most recently changed) |
+| `get_profile { space? }` | `brain:read` | the standing memories, then the most recent |
+| `list_memories { space?, cursor?, limit? }` | `brain:read` | one space's memories, newest first, `nextCursor` to continue |
+| `list_documents { space?, cursor?, limit? }` | `brain:read` | the Brain pages you can open, as `<type>/<id>` plus `index` and `log` |
+| `get_document { id }` | `brain:read` | one page as Markdown; a page you cannot open is "not found" |
+| `list_spaces {}` | `brain:read` | the projects you can open, their teams' notebooks and your agents with memory across sessions |
+| `who_am_i {}` | `brain:read` | your user, the key's scopes and the project |
+| `add_memory { text, space?, kind?, isStatic?, forgetAfter? }` | `brain:write` | save a memory (kind `memory` or `intended`; default space: your own project) |
+| `forget_memory { id, reason }` | `brain:write`, destructive | stop recalling a memory you may edit, with a reason |
+
+Text a model reads is one `<landflow-memory>` fence; `structuredContent` carries the plain values (the readers declare an
+`outputSchema`). `add_memory` and `forget_memory` need a person's key, not the instance access token, which only reads (as an
+owner). A write is recorded as the key's person with origin `person`; its audit row (`brain.memory_added`, `brain.fact_forgotten`)
+carries the key id, and `brain.memory_added` also `via: mcp`. `forget_memory` is annotated destructive, so an MCP grant set to
+`destructive` waits for a person's approval ([features/ai.md](features/ai.md#mcp)). `/connect` says how many tools the chosen
+scopes reach (a `brain:read` key 19, with `brain:write` 25, plus the workflow scopes).
 
 An API key sees only the tools its scopes cover (`brain:read`, `brain:write`; [features/ai.md](features/ai.md#mcp)). Each tool sees what the token's user sees (an instance access token sees everything), cut down to the project on a
 project server (`/api/mcp/projects/<id>`, a project token), where `brain_suggest` must name a workflow or agent of it.
