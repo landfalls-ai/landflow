@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { cut, fmtMs, resultOf, type RunModel, type RunSpan } from '@/lib/shared/run-trace-model';
+import { BLOCKED_LABEL, type BlockedKind } from '@/lib/shared/quota-block';
+import { Badge } from '../ui/badge';
 import { EmptyState } from '../ui/empty-state';
 import { actorColor, clock } from './parts';
 import { RerunFromHere } from './run-controls';
@@ -19,6 +21,15 @@ const OP: Record<string, string> = {
   tool: 'execute_tool',
   model: 'chat',
 };
+
+/** C05: a span a provider limit stopped (journal `attrs.blocked`), whatever the developer-details switch says. */
+function blockedOf(s: RunSpan): { kind: BlockedKind; message: string } | undefined {
+  const blocked = s.attrs.blocked;
+  if (typeof blocked !== 'object' || blocked === null) return undefined;
+  const { kind, message } = blocked as { kind?: unknown; message?: unknown };
+  const known = kind === 'usage_limit' || kind === 'credits_depleted' ? kind : 'unknown';
+  return { kind: known, message: typeof message === 'string' ? message : '' };
+}
 
 function nameOf(s: RunSpan) {
   if (s.kind === 'delegate' || s.kind === 'handoff') return `${s.caller ? `${s.caller.name} → ` : ''}${s.actor.name}`;
@@ -47,6 +58,7 @@ export function Trace({ model, open }: { model: RunModel; open: (o: Open) => voi
     const width = Math.max(0.8, ((s.t1 - s.t0) / total) * 100);
     const color =
       s.status === 'error' ? 'var(--rd)' : actorColor(s.kind === 'delegate' || s.kind === 'agent' || s.kind === 'wait' ? s.actor : (s.caller ?? s.actor));
+    const blocked = blockedOf(s);
     const label = s.kind === 'delegate' || s.kind === 'handoff' ? ` · ${resultOf(s)[0]}` : '';
     rows.push(
       <div
@@ -76,6 +88,15 @@ export function Trace({ model, open }: { model: RunModel; open: (o: Open) => voi
                 {s.ms < 500 && !running ? clock(s.startedAt) : `${fmtMs(s.ms)}${running ? ' …' : ''}`}
               </span>
             </div>
+            {blocked && (
+              <p className="mt-0.5 flex min-w-0 items-start gap-2 text-[12px] text-t2">
+                <Badge tone="warning">Blocked</Badge>
+                <span className="min-w-0 break-words">
+                  {BLOCKED_LABEL[blocked.kind]}
+                  {blocked.message && blocked.message !== BLOCKED_LABEL[blocked.kind] ? `: ${cut(blocked.message, 160)}` : ''}
+                </span>
+              </p>
+            )}
             {typeof s.attrs.reason === 'string' && s.attrs.reason && <p className="mt-0.5 line-clamp-2 break-words text-[12px] text-t2">Why: {cut(s.attrs.reason, 160)}</p>}
             <div className="mt-1 flex items-center gap-2">
               <span className="shrink-0 text-[11px] text-t3">

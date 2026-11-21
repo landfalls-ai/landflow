@@ -31,6 +31,8 @@ import {
   type HitlRequest,
 } from '../a2a/client';
 import type { AgentTraceSummary } from '../../shared/agents';
+import { BlockedNodeError, blockedOf, countBlocked } from '../a2a/blocked';
+import { BLOCKED_LABEL } from '../../shared/quota-block';
 import { traceFor, usageOfTrace, withMarker } from '../a2a/agent-trace';
 import { callAgent, landflowTags, taskCall, throttled } from '../a2a/traced';
 import { CUT } from '../journal/content';
@@ -189,10 +191,18 @@ export function progressReporter(ctx: Pick<IExecuteContext, 'sendProgress'>, car
 }
 
 /** A failed, rejected or canceled task fails the item (the agent's status message says why). */
-function assertNotFailed(card: AgentCard, result: A2aResult, itemIndex: number) {
+function assertNotFailed(ctx: IExecuteContext, card: AgentCard, result: A2aResult, itemIndex: number) {
   if (result.kind !== 'task') return;
   const { state } = result.task.status;
   if (state === 'TASK_STATE_FAILED' || state === 'TASK_STATE_REJECTED' || state === 'TASK_STATE_CANCELED') {
+    // C05: a provider limit (Codex usage or credits) is Blocked, said as such, not a generic failure.
+    const verdict = blockedOf(result.task);
+    if (verdict.blocked) {
+      countBlocked(verdict.kind, 'a2a');
+      ctx.sendProgress?.({ agent: card.name, state: 'blocked', blocked: { kind: verdict.kind, message: verdict.message }, steps: [] });
+      ctx.check({ name: 'blocked', status: 'warn', message: BLOCKED_LABEL.unknown, subject: card.name });
+      throw new BlockedNodeError(card.name, verdict.kind, verdict.message, itemIndex);
+    }
     throw new NodeOperationError(`${card.name}: the task ${stateName(state)}`, { description: statusText(result.task), itemIndex });
   }
 }
@@ -455,7 +465,7 @@ export const a2aAgentNode = defineNode({
             }
           }
         }
-        if (operation !== 'cancelTask') assertNotFailed(card, result, i);
+        if (operation !== 'cancelTask') assertNotFailed(ctx, card, result, i);
         const item = withTraced(resultItem(card, result), traced);
         if (asTool && operation === 'sendMessage') {
           const contextId = result.kind === 'message' ? result.message.contextId : result.task.contextId;
@@ -475,7 +485,9 @@ export const a2aAgentNode = defineNode({
       } catch (error) {
         const failure = error instanceof A2aError ? new NodeOperationError(error.message, { itemIndex: i }) : error;
         if (!ctx.continueOnFail()) throw failure;
-        out.push({ json: { error: (failure as Error).message }, pairedItem: { item: i } });
+        // C05: a flow can route a Blocked item differently.
+        const blocked: JsonObject = failure instanceof BlockedNodeError ? { blocked: true, blockedKind: failure.kind } : {};
+        out.push({ json: { error: (failure as Error).message, ...blocked }, pairedItem: { item: i } });
       }
     }
     return [out];

@@ -53,6 +53,7 @@ import {
   type OutgoingMessage,
   cancelTask as cancelRemoteTask,
 } from '../a2a/client';
+import { ProviderBlockedError, blockedOf, countBlocked } from '../a2a/blocked';
 import { traceFor, usageOfTrace, withMarker } from '../a2a/agent-trace';
 import { callAgent, landflowTags, remoteRunOf, throttled } from '../a2a/traced';
 import { credentials } from '../credentials/vault';
@@ -389,6 +390,14 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
     const state = task.status.state;
     if (state === 'TASK_STATE_COMPLETED') return { output: replyOf(result) ?? `(${card.name} gave no answer)`, remote };
     if (state === 'TASK_STATE_FAILED' || state === 'TASK_STATE_REJECTED' || state === 'TASK_STATE_CANCELED') {
+      // C05: a provider limit is Blocked: the trace is told (state blocked, with the kind), and the error carries it to the caller.
+      const verdict = blockedOf(task);
+      if (verdict.blocked) {
+        countBlocked(verdict.kind, 'a2a');
+        const blockedRun: RemoteRun & { blocked: { kind: string; message: string } } = { ...remote, state: 'blocked', blocked: { kind: verdict.kind, message: verdict.message } };
+        progress?.(blockedRun);
+        throw new ProviderBlockedError(card.name, verdict.kind, verdict.message);
+      }
       throw new Error(`${card.name}: the task ${stateName(state)}${statusText(task) ? `: ${statusText(task)}` : ''}`);
     }
     if (state === 'TASK_STATE_AUTH_REQUIRED') throw new Error(`${card.name} needs credentials Landflow can't give it${statusText(task) ? `: ${statusText(task)}` : ''}`);

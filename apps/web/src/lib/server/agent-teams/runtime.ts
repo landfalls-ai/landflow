@@ -17,6 +17,8 @@ import { agentModel } from '../agents/models';
 import type { Agent, AgentModel } from '../../shared/agents';
 import { estimateCost, findPrice, priceOverrides } from '../ai-usage/prices';
 import { newSession, runAgent, type TeamRole } from '../agents/runtime';
+import { ProviderBlockedError } from '../a2a/blocked';
+import { BLOCKED_LABEL } from '../../shared/quota-block';
 import { a2aAgentTool, type BuiltTool, type ToolContext, type ToolOutcome } from '../agents/tools';
 import { runContextProvider, withRunContext } from '../project-context/seam';
 import { liveJournal } from '../journal/writer';
@@ -852,7 +854,16 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
      */
     const redirectable = async (ctx: ToolContext, input: Record<string, unknown>, first: string, open?: { used(names: string[]): void }): Promise<ToolOutcome> => {
       if ('error' in built) throw new Error(built.error);
-      const send = (message: string, c: ToolContext) => built.invoke({ ...input, message }, c);
+      const send = async (message: string, c: ToolContext) => {
+        try {
+          return await built.invoke({ ...input, message }, c);
+        } catch (error) {
+          // C05: a provider limit is Blocked, not the member's failed work: a check says so, and the lead is told the same.
+          if (!(error instanceof ProviderBlockedError)) throw error;
+          check('Blocked', 'warn', `${report.title}: ${BLOCKED_LABEL[error.kind]}`, report.title);
+          throw new ProviderBlockedError(report.title, error.kind, `${error.providerMessage} (the member was blocked by a provider limit, not a failure of its work)`);
+        }
+      };
       if (!request.execution) return account(await send(first, renamed(ctx, open)), first);
       const attempt = { taskId: undefined as string | undefined, contextId: undefined as string | undefined, stopped: false, abort: new AbortController() };
       const held = holdMember(request.execution.executionId, report.title, 'remote', {

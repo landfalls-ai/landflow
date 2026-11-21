@@ -60,6 +60,8 @@ interface SpanState {
   note?: string;
   /** A delegate's remote run. */
   remote?: Remote;
+  /** C05: a provider limit stopped the remote task; kept on the span when it ends in error. */
+  blocked?: { kind: string; message: string };
 }
 
 interface Remote {
@@ -161,6 +163,7 @@ export function createTranslator(options: TranslatorOptions) {
     const paused = span.remote?.state === 'input-required' || span.remote?.state === 'auth-required';
     if (!paused) for (const child of spans.values()) if (child.open && child.parent === id) end(child.id, child.kind === 'wait' ? 'success' : 'canceled', { ...(result.at && { at: result.at }) });
     span.open = false;
+    const attrsOut = status === 'error' && span.blocked ? { ...result.attrs, blocked: span.blocked } : result.attrs;
     emit({
       type: 'span.ended',
       spanId: id,
@@ -168,7 +171,7 @@ export function createTranslator(options: TranslatorOptions) {
       ...(result.output !== undefined && { output: result.output }),
       ...(result.error && { error: result.error }),
       ...(result.usage && { usage: result.usage }),
-      ...(result.attrs && filled(result.attrs) && { attrs: result.attrs }),
+      ...(attrsOut && filled(attrsOut) && { attrs: attrsOut }),
       ...(result.at && { at: result.at }),
     });
   }
@@ -380,6 +383,10 @@ export function createTranslator(options: TranslatorOptions) {
         remote[key] = value;
         attrs[key] = value;
       }
+    }
+    if (isObject(data.blocked) && str(data.blocked.kind)) {
+      span.blocked = { kind: String(data.blocked.kind), message: str(data.blocked.message) ?? '' };
+      attrs.blocked = span.blocked;
     }
     const state = str(data.state);
     const pause = (s: string | undefined) => s === 'input-required' || s === 'auth-required';

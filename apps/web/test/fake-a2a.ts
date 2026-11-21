@@ -10,6 +10,10 @@
  * - `chatty <text>`: says something, calls `slugify`, says something more, then answers (words between the tool calls).
  * - `slow`: answers WORKING, and GetTask completes it.
  * - `fail`: the task fails.
+ * - `fail-limit`: the task fails with `codex_error_info: usage_limit_exceeded` in a status data part (the text says nothing of limits).
+ * - `fail-limit-text`: the task fails with a usage-limit sentence and no data.
+ * - `fail-credits`: the task fails with `codex_error_info: usage_limit_exceeded` and `rate_limit_reached_type: workspace_member_credits_depleted`.
+ * - `fail-model`: the task fails with "model not supported".
  * - anything else: echoes it.
  */
 import { createServer, type IncomingMessage, type Server } from 'node:http';
@@ -153,6 +157,13 @@ export async function startFakeA2a(): Promise<FakeA2a> {
       task.status = { state: 'TASK_STATE_WORKING' };
     } else if (text === 'fail') {
       task.status = { state: 'TASK_STATE_FAILED', message: { messageId: randomUUID(), role: 'ROLE_AGENT', parts: [{ text: 'the model is down' }] } };
+    } else if (text === 'fail-limit' || text === 'fail-credits') {
+      const data = { codex_error_info: 'usage_limit_exceeded', ...(text === 'fail-credits' && { rate_limit_reached_type: 'workspace_member_credits_depleted' }) };
+      task.status = { state: 'TASK_STATE_FAILED', message: { messageId: randomUUID(), role: 'ROLE_AGENT', parts: [{ text: 'Codex stopped the turn' }, { data }] } };
+    } else if (text === 'fail-limit-text') {
+      task.status = { state: 'TASK_STATE_FAILED', message: { messageId: randomUUID(), role: 'ROLE_AGENT', parts: [{ text: "You've hit your usage limit. Try again at 4:15 PM." }] } };
+    } else if (text === 'fail-model') {
+      task.status = { state: 'TASK_STATE_FAILED', message: { messageId: randomUUID(), role: 'ROLE_AGENT', parts: [{ text: 'model not supported' }] } };
     } else {
       complete(task, `echo: ${text}`, state.usage);
     }
