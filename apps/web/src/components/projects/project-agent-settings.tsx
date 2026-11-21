@@ -92,6 +92,60 @@ function ModeChoice({ label, edit, value, onChange, off }: { label: string; edit
   );
 }
 
+/**
+ * C07: where this project's memory lives: the built-in stores, or a plugin that provides memory (and the credential it uses).
+ * A provider serves the project's own facts only; teams' notebooks and agents' memories stay built in.
+ */
+function MemoryChoice({ form, state, edit, set, error }: { form: AgentSettingsForm; state: AgentSettingsState; edit: boolean; set: (patch: Partial<AgentSettingsForm>) => void; error?: string }) {
+  const { credentials } = useCredentials();
+  const memory = form.memory;
+  const provider = memory?.backend === 'provider' ? state.memoryProviders.find((p) => p.type === memory.nodeType) : undefined;
+  const label = memory?.backend === 'provider' ? (provider ? `${provider.displayName} (${provider.pluginName})` : `${memory.nodeType} (not installed)`) : 'Built-in';
+  // The credentials the provider's node declares: those of its credential types.
+  const options = provider ? (credentials ?? []).filter((c) => provider.credentialTypes.includes(c.type)) : [];
+  return (
+    <div>
+      <FieldLabel>Memory</FieldLabel>
+      <p className="mb-2 text-[12px] text-t3">Where this project’s remembered facts live. Built-in keeps them in Landflow’s brain; a provider is a plugin that stores them elsewhere. Teams’ notebooks and agents’ memories stay built in.</p>
+      {!edit ? (
+        <p className="text-[13px] text-t1">{label}</p>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Select
+            aria-label="Memory backend"
+            value={memory?.backend === 'provider' ? memory.nodeType : ''}
+            onChange={(e) => set({ memory: e.target.value ? { backend: 'provider', nodeType: e.target.value } : undefined })}
+          >
+            <option value="">Built-in</option>
+            {state.memoryProviders.map((p) => (
+              <option key={p.type} value={p.type}>
+                {p.displayName} ({p.pluginName})
+              </option>
+            ))}
+            {memory?.backend === 'provider' && !provider && <option value={memory.nodeType}>{label}</option>}
+          </Select>
+          {memory?.backend === 'provider' && options.length > 0 && (
+            <Select
+              aria-label="Memory credential"
+              value={memory.credentialId ?? ''}
+              onChange={(e) => set({ memory: { backend: 'provider', nodeType: memory.nodeType, ...(e.target.value && { credentialId: e.target.value }) } })}
+            >
+              <option value="">Choose a credential…</option>
+              {options.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          )}
+        </div>
+      )}
+      {state.memoryProviders.length === 0 && edit && <p className="mt-2 text-[12px] text-t3">No installed plugin provides memory yet.</p>}
+      {error && <p className="mt-2 text-[12px] text-rd">{error}</p>}
+    </div>
+  );
+}
+
 /** The card without its data fetching, for the page and for tests. */
 export function ProjectAgentSettingsView({
   state,
@@ -209,6 +263,8 @@ export function ProjectAgentSettingsView({
           )}
           <p className="mt-2 text-[12px] text-t3">Skills, memory, a team’s own tools and the tools connected to a workflow’s step are always allowed.</p>
         </div>
+
+        <MemoryChoice form={form} state={state} edit={edit} set={set} error={errorField === 'memory' ? error : undefined} />
 
         {error && !errorField && <p className="text-[12px] text-rd">{error}</p>}
         {!edit && <p className="text-[12px] text-t3">The project’s admins change these.</p>}

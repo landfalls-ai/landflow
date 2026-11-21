@@ -157,6 +157,8 @@ export interface ProjectSettingsView {
   nodeTypes: Array<{ type: string; displayName: string; pluginId: string }>;
   /** PC13: the agents available in the project (its own, shared to it, or to all projects), for the allow-list. Always set from wave 9 on; optional so a client copy compiles against an older route. */
   availableAgents?: Array<{ id: string; name: string; home: boolean }>;
+  /** C07: the installed plugin nodes that flag `memoryProvider`, with the credential types each declares, for the Memory row. */
+  memoryProviders?: Array<{ type: string; displayName: string; pluginName: string; credentialTypes: string[] }>;
 }
 
 /** GET /api/workflows/<id>/policy */

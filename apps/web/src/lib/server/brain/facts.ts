@@ -467,7 +467,7 @@ export function scoredFactSearch(query: string, options: ScoredFactOptions, db: 
   const similarity = new Map((options.mode === 'keyword' ? [] : (options.vector ?? [])).map((v) => [v.factId, v.similarity]));
   const useVector = similarity.size > 0;
   const scored = candidates.map((fact) => {
-    const words = keywordScore(query, `${fact.subjectName ?? ''} ${fact.kind} ${fact.statement}`);
+    const words = keywordScore(query, [fact.subjectName ?? '', fact.kind, fact.statement].join(' ')) // scoring input, never a prompt;
     const meaning = similarity.get(fact.id);
     let score: number;
     if (options.mode === 'keyword') score = words;
