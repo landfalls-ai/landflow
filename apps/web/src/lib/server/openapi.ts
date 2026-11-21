@@ -2147,10 +2147,10 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Agents',
     id: 'postHarnessHook',
     summary: 'Send one hook event of a coding harness',
-    description: 'Claude Code’s hook JSON as sent, one event per request (at most 64 KB), with an API key that has the `harness:write` scope (a cookie session is refused). The event joins a session of the key’s owner: a Landflow agent’s when `agent_type` names one they may run, else their own, which keeps status and counts only (docs/harnesses.md#live-status). `X-Landflow-Hook-Seq` (a per-session counter) orders events; without it the server’s receive time does. At most 20 events a second and 2,000 open sessions per key. Not in the audit log per call.',
+    description: 'Claude Code’s hook JSON as sent, one event per request (at most 64 KB), with an API key that has the `harness:write` scope (a cookie session is refused). The event joins a session of the key’s owner: a Landflow agent’s when `agent_type` names one they may run, else their own, which keeps status and counts only (docs/harnesses.md#live-status). `X-Landflow-Hook-Seq` (a per-session counter) orders events; else `X-Landflow-Hook-Time` (ISO or epoch milliseconds; ignored when more than 5 minutes ahead of the server) does; else the server’s receive time. A session belongs to an agent only when its first event is a `SessionStart` naming one. At most 20 events a second per key (100 for all of one person’s keys) and 2,000 open sessions per key owner. Not in the audit log per call.',
     pathParams: { harness: 'A registry id whose strategy sends events: `claude-code`' },
     body: jsonBody(object({ hook_event_name: { type: 'string' }, session_id: { type: 'string' } }, ['hook_event_name', 'session_id'])),
-    responses: { 204: { description: 'Taken' }, 400: invalid, 403: errorRef('The key lacks `harness:write`, or this is not an API key'), 404: errorRef('A harness that sends no events'), 413: errorRef('Over 64 KB'), 429: errorRef('Over the per-key limits (`retryAfter` seconds)') },
+    responses: { 204: { description: 'Taken' }, 400: invalid, 401: errorRef('No or an invalid API key'), 403: errorRef('The key lacks `harness:write`, or this is not an API key'), 404: errorRef('A harness that sends no events'), 413: errorRef('Over 64 KB'), 429: errorRef('Over the per-key limits (`retryAfter` seconds)') },
   });
   add('get', '/api/harness/sessions', {
     tag: 'Agents',

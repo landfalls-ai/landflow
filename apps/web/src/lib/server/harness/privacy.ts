@@ -8,12 +8,12 @@
  *   outputs), `off` (names and timings).
  */
 import { JOURNAL_SUMMARY_CHARS, type TraceContent } from '../../shared/run-trace';
-import { CUT } from '../journal/content';
+import { cutStrings, cutText } from '../journal/content';
 import { redactValue } from '../secrets/redact';
 
 export const CONTENT_MAX_BYTES = 16 * 1024;
 const REPOSITORY = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
-const TOOL_NAME = /^[\w.:/@ -]{1,120}$/;
+const TOOL_NAME = /^[A-Za-z0-9_.:@-]{1,120}$/;
 
 const record = (value: unknown): Record<string, unknown> => (typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {});
 const text = (value: unknown): string | undefined => (typeof value === 'string' && value ? value : undefined);
@@ -45,22 +45,12 @@ export function ownEventView(payload: Record<string, unknown>): Record<string, u
   return { event: eventNameOf(payload), ...(tool && { tool }), ...(duration !== undefined && { durationMs: duration }) };
 }
 
-const cutText = (value: string, max: number) => (value.length > max ? `${value.slice(0, max)}${CUT}` : value);
-
 /** A value bounded to `max` bytes of JSON: whole when it fits, else its JSON text cut. */
 function bounded(value: unknown, max: number): unknown {
   if (value === undefined) return undefined;
   if (typeof value === 'string') return cutText(value, max);
   const json = JSON.stringify(value);
   return json.length > max ? cutText(json, max) : value;
-}
-
-/** Every string inside `value` cut to `chars` characters. */
-function cutStrings(value: unknown, chars: number): unknown {
-  if (typeof value === 'string') return cutText(value, chars);
-  if (Array.isArray(value)) return value.map((item) => cutStrings(item, chars));
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, cutStrings(item, chars)]));
-  return value;
 }
 
 /** What an agent session's event keeps, under the content setting. */

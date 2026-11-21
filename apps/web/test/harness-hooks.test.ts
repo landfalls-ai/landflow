@@ -127,7 +127,7 @@ describe('the store (T-4)', () => {
     orderKey: { kind: 'seq', value: '1'.padStart(20, '0') },
     receivedAt: '2026-11-21T10:00:00.000Z',
     verdict: 'idle',
-    view: { event: 'SessionStart' },
+    viewFor: () => ({ event: 'SessionStart' }),
     prompt: false,
     tool: false,
     ...over,
@@ -135,7 +135,7 @@ describe('the store (T-4)', () => {
   const key = (n: number) => ({ kind: 'seq' as const, value: String(n).padStart(20, '0') });
 
   it('stores an older event in its place and leaves the status (AS-3, FR-4)', async () => {
-    const late = await store.applyEvent(input({ sessionKey: 'order-1', name: 'StopFailure', verdict: 'error', orderKey: key(2), view: { event: 'StopFailure' } }));
+    const late = await store.applyEvent(input({ sessionKey: 'order-1', name: 'StopFailure', verdict: 'error', orderKey: key(2), viewFor: () => ({ event: 'StopFailure' }) }));
     expect(late.session.status).toBe('error');
     const first = await store.applyEvent(input({ sessionKey: 'order-1', name: 'SessionStart', verdict: 'idle', orderKey: key(1) }));
     expect(first.applied).toBe(false);
@@ -281,7 +281,7 @@ describe('the routes (T-6)', () => {
     expect(results.filter((s) => s === 204)).toHaveLength(20);
     expect(results.filter((s) => s === 429)).toHaveLength(5);
     expect(JSON.parse(rowOf('lim-1')!.data).prompts).toBe(20);
-    expect(await takeEvent('key_limit', now + 1000)).toBe(true);
+    expect(await takeEvent('key_limit', alice.id, now + 1000)).toBe(true);
   });
   it('maps the 429 to a body with retryAfter', async () => {
     process.env.LANDFLOW_HARNESS_EVENTS_PER_SECOND = '1';
@@ -321,7 +321,7 @@ describe('binding to agents and the mirror', () => {
   const evePost = createApiKey(eve, { label: 'eve', scopes: ['harness:write', 'executions:read'] }).token;
 
   it('stores a session on an agent the owner may not run as their own (AS-7)', async () => {
-    await post('claude-code', { hook_event_name: 'UserPromptSubmit', session_id: 'agent-no', agent_type: 'hidden-helper:hidden-helper', prompt: 'secret prompt' }, { 'x-landflow-hook-seq': '1' }, evePost);
+    await post('claude-code', { hook_event_name: 'SessionStart', session_id: 'agent-no', agent_type: 'hidden-helper:hidden-helper', prompt: 'secret prompt' }, { 'x-landflow-hook-seq': '1' }, evePost);
     const row = rowOf('agent-no', eve.id)!;
     expect(row.agent_id).toBeNull();
     expect(JSON.stringify(store.eventsOf(row.id))).not.toContain('secret prompt');
@@ -331,13 +331,45 @@ describe('binding to agents and the mirror', () => {
     await post('claude-code', { hook_event_name: 'SessionStart', session_id: 'viewer-1', agent_type: 'open-helper:open-helper' }, { 'x-landflow-hook-seq': '1' });
     expect(rowOf('viewer-1')!.agent_id).toBeNull();
   });
+  it('binds only on a SessionStart: another first event with agent_type is an own session without content (privacy)', async () => {
+    for (const first of ['UserPromptSubmit', 'PreToolUse', 'SubagentStart']) {
+      const session = `nobind-${first}`;
+      await post('claude-code', { hook_event_name: first, session_id: session, agent_type: 'open-helper:open-helper', prompt: 'private prompt', tool_name: 'Bash', tool_input: { command: 'cat ~/notes' } }, { 'x-landflow-hook-seq': '1' }, evePost);
+      const row = rowOf(session, eve.id)!;
+      expect(row.agent_id).toBeNull();
+      expect(JSON.stringify(store.eventsOf(row.id))).not.toMatch(/private prompt|cat ~/);
+    }
+  });
+  it('an own session never stores content when a later event carries agent_type', async () => {
+    await post('claude-code', { hook_event_name: 'SessionStart', session_id: 'own-then-agent' }, { 'x-landflow-hook-seq': '1' }, evePost);
+    await post('claude-code', { hook_event_name: 'UserPromptSubmit', session_id: 'own-then-agent', agent_type: 'open-helper:open-helper', prompt: 'private prompt two' }, { 'x-landflow-hook-seq': '2' }, evePost);
+    const row = rowOf('own-then-agent', eve.id)!;
+    expect(row.agent_id).toBeNull();
+    expect(JSON.stringify(store.eventsOf(row.id))).not.toContain('private prompt two');
+    expect(agentStore.getSession(row.id)).toBeUndefined();
+  });
+  it('two concurrent first events: the row that wins decides the view, content is stored only in a bound session', async () => {
+    for (let i = 0; i < 10; i++) {
+      const session = `race-view-${i}`;
+      const base = { ownerId: eve.id, harness: 'claude-code', sessionKey: session, prompt: false, tool: false };
+      await Promise.all([
+        store.applyEvent({ ...base, name: 'SessionStart', agentId: shared.id, orderKey: { kind: 'seq', value: '1'.padStart(20, '0') }, receivedAt: '2026-11-21T10:00:00.000Z', verdict: 'idle', viewFor: (bound) => (bound ? { event: 'SessionStart', content: 'agent content' } : { event: 'SessionStart' }) }),
+        store.applyEvent({ ...base, name: 'UserPromptSubmit', orderKey: { kind: 'seq', value: '2'.padStart(20, '0') }, receivedAt: '2026-11-21T10:00:01.000Z', verdict: 'thinking', viewFor: (bound) => (bound ? { event: 'UserPromptSubmit', content: 'agent content' } : { event: 'UserPromptSubmit' }) }),
+      ]);
+      const row = rowOf(session, eve.id)!;
+      const events = JSON.stringify(store.eventsOf(row.id));
+      if (row.agent_id) expect(events.match(/agent content/g)).toHaveLength(2);
+      else expect(events).not.toContain('agent content');
+    }
+  });
   it('mirrors a session of an agent the owner may run, with the reply cut under summaries (AS-6)', async () => {
     process.env.LANDFLOW_TRACE_CONTENT = 'summaries';
     const body = (extra: Record<string, unknown>) => ({ session_id: 'agent-yes', agent_type: 'open-helper:open-helper', ...extra });
-    await post('claude-code', body({ hook_event_name: 'UserPromptSubmit', prompt: 'List files' }), { 'x-landflow-hook-seq': '1' }, evePost);
-    await post('claude-code', body({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'tu_1', tool_input: { command: 'ls' } }), { 'x-landflow-hook-seq': '2' }, evePost);
-    await post('claude-code', body({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'tu_1', tool_input: { command: 'ls' }, tool_response: { out: 'a b c' }, duration_ms: 12 }), { 'x-landflow-hook-seq': '3' }, evePost);
-    await post('claude-code', body({ hook_event_name: 'Stop', last_assistant_message: 'r'.repeat(900) }), { 'x-landflow-hook-seq': '4' }, evePost);
+    await post('claude-code', body({ hook_event_name: 'SessionStart' }), { 'x-landflow-hook-seq': '1' }, evePost);
+    await post('claude-code', body({ hook_event_name: 'UserPromptSubmit', prompt: 'List files' }), { 'x-landflow-hook-seq': '2' }, evePost);
+    await post('claude-code', body({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'tu_1', tool_input: { command: 'ls' } }), { 'x-landflow-hook-seq': '3' }, evePost);
+    await post('claude-code', body({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'tu_1', tool_input: { command: 'ls' }, tool_response: { out: 'a b c' }, duration_ms: 12 }), { 'x-landflow-hook-seq': '4' }, evePost);
+    await post('claude-code', body({ hook_event_name: 'Stop', last_assistant_message: 'r'.repeat(900) }), { 'x-landflow-hook-seq': '5' }, evePost);
     const row = rowOf('agent-yes', eve.id)!;
     expect(row.agent_id).toBe(shared.id);
     const session = agentStore.getSession(row.id)!;
@@ -408,12 +440,80 @@ describe('live events (T-7)', () => {
 
 describe('upkeep (T-8)', () => {
   it('prunes events older than 14 days and keeps newer ones', async () => {
-    const session = (await store.applyEvent({ ownerId: alice.id, harness: 'claude-code', sessionKey: 'prune-1', name: 'SessionStart', orderKey: { kind: 'seq', value: '1'.padStart(20, '0') }, receivedAt: '2026-11-01T00:00:00.000Z', verdict: 'idle', view: {}, prompt: false, tool: false })).session;
+    const session = (await store.applyEvent({ ownerId: alice.id, harness: 'claude-code', sessionKey: 'prune-1', name: 'SessionStart', orderKey: { kind: 'seq', value: '1'.padStart(20, '0') }, receivedAt: '2026-11-01T00:00:00.000Z', verdict: 'idle', viewFor: () => ({}), prompt: false, tool: false })).session;
     database().insertNew('harness_events', { id: 'he_old', session_id: session.id, order_key: '0', name: 'Stop', received_at: '2026-10-01T00:00:00.000Z', data: '{}' });
     database().insertNew('harness_events', { id: 'he_new', session_id: session.id, order_key: '9', name: 'Stop', received_at: '2026-11-20T00:00:00.000Z', data: '{}' });
     prune(Date.parse('2026-11-21T00:00:00.000Z'));
     const ids = database().all<{ id: string }>('SELECT id FROM harness_events').map((r) => r.id);
     expect(ids).toContain('he_new');
     expect(ids).not.toContain('he_old');
+  });
+});
+
+describe('limits and bounds (review fixes)', () => {
+  it('limits all of one owner’s keys together', async () => {
+    process.env.LANDFLOW_HARNESS_OWNER_EVENTS_PER_SECOND = '3';
+    try {
+      const now = Date.parse('2026-11-21T15:00:00.000Z');
+      const statuses: number[] = [];
+      for (let i = 0; i < 5; i++) statuses.push((await ingestHookEvent({ harness: 'claude-code', actor: alice, keyId: `key_many_${i}`, payload: { hook_event_name: 'SessionStart', session_id: 'owner-lim' }, headers: { get: () => null }, now })).status);
+      expect(statuses).toEqual([204, 204, 204, 429, 429]);
+    } finally {
+      delete process.env.LANDFLOW_HARNESS_OWNER_EVENTS_PER_SECOND;
+    }
+  });
+  it('past the per-session event cap the status moves but only the event name is stored', async () => {
+    await send('cap-events', 'SessionStart');
+    const row = rowOf('cap-events')!;
+    database().upsert('harness_sessions', { ...(row as unknown as Record<string, string | null>), data: JSON.stringify({ ...JSON.parse(row.data), events: store.MAX_EVENTS_PER_SESSION + 1 }) });
+    await send('cap-events', 'UserPromptSubmit', { prompt: 'x' });
+    const events = eventsOfSession('cap-events');
+    expect(events.at(-1)).toMatchObject({ name: 'UserPromptSubmit', data: { event: 'UserPromptSubmit' } });
+    expect(rowOf('cap-events')!.status).toBe('thinking');
+  });
+  it('sweep closes the oldest even with hundreds of already-told stale rows', async () => {
+    const base = Date.parse('2026-11-22T00:00:00.000Z');
+    const row = (id: string, ago: number, told: boolean) => ({ id, owner_id: 'usr_sweep', harness: 'claude-code', session_key: id, agent_id: null, project_id: null, status: 'idle', order_kind: 'seq', last_order: '1', last_event_at: new Date(base - ago).toISOString(), opened_at: new Date(base - ago).toISOString(), closed_at: null, data: JSON.stringify({ prompts: 0, toolCalls: 0, events: 1, changedAt: 'x', ...(told && { staleSent: true }) }) });
+    for (let i = 0; i < 600; i++) database().upsert('harness_sessions', row(`hs_told_${i}`, 3_600_000, true));
+    database().upsert('harness_sessions', row('hs_old_one', 25 * 3_600_000, false));
+    const changed = await sweep(base);
+    expect(changed.some((r) => r.id === 'hs_old_one' && r.status === 'ended')).toBe(true);
+    expect(changed.some((r) => r.id.startsWith('hs_told_'))).toBe(false);
+  });
+  it('publishes a wake from stale even when the status is the same', async () => {
+    const t = Date.parse('2026-11-21T16:00:00.000Z');
+    const h = (n: number) => ({ get: (name: string) => (name === 'x-landflow-hook-seq' ? String(n) : null) });
+    const call = (n: number, now: number) => ingestHookEvent({ harness: 'claude-code', actor: alice, keyId: 'key_wake', payload: { hook_event_name: 'UserPromptSubmit', session_id: 'wake-ingest-1' }, headers: h(n), now });
+    await call(1, t);
+    const seen: unknown[] = [];
+    const stop = bus.subscribe((e) => e.channel === 'harness' && seen.push(e));
+    await call(2, t + 5000);
+    expect(seen).toHaveLength(0);
+    await call(3, t + 40 * 60_000);
+    stop();
+    expect(seen).toHaveLength(1);
+  });
+  it('ignores a client time header far ahead of the server clock', () => {
+    const at = new Date('2026-11-21T10:00:00.000Z');
+    const get = (value: string) => ({ get: (name: string) => (name === 'x-landflow-hook-time' ? value : null) });
+    expect(status.orderKeyOf(get('2099-01-01T00:00:00Z'), at)).toEqual({ kind: 'time', value: at.toISOString() });
+    expect(status.orderKeyOf(get('2026-11-21T10:02:00Z'), at).value).toBe('2026-11-21T10:02:00.000Z');
+  });
+  it('allows only plain tool names', () => {
+    expect(privacy.ownEventView({ hook_event_name: 'PreToolUse', tool_name: 'mcp__srv__tool' })).toMatchObject({ tool: 'mcp__srv__tool' });
+    expect(privacy.ownEventView({ hook_event_name: 'PreToolUse', tool_name: 'cat /etc/passwd' }).tool).toBeUndefined();
+    expect(privacy.ownEventView({ hook_event_name: 'PreToolUse', tool_name: 'a/b' }).tool).toBeUndefined();
+  });
+  it('caps a mirrored timeline and keeps harness mirrors from evicting other sessions of the agent', async () => {
+    const { newSession } = await import('@/lib/server/agents/runtime');
+    const agent = agentStore.create({ name: 'Cap Helper', instructions: 'x', model: { provider: 'ollama', model: 'm' } });
+    agentStore.saveSession({ ...newSession(agent, { source: 'slack', userId: 'u-slack', version: 'draft' }), id: 'as_keep_me' });
+    for (let i = 0; i < 205; i++) agentStore.saveSession({ ...newSession(agent, { source: 'harness', userId: 'u', version: 'draft' }), id: `hs_cap_${i}` });
+    expect(agentStore.getSession('as_keep_me')).toBeDefined();
+    expect(agentStore.listSessions(agent.id, 500).filter((s) => s.id.startsWith('hs_cap_'))).toHaveLength(200);
+    const { mirrorEvent } = await import('@/lib/server/harness/mirror');
+    const row = { id: 'hs_long', owner_id: alice.id, harness: 'claude-code', session_key: 'long', agent_id: agent.id, project_id: null, status: 'thinking', order_kind: 'seq', last_order: '1', last_event_at: '2026-11-21T10:00:00.000Z', opened_at: '2026-11-21T10:00:00.000Z', closed_at: null, data: '{}' } as store.SessionRow;
+    for (let i = 0; i < 520; i++) mirrorEvent(row, { id: `e${i}`, name: 'UserPromptSubmit', view: { prompt: `p${i}` }, at: '2026-11-21T10:00:00.000Z' }, false);
+    expect(agentStore.getSession('hs_long')!.timeline).toHaveLength(store.MIRROR_TAIL);
   });
 });

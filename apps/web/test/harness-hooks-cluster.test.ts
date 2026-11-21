@@ -27,7 +27,7 @@ describe.skipIf(!enabled)('harness session writes across two processes', async (
   let worker: Database;
   const key = (n: number) => ({ kind: 'seq' as const, value: String(n).padStart(20, '0') });
   const event = (session: string, n: number, name: string, verdict: 'idle' | 'thinking' | 'error', extra: { prompt?: boolean } = {}) => ({
-    ownerId: 'usr_a', harness: 'claude-code', sessionKey: session, name, orderKey: key(n), receivedAt: new Date(Date.UTC(2026, 10, 21, 10, 0, n)).toISOString(), verdict, view: { event: name }, prompt: Boolean(extra.prompt), tool: false,
+    ownerId: 'usr_a', harness: 'claude-code', sessionKey: session, name, orderKey: key(n), receivedAt: new Date(Date.UTC(2026, 10, 21, 10, 0, n)).toISOString(), verdict, viewFor: () => ({ event: name }), prompt: Boolean(extra.prompt), tool: false,
   });
 
   beforeAll(async () => {

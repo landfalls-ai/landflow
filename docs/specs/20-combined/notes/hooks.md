@@ -32,7 +32,12 @@ hand. Codex, OpenCode, Cursor, Gemini, VS Code and Claude Desktop stay `verified
 - Own sessions carry no prompt, tool input or output, file path or `cwd`; the repository is only what the sender names in a `repository` field (the server cannot check the brain mod's allow-list).
 - Agent sessions follow the instance content setting (`LANDFLOW_TRACE_CONTENT`), not a per-agent one: agents have none.
 - An agent session binds only when `agent_type` is `<slug>:<slug>` of exactly one agent the key's owner may run (editor access); a slug shared by two agents is an own session. Binding is fixed by the session's first event.
-- The hook route is exempt from the API rate limit; its own limit is per key and per second.
+- The hook route is exempt from the API rate limit; its own limits are per key and per key owner, per second (shared across mains in queue mode). The open-session cap is per key owner and its count is cached 5 seconds per main, so mains can overshoot it by a few sessions.
+- A session binds to an agent only on its first event, and only a `SessionStart` that names one the owner may run; the stored row decides, and the event's view (content or status only) is chosen after that write.
+- Past 5,000 applied events a session stores only event names (status and counts still move). Late (older) events are not counted toward that cap, only bounded by the rate limits.
+- The agent mirror keeps the newest 500 timeline entries and rebuilds from the newest 500 events; harness mirrors have their own 200-per-agent cap and never evict other sources' sessions.
+- The mirror's read-modify-write is not safe when two mains take events of one session at the same moment: a rare lost entry shows until a late event rebuilds the timeline.
+- `X-Landflow-Hook-Time` more than 5 minutes ahead of the server is ignored (receive time is used).
 
 ## Roadmap lines
 
@@ -44,7 +49,8 @@ hand. Codex, OpenCode, Cursor, Gemini, VS Code and Claude Desktop stay `verified
 ## Deviations from the plan
 
 - The refused-key `api.denied` is recorded by `audit/http.ts` (the hook path is in `SKIP` for calls, but a 401/403 on it is recorded through the throttled denied-read branch), not by the route.
-- `lib/server/rate-limit/api-limiter.ts` is touched: the hook path is exempt from the per-minute API limit (production's 600 a minute would cut a tool-heavy session; the route has its own per-second limit).
+- `lib/server/rate-limit/api-limiter.ts` is touched: the hook path is exempt from the per-minute API limit (production's 600 a minute would cut a tool-heavy session; the route has its own per-second limits).
+- `journal/content.ts` exports `cutText` and `cutStrings` (reused by privacy.ts); `agents/store.ts` evicts harness sessions (ids `hs_…`) separately.
 - `StatusVerdict` adds `keep` (a listed event with no matching rule, e.g. another `Notification` type); `statusFor` returns `undefined` only for an unlisted name.
 - `harness/list.ts` (visibility of the list) is a seventh server module beside the plan's six, so the route stays thin.
 - A cookie session or MCP token is refused on the hook route (403): only an API key (or the test principal) may send events.

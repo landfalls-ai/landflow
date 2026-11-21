@@ -7,7 +7,7 @@
 import type { HarnessStatus } from '@landflow/protocol/harnesses';
 import type { AgentSession, SessionStatus, TimelineEntry } from '../../shared/agents';
 import { agentStore } from '../agents/store';
-import { eventsOf, type SessionRow } from './store';
+import { eventsOf, MIRROR_TAIL, type SessionRow } from './store';
 
 type View = Record<string, unknown>;
 const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
@@ -82,10 +82,13 @@ export function mirrorEvent(row: SessionRow, event: { id: string; name: string; 
   const session = agentStore.getSession(row.id) ?? empty(row, agent.name, 'Claude Code session');
   if (late) {
     session.timeline = [];
-    for (const stored of eventsOf(row.id)) applyToTimeline(session.timeline, stored.name, stored.data, stored.id, stored.receivedAt);
+    // Only the newest events are read back: a long session's rebuild stays bounded.
+    for (const stored of eventsOf(row.id, MIRROR_TAIL)) applyToTimeline(session.timeline, stored.name, stored.data, stored.id, stored.receivedAt);
   } else {
     applyToTimeline(session.timeline, event.name, event.view, event.id, event.at);
   }
+  // The mirror keeps the newest entries only (the events table keeps the rest until pruned).
+  if (session.timeline.length > MIRROR_TAIL) session.timeline = session.timeline.slice(-MIRROR_TAIL);
   const firstPrompt = session.timeline.find((entry) => entry.type === 'user');
   if (firstPrompt && firstPrompt.type === 'user' && firstPrompt.text !== '[content off]') session.title = firstPrompt.text.replace(/\s+/g, ' ').slice(0, 80);
   session.status = sessionStatusOf(row.status);

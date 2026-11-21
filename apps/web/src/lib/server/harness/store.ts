@@ -44,6 +44,8 @@ export interface EventRow {
 export interface SessionData {
   prompts: number;
   toolCalls: number;
+  /** Events applied (newer than the last): past `MAX_EVENTS_PER_SESSION` an event keeps only its name. */
+  events: number;
   /** `owner/name`, only when the sender gave it. */
   repository?: string;
   /** When the status last changed. */
@@ -56,15 +58,18 @@ export interface EventInput {
   ownerId: string;
   harness: string;
   sessionKey: string;
+  /** Binds a new session to this agent. Ignored for a session that already exists: the stored row decides. */
   agentId?: string;
-  projectId?: string;
   name: string;
   orderKey: OrderKey;
   receivedAt: string;
   /** What the registry says the event does (`undefined`: it lists no such name). */
   verdict: StatusVerdict | undefined;
-  /** What may be stored of the event (privacy.ts has already cut it). */
-  view: Record<string, unknown>;
+  /**
+   * What may be stored of the event, chosen after the row is resolved: `bound` is whether the session the event landed in
+   * belongs to an agent (privacy.ts: an own session keeps no content, whoever raced to create it).
+   */
+  viewFor: (bound: boolean) => Record<string, unknown>;
   prompt: boolean;
   tool: boolean;
   repository?: string;
@@ -78,16 +83,25 @@ export interface Applied {
   applied: boolean;
   /** The status is not what it was. */
   changed: boolean;
+  /** The session had gone quiet for 30 minutes or more before this event (it reads as stale until now). */
+  woke: boolean;
+  /** What was stored of the event (the mirror reads it). */
+  view: Record<string, unknown>;
 }
+
+/** Past this many applied events a session stores only the event names; the status and counts still move. */
+export const MAX_EVENTS_PER_SESSION = 5000;
+/** The mirror and its rebuild read at most this many of the newest events. */
+export const MIRROR_TAIL = 500;
 
 const db = (): Database => database();
 const asRow = (row: SessionRow) => row as unknown as Record<string, string | number | null>;
 const parse = (text: string): SessionData => {
   try {
     const value = JSON.parse(text) as Partial<SessionData>;
-    return { prompts: Number(value.prompts ?? 0), toolCalls: Number(value.toolCalls ?? 0), changedAt: value.changedAt ?? '', ...(value.repository && { repository: value.repository }), ...(value.staleSent && { staleSent: true }) };
+    return { prompts: Number(value.prompts ?? 0), events: Number(value.events ?? 0), toolCalls: Number(value.toolCalls ?? 0), changedAt: value.changedAt ?? '', ...(value.repository && { repository: value.repository }), ...(value.staleSent && { staleSent: true }) };
   } catch {
-    return { prompts: 0, toolCalls: 0, changedAt: '' };
+    return { prompts: 0, toolCalls: 0, events: 0, changedAt: '' };
   }
 };
 
@@ -103,14 +117,14 @@ function decide(before: SessionRow | undefined, input: EventInput): { next: Sess
     harness: input.harness,
     session_key: input.sessionKey,
     agent_id: input.agentId ?? null,
-    project_id: input.projectId ?? null,
+    project_id: null,
     status: 'idle',
     order_kind: null,
     last_order: null,
     last_event_at: input.receivedAt,
     opened_at: input.receivedAt,
     closed_at: null,
-    data: JSON.stringify({ prompts: 0, toolCalls: 0, changedAt: input.receivedAt } satisfies SessionData),
+    data: JSON.stringify({ prompts: 0, toolCalls: 0, events: 0, changedAt: input.receivedAt } satisfies SessionData),
   };
   const newer = isNewer({ orderKind: base.order_kind, lastOrder: base.last_order }, input.orderKey);
   if (!newer) return { next: base, applied: false };
@@ -119,6 +133,7 @@ function decide(before: SessionRow | undefined, input: EventInput): { next: Sess
   const next: SessionData = {
     prompts: data.prompts + (input.prompt ? 1 : 0),
     toolCalls: data.toolCalls + (input.tool ? 1 : 0),
+    events: data.events + 1,
     changedAt: status !== base.status || !before ? input.receivedAt : data.changedAt || input.receivedAt,
     ...((input.repository ?? data.repository) && { repository: input.repository ?? data.repository }),
   };
@@ -204,8 +219,12 @@ export async function applyEvent(input: EventInput, handle: Database = db()): Pr
       if (!session) continue;
     }
     const eventId = `he_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
-    handle.insertNew('harness_events', { id: eventId, session_id: session!.id, order_key: input.orderKey.value, name: input.name, received_at: input.receivedAt, data: JSON.stringify(input.view) });
-    return { session: session!, eventId, created: !before, applied, changed: !before || session!.status !== before.status };
+    // The view follows the row that won, not a read made before the write (two first events can race to create it).
+    const over = parse(session!.data).events > MAX_EVENTS_PER_SESSION;
+    const view = over ? { event: input.name } : input.viewFor(Boolean(session!.agent_id));
+    handle.insertNew('harness_events', { id: eventId, session_id: session!.id, order_key: input.orderKey.value, name: input.name, received_at: input.receivedAt, data: JSON.stringify(view) });
+    const woke = Boolean(before) && Date.parse(input.receivedAt) - Date.parse(before!.last_event_at) >= STALE_AFTER_MS;
+    return { session: session!, eventId, created: !before, applied, changed: !before || session!.status !== before.status, woke, view };
   }
   throw new Error('harness session kept changing');
 }
@@ -271,9 +290,12 @@ export function listSessions(filter: ListFilter): { rows: SessionRow[]; nextCurs
 }
 
 /** The events of one session in order-key order (a late event sits in its own place). */
-export function eventsOf(sessionId: string): Array<{ id: string; orderKey: string; name: string; receivedAt: string; data: Record<string, unknown> }> {
-  return db()
-    .all<EventRow>('SELECT * FROM harness_events WHERE session_id = ? ORDER BY order_key, received_at, id', sessionId)
+export function eventsOf(sessionId: string, tail?: number): Array<{ id: string; orderKey: string; name: string; receivedAt: string; data: Record<string, unknown> }> {
+  // `tail`: only the newest N (by order key), still returned oldest first.
+  const rows = tail
+    ? db().all<EventRow>('SELECT * FROM harness_events WHERE session_id = ? ORDER BY order_key DESC, received_at DESC, id DESC LIMIT ?', sessionId, tail).reverse()
+    : db().all<EventRow>('SELECT * FROM harness_events WHERE session_id = ? ORDER BY order_key, received_at, id', sessionId);
+  return rows
     .map((row) => ({ id: row.id, orderKey: row.order_key, name: row.name, receivedAt: row.received_at, data: JSON.parse(row.data) as Record<string, unknown> }));
 }
 
@@ -283,14 +305,19 @@ export function eventsOf(sessionId: string): Array<{ id: string; orderKey: strin
  */
 export async function sweep(now = Date.now(), handle: Database = db()): Promise<SessionRow[]> {
   const changed: SessionRow[] = [];
-  const quiet = new Date(now - STALE_AFTER_MS).toISOString();
-  const rows = handle.all<SessionRow>('SELECT * FROM harness_sessions WHERE closed_at IS NULL AND last_event_at < ? LIMIT 500', quiet);
-  for (const row of rows) {
+  const at = new Date(now).toISOString();
+  // Close first, oldest first (a pile of stale rows must not starve the 24-hour close); then the stale ones not yet told.
+  const old = handle.all<SessionRow>('SELECT * FROM harness_sessions WHERE closed_at IS NULL AND last_event_at < ? ORDER BY last_event_at ASC LIMIT 500', new Date(now - CLOSE_AFTER_MS).toISOString());
+  const quiet = handle.all<SessionRow>(
+    `SELECT * FROM harness_sessions WHERE closed_at IS NULL AND last_event_at < ? AND last_event_at >= ? AND status NOT IN ('error', 'blocked') AND data NOT LIKE '%"staleSent":true%' ORDER BY last_event_at ASC LIMIT 500`,
+    new Date(now - STALE_AFTER_MS).toISOString(),
+    new Date(now - CLOSE_AFTER_MS).toISOString(),
+  );
+  for (const row of [...old, ...quiet]) {
     const data = parse(row.data);
-    const old = now - Date.parse(row.last_event_at) >= CLOSE_AFTER_MS;
-    if (!old && (data.staleSent || row.status === 'error' || row.status === 'blocked')) continue;
-    const next: SessionRow = old
-      ? { ...row, status: 'ended', closed_at: new Date(now).toISOString(), data: JSON.stringify({ ...data, changedAt: new Date(now).toISOString() }) }
+    const closing = now - Date.parse(row.last_event_at) >= CLOSE_AFTER_MS;
+    const next: SessionRow = closing
+      ? { ...row, status: 'ended', closed_at: at, data: JSON.stringify({ ...data, changedAt: at }) }
       : { ...row, data: JSON.stringify({ ...data, staleSent: true }) };
     const saved = await swap(handle, row, next);
     if (saved) changed.push(saved);

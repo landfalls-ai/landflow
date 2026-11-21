@@ -69,7 +69,7 @@ export async function ingestHookEvent(input: IngestInput): Promise<IngestResult>
   const entry = harnessById(input.harness);
   if (!entry || !sendsEvents(entry)) return { status: 404 };
   const now = input.now ?? Date.now();
-  if (!(await takeEvent(input.keyId, now))) {
+  if (!(await takeEvent(input.keyId, input.actor.id, now))) {
     countHarnessEvent(entry.id, 'limited');
     return { status: 429, retryAfter: 1 };
   }
@@ -86,15 +86,21 @@ export async function ingestHookEvent(input: IngestInput): Promise<IngestResult>
     countHarnessEvent(entry.id, 'limited');
     return { status: 429, retryAfter: 30 };
   }
-  // The binding is fixed by the session's first event (an agent that cannot be run stays the owner's own, AS-7).
-  const agent = existing ? (existing.agent_id ? { id: existing.agent_id } : undefined) : agentForType(input.actor, payload.agent_type);
+  // A session belongs to an agent only when its first event is a SessionStart that names one the owner may run (`claude --agent
+  // x:x`, the main thread): any other first event, or an agent the owner may not run (AS-7), makes the owner's own session.
+  // Subagent events carry `agent_type` too, so it is never read from another event. This is only the proposal: the row the
+  // write resolves decides the binding and the view (store.ts `applyEvent`), so a race cannot leak content into an own session.
+  const agent = existing || name !== 'SessionStart' ? undefined : agentForType(input.actor, payload.agent_type);
   const receivedAt = new Date(now);
   let verdict: StatusVerdict | undefined = statusFor(entry, name, payload);
   if (verdict === undefined) countUnknownEvent(entry.id);
   const blocked = blockedKindOf(name, payload);
   if (blocked && verdict !== undefined) verdict = 'blocked';
-  const view = agent ? agentEventView(payload, contentOf(undefined)) : ownEventView(payload);
-  if (blocked) view.blocked = blocked;
+  const viewFor = (bound: boolean) => {
+    const view = bound ? agentEventView(payload, contentOf(undefined)) : ownEventView(payload);
+    if (blocked) view.blocked = blocked;
+    return view;
+  };
   const repository = repositoryOf(payload);
   const applied = await applyEvent({
     ownerId,
@@ -105,20 +111,21 @@ export async function ingestHookEvent(input: IngestInput): Promise<IngestResult>
     orderKey: orderKeyOf(input.headers, receivedAt),
     receivedAt: receivedAt.toISOString(),
     verdict,
-    view,
+    viewFor,
     prompt: name === 'UserPromptSubmit',
     tool: name === 'PreToolUse',
     ...(repository && { repository }),
   });
   countHarnessEvent(entry.id, applied.applied ? 'applied' : 'late');
-  if (agent) {
+  if (applied.session.agent_id) {
     try {
-      mirrorEvent(applied.session, { id: applied.eventId, name, view, at: receivedAt.toISOString() }, !applied.applied);
+      mirrorEvent(applied.session, { id: applied.eventId, name, view: applied.view, at: receivedAt.toISOString() }, !applied.applied);
     } catch (error) {
       logger.warn('harness mirror failed', { error });
     }
   }
-  if (applied.changed || applied.created) {
+  // A wake from stale with the same status still changes what a card reads (idle (stale) to working), so it is published too.
+  if (applied.changed || applied.created || applied.woke) {
     bus.publish({ channel: 'harness', ownerId, ...(applied.session.agent_id && { agentId: applied.session.agent_id }), session: viewOf(applied.session, now) });
   }
   return { status: 204 };

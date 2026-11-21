@@ -6,6 +6,8 @@
  */
 import type { HarnessStatus, StatusVerdict } from '@landflow/protocol/harnesses';
 
+/** A client time header more than this far ahead of the server's clock is ignored (the receive time is used). */
+export const MAX_CLOCK_AHEAD_MS = 5 * 60_000;
 export const STALE_AFTER_MS = 30 * 60_000;
 export const CLOSE_AFTER_MS = 24 * 3_600_000;
 
@@ -26,7 +28,8 @@ export function orderKeyOf(headers: Pick<Headers, 'get'>, receivedAt: Date): Ord
   const time = headers.get(TIME_HEADER)?.trim();
   if (time) {
     const at = /^\d{10,16}$/.test(time) ? Number(time) : Date.parse(time);
-    if (Number.isFinite(at)) return { kind: 'time', value: new Date(at).toISOString() };
+    // A clock far ahead of ours would pin the session's order key in the future and make every later event "older".
+    if (Number.isFinite(at) && at <= receivedAt.getTime() + MAX_CLOCK_AHEAD_MS) return { kind: 'time', value: new Date(at).toISOString() };
   }
   return { kind: 'time', value: receivedAt.toISOString() };
 }
