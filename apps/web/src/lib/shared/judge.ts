@@ -72,4 +72,4 @@ export function judgeTitle(node: string, why: FallbackReason, confidence?: numbe
 export const judgeNudgeSubject = (node: string, workflowName: string): string => `Decision needed: “${node}” in “${workflowName}”`;
 
 /** Whether `text` names one of the fallback reasons (a stored value is never trusted to be one). */
-export const isFallbackReason = (text: unknown): text is FallbackReason => typeof text === 'string' && text in FALLBACK_WORDS;
+export const isFallbackReason = (text: unknown): text is FallbackReason => typeof text === 'string' && Object.hasOwn(FALLBACK_WORDS, text);

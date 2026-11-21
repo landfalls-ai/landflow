@@ -2,7 +2,7 @@
  * What the nodes that wait in the approval inbox share (wave ap1, C13): the graph a run uses, why a run that is no editor's
  * cannot wait, and the opening of an AI Judge's request. Moved out of `nodes/agents.ts` unchanged (Run an Agent imports them).
  */
-import type { IExecuteContext } from '@landflow/sdk';
+import { NodeOperationError, type IExecuteContext } from '@landflow/sdk';
 import type { InboxOpen, RefuseWhy } from '../../shared/approval-inbox';
 import { EVIDENCE_OUTPUT_CHARS, type JudgeEvidence } from '../../shared/judge';
 import type { TraceContent } from '../../shared/run-trace';
@@ -72,7 +72,7 @@ export function judgeEvidenceFor(mode: TraceContent, evidence: JudgeEvidence): J
 }
 
 /** C13: one request in the approval inbox for an AI Judge that could not decide (idempotent: the id is `judge:<item>`). */
-export async function openJudgeRequest(ctx: IExecuteContext, port: InboxPort, run: { itemIndex: number; subject: unknown; evidence: JudgeEvidence }) {
+export async function openJudgeRequest(ctx: IExecuteContext, port: InboxPort, run: { itemIndex: number; key: string; subject: unknown; evidence: JudgeEvidence }) {
   const { runVersions } = await import('../agents/versions');
   const { unattendedTrigger } = await import('../agents/unattended');
   const { homeProjectId } = await import('../projects/store');
@@ -92,7 +92,7 @@ export async function openJudgeRequest(ctx: IExecuteContext, port: InboxPort, ru
   const projectId = homeProjectId('workflow', workflowId);
   const call: InboxOpen = {
     executionId,
-    callId: judgeCallId(run.itemIndex),
+    callId: judgeCallId(run.key, run.itemIndex),
     workflowId,
     workflowName: workflow?.name ?? workflowId,
     ...(number !== undefined && { workflowVersion: number }),
@@ -109,8 +109,24 @@ export async function openJudgeRequest(ctx: IExecuteContext, port: InboxPort, ru
     kind: 'judge',
     evidence: judgeEvidenceFor(mode, run.evidence),
   };
-  return port.open([call]);
+  const opened = await port.open([call]);
+  // Defence in depth: the id is unique per step and per run of the step, so a row that already exists is this very request
+  // (a re-open) and still waits. One that settled, or belongs to another step, must never be waited on: it would answer for a person who never saw this item.
+  const existing = port.outcome(executionId, call.callId);
+  const row = opened.ids[call.callId] ? port.view(opened.ids[call.callId]) : undefined;
+  if (!existing || existing.status !== 'waiting' || (row && row.nodeId !== call.nodeId)) throw new NodeOperationError('A decision request with this id already exists and is not waiting for this step, so the judge will not wait on it');
+  return opened;
 }
 
-/** The id of the one request an item's judgement opens (also the approval wait's call id). */
-export const judgeCallId = (itemIndex: number): string => `judge:${itemIndex}`;
+/** The trace content mode of the run's workflow (the setting, else the host's): what the inbox and the wait may keep of an item. */
+export async function traceModeOf(ctx: IExecuteContext): Promise<TraceContent> {
+  const { workflow } = await runGraph(ctx.getExecutionId(), ctx.getWorkflowId());
+  return contentOf(workflow?.settings?.traceContent);
+}
+
+/**
+ * The id of the one request an item's judgement opens (also the approval wait's call id). `key` is the step's idempotency key
+ * (`<execution>:<node>:<run of the node>`, the same on every retry of that run), so two judge steps of one run, and the
+ * batches of a loop through one judge, never share an id; the item number tells the items of one run apart.
+ */
+export const judgeCallId = (key: string, itemIndex: number): string => `judge:${key}:${itemIndex}`;

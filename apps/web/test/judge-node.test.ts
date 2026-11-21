@@ -203,6 +203,20 @@ describe('which tools the judge may use', () => {
     expect(admitTool(lying, true, trustedMcpServers('https://tools.example.test'))).toEqual({ ok: true });
   });
 
+  it('compares by parsed URL: the origin exactly, then a path prefix after resolving dot segments, and never credentials', () => {
+    const trusted = trustedMcpServers('https://tools.example.test/tenant-a');
+    expect(mcpServerTrusted('https://tools.example.test/tenant-a/../tenant-b/mcp', trusted)).toBe(false);
+    expect(mcpServerTrusted('https://tools.example.test/tenant-a/%2e%2e/tenant-b', trusted)).toBe(false);
+    expect(mcpServerTrusted('https://tools.example.test/tenant-a/mcp', trusted)).toBe(true);
+    expect(mcpServerTrusted('https://tools.example.test:8443/tenant-a/mcp', trusted)).toBe(false);
+    expect(mcpServerTrusted('http://tools.example.test/tenant-a/mcp', trusted)).toBe(false);
+    expect(mcpServerTrusted('https://user:pw@tools.example.test/tenant-a/mcp', trusted)).toBe(false);
+    expect(mcpServerTrusted('https://TOOLS.example.test/tenant-a?x=1', trusted)).toBe(true);
+    expect(mcpServerTrusted('not a url', trusted)).toBe(false);
+    expect(mcpServerTrusted('https://tools.example.test/anything', trustedMcpServers('https://tools.example.test'))).toBe(true);
+    expect(mcpServerTrusted('https://user:pw@tools.example.test/x', trustedMcpServers('https://user:pw@tools.example.test'))).toBe(false);
+  });
+
   it('trusts an origin for its paths only at a path boundary, and never an expression', () => {
     const trusted = trustedMcpServers(' https://tools.example.test/ , https://a.test/mcp ');
     expect(mcpServerTrusted('https://tools.example.test/deep/mcp', trusted)).toBe(true);
@@ -211,5 +225,18 @@ describe('which tools the judge may use', () => {
     expect(mcpServerTrusted('https://a.test/mcp2', trusted)).toBe(false);
     expect(mcpServerTrusted('{{ $json.url }}', trusted)).toBe(false);
     expect(mcpServerTrusted('https://tools.example.test/mcp', [])).toBe(false);
+  });
+});
+
+describe('small guards', () => {
+  it('a fallback reason is one of the listed words, not an inherited property', async () => {
+    const { isFallbackReason } = await import('@/lib/shared/judge');
+    expect(isFallbackReason('low confidence')).toBe(true);
+    for (const word of ['toString', 'constructor', '__proto__', 'hasOwnProperty']) expect(isFallbackReason(word)).toBe(false);
+  });
+
+  it('the policy is not an expression', () => {
+    const policy = descriptorOf('aiJudge').properties.find((p) => p.name === 'policy');
+    expect(policy?.noDataExpression).toBe(true);
   });
 });

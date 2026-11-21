@@ -14,7 +14,7 @@ import { redactValue } from '../secrets/redact';
 import { maskParams } from '../../shared/approval-inbox';
 import { approvalSettings, askForApproval, decisionsOf } from './ai';
 import { connectedModel } from './fallback';
-import { judgeCallId, openJudgeRequest, runGraph, triggerRefusal } from './inbox-run';
+import { judgeCallId, judgeParams, openJudgeRequest, runGraph, traceModeOf, triggerRefusal } from './inbox-run';
 import { runJudge, type JudgeOutcome } from './judge-loop';
 import { decisionSchema } from './judge-schema';
 import { admitTool } from './judge-tools';
@@ -29,9 +29,12 @@ const ROUTED = 2;
 
 type Outputs = [NodeItem[], NodeItem[], NodeItem[]];
 
+/** The fields besides the decision schema's own that only the judge writes. */
+const JUDGE_OUTPUT_FIELDS = ['decidedBy', 'rounds', 'toolCalls', 'fallbackReason', 'judgeReason', 'judgeConfidence', 'suggestion', 'couldNotDecide'];
+
 /** Kept in node state while an item waits for a person. */
 interface JudgeState {
-  waiting?: { item: number; out: Outputs; fallbackReason: FallbackReason; undecided?: JudgeOutcome['undecided']; rounds: number; toolCalls: number; via: 'inbox' | 'chat' };
+  waiting?: { item: number; callId: string; out: Outputs; fallbackReason: FallbackReason; undecided?: JudgeOutcome['undecided']; rounds: number; toolCalls: number; via: 'inbox' | 'chat' };
   $resume?: { kind: string; data?: JsonObject };
 }
 
@@ -70,7 +73,7 @@ export const aiJudgeNode = defineNode({
       { type: 'main', displayName: 'Needs a person' },
     ],
     properties: [
-      { name: 'policy', displayName: 'Policy', type: 'string', default: '', required: true, typeOptions: { rows: 8 }, description: `What the judge decides by (up to ${JUDGE_LIMITS.policyChars} characters). It approves only when this clearly allows it.` },
+      { name: 'policy', displayName: 'Policy', type: 'string', default: '', required: true, noDataExpression: true, typeOptions: { rows: 8 }, description: `What the judge decides by (up to ${JUDGE_LIMITS.policyChars} characters). It approves only when this clearly allows it.` },
       { name: 'input', displayName: 'Input to Judge', type: 'string', default: '{{ $json }}', typeOptions: { rows: 3 }, description: 'What the judge reads. The item as JSON by default.' },
       { name: 'threshold', displayName: 'Confidence Needed', type: 'number', default: DEFAULT_THRESHOLD, typeOptions: { minValue: MIN_THRESHOLD, maxValue: 1, numberPrecision: 2 }, description: 'Below this the judge never approves: the fallback decides (0.5 to 1)' },
       { name: 'fallback', displayName: 'When It Is Not Sure', type: 'options', default: 'person', noDataExpression: true, options: [
@@ -101,15 +104,21 @@ export const aiJudgeNode = defineNode({
     const name = node.name ?? node.id;
     const editor = isEditorRun(ctx.getMode(), Boolean(ctx.putExecutionToWait));
 
+    // The step's own key: the same on every retry of this run of the step, different for another step and for each batch of a loop.
+    const key = ctx.getIdempotencyKey() ?? `${ctx.getExecutionId()}:${node.id}:0`;
+    // Every field the judge writes is present on every output, null when it has no value, so a field of the item with the same
+    // name (a "decision" or "confidence" that came in) can never pose as the judge's.
+    const blank = Object.fromEntries([...Object.keys(schema.properties ?? {}), ...JUDGE_OUTPUT_FIELDS].map((field) => [field, null]));
+
     for (let i = waited?.item ?? 0; i < items.length; i++) {
       const base = items[i].json;
       const fallback = String(ctx.getNodeParameter('fallback', i, 'person'));
-      const place = (output: number, json: JsonObject) => out[output].push({ json: { ...base, ...json }, pairedItem: { item: i } });
+      const place = (output: number, json: JsonObject) => out[output].push({ json: { ...base, ...blank, ...json }, pairedItem: { item: i } });
       const check = (status: 'pass' | 'warn', message: string, evidence: JsonObject = {}) => ctx.check({ name: 'decision', status, message, subject: name, evidence });
 
       // Back from a wait: the person's word (or the clock's) settles this item.
       if (waited && i === waited.item) {
-        const word = await personsWord(ctx, waited.via, saved!.$resume, i);
+        const word = await personsWord(ctx, waited.via, saved!.$resume, waited.callId, i);
         const judged = { ...(waited.undecided && { judgeReason: waited.undecided.reason, judgeConfidence: waited.undecided.confidence }) };
         const common = { decidedBy: word.by, fallbackReason: waited.fallbackReason, rounds: waited.rounds, toolCalls: waited.toolCalls, ...judged };
         if (word.approved) {
@@ -172,15 +181,17 @@ export const aiJudgeNode = defineNode({
         check('warn', `${note}; ${FALLBACK_WORDS['cannot wait']}, so it was denied`, counts);
         continue;
       }
-      const masked = maskParams(redactValue(subject)) as JsonObject;
-      const callId = judgeCallId(i);
-      const state: JudgeState['waiting'] = { item: i, out, fallbackReason: why, ...(outcome.undecided && { undecided: outcome.undecided }), ...counts, via: wait.via };
+      // What the wait (and so the journal and the Run Trace) shows of the item follows the run's trace content mode, as the inbox row does.
+      const mode = await traceModeOf(ctx);
+      const masked = judgeParams(mode, maskParams(redactValue(subject))) as JsonObject;
+      const callId = judgeCallId(key, i);
+      const state: JudgeState['waiting'] = { item: i, callId, out, fallbackReason: why, ...(outcome.undecided && { undecided: outcome.undecided }), ...counts, via: wait.via };
       ctx.setNodeState?.({ waiting: state } as unknown as JsonObject);
       if (wait.via === 'inbox') {
-        const opened = await openJudgeRequest(ctx, wait.port, { itemIndex: i, subject, evidence });
+        const opened = await openJudgeRequest(ctx, wait.port, { itemIndex: i, key, subject, evidence });
         await askForApproval(ctx, i, { ...approvalSettings(ctx, i, 'all'), channel: 'chat', timeoutMinutes: 0 }, [{ id: callId, name, input: masked }], { inbox: { ids: opened.ids, expiresAt: opened.expiresAt }, judge: { fallbackReason: why } }, note, opened.expiresAt);
       } else {
-        await askForApproval(ctx, i, { ...approvalSettings(ctx, i, 'all'), channel: 'chat', timeoutMinutes: 0 }, [{ id: callId, name, input: masked }], { judge: { fallbackReason: why, ...(outcome.undecided && { reason: outcome.undecided.reason, confidence: outcome.undecided.confidence }) } }, note);
+        await askForApproval(ctx, i, { ...approvalSettings(ctx, i, 'all'), channel: 'chat', timeoutMinutes: 0 }, [{ id: callId, name, input: masked }], { judge: { fallbackReason: why, ...(mode !== 'off' && outcome.undecided && { reason: outcome.undecided.reason, confidence: outcome.undecided.confidence }) } }, note);
       }
       check('warn', note, counts);
       return out;
@@ -209,8 +220,7 @@ async function waitingPlace(ctx: IExecuteContext, editor: boolean): Promise<{ vi
  * The person's word on a waiting item. The inbox's record is the truth (read on every resume): a timeout settles a waiting record
  * `expired`; an answer the record does not say fails closed. The chat wait reads the decision the approvals route recorded.
  */
-async function personsWord(ctx: IExecuteContext, via: 'inbox' | 'chat', resume: JudgeState['$resume'], itemIndex: number): Promise<{ approved: boolean; by: string; line: string }> {
-  const callId = judgeCallId(itemIndex);
+async function personsWord(ctx: IExecuteContext, via: 'inbox' | 'chat', resume: JudgeState['$resume'], callId: string, itemIndex: number): Promise<{ approved: boolean; by: string; line: string }> {
   if (via === 'chat') {
     const decision = decisionsOf(resume)[callId];
     if (!decision) throw new NodeOperationError('The AI Judge was resumed without a decision', { itemIndex });

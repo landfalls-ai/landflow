@@ -11,7 +11,9 @@ import { splitToolOutput, type AgentMessage, type AgentTool, type LanguageModel,
 import { JUDGE_LIMITS, type FallbackReason, type JudgeDecision, type JudgeStep } from '../../shared/judge';
 import { wrapMemory } from '../../shared/memory-fence';
 import { isUsageCapError } from '../ai-usage';
+import { NodeOperationError } from '@landflow/sdk';
 import { checkDecision } from './judge-schema';
+import { disallowedArguments, judgeSpec } from './judge-tools';
 import type { JsonSchema } from './structured';
 
 export const SUBMIT_DECISION = 'submit_decision';
@@ -67,7 +69,7 @@ function judgementOf(value: Record<string, unknown>, schema: JsonSchema): Decide
 
 export async function runJudge(run: JudgeRun): Promise<JudgeOutcome> {
   const byName = new Map(run.tools.map((tool) => [tool.name, tool]));
-  const offered: ToolSpec[] = [...run.tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })), submitSpec(run.schema)];
+  const offered: ToolSpec[] = [...run.tools.map(judgeSpec), submitSpec(run.schema)];
   const system = `${run.policy.trim()}\n\n${RULES}`;
   const messages: AgentMessage[] = [{ role: 'user', content: wrapMemory('judge-input', [JSON.stringify(run.subject ?? null, null, 2)]) }];
   const outcome: JudgeOutcome = { rounds: 0, toolCalls: 0, steps: [] };
@@ -120,6 +122,9 @@ async function useTool(tool: AgentTool | undefined, call: ToolCall, steps: Judge
     steps.push({ tool: call.name, input: call.input, output: content, isError: true });
     return { id: call.id, name: call.name, content, isError: true };
   }
+  // A call that would change what the tool does (its operation, its resource) fails the step: it is never run.
+  const refused = disallowedArguments(tool, call.input);
+  if (refused.length) throw new NodeOperationError(`The AI Judge's tool “${call.name}” was called with ${refused.map((k) => `“${k}”`).join(', ')}, which would change what the tool does`, { description: 'A judge only runs its tools as they are set up.' });
   try {
     const text = splitToolOutput(await tool.invoke(call.input, signal)).text.slice(0, JUDGE_LIMITS.resultChars);
     steps.push({ tool: call.name, input: call.input, output: text });
