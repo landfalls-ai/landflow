@@ -24,8 +24,12 @@ export const AGENT_MEMORY = { max: 1_000, recent: 10, relevant: 8, recallThresho
 
 export const subjectOf = (agentId: string, userId: string) => `${agentId}/${userId}`;
 
-/** Whether a session user has memories at all: not an evaluation run, not kagent's own session user (it has no person). */
-export const hasMemoryUser = (userId: string): boolean => Boolean(userId) && userId !== 'evaluation' && !userId.startsWith('kagent:');
+/**
+ * Whether a session user is a person (or a workflow, schedule or channel user) with memories of their own: not an evaluation or smoke-test
+ * run, not kagent's own session user, and not a sub-agent (`agent:`) or team (`team:`) run, whose "user" would pool every caller's memories.
+ */
+export const hasMemoryUser = (userId: string): boolean =>
+  Boolean(userId) && userId !== 'evaluation' && userId !== 'smoke-test' && !userId.startsWith('kagent:') && !userId.startsWith('agent:') && !userId.startsWith('team:');
 
 /** An agent is deleted: every person's memories of it (and their vectors) go with it. */
 export async function deleteAgentMemories(agentId: string, db: Database = database()): Promise<number> {

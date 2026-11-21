@@ -351,8 +351,11 @@ describe('C09 the run recalls memory and records it', () => {
     expect(seenSystems[0]!.indexOf('Profile:')).toBeLessThan(seenSystems[0]!.indexOf('Relevant to this request:'));
     expect(session.memory?.map((m) => m.source)).toEqual(['agent-profile', 'agent-relevant', 'team-notebook']);
     expect(session.memory?.[1]).toMatchObject({ mode: 'keywords', count: 1 });
-    expect(session.memoryText).toContain('Wombats hibernate in burrows');
-    expect(session.memoryText).toContain('NOTEBOOK BLOCK');
+    // The record anyone who can read the session gets holds the sources, never the text (the journal's span has it, on full).
+    expect(session.memoryText).toBeUndefined();
+    expect(JSON.stringify(session)).not.toContain('Wombats hibernate');
+    expect(JSON.stringify(session)).not.toContain('NOTEBOOK BLOCK');
+    expect(JSON.stringify(agentStore.getSession(session.id))).not.toContain('Wombats hibernate');
   });
 
   it('keeps the sources but not the block on summaries, and neither on off, as the journal does', async () => {

@@ -338,16 +338,24 @@ an agent on kagent cannot tell Landflow whom it is working for.
   memory on (the A2A Agent node, or an agent's A2A tool), it adds the line "Memory key for this person: `mk_…`" after the
   practices index. The key is `base64url(agent id, user id, expiry)` and an HMAC-SHA256 under the vault's derived key
   `agent-memory-key`: it names one agent and one person (`workflow:<id>` from a workflow, the session's user from an agent's
-  tool), expires 24 hours after it was written, and is checked against every key of the ring, so a key rotation does not void a
-  conversation in flight. It is signed, not remembered, so it works in queue mode when the A2A call and the MCP call land on
-  different processes. It opens only that person's memories for that agent, which the agent already reads in its own runs.
+  tool), expires 24 hours after it was written (a key whose expiry is further out than that is refused), and is checked against
+  every key of the ring, so a key rotation does not void a conversation in flight. It is signed, not remembered, so it works in
+  queue mode when the A2A call and the MCP call land on different processes. It opens only that person's memories for that agent.
 - **What a call does.** `recall_memory` answers the same fenced block a Landflow run would get for that person and query
   ([agents.md](agents.md#agent-capabilities)); `remember` and `forget_memory` act as the Landflow tools do. Without a valid key
   for this agent (none, forged, expired, another agent's) a call answers "Memory needs the key Landflow gave you in this
   conversation" and reads or writes nothing. Each call is an `execute_tool` span (`memory` kind) with no key and no memory text.
+- **The key stays out of what Landflow keeps.** The key is for the agent, not for people reading the run. Landflow takes it out of
+  everything it stores or shows of the remote run: step arguments and outputs, the words the agent said, its data parts, its
+  reply and status text, progress reports and the trace (each key becomes `[memory key]`), and a `recall_memory` step shows
+  "recalled N memories" in place of what came back. A key a caller wrote in the message text is taken out too, and a copy of
+  Landflow's line does not stop the real one from being added, so another member of a project cannot paste a key they read
+  somewhere and act as that person.
 - **Not covered.** A caller that is not Landflow (kagent's own UI, another A2A client) gets no key and so no memory; follow-up
-  messages in a conversation carry no new key (the first message's lasts 24 hours); the key is in the conversation, so keep a
-  kagent conversation's transcript as private as the memories.
+  messages in a conversation carry no new key (the first message's lasts 24 hours). The key is in the first message the remote
+  agent received, so what kagent itself keeps of the conversation (its own session store and logs) holds it: treat those as
+  you treat the memories. A memory tool on kagent does not ask first: `forget_memory` acts at once and a project's rules that
+  make a tool "ask first" (Ask rules) are not applied to the three memory tools there, as they are for a Landflow run.
 
 ### On Claude Code
 

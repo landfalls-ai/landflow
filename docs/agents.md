@@ -491,8 +491,8 @@ absent from an agent without any). Publishing needs a model, and a persona part 
   ([a2a.md](a2a.md#on-claude-code)).
 - **Memory** (Abilities). Session memory is always on: the session keeps the transcript, and the model
   sees its last 30 user turns. **Cross-session memory** adds the `remember` and `forget_memory` tools and puts what the
-  agent knows about the person into the system prompt of that person's later sessions (below). A user is "you" in the test
-  chat, `telegram:<id>` in Telegram, `slack:<member id>` in Slack, `teams:<Entra object id>` in Teams, `workflow:<id>` from a
+  agent knows about the person into the system prompt of that person's later sessions (below). A user is the person chatting (their user id) in the
+  test chat, `telegram:<id>` in Telegram, `slack:<member id>` in Slack, `teams:<Entra object id>` in Teams, `workflow:<id>` from a
   workflow, and `schedule:<id>` for a schedule.
 
   What it remembers is stored as private brain facts (subject `agent-user`, `<agent id>/<user id>`, kind `memory`), so
@@ -516,12 +516,13 @@ absent from an agent without any). Publishing needs a model, and a persona part 
     is "not found". The tool is marked destructive.
   - **The bound.** A person has at most 1,000 live memories with one agent: past that the oldest non-static one is forgotten
     with reason `capacity` (audited as Landflow); static ones are never touched. The old cap of 50 sentences is gone.
-  - **Old notes.** The first time a database is used after the upgrade, every old `agent_memory` row (and, in files mode,
+  - **Old notes.** At boot, on the leader (and before the first read or write of memory, so a worker or a test sees it too), every old `agent_memory` row (and, in files mode,
     every `agent-memory/<agent>.json`) is imported as a non-static memory with its date; the ids are derived from the note,
     so a second run or a second process writes nothing. The old table stays, read-only, for one release.
+  - **Whose memory.** The person the run is for: a Landflow user in the test chat (their own id, not one shared pool), `slack:<member>`, `teams:<id>` and `telegram:<id>` in a channel (the author of the current message, so a shared thread or group recalls and writes for whoever is speaking), `workflow:<id>` and `schedule:<id>`. A sub-agent call (`agent:…`), a team run (`team:…`), an evaluation, a smoke test and kagent's own session user have none.
   - **What it recalled.** The run records the ids, versions and scores of what it was given (`saw.memory`, shown in What it
     saw and the Sessions tab), by the run's trace content mode: the sources on `summaries` and `full`, the exact block only on
-    `full`, nothing on `off` ([run-trace.md](run-trace.md#what-it-saw)). An evaluation run and an agent without the switch
+    `full` and only in the journal (the session record, which everyone who can read the session sees, keeps the sources, never the text), nothing on `off` ([run-trace.md](run-trace.md#what-it-saw)). An evaluation run and an agent without the switch
     read and write no memory; a team member's notebook is the team's ([team-notebook.md](team-notebook.md)).
   - **The memory card.** Abilities → Cross-session memory → **What it remembers** lists a person's memories (Static, the
     version, when it was said) with **Forget** (a reason is required) and **Restore** under the **Forgotten** chip. The

@@ -178,8 +178,8 @@ describe('T-2 the memory library', () => {
     expect(forgot.forgottenAt).toBeTruthy();
     expect(live(agent.id, 'u1')).toEqual([]);
     expect(memories.listAgentMemories(agent.id, 'u1', { limit: 10, forgotten: true }).items[0]).toMatchObject({ text: 'Mine', forgetReason: 'wrong' });
-    expect(() => memories.restoreAgentMemory(agent.id, 'u2', mine.item.id, 'u2')).toThrow(MemoryNotFoundError);
-    memories.restoreAgentMemory(agent.id, 'u1', mine.item.id, 'u1');
+    await expect(memories.restoreAgentMemory(agent.id, 'u2', mine.item.id, 'u2')).rejects.toBeInstanceOf(MemoryNotFoundError);
+    await memories.restoreAgentMemory(agent.id, 'u1', mine.item.id, 'u1');
     expect(live(agent.id, 'u1')).toHaveLength(1);
     expect(live(agent.id, 'u2')).toHaveLength(1);
   });

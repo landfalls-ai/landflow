@@ -147,6 +147,8 @@ async function answer(agent: Agent, version: number, channel: AgentChannel, cred
     return;
   }
   session ??= newSession(agent, { source: 'slack', userId: `slack:${event.user}`, version, conversationKey: key, title: text.slice(0, 80) });
+  // A thread is shared: this message's author is who memory recalls for and writes to, not whoever opened the thread (C09).
+  if (session.userId !== `slack:${event.user}`) session = { ...session, userId: `slack:${event.user}` };
   const result = await runAgent({ agent, session, message: text, approvals: 'ask', rootTrace: true });
   await deliver(agent, channel, threadPost(credential, chat, threadTs), chat, threadTs, result);
 }

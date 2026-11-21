@@ -189,6 +189,9 @@ export const SERVICES: ServiceSpec[] = [
   { name: 'publications', roles: MAIN, leader: true, start: ensurePublications },
   // AG21: agent versions are kept for the workflow versions that pin them; what is published now is pinned once, so nothing changes at the upgrade.
   { name: 'agent versions backfill', roles: MAIN, leader: true, start: async () => void (await (await import('./agents/versions')).backfillVersions()) },
+  // C09: the old agent_memory notes become facts once per database, before any run reads memory.
+  { name: 'agent memory import', roles: MAIN, leader: true, start: async () => void (await import('./agents/store')).agentStore.importMemories() },
+
   // LL05: Cap Raise Request (docs/llm-gateway.md#asking-for-a-higher-cap). A request starts its run on the process that took it, so not a leader service.
   { name: 'cap-raise trigger', roles: MAIN, start: startCapRaiseTrigger },
   // Projects: credentials and agents (files) and anything else without a project go to the owner's personal project.

@@ -10,9 +10,13 @@
 - Meaning search over an agent's memories lives in `agents/memory.ts`: the built-in memory backend searches an agent container by words only, so
   `memory.search` (MCP, nodes) over an agent container is still keywords.
 - The profile shows at most 50 static memories and the 10 newest others; a person with more static ones loses the oldest from the prompt (the cap is 4,000 characters anyway).
-- The test chat's user is "you", shared by everyone who chats with the agent there: those memories are the agent's editors' to see on the memory card.
+- The test chat remembers under the person's own user id; older test sessions that say "you" are continued as the person now chatting. Memories saved under "you" before this are editor-only on the memory card and no longer recalled.
   A person who may run an agent may also edit it (run and update are one right), so they can list and forget other people's memories of that agent.
 - An agent's write is Landflow's: it cannot replace a static memory (it forgets it and remembers the new one); only a person may.
+- The near-duplicate check (words, then the nearest embedding) and the write that follows are not one transaction: two `remember` calls for the same new fact at the same moment can both add it; the next study or a forget tidies it. The 1,000 bound is likewise checked after the add.
+- `forget_memory` on kagent acts at once; project Ask rules are not applied to the memory tools there (documented in a2a.md).
+- A kagent conversation's own store holds the first message's memory key for its 24 hours.
+- Telegram's shared-chat author fix has no test (no harness for it); Slack and Teams are tested in agent-channels.test.ts.
 - The thresholds (0.3 recall, 0.92 near-duplicate) are guesses; C11's playground shows scores to tune them.
 - With Ollama down the relevant part is by words and an embedding failure is left alone for a minute (process-local).
 
@@ -29,7 +33,7 @@ No new page.
 
 - `RunRequest.sawMemory` (sources) and `RunRequest.sawMemoryText` (their text, joined after the agent's own block in `saw.memoryText`): the team runtime's last task passes
   `sawMemory: [saw]` and `sawMemoryText: text` from `notebookBlockFor`.
-- `AgentSession.memory` / `memoryText` are set by the run by the trace content mode (`applyContent`): `full` both, `summaries` memory only, `off` neither.
+- `AgentSession.memory` is set by the run by the trace content mode (`applyContent`): `full` and `summaries` the sources, `off` none. `AgentSession.memoryText` is never set: the session record is readable by everyone with the agent's project, so the text is only in the journal span (`saw.memoryText`, on `full`).
 - P9 added the policy line (`kagent` untouched): `resourceAction` makes a non-read method under an agent's `memories` the `run` right. Two OpenAPI operations
   (`listAgentMemories`, `changeAgentMemory`) and two `api.md` rows are in; P11 adds its lines after them.
 - No SQL migration (2916 stays free).

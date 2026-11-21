@@ -125,6 +125,8 @@ async function answer(agent: Agent, version: number, channel: AgentChannel, cred
     return;
   }
   session ??= newSession(agent, { source: 'teams', userId, version, conversationKey: key, title: text.slice(0, 80) });
+  // A conversation is shared: this message's author is who memory recalls for and writes to, not whoever opened it (C09).
+  if (session.userId !== userId) session = { ...session, userId };
   agentStore.setChannelState(refKey(key), { serviceUrl: to.serviceUrl, conversationId: to.conversationId, ...(to.bot && { bot: { id: to.bot.id ?? null, name: to.bot.name ?? null } }) });
   const result = await runAgent({ agent, session, message: text, approvals: 'ask', rootTrace: true });
   await deliver(agent, channel, credential, to, result);

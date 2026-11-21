@@ -28,7 +28,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const userId = body.user ?? actor.id;
   if (userId !== actor.id && !canResource(actor, 'agent', id, 'update')) return error('Memory not found', 404);
   try {
-    const fact = body.action === 'forget' ? await forgetAgentMemory(id, userId, memoryId, body.reason, actor.id) : restoreAgentMemory(id, userId, memoryId, actor.id);
+    const fact = body.action === 'forget' ? await forgetAgentMemory(id, userId, memoryId, body.reason, actor.id) : await restoreAgentMemory(id, userId, memoryId, actor.id);
     return json({ item: viewOf(fact) });
   } catch (caught) {
     if (caught instanceof MemoryNotFoundError) return error('Memory not found', 404);

@@ -434,8 +434,9 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     });
     // The session record keeps what the run recalled by the same content rule as the journal (applyContent).
     const kept = sessionMemory(sawMem.memory ?? [], sawMem.memoryText, session.execution ? store.getWorkflow(session.execution.workflowId)?.settings?.traceContent : undefined);
+    // Only the sources (ids, versions, scores, a hash) stay on the session record: it is readable by everyone with the agent's project, the memory text is the owner's. The text is in the journal's span, on `full`.
     session.memory = kept.memory;
-    session.memoryText = kept.memoryText;
+    session.memoryText = undefined;
   }
   const userId = currentActorId();
   // The scope is created inside the run's context: it reads the run's own project and goal (not an outer run's).

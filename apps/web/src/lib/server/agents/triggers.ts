@@ -111,6 +111,9 @@ async function handleUpdate(agent: Agent, version: number, channel: AgentChannel
   // A conversation started on an older version moves to the current one.
   if (session && session.version !== version) session = { ...session, version };
   session ??= newSession(agent, { source: 'telegram', userId: `telegram:${update.from?.id ?? chatId}`, version, conversationKey: key });
+  // A group chat is shared: this message's author is who memory recalls for and writes to, not whoever opened it (C09).
+  const author = `telegram:${update.from?.id ?? chatId}`;
+  if (session.userId !== author) session = { ...session, userId: author };
   void callTelegram(agent, channel, TELEGRAM, { resource: 'message', operation: 'sendChatAction', chatId: String(chatId), action: 'typing' }).catch(() => {});
   const result = await runAgent({ agent, session, message: text, approvals: 'deny', rootTrace: true });
   const reply =

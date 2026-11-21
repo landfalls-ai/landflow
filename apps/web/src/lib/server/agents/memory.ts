@@ -26,6 +26,7 @@ import { forgetFact, indexFact, restoreFact } from '../brain/fact-lifecycle';
 import { envString, ollamaUrl } from '../config';
 import { database, type Database } from '../db';
 import { memory } from '../memory';
+import { agentStore } from './store';
 import { assertContainer } from '../memory/access';
 import { MemoryNotFoundError, MemoryWriteRefusedError, type MemoryCaller } from '../memory/backend';
 import { ollamaEmbeddings } from '../rag/embeddings';
@@ -214,6 +215,7 @@ async function relevantTo(agentId: string, userId: string, question: string, exc
  * that the profile does not already hold. A recall that fails to embed falls back to words and says nothing about it (FR-8).
  */
 export async function recallFor(agentId: string, userId: string, question: string | undefined): Promise<RecalledMemory> {
+  agentStore.importMemories(); // the old notes are facts before the first read
   const container = containerOf(agentId, userId);
   const caller = callerFor(agentId, userId);
   // The façade checks the container (this person, this agent) and records the span; the search itself reads the vectors (see the header).
@@ -259,6 +261,7 @@ export const countMemories = (agentId: string, userId: string): number => countL
 export async function rememberMemory(agentId: string, userId: string, input: RememberInput): Promise<{ item: MemoryItem; outcome: RememberOutcome; count: number }> {
   const text = input.fact.replace(/\s+/g, ' ').trim().slice(0, AGENT_MEMORY.factChars);
   if (!text) throw new MemoryWriteRefusedError('"fact" is empty: say what to remember in a sentence');
+  agentStore.importMemories();
   const container = containerOf(agentId, userId);
   const caller = callerFor(agentId, userId);
   const db = database();
@@ -268,7 +271,13 @@ export async function rememberMemory(agentId: string, userId: string, input: Rem
   if (input.replaces) {
     const target = resolveId(agentId, userId, input.replaces);
     try {
-      return done(await memory.add(container, { text, replaces: target, ...(input.static && { static: true }) }, caller), 'replaced');
+      let item = await memory.add(container, { text, replaces: target, ...(input.static && { static: true }) }, caller);
+      // A replace keeps what the old memory was; a `static` request on a plain one makes the new version static (the façade drops the flag on a replace).
+      if (input.static && !item.static) {
+        const latest = getFact(item.id, db);
+        if (latest) item = itemOf(upsertFact(latest, db, new Date().toISOString(), 'landflow', userId, { isStatic: true }));
+      }
+      return done(item, 'replaced');
     } catch (error) {
       // An agent's write is Landflow's, never a person's: it cannot rewrite a static memory (the person said it is always true).
       if (error instanceof StaticFactError) throw new MemoryWriteRefusedError('That memory is static, so it cannot be replaced. Forget it with forget_memory, then remember the new one.');
@@ -295,11 +304,12 @@ export async function rememberMemory(agentId: string, userId: string, input: Rem
 }
 
 /** Past the bound the oldest non-static memories are forgotten with reason `capacity`, audited as Landflow; static ones are never touched. */
-async function enforceBound(agentId: string, userId: string, db: Database): Promise<void> {
+async function enforceBound(agentId: string, userId: string, db: Database, keep?: string): Promise<void> {
   const subject = { subjectType: 'agent-user' as const, subjectId: subjectOf(agentId, userId) };
   const over = countLiveFacts(subject, { static: false }, db) - AGENT_MEMORY.max;
   if (over <= 0) return;
-  for (const fact of oldestLiveFacts(subject, over, db)) await forgetFact(fact.id, { reason: 'capacity' }, { userId: 'landflow' }, db);
+  const doomed = oldestLiveFacts(subject, over + (keep ? 1 : 0), db).filter((f) => f.id !== keep).slice(0, over);
+  for (const fact of doomed) await forgetFact(fact.id, { reason: 'capacity' }, { userId: 'landflow' }, db);
   logger.info('an agent memory passed its bound; the oldest were forgotten', { 'gen_ai.agent.id': agentId, count: over });
 }
 
@@ -310,11 +320,14 @@ export async function forgetAgentMemory(agentId: string, userId: string, id: str
 }
 
 /** Bring a forgotten memory of this person back. */
-export function restoreAgentMemory(agentId: string, userId: string, id: string, by: string): BrainFact {
+export async function restoreAgentMemory(agentId: string, userId: string, id: string, by: string): Promise<BrainFact> {
   const full = resolveId(agentId, userId, id);
   const fact = getFact(full, database(), { includeForgotten: true });
   if (!fact || fact.subjectType !== 'agent-user' || fact.subjectId !== subjectOf(agentId, userId) || fact.latest === false) throw new MemoryNotFoundError();
-  return restoreFact(fact.id, { userId: by }, database());
+  const restored = restoreFact(fact.id, { userId: by }, database());
+  // A restore can pass the bound (the oldest were forgotten to make room): the oldest go again, so 1,000 holds.
+  await enforceBound(agentId, userId, database(), fact.id);
+  return restored;
 }
 
 // ---------------------------------------------------------------------------

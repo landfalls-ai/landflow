@@ -33,7 +33,10 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   }
   if (session && (isRunning(session.id) || session.status === 'running')) return error('This session is still answering — wait for the reply', 409);
   if (session?.status === 'awaiting_approval') return error('Approve or deny the pending tool calls first', 409);
-  session ??= newSession(agent, { source: 'test', userId: 'you', version: 'draft' });
+  // C09: the test chat's memory is the person's own (their user id), not one pool shared by every editor; a session someone else opened continues as the person now chatting.
+  const chatter = currentActorId() ?? 'you';
+  session ??= newSession(agent, { source: 'test', userId: chatter, version: 'draft' });
+  if (session.userId !== chatter) session = { ...session, userId: chatter };
   const start = session;
   // A follow-up message stays in the project the test chat began in (a message that names another was refused above).
   const projectId = session.messages.length ? (session.context?.projectId ?? asked) : asked;

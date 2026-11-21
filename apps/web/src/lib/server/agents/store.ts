@@ -617,7 +617,8 @@ class AgentStore {
 
   /** The old notes are imported into the memory backend once per database, on first use (agents/memory.ts, C09 FR-6). */
   private importedMemories = false;
-  private importMemories() {
+  /** Public: the boot step, `recallFor` and `rememberMemory` call it, so no caller depends on `memories()` having run first. */
+  importMemories() {
     if (this.importedMemories) return;
     importOnce(database(), 'agent-memory-facts', () => importAgentMemories(database(), store.dir));
     this.importedMemories = true;

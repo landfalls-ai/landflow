@@ -15,8 +15,7 @@ import { hasMemoryUser } from '../agents/memory';
 
 const LABEL = 'agent-memory-key';
 export const MEMORY_KEY_TTL_MS = 24 * 3_600_000;
-/** What a memory key looks like, for scrubbing it out of anything that must not carry one. */
-export const MEMORY_KEY_PATTERN = /mk_[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{20,}/g;
+export { MEMORY_KEY_PATTERN } from './memory-scrub';
 
 const sign = (key: Buffer, payload: string) => createHmac('sha256', key).update(payload).digest('base64url');
 
@@ -40,7 +39,7 @@ export function openMemoryKey(key: unknown, agentId: string, now = Date.now()): 
   if (!valid) return undefined;
   try {
     const body = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { a?: unknown; u?: unknown; e?: unknown };
-    if (body.a !== agentId || typeof body.u !== 'string' || typeof body.e !== 'number' || body.e <= now || !hasMemoryUser(body.u)) return undefined;
+    if (body.a !== agentId || typeof body.u !== 'string' || typeof body.e !== 'number' || body.e <= now || body.e > now + MEMORY_KEY_TTL_MS + 60_000 || !hasMemoryUser(body.u)) return undefined;
     return { userId: body.u };
   } catch {
     return undefined;

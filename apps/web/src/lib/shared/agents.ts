@@ -907,7 +907,7 @@ export interface AgentSession {
   context?: RunContext;
   /** C09: the memories the last run recalled (ids, versions, scores; never the text), for the Sessions tab. */
   memory?: SawMemorySource[];
-  /** C09: the exact block, only when the run's trace content is `full` (the same rule as the journal's `saw.memoryText`). */
+  /** Never set on a session record (anyone who can read the session could read it): the exact block is the journal's `saw.memoryText`, on `full`. Kept for readers that expect the field. */
   memoryText?: string;
   createdAt: string;
   updatedAt: string;
