@@ -88,8 +88,8 @@ runs are read through the async seam), `config-catalog.test.ts` (every variable 
 ## 4. Docs
 
 In the same change: the feature's page under `docs/` (`docs/README.md` has the feature map), the route in
-`docs/reference/api.md`, `docs/limitations.md` and `docs/roadmap.md` when it adds or closes something, and a row at the
-end of the table in `docs/history.md` (`| (this change) | what changed, in plain words | [page](link) |`). A new page goes
+`docs/reference/api.md`, `docs/limitations.md` and `docs/roadmap.md` when it adds or closes something, and a history
+fragment in `docs/history.d/` (`| (this change) | what changed, in plain words | [page](link) |`; format in `docs/development.md#history-fragments`; never edit `docs/history.md` on a package branch, the integrator runs `pnpm history:assemble` once per wave). A new page goes
 in `docs/README.md`.
 
 ## 5. Check

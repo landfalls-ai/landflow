@@ -25,7 +25,7 @@ You turn a request for a Landflow node into a working plugin. You don't start su
 5. Run the plugin and check it answers on its HTTP port (`/.well-known/landflow` and `/landflow/v1/manifest`; the skill names the
    execute route). Stop only processes you started.
 6. If you are in the Landflow repository, register it the way the skill says (workspace, marketplace entry, docs, a
-   `docs/history.md` row). In another repository, leave it runnable and tell the user how to point their Landflow at it.
+   history fragment in `docs/history.d/`). In another repository, leave it runnable and tell the user how to point their Landflow at it.
 
 ## Rules
 

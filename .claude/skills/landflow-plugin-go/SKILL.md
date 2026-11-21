@@ -131,7 +131,7 @@ path differs.
 - [ ] `gofmt -l .` prints nothing, `go vet ./...` and `go test ./...` pass; if you touched `sdks/go`, run `go test ./...` there too.
 - [ ] The plugin starts, the manifest validates, one `execute` call returns the expected outputs (shown to the user).
 - [ ] No secret, personal data or real token in any file; credential fields are `Password`, a `baseUrl` is overridable.
-- [ ] Docs: the plugin's `README.md`, a row in `docs/history.md`, `docs/limitations.md` for what is not done, the feature map in
+- [ ] Docs: the plugin's `README.md`, a history fragment in `docs/history.d/` (never `docs/history.md`; see `docs/development.md#history-fragments`), `docs/limitations.md` for what is not done, the feature map in
   `docs/README.md` if it is a new page (`CLAUDE.md`, "Every change updates its docs").
 - [ ] You stopped every process you started and removed built binaries. Nothing was pushed or deployed.
 

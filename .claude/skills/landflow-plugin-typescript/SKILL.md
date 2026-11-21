@@ -132,7 +132,7 @@ Never touch `apps/web/.data` or other people's containers.
 - [ ] `pnpm --filter @landflow/plugin-<id> test` and `typecheck` pass; `pnpm test` still passes if you touched shared code.
 - [ ] The plugin starts, the manifest validates, one `execute` call returns the expected outputs (shown to the user).
 - [ ] No secret, personal data or real token in any file; credential fields are `password`, a `baseUrl` is overridable.
-- [ ] Docs: the plugin's `README.md`, a row in `docs/history.md`, `docs/limitations.md` for what is not done, the feature map in
+- [ ] Docs: the plugin's `README.md`, a history fragment in `docs/history.d/` (never `docs/history.md`; see `docs/development.md#history-fragments`), `docs/limitations.md` for what is not done, the feature map in
   `docs/README.md` if it is a new page (`CLAUDE.md`, "Every change updates its docs").
 - [ ] You stopped every process you started. Nothing was pushed or deployed.
 
