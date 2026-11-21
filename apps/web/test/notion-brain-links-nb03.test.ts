@@ -162,7 +162,8 @@ describe('the tables', () => {
       expect(partial.sql).toContain("WHERE status <> 'unlinked'");
     }
     expect(TABLES).toMatchObject({ notion_brain_links: ['id'], notion_brain_items: ['link_id', 'kind', 'local_key'], notion_brain_outbox: ['link_id', 'kind', 'local_key'], notion_brain_problems: ['id'], notion_knowledge_docs: ['link_id', 'page_id'] });
-    expect(MIGRATIONS.filter((m) => m.version > 2907).map((m) => m.version)).toEqual([2908, 2909, 2910, 2911]);
+    // Later work adds its own (2912-2913: fact versions and forgetting); this test is about NB03's four.
+    expect(MIGRATIONS.filter((m) => m.version > 2907 && m.version <= 2911).map((m) => m.version)).toEqual([2908, 2909, 2910, 2911]);
   });
 });
 

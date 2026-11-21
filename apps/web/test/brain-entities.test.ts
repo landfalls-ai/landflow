@@ -218,6 +218,21 @@ describe('the Entity node', () => {
     await expect(runOk(brainEntityNode, { operation: 'get', type: 'system', entityId: id })).rejects.toThrow(/No system/);
   });
 
+  it('C01: adds a static fact, a linked fact and a forget-after through the node and the library', async () => {
+    asker();
+    const made = (await runOk(brainEntityNode, { operation: 'upsert', type: 'system', entityId: 'ledger', name: 'Ledger', description: '', owner: '', attributes: '{}' })).json()[0] as any;
+    const id = made.entity.id;
+    const first = (await runOk(brainEntityNode, { operation: 'addFact', type: 'system', entityId: id, factKind: 'purpose', statement: 'Holds the books', factStatic: true })).json()[0] as any;
+    expect(first.fact).toMatchObject({ static: true, version: 1 });
+    const linked = (await runOk(brainEntityNode, { operation: 'addFact', type: 'system', entityId: id, factKind: 'dependency', statement: 'Feeds the report', linkedFactId: first.fact.id, factLink: 'derives' })).json()[0] as any;
+    expect(linked.fact).toMatchObject({ parentId: first.fact.id, relation: 'derives', version: 1, rootId: linked.fact.id });
+    await expect(runOk(brainEntityNode, { operation: 'addFact', type: 'system', entityId: id, factKind: 'dependency', statement: 'x', linkedFactId: 'workflow:nope:health' })).rejects.toThrow(/No fact/);
+    const entity = entities.getEntity('system', id)!;
+    const soon = new Date(Date.now() + 3_600_000).toISOString();
+    expect(entities.addEntityFact(entity, { kind: 'health', statement: 'Short lived', forgetAfter: soon }).forgetAfter).toBe(soon);
+    expect(() => entities.addEntityFact(entity, { kind: 'health', statement: 'Too soon', forgetAfter: new Date(Date.now() + 1_000).toISOString() })).toThrow(/forgetAfter/);
+  });
+
   it('does not see or change entities of projects its creator cannot open', async () => {
     asker();
     seed();

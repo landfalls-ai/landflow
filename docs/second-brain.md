@@ -91,6 +91,49 @@ attributes.
   projects go in `landflow-brain`.
 - Search (`GET /api/brain/facts?q=`, the Landflow Usage node, the analyst) fuses keyword (BM25) and vector hits.
 
+#### Fact versions
+
+A fact is a chain of versions, so a reworded fact keeps what it said before (`apps/web/src/lib/server/brain/facts.ts`).
+
+- **The id a caller knows names the latest version.** A fact keeps its id (`workflow:w1:health`, or an entity fact's
+  `entity:customer/acme:purpose:fact_…`). When the study, a suggestion, a person or Notion writes a different statement for it,
+  the old row is copied to `<id>#v<n>` (not latest) and the id row becomes version n+1. Same words (spacing and case ignored):
+  nothing new, only `last_seen`, confidence and evidence move. Every version's `root_id` is the chain id, and `parent_id` is the
+  version before it; each row says who or what wrote it (`writtenBy`).
+- **Reads see the latest live version only**: the list, the search, the Ask prompt, the MCP `brain_search_facts` tool, the
+  Landflow Usage node, the Brain page and the Notion copy. The latest, not-forgotten, not-past-its-forget-after rule is in the
+  SQL (`LIVE_FACT`), so a long history never reaches memory. `?history=1` on `GET /api/brain/facts` adds the old versions.
+- **History**: `GET /api/brain/facts/:id/versions` (the id URL-encoded: entity fact ids hold `/`) lists the chain oldest first
+  with the same visibility rule as the fact (404 when you may not see it; the versions of a forgotten fact only for people who
+  may restore it); the Brain page's **History** button opens it.
+- **At most 50 versions.** A chain keeps its first version and its newest 49; the oldest one past that is deleted with its row.
+- **Static facts.** A fact added with `isStatic` (the Add Fact node's **Static**, the facts route's `isStatic`) never goes stale
+  and the study, a suggestion's outcome and any other synchronous write leave it unchanged (logging `brain fact is static` with its id). A person's edit (Notion's pull of a person's own fact, `supersedeFact` with
+  `replaceStatic`) changes it as a new version.
+- **Relations.** `parentId` with `relation: 'extends'` or `'derives'` on `POST /api/entities/:type/:id/facts` (the node's
+  **Linked Fact ID** and **Link**) starts a new chain whose `parent_id` is the linked fact; only `updates` moves a chain forward.
+  The linked fact must be one the caller can read (404 otherwise).
+- **Supersede for a person or an agent** (`supersedeFact`, `brain/fact-lifecycle.ts`) is all or nothing: the embedding is made
+  first (an unreachable model answers 503 `MemoryIndexError` and writes nothing), then both rows go in one transaction (in
+  Postgres one conditional write: of two writers of the same version one wins and the other gets 409 `StaleChainError`), then
+  the vector, under the chain id. The study keeps its own batch: it writes rows and rebuilds the vectors once at its end.
+
+#### Forgetting a fact
+
+**Forget** (Brain page, `POST /api/brain/facts/:id/forget { reason, forgetAfter? }`) removes the latest version of a fact from
+recall without deleting it: it leaves every list, search, prompt block and MCP tool, its vector is dropped, and the row stays
+with the reason (1 to 500 characters, required), who and when. **Restore** (`POST …/restore`, the **Forgotten** list on the Brain
+page) brings it back. Both are audited (`brain.fact_forgotten`, `brain.fact_restored`, with the reason and from/to) and need
+editor access to the fact's subject (a workflow, an agent or an entity's project; owners and admins for node types, credentials and
+the instance); a caller who cannot see the fact gets 404.
+
+- **Forget after.** An ISO time a minute to five years ahead (`forgetAfter`, also on a new entity fact): from then on every read
+  leaves the fact out, with no sweep. With it, **Forget** only sets that time.
+- A forgotten fact stays forgotten when the study writes it again (a reworded statement still becomes a new version of it);
+  restoring brings the current version back. A past version never becomes the latest again.
+- A forgotten fact leaves the Notion copy: the next push trashes its row, and a restore writes it back as a new row. Restoring a fact that is not forgotten answers 409.
+- The reason is a person's words: the audit log keeps it, and it comes back only in the forgotten list and an editor's history, never in a search, an MCP tool, the Usage node or a prompt (a live fact with a forget-after pending does not carry it either).
+
 ### 3. The loop
 
 The leader runs the brain (`leaderService('second brain')`). Every `LANDFLOW_BRAIN_INTERVAL_MINUTES` (60) it:

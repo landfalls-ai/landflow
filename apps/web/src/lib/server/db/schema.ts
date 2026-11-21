@@ -1986,6 +1986,38 @@ export const MIGRATIONS: Migration[] = [
       `CREATE TABLE IF NOT EXISTS notion_knowledge_docs (link_id TEXT NOT NULL, page_id TEXT NOT NULL, title TEXT, url TEXT, path TEXT, edited_at TEXT, hash TEXT, markdown TEXT, truncated BIGINT NOT NULL DEFAULT 0, PRIMARY KEY (link_id, page_id))`,
     ],
   },
+  // C01: a brain fact is a chain of versions (docs/second-brain.md#fact-versions). The chain id keeps naming the latest row.
+  {
+    version: 2912,
+    name: 'brain_fact_versions',
+    addColumns: [
+      { table: 'brain_facts', column: 'version', definition: 'BIGINT NOT NULL DEFAULT 1' },
+      { table: 'brain_facts', column: 'is_latest', definition: 'BIGINT NOT NULL DEFAULT 1' },
+      { table: 'brain_facts', column: 'parent_id', definition: 'TEXT' },
+      { table: 'brain_facts', column: 'root_id', definition: 'TEXT' },
+      { table: 'brain_facts', column: 'is_static', definition: 'BIGINT NOT NULL DEFAULT 0' },
+      { table: 'brain_facts', column: 'relation', definition: 'TEXT' },
+    ],
+    statements: [
+      // Every fact written before this is version 1 of a chain of its own.
+      `UPDATE brain_facts SET root_id = id WHERE root_id IS NULL`,
+      `CREATE INDEX IF NOT EXISTS brain_facts_chain ON brain_facts (root_id, version)`,
+      `CREATE INDEX IF NOT EXISTS brain_facts_latest ON brain_facts (is_latest, status)`,
+    ],
+  },
+  // C02: forgetting facts and notes softly (docs/second-brain.md#forgetting-a-fact, docs/team-notebook.md#forgetting-a-note)
+  {
+    version: 2913,
+    name: 'brain_forget',
+    addColumns: [
+      ...['forgotten_at', 'forget_reason', 'forgotten_by', 'forget_after'].map((column) => ({ table: 'brain_facts', column, definition: 'TEXT' })),
+      ...['forgotten_at', 'forget_reason', 'forgotten_by'].map((column) => ({ table: 'team_notes', column, definition: 'TEXT' })),
+    ],
+    statements: [
+      `CREATE INDEX IF NOT EXISTS brain_facts_forget_after ON brain_facts (forget_after)`,
+      `CREATE INDEX IF NOT EXISTS team_notes_forgotten ON team_notes (forgotten_at)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */

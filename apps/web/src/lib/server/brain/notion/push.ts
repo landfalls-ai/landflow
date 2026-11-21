@@ -44,7 +44,7 @@ export function localKeys(link: LinkRow): Record<ItemKind, string[]> {
     entity: listEntities({ projectId: link.project_id, limit: 1_000_000 }).map((e) => entityKey(e)),
     fact: listFacts({ status: 'active', limit: 1_000_000 }).filter((f) => f.projectId === link.project_id).map((f) => f.id),
     practice: listPractices({ projectId: link.project_id, status: ['draft', 'approved'], limit: 1_000_000 }).map((p) => p.id),
-    note: db.all<{ id: string }>("SELECT id FROM team_notes WHERE project_id = ? AND scope = 'project' ORDER BY created_at, id", link.project_id).map((r) => r.id),
+    note: db.all<{ id: string }>("SELECT id FROM team_notes WHERE project_id = ? AND scope = 'project' AND forgotten_at IS NULL ORDER BY created_at, id", link.project_id).map((r) => r.id),
   };
 }
 
@@ -67,7 +67,8 @@ export function loadRendered(kind: ItemKind, key: string, env: PushEnv, hasItem:
     return practice.status !== 'retired' || hasItem ? renderPractice(practice) : undefined;
   }
   const note = noteStore.get(key);
-  return note && note.scope === 'project' && note.projectId === link.project_id ? renderNote(note) : undefined;
+  // C02: a forgotten note leaves the copy (the push trashes its row), like a forgotten fact.
+  return note && !note.forgottenAt && note.scope === 'project' && note.projectId === link.project_id ? renderNote(note) : undefined;
 }
 
 // ---------------------------------------------------------------------------------------------------- rows

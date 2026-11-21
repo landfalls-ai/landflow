@@ -313,6 +313,23 @@ describe('practices, notes and the switch', () => {
     expect(sync.splitBody(after).notes).toBe('');
   });
 
+  it('C02: a forgotten fact’s row is trashed, and restoring it writes a new row', async () => {
+    const entity = entities.getEntity('customer', 'lumen-health')!;
+    const fact = asPerson(() => entities.addEntityFact(entity, { kind: 'cost', statement: 'Costs more than planned' }));
+    await settle();
+    const row = rowOf('fact', fact.id);
+    const { forgetFact, restoreFact } = await import('@/lib/server/brain/fact-lifecycle');
+    await asPerson(() => forgetFact(fact.id, { reason: 'Wrong' }, { userId: 'usr_t' }));
+    await settle();
+    expect(fake.state.pages.get(row)!.inTrash).toBe(true);
+    expect(sync.itemOf(linkId, 'fact', fact.id)).toBeUndefined();
+    asPerson(() => restoreFact(fact.id, { userId: 'usr_t' }));
+    await settle();
+    const back = rowOf('fact', fact.id);
+    expect(back).not.toBe(row);
+    expect(fake.value(back, 'Statement')).toBe('Costs more than planned');
+  });
+
   it('pushes a note, and a status change of it', async () => {
     const note = seed.projectNotes[0];
     const row = rowOf('note', note.id);
@@ -321,6 +338,19 @@ describe('practices, notes and the switch', () => {
     sync.enqueue(linkId, 'note', note.id);
     await settle();
     expect(fake.value(row, 'Status')).toBe('verified');
+  });
+
+  it('C02: a forgotten project note leaves the copy, and restoring it writes a row back', async () => {
+    const note = seed.projectNotes[0];
+    const { forgetNote, restoreNote } = await import('@/lib/server/notebook/lifecycle');
+    forgetNote(note.teamId, note.id, { reason: 'Not true' }, 'Tester');
+    await settle();
+    expect(sync.itemOf(linkId, 'note', note.id)).toBeUndefined();
+    restoreNote(note.teamId, note.id, 'Tester');
+    sync.enqueue(linkId, 'note', note.id);
+    await settle();
+    expect(sync.itemOf(linkId, 'note', note.id)).toBeDefined();
+    expect(fake.value(rowOf('note', note.id), 'Status')).toBeDefined();
   });
 
   it('LANDFLOW_NOTION_BRAIN=off: ten ticks make no request, the outbox still fills, and switching it on pushes what changed', async () => {
