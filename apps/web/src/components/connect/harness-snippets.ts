@@ -1,21 +1,20 @@
 /**
  * The setup text for each harness (pure: no React, no zod, so the page and its tests share it). `snippetFor` gives the
  * text to paste for Claude Code, Cursor, Codex CLI, Gemini CLI, VS Code or any MCP client; the key goes in once per
- * snippet, or a placeholder until one is made. `harnessKeyBody` is the body of the `POST /api/api-keys` the page sends.
+ * snippet, or a placeholder until one is made. The harness list and its words come from the registry
+ * (`@landflow/protocol/harnesses`, C15); `hookSnippetFor` is the live-status hooks block (C04). `harnessKeyBody` is the body of the `POST /api/api-keys` the page sends.
  */
+import { CONNECT_HARNESS_IDS, harnessById, sendsEvents } from '@landflow/protocol/harnesses';
 import type { ApiKeyScope } from '@/lib/shared/auth';
 
-export const HARNESS_IDS = ['claude-code', 'cursor', 'codex', 'gemini', 'vscode', 'generic'] as const;
-export type HarnessId = (typeof HARNESS_IDS)[number];
+export const HARNESS_IDS = CONNECT_HARNESS_IDS;
+export type HarnessId = (typeof CONNECT_HARNESS_IDS)[number];
 
-export const HARNESSES: readonly { id: HarnessId; label: string; hint: string }[] = [
-  { id: 'claude-code', label: 'Claude Code', hint: 'A .mcp.json entry, or one command, and the brain mod' },
-  { id: 'cursor', label: 'Cursor', hint: '.cursor/mcp.json' },
-  { id: 'codex', label: 'Codex CLI', hint: '~/.codex/config.toml' },
-  { id: 'gemini', label: 'Gemini CLI', hint: '~/.gemini/settings.json' },
-  { id: 'vscode', label: 'VS Code', hint: '.vscode/mcp.json' },
-  { id: 'generic', label: 'Any MCP client', hint: 'The URL and the header' },
-];
+/** What `/connect` lists: the registry's entries for the ids it has setup text for, in its order. */
+export const HARNESSES: readonly { id: HarnessId; label: string; hint: string }[] = CONNECT_HARNESS_IDS.map((id) => {
+  const entry = harnessById(id);
+  return { id, label: entry?.label ?? id, hint: entry?.hint ?? '' };
+});
 
 /** What the shown token stands in for until a key is made. */
 export const KEY_PLACEHOLDER = '<your-key>';
@@ -84,11 +83,36 @@ export const WORKFLOW_SCOPES: readonly { scope: ApiKeyScope; label: string }[] =
   { scope: 'run', label: 'Run' },
 ];
 
-/** The body of the key request: the brain scopes, the chosen workflow ones, 90 days unless told otherwise. */
+/** The scope that lets a key send live status, offered only for a harness that sends events (C04). */
+export const STATUS_SCOPE: { scope: ApiKeyScope; label: string } = { scope: 'harness:write', label: 'Send live status' };
+
+/** Whether `/connect` has a live-status step for the harness: the registry says it sends events. */
+export function sendsStatus(harness: HarnessId): boolean {
+  const entry = harnessById(harness);
+  return Boolean(entry && sendsEvents(entry));
+}
+
+/** The body of the key request: the brain scopes, the chosen workflow ones (and live status, for a harness that sends it), 90 days unless told otherwise. */
 export function harnessKeyBody(harness: HarnessId, workflowScopes: readonly ApiKeyScope[] = [], expiresInDays = 90) {
   const label = HARNESSES.find((h) => h.id === harness)?.label ?? harness;
-  const scopes: ApiKeyScope[] = ['brain:read', 'brain:write', ...workflowScopes.filter((s) => s !== 'brain:read' && s !== 'brain:write')];
+  const scopes: ApiKeyScope[] = ['brain:read', 'brain:write', ...workflowScopes.filter((s) => s !== 'brain:read' && s !== 'brain:write' && (s !== STATUS_SCOPE.scope || sendsStatus(harness)))];
   return { label: `Harness · ${label}`, scopes: [...new Set(scopes)], ...(expiresInDays > 0 && { expiresInDays }) };
+}
+
+/**
+ * The Claude Code `settings.json` block that reports status (C04): one command hook per event the registry lists. Each
+ * runs `curl` with the key, a per-process counter in the `X-Landflow-Hook-Seq` header (events arrive on separate
+ * connections, so they carry their own order) and `--max-time 2` so Claude Code never waits. The hook body is the
+ * event's JSON on stdin; Landflow keeps status and counts, never prompt text (docs/connect-your-harness.md).
+ */
+export function hookSnippetFor({ url, token }: SnippetInput): Snippet {
+  const entry = harnessById('claude-code');
+  const target = `${originOf(url)}/api/harness/claude-code/hooks`;
+  const key = token ?? KEY_PLACEHOLDER;
+  const counter = 'f="${TMPDIR:-/tmp}/landflow-hook-$PPID"; n=$(( $(cat "$f" 2>/dev/null || echo 0) + 1 )); echo $n > "$f"';
+  const command = `${counter}; curl -s --max-time 2 -X POST ${target} -H "Authorization: ${bearer(key)}" -H "Content-Type: application/json" -H "X-Landflow-Hook-Seq: $n" --data-binary @- >/dev/null 2>&1 || true`;
+  const hooks = Object.fromEntries(Object.keys(entry?.hookEvents ?? {}).map((event) => [event, [{ hooks: [{ type: 'command', command }] }]]));
+  return { label: 'Live status hooks', where: 'Merge into .claude/settings.json in your project, or ~/.claude/settings.json for every project (do not commit it: it holds your key)', language: 'json', text: json({ hooks }) };
 }
 
 /** The `tools/list` request that tests a key. */

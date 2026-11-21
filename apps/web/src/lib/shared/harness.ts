@@ -40,3 +40,42 @@ export const HARNESS_STATUS_LABELS: Record<HarnessStatus, string> = {
 
 /** The bus event's payload channel name (docs/harnesses.md#live-status). */
 export const HARNESS_CHANNEL = 'harness';
+
+/** The chip's words: a stale session (no event for 30 minutes) reads "Idle (stale)", whatever its last status was. */
+export function harnessChipLabel(session: Pick<HarnessSessionView, 'status' | 'stale'>): string {
+  return session.stale && session.status !== 'ended' ? 'Idle (stale)' : HARNESS_STATUS_LABELS[session.status];
+}
+
+export type HarnessChipTone = 'accent' | 'warning' | 'danger' | 'muted';
+
+/** Its colour: busy is the accent, waiting and blocked ask for a person, error is red, idle and ended are quiet. */
+export function harnessChipTone(session: Pick<HarnessSessionView, 'status' | 'stale'>): HarnessChipTone {
+  if (session.stale) return 'muted';
+  switch (session.status) {
+    case 'thinking':
+    case 'working':
+    case 'compacting':
+      return 'accent';
+    case 'waiting':
+    case 'blocked':
+      return 'warning';
+    case 'error':
+      return 'danger';
+    default:
+      return 'muted';
+  }
+}
+
+/** The open sessions after a live event: the session replaces its old row (or joins), a closed or ended one leaves, newest event first. */
+export function mergeHarnessSession(list: readonly HarnessSessionView[], session: HarnessSessionView): HarnessSessionView[] {
+  const rest = list.filter((s) => s.id !== session.id);
+  if (session.closedAt || session.status === 'ended') return rest;
+  return [session, ...rest].sort((a, b) => b.lastEventAt.localeCompare(a.lastEventAt));
+}
+
+/** Each agent's newest open session, for the Agents page (the list is newest first). */
+export function newestByAgent(list: readonly HarnessSessionView[]): Map<string, HarnessSessionView> {
+  const out = new Map<string, HarnessSessionView>();
+  for (const s of list) if (s.agentId && !s.closedAt && !out.has(s.agentId)) out.set(s.agentId, s);
+  return out;
+}

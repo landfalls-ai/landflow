@@ -6,8 +6,11 @@ import { api } from '@/lib/client/api';
 import { Copy, Download, ExternalLink, MoreHorizontal, Sparkles } from 'lucide-react';
 import { askAbout, askDetail } from '@/lib/client/ask-about';
 import type { AgentSummary } from '@/lib/shared/agents';
+import { harnessChipLabel, harnessChipTone, type HarnessSessionView } from '@/lib/shared/harness';
+import { timeAgo } from '@/lib/client/format';
 import { AgentAvatar } from './avatar';
 import { Badge } from '../ui/badge';
+import { BrandGlyph } from '../ui/icon';
 import { Button } from '../ui/button';
 import { MenuItem, Popover } from '../ui/popover';
 import { availabilityLabel, ownershipOfSummary, sharedFromLabel, type AvailabilityAnswer } from './project-names';
@@ -31,7 +34,8 @@ function useAvailability(agentId: string): AvailabilityAnswer | undefined {
   return answer;
 }
 
-export function AgentCard({ agent, index = 0, onSave, onExport }: { agent: AgentSummary; index?: number; onSave: () => void; onExport: () => void }) {
+/** `harnessStatus`: the agent's newest open Claude Code session (docs/harnesses.md#live-status), shown as a chip with the time of its last change. */
+export function AgentCard({ agent, index = 0, onSave, onExport, harnessStatus }: { agent: AgentSummary; index?: number; onSave: () => void; onExport: () => void; harnessStatus?: HarnessSessionView }) {
   const about = agent.description || agent.role;
   const where = availabilityLabel(useAvailability(agent.id));
   const shared = sharedFromLabel(ownershipOfSummary(agent));
@@ -91,6 +95,11 @@ export function AgentCard({ agent, index = 0, onSave, onExport }: { agent: Agent
       <div className="mt-auto flex flex-wrap items-center gap-1.5">
         {agent.publishedVersion ? <Badge tone="success">Published v{agent.publishedVersion}</Badge> : <Badge tone="muted">Draft</Badge>}
         {agent.publishedVersion && agent.draftChanged && <Badge tone="warning">Changes not published</Badge>}
+        {harnessStatus && (
+          <Badge tone={harnessChipTone(harnessStatus)} title={`Claude Code session, changed ${timeAgo(harnessStatus.changedAt)}`} className={harnessStatus.status === 'working' || harnessStatus.status === 'thinking' ? 'animate-pulse-soft' : undefined}>
+            <BrandGlyph brand="claude" size={11} /> {harnessChipLabel(harnessStatus)} · {timeAgo(harnessStatus.changedAt)}
+          </Badge>
+        )}
       </div>
       {(shared || where) && (
         <p className="truncate text-[12px] text-t3" title={shared ?? `Available in ${where}`}>

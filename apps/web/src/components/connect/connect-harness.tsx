@@ -14,7 +14,10 @@ import { Card } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { CopyButton } from '@/components/ui/copy-button';
 import { FieldLabel, Select } from '@/components/ui/inputs';
-import { HARNESSES, TOOLS_LIST_REQUEST, WORKFLOW_SCOPES, harnessKeyBody, snippetFor, toolNames, type HarnessId, type Snippet } from './harness-snippets';
+import { HARNESSES, STATUS_SCOPE, TOOLS_LIST_REQUEST, WORKFLOW_SCOPES, harnessKeyBody, hookSnippetFor, sendsStatus, snippetFor, toolNames, type HarnessId, type Snippet } from './harness-snippets';
+import { YourSessions } from './your-sessions';
+import { mergeHarnessSession, type HarnessSessionView } from '@/lib/shared/harness';
+import { useLiveEvents } from '@/lib/client/live';
 
 const EXPIRY = [
   { days: 30, label: '30 days' },
@@ -47,7 +50,7 @@ function SnippetBox({ snippet }: { snippet: Snippet }) {
 }
 
 /** What the page needs, so a test can render it without a host. */
-export function ConnectSteps({ harness, onHarness, scopes, onScopes, days, onDays, onMake, making, token, mcpUrl, test, onTest, testing }: {
+export function ConnectSteps({ harness, onHarness, scopes, onScopes, days, onDays, onMake, making, token, mcpUrl, test, onTest, testing, sessions }: {
   harness: HarnessId;
   onHarness: (id: HarnessId) => void;
   scopes: ApiKeyScope[];
@@ -61,9 +64,14 @@ export function ConnectSteps({ harness, onHarness, scopes, onScopes, days, onDay
   test?: { ok: boolean; message: string };
   onTest: () => void;
   testing: boolean;
+  /** The person's own open Claude Code sessions (live status step). */
+  sessions?: HarnessSessionView[];
 }) {
   const toggle = (scope: ApiKeyScope) => onScopes(scopes.includes(scope) ? scopes.filter((s) => s !== scope) : [...scopes, scope]);
-  const snippets = snippetFor(harness, { url: mcpUrl, ...(token && { token }) });
+  const input = { url: mcpUrl, ...(token && { token }) };
+  const snippets = snippetFor(harness, input);
+  const status = sendsStatus(harness);
+  const scopeOptions = status ? [...WORKFLOW_SCOPES, STATUS_SCOPE] : WORKFLOW_SCOPES;
   return (
     <div className="space-y-6">
       <section aria-label="Pick your harness">
@@ -97,7 +105,7 @@ export function ConnectSteps({ harness, onHarness, scopes, onScopes, days, onDay
                   <span className="block text-[11px] text-t3">Read your briefing, ask, and record your work</span>
                 </span>
               </label>
-              {WORKFLOW_SCOPES.map(({ scope, label }) => (
+              {scopeOptions.map(({ scope, label }) => (
                 <label key={scope} className={cn('flex min-h-11 cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-2', scopes.includes(scope) ? 'border-acbd bg-acdim' : 'border-hair hover:bg-sf2')}>
                   <input type="checkbox" checked={scopes.includes(scope)} onChange={() => toggle(scope)} className="mt-0.5" aria-label={label} />
                   <span className="min-w-0">
@@ -147,6 +155,22 @@ export function ConnectSteps({ harness, onHarness, scopes, onScopes, days, onDay
           </div>
         </Card>
       </section>
+
+      {status && (
+        <section aria-label="Live status">
+          <StepTitle n={4}>Live status (optional)</StepTitle>
+          <Card className="space-y-4 px-5 py-4">
+            <p className="text-[12px] text-t2">
+              Claude Code can tell Landflow when it is thinking, working or waiting for you. Landflow keeps the status, the time and counts of prompts and tool calls, never what you typed or what a tool returned. The key needs “{STATUS_SCOPE.label}” ticked in step 2.
+            </p>
+            <SnippetBox snippet={hookSnippetFor(input)} />
+            <div>
+              <h3 className="mb-1.5 text-[12px] font-semibold text-t2">Your sessions</h3>
+              <YourSessions sessions={sessions} />
+            </div>
+          </Card>
+        </section>
+      )}
     </div>
   );
 }
@@ -161,6 +185,17 @@ export function ConnectHarness() {
   const [test, setTest] = useState<{ ok: boolean; message: string }>();
   const [origin, setOrigin] = useState('http://localhost:3000');
   useEffect(() => setOrigin(window.location.origin), []);
+  const [sessions, setSessions] = useState<HarnessSessionView[]>();
+  // The person's own open sessions: read once when the harness sends status, then kept current by `harness` events.
+  useEffect(() => {
+    if (!sendsStatus(harness)) return;
+    api<{ sessions: HarnessSessionView[] }>('/api/harness/sessions?open=1&limit=50', { background: true })
+      .then((r) => setSessions(r.sessions.filter((x) => !x.agentId)))
+      .catch(() => setSessions([]));
+  }, [harness]);
+  useLiveEvents((event) => {
+    if (event.channel === 'harness' && !event.session.agentId) setSessions((list) => mergeHarnessSession(list ?? [], event.session));
+  });
 
   const make = async () => {
     setMaking(true);
@@ -206,6 +241,6 @@ export function ConnectHarness() {
     }
   };
 
-  return <ConnectSteps harness={harness} onHarness={setHarness} scopes={scopes} onScopes={setScopes} days={days} onDays={setDays} onMake={() => void make()} making={making} token={token} mcpUrl={`${origin}/api/mcp`} test={test} onTest={() => void runTest()} testing={testing} />;
+  return <ConnectSteps harness={harness} onHarness={setHarness} scopes={scopes} onScopes={setScopes} days={days} onDays={setDays} onMake={() => void make()} making={making} token={token} mcpUrl={`${origin}/api/mcp`} test={test} onTest={() => void runTest()} testing={testing} sessions={sessions} />;
 }
 

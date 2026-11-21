@@ -1,6 +1,6 @@
 # Harnesses: running Landflow agents in Claude Code and other coding agents (plan)
 
-Status: **plan**. The phase 0 spike is done (results below); nothing is built in the app yet. The
+Status: **plan**, with one part built: [live status](#live-status) (Claude Code hooks, the harness registry and `landflow harness detect`). The phase 0 spike is done (results below); the rest is not built in the app yet. The
 goal is to take an agent built in Landflow (instructions, skills, tools, approvals, memory) and
 run it inside a *harness*: an agent runtime with its own loop and tools, such as Claude Code,
 where it can read and edit code, run commands and use Landflow's integrations.
@@ -238,16 +238,9 @@ Sessions show harness tool calls and diffs.
 
 ### 5. Hooks and observability
 
-- **Hooks (phase 2).** The bundle adds HTTP hooks to `/api/harness/claude-code/hooks`, with the
-  token in an `Authorization: Bearer $LANDFLOW_TOKEN` header (`allowedEnvVars: ["LANDFLOW_TOKEN"]`).
-  `session_id` keys a Landflow session (source `harness`):
-  - `UserPromptSubmit` → a user entry;
-  - `PostToolUse` → tool entries for Claude Code's own tools;
-  - `Stop` → the assistant entry (`last_assistant_message`);
-  - `SessionStart` → the remembered facts as `additionalContext`. Check whether an HTTP hook's JSON
-    response is honored. Otherwise use a command hook that runs `curl`.
-  - The first `PostToolUse` of an `mcp__plugin_landflow-…` tool carries the same `tool_use_id`
-    as the MCP call's `_meta`. That links the MCP session to the Claude Code session.
+- **Hooks.** Status from Claude Code's hooks is built: see [Live status](#live-status). Phase 2 still adds the
+  bundle's own hooks that mirror prompts and replies into the agent's Sessions and bring remembered facts back as
+  `additionalContext` at `SessionStart`.
 - **Direction A telemetry:**
   - Each MCP request is an `mcp.request` span (`mcp.method.name`, `mcp.session.id`, `landflow.agent.id`).
   - Each call is the existing `execute_tool {tool}` span, with `gen_ai.tool.call.id` = Claude Code's
@@ -261,6 +254,34 @@ Sessions show harness tool calls and diffs.
 - **Metrics:** the `landflow.agent.*` metrics get a `landflow.agent.harness` attribute. Claude
   Code's `claude_code.token.usage` / `cost.usage` carry the agent id. Cost is only meaningful for
   Claude models.
+
+### Live status
+
+Built (specs C04 and C15). Claude Code can report what it is doing, and Landflow shows it as a chip on the agent's card,
+in the agent's Sessions and, for your own sessions, on `/connect`.
+
+- **The registry.** `@landflow/protocol/harnesses` (`packages/protocol/src/harnesses.ts`) is the one list of harnesses: id,
+  label, how to detect it (binaries, config files), where its MCP config goes, how Landflow can observe it
+  (`native-hooks`, `plugin`, `extension`, `wrapper` or `mcp-only`) and, when it sends events, which event names set which
+  status. `/connect`, the kagent runtime labels, `landflow harness detect` and the hook route all read it, and a source scan
+  (`apps/web/test/harness-registry-scan.test.ts`) fails when another module declares its own list. Only Claude Code sends
+  events today; the others are `mcp-only` until their event names are checked against a live install.
+- **Sending.** `POST /api/harness/claude-code/hooks` with an API key that has `harness:write` (**Send live status** on
+  `/connect`). The `/connect` page gives a `settings.json` `hooks` block: one command hook per event that runs `curl` with
+  `--max-time 2`, so Claude Code never waits, and an `X-Landflow-Hook-Seq` counter, because each event arrives on its own
+  connection and a later one can arrive first. The brain mod can send the same events for you
+  ([`/brain status-sharing`](landflow-brain-mod.md#status-sharing)).
+- **Statuses.** Thinking, Working, Compacting, Waiting for you, Idle, Error, Blocked, Ended. A session with no event for
+  30 minutes reads **Idle (stale)** and closes after 24 hours. Error and Blocked stay until a newer prompt, tool use or
+  session start.
+- **Who sees what.** `agent_type` of an agent you may run binds the session to that agent: its card shows the chip and its
+  Sessions tab lists a **Claude Code** session. Any other session is yours alone, an admin's view included: it keeps the
+  status, times, tool names, counts and (when you or the brain mod name it) the repository, never prompt text, tool input or
+  output, a file path or the working directory.
+- **The UI.** The Agents page reads `GET /api/harness/sessions?open=1` once and follows `harness` events on `/api/events`;
+  each card shows its newest open session as a chip ("Working · 2 min ago", "Waiting for you"). `/connect` → Claude Code
+  has a **Live status** step with the hooks block and **Your sessions**.
+- **`landflow harness detect`** lists which registry harnesses are on the machine ([CLI](features/cli.md)).
 
 ### 6. Security
 

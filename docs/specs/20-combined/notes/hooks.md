@@ -39,10 +39,16 @@ hand. Codex, OpenCode, Cursor, Gemini, VS Code and Claude Desktop stay `verified
 - The mirror's read-modify-write is not safe when two mains take events of one session at the same moment: a rare lost entry shows until a late event rebuilds the timeline.
 - `X-Landflow-Hook-Time` more than 5 minutes ahead of the server is ignored (receive time is used).
 
+- Own sessions reach Landflow only through the pasted `/connect` hooks block or the brain mod with `/brain status-sharing on` (default off); a person who does neither is invisible, by design.
+- The hooks block counts events per Claude Code process (`$PPID` counter file under `$TMPDIR`); two hooks that run at the same instant (parallel tool calls) can read the same counter and share a number, and a stale counter file is reused if the OS reuses a pid. A tie never moves the status backwards (an equal key is not newer).
+- The brain mod reports under a session id it makes itself (Claude Code's own id reaches it only at the end), and only in a listed repository.
+- The Agents page chip shows only agent sessions; a person's own sessions are on `/connect` only.
+- Screens are checked at 1440x900 and 390x844 by a person in a live check; the layout has no unit test.
+
 ## Roadmap lines
 
-- C04 hook ingest (routes, status machine, mirror, live event, sweep): built (P4a). Open: Agents page chip, `/connect` live-status step, `landflow harness detect`, brain mod `/brain status-sharing` (P4b).
-- C15 registry, kagent runtime labels, source scan: built (P4a). Open: `/connect` reads the registry (P4b, empties the scan's `PENDING` allowance); Codex wrapper and OpenCode plugin entries once verified live.
+- C04 hook ingest (routes, status machine, mirror, live event, sweep): built (P4a); Agents page chip, `/connect` live-status step, `landflow harness detect`, brain mod `/brain status-sharing` (default off): built (P4b).
+- C15 registry, kagent runtime labels, source scan: built (P4a); `/connect` reads the registry and the scan's `PENDING` allowance is empty (P4b). Open: Codex wrapper and OpenCode plugin entries once verified live.
 - Blocked from `StopFailure`: built with P5's `classifyText` (over `error_details`, `last_assistant_message`, `error`) and an explicit `quota_blocked: true` field.
 - Codex quota path (C05 W2): a Codex `quota_blocked` event can use the same `harness/ingest.ts` path.
 
@@ -56,4 +62,6 @@ hand. Codex, OpenCode, Cursor, Gemini, VS Code and Claude Desktop stay `verified
 - A cookie session or MCP token is refused on the hook route (403): only an API key (or the test principal) may send events.
 - The registry's `sendsEvents` is true for an entry with `hookEvents` and a strategy other than `mcp-only`.
 - `docs/observability.md` has the two harness counters; P5's `landflow.harness.blocked` row (see `blocked.md`) was not added here.
-- `docs/harnesses.md` "Live status", `docs/connect-your-harness.md`, `docs/landflow-brain-mod.md`, `docs/features/cli.md` are P4b's T-14.
+- `docs/harnesses.md` "Live status", `docs/connect-your-harness.md`, `docs/landflow-brain-mod.md`, `docs/features/cli.md`: written in P4b.
+- P4b: the key made on `/connect` gets `harness:write` only when **Send live status** is ticked (shown for harnesses that send events), not by default, so the existing brain-key body is unchanged.
+- P4b: the hooks block uses `$PPID` for the order counter (the hook does not know the session id before it reads stdin).

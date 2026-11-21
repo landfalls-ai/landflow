@@ -5,6 +5,7 @@ import type { EditLockView } from './auth';
 import type { EvaluationRef } from './evaluations';
 import type { JournalEvent } from './run-trace';
 import type { ExecutionAiUsage } from './ai-usage';
+import type { HarnessSessionView } from './harness';
 
 export type { DebugCommand, ExecutionEvent, ExecutionResult, ExecutionWait, NodeRun, PauseReason, Transport, Workflow };
 export type { GroupComposite, StickyNote, WorkflowConnection, WorkflowGroup, WorkflowNode, WorkflowSettings } from '@landflow/engine';
@@ -345,7 +346,9 @@ export type StreamEvent =
   | { channel: 'execution'; workflowId: string; event: ExecutionEvent; seq: number; at: string }
   | { channel: 'lock'; workflowId: string; lock: EditLockView | null; seq: number; at: string }
   /** New journal entries of an execution (Run Trace); `seq` here is the stream's, each event has its own. */
-  | { channel: 'journal'; workflowId: string; executionId: string; events: JournalEvent[]; seq: number; at: string };
+  | { channel: 'journal'; workflowId: string; executionId: string; events: JournalEvent[]; seq: number; at: string }
+  /** A harness session's status changed (C04); without `agentId` it is the viewer's own session. */
+  | { channel: 'harness'; ownerId?: string; agentId?: string; projectId?: string; session: HarnessSessionView; seq: number; at: string };
 
 /** A folder in the workflows list (GET /api/folders). Folders nest through `parentId`. */
 export interface Folder {

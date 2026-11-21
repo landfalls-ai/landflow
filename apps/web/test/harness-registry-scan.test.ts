@@ -15,11 +15,8 @@ const HARNESS_LIST = /\[\s*'(?:claude-code|cursor|codex|gemini|vscode|opencode)'
 /** A label map for the runtimes. */
 const RUNTIME_MAP = /Record<\s*KagentRuntime\s*,\s*string\s*>/;
 
-/** Files that still declare a list of their own, to be emptied by the `/connect` change (C15 T-10). */
-const PENDING = new Set(['components/connect/harness-snippets.ts']);
-
 export function offenders(files: Array<{ path: string; text: string }>): string[] {
-  return files.filter((f) => (HARNESS_LIST.test(f.text) || RUNTIME_MAP.test(f.text)) && !PENDING.has(f.path)).map((f) => f.path);
+  return files.filter((f) => (HARNESS_LIST.test(f.text) || RUNTIME_MAP.test(f.text))).map((f) => f.path);
 }
 
 function sources(dir: string, out: Array<{ path: string; text: string }> = []) {
@@ -40,9 +37,10 @@ describe('the registry is the only list', () => {
   it('finds none in the host source', () => {
     expect(offenders(sources(SRC))).toEqual([]);
   });
-  it('keeps the pending allowance honest: the file still has the list it is allowed to have', () => {
+  it('/connect reads the registry for its list (C15 FR-1)', () => {
     const text = readFileSync(join(SRC, 'components/connect/harness-snippets.ts'), 'utf8');
-    expect(HARNESS_LIST.test(text)).toBe(true);
+    expect(text).toContain('@landflow/protocol/harnesses');
+    expect(HARNESS_LIST.test(text)).toBe(false);
   });
 });
 

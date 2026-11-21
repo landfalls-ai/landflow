@@ -14,6 +14,22 @@ harness**. Part of the [Landflow docs](README.md).
 
 The instance MCP server must be on (Settings → MCP → Access token), or the test says it is off.
 
+The harnesses on the page come from the registry (`@landflow/protocol/harnesses`), not a list of the page's own.
+
+## Live status (Claude Code)
+
+For Claude Code a fourth, optional step appears: **Live status**. Tick **Send live status** (`harness:write`) in step 2,
+make the key, then merge the **Live status hooks** block into `.claude/settings.json` in your project (or
+`~/.claude/settings.json` for every project; do not commit it, it holds your key). Claude Code then reports each event to
+`POST /api/harness/claude-code/hooks` through a short `curl` (2 second bound, an order counter in
+`X-Landflow-Hook-Seq`). **Your sessions** lists your open sessions live: **Thinking**, **Working**, **Waiting for you**,
+**Idle**, with the repository when one was named and counts of prompts and tool calls.
+
+Your own sessions keep status, times, tool names and counts. They never keep what you typed, what a tool returned, a file
+path or your working directory, and no one else sees them, admins included. A session of a Landflow agent (started with
+`claude --agent <slug>:<slug>` from its exported plugin) shows as a chip on that agent's card for everyone who may read the
+agent. The brain mod can send the same status instead of the hooks block: [Status sharing](landflow-brain-mod.md#status-sharing).
+
 ## Setup for each harness
 
 | Harness | Where it goes |

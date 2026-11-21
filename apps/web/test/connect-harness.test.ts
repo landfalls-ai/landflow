@@ -10,8 +10,9 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { ConnectSteps } from '@/components/connect/connect-harness';
-import { HARNESS_IDS, KEY_PLACEHOLDER, harnessKeyBody, originOf, snippetFor, toolNames } from '@/components/connect/harness-snippets';
+import { HARNESS_IDS, HARNESSES, KEY_PLACEHOLDER, harnessKeyBody, hookSnippetFor, originOf, sendsStatus, snippetFor, toolNames } from '@/components/connect/harness-snippets';
 import { McpSections } from '@/components/settings/mcp-sections';
+import { HARNESS_REGISTRY } from '@landflow/protocol/harnesses';
 import { TOOL_SCOPES } from '@/lib/shared/mcp';
 
 vi.setConfig({ testTimeout: 20_000 });
@@ -45,6 +46,39 @@ const occurrences = (text: string, needle: string) => text.split(needle).length 
 const req = (method: string, path: string, body?: unknown) =>
   new Request(`http://localhost${path}`, { method, headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 const makeKey = async (body: unknown) => keysRoute.POST(req('POST', '/api/api-keys', body));
+
+describe('snippets: unchanged by the registry (C15 AS-2)', () => {
+  it('all six harnesses give the same text as before the list moved to the registry', () => {
+    for (const id of HARNESS_IDS) expect(snippetFor(id, { url: URL_, token: TOKEN })).toMatchSnapshot(id);
+  });
+});
+
+describe('hookSnippetFor (C04)', () => {
+  const hooks = (text: string) => (JSON.parse(text) as { hooks: Record<string, Array<{ hooks: Array<{ type: string; command: string }> }>> }).hooks;
+  it('one command hook per event the registry lists, each with the seq header and a 2 second bound', () => {
+    const block = hooks(hookSnippetFor({ url: URL_, token: TOKEN }).text);
+    expect(Object.keys(block)).toEqual(Object.keys(HARNESS_REGISTRY.find((h) => h.id === 'claude-code')!.hookEvents!));
+    for (const [event, groups] of Object.entries(block)) {
+      const command = groups[0]!.hooks[0]!.command;
+      expect(groups[0]!.hooks[0]!.type, event).toBe('command');
+      expect(command, event).toContain('X-Landflow-Hook-Seq: $n');
+      expect(command, event).toContain('--max-time 2');
+      expect(command, event).toContain('https://landflow.example.test/api/harness/claude-code/hooks');
+      expect(command, event).toContain(`Authorization: Bearer ${TOKEN}`);
+    }
+  });
+  it('shows the placeholder, never a key, when none is given', () => {
+    const text = hookSnippetFor({ url: URL_ }).text;
+    expect(text).toContain(KEY_PLACEHOLDER);
+    expect(text).not.toContain('lf_');
+  });
+  it('only a harness that sends events has the live status step and scope', () => {
+    expect(sendsStatus('claude-code')).toBe(true);
+    for (const h of HARNESSES.filter((x) => x.id !== 'claude-code')) expect(sendsStatus(h.id), h.id).toBe(false);
+    expect(harnessKeyBody('claude-code', ['harness:write']).scopes).toContain('harness:write');
+    expect(harnessKeyBody('cursor', ['harness:write']).scopes).not.toContain('harness:write');
+  });
+});
 
 describe('snippets', () => {
   it('every harness puts the URL and the key in, the key once per snippet', () => {
@@ -150,10 +184,14 @@ describe('markup', () => {
   const steps = (props: Partial<Parameters<typeof ConnectSteps>[0]> = {}) =>
     renderToStaticMarkup(createElement(ConnectSteps, { harness: 'claude-code', onHarness() {}, scopes: [], onScopes() {}, days: 90, onDays() {}, onMake() {}, making: false, mcpUrl: URL_, onTest() {}, testing: false, ...props }));
 
-  it('the page has three steps, one per section, and every harness card', () => {
-    const html = steps();
+  it('the page has three steps, one per section, and every harness card; Claude Code adds the live status step', () => {
+    const html = steps({ harness: 'cursor' });
     for (const label of ['Pick your harness', 'Make a key', 'Copy the setup']) expect(html).toContain(label);
     expect(html.match(/<section /g)).toHaveLength(3);
+    expect(html).not.toContain('Live status');
+    const claude = steps({ sessions: [] });
+    expect(claude.match(/<section /g)).toHaveLength(4);
+    for (const text of ['Live status (optional)', 'Send live status', 'Your sessions', 'X-Landflow-Hook-Seq', 'No open sessions yet']) expect(claude).toContain(text);
     for (const label of ['Claude Code', 'Cursor', 'Codex CLI', 'Gemini CLI', 'VS Code', 'Any MCP client']) expect(html).toContain(label);
     expect(html).toContain('Read workflows');
     expect(html).toContain('Test connection');
