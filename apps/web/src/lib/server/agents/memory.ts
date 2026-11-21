@@ -43,7 +43,7 @@ import { StaticFactError } from '../brain/facts';
 /** The numbers C09 fixes (spec FR-1, FR-2, FR-5; the two thresholds are guesses C11's playground lets a person tune). */
 
 const NOTHING = '(nothing yet)';
-const HINT = 'Use the remember tool for durable facts worth knowing next time; pass replaces with an id above to correct one, and forget_memory to drop one.';
+const HINT = 'Use the remember tool for durable facts worth knowing next time; pass replaces with an id above to correct one, and forget_memory to drop one. These memories belong to the person speaking now: do not save facts about other people.';
 
 export interface RecalledMemory {
   profile: MemoryItem[];

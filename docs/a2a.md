@@ -345,10 +345,10 @@ an agent on kagent cannot tell Landflow whom it is working for.
   ([agents.md](agents.md#agent-capabilities)); `remember` and `forget_memory` act as the Landflow tools do. Without a valid key
   for this agent (none, forged, expired, another agent's) a call answers "Memory needs the key Landflow gave you in this
   conversation" and reads or writes nothing. Each call is an `execute_tool` span (`memory` kind) with no key and no memory text.
+- **Where a key is minted.** Only for the address Landflow stored when it deployed the agent (`kagent.a2aUrl`), compared exactly. An address that merely ends in the same `/agents/<namespace>/<name>` on another host gets no key, and a deployment made before the address was stored gets none until it is redeployed. The key is also registered with the central redactor, so node outputs and errors, executions, the journal, logs, the approvals inbox and alerts never show it.
 - **The key stays out of what Landflow keeps.** The key is for the agent, not for people reading the run. Landflow takes it out of
   everything it stores or shows of the remote run: step arguments and outputs, the words the agent said, its data parts, its
-  reply and status text, progress reports and the trace (each key becomes `[memory key]`), and a `recall_memory` step shows
-  "recalled N memories" in place of what came back. A key a caller wrote in the message text is taken out too, and a copy of
+  reply and status text, progress reports and the trace (each key becomes `[memory key]`), and the three memory tools' steps keep nothing of the words: a `recall_memory` step shows "recalled N memories", `remember` "remembered a memory" and `forget_memory` "forgot a memory" (also under Claude Code's `mcp__<server>__<tool>` names). Errors, questions, approval hints and the mod's guard and ask events are scrubbed too, and so is every message Landflow sends (answers, rejection reasons, metadata) except its own key line. Scrubbing by the key's shape is best effort: a key altered beyond that shape is not recognised, which is why the redactor also holds the exact key. A key a caller wrote in the message text is taken out too, and a copy of
   Landflow's line does not stop the real one from being added, so another member of a project cannot paste a key they read
   somewhere and act as that person.
 - **Not covered.** A caller that is not Landflow (kagent's own UI, another A2A client) gets no key and so no memory; follow-up

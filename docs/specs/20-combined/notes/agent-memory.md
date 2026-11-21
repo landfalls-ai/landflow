@@ -37,3 +37,10 @@ No new page.
 - P9 added the policy line (`kagent` untouched): `resourceAction` makes a non-read method under an agent's `memories` the `run` right. Two OpenAPI operations
   (`listAgentMemories`, `changeAgentMemory`) and two `api.md` rows are in; P11 adds its lines after them.
 - No SQL migration (2916 stays free).
+
+## Second review
+
+- A kagent deployment made before this commit has no stored `kagent.a2aUrl` (unless the landflow-harness mod's `trace.a2aUrl` was set) and gets no memory key until it is redeployed.
+- The test chat's approval route resumes a session with its own user for `remember` and `forget_memory` writes made after the approval (a resumed run does not read memory again); the first message's run uses the person chatting.
+- `saw.memoryFor` and `saw.memoryAgent` (who the memory text is for) are on the journal's saw event and are removed with the text for readers who may not see it.
+- Telegram's author fix is tested through `asAuthor` (agents/author.ts), which all three channel handlers use; the Telegram handler itself has no harness.

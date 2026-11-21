@@ -309,6 +309,7 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
     version,
     deployedAt: new Date().toISOString(),
     token: credentials.sealSecret(token),
+    ...(a2aUrlOf(cluster, name) && { a2aUrl: a2aUrlOf(cluster, name) }),
     ...(plugins.length && { plugins }),
     ...(input.egressPolicies !== undefined || egressPolicies.length ? { egressPolicies } : {}),
     ...(guard !== 'enforce' && plugins.some((pin) => pin.url === BUILTIN_URL) && { guard }),

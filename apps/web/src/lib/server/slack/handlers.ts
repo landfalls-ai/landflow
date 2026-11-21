@@ -17,6 +17,7 @@
  * Tools that need approval pause the agent and post Approve / Reject buttons in the thread; the click decides
  * (lib/server/agents/runtime.ts `decide`) and the run continues.
  */
+import { asAuthor } from '../agents/author';
 import type { JsonObject } from '@landflow/protocol';
 import { approvalSubject, type Agent, type AgentChannel } from '../../shared/agents';
 import { allowed } from '../agents/triggers';
@@ -148,7 +149,7 @@ async function answer(agent: Agent, version: number, channel: AgentChannel, cred
   }
   session ??= newSession(agent, { source: 'slack', userId: `slack:${event.user}`, version, conversationKey: key, title: text.slice(0, 80) });
   // A thread is shared: this message's author is who memory recalls for and writes to, not whoever opened the thread (C09).
-  if (session.userId !== `slack:${event.user}`) session = { ...session, userId: `slack:${event.user}` };
+  session = asAuthor(session, `slack:${event.user}`);
   const result = await runAgent({ agent, session, message: text, approvals: 'ask', rootTrace: true });
   await deliver(agent, channel, threadPost(credential, chat, threadTs), chat, threadTs, result);
 }

@@ -38,6 +38,7 @@ const memories = await import('@/lib/server/agents/memory');
 const facts = await import('@/lib/server/brain/facts');
 const mcpRoute = await import('@/app/api/mcp/agents/[id]/route');
 const { run } = await import('./helpers');
+const clientModule = await import('@/lib/server/a2a/client');
 
 registry.registerBuiltin(corePlugin);
 
@@ -181,6 +182,40 @@ describe('the tools on the agent’s MCP endpoint', () => {
     expect(everything).not.toContain('A very private sentence');
     expect(everything).not.toMatch(MEMORY_KEY_PATTERN);
     expect(everything).not.toContain(key);
+  });
+});
+
+describe('a key is minted only for the address Landflow deployed to (3)', () => {
+  it('gives no key for another host with the same last path segment, nor for a deployment without a stored address', () => {
+    const name = `kagent-${remote.id}`;
+    expect(memoryKeyLine(`${a2a.url}/${remote.id}`, 'workflow:w1')).toMatch(/^Memory key for this person: mk_/);
+    expect(memoryKeyLine(`${a2a.url}/${remote.id}/`, 'workflow:w1')).toMatch(/^Memory key/);
+    for (const url of [`https://evil.example/x/agents/ns/${name}`, `http://kagent.test/api/a2a/kagent/agents/ns/${name}`, `${a2a.url}/other/agents/ns/${name}`]) expect(memoryKeyLine(url, 'workflow:w1'), url).toBeUndefined();
+    const legacy = agentStore.create({ name: 'Legacy', instructions: 'Work.', memory: { crossSession: true } } as never);
+    agentStore.setKagent(legacy.id, { credential: { id: 'cred', name: 'kind' }, name: `kagent-${legacy.id}`, version: 1, token: credentials.sealSecret(TOKEN) } as never);
+    expect(memoryKeyLine(`https://elsewhere/agents/ns/kagent-${legacy.id}`, 'workflow:w1')).toBeUndefined();
+  });
+});
+
+describe('what leaves Landflow for the remote agent (5)', () => {
+  const { sendMessage, approvalMessage, answerMessage } = clientModule;
+  const endpoint = () => ({ url: `${a2a.url}/${remote.id}`, headers: {}, timeoutMs: 5_000 });
+  const sentTexts = (from: number) => a2a.calls.slice(from).filter((c) => c.method === 'SendMessage').map((c) => JSON.stringify(c.params.message));
+
+  it('takes a pasted memory key out of an answer, a rejection reason, a plain message and the metadata, and keeps Landflow’s own line', async () => {
+    const stolen = memoryKeyFor(remote.id, 'usr_victim');
+    const before = a2a.calls.length;
+    const task = { id: 't9', contextId: 'c9' };
+    await sendMessage(endpoint(), answerMessage(task, { type: 'ask_user_request', id: 'q', questions: [] }, [`my answer ${stolen}`]));
+    await sendMessage(endpoint(), approvalMessage(task, { type: 'tool_approval_request', tools: [{ id: 'a', name: 'Bash' }] }, false, `no, because ${stolen}`));
+    await sendMessage(endpoint(), { text: `plain ${stolen}`, metadata: { note: stolen } });
+    const own = 'Memory key for this person: ' + memoryKeyFor(remote.id, 'usr_me');
+    await sendMessage(endpoint(), { text: `${own}\n\nhello ${stolen}`, keyLine: own });
+    const sent = sentTexts(before);
+    expect(sent).toHaveLength(4);
+    for (const text of sent.slice(0, 3)) expect(text).not.toContain('mk_');
+    expect(sent[3]).toContain(own);
+    expect(sent[3].match(/mk_/g)).toHaveLength(1);
   });
 });
 

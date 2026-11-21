@@ -443,7 +443,7 @@ export const a2aAgentNode = defineNode({
             // C09: a Landflow agent on kagent with memory on gets the signed key of the person (a workflow run is `workflow:<id>`) in a new conversation's first message.
             const keyLine = !contextId && !remembered?.taskId && ctx.getWorkflowId() ? memoryKeyLine(endpoint.url, `workflow:${ctx.getWorkflowId()}`) : undefined;
             const framed = withProjectContext(withMemoryKey(withPracticesIndex(text, practiceIndex?.text ?? ''), keyLine), contextBlock);
-            const message = { text: framed.text, metadata: { ...metadata, ...framed.tags }, ...(contextId && { contextId }), ...(remembered?.taskId && { taskId: remembered.taskId }) };
+            const message = { text: framed.text, ...(keyLine && { keyLine }), metadata: { ...metadata, ...framed.tags }, ...(contextId && { contextId }), ...(remembered?.taskId && { taskId: remembered.taskId }) };
             const trace = message.taskId ? undefined : traceFor(endpoint.url, ctx.getExecutionId() && ctx.getWorkflowId() ? { executionId: ctx.getExecutionId()!, workflowId: ctx.getWorkflowId()!, nodeId: ctx.getNode().id, member: ctx.getNode().name } : undefined);
             try {
               result = await callAgent(endpoint, card, withMarker(message, trace), send);

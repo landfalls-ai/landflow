@@ -479,6 +479,8 @@ export interface KagentDeployment {
    * the agent does (`<landflowUrl>/api/agent-trace`), so a run shows its real tokens, cost and tool calls.
    */
   trace?: { url: string; /** The agent's A2A URL then, to know a call goes to it. */ a2aUrl?: string };
+  /** The agent's A2A URL on kagent's controller, as deployed: the only address a memory key is minted for (kagent/memory-line.ts). */
+  a2aUrl?: string;
 }
 
 /**

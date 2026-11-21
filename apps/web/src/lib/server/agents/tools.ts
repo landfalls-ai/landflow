@@ -89,6 +89,8 @@ export interface ToolCaller {
 export interface ToolContext {
   agent: Agent;
   session: AgentSession;
+  /** Whose memory this run reads and writes (the session's user unless the request names another person). */
+  memoryUser?: string;
   /** 0 for the agent the user talks to; +1 per delegation. */
   depth: number;
   /** How deep delegation may go in this run tree. */
@@ -481,10 +483,10 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
       const index = brandNew ? practicesIndexFor(config.parameters.agentUrl as string, options.practices, text) : undefined;
       const block = currentRunContext()?.compact;
       // C09: and the signed memory key of this session's person, after the practices index.
-      const keyLine = brandNew ? memoryKeyLine(config.parameters.agentUrl as string, ctx.session.userId) : undefined;
+      const keyLine = brandNew ? memoryKeyLine(config.parameters.agentUrl as string, ctx.memoryUser ?? ctx.session.userId) : undefined;
       const { text: sent, tags } = withProjectContext(withMemoryKey(withPracticesIndex(text, index?.text ?? '', block), keyLine), fresh ? currentRunContext() : undefined);
       if (index) indexed.set(ctx.session.id, index);
-      const outcome = await run({ text: sent, ...(Object.keys(tags).length > 0 && { metadata: tags }), ...(known?.contextId && { contextId: known.contextId }), ...(known?.taskId && { taskId: known.taskId }) }, ctx);
+      const outcome = await run({ text: sent, ...(keyLine && { keyLine }), ...(Object.keys(tags).length > 0 && { metadata: tags }), ...(known?.contextId && { contextId: known.contextId }), ...(known?.taskId && { taskId: known.taskId }) }, ctx);
       return settle(outcome, ctx);
     },
     async resume(state, approved, ctx, answer) {
@@ -854,7 +856,7 @@ function rememberTool(): BuiltTool {
       const fact = String(input.fact ?? '').trim();
       if (!fact) throw new Error('"fact" is empty');
       const replaces = typeof input.replaces === 'string' && input.replaces.trim() ? input.replaces.trim() : undefined;
-      const { outcome, count, item } = await rememberMemory(ctx.agent.id, ctx.session.userId, { fact, static: input.static === true, ...(replaces && { replaces }) });
+      const { outcome, count, item } = await rememberMemory(ctx.agent.id, ctx.memoryUser ?? ctx.session.userId, { fact, static: input.static === true, ...(replaces && { replaces }) });
       const said = outcome === 'replaced' ? `Replaced ${replaces} (now version ${item.version ?? 2}).` : outcome === 'refreshed' ? 'Already remembered; refreshed.' : 'Saved.';
       return { output: `${said} You now remember ${count} fact(s) about this user.` };
     },
@@ -880,7 +882,7 @@ function forgetMemoryTool(): BuiltTool {
       const reason = String(input.reason ?? '').trim();
       if (!id || !reason) throw new Error('"id" and "reason" are both needed');
       try {
-        await forgetAgentMemory(ctx.agent.id, ctx.session.userId, id, reason, ctx.session.userId);
+        await forgetAgentMemory(ctx.agent.id, ctx.memoryUser ?? ctx.session.userId, id, reason, ctx.memoryUser ?? ctx.session.userId);
       } catch (error) {
         if (error instanceof MemoryNotFoundError) throw new Error(`Memory ${id} not found`);
         throw error;

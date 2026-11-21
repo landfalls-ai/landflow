@@ -26,6 +26,16 @@ const { PRACTICES_INDEX_LINE } = await import('@/lib/server/practices/remote');
 const { resultItem, progressReporter } = await import('@/lib/server/nodes/a2a');
 const { remoteStepsOf, dataOf, remoteSaidOf, replyOf } = await import('@/lib/server/a2a/client');
 const chatRoute = await import('@/app/api/agents/[id]/chat/route');
+const sessionsRoute = await import('@/app/api/agents/[id]/sessions/route');
+const { newSession } = await import('@/lib/server/agents/runtime');
+const { asAuthor } = await import('@/lib/server/agents/author');
+const { A2aError, hitlRequestOf, KAGENT_HITL_EXTENSION } = await import('@/lib/server/a2a/client');
+const { memoryToolOf } = await import('@/lib/server/kagent/memory-scrub');
+const { redactValue } = await import('@/lib/server/secrets/redact');
+const { hideMemoryText } = await import('@/lib/server/journal/memory-visibility');
+const { createUser } = await import('@/lib/server/auth/users');
+const { createTeamProject, setHomeProject, setMember } = await import('@/lib/server/projects/store');
+const { ingestTrace, openTrace } = await import('@/lib/server/a2a/agent-trace');
 const { TEST_OWNER } = await import('@/lib/server/auth/test-bypass');
 
 afterAll(() => {
@@ -96,7 +106,9 @@ describe('BLOCKER 2: a memory key and recalled text stay out of what is stored a
     const steps = item.steps as Array<{ name: string; output?: unknown; args?: Record<string, unknown> }>;
     expect(steps.find((s) => s.name === 'recall_memory')!.output).toBe('recalled 2 memories');
     expect(steps.find((s) => s.name === 'recall_memory')!.args!.memoryKey).toBe('[memory key]');
-    expect(steps.find((s) => s.name === 'remember')!.args!.memoryKey).toBe('[memory key]');
+    // remember and forget keep nothing of the memory's words in a stored copy (item 8).
+    expect(steps.find((s) => s.name === 'remember')!.args).toEqual({ summary: 'remembered a memory' });
+    expect(steps.find((s) => s.name === 'remember')!.output).toBeUndefined();
   });
 
   it('the pieces a run is stored from are clean too: steps, said text, data parts, the reply, the progress reports', () => {
@@ -194,5 +206,139 @@ describe('replaces and the bound (8, 10)', () => {
     const ids = live(agent.id, 'u1').map((f) => memories.shortId(f.id));
     expect(ids).toContain(middle);
     expect(ids).not.toContain('m_0000');
+  });
+});
+
+describe('Claude Code names MCP tools mcp__<server>__<tool> (1, 8)', () => {
+  const PART = 'kagent.dev/a2a/part-type';
+  const KEY = memoryKeyFor('agent_x', 'usr_a');
+  const task = (prefix: string) =>
+    ({
+      id: 't2',
+      contextId: 'c2',
+      status: { state: 'TASK_STATE_COMPLETED' },
+      artifacts: [
+        { artifactId: 'a1', parts: [{ data: { id: 'c1', name: `${prefix}recall_memory`, args: { memoryKey: KEY, query: 'tea' } }, metadata: { [PART]: 'function_call' } }] },
+        { artifactId: 'a2', parts: [{ data: { id: 'c1', name: `${prefix}recall_memory`, response: { output: 'Profile:\n- [m_a] Likes tea (static)' } }, metadata: { [PART]: 'function_response' } }] },
+        { artifactId: 'a3', parts: [{ data: { id: 'c2', name: `${prefix}remember`, args: { memoryKey: KEY, fact: 'Likes tea' } }, metadata: { [PART]: 'function_call' } }] },
+        { artifactId: 'a4', parts: [{ data: { id: 'c2', name: `${prefix}remember`, response: { output: 'Saved. You now remember 2 facts about this user.' } }, metadata: { [PART]: 'function_response' } }] },
+        { artifactId: 'a5', parts: [{ data: { id: 'c3', name: `${prefix}forget_memory`, args: { memoryKey: KEY, id: 'm_a', reason: 'Likes tea is wrong' } }, metadata: { [PART]: 'function_call' } }] },
+        { artifactId: 'a6', parts: [{ data: { id: 'c3', name: `${prefix}forget_memory`, response: { output: 'Forgot m_a.' } }, metadata: { [PART]: 'function_response' } }] },
+        { artifactId: 'a7', parts: [{ text: 'done' }] },
+      ],
+    }) as never;
+
+  it('knows the three tools with or without the server prefix, and nothing else', () => {
+    for (const name of ['recall_memory', 'mcp__landflow__recall_memory', 'mcp__land-flow_1__remember', 'forget_memory']) expect(memoryToolOf(name), name).toBeTruthy();
+    for (const name of ['recall_memory_all', 'mcp__x__recall', 'my_remember', 'Bash', undefined]) expect(memoryToolOf(name), String(name)).toBeUndefined();
+  });
+
+  it('keeps the key and every memory word out of the steps and the node output for prefixed names too', () => {
+    for (const prefix of ['', 'mcp__landflow-agent__']) {
+      const item = resultItem({ name: 'Remote' } as never, { kind: 'task', task: task(prefix) });
+      const text = JSON.stringify(item);
+      expect(text, prefix).not.toMatch(/mk_/);
+      expect(text, prefix).not.toContain('Likes tea');
+      expect(text, prefix).not.toContain('Saved. You now remember');
+      const steps = item.steps as Array<{ name: string; args?: unknown; output?: unknown }>;
+      expect(steps.map((s) => s.output)).toEqual(['recalled 1 memory', 'remembered a memory', 'forgot a memory']);
+      expect(steps.map((s) => s.args)).toEqual([{ memoryKey: '[memory key]', query: 'tea' }, { summary: 'remembered a memory' }, { summary: 'forgot a memory' }]);
+    }
+  });
+});
+
+describe('the key is registered with the central redactor, and scrubbed from errors, questions, hints and the mod\'s events (4)', () => {
+  const KEY = memoryKeyFor('agent_x', 'usr_a');
+
+  it('the redactor learns a minted key', () => {
+    expect(JSON.stringify(redactValue({ error: `failed with ${KEY}` }))).not.toContain(KEY);
+  });
+
+  it('an A2A error, a question and an approval hint carry no key', () => {
+    expect(new A2aError(`SendMessage: ${KEY} was refused`).message).not.toContain('mk_');
+    const hitl = (payload: unknown) => hitlRequestOf({ id: 't', contextId: 'c', status: { state: 'TASK_STATE_INPUT_REQUIRED', message: { metadata: { [KAGENT_HITL_EXTENSION]: payload } } } } as never);
+    expect(JSON.stringify(hitl({ type: 'ask_user_request', id: 'q1', questions: [{ question: `Use ${KEY}?` }, `Or ${KEY}`] }))).not.toContain('mk_');
+    expect(JSON.stringify(hitl({ type: 'tool_approval_request', hint: `run it with ${KEY}`, tools: [{ id: 'a', name: 'Bash', args: { command: `cat ${KEY}` } }] }))).not.toContain('mk_');
+  });
+
+  it('a guard decision from the mod is scrubbed', async () => {
+    const trace = openTrace({ baseUrl: 'http://x' });
+    expect(ingestTrace(trace.id, [{ type: 'guard', rule: 'r', tool: 'Bash', arg: `cat ${KEY}`, reason: `saw ${KEY}` }])).toBe('ok');
+    expect(JSON.stringify(trace.summary())).not.toContain('mk_');
+    expect(JSON.stringify(trace.summary())).toContain('[memory key]');
+  });
+});
+
+describe('the test chat history (2)', () => {
+  it('lists the person’s own test chats and the old shared "you" ones, and not another person’s', async () => {
+    const agent = agentOf('History');
+    const mine = newSession(agent, { source: 'test', userId: TEST_OWNER.id, version: 'draft', title: 'mine' });
+    const old = newSession(agent, { source: 'test', userId: 'you', version: 'draft', title: 'old' });
+    const theirs = newSession(agent, { source: 'test', userId: 'usr_someone_else', version: 'draft', title: 'theirs' });
+    for (const session of [mine, old, theirs]) agentStore.saveSession(session);
+    const response = await (sessionsRoute.GET as unknown as (r: Request, c: { params: Promise<{ id: string }> }) => Promise<Response>)(new Request(`http://localhost/api/agents/${agent.id}/sessions?source=test`), { params: Promise.resolve({ id: agent.id }) });
+    const titles = ((await response.json()) as { sessions: Array<{ title: string }> }).sessions.map((x) => x.title).sort();
+    expect(titles).toEqual(['mine', 'old']);
+  });
+
+  it('chatting in a session someone else opened does not change whose it is', async () => {
+    const agent = agentOf('Borrowed');
+    const theirs = newSession(agent, { source: 'test', userId: 'usr_someone_else', version: 'draft', title: 'theirs' });
+    agentStore.saveSession(theirs);
+    const response = await (chatRoute.POST as unknown as (r: Request, c: { params: Promise<{ id: string }> }) => Promise<Response>)(
+      new Request(`http://localhost/api/agents/${agent.id}/chat`, { method: 'POST', body: JSON.stringify({ message: 'hi', sessionId: theirs.id }) }),
+      { params: Promise.resolve({ id: agent.id }) },
+    );
+    await response.text();
+    expect(agentStore.getSession(theirs.id)!.userId).toBe('usr_someone_else');
+  });
+});
+
+describe('a shared thread runs as the author of the message (9)', () => {
+  it('changes only the user, and not the session it was given', () => {
+    const session = { id: 's', userId: 'telegram:1' };
+    expect(asAuthor(session, 'telegram:1')).toBe(session);
+    expect(asAuthor(session, 'telegram:2')).toEqual({ id: 's', userId: 'telegram:2' });
+    expect(session.userId).toBe('telegram:1');
+  });
+});
+
+describe('the memory text in the journal is for the person and the agent’s editors (6)', () => {
+  it('a project member who is neither sees the sources but not the text', async () => {
+    const mk = (n: string) => createUser({ email: `${n}@rev.test`, name: n, role: 'member', password: `${n}-password-1` });
+    const [person, editor, viewer] = [await mk('pe'), await mk('ed'), await mk('vw')];
+    const project = createTeamProject({ name: 'Rev', createdBy: editor.id });
+    setMember(project.id, editor.id, 'editor');
+    setMember(project.id, viewer.id, 'viewer');
+    const agent = agentOf('Journal');
+    setHomeProject('agent', agent.id, project.id);
+    const event = { seq: 1, type: 'span.updated', attrs: { saw: { text: 'x', memory: [{ source: 'agent-profile', count: 1, items: [{ id: 'm_a' }] }], memoryText: 'Likes tea', memoryFor: person.id, memoryAgent: agent.id } } } as never;
+    const read = (actor: { id: string; role: 'member' | 'owner' }) => JSON.stringify(hideMemoryText([event], actor as never));
+    expect(read({ id: person.id, role: 'member' })).toContain('Likes tea');
+    expect(read({ id: editor.id, role: 'member' })).toContain('Likes tea');
+    expect(read({ id: 'usr_owner_x', role: 'owner' })).toContain('Likes tea');
+    const hidden = read({ id: viewer.id, role: 'member' });
+    expect(hidden).not.toContain('Likes tea');
+    expect(hidden).not.toContain(person.id);
+    expect(hidden).toContain('agent-profile');
+  });
+});
+
+describe('the import never fails a run (9)', () => {
+  it('logs a failed import, sets the flag and goes on', () => {
+    const flag = agentStore as unknown as { importedMemories: boolean };
+    flag.importedMemories = false;
+    database().delete('meta', { key: 'config_store.imported.agent-memory-facts' }); // so the import runs again and meets the failure
+    const spy = vi.spyOn(database(), 'transaction').mockImplementation(() => {
+      throw new Error('boom');
+    });
+    try {
+      expect(() => agentStore.importMemories()).not.toThrow();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(flag.importedMemories).toBe(true);
+    agentStore.importMemories(); // the next boot imports again
+    expect(database().get('SELECT value FROM meta WHERE key = ?', 'config_store.imported.agent-memory-facts')).toBeUndefined();
   });
 });

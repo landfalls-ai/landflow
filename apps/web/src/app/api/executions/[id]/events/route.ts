@@ -9,6 +9,8 @@ import { z } from 'zod';
 import { error, handler, json, parseQuery } from '@/lib/server/http';
 import { limitParam } from '@/lib/server/pagination';
 import { journalStore, rebuildJournal } from '@/lib/server/journal';
+import { hideMemoryText } from '@/lib/server/journal/memory-visibility';
+import { routeActor } from '@/lib/server/projects/http';
 import { liveExecution } from '@/lib/server/runner';
 import { store } from '@/lib/server/store';
 
@@ -28,6 +30,6 @@ export const GET = handler(async (request: Request, { params }: Ctx) => {
   if (record && after === 0) rebuildJournal(record, record.workflow ?? store.getWorkflow(record.workflowId));
   // One more than asked tells whether another page follows.
   const rows = await journalStore.readEventsAsync(id, after, limit + 1);
-  const events = rows.slice(0, limit);
+  const events = hideMemoryText(rows.slice(0, limit), routeActor());
   return json({ events, last: events.at(-1)?.seq ?? after, more: rows.length > limit });
 });

@@ -3,16 +3,33 @@
  * by the A2A node and an agent's A2A tool to a new conversation's first message, after the practices index.
  */
 import { hasMemoryUser } from '../agents/memory';
-import { agentAtEndpoint } from '../notebook/binding';
+import { agentStore } from '../agents/store';
+import type { Agent } from '../../shared/agents';
 import { PRACTICES_INDEX_LINE } from '../practices/remote';
 import { deployedConfig } from './deployed-config';
 import { memoryKeyFor } from './memory-key';
 import { scrubKeys } from './memory-scrub';
 
+const trimmed = (url: string) => url.trim().replace(/\/+$/, '');
+
+/**
+ * The Landflow agent whose stored kagent A2A address is exactly `endpoint`. Never the last-path-segment match the notebook uses
+ * (`agentAtEndpoint`): an address Landflow did not deploy to (`https://elsewhere/x/agents/ns/<name>`) must not be sent a person's key.
+ * A deployment made before the address was stored has none until it is redeployed, and gets no memory key.
+ */
+export function agentAtExactEndpoint(endpoint: string): Agent | undefined {
+  const url = trimmed(endpoint);
+  const found = agentStore.list().filter((agent) => {
+    const stored = agent.kagent?.a2aUrl ?? agent.kagent?.trace?.a2aUrl;
+    return Boolean(stored) && trimmed(stored!) === url;
+  });
+  return found.length === 1 ? found[0] : undefined;
+}
+
 /** The line for a new conversation's first message to the Landflow agent on kagent at `endpoint`; undefined when it is not one, has memory off, or the person has none. */
 export function memoryKeyLine(endpoint: string, userId: string | undefined): string | undefined {
   if (!userId || !hasMemoryUser(userId)) return undefined;
-  const agent = agentAtEndpoint(endpoint);
+  const agent = agentAtExactEndpoint(endpoint);
   const deployed = agent && deployedConfig(agent);
   if (!agent || !deployed?.config.memory.crossSession) return undefined;
   return `Memory key for this person: ${memoryKeyFor(agent.id, userId)}\nPass it as memoryKey to recall_memory, remember and forget_memory. Call recall_memory first.`;

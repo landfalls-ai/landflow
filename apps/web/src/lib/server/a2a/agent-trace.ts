@@ -16,6 +16,7 @@ import { z } from 'zod';
 import type { AgentTraceSummary, TokenUsage, TraceGuardDecision } from '../../shared/agents';
 import { agentStore } from '../agents/store';
 import { cancelAsks, openAsk, type AskRun } from './agent-asks';
+import { scrubKeys } from '../kagent/memory-scrub';
 import { estimateCost, findPrice, priceOverrides } from '../ai-usage/prices';
 import { clusterActive, clusterState } from '../cluster/state';
 import { singleton } from '../singleton';
@@ -98,7 +99,7 @@ const emptySummary = (): AgentTraceSummary => ({
 function apply(trace: Trace, event: TraceEvent) {
   // An ask is a person's business, not the summary's: it goes to the run (a2a/agent-asks.ts) and the mod polls the answer.
   if (event.type === 'ask') {
-    openAsk(trace.id, trace.run, { askId: event.askId, command: event.command, cwd: event.cwd, reason: event.reason, agent: event.agent });
+    openAsk(trace.id, trace.run, { askId: event.askId, command: scrubKeys(event.command), cwd: event.cwd, reason: event.reason && scrubKeys(event.reason), agent: event.agent });
     return;
   }
   const s = (trace.summary ??= emptySummary());
@@ -144,7 +145,7 @@ function apply(trace: Trace, event: TraceEvent) {
       s.tools.ms += event.ms ?? 0;
       break;
     case 'guard': {
-      const decision: TraceGuardDecision = { rule: event.rule, tool: event.tool, action: event.action ?? 'deny', ...(event.arg && { arg: event.arg }), ...(event.reason && { reason: event.reason }), ...(event.agent && { agent: event.agent }) };
+      const decision: TraceGuardDecision = { rule: event.rule, tool: event.tool, action: event.action ?? 'deny', ...(event.arg && { arg: scrubKeys(event.arg) }), ...(event.reason && { reason: scrubKeys(event.reason) }), ...(event.agent && { agent: event.agent }) };
       if (s.guard.length < MAX_GUARD) s.guard.push(decision);
       break;
     }

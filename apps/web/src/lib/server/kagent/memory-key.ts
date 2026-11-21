@@ -12,6 +12,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { credentials } from '../credentials/vault';
 import { hasMemoryUser } from '../agents/memory';
+import { rememberSecretValues } from '../secrets/redact';
 
 const LABEL = 'agent-memory-key';
 export const MEMORY_KEY_TTL_MS = 24 * 3_600_000;
@@ -22,7 +23,10 @@ const sign = (key: Buffer, payload: string) => createHmac('sha256', key).update(
 /** A key for `userId` talking to agent `agentId`, valid for 24 hours from `now`. */
 export function memoryKeyFor(agentId: string, userId: string, now = Date.now()): string {
   const payload = Buffer.from(JSON.stringify({ a: agentId, u: userId, e: now + MEMORY_KEY_TTL_MS })).toString('base64url');
-  return `mk_${payload}.${sign(credentials.deriveKey(LABEL), payload)}`;
+  const key = `mk_${payload}.${sign(credentials.deriveKey(LABEL), payload)}`;
+  // The central redactor learns it: node outputs and errors, executions, the journal, logs, the approvals inbox and alerts never show it.
+  rememberSecretValues(key, { lines: false });
+  return key;
 }
 
 /** The person a key names for `agentId`; undefined for a key that is forged, expired, or for another agent. */

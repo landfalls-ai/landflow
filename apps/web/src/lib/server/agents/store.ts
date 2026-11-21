@@ -40,6 +40,7 @@ import { store } from '../store';
 import type { Cursor } from '../pagination';
 import { recordAgentVersion } from './version-rows'; // AG21:
 import { deleteAgentMemories, importAgentMemories, profileNotes, rememberSync } from './memory-store'; // C09:
+import { logger } from '../telemetry/logger';
 
 /** A `running` session no process has saved for this long is idle again (its process died; files mode resets them at boot). */
 const STALE_RUNNING_MS = 30 * 60_000;
@@ -142,7 +143,8 @@ export const audienceSources = (audience?: SessionAudience): readonly SessionSou
 /** What `listSessions` narrows to: some sources, one user, and the page after a cursor (`s` the last row's updatedAt, `i` its id). */
 export interface SessionFilter {
   sources?: readonly SessionSource[];
-  userId?: string;
+  /** One user, or any of several (the test chat lists the person's own and the old shared "you"). */
+  userId?: string | readonly string[];
   /** PC13: only sessions of these projects (the caller's; undefined: all). A summary without a project counts as `homeProjectId`. */
   projectIds?: ReadonlySet<string>;
   /** PC13: the agent's home project now, for summaries saved without a project. */
@@ -154,7 +156,7 @@ export interface SessionFilter {
 function sessionMatches(s: SessionSummary, filter?: SessionFilter): boolean {
   if (!filter) return true;
   if (filter.sources && !filter.sources.includes(s.source)) return false;
-  if (filter.userId && s.userId !== filter.userId) return false;
+  if (filter.userId && !([] as string[]).concat(filter.userId as string[]).includes(s.userId)) return false;
   if (filter.projectIds && !filter.projectIds.has(s.projectId ?? filter.homeProjectId ?? '')) return false;
   const after = filter.cursor;
   return !after || s.updatedAt < after.s || (s.updatedAt === after.s && s.id < after.i);
@@ -620,8 +622,13 @@ class AgentStore {
   /** Public: the boot step, `recallFor` and `rememberMemory` call it, so no caller depends on `memories()` having run first. */
   importMemories() {
     if (this.importedMemories) return;
-    importOnce(database(), 'agent-memory-facts', () => importAgentMemories(database(), store.dir));
+    // A failed import is logged once and not tried again in this process: it must never fail every run (the rows stay, the import runs again at the next boot).
     this.importedMemories = true;
+    try {
+      importOnce(database(), 'agent-memory-facts', () => importAgentMemories(database(), store.dir));
+    } catch (error) {
+      logger.warn('the old agent memories could not be imported', { error: (error as Error).message });
+    }
   }
 
   /** The profile (every static memory, then the newest others) as plain notes; a run's block comes from `recallForRun`. */

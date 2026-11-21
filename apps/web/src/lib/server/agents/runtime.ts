@@ -107,6 +107,8 @@ export interface RunRequest {
    */
   caller?: ToolCaller;
   /** C09: memory sources a caller gave this run besides the agent's own (a team's notebook block), appended to what the run records (C11). */
+  /** Whose memory this run reads and writes, when it is not the session's user (the test chat: the person chatting, whoever opened the session). Never changes the session. */
+  memoryUser?: string;
   sawMemory?: SawMemorySource[];
   /** The text of those sources, joined after the agent's own block in `saw.memoryText`. */
   sawMemoryText?: string;
@@ -246,7 +248,7 @@ export function systemPromptParts(agent: Agent, config: AgentConfig, session: Ag
  * SP19: the cross-session memory as the prompt shows it when no recall was made (the text-only caller and the tests): the profile
  * part, read now. A run reads its block once at its start through `recallForRun` (C09) and passes it as `memoryText`.
  */
-export function memoryBlock(agent: Agent, config: AgentConfig, session: AgentSession): string | undefined {
+export function memoryBlock(agent: Agent, config: AgentConfig, session: Pick<AgentSession, 'userId'>): string | undefined {
   if (!config.memory.crossSession) return undefined;
   return profileBlock(agent.id, session.userId);
 }
@@ -406,11 +408,12 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
   session.context = runCtx;
   // SP19: the memory is read once for the run (a `remember` during it is in the conversation and reaches the prompt next run).
   // C09: the profile and what is relevant to the first question, one fenced block after the cache breakpoint.
-  const recalled = await recallForRun(agent, config, session, recallQuestion(request, session)).catch((error) => {
+  const memoryUser = request.memoryUser ?? session.userId;
+  const recalled = await recallForRun(agent, config, { userId: memoryUser }, recallQuestion(request, session)).catch((error) => {
     logger.warn('could not recall the agent’s memory; the run goes on with the profile', { 'gen_ai.agent.id': agent.id, error });
     return undefined;
   });
-  const runMemory = recalled?.text ?? memoryBlock(agent, config, session);
+  const runMemory = recalled?.text ?? memoryBlock(agent, config, { userId: memoryUser });
   // PC13: the project's settings for agents, read once for the run (undefined: none on, the run is as it was).
   const rules = projectAgentRules(runCtx.projectId);
   const notAllowed = rules && !rules.agentAllowed(agent.id) ? agentNotAllowedMessage(config.name, rules.projectName) : undefined;
@@ -431,10 +434,11 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       persona: sawPersona(cleanPersona(config.persona)),
       practices: runCtx.practices,
       ...sawMem,
+      ...(sawMem.memoryText && { memoryFor: memoryUser, memoryAgent: agent.id }),
     });
     // The session record keeps what the run recalled by the same content rule as the journal (applyContent).
     const kept = sessionMemory(sawMem.memory ?? [], sawMem.memoryText, session.execution ? store.getWorkflow(session.execution.workflowId)?.settings?.traceContent : undefined);
-    // Only the sources (ids, versions, scores, a hash) stay on the session record: it is readable by everyone with the agent's project, the memory text is the owner's. The text is in the journal's span, on `full`.
+    // Only the sources (ids, versions, scores, a hash) stay on the session record, which everyone who can read the session reads. The text is in the journal's span (saw.memoryText, on `full`), which the reader's access to the person's memories decides (journal read).
     session.memory = kept.memory;
     session.memoryText = undefined;
   }
@@ -532,8 +536,8 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       }
       toolsOffered = toolset.tools.length;
       // Tool access by caller: tools this caller may not use are withheld; some may need a person's approval for them.
-      const role = requestAuth()?.principal?.user.id === session.userId ? requestAuth()?.principal?.user.role : undefined;
-      const access = await applyToolPolicy(toolset.tools, { agentId: agent.id, caller: { id: session.userId, ...(role && { role }), source: session.source }, access: config.access, ...(request.signal && { signal: request.signal }) });
+      const role = requestAuth()?.principal?.user.id === memoryUser ? requestAuth()?.principal?.user.role : undefined;
+      const access = await applyToolPolicy(toolset.tools, { agentId: agent.id, caller: { id: memoryUser, ...(role && { role }), source: session.source }, access: config.access, ...(request.signal && { signal: request.signal }) });
       toolset = { ...toolset, tools: access.tools };
       accessNotes = access.notes;
       // PC13: the project's tool kinds, then its knowledge base (never withheld by the kinds).
@@ -591,6 +595,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
     const ctx: ToolContext = {
       agent: { ...agent, ...config },
       session,
+      memoryUser,
       depth,
       maxDepth,
       runId: `ar_${nanoid(10)}`,
