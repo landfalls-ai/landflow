@@ -229,6 +229,17 @@ describe('safeFetch', () => {
     }
   });
 
+  it('exempts the endpoint of LANDFLOW_TOOL_POLICY_URL, so an operator’s OPA on a private address keeps working in production', async () => {
+    const { implicitEndpoints } = await import('@/lib/server/net/safe-fetch');
+    process.env.LANDFLOW_TOOL_POLICY_URL = 'http://10.0.0.5:8181/v1/data/x';
+    try {
+      expect(implicitEndpoints().has('10.0.0.5:8181')).toBe(true);
+      expect(implicitEndpoints().has('10.0.0.5:9999')).toBe(false);
+    } finally {
+      delete process.env.LANDFLOW_TOOL_POLICY_URL;
+    }
+  });
+
   it('scopes the configured endpoints to their port: another port on the same host stays blocked', async () => {
     blockOn();
     process.env.OLLAMA_URL = `http://127.0.0.1:${port}`;

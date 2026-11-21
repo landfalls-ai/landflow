@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { stamp } from '@/lib/client/format';
 import type { BrainFact } from '@/lib/shared/brain';
+import { itemsReader } from '@/lib/shared/memory-items-read';
 import { unescapeFenceText } from '@/lib/shared/memory-fence';
 import type { SawMemorySource } from '@/lib/shared/what-it-saw';
 import { SAW_MEMORY_LABEL } from '@/lib/shared/what-it-saw-sections';
@@ -105,23 +106,26 @@ function Source({ source, states, onForget, onVersions }: { source: SawMemorySou
   );
 }
 
+// One reader for the page: the same ids are asked once however often the part re-renders or mounts.
+const readItems = itemsReader<SawItemState>((query) => api<{ items: SawItemState[] }>(`/api/memory/items?${query}`, { background: true }));
+
 export function SawMemory({ memory, memoryText, states: given }: SawMemoryProps) {
-  const ids = useMemo(() => [...new Set(memory.flatMap((s) => s.items.map((i) => i.id)))], [memory]);
+  // A key, not the array: a parent that hands over a new array of the same ids must not ask again.
+  const idsKey = useMemo(() => [...new Set(memory.flatMap((s) => s.items.map((i) => i.id)))].join('\u0000'), [memory]);
   const [read, setRead] = useState<Record<string, SawItemState>>({});
   const [forgetting, setForgetting] = useState<{ id: string; text: string }>();
   const [history, setHistory] = useState<string>();
   useEffect(() => {
+    const ids = idsKey ? idsKey.split('\u0000') : [];
     if (given || !ids.length) return;
     let live = true;
-    // At most 50 ids a call (the route's cap): ask in batches.
-    const batches = Array.from({ length: Math.ceil(ids.length / 50) }, (_, i) => ids.slice(i * 50, i * 50 + 50));
-    Promise.all(batches.map((batch) => api<{ items: SawItemState[] }>(`/api/memory/items?ids=${batch.map(encodeURIComponent).join(',')}`, { background: true })))
-      .then((all) => live && setRead(Object.fromEntries(all.flatMap((r) => r.items).map((i) => [i.id, i]))))
+    readItems(ids)
+      .then((all) => live && setRead(all))
       .catch(() => {});
     return () => {
       live = false;
     };
-  }, [ids, given]);
+  }, [idsKey, given]);
   const states = given ?? read;
   if (!memory.length) return null;
   const forget = async (reason: string, forgetAfter?: string) => {

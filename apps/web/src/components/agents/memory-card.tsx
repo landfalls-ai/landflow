@@ -4,7 +4,7 @@
  * (a reason is required) and Restore. A person sees their own; the agent's editors pick whose. Text is shown as text, never as
  * markup. The list is `MemoryList` (no state, so it renders on its own); the card loads and acts.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Brain } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
@@ -13,6 +13,7 @@ import { Badge, FilterChip } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { Input, Select } from '../ui/inputs';
+import { personLabels, type PersonName } from '@/lib/shared/memory-people';
 import { Section, Field, Dialog } from './dialog';
 
 interface Page {
@@ -56,9 +57,23 @@ export function MemoryList({ items, onForget, onRestore }: { items: AgentMemoryV
   );
 }
 
+/** The Person picker: names shown, user ids kept as the values. */
+export function PersonSelect({ users, labels, value, onChange }: { users: string[]; labels: Record<string, string>; value: string; onChange: (id: string) => void }) {
+  return (
+    <Select id="memory-person" value={value} onChange={(e) => onChange(e.target.value)}>
+      {users.map((u) => (
+        <option key={u} value={u}>
+          {labels[u] ?? u}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
 export function MemoryCard({ agentId }: { agentId: string }) {
   const [users, setUsers] = useState<string[]>();
   const [user, setUser] = useState<string>();
+  const [people, setPeople] = useState<PersonName[]>([]);
   const [forgotten, setForgotten] = useState(false);
   const [page, setPage] = useState<Page>();
   const [loading, setLoading] = useState(true);
@@ -86,6 +101,13 @@ export function MemoryCard({ agentId }: { agentId: string }) {
     [agentId, user, forgotten],
   );
   useEffect(() => load(), [load]);
+  // Names for the picker (the same lookup the other people pickers use); without it the picker falls back to the ids.
+  useEffect(() => {
+    api<{ users: PersonName[] }>('/api/users', { background: true })
+      .then((r) => setPeople(r.users))
+      .catch(() => {});
+  }, []);
+  const labels = useMemo(() => personLabels(users ?? [], people), [users, people]);
 
   const change = async (item: AgentMemoryView, body: Record<string, unknown>, done: string) => {
     try {
@@ -108,13 +130,7 @@ export function MemoryCard({ agentId }: { agentId: string }) {
       <div className="flex flex-col gap-3">
         {users && users.length > 0 && (
           <Field label="Person" id="memory-person">
-            <Select id="memory-person" value={user ?? ''} onChange={(e) => setUser(e.target.value)}>
-              {users.map((u) => (
-                <option key={u} value={u}>
-                  {u}
-                </option>
-              ))}
-            </Select>
+            <PersonSelect users={users} labels={labels} value={user ?? ''} onChange={setUser} />
           </Field>
         )}
         <div className="flex flex-wrap items-center gap-2">

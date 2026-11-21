@@ -260,7 +260,7 @@ histograms in **milliseconds** with buckets `1, 5, 10, 25, 50, 100, 250, 500, 10
 | `landflow.sse.connections` | up-down counter | `http.route` (the route template, such as `/api/workflows/:id/run`; never a request path, so no ids; `other` for a stream that names no route): open Server-Sent Events streams |
 | `landflow.harness.events` | counter | `harness` (a registry id), `outcome` (`applied`, `late`, `limited`, `refused`): hook events taken by `POST /api/harness/:harness/hooks`; `late` arrived older than the session's last applied event and changed nothing |
 | `landflow.harness.unknown_events` | counter | `harness`: events whose name the registry entry does not list (stored, status unchanged) |
-| `landflow.harness.blocked` | counter | `kind` (`usage_limit`, `credits_depleted`, `unknown`), `harness` (`a2a` on the A2A path; `codex` for the W2 CLI watch): one per entry into Blocked (`lib/server/a2a/blocked.ts`, scope `landflow-harness`) |
+| `landflow.harness.blocked` | counter | `kind` (`usage_limit`, `credits_depleted`, `unknown`), `harness` (`a2a` on the A2A path; `codex` for the CLI watch): one per entry into Blocked (`lib/server/a2a/blocked.ts`, scope `landflow-harness`) |
 | `landflow.audit.write_failures` | counter | `action` (the event's, `api.request` for the generic request layer): audit events that could not be stored ([fail-closed mode](features/audit-and-governance.md#reliability-and-fail-closed-mode)) |
 | `landflow.audit.outbox.delivery_failures` | counter | `destination`: failed deliveries to a SIEM destination |
 | `landflow.audit.outbox.depth` | gauge | audit events queued for SIEM destinations and not yet delivered (the shared outbox; every host reports it, also with `LANDFLOW_AUDIT_OUTBOX=off`) |
@@ -316,6 +316,8 @@ In queue mode each process also reports how far its copy trails the others:
 | `landflow.a2a.call.duration` | histogram (ms) | `gen_ai.agent.name`, `rpc.method`, `landflow.a2a.caller`: until the task settles or pauses |
 | `landflow.a2a.tokens` | counter | `gen_ai.agent.name`, `gen_ai.token.type`: what the remote agent reports using (kagent's usage extension) |
 | `landflow.a2a.tool.calls` | counter | `gen_ai.agent.name`, `gen_ai.tool.name`, `landflow.a2a.tool.status` (`success`/`error`/`awaiting_approval`): the remote agent's own tool calls |
+| `landflow.mcp.policy.decisions` | counter | `decision` (`allow`, `deny`, `failed_open`, `failed_closed`), `hook` (the hook's name): the outbound MCP calls an admin's [policy hook](features/audit-and-governance.md#mcp-policy-hooks) looked at |
+| `landflow.mcp.policy.store_errors` | counter | reads of the stored policy hooks that were unreadable or invalid (calls are blocked in production) |
 | `landflow.assistant.requests` | counter | `landflow.assistant.request` (`suggest`/`chat`/`architect`), `landflow.outcome` (`ok`/`error`/`timeout`/`skipped`) |
 | `landflow.assistant.duration` | histogram (ms) | `landflow.assistant.request` |
 | `landflow.assistant.suggestions` | counter | `landflow.assistant.kind` (`fix`/`param`/`data`/`next`, or `proposal` for a chat proposal): what the editor was shown |
