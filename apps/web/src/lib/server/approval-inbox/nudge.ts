@@ -190,9 +190,9 @@ export async function checkApprovalAlerts(now: number, send: (rule: AlertRule, n
   }
   const rules = alertStore.rules().filter((rule) => (rule.kind ?? 'runs') === 'runs' && rule.enabled && rule.events.includes('approval') && rule.channelIds.length);
   // C12: a ticket channel gets a ticket (its own retries and its close), not the one-shot alert; the plain channels keep today's path.
-  const channels = new Map(alertStore.channels().map((channel) => [channel.id, channel]));
-  await sweepTickets(now, rules, channels, ticketRequestOf);
-  const plain = rules.map((rule) => ({ ...rule, channelIds: rule.channelIds.filter((id) => !channels.has(id) || !opensTickets(channels.get(id)!)) })).filter((rule) => rule.channelIds.length);
+  const channelById = new Map(alertStore.channels().map((channel) => [channel.id, channel]));
+  await sweepTickets(now, rules, channelById, ticketRequestOf);
+  const plain = rules.map((rule) => ({ ...rule, channelIds: rule.channelIds.filter((id) => !channelById.has(id) || !opensTickets(channelById.get(id)!)) })).filter((rule) => rule.channelIds.length);
   if (!plain.length) return;
   for (const row of rows) {
     if (Date.parse(row.expires_at) <= now) continue;

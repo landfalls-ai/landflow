@@ -207,6 +207,46 @@ describe('opening a ticket', () => {
   });
 });
 
+describe('a ticket system that is down does not hold up the tick', () => {
+  it('an unreachable channel defers its other due rows without counting an attempt', async () => {
+    const dead = alertStore.createChannel({ name: 'Dead board', kind: 'servicenow', config: { url: 'http://127.0.0.1:1', credentialId: basic.id } });
+    alertStore.createRule({ name: 'Dead', enabled: true, workflows: { mode: 'all' }, events: ['approval'], channelIds: [dead.id], throttleMinutes: 0 });
+    const a = await open();
+    const b = await open();
+    const t0 = Date.now();
+    await sweep(t0);
+    const deadRows = [a, b].map((r) => rowsOf(r.id).find((row) => row.channel_id === dead.id)!);
+    // One call was made and failed; the other row was pushed back without an attempt.
+    expect(deadRows.map((r) => r.attempts).sort()).toEqual([0, 1]);
+    const deferred = deadRows.find((r) => r.attempts === 0)!;
+    expect(Date.parse(deferred.next_at!)).toBe(t0 + MIN);
+    // The healthy channel was not held up.
+    expect(fake.records).toHaveLength(2);
+  });
+
+  it('makes at most 10 outside calls to a failing channel in one tick', async () => {
+    fake.failing = true;
+    const opened = [];
+    for (let i = 0; i < 12; i++) opened.push(await open());
+    await sweep(Date.now());
+    const attempted = opened.filter((r) => rowsOf(r.id)[0]!.attempts === 1);
+    expect(attempted).toHaveLength(10);
+    expect(fake.calls.filter((c) => c.method === 'POST')).toHaveLength(10);
+  });
+
+  it('skips a request that is past its expiry even if it still reads waiting', async () => {
+    fake.failing = true;
+    const opened = await open();
+    const t0 = Date.now();
+    await sweep(t0);
+    fake.failing = false;
+    database().sqlite.prepare('UPDATE approval_inbox SET expires_at = ? WHERE id = ?').run(new Date(t0 + MIN).toISOString(), opened.id);
+    await sweep(t0 + 2 * MIN);
+    expect(rowsOf(opened.id)[0]!.state).toBe('skipped');
+    expect(fake.records).toHaveLength(0);
+  });
+});
+
 describe('closing a ticket', () => {
   const settle = async (to: 'approved' | 'denied') => {
     const opened = await open();
@@ -323,6 +363,13 @@ describe('what people see', () => {
     const other = await open();
     await sweep(Date.now());
     expect('tickets' in access.view(other.id)!).toBe(false);
+  });
+
+  it('never shows a link that is not http(s)', async () => {
+    const opened = await open();
+    database().insertNew('approval_tickets', { request_id: opened.id, channel_id: 'x', rule_id: 'r', system: 'webhook', state: 'open', external_id: 'T-1', external_key: 'T-1', external_url: 'javascript:alert(1)', attempts: 0, next_at: null, last_error: null, opened_at: null, closed_at: null, created_at: new Date().toISOString() });
+    const shown = access.view(opened.id)!.tickets!.find((t) => t.id === 'T-1')!;
+    expect(shown.url).toBeUndefined();
   });
 
   it('shows an opening ticket without an id and hides a skipped one', async () => {

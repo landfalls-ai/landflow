@@ -51,6 +51,8 @@ const OPEN_DELAYS = [1, 5, 15];
 /** Minutes after the Nth failed attempt to close; the third failure gives up. */
 const CLOSE_DELAYS = [1, 5];
 const CLOSE_ATTEMPTS = 3;
+/** Outside calls one tick makes to open (and again to close): a down ticket system must not hold up the other alert checks. */
+const CALLS_PER_TICK = 10;
 
 const db = (): Database => database();
 const asRow = (row: TicketRow) => row as unknown as Record<string, string | number | null>;
@@ -148,15 +150,24 @@ async function createRows(now: number, rules: AlertRule[], channels: Map<string,
 }
 
 async function openDue(now: number, requestOf: TicketRequestOf): Promise<void> {
+  // A channel that could not be reached this tick: its other due rows wait (without an attempt counted) instead of each timing out.
+  const unreachable = new Set<string>();
+  let calls = 0;
   for (const row of db().all<TicketRow>("SELECT * FROM approval_tickets WHERE state = 'opening' AND next_at <= ?", iso(now))) {
     try {
       const request = db().get<InboxRow>('SELECT * FROM approval_inbox WHERE id = ?', row.request_id);
       const channel = alertStore.channelForSending(row.channel_id);
-      if (!request || request.status !== 'waiting' || !channel) {
+      if (!request || request.status !== 'waiting' || Date.parse(request.expires_at) <= now || !channel) {
         // The request settled before the ticket opened (or the channel is gone): nothing to open and nothing to say.
         if (await moveTicket(row.request_id, row.channel_id, { state: 'opening', attempts: Number(row.attempts) }, { state: 'skipped', next_at: null })) outcome(row.system, 'skipped');
         continue;
       }
+      if (unreachable.has(row.channel_id)) {
+        await moveTicket(row.request_id, row.channel_id, { state: 'opening', attempts: Number(row.attempts) }, { next_at: iso(now + openDelay(Math.max(1, Number(row.attempts)))) });
+        continue;
+      }
+      if (calls >= CALLS_PER_TICK) continue; // the rest are due next tick
+      calls++;
       // Take this attempt first (a conditional step on the attempt count): the next attempt is already scheduled if this process dies.
       const attempts = Number(row.attempts) + 1;
       const leased = await moveTicket(row.request_id, row.channel_id, { state: 'opening', attempts: Number(row.attempts) }, { attempts, next_at: iso(now + openDelay(attempts)) });
@@ -169,6 +180,7 @@ async function openDue(now: number, requestOf: TicketRequestOf): Promise<void> {
           audit('approval.ticket.open', opened, request);
         }
       } catch (error) {
+        if (/could not be reached/.test((error as Error).message)) unreachable.add(row.channel_id);
         await moveTicket(row.request_id, row.channel_id, { state: 'opening', attempts }, { last_error: redactText((error as Error).message).slice(0, 200) });
         outcome(row.system, 'open_failed');
         logger.warn('approval ticket not opened', { 'landflow.approval.request': row.request_id, 'landflow.alert.channel': row.channel_id, error: (error as Error).message });
@@ -181,10 +193,13 @@ async function openDue(now: number, requestOf: TicketRequestOf): Promise<void> {
 
 async function closeSettled(now: number): Promise<void> {
   const due = db().all<TicketRow>("SELECT * FROM approval_tickets WHERE state = 'open' OR (state = 'closing' AND next_at <= ?)", iso(now));
+  let calls = 0;
   for (const row of due) {
     try {
       const request = db().get<InboxRow>('SELECT * FROM approval_inbox WHERE id = ?', row.request_id);
       if (request?.status === 'waiting') continue;
+      if (calls >= CALLS_PER_TICK) break; // the rest are due next tick
+      calls++;
       const channel = alertStore.channelForSending(row.channel_id);
       const attempts = Number(row.attempts) + 1;
       const leased = await moveTicket(row.request_id, row.channel_id, { state: row.state, attempts: Number(row.attempts) }, { state: 'closing', attempts, next_at: iso(now + (CLOSE_DELAYS[attempts - 1] ?? CLOSE_DELAYS.at(-1)!) * MIN) });
@@ -220,6 +235,6 @@ export function ticketsOf(requestId: string): InboxTicket[] {
     .all<TicketRow>("SELECT * FROM approval_tickets WHERE request_id = ? AND state <> 'skipped' ORDER BY created_at, channel_id", requestId)
     .map((row): InboxTicket => {
       const shown: InboxTicket['state'] = row.state === 'opening' ? 'opening' : row.state === 'closed' ? 'closed' : row.external_id ? 'open' : 'failed';
-      return { system: row.system, channel: row.channel_id, ...(shown !== 'opening' && row.external_id && { id: row.external_id }), ...(shown !== 'opening' && row.external_url && { url: row.external_url }), state: shown };
+      return { system: row.system, channel: row.channel_id, ...(shown !== 'opening' && row.external_id && { id: row.external_id }), ...(shown !== 'opening' && row.external_url && /^https?:\/\//i.test(row.external_url) && { url: row.external_url }), state: shown };
     });
 }
