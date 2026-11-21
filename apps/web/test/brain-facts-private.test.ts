@@ -238,7 +238,7 @@ describe('review fixes: the facts route and private subjects', () => {
   it('never lists another person’s private memory, however the subject is named', async () => {
     const route = await import('@/app/api/brain/facts/route');
     const { withAuth } = await import('@/lib/server/auth/context');
-    const mallory = await createUser({ email: 'mallory@priv.test', name: 'Mallory', role: 'member', password: 'mallory-password-1' });
+    const mallory = await createUser({ email: 'mallory@priv.test', name: 'Mallory', role: 'owner', password: 'mallory-password-1' }); // an owner sees every fact, so only the route's own rule can hide a private one
     const victim = await createUser({ email: 'victim@priv.test', name: 'Victim', role: 'member', password: 'victim-password-1' });
     put(`agent-user:ag9/${victim.id}:memory:s1`, 'agent-user', `ag9/${victim.id}`, 'Victim’s secret preference', undefined, 9);
     const get = async (query: string) => {

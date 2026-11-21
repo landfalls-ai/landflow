@@ -206,6 +206,9 @@ describe('T-8 as an agent tool', () => {
     // is not annotated idempotent, so a read-configured tool would hold it too.
     const forgets = writesOutside({ type: 'core.memoryForget', parameters: { operation: 'delete' } });
     expect(forgets).toBe(true);
+    const forgetType = registry.resolve('core.memoryForget');
+    const annotations = 'error' in forgetType ? undefined : forgetType.descriptor.properties.find((p) => p.name === 'operation')!.options![0].toolAnnotations;
+    expect((await import('@/lib/server/mcp/approval-mode')).needsApproval('destructive', { annotations: annotations as never })).toBe(true);
     expect(writesOutside({ type: 'core.memorySearch', parameters: { operation: 'search' } })).toBe(false);
     const agent = agentOf([{ id: 't1', type: 'node', name: 'forget', description: 'f', nodeType: 'core.memoryForget', parameters: { operation: 'delete' }, ...(forgets && { requireApproval: true }) }]);
     script.push(() => ({ toolCalls: [{ id: 'c1', name: 'forget', input: { memoryId: mem, reason: 'because' } }] }));

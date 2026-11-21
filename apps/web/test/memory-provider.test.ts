@@ -220,6 +220,9 @@ describe('review fixes: untrusted answers, forget container, credential at call 
       bad = [wrong];
       await expect(memory.search(c(), 'x', {}, caller), JSON.stringify(wrong)).rejects.toMatchObject({ name: 'MemoryProviderError' });
     }
+    bad = [{ ...good, kind: null, version: null }];
+    expect((await memory.search(c(), 'x', {}, caller)).items[0]).toMatchObject({ kind: 'memory' });
+    expect((await memory.search(c(), 'x', {}, caller)).items[0].version).toBeUndefined();
     bad = [{ ...good, id: 'ns:a.b/c#v2@x-1', version: 2 }];
     expect((await memory.search(c(), 'x', {}, caller)).items[0]).toMatchObject({ id: 'ns:a.b/c#v2@x-1', version: 2 });
   });

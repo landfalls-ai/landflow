@@ -41,9 +41,9 @@ function toItem(raw: unknown, at: string): MemoryItem {
   const wire = (raw && typeof raw === 'object' ? raw : {}) as Partial<MemoryItemWire>;
   if (typeof wire.id !== 'string' || typeof wire.text !== 'string') throw new MemoryProviderError('the memory provider answered an item without an id and text');
   if (!ID.test(wire.id)) throw new MemoryProviderError('the memory provider answered an item whose id is not a plain id (letters, digits and : . / # @ _ -, up to 200)');
-  const kind = wire.kind === undefined ? 'memory' : wire.kind;
+  const kind = wire.kind ?? 'memory'; // null (Python None, a Go field without omitempty) is absent
   if (typeof kind !== 'string' || !KIND.test(kind)) throw new MemoryProviderError('the memory provider answered an item whose kind is not a plain word (up to 40 characters)');
-  if (wire.version !== undefined && !(Number.isInteger(wire.version) && (wire.version as number) >= 1)) throw new MemoryProviderError('the memory provider answered an item whose version is not a whole number');
+  if (wire.version != null && !(Number.isInteger(wire.version) && (wire.version as number) >= 1)) throw new MemoryProviderError('the memory provider answered an item whose version is not a whole number');
   const score = typeof wire.score === 'number' && Number.isFinite(wire.score) ? Math.max(0, Math.min(1, wire.score)) : undefined;
   return {
     id: wire.id,
@@ -51,7 +51,7 @@ function toItem(raw: unknown, at: string): MemoryItem {
     kind,
     source: 'provider',
     ...(score !== undefined && { score }),
-    ...(wire.version !== undefined && { version: wire.version }),
+    ...(wire.version != null && { version: wire.version }),
     ...(wire.static === true && { static: true }),
     createdAt: when(wire.createdAt, at),
     updatedAt: when(wire.updatedAt, when(wire.createdAt, at)),

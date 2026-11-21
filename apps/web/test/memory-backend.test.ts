@@ -290,8 +290,8 @@ describe('review fixes: the study, study facts, and team paging', () => {
   it('replaces and forget refuse a study fact, even one of this project', async () => {
     facts.upsertFact({ id: `workflow:w_rv2:health`, subjectType: 'workflow', subjectId: 'w_rv2', kind: 'health', statement: 'Study says healthy', confidence: 1, evidence: [], projectId: p } as never, database(), new Date().toISOString());
     const c = { kind: 'project' as const, id: p };
-    await expect(memory.add(c, { text: 'rewritten', replaces: 'workflow:w_rv2:health' }, editor)).rejects.toMatchObject({ name: 'MemoryNotFoundError' });
-    await expect(memory.forget(c, 'workflow:w_rv2:health', 'no', editor)).rejects.toMatchObject({ name: 'MemoryNotFoundError' });
+    await expect(memory.add(c, { text: 'rewritten', replaces: 'workflow:w_rv2:health' }, editor)).rejects.toMatchObject({ name: 'MemoryWriteRefusedError', message: expect.stringContaining('own memories') });
+    await expect(memory.forget(c, 'workflow:w_rv2:health', 'no', editor)).rejects.toMatchObject({ name: 'MemoryWriteRefusedError' });
     expect(facts.getFact('workflow:w_rv2:health', database())).toMatchObject({ statement: 'Study says healthy', status: 'active' });
   });
 

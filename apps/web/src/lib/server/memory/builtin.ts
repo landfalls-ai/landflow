@@ -84,7 +84,8 @@ function factIn(c: MemoryContainer, id: string, options: { includeForgotten?: bo
 function writableFact(c: MemoryContainer, id: string, caller: MemoryCaller): BrainFact {
   const fact = factIn(c, id);
   const memoryKind = fact.subjectType === 'project' || fact.subjectType === 'agent-user';
-  if (!memoryKind || (STUDY_FACT_KINDS as readonly string[]).includes(fact.kind) || (caller.actor && !canFact(caller.actor, fact, 'update'))) throw new MemoryNotFoundError();
+  if (!memoryKind || (STUDY_FACT_KINDS as readonly string[]).includes(fact.kind)) throw new MemoryWriteRefusedError('only a project’s own memories can be replaced or forgotten');
+  if (caller.actor && !canFact(caller.actor, fact, 'update')) throw new MemoryNotFoundError();
   return fact;
 }
 
