@@ -188,7 +188,7 @@ async function start(config: ClusterConfig, options: StartClusterOptions): Promi
 
   // Live events: this process's go out; mains show everyone's.
   setBusRelay((event) => {
-    if (event.channel === 'execution' || event.channel === 'agent' || event.channel === 'lock') void relay.broadcast<BusEvent>('bus', event);
+    if (event.channel === 'execution' || event.channel === 'agent' || event.channel === 'lock' || event.channel === 'harness') void relay.broadcast<BusEvent>('bus', event);
   });
   stoppers.push(() => setBusRelay(undefined));
   if (config.role === 'main') {

@@ -2018,6 +2018,20 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS team_notes_forgotten ON team_notes (forgotten_at)`,
     ],
   },
+  // C04: Claude Code hook ingest (docs/harnesses.md#live-status)
+  {
+    version: 2914,
+    name: 'harness_sessions',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS harness_sessions (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, harness TEXT NOT NULL, session_key TEXT NOT NULL, agent_id TEXT, project_id TEXT, status TEXT NOT NULL, order_kind TEXT, last_order TEXT, last_event_at TEXT NOT NULL, opened_at TEXT NOT NULL, closed_at TEXT, data TEXT NOT NULL)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS harness_sessions_key ON harness_sessions (owner_id, harness, session_key)`,
+      `CREATE INDEX IF NOT EXISTS harness_sessions_open ON harness_sessions (owner_id, closed_at)`,
+      `CREATE INDEX IF NOT EXISTS harness_sessions_agent ON harness_sessions (agent_id, last_event_at)`,
+      `CREATE TABLE IF NOT EXISTS harness_events (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, order_key TEXT NOT NULL, name TEXT NOT NULL, received_at TEXT NOT NULL, data TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS harness_events_session ON harness_events (session_id, order_key)`,
+      `CREATE INDEX IF NOT EXISTS harness_events_received ON harness_events (received_at)`,
+    ],
+  },
   // C07: memory containers read a project's facts by project (docs/second-brain.md#memory-backend)
   {
     version: 2915,
@@ -2112,6 +2126,8 @@ export const TABLES = {
   scheduled_publishes: ['id'],
   approval_email_used: ['group_id'],
   approval_inbox: ['id'], // AP01:
+  harness_sessions: ['id'], // C04:
+  harness_events: ['id'], // C04:
   notion_brain_links: ['id'], // NB03:
   notion_brain_items: ['link_id', 'kind', 'local_key'], // NB03:
   notion_brain_outbox: ['link_id', 'kind', 'local_key'], // NB03:

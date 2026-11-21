@@ -1,0 +1,152 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`snippets: unchanged by the registry (C15 AS-2) > all six harnesses give the same text as before the list moved to the registry > claude-code 1`] = `
+[
+  {
+    "label": "One command",
+    "language": "bash",
+    "text": "claude mcp add --transport http landflow https://landflow.example.test/api/mcp --header "Authorization: Bearer lf_made-up-test-key-0123456789"",
+    "where": "Run it in a terminal",
+  },
+  {
+    "label": ".mcp.json",
+    "language": "json",
+    "text": "{
+  "mcpServers": {
+    "landflow": {
+      "type": "http",
+      "url": "https://landflow.example.test/api/mcp",
+      "headers": {
+        "Authorization": "Bearer lf_made-up-test-key-0123456789"
+      }
+    }
+  }
+}",
+    "where": "Or put this in .mcp.json in your project (do not commit it: it holds your key)",
+  },
+  {
+    "label": "The landflow-brain mod",
+    "language": "bash",
+    "text": "claude plugin marketplace add landfalls-ai/landflow
+claude plugin install landflow-brain",
+    "where": "Install it from the Landflow repository’s marketplace. It journals your sessions and brings yesterday back",
+  },
+  {
+    "label": "Or from a checkout",
+    "language": "bash",
+    "text": "claude plugin install apps/web/claude-plugins/landflow-brain",
+    "where": "In a clone of the Landflow repository",
+  },
+  {
+    "label": "The mod’s options",
+    "language": "text",
+    "text": "url: https://landflow.example.test
+key: lf_made-up-test-key-0123456789
+repos: owner/name
+mode: review",
+    "where": "Claude Code asks for these when you install it",
+  },
+]
+`;
+
+exports[`snippets: unchanged by the registry (C15 AS-2) > all six harnesses give the same text as before the list moved to the registry > codex 1`] = `
+[
+  {
+    "label": "config.toml",
+    "language": "toml",
+    "text": "[mcp_servers.landflow]
+url = "https://landflow.example.test/api/mcp"
+http_headers = { Authorization = "Bearer lf_made-up-test-key-0123456789" }",
+    "where": "~/.codex/config.toml",
+  },
+]
+`;
+
+exports[`snippets: unchanged by the registry (C15 AS-2) > all six harnesses give the same text as before the list moved to the registry > cursor 1`] = `
+[
+  {
+    "label": "mcp.json",
+    "language": "json",
+    "text": "{
+  "mcpServers": {
+    "landflow": {
+      "url": "https://landflow.example.test/api/mcp",
+      "headers": {
+        "Authorization": "Bearer lf_made-up-test-key-0123456789"
+      }
+    }
+  }
+}",
+    "where": ".cursor/mcp.json in your project, or ~/.cursor/mcp.json for every project",
+  },
+]
+`;
+
+exports[`snippets: unchanged by the registry (C15 AS-2) > all six harnesses give the same text as before the list moved to the registry > gemini 1`] = `
+[
+  {
+    "label": "settings.json",
+    "language": "json",
+    "text": "{
+  "mcpServers": {
+    "landflow": {
+      "httpUrl": "https://landflow.example.test/api/mcp",
+      "headers": {
+        "Authorization": "Bearer lf_made-up-test-key-0123456789"
+      }
+    }
+  }
+}",
+    "where": "~/.gemini/settings.json, or .gemini/settings.json in your project",
+  },
+]
+`;
+
+exports[`snippets: unchanged by the registry (C15 AS-2) > all six harnesses give the same text as before the list moved to the registry > generic 1`] = `
+[
+  {
+    "label": "The server",
+    "language": "text",
+    "text": "URL: https://landflow.example.test/api/mcp
+Authorization: Bearer lf_made-up-test-key-0123456789",
+    "where": "Streamable HTTP, with this header on every request",
+  },
+  {
+    "label": "As JSON",
+    "language": "json",
+    "text": "{
+  "mcpServers": {
+    "landflow": {
+      "type": "http",
+      "url": "https://landflow.example.test/api/mcp",
+      "headers": {
+        "Authorization": "Bearer lf_made-up-test-key-0123456789"
+      }
+    }
+  }
+}",
+    "where": "For clients that read an mcpServers block",
+  },
+]
+`;
+
+exports[`snippets: unchanged by the registry (C15 AS-2) > all six harnesses give the same text as before the list moved to the registry > vscode 1`] = `
+[
+  {
+    "label": "mcp.json",
+    "language": "json",
+    "text": "{
+  "servers": {
+    "landflow": {
+      "type": "http",
+      "url": "https://landflow.example.test/api/mcp",
+      "headers": {
+        "Authorization": "Bearer lf_made-up-test-key-0123456789"
+      }
+    }
+  }
+}",
+    "where": ".vscode/mcp.json in your project",
+  },
+]
+`;

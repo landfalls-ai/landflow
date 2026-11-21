@@ -2143,6 +2143,29 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(object({ events: array({ type: 'object', additionalProperties: true }) }, ['events'])),
     responses: { 202: { description: 'Passed on to the queue-mode process that holds the trace' }, 204: { description: 'Taken' }, 400: invalid, 404: notFound, 410: errorRef('The call has ended: stop posting here'), 413: errorRef('The trace holds all it may') },
   });
+  add('post', '/api/harness/{harness}/hooks', {
+    tag: 'Agents',
+    id: 'postHarnessHook',
+    summary: 'Send one hook event of a coding harness',
+    description: 'Claude Code’s hook JSON as sent, one event per request (at most 64 KB), with an API key that has the `harness:write` scope (a cookie session is refused). The event joins a session of the key’s owner: a Landflow agent’s when `agent_type` names one they may run, else their own, which keeps status and counts only (docs/harnesses.md#live-status). `X-Landflow-Hook-Seq` (a per-session counter) orders events; else `X-Landflow-Hook-Time` (ISO or epoch milliseconds; ignored when more than 5 minutes ahead of the server) does; else the server’s receive time. A session belongs to an agent only when its first event is a `SessionStart` naming one. At most 20 events a second per key (100 for all of one person’s keys) and 2,000 open sessions per key owner. Not in the audit log per call.',
+    pathParams: { harness: 'A registry id whose strategy sends events: `claude-code`' },
+    body: jsonBody(object({ hook_event_name: { type: 'string' }, session_id: { type: 'string' } }, ['hook_event_name', 'session_id'])),
+    responses: { 204: { description: 'Taken' }, 400: invalid, 401: errorRef('No or an invalid API key'), 403: errorRef('The key lacks `harness:write`, or this is not an API key'), 404: errorRef('A harness that sends no events'), 413: errorRef('Over 64 KB'), 429: errorRef('Over the per-key limits (`retryAfter` seconds)') },
+  });
+  add('get', '/api/harness/sessions', {
+    tag: 'Agents',
+    id: 'listHarnessSessions',
+    summary: 'Harness sessions you may see',
+    description: 'Your own sessions (nobody else sees them, an admin included) and the sessions of Landflow agents you may read, newest first by last event. Needs `executions:read` for a key.',
+    query: [
+      { name: 'agentId', description: 'Only this agent’s sessions', schema: { type: 'string' } },
+      { name: 'open', description: '`1`: leave out closed sessions', schema: { type: 'string', enum: ['1', 'true', '0', 'false'] } },
+      { name: 'kind', description: '`own`: only your own sessions; `agent`: only sessions of Landflow agents you may read', schema: { type: 'string', enum: ['own', 'agent'] } },
+      { name: 'limit', description: 'At most this many per page (default 100, at most 500)', schema: { type: 'integer', minimum: 1, maximum: 500, default: 100 } },
+      { name: 'cursor', description: 'Opaque; the previous page’s nextCursor', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The sessions', object({ sessions: array({ type: 'object', additionalProperties: true }), nextCursor: { type: 'string' } }, ['sessions'])), 400: invalid },
+  });
   add('get', '/api/agent-trace/{id}/asks/{askId}', {
     tag: 'Agents',
     id: 'getAgentTraceAsk',

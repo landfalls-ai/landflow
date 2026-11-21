@@ -15,10 +15,10 @@ export function defaultContent(): TraceContent {
 /** A workflow's setting, else the instance's. */
 export const contentOf = (setting: TraceContent | undefined): TraceContent => (setting === 'full' || setting === 'summaries' || setting === 'off' ? setting : defaultContent());
 
-const cutText = (text: string, chars: number) => (text.length > chars ? `${text.slice(0, chars)}${CUT}` : text);
+export const cutText = (text: string, chars: number) => (text.length > chars ? `${text.slice(0, chars)}${CUT}` : text);
 
 /** Every string inside `value` cut to `chars` characters. */
-function cutStrings(value: unknown, chars: number): unknown {
+export function cutStrings(value: unknown, chars: number): unknown {
   if (typeof value === 'string') return cutText(value, chars);
   if (Array.isArray(value)) return value.map((item) => cutStrings(item, chars));
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, cutStrings(item, chars)]));
