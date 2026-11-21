@@ -21,6 +21,8 @@ export interface MemoryCaller {
   userId?: string;
   /** The API key that called (audited; never the key). */
   keyId?: string;
+  /** How a person's call arrived (`mcp`), recorded on the audit row of a write. */
+  via?: string;
   run?: { executionId?: string; agentId?: string };
   /** A team run's notebook binding: the only thing that can write a note (C07 D9) and the only way to read a run's notes. */
   notebook?: NotebookBinding;

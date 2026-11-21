@@ -286,6 +286,18 @@ in the agent's Sessions and, for your own sessions, on `/connect`.
   each card shows its newest open session as a chip ("Working · 2 min ago", "Waiting for you"). `/connect` → Claude Code
   has a **Live status** step with the hooks block and **Your sessions**.
 - **`landflow harness detect`** lists which registry harnesses are on the machine ([CLI](features/cli.md)).
+- **Codex: `landflow harness watch codex`.** Codex runs no hook when a turn dies on a provider limit; it writes the failure into
+  its rollout file. The watch starts `codex` on your terminal and reads only the rollout files of the sessions it started
+  (`$CODEX_HOME/sessions`, default `~/.codex/sessions`): the first read starts at most 64 KB before a file's end, a tick reads at
+  most 256 KB, and a turn is never timed out. When a turn ends on a usage limit or out-of-credits, it sends one `quota_blocked`
+  event to `POST /api/harness/codex/hooks` with the session id, the kind of limit and the provider's message, and nothing else:
+  no prompt, tool output or path. The Codex registry entry is a `wrapper` that accepts that one event (any other name is stored
+  and counted as unknown); binding works as for any harness (only a first `SessionStart` with the `X-Landflow-Agent` header binds), and the watch sends
+  no `SessionStart`, so a Codex session is **yours alone**. Blocked lasts until the session goes stale (about the usual idle
+  window): no other Codex event is accepted, so nothing clears it earlier. The chip reads "Blocked: Codex usage limit reached · since 14:32". The kinds count as
+  `landflow.harness.blocked{kind, harness=codex}`. The classifier is the protocol's (`@landflow/protocol/quota-block`), shared
+  with the A2A path. The entry is marked unverified: it was built against Codex's documented rollout records and fixtures, not
+  a live Codex that hit its limit ([limitations](limitations.md)).
 
 ### 6. Security
 

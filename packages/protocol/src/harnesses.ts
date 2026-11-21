@@ -45,7 +45,7 @@ const notification = (type: string, status: HarnessStatus): HookEventRule => ({ 
 
 /**
  * Claude Code's hooks, checked against the CLI's own event schemas (2.1.330 locally; kagent pins 2.1.285, which has the
- * same names: docs/specs/20-combined/notes/hooks.md). `Blocked` is not here: it comes from a quota signal (ingest).
+ * same names: docs/specs/20-combined/notes/hooks.md). `Blocked` is not here: it comes from a quota signal (ingest). Codex's entry lists `quota_blocked`, its one event.
  */
 const CLAUDE_CODE_EVENTS: Record<string, HookEventRule | HookEventRule[]> = {
   SessionStart: always('idle'),
@@ -88,11 +88,14 @@ export const HARNESS_REGISTRY: readonly HarnessEntry[] = [
     detect: { binaries: ['codex'], configFiles: ['~/.codex/config.toml'] },
     defaultCommand: 'codex',
     mcpConfig: { file: '~/.codex/config.toml', format: 'toml' },
-    strategy: 'mcp-only',
-    statusSignals: 'none',
+    // `landflow harness watch codex` starts codex and reads the rollout files of the sessions it started; the one thing it sends is
+    // a `quota_blocked` event (C05, C08). Codex sends no hook events of its own, so no other name is accepted.
+    strategy: 'wrapper',
+    hookEvents: { quota_blocked: always('blocked') },
+    statusSignals: 'rollout-file',
     kagentRuntime: 'codex',
     verified: false,
-    note: `Planned as a wrapper (hooks plus the rollout file). ${NOT_VERIFIED}`,
+    note: `A wrapper (landflow harness watch codex) that reports only when a provider limit stops a turn. Not checked against a live Codex that hit a limit: ${NOT_VERIFIED}`,
   },
   { id: 'gemini', label: 'Gemini CLI', hint: '~/.gemini/settings.json', kind: 'cli', detect: { binaries: ['gemini'], configFiles: ['~/.gemini/settings.json'] }, defaultCommand: 'gemini', mcpConfig: { file: '~/.gemini/settings.json', format: 'json-mcpServers' }, strategy: 'mcp-only', statusSignals: 'none', verified: false },
   { id: 'vscode', label: 'VS Code', hint: '.vscode/mcp.json', kind: 'ide', detect: { binaries: ['code'], configFiles: [] }, mcpConfig: { file: '.vscode/mcp.json', format: 'json-servers' }, strategy: 'mcp-only', statusSignals: 'none', verified: false },

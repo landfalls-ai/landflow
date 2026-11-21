@@ -21,7 +21,8 @@ const text = (value: unknown): string | undefined => (typeof value === 'string' 
 /** The event name, or undefined for a payload that names none (the route refuses it). */
 export const eventNameOf = (payload: Record<string, unknown>): string | undefined => {
   const name = text(payload.hook_event_name);
-  return name && /^[A-Za-z]{1,40}$/.test(name) ? name : undefined;
+  // Letters, and underscores for Codex's `quota_blocked` (C08).
+  return name && /^[A-Za-z][A-Za-z_]{0,39}$/.test(name) ? name : undefined;
 };
 
 /** The `owner/name` the sender gave in `repository`, if it is one. */

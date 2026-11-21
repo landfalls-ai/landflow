@@ -13,6 +13,7 @@ import { backtestScope } from '../brain/backtest-scope';
 import { listKinds } from '../usage/kinds';
 import { SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL, slackRefOf } from '../slack';
 import { store } from '../store';
+import { escapeMemoryFields } from '../../shared/memory-fence';
 
 const main = [{ type: 'main' as const }];
 const DAY_MS = 86_400_000;
@@ -270,8 +271,10 @@ export const landflowUsageNode = defineNode({
         default:
           throw new NodeOperationError(`Unknown operation ${operation}`, { itemIndex: i });
       }
-      if (operation === 'workflow' || operation === 'entity' || oneItem) out.push({ json: json(whole), pairedItem: { item: i } });
-      else out.push(...rows.map((row) => ({ json: json(row), pairedItem: { item: i } })));
+      // In tool mode a model reads this: fact statements are escaped in place (C08 D1); a flow's own step sees the original.
+      const shown = <T>(value: T): T => (ctx.getMode() === 'tool' ? escapeMemoryFields(value) : value);
+      if (operation === 'workflow' || operation === 'entity' || oneItem) out.push({ json: json(shown(whole)), pairedItem: { item: i } });
+      else out.push(...rows.map((row) => ({ json: json(shown(row)), pairedItem: { item: i } })));
     }
     return [out];
   },
