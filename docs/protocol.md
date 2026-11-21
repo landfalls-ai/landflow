@@ -1279,6 +1279,30 @@ templates** (`resources/templates/list`) for callers whose grant covers `trigger
 - **Queue mode**: the main holding the stream polls; events live in the database, and a 1 s watch lets that main see
   a webhook another main received. A client that reconnects to another main starts a new baseline.
 
+### 15.8 Memory providers
+
+A plugin can provide a project's memory (docs/second-brain.md#memory-backend). Declare an action node with `memoryProvider: true`
+whose `operation` options property has exactly the five values `search`, `profile`, `add`, `forget` and `list`, each with an
+`outputSchema` that requires the keys the host reads: `search` and `list` `items`; `profile` `static` and `recent`; `add` and
+`forget` `item`. The host checks this when it parses the manifest, so a provider with a wrong shape fails registration with a message
+naming the node (`node “vecmem”: a memory provider needs the operation forget`). An old host treats the node as any action node.
+
+The host calls the node as any node: mode `manual`, one input item whose `json` is the request, parameters `{ operation }`, the credential
+the project chose; it reads the first output item.
+
+| `operation` | Request `json` | Output `json` |
+|---|---|---|
+| `search` | `{ container, query, mode: keyword\|meaning\|hybrid, limit, threshold }` | `{ items }` |
+| `profile` | `{ container }` | `{ static: [...], recent: [...] }` |
+| `add` | `{ container, text, kind?, static?, forgetAfter?, replaces? }` | `{ item }` |
+| `forget` | `{ id, reason }` | `{ item }` |
+| `list` | `{ container, cursor?, limit }` | `{ items, nextCursor? }` |
+
+`container` is `project:<id>`. An item is `{ id, text, kind?, score?, version?, static?, createdAt?, updatedAt? }` with `score` 0..1.
+A provider that errors, does not answer in 10 s or answers an item without `id` and `text` fails the call; Landflow never falls back to
+another memory. Its own HTTP goes through `ctx.http`. The Go SDK has `NodeDescriptor.MemoryProvider`; the Python SDK passes the
+descriptor as a dict.
+
 ## 16. Activity items
 
 Integration triggers and their **List Changed Since** operations (Slack, Google Drive and Calendar, Notion, …) output

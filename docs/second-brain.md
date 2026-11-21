@@ -134,6 +134,48 @@ the instance); a caller who cannot see the fact gets 404.
 - A forgotten fact leaves the Notion copy: the next push trashes its row, and a restore writes it back as a new row. Restoring a fact that is not forgotten answers 409.
 - The reason is a person's words: the audit log keeps it, and it comes back only in the forgotten list and an editor's history, never in a search, an MCP tool, the Usage node or a prompt (a live fact with a forget-after pending does not carry it either).
 
+#### Memory backend
+
+One interface, `MemoryBackend` (`apps/web/src/lib/server/memory/`), is how flows, MCP tools and agents read and write what Landflow
+remembers. It has five operations over a **container**; the built-in backend maps containers onto the stores above, and a project
+can choose a plugin instead.
+
+| Container | Wire key | What it is | Who reaches it |
+|---|---|---|---|
+| Project | `project:<id>` | the brain facts of that project, plus memories added to it (subject `project`, kind `memory` or `intended`) | any member reads; editors write and forget |
+| Team | `team:<id>` | the team's notebook notes (team and project scope; a run's own notes only for that run) | anyone with the team's access; notes are written only by a team run |
+| Agent | `agent:<id>` | what the agent remembers about one user: private `agent-user` facts (`<agentId>/<userId>`), in their own vector collection `landflow-agent-memory` | that user, and the agent's editors (read) |
+
+- **Operations.** `search(query, { mode, limit, threshold })` (modes `keyword`, `meaning`, `hybrid`; `limit` 1 to 50, default
+  10; `threshold` 0 to 1; scores are 0..1 for both facts and notes, one formula, `fuseScores`), `profile` (static items, then the
+  10 newest), `add(item, { replaces })`, `forget(id, reason)` and `list` (keyset pages). `add` with `replaces: <id>` writes the
+  next version of that memory (C01, through `supersedeFact`); `<id>#v<n>` says "I read version n" and answers 409 when the chain has
+  moved. A static memory is rewritten only by a person, not by a flow.
+- **Access first.** Every call checks the container before reading, and a container the caller may not reach answers 404 "Memory
+  not found", the same as one that does not exist. A flow acts as its creator; a seeded flow and an agent's tools act for the
+  instance inside their own project only.
+- **What `add` refuses.** The study's kinds (`health`, `cost`, ...) answer 400 "the study writes health facts"; a note outside a team
+  run answers 400 "notes are written by a team run". `add` audits `brain.memory_added` (ids, container kind, who; never the text).
+- **Private subjects.** An `agent-user` fact is left out of every brain read (the Brain page, Ask, Notion, the brain MCP tools, the
+  study and its vector rebuild) unless the filter names both its type and its id.
+- **No side effects.** A search from a playground or the API does not move a note's expiry; only a run that uses the result does.
+- **Spans.** `memory.search`, `memory.add`, ... carry the backend, the container kind, the count and `landflow.memory.denied`; never text.
+- **Fence.** Text returned to a model (the Memory nodes in tool mode) is inside the memory fence, so nothing in a memory can open or close a block.
+- **Provider.** **Project → Settings → Agents in this project → Memory** (`memory` in `PATCH /api/projects/:id/settings`) chooses
+  Built-in or a plugin node that declares `memoryProvider` ([protocol](protocol.md#memory-providers)) and the credential it uses. A
+  provider serves the project container only. An error or a 10 s timeout fails the call with the provider's message; nothing falls
+  back to the built-in store.
+- **One index** (migration 2915) makes a project's facts a keyset read; there is no new table.
+
+#### Memory nodes
+
+Four core nodes use the backend, as steps and as agent tools (`apps/web/src/lib/server/nodes/memory.ts`): **Memory Search**,
+**Memory Add**, **Memory Forget** and **Memory Profile**. Each asks for a container (a project, empty meaning the workflow's own,
+or a team). In a step, Search returns one item per hit (`id`, `text`, `kind`, `source`, `score`, `version`); as a tool every node
+answers a short JSON, and Search and Profile put the text inside the memory fence. Search and Profile are read-only; Forget is a
+destructive change (its operation is `delete`), so an agent's Tool Approvals apply as for any other change. A flow cannot add to an
+agent's own memory: only that agent's run writes it.
+
 ### 3. The loop
 
 The leader runs the brain (`leaderService('second brain')`). Every `LANDFLOW_BRAIN_INTERVAL_MINUTES` (60) it:

@@ -2871,13 +2871,14 @@ function paths(): Record<string, Record<string, Json>> {
     knowledge: { type: 'object', additionalProperties: true, description: '`{ enabled, tool }`: one knowledge base every agent in the project can search, as `project_knowledge`' },
     agents: object({ mode: { type: 'string', enum: ['off', 'allow'] }, ids: { type: 'array', items: { type: 'string' }, maxItems: 200 } }, ['mode', 'ids']),
     agentTools: object({ mode: { type: 'string', enum: ['off', 'allow'] }, kinds: { type: 'array', items: { type: 'string', enum: ['node', 'mcp', 'knowledge', 'workflow', 'agent', 'a2a'] } } }, ['mode', 'kinds']),
+    memory: { type: ['object', 'null'], additionalProperties: true, description: 'C07: where the project’s memory lives: `{ backend: \'built-in\' }` or `{ backend: \'provider\', nodeType, credentialId? }` (a plugin node that declares `memoryProvider`). `null` goes back to built-in' },
   });
-  const settingsView = object({ settings: { type: 'object', additionalProperties: true }, canEdit: { type: 'boolean' }, plugins: array({ type: 'object', additionalProperties: true }), nodeTypes: array({ type: 'object', additionalProperties: true }), availableAgents: array(object({ id: { type: 'string' }, name: { type: 'string' }, home: { type: 'boolean' } }, ['id', 'name', 'home'])) }, ['settings', 'canEdit']);
+  const settingsView = object({ settings: { type: 'object', additionalProperties: true }, canEdit: { type: 'boolean' }, plugins: array({ type: 'object', additionalProperties: true }), nodeTypes: array({ type: 'object', additionalProperties: true }), availableAgents: array(object({ id: { type: 'string' }, name: { type: 'string' }, home: { type: 'boolean' } }, ['id', 'name', 'home'])), memoryProviders: array(object({ type: { type: 'string' }, displayName: { type: 'string' }, pluginName: { type: 'string' }, credentialTypes: array({ type: 'string' }) }, ['type', 'displayName'])) }, ['settings', 'canEdit']);
   add('get', '/api/projects/{id}/settings', {
     tag: 'Projects',
     id: 'getProjectSettings',
     summary: 'A project’s settings',
-    description: 'Any role in the project. Besides the node allow-list and approvers: `defaultModel`, `knowledge`, `agents` and `agentTools` for the agents that run in it, and `availableAgents` (the agents available in the project, sorted by name, `home` true for its own).',
+    description: 'Any role in the project. Besides the node allow-list and approvers: `defaultModel`, `knowledge`, `agents` and `agentTools` for the agents that run in it, `memory` (the memory backend), and `availableAgents` (the agents available in the project, sorted by name, `home` true for its own) and `memoryProviders` (installed plugin nodes that can be the project’s memory).',
     pathParams: { id: 'The project id' },
     responses: { 200: reply('The settings', settingsView), 404: notFound },
   });
@@ -2885,7 +2886,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Projects',
     id: 'updateProjectSettings',
     summary: 'Change a project’s settings',
-    description: 'The project’s admins, owners and admins. A field the body leaves out keeps its value; `null` clears `defaultModel` and `knowledge`. 400 for a credential the project can’t use, an agent that isn’t available in it, or a tool kind that doesn’t exist.',
+    description: 'The project’s admins, owners and admins. A field the body leaves out keeps its value; `null` clears `defaultModel`, `knowledge` and `memory`. 400 for a credential the project can’t use, an agent that isn’t available in it, a tool kind that doesn’t exist, or a memory provider that isn’t an installed memory provider node.',
     pathParams: { id: 'The project id' },
     body: jsonBody(agentSettingsDoc),
     responses: { 200: reply('The settings', settingsView), 400: invalid, 403: errorRef('Not an admin of the project'), 404: notFound },
