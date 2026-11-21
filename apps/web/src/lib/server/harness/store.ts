@@ -10,6 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import type { HarnessStatus, StatusVerdict } from '@landflow/protocol/harnesses';
 import type { HarnessSessionView } from '../../shared/harness';
+import type { BlockedKind } from '../../shared/quota-block';
 import { database, type Database } from '../db';
 import { decodeCursor, encodeCursor, type Cursor } from '../pagination';
 import { logger } from '../telemetry/logger';
@@ -52,6 +53,9 @@ export interface SessionData {
   changedAt: string;
   /** The sweep already told the live stream this session went stale. */
   staleSent?: boolean;
+  /** While Blocked: why (a provider limit's kind) and since when. Cleared when the status leaves Blocked. */
+  blockedKind?: BlockedKind;
+  blockedSince?: string;
 }
 
 export interface EventInput {
@@ -70,6 +74,8 @@ export interface EventInput {
    * belongs to an agent (privacy.ts: an own session keeps no content, whoever raced to create it).
    */
   viewFor: (bound: boolean) => Record<string, unknown>;
+  /** The kind of limit that blocked it, when the event is a quota signal. */
+  blocked?: BlockedKind;
   prompt: boolean;
   tool: boolean;
   repository?: string;
@@ -99,7 +105,7 @@ const asRow = (row: SessionRow) => row as unknown as Record<string, string | num
 const parse = (text: string): SessionData => {
   try {
     const value = JSON.parse(text) as Partial<SessionData>;
-    return { prompts: Number(value.prompts ?? 0), events: Number(value.events ?? 0), toolCalls: Number(value.toolCalls ?? 0), changedAt: value.changedAt ?? '', ...(value.repository && { repository: value.repository }), ...(value.staleSent && { staleSent: true }) };
+    return { prompts: Number(value.prompts ?? 0), events: Number(value.events ?? 0), toolCalls: Number(value.toolCalls ?? 0), changedAt: value.changedAt ?? '', ...(value.repository && { repository: value.repository }), ...(value.staleSent && { staleSent: true }), ...(value.blockedKind && { blockedKind: value.blockedKind }), ...(value.blockedSince && { blockedSince: value.blockedSince }) };
   } catch {
     return { prompts: 0, toolCalls: 0, events: 0, changedAt: '' };
   }
@@ -136,6 +142,8 @@ function decide(before: SessionRow | undefined, input: EventInput): { next: Sess
     events: data.events + 1,
     changedAt: status !== base.status || !before ? input.receivedAt : data.changedAt || input.receivedAt,
     ...((input.repository ?? data.repository) && { repository: input.repository ?? data.repository }),
+    // Blocked keeps its kind and the time it began; leaving Blocked drops both.
+    ...(status === 'blocked' && { blockedKind: input.blocked ?? data.blockedKind ?? 'unknown', blockedSince: base.status === 'blocked' && data.blockedSince ? data.blockedSince : input.receivedAt }),
   };
   return {
     applied: true,
@@ -245,6 +253,7 @@ export function viewOf(row: SessionRow, now = Date.now()): HarnessSessionView {
     ...(row.closed_at && { closedAt: row.closed_at }),
     ...(row.agent_id && { agentId: row.agent_id }),
     ...(data.repository && { repository: data.repository }),
+    ...(read.status === 'blocked' && data.blockedKind && { blockedKind: data.blockedKind, ...(data.blockedSince && { blockedSince: data.blockedSince }) }),
     prompts: data.prompts,
     toolCalls: data.toolCalls,
   };

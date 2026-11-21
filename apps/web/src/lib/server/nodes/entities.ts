@@ -11,9 +11,12 @@ import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '
 import { ENTITY_LABELS, ENTITY_TYPES, entityRef, FACT_KINDS, isEntityType, parseEntityRef, type FactKind } from '../../shared/brain';
 import { homeProjectId } from '../projects/store';
 import { store } from '../store';
+import { escapeMemoryFields } from '../../shared/memory-fence';
 
 const main = [{ type: 'main' as const }];
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as JsonObject;
+/** The facts a model reads in tool mode have their statements escaped in place (C08 D1); a flow's own step sees the original. */
+const forModel = <T>(mode: string, value: T): T => (mode === 'tool' ? escapeMemoryFields(value) : value);
 const typeOptions = ENTITY_TYPES.map((t) => ({ name: ENTITY_LABELS[t], value: t }));
 
 export const brainEntityNode = defineNode({
@@ -107,7 +110,7 @@ export const brainEntityNode = defineNode({
           case 'get': {
             const entity = visible(type, id) ? getEntity(type, id) : undefined;
             if (!entity) throw fail(`No ${type} ${id}`);
-            out.push({ json: json(entityKnowledge(entity, (ref) => listProposals({ status: 'open', scope, limit: 50 }).filter((p) => p.target.type === 'entity' && p.target.id === ref))), pairedItem: { item: i } });
+            out.push({ json: json(forModel(ctx.getMode(), entityKnowledge(entity, (ref) => listProposals({ status: 'open', scope, limit: 50 }).filter((p) => p.target.type === 'entity' && p.target.id === ref)))), pairedItem: { item: i } });
             break;
           }
           case 'list': {
@@ -152,7 +155,7 @@ export const brainEntityNode = defineNode({
               ...(Boolean(ctx.getNodeParameter<boolean>('factStatic', i, false)) && { isStatic: true }),
               ...(linked && { parentId: linked, relation: link === 'derives' ? ('derives' as const) : ('extends' as const) }),
             });
-            out.push({ json: json({ fact, entity: entityKey(entity) }), pairedItem: { item: i } });
+            out.push({ json: json(forModel(ctx.getMode(), { fact, entity: entityKey(entity) })), pairedItem: { item: i } });
             break;
           }
           default:

@@ -27,6 +27,7 @@ import { getProject } from '../projects/store';
 import { inScope, type McpScope } from './project-servers';
 import { createIn } from '../projects/http';
 import { registerAgentTools } from './agent-tools'; // AG18:
+import { registerMemoryTools } from './memory-tools'; // C08:
 import type { ResourceAction } from '../../shared/projects';
 import { MCP_SERVER_VERSION, textResult } from './server';
 import type { ApiKeyScope } from '../../shared/auth';
@@ -166,7 +167,7 @@ function startNode(workflow: Workflow, ref?: string) {
  * `resourceCan`), and what they create goes to their personal project. Without one (the instance access token) the
  * server acts for the instance and checks nothing, as before.
  */
-export function instanceServer(actor?: Actor, scope?: McpScope, keyScopes?: readonly ApiKeyScope[]): McpServer {
+export function instanceServer(actor?: Actor, scope?: McpScope, keyScopes?: readonly ApiKeyScope[], keyId?: string): McpServer {
   const project = scope && getProject(scope.projectId);
   const server = new McpServer(
     { name: 'landflow', title: project ? `Landflow · ${project.name}` : 'Landflow', version: MCP_SERVER_VERSION },
@@ -521,6 +522,7 @@ export function instanceServer(actor?: Actor, scope?: McpScope, keyScopes?: read
   registerRunLogTool(server, { actor, inScope: (id) => inScope(scope, id), json, failure }); // AG20:
 
   registerBrainTools(server, { actor, scope, denied: (id, action) => denied(id, action), json, failure });
+  registerMemoryTools(server, { actor, scope, keyId, keyScopes, failure }); // C08: the nine memory tools
   // PR04: practices (tools and resources)
   registerPracticeTools(server, { actor, scope, denied: (id, action) => denied(id, action), json, failure, keyScopes });
   registerProjectTools(server, { actor, scope, json, failure, keyScopes }); // PC10

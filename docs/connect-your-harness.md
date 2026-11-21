@@ -10,11 +10,15 @@ harness**. Part of the [Landflow docs](README.md).
    work). **Read workflows**, **Edit workflows** and **Run** are optional. Pick an expiry (90 days by default). The key
    is made with `POST /api/api-keys` as "Harness · <harness>", shown once, and put into the setup below.
 3. **Copy the setup** and press **Test connection**: it sends `tools/list` to `/api/mcp` with the key and says how many
-   tools the key reaches (a brain-only key reaches 9).
+   tools the key reaches. Under the scope choices the page already says how many that is, from the same scope map the server
+   uses: the brain's two scopes alone reach 25 tools (a `brain:read` key alone reaches 19), nine of them the
+   [memory tools](#memory-tools); each workflow scope adds its own.
 
 The instance MCP server must be on (Settings → MCP → Access token), or the test says it is off.
 
 The harnesses on the page come from the registry (`@landflow/protocol/harnesses`), not a list of the page's own.
+
+Codex has no hooks: `landflow harness watch codex` reports a Blocked turn (usage limit, credits) and needs an API key with `harness:write`. `landflow login` creates no key, so use the hook key below or make one in Settings → API keys with `harness:write` ticked, and pass it as `LANDFLOW_API_KEY`. A Blocked Codex session stays Blocked until it goes stale.
 
 ## Live status (Claude Code)
 
@@ -74,6 +78,15 @@ Settings → Security. The route refuses the rest with the reason (`scopeRefusal
 With the mod (or the `morning-briefing` prompt of the MCP server), your own work from yesterday comes into the session as
 quoted data, and your sessions are held for your review before they are sent. Every event is private unless you share it with your team or the organization (B18).
 See [work-and-briefings.md](work-and-briefings.md).
+
+## Memory tools
+
+The key from step 2 also reaches nine memory tools, named as Supermemory's so prompts and skills that know them work against
+your local Landflow: `search_memory`, `get_profile`, `list_memories`, `list_documents`, `get_document`, `list_spaces` and
+`who_am_i` (read), `add_memory` and `forget_memory` (write; `forget_memory` is marked destructive, so an MCP grant set to
+ask first waits for a person). A *space* is a project, a team's notebook or an agent: `list_spaces` lists the ones you can
+read, and on a project's own server (`/api/mcp/projects/<id>`) every tool stays in that project. Details:
+[second-brain.md](second-brain.md#memory-over-mcp).
 
 ## Project context
 

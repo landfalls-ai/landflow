@@ -15,7 +15,7 @@ import { ConnectSteps } from '@/components/connect/connect-harness';
 import { HARNESS_IDS, HARNESSES, KEY_PLACEHOLDER, harnessKeyBody, hookKeyBody, hookFilterScript, hookKeySnippet, hookSnippetFor, originOf, sendsStatus, snippetFor, toolNames } from '@/components/connect/harness-snippets';
 import { McpSections } from '@/components/settings/mcp-sections';
 import { HARNESS_REGISTRY } from '@landflow/protocol/harnesses';
-import { TOOL_SCOPES } from '@/lib/shared/mcp';
+import { TOOL_SCOPES, toolsFor } from '@/lib/shared/mcp';
 
 vi.setConfig({ testTimeout: 20_000 });
 
@@ -269,6 +269,13 @@ describe('markup', () => {
     expect(html).toContain('Read workflows');
     expect(html).toContain('Test connection');
     expect(html).toContain(ESCAPED_PLACEHOLDER);
+  });
+
+  it('says how many tools the chosen scopes reach, from the scope map (C08 FR-10)', () => {
+    expect(steps({ scopes: [] })).toContain('This key reaches 25 tools');
+    const withWorkflows = toolsFor(['brain:read', 'brain:write', 'workflows:read']).length;
+    expect(withWorkflows).toBeGreaterThan(25);
+    expect(steps({ scopes: ['workflows:read'] })).toContain(`This key reaches ${withWorkflows} tools`);
   });
 
   it('with a key, the setup holds it and the test button is on', () => {
