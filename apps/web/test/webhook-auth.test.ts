@@ -34,6 +34,7 @@ const projects = await import('@/lib/server/projects');
 const { logger } = await import('@/lib/server/telemetry/logger');
 const { queryEvents } = await import('@/lib/server/audit/store');
 const { database } = await import('@/lib/server/db');
+const { useTokenOnce } = await import('@/lib/server/token-replay');
 
 registry.registerBuiltin(corePlugin);
 
@@ -515,5 +516,127 @@ describe('JWT Auth bound claims and the JWKS fetch (C18)', () => {
       if (previous === undefined) delete process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE;
       else process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE = previous;
     }
+  });
+});
+
+describe('JWT Auth single use and run data (C18 W4a)', () => {
+  const GITHUB = 'https://token.actions.githubusercontent.com';
+  const github = (repository: string, claims: Record<string, unknown> = {}, issuer = GITHUB, expires: string | null = '5m') => {
+    const jwt = new SignJWT({ repository, sub: `repo:${repository}:ref:refs/heads/main`, ...claims }).setProtectedHeader({ alg: 'RS256', kid: 'k1' }).setIssuer(issuer).setAudience('landflow').setJti(`jti-${Math.random()}`);
+    if (expires) jwt.setExpirationTime(expires);
+    return jwt.sign(rsa.privateKey);
+  };
+  const credential = (name: string, extra: Record<string, unknown> = {}) =>
+    credentials.create({ name, type: 'core.jwtAuth', data: { keyType: 'jwks', jwksUrl, algorithm: 'RS256', issuer: GITHUB, audience: 'landflow', boundClaims: 'repository: my-org/app', ...extra } });
+  const runs = (id: string) => store.listExecutions({ workflowId: id }).length;
+  const replayRows = () => queryEvents({ action: ['api.denied'] }, { limit: 200 }).events.filter((event) => event.summary === 'JWT token replayed');
+  const settle = async (id: string, count: number) => {
+    for (let i = 0; i < 200 && runs(id) < count; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  };
+
+  it('Single use: a token works once, the second time is 409 and starts no run; the audit holds no token', async () => {
+    await hook('su-on', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Single', { singleUse: true })) });
+    const token = await github('my-org/app');
+    expect((await call('su-on', { authorization: `Bearer ${token}` })).status).toBe(200);
+    await settle('wf_auth_su_on', 1);
+    const before = runs('wf_auth_su_on');
+    const warn = vi.spyOn(logger, 'warn');
+    const again = await call('su-on', { authorization: `Bearer ${token}` });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toMatchObject({ code: 'token_replayed' });
+    expect(runs('wf_auth_su_on')).toBe(before);
+    const rows = replayRows().filter((event) => event.target?.id === 'wf_auth_su_on');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ outcome: 'denied', status: 409, details: { reason: 'token_replayed', iss: GITHUB } });
+    const everything = JSON.stringify([database().all('SELECT * FROM audit_events'), warn.mock.calls]);
+    expect(everything).not.toContain(token);
+    expect(everything).not.toContain(token.split('.')[1]);
+    warn.mockRestore();
+    // A throttle: ten more replays in the minute add no rows.
+    for (let i = 0; i < 10; i++) expect((await call('su-on', { authorization: `Bearer ${token}` })).status).toBe(409);
+    expect(replayRows().filter((event) => event.target?.id === 'wf_auth_su_on')).toHaveLength(1);
+  });
+
+  it('Single use: a token with no exp is refused 401, naming why', async () => {
+    await hook('su-noexp', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Single no exp', { singleUse: true })) });
+    const response = await call('su-noexp', { authorization: `Bearer ${await github('my-org/app', {}, GITHUB, null)}` });
+    expect(response.status).toBe(401);
+    expect((await response.json()).error).toMatch(/Single use needs tokens with an expiry/);
+  });
+
+  it('Single use off: the same token starts two runs', async () => {
+    await hook('su-off', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Multi')) });
+    const token = await github('my-org/app');
+    expect((await call('su-off', { authorization: `Bearer ${token}` })).status).toBe(200);
+    expect((await call('su-off', { authorization: `Bearer ${token}` })).status).toBe(200);
+    await settle('wf_auth_su_off', 2);
+    expect(runs('wf_auth_su_off')).toBe(2);
+  });
+
+  it('Single use also guards a Form Trigger with the same credential', async () => {
+    const workflow: Workflow = {
+      id: 'wf_auth_su_form',
+      name: 'Single use form',
+      nodes: [
+        {
+          id: 'Form',
+          name: 'Form',
+          type: 'core.formTrigger',
+          typeVersion: 1,
+          position: [0, 0],
+          parameters: { path: 'su-form', formTitle: 'CI', authentication: 'jwtAuth', formFields: { values: [{ fieldLabel: 'Name', fieldType: 'text' }] } },
+          credentials: { jwtAuth: ref(credential('Single form', { singleUse: true })) },
+        },
+      ],
+      connections: [],
+    };
+    store.saveWorkflow(workflow);
+    await publishDraft(workflow.id);
+    const token = await github('my-org/app');
+    const submit = () =>
+      formRoute.POST(new Request('http://auth.test/form/su-form', { method: 'POST', body: new URLSearchParams({ f0: 'Ada' }), headers: { authorization: `Bearer ${token}` } }), { params: Promise.resolve({ path: ['su-form'] }) });
+    expect((await submit()).status).toBe(200);
+    expect((await submit()).status).toBe(409);
+  });
+
+  it('keeps the token out of the saved run and keeps jwtPayload (C18-D2)', async () => {
+    await hook('su-data', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Data')) });
+    const token = await github('my-org/app');
+    expect((await call('su-data', { authorization: `Bearer ${token}` })).status).toBe(200);
+    await settle('wf_auth_su_data', 1);
+    const summary = store.listExecutions({ workflowId: 'wf_auth_su_data' })[0];
+    const saved = JSON.stringify(store.getExecution(summary.id));
+    expect(saved).not.toContain(token);
+    expect(saved).not.toContain(token.split('.')[2]);
+    expect(saved).not.toMatch(/authorization/i);
+    expect(saved).toContain('my-org/app');
+    expect(saved).toContain('jwtPayload');
+  });
+});
+
+describe('useTokenOnce (token-replay.ts)', () => {
+  const payload = (over: Record<string, unknown> = {}) => ({ iss: 'https://a.test', jti: 'j1', exp: Math.floor(Date.now() / 1000) + 300, ...over });
+  it('refuses the second use of a jti and keys it by issuer', async () => {
+    const p = payload({ jti: 'unit-1' });
+    expect(await useTokenOnce(p, 'tok')).toEqual({ ok: true });
+    expect(await useTokenOnce(p, 'tok')).toEqual({ ok: false, reason: 'token_replayed' });
+    expect(await useTokenOnce(payload({ jti: 'unit-1', iss: 'https://b.test' }), 'tok')).toEqual({ ok: true });
+  });
+  it('hashes the token when there is no jti, and refuses a token with no exp', async () => {
+    const p = payload({ jti: undefined });
+    expect(await useTokenOnce(p, 'no-jti-token')).toEqual({ ok: true });
+    expect(await useTokenOnce(p, 'no-jti-token')).toEqual({ ok: false, reason: 'token_replayed' });
+    expect(await useTokenOnce(p, 'other-token')).toEqual({ ok: true });
+    expect(await useTokenOnce(payload({ exp: undefined }), 'x')).toEqual({ ok: false, reason: 'no_expiry' });
+  });
+  it('forgets the id 30 s after exp, and caps the memory at 24 h', async () => {
+    const now = Date.now();
+    const p = payload({ jti: 'unit-2', exp: Math.floor(now / 1000) + 60 });
+    expect(await useTokenOnce(p, 't', now)).toEqual({ ok: true });
+    expect(await useTokenOnce(p, 't', now + 80_000)).toEqual({ ok: false, reason: 'token_replayed' });
+    expect(await useTokenOnce(p, 't', now + 91_000)).toEqual({ ok: true });
+    const long = payload({ jti: 'unit-3', exp: Math.floor(now / 1000) + 30 * 86_400 });
+    expect(await useTokenOnce(long, 't', now)).toEqual({ ok: true });
+    expect(await useTokenOnce(long, 't', now + 25 * 3_600_000)).toEqual({ ok: true });
   });
 });

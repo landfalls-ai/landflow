@@ -9,11 +9,9 @@
  */
 import type { JWTPayload } from 'jose';
 import type { JsonObject } from '@landflow/protocol';
+import { parseBoundClaims, type BoundClaim } from '../shared/bound-claims';
 
-export interface BoundClaim {
-  claim: string;
-  pattern: string;
-}
+export { parseBoundClaims, type BoundClaim } from '../shared/bound-claims';
 
 /** Hosts whose tokens come from every customer's jobs, so a valid signature says nothing about whose job it was. */
 export const PUBLIC_CI_ISSUERS: readonly string[] = ['https://token.actions.githubusercontent.com', 'https://gitlab.com'];
@@ -23,24 +21,6 @@ const isPublicCiHost = (host: string) => host === 'token.actions.githubuserconte
 
 /** Claims that name the repository, project or owner by id or path, or the job's subject. */
 export const BINDING_CLAIMS: readonly string[] = ['sub', 'repository', 'project_path', 'repository_id', 'repository_owner_id', 'project_id', 'namespace_id'];
-
-const LINE = /^([^\s:]+)\s*:\s*(\S.*)$/;
-
-/** Reads the credential's text; `problems` names every line that is not `claim: pattern`. */
-export function parseBoundClaims(text: string): { claims: BoundClaim[]; problems: string[] } {
-  const claims: BoundClaim[] = [];
-  const problems: string[] = [];
-  String(text ?? '')
-    .split(/\r?\n/)
-    .forEach((raw, index) => {
-      const line = raw.trim();
-      if (!line || line.startsWith('#')) return;
-      const match = LINE.exec(line);
-      if (match) claims.push({ claim: match[1], pattern: match[2].trim() });
-      else problems.push(`line ${index + 1}: expected “claim: pattern”`);
-    });
-  return { claims, problems };
-}
 
 /** Whether `value` matches `pattern` (`*` within one segment, everything else literal). */
 export function matchesGlob(pattern: string, value: string): boolean {
