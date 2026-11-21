@@ -38,7 +38,8 @@ engine, protocol, SDK, transports and CLI are in `packages/`, the Go and Python 
 - Every change updates its docs: the feature page, `docs/reference/` for routes and variables, `docs/limitations.md`
   and `docs/roadmap.md` when it adds, closes or lifts something, and each change writes its history rows as a fragment in
   `docs/history.d/` (format in `docs/development.md#history-fragments`); never edit `docs/history.md` on a package
-  branch, the integrator runs `pnpm history:assemble` once per wave. New pages go in `docs/README.md`.
+  branch. The integrator runs `pnpm history:assemble` once per wave; outside a wave, the branch's author runs it as the
+  last commit before merging. New pages go in `docs/README.md`.
 
 ## Agents and the feature skill
 

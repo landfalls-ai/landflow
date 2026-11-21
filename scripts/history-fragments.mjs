@@ -5,7 +5,7 @@
 //   node scripts/history-fragments.mjs --assemble   append every fragment's rows to docs/history.md, delete the fragments
 //
 // Format: docs/history.d/README.md describes it; docs/development.md#history-fragments says when each command runs.
-import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -45,6 +45,13 @@ function linkTargets(text) {
   return out
 }
 
+/** True when a relative link target is an existing file; absolute targets never count. */
+function isFileUnder(docsDir, target) {
+  if (target.startsWith('/')) return false
+  const p = resolve(docsDir, target)
+  return existsSync(p) && statSync(p).isFile()
+}
+
 /** Parses one fragment: { section?, rows: [{ line, text }], problems }. Problems carry "<name>:<line>: ...". */
 export function parseFragment(name, text) {
   const problems = []
@@ -73,7 +80,7 @@ function listFragments(docsDir) {
   const dir = join(docsDir, 'history.d')
   if (!existsSync(dir)) return []
   return readdirSync(dir)
-    .filter((f) => f !== 'README.md')
+    .filter((f) => f !== 'README.md' && !f.startsWith('.') && statSync(join(dir, f)).isFile())
     .sort()
 }
 
@@ -100,7 +107,7 @@ function load(docsDir) {
     problems.push(...frag.problems)
     for (const r of frag.rows) {
       for (const target of linkTargets(r.text)) {
-        if (!existsSync(resolve(docsDir, target))) problems.push(`${f}:${r.line}: link target not found under docs/: ${target}`)
+        if (!isFileUnder(docsDir, target)) problems.push(`${f}:${r.line}: link target not found under docs/: ${target}`)
       }
       if (present.has(r.text)) problems.push(`${f}:${r.line}: already assembled: delete the fragment`)
     }
@@ -145,7 +152,9 @@ export function assemble(docsDir) {
     lines.splice(last + 1, 0, ...frag.rows.map((r) => r.text))
     count += frag.rows.length
   }
-  writeFileSync(join(docsDir, 'history.md'), lines.join('\n') + '\n')
+  const out = join(docsDir, 'history.md')
+  writeFileSync(`${out}.tmp`, lines.join('\n') + '\n')
+  renameSync(`${out}.tmp`, out)
   for (const name of parsed.keys()) unlinkSync(join(docsDir, 'history.d', name))
   return { rows: count, fragments: parsed.size }
 }

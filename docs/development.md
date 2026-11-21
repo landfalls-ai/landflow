@@ -108,8 +108,8 @@ filesystem access causes tracing of the whole project".
   code.
 - **Docs move with the code.** A change to a feature updates its page under [features/](README.md#feature-map) (or
   [reference/](reference/api.md) for routes and environment variables), [limitations.md](limitations.md) when it adds
-  or removes a limit, and [roadmap.md](roadmap.md) when it closes or opens an item. Each commit gets a row in
-  [history.md](history.md).
+  or removes a limit, and [roadmap.md](roadmap.md) when it closes or opens an item. Each change records its history rows in a fragment ([History fragments](#history-fragments)); never edit
+  [history.md](history.md) on a package branch.
 - **Local only.** Everything runs on this machine: the OrbStack Docker engine and its Kubernetes cluster (context
   `orbstack`, namespace `landflow-dev`). Never deploy to or push images to a cloud account. Build with
   `COMPOSE_BAKE=false` (the default buildx builder belongs to another project) and build cluster images with
@@ -125,7 +125,7 @@ Never edit `docs/history.md` on a package branch.
 - **File**: `docs/history.d/<yyyy-mm-dd>-<slug>.md`; the slug is lowercase letters, digits and dashes, up to 60
   characters. `docs/history.d/README.md` is the one other file allowed; it is never assembled.
 - **Content**: an optional first line `section: <heading text>` (no `## `) names the date section the rows go under
-  (default: the last `## ` section of `history.md`); then one or more rows
+  (default: the last `## ` section of `history.md` at the time it is assembled); then one or more rows
   `| (this change) | <what changed, in plain words> | [page](link) |`. Exactly three columns (the third may be empty);
   write a `|` inside text as `\|`. Blank lines are ignored; nothing else is allowed.
 - **Links** are paths relative to `docs/` (`reference/api.md#anchor`, or `<../reports/A B.md>` for spaces); the file
@@ -135,7 +135,8 @@ Never edit `docs/history.md` on a package branch.
   fragments it passes. `pnpm check` runs it, and `pnpm test:scripts` (the script's tests).
 - `pnpm history:assemble` appends every fragment's rows to `history.md` under its section (creating `## <section>` with
   the table header when it is missing), in file-name order, then deletes the fragments. The integrator runs it once per
-  wave, after the last merge and before the gate; running it again changes nothing. It leaves every other row as it is,
+  wave, after the last merge and before the gate; outside a wave, the branch's author runs it as the last commit
+  before merging. Running it again changes nothing. It leaves every other row as it is,
   so a row added to `history.md` directly (an old branch, a hotfix) stays.
 
 ## Working with Claude Code: constitution, agents, feature skill

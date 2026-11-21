@@ -298,7 +298,10 @@ session; people read it before they start a feature too.
   [reference/configuration.md](reference/configuration.md) for variables (generated: add the variable to
   `lib/server/config/catalog.ts` and run `pnpm --filter @landflow/web gen:config-docs`).
 - [limitations.md](limitations.md) when a limit is added or lifted; [roadmap.md](roadmap.md) when an item closes or
-  opens; history rows (`| (this change) | what changed, in plain words | [page](link) |`) in a fragment in `docs/history.d/`, never edited into [history.md](history.md) on a package branch; the integrator runs `pnpm history:assemble` once per wave (format: [development.md](development.md#history-fragments)).
+  opens; history rows (`| (this change) | what changed, in plain words | [page](link) |`) in a fragment in
+  `docs/history.d/`, never edited into [history.md](history.md) on a package branch; the integrator runs
+  `pnpm history:assemble` once per wave, and outside a wave the branch's author runs it as the last commit before
+  merging (format: [development.md](development.md#history-fragments)).
 - New pages go in [README.md](README.md). Write short, plain sentences: what and why; no marketing.
 
 ## Definition of done
