@@ -6,6 +6,7 @@ import type { InboxRequestView } from '../../shared/approval-inbox';
 import { canResource, resourceAccess, type Actor } from '../projects/access';
 import { reconcile, requestRow, viewOf, type InboxRow } from './store';
 import { database } from '../db';
+import { ticketsOf } from './tickets';
 
 /** Whether `actor` is a signed-in person who may decide (run access on the request's workflow). */
 export function canDecide(actor: Actor | undefined, row: Pick<InboxRow, 'workflow_id'>): boolean {
@@ -13,7 +14,10 @@ export function canDecide(actor: Actor | undefined, row: Pick<InboxRow, 'workflo
 }
 
 /** The request as `viewer` sees it. */
-export const viewFor = (row: InboxRow, viewer?: Actor): InboxRequestView => viewOf(row, canDecide(viewer, row));
+export function viewFor(row: InboxRow, viewer?: Actor): InboxRequestView {
+  const tickets = ticketsOf(row.id);
+  return { ...viewOf(row, canDecide(viewer, row)), ...(tickets.length && { tickets }) };
+}
 
 /** One request as the routes show it, for `viewer`. */
 export function view(id: string, viewer?: Actor): InboxRequestView | undefined {

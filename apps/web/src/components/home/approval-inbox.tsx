@@ -6,6 +6,7 @@
  * here), the run and the agent. A decision goes through the one claim on the server, so a second approver or the expiry timer
  * is answered with who won. There is no bulk approve, no select-many and no shortcut that approves: one request, one click.
  */
+import { TicketLinks } from './ticket-links'; // C12:
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Ban, Check, Clock, ExternalLink } from 'lucide-react';
@@ -192,6 +193,7 @@ export function InboxRow({ row, index = 0, autoOpen, className }: { row: InboxRo
           <Clock className="mt-px size-3 shrink-0" aria-hidden /> <span>{waitText(row)}</span>
         </p>
       )}
+      <TicketLinks tickets={row.tickets} />
       <div className="mt-2.5 flex flex-wrap items-center gap-2">
         <DecideButtons row={row} index={index} />
         <Button size="sm" variant="ghost" className="max-md:min-h-11" onClick={() => setOpen(true)} data-testid="inbox-details-open">

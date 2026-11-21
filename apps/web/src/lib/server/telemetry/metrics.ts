@@ -43,6 +43,7 @@ function create(provider: MeterProvider) {
     agentToolCalls: meter.createCounter('landflow.agent.tool.calls', { description: 'Tool calls made by agents' }),
     agentToolDuration: meter.createHistogram('landflow.agent.tool.duration', { description: 'Duration of an agent tool call', unit: 'ms', advice }),
     agentApprovals: meter.createCounter('landflow.agent.approvals', { description: 'Tool calls a person approved or denied' }),
+    approvalTickets: meter.createCounter('landflow.approval.tickets', { description: 'Tickets opened and closed for approval requests, by system (servicenow, webhook) and outcome (opened, open_failed, closed, close_failed, skipped)' }),
     agentTokens: meter.createCounter('landflow.agent.tokens', { description: 'Model tokens used by agents' }),
     a2aCalls: meter.createCounter('landflow.a2a.calls', { description: 'Calls to remote A2A agents, by agent, method, final task state and outcome' }),
     a2aDuration: meter.createHistogram('landflow.a2a.call.duration', { description: 'Duration of a call to a remote A2A agent (until its task settles)', unit: 'ms', advice }),

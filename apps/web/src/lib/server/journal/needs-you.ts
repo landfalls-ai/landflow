@@ -10,6 +10,7 @@ import type { JournalEvent, RunActor, RunCheck } from '../../shared/run-trace';
 import { openAsks } from '../a2a/agent-asks';
 import { canDecide } from '../approval-inbox/access'; // AP01:
 import { waitingOfExecution } from '../approval-inbox/store'; // AP01:
+import { ticketsOf } from '../approval-inbox/tickets'; // C12:
 import type { Actor } from '../projects/access'; // AP01:
 import { liveExecution } from '../runner';
 import { store } from '../store';
@@ -131,6 +132,7 @@ function inboxItems(record: ExecutionRecord, actor: Actor | undefined): NeedsYou
     .map((row): NeedsYouItem => {
       const version = row.agent_version === null ? undefined : row.agent_version === 'draft' ? 'draft' : Number(row.agent_version);
       const workflowVersion = row.workflow_version === null ? undefined : Number(row.workflow_version);
+      const tickets = ticketsOf(row.id);
       return {
         executionId: record.executionId,
         workflowId: record.workflowId,
@@ -145,6 +147,7 @@ function inboxItems(record: ExecutionRecord, actor: Actor | undefined): NeedsYou
         inboxStatus: row.status,
         ...(row.kind === 'judge' && { inboxKind: 'judge' as const, ...(judgeWhyOf(row) && { judgeWhy: judgeWhyOf(row) }) }),
         tool: row.tool,
+        ...(tickets.length && { tickets }),
         agentName: row.agent_name,
         ...(version !== undefined && { agentVersion: version as number | 'draft' }),
         ...(workflowVersion !== undefined && { workflowVersion }),

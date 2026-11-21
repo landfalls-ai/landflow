@@ -36,6 +36,10 @@ address) and who settled it, by which door and when. Parameters pass the host's 
 becomes `[redacted]`) and then `maskParams` (a key such as `password`, `token`, `api-key`, `authorization` becomes `••••••`)
 before they are stored; they are masked again when shown, so a row, a view, a list, a mail and an alert never hold a secret.
 
+Migration **2922** adds `approval_tickets`: one row per (request, ticket channel) with the channel, the rule, the system, the
+state (`opening`, `open`, `closing`, `closed`, `skipped`, `failed`), the ticket's id, key and link, the attempts, the next try and
+the last error (redacted, cut to 200 characters), kept for the audit of where a ticket went (see [Tickets](#tickets)).
+
 Migration **2920** adds `kind` (`judge`; NULL, every older row, is a tool request) and `evidence` (JSON, judge requests only). Rows are **kept** (the audit of who decided). A deleted workflow keeps its rows, which then only instance owners and admins read; a
 transferred workflow's rows follow it, because visibility is worked out from the workflow at request time.
 
@@ -94,6 +98,30 @@ nothing), in the background, never failing the run.
   the tool, agent, workflow, destination, expiry and the link, **never a parameter value**. Nothing is sent when no rule has the
   event; there is no default channel and no Slack app message.
 
+## Tickets
+
+A **ticket channel** is an alert channel that opens tickets: **ServiceNow** (Settings → Alerts → New channel), or a **webhook** with
+*Opens tickets* ticked. Put it in an alert rule with the event *Waits for your approval* (a ServiceNow channel serves no other rule)
+and every request that rule watches opens **one ticket per request and channel**; the other channels of the rule keep sending their
+one alert as before.
+
+- **When.** The alert ticker (on the leader, every 30 s) makes the ticket. A system that cannot be reached delays only the ticket:
+  opening retries after 1, 5 and 15 minutes and then every 15 until it opens or the request settles (then the row is `skipped` and
+  nothing is sent). The run does not wait for it and its expiry is not moved.
+- **What it holds.** The subject (*Approval needed: “Send Email” in “Alert mailer flow”*, or the judge's words), the same fixed facts
+  as the alert (the tool or judge, agent, workflow and versions, destination, expiry), the request id as the correlation id and the
+  **Needs you link**, which asks for a sign-in. Never a parameter value, a judge's evidence, reason or item text, and never the
+  emailed Approve and Deny links.
+- **Closing.** When a person decides in Landflow, or the request expires or the run is cancelled, the next tick adds a work note
+  with the settled line (*Approved by Dana Lee in Needs you · 14:05*) and, in ServiceNow, sets the state the channel maps for that
+  outcome (none mapped: the note only). A webhook gets `approval.settled`. Closing is tried three times (1, then 5 minutes apart);
+  after that the row is `failed`, the ticket stays as it is and an `approval.ticket.failed` audit event says so. Opening, closing and
+  giving up are audited (`approval.ticket.open`, `.close`, `.failed`, actor Landflow, ids only) and counted in
+  `landflow.approval.tickets{system, outcome}`.
+- **Who decides.** **Only a signed-in person in Landflow**, as before. A ticket only notifies and links: no route accepts a ticket
+  system's word, no callback or token exists, and a change made in the ticket (a state, a comment) changes nothing here.
+- **Judge requests** open tickets too, with the judge's fixed words.
+
 ## Expiry
 
 `LANDFLOW_APPROVAL_INBOX_EXPIRY_MINUTES` (default 1440 = 24 hours, 1 to 43,200; [reference/configuration.md](reference/configuration.md))
@@ -122,9 +150,14 @@ Shots are from a development host with made-up requests, at 1440 by 900 and 390 
 
 - **A judge request.** The row is badged *Decision* and reads *“Refund check” could not decide: it was not sure enough (0.52)* with the workflow, no agent. **Details** list the item (a `token` key reads `••••••`; *This run keeps no item text* when its trace content is off), what the judge concluded with its confidence, and each tool it used. The Run Trace card shows the same under the judge's title. Everything is shown as text.
 
+- **A ticket.** *Ticket CHG0031* beside Approve and Deny on Home's row, in Needs you and on the Run Trace card: a link that opens the
+  ticket in a new tab; *Ticket opening…* while the system has not been reached; *Ticket not opened* when it never was. A request no
+  rule sends to a ticket channel shows nothing.
+
 There is no *Approve all*, no select-many and no keyboard shortcut that approves.
 
 ## What is not covered
 
-kagent and the Claude Code harness; Run a Team's members; a remote A2A agent's own pause in a run nobody watches (still
+No ticket system decides (by the person's decision of 2026-11-21): there is no delegated approval, callback or read-back; Jira and
+other systems are a webhook away, and there is no custom field mapping. kagent and the Claude Code harness; Run a Team's members; a remote A2A agent's own pause in a run nobody watches (still
 auto-rejected); Slack as a place to approve. See [limitations.md](limitations.md).

@@ -310,6 +310,7 @@ In queue mode each process also reports how far its copy trails the others:
 | `landflow.agent.run.duration` | histogram (ms) | `gen_ai.agent.id`, `gen_ai.agent.name`, `landflow.agent.source` |
 | `landflow.agent.tool.calls` | counter | agent attributes, `gen_ai.tool.name`, `landflow.agent.tool.kind`, `landflow.outcome` |
 | `landflow.agent.tool.duration` | histogram (ms) | agent attributes, `gen_ai.tool.name`, `landflow.agent.tool.kind` |
+| `landflow.approval.tickets` | counter | `system` (`servicenow`/`webhook`), `outcome` (`opened`, `open_failed`, `closed`, `close_failed`, `skipped`): tickets of approval requests ([approval-inbox.md](approval-inbox.md#tickets)); no alert rule pages on it |
 | `landflow.agent.approvals` | counter | agent attributes, `gen_ai.tool.name`, `landflow.agent.approval.decision` (`approved`/`denied`) |
 | `landflow.agent.tokens` | counter | agent attributes, `gen_ai.token.type` (`input`/`output`) |
 | `landflow.a2a.calls` | counter | `gen_ai.agent.name` (the card's name), `rpc.method`, `landflow.a2a.caller` (`agent`/`node`), `a2a.task.state`, `landflow.outcome` |
