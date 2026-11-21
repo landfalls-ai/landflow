@@ -143,7 +143,7 @@ export const builtInBackend: MemoryBackend = {
       const match = /^(.*)#v(\d+)$/.exec(input.replaces);
       const chainId = match ? match[1] : input.replaces;
       factIn(c, chainId); // not found when it is not this container's
-      const written = await supersedeFact(chainId, { statement: text, ...(match && { expectedVersion: Number(match[2]) }) }, who, database());
+      const written = await supersedeFact(chainId, { statement: text, ...(match && { expectedVersion: Number(match[2]) }), ...(caller.origin === 'person' && caller.actor && { replaceStatic: true }) }, who, database());
       auditAdded(c, written, caller, true);
       return factItem(written);
     }

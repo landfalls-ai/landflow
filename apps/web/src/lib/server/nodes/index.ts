@@ -8,6 +8,7 @@ import { a2aAgentNode } from './a2a';
 import { runTeamNode } from './run-team';
 import { messageAgentNode, workflowTrigger } from './agents';
 import { brainEntityNode } from './entities';
+import { memoryAddNode, memoryForgetNode, memoryProfileNode, memorySearchNode } from './memory'; // C07:
 import { briefingNodes } from './briefing';
 // LL05:
 import { applyCapRaiseNode, capRaiseTriggerNode } from './cap-raise';
@@ -112,6 +113,10 @@ export const corePlugin = definePlugin({
     landflowUsageNode,
     recordEventNode,
     brainEntityNode,
+    memorySearchNode,
+    memoryAddNode,
+    memoryForgetNode,
+    memoryProfileNode,
     githubWorkEventNode, // B31:
     practiceDraftNode, // PR03:
     practiceCheckNode, // PR08:
