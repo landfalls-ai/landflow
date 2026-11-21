@@ -297,12 +297,14 @@ describe('markup', () => {
     expect(html).toContain('delete_rows');
   });
 
-  it('MCP settings is four collapsed sections, and the switch row is for admins', () => {
+  it('MCP settings is four collapsed sections (admins also get Policy hooks), and the switch row is for admins', () => {
     const page = (canManage: boolean) => renderToStaticMarkup(createElement(McpSections, { canManage, gatewayMode: 'off', access: 'ACCESS', clients: 'CLIENTS', tools: 'TOOLS', gateway: 'GATEWAY' }));
     const html = page(true);
-    for (const title of ['Access token', 'Connected clients', 'Tools', 'Gateway']) expect(html).toContain(title);
-    expect(html.match(/aria-expanded="false"/g)).toHaveLength(4);
-    expect(html.match(/Learn more/g)).toHaveLength(4);
+    for (const title of ['Access token', 'Connected clients', 'Tools', 'Policy hooks', 'Gateway']) expect(html).toContain(title);
+    expect(html.match(/aria-expanded="false"/g)).toHaveLength(5);
+    expect(html.match(/Learn more/g)).toHaveLength(5);
+    expect(page(false).match(/aria-expanded="false"/g)).toHaveLength(4);
+    expect(page(false)).not.toContain('Policy hooks');
     for (const body of ['ACCESS', 'CLIENTS', 'TOOLS', 'GATEWAY']) expect(html).not.toContain(body);
     expect(html).toContain(`${Object.keys(TOOL_SCOPES).length} instance tools`);
     expect(html).toContain('Work from local tools');

@@ -1136,6 +1136,9 @@ a person signed in to Landflow (`owner`, `admin` or `member`).
 | `opa` | `LANDFLOW_TOOL_POLICY_URL`, the rule's data URL (for example `http://opa:8181/v1/data/landflow/tools/result`; a package URL such as `.../landflow/tools` also works, the nested `result` is read) | `POST { input: { caller, agentId, tool, kind } }`; the `result` may be `allow`, `ask`, `deny` or a boolean |
 | `openfga` | `LANDFLOW_TOOL_POLICY_URL` (the server) and `LANDFLOW_OPENFGA_STORE_ID` | `POST /stores/<id>/check` with `user:<id>` `can_use` `tool:<agentId>/<tool>`; no means deny |
 
+The engine is called through `safeFetch` (the outbound rules apply; the endpoint of `LANDFLOW_TOOL_POLICY_URL` is allowed without listing it, like `OLLAMA_URL`; a redirect is not followed). It decides which tools a caller is offered, once, before the run and never sees
+arguments. To decide **per call**, on the arguments, use an MCP [policy hook](features/audit-and-governance.md#mcp-policy-hooks).
+
 **Try a caller.** Under the rules, **What can they do?** takes a user id, a role and a source and shows what that caller
 may do with each of the agent's tools (*may use it*, *needs approval* or *may not use it*, with the engine's reason),
 using the rules on screen (saved or not) and the engine the environment names. It builds the agent's tools and calls none

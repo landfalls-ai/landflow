@@ -54,6 +54,51 @@ inside a larger transaction: a swallowed failure leaves no partial rows and no f
 - **Off**, behaviour is as before: the failure is logged and counted and the change goes on. Everything else (sign-ins,
   workflow events, credential use in runs) is never required, in either mode.
 
+### MCP policy hooks
+
+An admin can have a service of their own decide, call by call, whether an outbound MCP request may leave. **Settings → MCP →
+Policy hooks** lists the hooks (at most 20); each has a name, a URL, a signing key, a timeout, a failure mode and what it
+looks at. Before every MCP request a hook matches, Landflow posts the call to it and goes on only if every matching hook
+answers `allow`. It covers every caller that goes through Landflow's MCP client: an agent's MCP tools, the MCP Client Tool,
+the MCP Client node and a team member's tools, because the check sits in `callMcpTool`, `readMcpResource` and `getMcpPrompt`.
+It runs after the arguments are known and after any person's approval (an approval does not skip it).
+
+- **Matching**: server host (names, `*.suffix`, IPs and CIDR ranges, as the governance host lists) and a path prefix; tool name
+  patterns (`create_*`, `?`; for a resource read the URI, for a prompt its name); the method (`tools/call` by default,
+  `resources/read` and `prompts/get` optional); projects. An empty list means any. A call no hook matches pays a cached read and a match.
+- **What is sent** (`POST`, JSON): `{ requestId, time, server: { url }, method, tool | uri | prompt, arguments, masked, truncated, caller: { executionId,
+  workflowId, nodeId, nodeName, agentId, sessionId, userId }, projectId }`, plus `test: true` for the Test button. The server URL
+  has no userinfo and no query. `arguments` is **never cut**: a decision on half of an argument is no decision. Known secret values
+  are replaced and the values under secret-looking keys (`token`, `password`, `apiKey` …) and auth-header-looking strings become `••••••`;
+  `masked` lists every such place as a path (`nested.list[0].apiToken`), so a service that cannot judge what it cannot see can deny it.
+  The whole request is capped at 256 KB: a larger one is **not sent** and counts as a failure (the failure mode decides), so `truncated`
+  is always `false` (it is there so a service can rely on the field). Never a credential value. Agent version and team are not sent yet.
+- **Signing**: by default `X-Landflow-Timestamp` and `X-Landflow-Signature: sha256=<hex>`, the HMAC-SHA-256 of `<timestamp>.<body>`
+  keyed by the token of a **Bearer Auth credential** you pick (the same scheme as the alert webhook channel); or the token as
+  `Authorization: Bearer` (refused on an `http:` URL in the production profile); or none. **A receiver must reject** a request whose
+  `X-Landflow-Timestamp` is more than 5 minutes old and any `requestId` it has already seen, or a captured request can be replayed.
+- **The answer**: `{ "decision": "allow" | "deny", "reason"?: string (500), "ruleId"?: string }` with a 2xx status. Anything else, a non-2xx
+  status, a body over 64 KB, a redirect or no answer within the timeout (100 ms to 5 s, default 2 s) is a failure.
+- **Failure mode**: `closed` blocks the call ("policy service unavailable"), `open` lets it through. A new hook is `closed` in the production profile
+  and `open` otherwise; the choice is stored and editable. With several hooks the first deny, in the order of the list, is the one named.
+- **A deny** is the tool's result: "Blocked by policy <hook>: <reason>", which the model reads and can work around; it does not fail the run.
+  The MCP Client node fails its item with that text (so *Continue on fail* applies). The server receives nothing.
+- **Run Trace and audit**: each decision is a `policy` check on the call's span (allow: pass; deny: warn; the service down with `open`: warn,
+  with `closed`: fail, which shows in Needs you); a deny is the audit event `mcp.policy.denied` and a failure `mcp.policy.failed`
+  (actor the run's user or the system, target the MCP server, details the hook, tool, rule id and execution; never the arguments);
+  hook changes are `mcp.policy_hook.create`, `.update` and `.delete`. The counter `landflow.mcp.policy.decisions` counts by `decision` and `hook`.
+- **Unreadable hooks**: if the stored hooks cannot be read or one is invalid, that is logged and counted (`landflow.mcp.policy.store_errors`), and in the
+  production profile every MCP call is blocked ("policy service unavailable", audited as `mcp.policy.failed`); elsewhere calls go ahead. Saving a hook recovers it.
+- **A cancelled run** stops the check: the abort goes up as it is, with no check, audit event or failure mode (an `open` hook never lets a cancelled call through).
+- **The Run Trace says only** "policy service unavailable"; the network detail (addresses, errors) is in the audit event and the log.
+- **An allow is reused for 60 s** for the same call (hook, tool, arguments, caller) in the same run, in that process. A deny and a failure never are.
+- **Outbound rules**: the hook is called through `safeFetch`; saving a hook on a private address in the production profile is
+  refused unless `LANDFLOW_OUTBOUND_ALLOW` lists it. **Test** sends one sample request (`tool: "example_tool"`) and shows the answer; it is not audited.
+- **Not covered**: kagent agents' own MCP calls and calls through the agentgateway (it has its own policies), inbound calls to
+  Landflow's own MCP server (grants and MCP approvals), non-MCP tools, and a standalone agent's chat with no workflow node
+  (the model still reads the denial, and the audit event and counter still record it, but there is no check on a span).
+  A hook cannot rewrite arguments.
+
 ### Outbound requests
 
 The host allow and block list above matches host names before a call. Below it sits an address policy for everything a
@@ -72,7 +117,7 @@ fetch read, are refused).
 A refusal reads "Blocked: <host> resolves to a private address (LANDFLOW_OUTBOUND_ALLOW lists exceptions)" (an
 OpenAI-compatible model call shows it as the error, with the server it could not reach below). Exceptions:
 `LANDFLOW_OUTBOUND_ALLOW` (host names, `*.suffix` globs, IPs and CIDR ranges); the exact endpoints (host and port) of `OLLAMA_URL` (or its default),
-`LANDFLOW_CODE_RUNNER_URL`, `OPENAI_BASE_URL`, `LANDFLOW_LLM_GATEWAY_URL`, `LANDFLOW_MCP_GATEWAY_PUBLIC_URL`, `LANDFLOW_GITHUB_MCP_URL` (or its in-cluster default) and `LANDFLOW_OIDC_DISCOVERY_URL` are allowed without listing (another port on the same host is not). Covered: the HTTP
+`LANDFLOW_CODE_RUNNER_URL`, `OPENAI_BASE_URL`, `LANDFLOW_LLM_GATEWAY_URL`, `LANDFLOW_MCP_GATEWAY_PUBLIC_URL`, `LANDFLOW_GITHUB_MCP_URL` (or its in-cluster default), `LANDFLOW_OIDC_DISCOVERY_URL` and `LANDFLOW_TOOL_POLICY_URL` are allowed without listing (another port on the same host is not). Covered: the HTTP
 Request node and other in-process nodes (their `ctx.http`), alert channels, HTTP SIEM destinations (not syslog), remote MCP
 servers, RAG embeddings and rerank, OpenAI-compatible model calls (the credential's Base URL), in-process plugins' load-options and credential tests, OIDC and SAML metadata. Every call has a client span (`HTTP <method>`, URL without its
 query). Not covered, by decision, and listed in [limitations.md](../limitations.md): plugin processes, databases, brokers,

@@ -1358,6 +1358,70 @@ function paths(): Record<string, Record<string, Json>> {
     responses: { 200: reply('The default and the models', spotlightModelsDoc), 400: invalid, 403: errorRef('Not an admin') },
   });
 
+  // C14: policy hooks asked before an outbound MCP call (docs/features/audit-and-governance.md, "MCP policy hooks").
+  const hookMatch = object({ hosts: array({ type: 'string' }), pathPrefix: { type: 'string' }, tools: array({ type: 'string' }), methods: array({ type: 'string', enum: ['tools/call', 'resources/read', 'prompts/get'] }), projects: array({ type: 'string' }) });
+  const policyHookDoc = object(
+    {
+      id: { type: 'string' },
+      name: { type: 'string' },
+      enabled: { type: 'boolean' },
+      url: { type: 'string' },
+      auth: { type: 'string', enum: ['hmac', 'bearer', 'none'] },
+      credential: object({ id: { type: 'string' }, name: { type: 'string' } }, ['id', 'name'], { description: 'The Bearer Auth credential that signs the request or is sent as the bearer: its id and name, never its data' }),
+      timeoutMs: { type: 'integer', minimum: 100, maximum: 5000 },
+      failureMode: { type: 'string', enum: ['closed', 'open'], description: 'What happens when the service does not answer: `closed` blocks the call, `open` lets it through' },
+      match: hookMatch,
+      createdAt: { type: 'string' },
+      updatedAt: { type: 'string' },
+    },
+    ['id', 'name', 'enabled', 'url', 'auth', 'timeoutMs', 'failureMode', 'match'],
+  );
+  const hookBody = {
+    name: { type: 'string', minLength: 1, maxLength: 100 },
+    enabled: { type: 'boolean' },
+    url: { type: 'string', description: 'http(s); under the outbound rules (a private address needs `LANDFLOW_OUTBOUND_ALLOW` in the production profile)' },
+    auth: { type: 'string', enum: ['hmac', 'bearer', 'none'], description: 'Default `hmac`: `X-Landflow-Timestamp` and `X-Landflow-Signature` (HMAC-SHA-256 of `timestamp.body` keyed by the credential’s token)' },
+    credentialId: { type: ['string', 'null'], description: 'A `core.httpBearerAuth` credential; needed for `hmac` and `bearer`' },
+    timeoutMs: { type: 'integer', minimum: 100, maximum: 5000 },
+    failureMode: { type: 'string', enum: ['closed', 'open'], description: 'Default `closed` in the production profile, `open` otherwise' },
+    match: hookMatch,
+  };
+  add('get', '/api/settings/mcp/policy-hooks', {
+    tag: 'Settings',
+    id: 'listMcpPolicyHooks',
+    summary: 'List the MCP policy hooks',
+    description: 'Webhooks asked allow or deny before an outbound MCP tool call, resource read or prompt. Admins.',
+    responses: { 200: reply('The hooks', object({ hooks: array(policyHookDoc) }, ['hooks'])) },
+  });
+  add('post', '/api/settings/mcp/policy-hooks', {
+    tag: 'Settings',
+    id: 'createMcpPolicyHook',
+    summary: 'Create an MCP policy hook',
+    description: 'Admins. At most 20. A URL the outbound rules refuse, or a credential that is not a Bearer Auth one, is a 400.',
+    body: jsonBody(object(hookBody, ['name', 'url'])),
+    responses: { 201: reply('The hook', object({ hook: policyHookDoc }, ['hook'])), 400: invalid, 409: errorRef('There are already 20 hooks') },
+  });
+  add('get', '/api/settings/mcp/policy-hooks/{id}', { tag: 'Settings', id: 'getMcpPolicyHook', summary: 'Get an MCP policy hook', responses: { 200: reply('The hook', object({ hook: policyHookDoc }, ['hook'])), 404: notFound } });
+  add('patch', '/api/settings/mcp/policy-hooks/{id}', {
+    tag: 'Settings',
+    id: 'updateMcpPolicyHook',
+    summary: 'Change an MCP policy hook',
+    description: 'Any subset; `credentialId: null` clears the credential.',
+    body: jsonBody(object(hookBody)),
+    responses: { 200: reply('The hook', object({ hook: policyHookDoc }, ['hook'])), 400: invalid, 404: notFound },
+  });
+  add('delete', '/api/settings/mcp/policy-hooks/{id}', { tag: 'Settings', id: 'deleteMcpPolicyHook', summary: 'Remove an MCP policy hook', responses: { 200: reply('Removed', ok), 404: notFound } });
+  add('post', '/api/settings/mcp/policy-hooks/{id}/test', {
+    tag: 'Settings',
+    id: 'testMcpPolicyHook',
+    summary: 'Send a sample request to an MCP policy hook',
+    description: 'Sends one request (`tool: "example_tool"`, no arguments, `test: true`) and answers what the service said, or why it did not. Not a run: nothing is cached or audited as a decision.',
+    responses: {
+      200: reply('The service’s answer', object({ ok: { type: 'boolean' }, decision: { type: 'string', enum: ['allow', 'deny'] }, reason: { type: 'string' }, ruleId: { type: 'string' }, status: { type: 'integer' }, error: { type: 'string' }, ms: { type: 'integer' } }, ['ok', 'ms'])),
+      404: notFound,
+    },
+  });
+
   // SP12: the caller's own AI spend, and the local models Settings lists (docs/llm-gateway.md, "The AI page").
   const spendTotals = { inputTokens: { type: 'integer' }, outputTokens: { type: 'integer' }, cacheReadTokens: { type: 'integer' }, cacheWriteTokens: { type: 'integer' }, cost: { type: 'number' }, calls: { type: 'integer' }, unpricedCalls: { type: 'integer' }, runs: { type: 'integer' } };
   const spendTotalsDoc = object(spendTotals, ['inputTokens', 'outputTokens', 'cost', 'calls', 'unpricedCalls', 'runs']);
