@@ -371,6 +371,7 @@ describe('status sharing (C04: own sessions report status only when the person o
     const body = statusBody('tool.before', { sessionId: 'st-1', repository: 'acme/widgets', tool: 'Bash', text: 'my secret prompt', input: { command: 'cat /etc/passwd' } } as never);
     expect(body).toEqual({ hook_event_name: 'PreToolUse', session_id: 'st-1', repository: 'acme/widgets', tool_name: 'Bash' });
     expect(JSON.stringify(body)).not.toMatch(/secret|passwd|cwd|transcript/);
+    expect(Object.keys(statusBody('session.start', { sessionId: 's', agent_type: 'a:b', agentType: 'a:b' } as never))).toEqual(['hook_event_name', 'session_id']);
     expect(statusBody('prompt.submit', { sessionId: 'st-1', tool: 'Bash' })).toEqual({ hook_event_name: 'UserPromptSubmit', session_id: 'st-1' });
   });
 

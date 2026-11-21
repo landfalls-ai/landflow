@@ -274,7 +274,7 @@ in the agent's Sessions and, for your own sessions, on `/connect`.
 - **Statuses.** Thinking, Working, Compacting, Waiting for you, Idle, Error, Blocked, Ended. A session with no event for
   30 minutes reads **Idle (stale)** and closes after 24 hours. Error and Blocked stay until a newer prompt, tool use or
   session start.
-- **Who sees what.** `agent_type` of an agent you may run binds the session to that agent: its card shows the chip and its
+- **Who sees what.** A session binds to a Landflow agent only through its first event, a `SessionStart` whose `agent_type` names an agent you may run (Claude Code puts it there when started with `--agent <slug>:<slug>`); `agent_type` on any later event is ignored, and a session that began as your own never becomes an agent's. A bound session: its card shows the chip and its
   Sessions tab lists a **Claude Code** session. Any other session is yours alone, an admin's view included: it keeps the
   status, times, tool names, counts and (when you or the brain mod name it) the repository, never prompt text, tool input or
   output, a file path or the working directory.

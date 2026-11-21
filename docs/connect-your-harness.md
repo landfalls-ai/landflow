@@ -28,7 +28,10 @@ make the key, then merge the **Live status hooks** block into `.claude/settings.
 Your own sessions keep status, times, tool names and counts. They never keep what you typed, what a tool returned, a file
 path or your working directory, and no one else sees them, admins included. A session of a Landflow agent (started with
 `claude --agent <slug>:<slug>` from its exported plugin) shows as a chip on that agent's card for everyone who may read the
-agent. The brain mod can send the same status instead of the hooks block: [Status sharing](landflow-brain-mod.md#status-sharing).
+agent. The hooks block forwards Claude Code's own event JSON, so the binding comes from the `agent_type` on the session's
+first event (`SessionStart`) and only when you may run that agent; later events cannot bind or rebind it. Limits: 20 events a
+second per key (`LANDFLOW_HARNESS_EVENTS_PER_SECOND`) and 100 a second for all of your keys together
+(`LANDFLOW_HARNESS_OWNER_EVENTS_PER_SECOND`); past either, Landflow answers 429 and the status may lag. The brain mod can send the same status instead of the hooks block: [Status sharing](landflow-brain-mod.md#status-sharing).
 
 ## Setup for each harness
 

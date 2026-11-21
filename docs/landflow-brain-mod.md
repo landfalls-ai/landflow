@@ -134,7 +134,7 @@ Off by default, and yours to turn on: `/brain status-sharing on` (stored in the 
 argument shows the state). While it is on, a session in a listed repository sends the status of each step to
 `POST /api/harness/claude-code/hooks` as the Claude Code hook it stands for (`SessionStart`, `UserPromptSubmit`,
 `PreToolUse`, `PostToolUse`, `Stop`, `SessionEnd`), so `/connect` → **Your sessions** shows Thinking, Working and Idle live.
-The body holds the hook name, a session id the mod made, the repository name and a tool's name: never prompt text, tool
+The body holds the hook name, a session id the mod made, the repository name and a tool's name (never an `agent_type`, so the session is always your own): never prompt text, tool
 input or output, a path or the working directory. Each request carries an order number, is fire and forget and bounded at
 2 seconds, so it never slows a prompt. Outside a listed repository nothing is sent. The key needs the `harness:write` scope:
 without it the mod says so once ("Your key needs the harness:write scope to share status") and goes on. It is separate from
