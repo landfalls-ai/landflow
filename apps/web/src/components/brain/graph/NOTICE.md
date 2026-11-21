@@ -1,6 +1,6 @@
 # Notice: code adapted from Supermemory's memory-graph
 
-Four files in this folder are adapted from the `memory-graph` package of [supermemory](https://github.com/supermemoryai/supermemory)
+Three files in this folder are adapted from the `memory-graph` package of [supermemory](https://github.com/supermemoryai/supermemory)
 (`packages/memory-graph`, commit `9547bd0f`), which is licensed under the MIT licence. Each carries a header naming its source.
 
 | File here | Source file | What changed |
@@ -8,7 +8,6 @@ Four files in this folder are adapted from the `memory-graph` package of [superm
 | `simulation.ts` | `src/canvas/simulation.ts` | `d3-force` forces retuned for facts around subjects; document clustering removed; stepped by the caller with a 2 s budget and paused while the tab is hidden |
 | `viewport.ts` | `src/canvas/viewport.ts` | a keyboard handler (`applyKey`) added; a fit zooms in up to 2x instead of 1x |
 | `hit-test.ts` | `src/canvas/hit-test.ts` | subjects (squares) and facts (circles) replace documents and memories |
-| `version-chain.ts` | `src/canvas/version-chain.ts` | indexes Landflow's fact nodes (parent ids) and marks earlier versions |
 
 `renderer.ts`, `graph-view.tsx`, `legend.tsx`, `popover.tsx`, `graph-list.tsx`, `merge.ts` and `types.ts` are written for Landflow
 after the structure of Supermemory's renderer, canvas component, legend and hover popover; none of their drawing or React code is copied.

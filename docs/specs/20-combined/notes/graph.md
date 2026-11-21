@@ -6,6 +6,7 @@
 - "One link away" reads at most 50 neighbouring subjects: an entity page's related pages, and the agents and workflows a workflow or agent uses.
 - The layout runs in the browser (`d3-force`, about 2 s for 500 nodes, then it stops); nothing is laid out on the server and there is no WebGL renderer.
 - Version edges across two pages of a whole-brain graph join only once both pages are loaded (Load more); the page order is newest first, not by chain.
+- A graph read stops at 20,000 facts (per subject for a page's graph): the response says `truncated` and the tab says the oldest are left out. A member's read still loads every row the scope allows before the cap, because `listFacts` drops its SQL limit when scoped; P7's `pageFacts` (scope in SQL) replaces this after the rebase.
 - The Graph tab does not edit: no dragging a fact onto another to link them.
 
 ## docs/roadmap.md

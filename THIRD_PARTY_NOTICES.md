@@ -5,8 +5,8 @@ Landflow's own code is under the licence in this repository. Code adapted from o
 ## Supermemory memory-graph (MIT)
 
 The Graph tab of the Brain page (`apps/web/src/components/brain/graph/`) adapts the canvas layout code of the
-`memory-graph` package of supermemory (`packages/memory-graph`, commit `9547bd0f`): `simulation.ts`, `viewport.ts`,
-`hit-test.ts` and `version-chain.ts`. Each adapted file carries a header naming its source, and
+`memory-graph` package of supermemory (`packages/memory-graph`, commit `9547bd0f`): `simulation.ts`, `viewport.ts` and
+`hit-test.ts`. Each adapted file carries a header naming its source, and
 [`apps/web/src/components/brain/graph/NOTICE.md`](apps/web/src/components/brain/graph/NOTICE.md) lists what changed in each.
 
 ```

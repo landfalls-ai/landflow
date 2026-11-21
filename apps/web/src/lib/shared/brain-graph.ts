@@ -53,6 +53,8 @@ export interface GraphPage {
   nodes: GraphNode[];
   edges: GraphEdge[];
   nextCursor?: string;
+  /** The read hit its cap, so the oldest facts are left out of every page. */
+  truncated?: boolean;
 }
 
 export interface GraphQuery {

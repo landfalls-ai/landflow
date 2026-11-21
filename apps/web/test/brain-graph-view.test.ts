@@ -14,9 +14,8 @@ import { SpatialIndex } from '@/components/brain/graph/hit-test';
 import { Legend } from '@/components/brain/graph/legend';
 import { mergePage } from '@/components/brain/graph/merge';
 import { NodePopover } from '@/components/brain/graph/popover';
-import { FORCE_CONFIG, ForceSimulation, SETTLE_BUDGET_MS } from '@/components/brain/graph/simulation';
+import { FORCE_CONFIG, ForceSimulation, handleVisibility, SETTLE_BUDGET_MS } from '@/components/brain/graph/simulation';
 import { FACT_SIZE, SUBJECT_SIZE, type LayoutEdge, type LayoutNode } from '@/components/brain/graph/types';
-import { VersionChainIndex } from '@/components/brain/graph/version-chain';
 import { applyKey, ViewportState } from '@/components/brain/graph/viewport';
 import { factNodeId, subjectNodeId, type GraphEdge, type GraphFactNode, type GraphNode, type GraphSubjectNode } from '@/lib/shared/brain-graph';
 
@@ -34,23 +33,6 @@ const layout = (n: number): { nodes: LayoutNode[]; edges: LayoutEdge[] } => {
   return { nodes, edges };
 };
 
-describe('version chains (AS-2)', () => {
-  it('orders a chain v1 -> v2 -> v3 from any version and marks earlier ones faded', () => {
-    const index = new VersionChainIndex();
-    index.rebuild(chain);
-    for (const id of ['h#v1', 'h#v2', 'h']) expect(index.getChain(id)?.map((c) => c.version)).toEqual([1, 2, 3]);
-    expect(index.isEarlier('h#v1')).toBe(true);
-    expect(index.isEarlier('h#v2')).toBe(true);
-    expect(index.isEarlier('h')).toBe(false);
-  });
-  it('has no chain for a fact with one version and survives a parent loop', () => {
-    const index = new VersionChainIndex();
-    index.rebuild([fact('solo'), fact('a', { parentId: 'b' }), fact('b', { parentId: 'a' })]);
-    expect(index.getChain('solo')).toBeNull();
-    expect(index.getChain('a')?.length).toBe(2);
-  });
-});
-
 describe('the simulation (FR-7)', () => {
   it('settles 500 nodes within its 2 s budget on a fake clock', () => {
     const { nodes, edges } = layout(500);
@@ -59,31 +41,44 @@ describe('the simulation (FR-7)', () => {
     let now = 1000;
     let frames = 0;
     // Each frame costs 16 ms of the fake clock: a graph that never settles must still stop at the budget.
-    while (sim.frame(now, false) && frames < 1000) {
+    while (sim.frame(now) && frames < 1000) {
       now += 16;
       frames++;
     }
     expect(frames).toBeLessThan(Math.ceil(SETTLE_BUDGET_MS / 16) + 1);
     expect(sim.isActive()).toBe(false);
-    expect(sim.frame(now + 16, false)).toBe(false);
+    expect(sim.frame(now + 16)).toBe(false);
     expect(Number.isFinite(nodes[1]!.x)).toBe(true);
   });
-  it('stops while the tab is hidden and gets a fresh budget when it is shown', () => {
-    const { nodes, edges } = layout(60);
+  it('pauses when the tab is hidden, keeps its heat, and finishes with a fresh budget when shown', () => {
+    const { nodes, edges } = layout(500);
     const sim = new ForceSimulation();
     sim.init(nodes, edges);
-    expect(sim.frame(0, false)).toBe(true);
-    expect(sim.frame(16, true)).toBe(false);
-    expect(sim.wasPaused).toBe(true);
-    sim.resume();
-    expect(sim.wasPaused).toBe(false);
-    expect(sim.frame(10_000, false)).toBe(true);
+    expect(sim.frame(0)).toBe(true);
+    // The tab is hidden: no frames fire, then the person comes back after 10 s.
+    expect(handleVisibility(sim, true)).toBe(false);
+    expect(sim.isPaused).toBe(true);
+    expect(sim.isActive()).toBe(true);
+    expect(sim.frame(16)).toBe(false);
+    // Shown again: not stopped half-settled by the time that passed.
+    expect(handleVisibility(sim, false)).toBe(true);
+    expect(sim.isPaused).toBe(false);
+    expect(sim.frame(10_000)).toBe(true);
+    expect(sim.frame(10_016)).toBe(true);
+  });
+  it('does not wake a layout that had already settled', () => {
+    const { nodes, edges } = layout(10);
+    const sim = new ForceSimulation();
+    sim.init(nodes, edges);
+    for (let t = 0; sim.frame(t * 16); t++);
+    expect(handleVisibility(sim, true)).toBe(false);
+    expect(handleVisibility(sim, false)).toBe(false);
   });
   it('keeps settled positions when nodes are added', () => {
     const { nodes, edges } = layout(30);
     const sim = new ForceSimulation();
     sim.init(nodes, edges);
-    for (let t = 0; sim.frame(t * 16, false); t++);
+    for (let t = 0; sim.frame(t * 16); t++);
     const before = { x: nodes[3]!.x, y: nodes[3]!.y };
     sim.update([...nodes, { id: 'new', kind: 'fact', data: fact('new'), x: before.x + 5, y: before.y, size: FACT_SIZE, faded: false }], [...edges, { source: 'new', target: 's', type: 'about' }]);
     expect(Math.hypot(nodes[3]!.x - before.x, nodes[3]!.y - before.y)).toBeLessThan(5);
@@ -166,6 +161,10 @@ describe('what a node shows (AS-5, FR-9)', () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]!.subject.label).toBe('Acme');
     expect(groups[0]!.facts.filter((f) => f.node.chainId === 'h').map((f) => f.depth)).toEqual([0, 1, 2]);
+    // An unrelated fact seen between the chain's versions must not split it or reorder its versions.
+    const mixed = { nodes: [s, fact('z', { lastSeen: '2026-11-02T12:00:00Z' }), ...chain, fact('y', { lastSeen: '2026-11-02T12:00:00Z' })], edges: [fact('z'), ...chain, fact('y')].map((f) => ({ from: f.id, to: s.id, type: 'about' as const })) };
+    const order = groupBySubject(mixed)[0]!.facts.map((f) => f.node.factId);
+    expect(order).toEqual(['y', 'z', 'h#v1', 'h#v2', 'h']);
     const html = renderToStaticMarkup(createElement(GraphList, { data, onOpenPage: () => undefined, onVersions: () => undefined }));
     expect(html).toContain('Acme');
     expect(html).toContain('margin-left:32px');
@@ -187,6 +186,6 @@ describe('the CSP rule (FR-10)', () => {
   });
   it('keeps the MIT header on every file adapted from Supermemory', () => {
     const dir = join(__dirname, '..', 'src', 'components', 'brain', 'graph');
-    for (const f of ['simulation.ts', 'viewport.ts', 'hit-test.ts', 'version-chain.ts']) expect(readFileSync(join(dir, f), 'utf8'), f).toMatch(/Supermemory[\s\S]*MIT[\s\S]*Copyright \(c\) 2025 supermemory/);
+    for (const f of ['simulation.ts', 'viewport.ts', 'hit-test.ts']) expect(readFileSync(join(dir, f), 'utf8'), f).toMatch(/Supermemory[\s\S]*MIT[\s\S]*Copyright \(c\) 2025 supermemory/);
   });
 });

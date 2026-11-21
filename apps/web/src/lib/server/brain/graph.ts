@@ -6,6 +6,7 @@
  * `pageFacts` below is the keyset page over `listFacts` this package needs. C07 (P7) adds the SQL version with the scope in
  * the query; when it lands `readFacts` swaps for it and nothing else here changes.
  */
+import { logger } from '../telemetry/logger';
 import { agentStore } from '../agents/store';
 import { type Actor } from '../projects/access';
 import { store } from '../store';
@@ -20,7 +21,7 @@ import { factNodeId, subjectNodeId, type GraphEdge, type GraphFactNode, type Gra
 /** Subjects a graph page reads at depth 2 (the spec's bound). */
 export const MAX_NEIGHBOURS = 50;
 /** The most facts one request reads before paging. */
-const READ_CAP = 20_000;
+export const READ_CAP = 20_000;
 
 export interface SubjectKey {
   subjectType: FactSubject;
@@ -37,6 +38,7 @@ export function parseSubject(key: string): SubjectKey | undefined {
   const head = key.slice(0, slash);
   const rest = key.slice(slash + 1);
   if (!rest) return undefined;
+  if (head === 'agent-user') return undefined; // private to one person: never a subject of a shared graph
   if (head === 'entity') return parseEntityRef(rest) ? { subjectType: 'entity', subjectId: rest } : undefined;
   if (parseEntityRef(key)) return { subjectType: 'entity', subjectId: key };
   return (FACT_SUBJECTS as readonly string[]).includes(head) && head !== 'entity' ? { subjectType: head as FactSubject, subjectId: rest } : undefined;
@@ -61,16 +63,29 @@ const isForgotten = (f: BrainFact, now: string) => Boolean(f.forgottenAt || (f.f
 /** Newest first, then by id, so a cursor `{ s: lastSeen, i: id }` names a position in a stable order. */
 const byPosition = (a: BrainFact, b: BrainFact) => (a.lastSeen === b.lastSeen ? (a.id < b.id ? -1 : 1) : a.lastSeen < b.lastSeen ? 1 : -1);
 
-/** The facts the caller may see for `query`, in page order, before paging. */
-function readFacts(actor: Actor | undefined, query: GraphQuery, subjects: SubjectKey[], now: string): BrainFact[] {
+/** The facts the caller may see for `query`, in page order, before paging; `truncated` when the read hit `READ_CAP`. */
+function readFacts(actor: Actor | undefined, query: GraphQuery, subjects: SubjectKey[], now: string, cap: number): { facts: BrainFact[]; truncated: boolean } {
   const scope = actor && scopeForActor(actor);
   const forgotten = query.forgotten ? ('include' as const) : ('exclude' as const);
-  const base = { status: 'all' as const, scope, history: query.history, forgotten, limit: READ_CAP, now };
-  const all = subjects.length ? subjects.flatMap((s) => listFacts({ ...base, subjectType: s.subjectType, subjectId: s.subjectId })) : listFacts(base);
-  return all
+  const base = { status: 'all' as const, scope, history: query.history, forgotten, limit: cap + 1, now };
+  // One read per subject (or one for the whole brain), each asked for one fact past the cap so a hit is noticed.
+  const reads = subjects.length ? subjects.map((s) => listFacts({ ...base, subjectType: s.subjectType, subjectId: s.subjectId })) : [listFacts(base)];
+  const truncated = reads.some((r) => r.length > cap);
+  const all = reads.flatMap((r) => r.slice(0, cap));
+  // Whether the caller may restore a subject's facts is decided once per subject, not once per forgotten fact.
+  const mayRestore = new Map<string, boolean>();
+  const canRestore = (f: BrainFact) => {
+    if (!actor) return false;
+    const key = `${f.subjectType}\u0000${f.subjectId}`;
+    if (!mayRestore.has(key)) mayRestore.set(key, canFact(actor, f, 'update'));
+    return mayRestore.get(key)!;
+  };
+  const facts = all
     .filter((f) => (f.subjectType as string) !== 'agent-user') // a person's private notes about an agent never enter a shared graph
-    .filter((f) => !isForgotten(f, now) || (actor && canFact(actor, f, 'update')))
+    .filter((f) => !isForgotten(f, now) || canRestore(f))
     .sort(byPosition);
+  if (truncated) logger.warn('brain graph read hit its cap', { cap, forgotten: query.forgotten, history: query.history });
+  return { facts, truncated };
 }
 
 /** The subjects one link away from `s` that `actor` may read (at most `MAX_NEIGHBOURS`). */
@@ -93,11 +108,12 @@ function neighbours(actor: Actor | undefined, s: SubjectKey): SubjectKey[] {
 }
 
 /** One page of the graph for `actor` (undefined: no access check, for the instance's own use). */
-export function brainGraph(actor: Actor | undefined, query: GraphQuery, now = new Date().toISOString()): GraphPage {
+export function brainGraph(actor: Actor | undefined, query: GraphQuery, now = new Date().toISOString(), cap = READ_CAP): GraphPage {
   const about = query.about ? parseSubject(query.about) : undefined;
   const subjects = about ? [about, ...(query.depth === 2 ? neighbours(actor, about) : [])] : [];
   const cursor = query.cursor ? decodeCursor(query.cursor) : undefined;
-  const ordered = readFacts(actor, query, subjects, now).filter((f) => !cursor || f.lastSeen < cursor.s || (f.lastSeen === cursor.s && f.id > cursor.i));
+  const read = readFacts(actor, query, subjects, now, cap);
+  const ordered = read.facts.filter((f) => !cursor || f.lastSeen < cursor.s || (f.lastSeen === cursor.s && f.id > cursor.i));
   const page = ordered.slice(0, query.limit);
   const last = page.at(-1);
 
@@ -141,5 +157,5 @@ export function brainGraph(actor: Actor | undefined, query: GraphQuery, now = ne
   if (query.history)
     for (const f of page) if (f.parentId && factIds.has(f.parentId)) edges.push({ from: factNodeId(f.parentId), to: factNodeId(f.id), type: f.relation ?? 'updates' });
   const more = ordered.length > page.length && last;
-  return { nodes, edges, ...(more && { nextCursor: encodeCursor({ s: last.lastSeen, i: last.id }) }) };
+  return { nodes, edges, ...(more && { nextCursor: encodeCursor({ s: last.lastSeen, i: last.id }) }), ...(read.truncated && { truncated: true }) };
 }

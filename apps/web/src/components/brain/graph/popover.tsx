@@ -68,7 +68,7 @@ export function NodePopover({ node, subject, onOpenPage, onVersions, onClose }: 
 
 function Card({ children, onClose }: { children: ReactNode; onClose?: () => void }) {
   return (
-    <div role="dialog" aria-label="Node details" onKeyDown={(e) => e.key === 'Escape' && onClose?.()} className="pointer-events-auto w-[300px] max-w-full rounded-xl border border-hair bg-sf px-3 py-2.5 shadow-pop">
+    <div role="tooltip" aria-label="Node details" onKeyDown={(e) => e.key === 'Escape' && onClose?.()} className="pointer-events-auto w-[300px] max-w-full rounded-xl border border-hair bg-sf px-3 py-2.5 shadow-pop">
       {children}
     </div>
   );

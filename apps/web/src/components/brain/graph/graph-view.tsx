@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/client/api';
 import { usePhone } from '@/lib/client/use-phone';
 import { plural } from '@/lib/client/format';
-import { type GraphFactNode, type GraphNode, type GraphPage } from '@/lib/shared/brain-graph';
+import { type GraphFactNode, type GraphNode, type GraphPage, type GraphSubjectNode } from '@/lib/shared/brain-graph';
 import type { BrainFact } from '@/lib/shared/brain';
 import { Button } from '../../ui/button';
 import { EmptyState } from '../../ui/empty-state';
@@ -24,9 +24,8 @@ import { Legend } from './legend';
 import { mergePage, type GraphData } from './merge';
 import { NodePopover } from './popover';
 import { draw, readColors } from './renderer';
-import { ForceSimulation } from './simulation';
+import { ForceSimulation, handleVisibility } from './simulation';
 import { FACT_SIZE, SUBJECT_SIZE, type LayoutEdge, type LayoutNode } from './types';
-import { VersionChainIndex } from './version-chain';
 import { applyKey, ViewportState } from './viewport';
 
 const EMPTY: GraphData = { nodes: [], edges: [] };
@@ -50,6 +49,9 @@ export function GraphView({ about, onOpenPage }: { about?: string; onOpenPage: (
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [versions, setVersions] = useState<BrainFact>();
+  // Bumped by every reset load (a toggle, the first read), so the canvas fits again then and not after Load more.
+  const [generation, setGeneration] = useState(0);
+  const [truncated, setTruncated] = useState(false);
   const [hover, setHover] = useState<{ node: GraphNode; x: number; y: number }>();
   const seq = useRef(0);
 
@@ -62,6 +64,8 @@ export function GraphView({ about, onOpenPage }: { about?: string; onOpenPage: (
           if (mine !== seq.current) return;
           setData((current) => mergePage(reset ? EMPTY : current, page, history));
           setCursor(page.nextCursor);
+          if (reset) setGeneration((g) => g + 1);
+          setTruncated(Boolean(page.truncated));
           setError(undefined);
         })
         .catch((e: Error) => mine === seq.current && setError(e.message))
@@ -73,8 +77,8 @@ export function GraphView({ about, onOpenPage }: { about?: string; onOpenPage: (
   useEffect(() => load(true), [load]);
 
   const facts = data.nodes.filter((n) => n.kind === 'fact').length;
-  const openVersions = (fact: GraphFactNode, subject: string) =>
-    setVersions({ id: fact.factId, subjectType: 'workflow', subjectId: subject, subjectName: subject, kind: fact.factKind, statement: fact.statement, evidence: [], confidence: fact.confidence, firstSeen: fact.firstSeen, lastSeen: fact.lastSeen, status: fact.status });
+  const openVersions = (fact: GraphFactNode, subject?: GraphSubjectNode) =>
+    setVersions({ id: fact.factId, subjectType: subject?.subjectType === 'project' || !subject ? 'instance' : subject.subjectType, subjectId: subject?.subjectId ?? '', subjectName: subject?.label, kind: fact.factKind, statement: fact.statement, evidence: [], confidence: fact.confidence, firstSeen: fact.firstSeen, lastSeen: fact.lastSeen, status: fact.status });
   const showList = phone || mode === 'list';
 
   return (
@@ -99,6 +103,11 @@ export function GraphView({ about, onOpenPage }: { about?: string; onOpenPage: (
           </Button>
         )}
       </div>
+      {truncated && (
+        <p className="text-[12px] text-t3" role="status">
+          This brain has more facts than one graph reads, so the oldest are left out. Open a page’s graph to see its own facts.
+        </p>
+      )}
       {error && (
         <p role="alert" className="text-[13px] text-rd">
           {error}
@@ -111,29 +120,29 @@ export function GraphView({ about, onOpenPage }: { about?: string; onOpenPage: (
           <GraphList data={data} onOpenPage={onOpenPage} onVersions={openVersions} />
         </div>
       ) : (
-        <GraphCanvas data={data} history={history} onHover={setHover} onOpenPage={onOpenPage} onVersions={openVersions} hover={hover} />
+        <GraphCanvas data={data} history={history} generation={generation} onHover={setHover} onOpenPage={onOpenPage} onVersions={openVersions} hover={hover} />
       )}
       {versions && <FactHistory fact={versions} onClose={() => setVersions(undefined)} />}
     </div>
   );
 }
 
-function GraphCanvas({ data, history, hover, onHover, onOpenPage, onVersions }: { data: GraphData; history: boolean; hover?: { node: GraphNode; x: number; y: number }; onHover: (h?: { node: GraphNode; x: number; y: number }) => void; onOpenPage: (ref: string) => void; onVersions: (fact: GraphFactNode, subject: string) => void }) {
+function GraphCanvas({ data, history, generation, hover, onHover, onOpenPage, onVersions }: { data: GraphData; history: boolean; generation: number; hover?: { node: GraphNode; x: number; y: number }; onHover: (h?: { node: GraphNode; x: number; y: number }) => void; onOpenPage: (ref: string) => void; onVersions: (fact: GraphFactNode, subject?: GraphSubjectNode) => void }) {
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const engine = useRef({
     sim: new ForceSimulation(),
     viewport: new ViewportState(0, 0, 1),
     index: new SpatialIndex(),
-    chains: new VersionChainIndex(),
     nodes: new Map<string, LayoutNode>(),
     edges: [] as LayoutEdge[],
     size: { w: 0, h: 0 },
     hovered: undefined as string | undefined,
     fitted: false,
+    generation: 0,
     raf: 0,
   });
-  const labels = useMemo(() => new Map(data.nodes.flatMap((n) => (n.kind === 'subject' ? [[n.id, n.label] as const] : []))), [data]);
+  const subjects = useMemo(() => new Map(data.nodes.flatMap((n) => (n.kind === 'subject' ? [[n.id, n] as const] : []))), [data]);
   const subjectOfFact = useMemo(() => new Map(data.edges.filter((e) => e.type === 'about').map((e) => [e.from, e.to])), [data]);
 
   const frame = useCallback(() => {
@@ -143,9 +152,9 @@ function GraphCanvas({ data, history, hover, onHover, onOpenPage, onVersions }: 
     e.raf = 0;
     if (!el || !ctx || !wrap.current) return;
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    let active = e.sim.frame(performance.now(), document.hidden);
+    let active = e.sim.frame(performance.now());
     // Reduce motion: no animated settling, the layout is finished before it is shown.
-    for (let t = 0; reduced && active && t < 400; t++) active = e.sim.frame(performance.now() + t * 16, false);
+    for (let t = 0; reduced && active && t < 400; t++) active = e.sim.frame(performance.now() + t * 16);
     const moving = e.viewport.tick();
     if (!active && !e.fitted && e.nodes.size) {
       e.viewport.fitToNodes([...e.nodes.values()], e.size.w, e.size.h, { animate: false });
@@ -164,7 +173,6 @@ function GraphCanvas({ data, history, hover, onHover, onOpenPage, onVersions }: 
   // The data changed: keep settled nodes where they are, put new ones next to their subject, let the layout run again.
   useEffect(() => {
     const e = engine.current;
-    e.chains.rebuild(data.nodes);
     const first = e.nodes.size === 0;
     const next = new Map<string, LayoutNode>();
     const subjectPos = (factId: string) => e.nodes.get(subjectOfFact.get(factId) ?? '');
@@ -183,11 +191,15 @@ function GraphCanvas({ data, history, hover, onHover, onOpenPage, onVersions }: 
     });
     e.nodes = next;
     e.edges = data.edges.filter((ed) => next.has(ed.from) && next.has(ed.to)).map((ed) => ({ source: ed.from, target: ed.to, type: ed.type }));
-    e.fitted = !first && e.fitted;
+    // A reset load (a toggle) fits again once; Load more keeps the view where the person left it.
+    if (e.generation !== generation) {
+      e.generation = generation;
+      e.fitted = false;
+    } else e.fitted = !first && e.fitted;
     if (first) e.sim.init([...next.values()], e.edges);
     else e.sim.update([...next.values()], e.edges);
     schedule();
-  }, [data, schedule, subjectOfFact]);
+  }, [data, generation, schedule, subjectOfFact]);
 
   // Size and pixel density, a hidden tab pausing the layout and the theme changing.
   useEffect(() => {
@@ -211,20 +223,21 @@ function GraphCanvas({ data, history, hover, onHover, onOpenPage, onVersions }: 
       schedule();
     };
     const visible = () => {
-      if (!document.hidden && e.sim.wasPaused) {
-        e.sim.resume();
-        schedule();
-      }
+      if (handleVisibility(e.sim, document.hidden)) schedule();
     };
     const ro = new ResizeObserver(resize);
     ro.observe(box);
     const dark = window.matchMedia('(prefers-color-scheme: dark)');
     dark.addEventListener('change', schedule);
+    // The app's own theme switch sets data-theme on <html>.
+    const theme = new MutationObserver(schedule);
+    theme.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     document.addEventListener('visibilitychange', visible);
     resize();
     return () => {
       ro.disconnect();
       dark.removeEventListener('change', schedule);
+      theme.disconnect();
       document.removeEventListener('visibilitychange', visible);
       cancelAnimationFrame(e.raf);
       e.raf = 0;
@@ -252,7 +265,7 @@ function GraphCanvas({ data, history, hover, onHover, onOpenPage, onVersions }: 
     onHover(n ? { node: n.data, x: p.x, y: p.y } : undefined);
     schedule();
   };
-  const subjectLabel = (n: GraphNode) => (n.kind === 'fact' ? labels.get(subjectOfFact.get(n.id) ?? '') : undefined);
+  const subjectOf = (n: GraphNode) => (n.kind === 'fact' ? subjects.get(subjectOfFact.get(n.id) ?? '') : undefined);
 
   return (
     <div ref={wrap} className="relative min-h-[360px] flex-1 overflow-hidden rounded-xl border border-hair bg-sf2">
@@ -287,7 +300,7 @@ function GraphCanvas({ data, history, hover, onHover, onOpenPage, onVersions }: 
           const n = nodeAt(at(ev));
           if (!n) return;
           if (n.data.kind === 'subject' && n.data.page) onOpenPage(n.data.page);
-          else if (n.data.kind === 'fact') onVersions(n.data, subjectLabel(n.data) ?? '');
+          else if (n.data.kind === 'fact') onVersions(n.data, subjectOf(n.data));
         }}
         onPointerLeave={() => {
           engine.current.hovered = undefined;
@@ -324,7 +337,7 @@ function GraphCanvas({ data, history, hover, onHover, onOpenPage, onVersions }: 
       </div>
       {hover && (
         <div className="pointer-events-none absolute" style={{ left: Math.min(Math.max(hover.x + 14, 8), Math.max(8, engine.current.size.w - 316)), top: Math.min(Math.max(hover.y + 14, 8), Math.max(8, engine.current.size.h - 200)) }}>
-          <NodePopover node={hover.node} subject={subjectLabel(hover.node)} />
+          <NodePopover node={hover.node} subject={subjectOf(hover.node)?.label} />
         </div>
       )}
     </div>

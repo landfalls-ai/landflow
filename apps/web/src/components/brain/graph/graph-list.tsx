@@ -29,12 +29,21 @@ export function groupBySubject(data: GraphData): ListGroup[] {
     }
     return depth;
   };
-  const ordered = [...facts.values()].sort((a, b) => (a.chainId === b.chainId ? a.version - b.version : a.lastSeen < b.lastSeen ? 1 : -1));
+  // Chains by their newest version first, a chain oldest version first; every tie is broken, so the order is total.
+  const newest = new Map<string, string>();
+  for (const f of facts.values()) if (f.lastSeen > (newest.get(f.chainId) ?? '')) newest.set(f.chainId, f.lastSeen);
+  const ordered = [...facts.values()].sort((a, b) => {
+    if (a.chainId !== b.chainId) {
+      const [x, y] = [newest.get(a.chainId) ?? '', newest.get(b.chainId) ?? ''];
+      return x === y ? (a.chainId < b.chainId ? -1 : 1) : x < y ? 1 : -1;
+    }
+    return a.version - b.version || (a.factId < b.factId ? -1 : a.factId > b.factId ? 1 : 0);
+  });
   for (const f of ordered) groups.get(subjectOf.get(f.id) ?? '')?.facts.push({ node: f, depth: depthOf(f) });
   return [...groups.values()].filter((g) => g.facts.length > 0 || subjects.size === 1);
 }
 
-export function GraphList({ data, onOpenPage, onVersions }: { data: GraphData; onOpenPage: (page: string) => void; onVersions: (fact: GraphFactNode, subject: string) => void }) {
+export function GraphList({ data, onOpenPage, onVersions }: { data: GraphData; onOpenPage: (page: string) => void; onVersions: (fact: GraphFactNode, subject: GraphSubjectNode) => void }) {
   const groups = groupBySubject(data);
   return (
     <div className="flex flex-col gap-4">
@@ -61,7 +70,7 @@ export function GraphList({ data, onOpenPage, onVersions }: { data: GraphData; o
                   <span>{stamp(node.lastSeen)}</span>
                 </div>
                 {node.version > 1 || !node.latest ? (
-                  <button type="button" onClick={() => onVersions(node, subject.label)} className="mt-1 inline-flex min-h-11 items-center text-[12px] font-semibold text-ac">
+                  <button type="button" onClick={() => onVersions(node, subject)} className="mt-1 inline-flex min-h-11 items-center text-[12px] font-semibold text-ac">
                     Versions
                   </button>
                 ) : null}

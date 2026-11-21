@@ -64,16 +64,13 @@ export class ForceSimulation {
   }
 
   /**
-   * One animation frame at time `now` (ms): a few ticks. False when the graph is settled, the budget is spent, or the tab
-   * is hidden (a hidden tab keeps its heat and `resume()` gives it a fresh budget).
+   * One animation frame at time `now` (ms): a few ticks. False when the graph is settled, the budget is spent, or the
+   * simulation is paused. Animation frames do not fire in a hidden tab, so the view pauses on `visibilitychange` (see
+   * `handleVisibility`): the heat is kept and `resume()` gives the layout a fresh budget.
    */
-  frame(now: number, hidden: boolean): boolean {
+  frame(now: number): boolean {
     const sim = this.sim;
-    if (!sim) return false;
-    if (hidden) {
-      this.paused = true;
-      return false;
-    }
+    if (!sim || this.paused) return false;
     this.startedAt ??= now;
     if (sim.alpha() < FORCE_CONFIG.alphaMin || now - this.startedAt >= SETTLE_BUDGET_MS) {
       this.stop();
@@ -83,8 +80,13 @@ export class ForceSimulation {
     return true;
   }
 
-  /** Whether a hidden tab left the layout unfinished (the view calls `resume()` when it is shown again). */
-  get wasPaused(): boolean {
+  /** Stop stepping but keep the heat and the positions (a hidden tab); the budget restarts on `resume()`. */
+  pause(): void {
+    this.paused = true;
+    this.startedAt = undefined;
+  }
+
+  get isPaused(): boolean {
     return this.paused;
   }
 
@@ -108,4 +110,15 @@ export class ForceSimulation {
     this.sim = null;
     this.paused = false;
   }
+}
+
+/** What the document's `visibilitychange` does to a layout: pause when hidden, pick up again when shown. True when the caller should schedule a frame. */
+export function handleVisibility(sim: ForceSimulation, hidden: boolean): boolean {
+  if (hidden) {
+    sim.pause();
+    return false;
+  }
+  if (!sim.isPaused && !sim.isActive()) return false;
+  sim.resume();
+  return sim.isActive();
 }

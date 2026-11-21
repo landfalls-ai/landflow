@@ -24,7 +24,7 @@ const facts = await import('@/lib/server/brain/facts');
 const { forgetFact } = await import('@/lib/server/brain/fact-lifecycle');
 const { createTeamProject, setHomeProject, setMember } = await import('@/lib/server/projects/store');
 const route = await import('@/app/api/brain/graph/route');
-const { parseSubject } = await import('@/lib/server/brain/graph');
+const { parseSubject, brainGraph } = await import('@/lib/server/brain/graph');
 import type { GraphPage } from '@/lib/shared/brain-graph';
 
 const owner = await createUser({ email: 'owner@graph.test', name: 'Owner', role: 'owner', password: 'owner-password-1' });
@@ -96,12 +96,36 @@ describe('the builder', () => {
   });
 
   it('marks a forgotten fact, only when asked and only to someone who may restore it', async () => {
-    await forgetFact('entity:customer/acme:cost', { reason: 'wrong' }, { userId: owner.id });
+    await forgetFact('entity:customer/acme:cost', { reason: 'secret reason words' }, { userId: owner.id });
     const plain = await get('?about=customer/acme');
     expect(plain.body.nodes.filter((n) => n.kind === 'fact')).toHaveLength(3);
     const shown = await get('?about=customer/acme&forgotten=1');
     const forgotten = shown.body.nodes.filter((n) => n.kind === 'fact' && n.forgotten);
     expect(forgotten).toHaveLength(1);
+    // The reason and who forgot it never leave in the graph.
+    const text = JSON.stringify(shown.body);
+    expect(text).not.toContain('secret reason words');
+    expect(text).not.toContain(owner.id);
+  });
+
+  it('shows no forgotten node to a member who can read the page but not change it', async () => {
+    const viewer = await createUser({ email: 'viewer@graph.test', name: 'Viewer', role: 'member', password: 'viewer-password-1' });
+    setMember(teamA.id, viewer.id, 'viewer');
+    await forgetFact('entity:customer/acme:cost', { reason: 'secret reason words' }, { userId: owner.id });
+    enableTestAuth(viewer);
+    const plain = await get('?about=customer/acme&forgotten=1');
+    expect(plain.status).toBe(200);
+    expect(plain.body.nodes.filter((n) => n.kind === 'fact')).toHaveLength(3);
+    expect(plain.body.nodes.some((n) => n.kind === 'fact' && n.forgotten)).toBe(false);
+    expect(JSON.stringify(plain.body)).not.toContain('secret reason words');
+    enableTestAuth(owner);
+  });
+
+  it('says when a read hit its cap', () => {
+    const page = brainGraph(undefined, { depth: 1, history: false, forgotten: false, limit: 500 }, new Date().toISOString(), 3);
+    expect(page.truncated).toBe(true);
+    expect(page.nodes.filter((n) => n.kind === 'fact')).toHaveLength(3);
+    expect(brainGraph(undefined, { depth: 1, history: false, forgotten: false, limit: 500 }).truncated).toBeUndefined();
   });
 
   it('leaves out a node type the member cannot see and answers 404 for a subject they may not read (AS-3)', async () => {
