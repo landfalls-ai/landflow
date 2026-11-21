@@ -152,6 +152,30 @@ describe('T-6 access, a project’s facts and a knowledge base', () => {
     await expect(runPlayground(member, { ...base, source: { kind: 'facts', projectId: pid }, query: 'deploy', mode: 'keyword' })).rejects.toMatchObject({ status: 404 });
   });
 
+  it('a member without a personal-project fallback: facts default to the caller’s own project, never the owner’s', async () => {
+    const answer = await runPlayground(member, { ...base, source: { kind: 'facts' }, query: 'anything', mode: 'keyword' });
+    expect(answer.results).toEqual([]);
+  });
+
+  it('keeps only facts the caller may read, and never an agent-user memory (blocker 4)', async () => {
+    const agent = agentStore.create({ name: 'Private mem' });
+    setHomeProject('agent', agent.id, pid);
+    facts.upsertFact({ id: `agent-user:${agent.id}/someone:memory:p1`, subjectType: 'agent-user', subjectId: `${agent.id}/someone`, kind: 'memory', statement: 'Deploy freeze secret of someone', confidence: 1, evidence: [], projectId: pid } as never, database(), new Date().toISOString());
+    const answer = await runPlayground(editor, { ...base, source: { kind: 'facts', projectId: pid }, query: 'deploy freeze', mode: 'keyword' });
+    expect(answer.results.map((r) => r.text)).not.toContain('Deploy freeze secret of someone');
+    expect(answer.results.length).toBeGreaterThan(0);
+  });
+
+  it('refuses a Cohere credential the source’s project may not use, and a blank query is 400 (blocker 7, 6)', async () => {
+    const { credentials } = await import('@/lib/server/credentials/vault');
+    const { registry } = await import('@/lib/server/plugins/registry');
+    const { corePlugin } = await import('@/lib/server/nodes');
+    registry.registerBuiltin(corePlugin);
+    const cred = credentials.create({ name: 'cohere elsewhere', type: 'core.cohereApi', data: { apiKey: 'k', baseUrl: 'http://127.0.0.1:1' } });
+    await expect(runPlayground(editor, { ...base, source: { kind: 'facts', projectId: pid }, query: 'deploy', mode: 'keyword', rerank: { kind: 'cohere', credentialId: cred.id } })).rejects.toMatchObject({ status: 404 });
+    expect(playgroundSchema.safeParse({ source: { kind: 'facts' }, query: '   ' }).success).toBe(false);
+  });
+
   it('a knowledge base needs edit access to the agent (AS-7)', async () => {
     const req = { ...base, source: { kind: 'kb' as const, agentId, toolId: 'kb1' }, query: 'worker', mode: 'keyword' as const };
     await expect(runPlayground(member, req)).rejects.toMatchObject({ status: 404 });
@@ -185,6 +209,7 @@ describe('T-6 access, a project’s facts and a knowledge base', () => {
 });
 
 describe('T-6 the route', () => {
+  let used = 0; // searches this window already took (a bad body counts too: the schema runs first, so it does not)
   it('refuses a query over 2,000 characters, and a bad body', async () => {
     expect(playgroundSchema.safeParse({ source: { kind: 'facts' }, query: 'x'.repeat(2001) }).success).toBe(false);
     const response = await route.POST(post({ source: { kind: 'facts' }, query: 'x'.repeat(2001) }));
@@ -192,20 +217,32 @@ describe('T-6 the route', () => {
     expect((await route.POST(post({ source: { kind: 'nope' }, query: 'x' }))).status).toBe(400);
   });
 
+  it('writes no audit row: a search is a read', async () => {
+    const { auditSkipped, auditRequest } = await import('@/lib/server/audit/http');
+    expect(auditSkipped('/api/memory/search')).toBe(true);
+    const count = () => database().get<{ n: number }>('SELECT COUNT(*) AS n FROM audit_events')!.n;
+    const projectId = createTeamProject({ name: 'Audit', createdBy: 'owner' }).id;
+    const before = count();
+    const request = post({ source: { kind: 'facts', projectId }, query: 'audit', mode: 'keyword' });
+    expect((await auditRequest([request], () => route.POST(request))).status).toBe(200);
+    expect(count()).toBe(before);
+    used += 1;
+  });
+
   it('answers 429 with Retry-After on the 21st request in a minute (FR-9)', async () => {
     let last: Response | undefined;
     const statuses: number[] = [];
-    for (let i = 0; i < 21; i++) {
+    for (let i = 0; i < 21 - used; i++) {
       last = await route.POST(post({ source: { kind: 'facts' }, query: `q${i}`, mode: 'keyword' }));
       statuses.push(last.status);
     }
-    expect(statuses.slice(0, 20).every((s) => s !== 429)).toBe(true);
-    expect(statuses[20]).toBe(429);
+    expect(statuses.slice(0, -1).every((s) => s !== 429)).toBe(true);
+    expect(statuses.at(-1)).toBe(429);
     expect(Number(last!.headers.get('retry-after'))).toBeGreaterThan(0);
   });
 
-  it('writes no agent usage row', () => {
-    const rows = database().get<{ n: number }>("SELECT COUNT(*) AS n FROM ai_usage WHERE agent_id IS NOT NULL");
+  it('writes no usage row at all', () => {
+    const rows = database().get<{ n: number }>('SELECT COUNT(*) AS n FROM ai_usage');
     expect(rows?.n ?? 0).toBe(0);
   });
 });

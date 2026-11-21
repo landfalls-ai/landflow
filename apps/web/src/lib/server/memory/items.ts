@@ -7,6 +7,7 @@ import { canFact } from '../brain/scope';
 import { noteStore } from '../notebook/store';
 import { canResource, type Actor } from '../projects/access';
 
+/** Ids one call reads; the inspector asks in batches of this many. */
 export const MAX_ITEM_IDS = 50;
 
 export interface MemoryItemState {
@@ -34,13 +35,18 @@ export function memoryItemStates(actor: Actor, ids: readonly string[]): MemoryIt
     if (fact) {
       if (!canFact(actor, fact, 'read')) continue;
       const lapsed = Boolean(fact.forgottenAt || (fact.forgetAfter && fact.forgetAfter <= now()));
+      const change = canFact(actor, fact, 'update');
+      // A forgotten fact is for people who may change it: a reader sees the item as it was recorded, with no hint and no reason.
+      if (lapsed && !change) continue;
       const forgottenAt = fact.forgottenAt ?? (lapsed ? fact.forgetAfter : undefined);
-      out.push({ id, live: !lapsed, ...(canFact(actor, fact, 'update') && { canChange: true }), version: fact.version ?? 1, ...(!lapsed && { text: fact.statement }), ...(forgottenAt && { forgottenAt }), ...(lapsed && fact.forgetReason && { reason: fact.forgetReason }) });
+      out.push({ id, live: !lapsed, ...(change && { canChange: true }), version: fact.version ?? 1, ...(!lapsed && { text: fact.statement }), ...(forgottenAt && { forgottenAt }), ...(lapsed && fact.forgetReason && { reason: fact.forgetReason }) });
       continue;
     }
     const note = noteStore.get(id, { withForget: true });
     if (!note || !canResource(actor, 'agentTeam', note.teamId, 'read')) continue;
-    out.push({ id, live: !note.forgottenAt, teamId: note.teamId, ...(canResource(actor, 'agentTeam', note.teamId, 'update') && { canChange: true }), ...(!note.forgottenAt && { text: note.text }), ...(note.forgottenAt && { forgottenAt: note.forgottenAt }), ...(note.forgetReason && { reason: note.forgetReason }) });
+    const change = canResource(actor, 'agentTeam', note.teamId, 'update');
+    if (note.forgottenAt && !change) continue;
+    out.push({ id, live: !note.forgottenAt, teamId: note.teamId, ...(change && { canChange: true }), ...(!note.forgottenAt && { text: note.text }), ...(note.forgottenAt && { forgottenAt: note.forgottenAt, ...(note.forgetReason && { reason: note.forgetReason }) }) });
   }
   return out;
 }

@@ -394,7 +394,7 @@ cut to 300 characters; never the instructions) and `practices` (handle and versi
   `memoryText`; `off` keeps neither `memory` nor `memoryText`. A run recorded before this, or with no memory, draws no Memory part.
   On open the part asks `GET /api/memory/items?ids=` (at most 50) for each item's state now: one forgotten since says "forgotten since
   <date>: <reason>", and a person who may change it gets **Forget** and **Versions**. An item the caller may not see is left as recorded.
-  The notebook block is recorded on each member's span that got it; the agent's profile and relevant memories come with the
+  The notebook block will be recorded on each member's span that got it, and the agent's profile and relevant memories come with the
   agent-memory work (the session's `memory` and `memoryText`).
 - **On the run.** The root span's sheet shows **Project** and **Goal** chips from `attrs.project` and `attrs.goal`.
 - **In sessions.** An agent's **Sessions** tab has the same section as a fold, built from the session's saved context

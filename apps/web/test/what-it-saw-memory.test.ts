@@ -192,6 +192,27 @@ describe('T-3 the items’ current state', () => {
     expect(memoryItemStates({ id: outsider.id, role: 'member' }, [`agent-user:${agent.id}/someone:memory:x`])).toEqual([]);
   });
 
+  it('gives a reader-only member nothing for a forgotten fact or note, and no reason for a pending forget (blocker)', async () => {
+    const { memoryItemStates } = await import('@/lib/server/memory/items');
+    const { forgetNote } = await import('@/lib/server/notebook/lifecycle');
+    const viewer = await createUser({ email: 'v@items.test', name: 'Viewer', role: 'member', password: 'viewer-password-1' });
+    setMember(pid, viewer.id, 'viewer');
+    const reader = { id: viewer.id, role: 'member' as const };
+    const lead = agentStore.create({ name: 'Lead2' });
+    const team = agentTeamStore.create({ name: 'T2', members: [{ id: 'm', kind: 'agent', agentId: lead.id, title: 'Lead' }] });
+    setHomeProject('agentTeam', team.id, pid);
+    const gone = noteStore.insert({ teamId: team.id, kind: 'fact', text: 'Gone note', scope: 'team', author: 'Lead' });
+    const pending = noteStore.insert({ teamId: team.id, kind: 'fact', text: 'Pending note', scope: 'team', author: 'Lead' });
+    forgetNote(team.id, gone.id, { reason: 'private reason' }, 'someone');
+    forgetNote(team.id, pending.id, { reason: 'later reason', forgetAfter: new Date(Date.now() + 3_600_000).toISOString() }, 'someone');
+    const states = memoryItemStates(reader, [`project:${pid}:memory:i0`, `project:${pid}:memory:i1`, gone.id, pending.id]);
+    expect(states.map((i) => i.id).sort()).toEqual([`project:${pid}:memory:i0`, pending.id].sort());
+    expect(JSON.stringify(states)).not.toMatch(/reason/);
+    // The editor still sees both forgotten items with their reasons.
+    const full = memoryItemStates({ id: editor.id, role: 'member' }, [`project:${pid}:memory:i1`, gone.id]);
+    expect(full.map((i) => i.reason).sort()).toEqual(['private reason', 'was wrong']);
+  });
+
   it('answers 400 for more than 50 ids', async () => {
     const ids = Array.from({ length: 51 }, (_, i) => `x${i}`).join(',');
     expect((await get(ids)).status).toBe(400);

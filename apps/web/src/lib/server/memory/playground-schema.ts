@@ -15,7 +15,7 @@ const rerank = z.discriminatedUnion('kind', [
 
 export const playgroundSchema = z.object({
   source,
-  query: z.string().max(PLAYGROUND_LIMITS.query, `Keep the query under ${PLAYGROUND_LIMITS.query} characters`),
+  query: z.string().trim().min(1, 'Type a query').max(PLAYGROUND_LIMITS.query, `Keep the query under ${PLAYGROUND_LIMITS.query} characters`),
   mode: z.enum(['keyword', 'meaning', 'hybrid']).default('hybrid'),
   limit: z.number().int().min(PLAYGROUND_LIMITS.limit.min).max(PLAYGROUND_LIMITS.limit.max).default(PLAYGROUND_LIMITS.limit.default),
   threshold: z.number().min(0).max(1).default(0),

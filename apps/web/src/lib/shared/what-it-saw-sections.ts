@@ -62,7 +62,11 @@ export function sawMemoryOf(value: unknown): SawMemorySource[] {
     if (!v || typeof v !== 'object') return [];
     const s = v as Record<string, unknown>;
     if (typeof s.source !== 'string' || !(s.source in SAW_MEMORY_LABEL) || !Array.isArray(s.items)) return [];
-    const items = (s.items as unknown[]).filter((i): i is SawMemoryItem => Boolean(i) && typeof i === 'object' && typeof (i as SawMemoryItem).id === 'string');
+    const items = (s.items as unknown[]).flatMap((raw): SawMemoryItem[] => {
+      if (!raw || typeof raw !== 'object' || typeof (raw as SawMemoryItem).id !== 'string') return [];
+      const i = raw as Record<string, unknown>;
+      return [{ id: i.id as string, ...(typeof i.version === 'number' && { version: i.version }), ...(typeof i.kind === 'string' && { kind: i.kind }), ...(i.static === true && { static: true }), ...(typeof i.score === 'number' && { score: i.score }) }];
+    });
     if (!items.length && !(typeof s.count === 'number' && s.count > 0)) return [];
     return [{ source: s.source as SawMemorySourceKind, count: typeof s.count === 'number' ? s.count : items.length, items, ...((s.mode === 'meaning' || s.mode === 'keywords') && { mode: s.mode }), ...(typeof s.hash === 'string' && { hash: s.hash }) }];
   });

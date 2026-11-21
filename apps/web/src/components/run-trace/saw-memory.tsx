@@ -106,15 +106,17 @@ function Source({ source, states, onForget, onVersions }: { source: SawMemorySou
 }
 
 export function SawMemory({ memory, memoryText, states: given }: SawMemoryProps) {
-  const ids = useMemo(() => [...new Set(memory.flatMap((s) => s.items.map((i) => i.id)))].slice(0, 50), [memory]);
+  const ids = useMemo(() => [...new Set(memory.flatMap((s) => s.items.map((i) => i.id)))], [memory]);
   const [read, setRead] = useState<Record<string, SawItemState>>({});
   const [forgetting, setForgetting] = useState<{ id: string; text: string }>();
   const [history, setHistory] = useState<string>();
   useEffect(() => {
     if (given || !ids.length) return;
     let live = true;
-    api<{ items: SawItemState[] }>(`/api/memory/items?ids=${ids.map(encodeURIComponent).join(',')}`, { background: true })
-      .then((r) => live && setRead(Object.fromEntries(r.items.map((i) => [i.id, i]))))
+    // At most 50 ids a call (the route's cap): ask in batches.
+    const batches = Array.from({ length: Math.ceil(ids.length / 50) }, (_, i) => ids.slice(i * 50, i * 50 + 50));
+    Promise.all(batches.map((batch) => api<{ items: SawItemState[] }>(`/api/memory/items?ids=${batch.map(encodeURIComponent).join(',')}`, { background: true })))
+      .then((all) => live && setRead(Object.fromEntries(all.flatMap((r) => r.items).map((i) => [i.id, i]))))
       .catch(() => {});
     return () => {
       live = false;
@@ -129,7 +131,7 @@ export function SawMemory({ memory, memoryText, states: given }: SawMemoryProps)
     else {
       const teamId = states[id]?.teamId;
       if (!teamId) throw new Error('Open the team’s Notebook tab to forget this note');
-      await api(`/api/agent-teams/${teamId}/notes/${encodeURIComponent(id)}`, { method: 'POST', json: { action: 'forget', reason, ...(forgetAfter && { forgetAfter }) } });
+      await api(`/api/agent-teams/${encodeURIComponent(teamId)}/notes/${encodeURIComponent(id)}`, { method: 'POST', json: { action: 'forget', reason, ...(forgetAfter && { forgetAfter }) } });
     }
     toast.success(forgetAfter ? 'It will be forgotten then' : 'Forgotten');
     setRead((r) => ({ ...r, [id]: { ...r[id], id, live: false, forgottenAt: new Date().toISOString(), reason } }));
