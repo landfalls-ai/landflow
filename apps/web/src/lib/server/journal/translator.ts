@@ -61,7 +61,7 @@ interface SpanState {
   /** A delegate's remote run. */
   remote?: Remote;
   /** C05: a provider limit stopped the remote task; kept on the span when it ends in error. */
-  blocked?: { kind: string; message: string };
+  blocked?: { kind: string; message: string; label?: string };
 }
 
 interface Remote {
@@ -385,7 +385,7 @@ export function createTranslator(options: TranslatorOptions) {
       }
     }
     if (isObject(data.blocked) && str(data.blocked.kind)) {
-      span.blocked = { kind: String(data.blocked.kind), message: str(data.blocked.message) ?? '' };
+      span.blocked = { kind: String(data.blocked.kind), message: str(data.blocked.message) ?? '', ...(str(data.blocked.label) && { label: String(data.blocked.label) }) };
       attrs.blocked = span.blocked;
     }
     const state = str(data.state);

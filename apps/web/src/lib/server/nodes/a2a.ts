@@ -32,7 +32,7 @@ import {
 } from '../a2a/client';
 import type { AgentTraceSummary } from '../../shared/agents';
 import { BlockedNodeError, blockedOf, countBlocked } from '../a2a/blocked';
-import { BLOCKED_LABEL } from '../../shared/quota-block';
+import { BLOCKED_LABEL, type BlockedKind } from '../../shared/quota-block';
 import { traceFor, usageOfTrace, withMarker } from '../a2a/agent-trace';
 import { callAgent, landflowTags, taskCall, throttled } from '../a2a/traced';
 import { CUT } from '../journal/content';
@@ -199,9 +199,9 @@ function assertNotFailed(ctx: IExecuteContext, card: AgentCard, result: A2aResul
     const verdict = blockedOf(result.task);
     if (verdict.blocked) {
       countBlocked(verdict.kind, 'a2a');
-      ctx.sendProgress?.({ agent: card.name, state: 'blocked', blocked: { kind: verdict.kind, message: verdict.message }, steps: [] });
+      ctx.sendProgress?.({ agent: card.name, state: 'blocked', blocked: { kind: verdict.kind, message: verdict.message, label: verdict.label }, steps: [] });
       ctx.check({ name: 'blocked', status: 'warn', message: BLOCKED_LABEL.unknown, subject: card.name });
-      throw new BlockedNodeError(card.name, verdict.kind, verdict.message, itemIndex);
+      throw new BlockedNodeError(card.name, verdict.kind, verdict.message, itemIndex, verdict.label);
     }
     throw new NodeOperationError(`${card.name}: the task ${stateName(state)}`, { description: statusText(result.task), itemIndex });
   }
@@ -387,11 +387,15 @@ export const a2aAgentNode = defineNode({
   async execute(ctx) {
     const items = ctx.getInputData();
     const out: NodeItem[] = [];
+    // C05: an agent that was Blocked by its provider is not called again for the later items of this execute; they fail the same way, without a second check.
+    const blockedBy = new Map<string, { kind: BlockedKind; message: string; label: string }>();
     for (let i = 0; i < Math.max(items.length, 1); i++) {
       try {
         const endpoint = endpointOf(ctx, i);
         const operation = String(ctx.getNodeParameter('operation', i, 'sendMessage') ?? 'sendMessage');
         const card = await getAgentCard(endpoint, { signal: ctx.signal });
+        const already = operation === 'sendMessage' ? blockedBy.get(endpoint.url) : undefined;
+        if (already) throw new BlockedNodeError(card.name, already.kind, already.message, i, already.label);
         const options = ctx.getNodeParameter<{ humanInTheLoop?: boolean; questionsGoTo?: string; projectContext?: string; practices?: 'on' | 'off' }>('options', i, {}) ?? {};
         // As an agent's tool the node keeps the conversation for the run and hands the agent the remote agent's questions.
         const asTool = ctx.getMode() === 'tool' && Boolean(ctx.getNodeState && ctx.setNodeState);
@@ -465,7 +469,14 @@ export const a2aAgentNode = defineNode({
             }
           }
         }
-        if (operation !== 'cancelTask') assertNotFailed(ctx, card, result, i);
+        if (operation !== 'cancelTask') {
+          try {
+            assertNotFailed(ctx, card, result, i);
+          } catch (error) {
+            if (error instanceof BlockedNodeError) blockedBy.set(endpoint.url, { kind: error.kind, message: error.providerMessage, label: error.label });
+            throw error;
+          }
+        }
         const item = withTraced(resultItem(card, result), traced);
         if (asTool && operation === 'sendMessage') {
           const contextId = result.kind === 'message' ? result.message.contextId : result.task.contextId;
@@ -486,7 +497,7 @@ export const a2aAgentNode = defineNode({
         const failure = error instanceof A2aError ? new NodeOperationError(error.message, { itemIndex: i }) : error;
         if (!ctx.continueOnFail()) throw failure;
         // C05: a flow can route a Blocked item differently.
-        const blocked: JsonObject = failure instanceof BlockedNodeError ? { blocked: true, blockedKind: failure.kind } : {};
+        const blocked: JsonObject = failure instanceof BlockedNodeError ? { blocked: true, blockedKind: failure.kind, blockedMessage: failure.providerMessage } : {};
         out.push({ json: { error: (failure as Error).message, ...blocked }, pairedItem: { item: i } });
       }
     }

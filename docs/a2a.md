@@ -142,22 +142,30 @@ home project when none does). Their calls and the citations in the answer are re
 ### When a provider blocks a call
 
 A remote task that ends `TASK_STATE_FAILED` because the provider's quota or credits ran out (a Codex Harness behind
-kagent, for one) is **Blocked**, not a generic failure. Landflow reads the task's status data parts and metadata for
-`codex_error_info: usage_limit_exceeded` (a `rate_limit_reached_type` naming credits makes it `credits_depleted`), and
-falls back to the status words (`usage limit`, `out of credits`, `credits depleted`, whole phrases only, so "model not
-supported" and "rate limited by the gateway" stay ordinary failures). The classifier is
+kagent, for one) is **Blocked**, not a generic failure. Landflow reads the task's status data parts and metadata first:
+`codex_error_info: usage_limit_exceeded` is a usage limit (a `rate_limit_reached_type` naming credits, also nested as
+Codex's `rate_limits.rate_limit_reached_type`, makes it credits depleted), any other `codex_error_info` is an ordinary
+error, and OpenAI's `insufficient_quota` is credits depleted. Only when no such field is there does it match the status
+words, provider phrasing only: "hit your usage limit", "usage limit reached", "out of credits", "exceeded your current
+quota", "credit balance is too low". "model not supported", "rate limited by the gateway", "Rate limit reached for ...",
+and "Container exceeded its memory usage limit" stay ordinary failures. The wording says "Codex ..." only when the
+verdict came from `codex_error_info`; a text verdict says "Usage limit reached" or "Credits depleted". The classifier is
 `lib/shared/quota-block.ts`, shared by every path.
 
-- **The node** fails with `<agent>: Codex usage limit reached` (or `Codex credits depleted`, `Blocked by a provider limit`),
-  the provider's message as the error description, and records the check `blocked` (warn, "Blocked by a provider limit")
-  on the run. The run still reads failed: a wait for the reset is a later feature.
-- **Continue on fail**: the error item carries `blocked: true` and `blockedKind` (`usage_limit`, `credits_depleted` or
-  `unknown`), so a flow can route a Blocked item (try another model, tell a person) apart from other failures.
+- **The node** fails with `<agent>: Codex usage limit reached`, the provider's message as the error description, and
+  records the check `blocked` (warn, "Blocked by a provider limit") once. The run still reads failed: a wait for the reset
+  is a later feature. The later items of the same execution do not call the blocked agent again: they fail the same way.
+- **Continue on fail**: the error item carries `blocked: true`, `blockedKind` (`usage_limit`, `credits_depleted` or
+  `unknown`) and `blockedMessage`, so a flow can route a Blocked item apart from other failures.
 - **An agent's A2A tool** throws the same Blocked error (the model reads "Codex usage limit reached: ...") and reports
-  the remote run as `state: 'blocked'`; **a team's remote member** adds a `Blocked` warn check naming the member, and the
-  lead is told the member was blocked by a provider limit, not that its work failed.
+  the remote run as `state: 'blocked'`; **a team's remote member** adds a `blocked` warn check naming the member, puts
+  the badge on its call span, is not asked again in this run ("blocked by a provider limit for this run; don't ask it
+  again"), and the lead is told the member was blocked, not that its work failed.
 - The [Run Trace](run-trace.md#a-blocked-call) shows a Blocked badge with the kind and the message.
 - The counter `landflow.harness.blocked{kind, harness}` counts each entry (`harness` is `a2a` here).
+- **Retries**: the engine's retry on fail (`retryOnFail`) is not told a failure is Blocked, so a node with it set calls the
+  blocked provider again until its tries are used. Leave retries off on a node that calls a metered agent
+  ([limitations.md](limitations.md)).
 
 Only the A2A path is built. Watching a person's local Codex session is not ([limitations.md](limitations.md)).
 

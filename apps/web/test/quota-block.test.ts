@@ -6,7 +6,7 @@ const complete = (error: Record<string, unknown>) => ({ type: 'event_msg', paylo
 
 describe('classifyRecord', () => {
   it('reads usage_limit_exceeded as a usage limit', () => {
-    expect(classifyRecord(complete({ message: 'out of credits', codex_error_info: 'usage_limit_exceeded' }))).toEqual({ blocked: true, kind: 'usage_limit', message: 'out of credits' });
+    expect(classifyRecord(complete({ message: 'out of credits', codex_error_info: 'usage_limit_exceeded' }))).toEqual({ blocked: true, kind: 'usage_limit', message: 'out of credits', label: 'Codex usage limit reached' });
   });
 
   it('says credits depleted when the preceding token_count named credits', () => {
@@ -17,6 +17,22 @@ describe('classifyRecord', () => {
   it('reads a token_count record carrying the limit type', () => {
     const verdict = classifyRecord({ type: 'event_msg', payload: { type: 'token_count', rate_limit_reached_type: 'workspace_member_credits_depleted' } });
     expect(verdict).toMatchObject({ blocked: true, kind: 'credits_depleted' });
+  });
+
+  it('reads the nested rate_limits shape of a token_count, as Codex writes it', () => {
+    const verdict = classifyRecord({ type: 'event_msg', payload: { type: 'token_count', rate_limits: { rate_limit_reached_type: 'workspace_member_credits_depleted' } } });
+    expect(verdict).toMatchObject({ blocked: true, kind: 'credits_depleted', label: 'Codex credits depleted' });
+    expect(classifyRecord({ type: 'event_msg', payload: { type: 'token_count', rate_limits: { rate_limit_reached_type: 'primary' } } })).toEqual({ blocked: false });
+  });
+
+  it('does not count a limit-type value that names no limit', () => {
+    expect(classifyRecord({ rate_limit_reached_type: 'primary' })).toEqual({ blocked: false });
+  });
+
+  it('reads OpenAI insufficient_quota as credits depleted, in neutral words', () => {
+    expect(classifyRecord({ error: { code: 'insufficient_quota', message: 'You exceeded your current quota' } })).toEqual({ blocked: true, kind: 'credits_depleted', message: 'You exceeded your current quota', label: 'Credits depleted' });
+    expect(classifyRecord({ error: { type: 'insufficient_quota' } })).toMatchObject({ blocked: true, kind: 'credits_depleted' });
+    expect(classifyRecord({ error: { code: 'rate_limit_exceeded', message: 'Rate limit reached for gpt' } })).toEqual({ blocked: false });
   });
 
   it('treats any other codex_error_info as an ordinary error', () => {
@@ -44,11 +60,31 @@ describe('classifyText', () => {
     expect(classifyText("You've hit your usage limit")).toMatchObject({ blocked: true, kind: 'usage_limit' });
     expect(classifyText('usage_limit_exceeded')).toMatchObject({ blocked: true, kind: 'usage_limit' });
     expect(classifyText('You are out of credits')).toMatchObject({ blocked: true, kind: 'credits_depleted' });
+    expect(classifyText('You exceeded your current quota, please check your plan')).toMatchObject({ blocked: true, kind: 'credits_depleted' });
+    expect(classifyText('Your credit balance is too low to access the API')).toMatchObject({ blocked: true, kind: 'credits_depleted' });
+    expect(classifyText('Usage limit reached for this plan')).toMatchObject({ blocked: true, kind: 'usage_limit' });
     expect(classifyText('Workspace credits depleted')).toMatchObject({ blocked: true, kind: 'credits_depleted' });
   });
 
   it('leaves ordinary failures alone', () => {
-    for (const text of ['model not supported', 'rate limited by the gateway', 'the model is down', '', undefined]) expect(classifyText(text)).toEqual({ blocked: false });
+    for (const text of [
+      'model not supported',
+      'rate limited by the gateway',
+      'Rate limit reached for gpt-5 in organization org-1',
+      '429 Too Many Requests',
+      'the model is down',
+      'Container exceeded its memory usage limit',
+      'CPU usage limit exceeded',
+      'Disk usage limit of 10GB reached',
+      'No usage limit is set for this project',
+      '',
+      undefined,
+    ]) expect(classifyText(text)).toEqual({ blocked: false });
+  });
+
+  it('uses neutral words for a text verdict', () => {
+    expect(classifyText("You've hit your usage limit")).toMatchObject({ label: 'Usage limit reached' });
+    expect(classifyText('out of credits')).toMatchObject({ label: 'Credits depleted' });
   });
 
   it('labels each kind in words', () => {

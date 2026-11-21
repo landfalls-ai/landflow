@@ -66,6 +66,13 @@ describe('blockedOf', () => {
     const t = { ...(task([{ text: 'stopped' }]) as object), metadata: { error: { codex_error_info: 'usage_limit_exceeded', rate_limit_reached_type: 'workspace_member_credits_depleted' } } } as never;
     expect(blockedOf(t)).toMatchObject({ blocked: true, kind: 'credits_depleted' });
   });
+  it('lets codex_error_info decide: an ordinary code with limit words in the message is not blocked', () => {
+    expect(blockedOf(task([{ text: 'You have hit your usage limit' }, { data: { codex_error_info: 'other' } }]))).toEqual({ blocked: false });
+  });
+  it('does not take a window name in the task metadata for a limit', () => {
+    const t = { ...(task([{ text: 'stopped' }]) as object), metadata: { rate_limit_reached_type: 'primary' } } as never;
+    expect(blockedOf(t)).toEqual({ blocked: false });
+  });
   it('is not blocked for a completed task or an ordinary failure', () => {
     expect(blockedOf(task([{ text: 'usage limit' }], 'TASK_STATE_COMPLETED'))).toEqual({ blocked: false });
     expect(blockedOf(task([{ text: 'model not supported' }]))).toEqual({ blocked: false });
@@ -99,12 +106,25 @@ describe('the A2A node', () => {
 
   it('with continue on fail, the item says blocked and why', async () => {
     const { response } = await call('fail-credits', { continueOnFail: true });
-    expect(response.outputs[0][0].json).toMatchObject({ blocked: true, blockedKind: 'credits_depleted' });
+    expect(response.outputs[0][0].json).toMatchObject({ blocked: true, blockedKind: 'credits_depleted', blockedMessage: expect.any(String) });
   });
 
-  it('a usage-limit sentence without the field is Blocked too', async () => {
+  it('a usage-limit sentence without the field is Blocked too, in neutral words', async () => {
     const { response } = await call('fail-limit-text');
-    expect(response.error?.message).toBe('fake-agent: Codex usage limit reached');
+    expect(response.error?.message).toBe('fake-agent: Usage limit reached');
+  });
+
+  it('does not call a blocked agent again for the later items, and checks once', async () => {
+    const before = fake.calls.filter((c) => c.method === 'SendMessage').length;
+    const p = params('fail-limit');
+    const response = await runNode(
+      a2aAgentNode,
+      { protocol: 'landflow.plugin/v1', executionId: 'ex_b', workflowId: 'wf_b', mode: 'manual', node: { id: 'n1', name: 'Codex', type: 'core.a2aAgent', typeVersion: 1 }, parameters: p, itemParameters: [p, p, p], inputs: [[{ json: {} }, { json: {} }, { json: {} }]], continueOnFail: true } as never,
+      undefined,
+    );
+    expect(response.outputs[0].map((i) => i.json)).toEqual([expect.objectContaining({ blocked: true, blockedKind: 'usage_limit' }), expect.objectContaining({ blocked: true }), expect.objectContaining({ blocked: true })]);
+    expect(fake.calls.filter((c) => c.method === 'SendMessage').length - before).toBe(1);
+    expect(response.records?.filter((r) => r.type === 'check' && r.name === 'blocked')).toHaveLength(1);
   });
 
   it('an ordinary failure stays a generic failure, with no check', async () => {
@@ -170,9 +190,11 @@ describe('a team with a blocked remote member', () => {
     const team = agentTeamStore.create(config);
     agentTeamStore.publish(team.id);
     let toolResult = '';
+    fake.calls.length = 0;
     leadTurns = 0;
     leadScript = (turn, body) => {
       if (turn === 1) return { toolCalls: [{ id: 'b1', name: 'ask_coder', arguments: { message: 'fail-limit', reason: 'Code' } }] };
+      if (turn === 2) return { toolCalls: [{ id: 'b2', name: 'ask_coder', arguments: { message: 'fail-limit', reason: 'Again' } }] };
       toolResult = body.messages.map((m) => m.content).join('\n');
       return { text: 'ok' };
     };
@@ -187,7 +209,14 @@ describe('a team with a blocked remote member', () => {
     const record = await runWorkflow({ workflow: wf, mode: 'manual', startNodeId: 'Start' });
     const events = journalStore.readAll(record.executionId);
     resetJournals();
-    expect(events.find((e) => e.type === 'check' && e.check.name === 'Blocked')).toMatchObject({ check: { status: 'warn', subject: 'Coder', message: 'Coder: Codex usage limit reached' } });
+    expect(events.find((e) => e.type === 'check' && e.check.name === 'blocked')).toMatchObject({ check: { status: 'warn', subject: 'Coder', message: 'Coder: Codex usage limit reached' } });
+    // The member's call span says why it ended in error (the Run Trace badge).
+    const memberSpans = events.filter((e) => e.type === 'span.updated' && e.attrs && 'blocked' in e.attrs);
+    expect(memberSpans).toHaveLength(1);
+    expect(memberSpans[0]).toMatchObject({ attrs: { blocked: { kind: 'usage_limit', label: 'Codex usage limit reached' } } });
+    // The second ask never reaches the agent.
+    expect(fake.calls.filter((c) => c.method === 'SendMessage' && (c.params.message?.parts?.[0]?.text ?? '').includes('fail-limit'))).toHaveLength(1);
+    expect(toolResult).toContain("don't ask it again");
     expect(toolResult).toContain('Codex usage limit reached');
     expect(toolResult).toContain('not a failure of its work');
   });

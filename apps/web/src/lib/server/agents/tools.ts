@@ -394,9 +394,9 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
       const verdict = blockedOf(task);
       if (verdict.blocked) {
         countBlocked(verdict.kind, 'a2a');
-        const blockedRun: RemoteRun & { blocked: { kind: string; message: string } } = { ...remote, state: 'blocked', blocked: { kind: verdict.kind, message: verdict.message } };
+        const blockedRun: RemoteRun & { blocked: { kind: string; message: string; label: string } } = { ...remote, state: 'blocked', blocked: { kind: verdict.kind, message: verdict.message, label: verdict.label } };
         progress?.(blockedRun);
-        throw new ProviderBlockedError(card.name, verdict.kind, verdict.message);
+        throw new ProviderBlockedError(card.name, verdict.kind, verdict.message, verdict.label);
       }
       throw new Error(`${card.name}: the task ${stateName(state)}${statusText(task) ? `: ${statusText(task)}` : ''}`);
     }

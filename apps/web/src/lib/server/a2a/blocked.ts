@@ -16,31 +16,44 @@ import type { A2aTask } from './client';
 export class ProviderBlockedError extends Error {
   readonly kind: BlockedKind;
   readonly providerMessage: string;
-  constructor(agent: string, kind: BlockedKind, providerMessage: string) {
-    super(`${agent}: ${BLOCKED_LABEL[kind]}${providerMessage && providerMessage !== BLOCKED_LABEL[kind] ? `: ${providerMessage}` : ''}`);
+  /** The kind in words ("Codex ..." only when Codex's own error info said so). */
+  readonly label: string;
+  constructor(agent: string, kind: BlockedKind, providerMessage: string, label: string = BLOCKED_LABEL[kind]) {
+    super(`${agent}: ${label}${providerMessage && providerMessage !== label ? `: ${providerMessage}` : ''}`);
     this.name = 'ProviderBlockedError';
     this.kind = kind;
     this.providerMessage = providerMessage;
+    this.label = label;
   }
 }
 
 /** What the A2A node throws for a Blocked task: a user-facing node error that also says which limit it was (the catch reads `kind`). */
 export class BlockedNodeError extends NodeOperationError {
   readonly kind: BlockedKind;
-  constructor(agent: string, kind: BlockedKind, providerMessage: string, itemIndex: number) {
-    super(`${agent}: ${BLOCKED_LABEL[kind]}`, { description: providerMessage, itemIndex });
+  readonly providerMessage: string;
+  readonly label: string;
+  constructor(agent: string, kind: BlockedKind, providerMessage: string, itemIndex: number, label: string = BLOCKED_LABEL[kind]) {
+    super(`${agent}: ${label}`, { description: providerMessage, itemIndex });
     this.name = 'BlockedNodeError';
     this.kind = kind;
+    this.providerMessage = providerMessage;
+    this.label = label;
   }
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+const hasCodexInfo = (shape: Record<string, unknown>) => typeof shape.codex_error_info === 'string' || (isObject(shape.error) && typeof shape.error.codex_error_info === 'string');
 
-/** Whether a failed task stopped on a provider limit: its status data and metadata first (the field is exact), then its words. */
+/**
+ * Whether a failed task stopped on a provider limit: its status data and metadata first (the field is exact: a shape that
+ * carries `codex_error_info` decides, and the words are not consulted), then its words.
+ */
 export function blockedOf(task: A2aTask): BlockVerdict {
   if (task.status.state !== 'TASK_STATE_FAILED') return { blocked: false };
   const parts = task.status.message?.parts ?? [];
-  const shapes: unknown[] = [...parts.map((part) => part.data), task.metadata?.error, task.status.message?.metadata?.error, task.metadata].filter(isObject);
+  const shapes = [...parts.map((part) => part.data), task.metadata?.error, task.status.message?.metadata?.error, task.metadata].filter(isObject);
+  const codex = shapes.find(hasCodexInfo);
+  if (codex) return classifyRecord(codex);
   for (const shape of shapes) {
     const verdict = classifyRecord(shape);
     if (verdict.blocked) return verdict;
@@ -66,8 +79,10 @@ function counter(): Counter {
   return created;
 }
 
+export type BlockedHarness = 'a2a' | 'codex';
+
 /** One entry into Blocked. `harness` is a small fixed set (`a2a` here, `codex` for the CLI watch), never an agent's name. */
-export function countBlocked(kind: BlockedKind, harness: string): void {
+export function countBlocked(kind: BlockedKind, harness: BlockedHarness): void {
   const key = `${kind}\u0000${harness}`;
   const map = tally();
   map.set(key, (map.get(key) ?? 0) + 1);
@@ -78,9 +93,9 @@ export function countBlocked(kind: BlockedKind, harness: string): void {
   }
 }
 
-export function blockedCounts(): Array<{ kind: BlockedKind; harness: string; count: number }> {
+export function blockedCounts(): Array<{ kind: BlockedKind; harness: BlockedHarness; count: number }> {
   return [...tally()].map(([key, count]) => {
     const [kind, harness] = key.split('\u0000');
-    return { kind: kind as BlockedKind, harness, count };
+    return { kind: kind as BlockedKind, harness: harness as BlockedHarness, count };
   });
 }

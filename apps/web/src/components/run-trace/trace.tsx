@@ -23,12 +23,12 @@ const OP: Record<string, string> = {
 };
 
 /** C05: a span a provider limit stopped (journal `attrs.blocked`), whatever the developer-details switch says. */
-function blockedOf(s: RunSpan): { kind: BlockedKind; message: string } | undefined {
+function blockedOf(s: RunSpan): { label: string; message: string } | undefined {
   const blocked = s.attrs.blocked;
   if (typeof blocked !== 'object' || blocked === null) return undefined;
-  const { kind, message } = blocked as { kind?: unknown; message?: unknown };
-  const known = kind === 'usage_limit' || kind === 'credits_depleted' ? kind : 'unknown';
-  return { kind: known, message: typeof message === 'string' ? message : '' };
+  const { kind, message, label } = blocked as { kind?: unknown; message?: unknown; label?: unknown };
+  const known: BlockedKind = kind === 'usage_limit' || kind === 'credits_depleted' ? kind : 'unknown';
+  return { label: typeof label === 'string' && label ? label : BLOCKED_LABEL[known], message: typeof message === 'string' ? message : '' };
 }
 
 function nameOf(s: RunSpan) {
@@ -92,8 +92,8 @@ export function Trace({ model, open }: { model: RunModel; open: (o: Open) => voi
               <p className="mt-0.5 flex min-w-0 items-start gap-2 text-[12px] text-t2">
                 <Badge tone="warning">Blocked</Badge>
                 <span className="min-w-0 break-words">
-                  {BLOCKED_LABEL[blocked.kind]}
-                  {blocked.message && blocked.message !== BLOCKED_LABEL[blocked.kind] ? `: ${cut(blocked.message, 160)}` : ''}
+                  {blocked.label}
+                  {blocked.message && blocked.message !== blocked.label ? `: ${cut(blocked.message, 160)}` : ''}
                 </span>
               </p>
             )}

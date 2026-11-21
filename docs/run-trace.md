@@ -393,10 +393,10 @@ The goal chain and the project are explained in [projects-and-goals.md](projects
 
 ### A blocked call
 
-When a remote agent's task fails because a provider limit stopped it (a Codex usage limit or depleted credits,
+When a remote agent's task fails because a provider limit stopped it (a usage limit or depleted credits,
 [a2a.md](a2a.md#when-a-provider-blocks-a-call)), its span still ends in error, but the Trace row carries a **Blocked**
 badge with the kind in words ("Codex usage limit reached", "Codex credits depleted") and the provider's message, and the
-run's checks show "Blocked by a provider limit" as a warning (a team member's check is named `Blocked`). The span has no
+run's checks show "Blocked by a provider limit" as a warning (a team member's check is named `blocked` and names the member, and its call span carries the badge). The span has no
 status of its own: `attrs.blocked = { kind, message }` rides on the error span. The row shows without the
 developer-details switch.
 
