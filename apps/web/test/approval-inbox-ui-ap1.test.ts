@@ -360,3 +360,75 @@ describe("the agent page's session", () => {
     expect(host.querySelector('[data-testid="waiting-in-needs-you"]')).toBeNull();
   });
 });
+
+describe('a judge request (C13)', () => {
+  const judge = (over: Partial<InboxRequestView> = {}): InboxRequestView =>
+    view({
+      id: 'jreq1',
+      callId: 'judge:0',
+      kind: 'judge',
+      tool: 'Refund check',
+      agentId: '',
+      agentName: 'AI Judge',
+      agentVersion: undefined,
+      destination: undefined,
+      params: { amount: 40, token: 'tok-not-masked-1234', note: '<script>alert(1)</script>' },
+      evidence: { fallbackReason: 'low confidence', confidence: 0.52, decision: 'approve', reason: 'Looks like a repeat <b>refund</b>', rounds: 2, toolCalls: 1, steps: [{ tool: 'Search', input: { query: 'refunds', apiKey: 'k-9999' }, output: 'two earlier refunds' }] },
+      ...over,
+    });
+
+  it('the row reads the judge, its reason and confidence, with no agent', async () => {
+    routes.list = [judge()];
+    await mount(createElement(ApprovalInboxPanel));
+    const row = host.querySelector('[data-testid="inbox-row"]')!;
+    expect(row.querySelector('[data-testid="inbox-tool"]')?.textContent).toBe('“Refund check” could not decide: it was not sure enough (0.52)');
+    expect(row.textContent).toContain('Decision');
+    expect(row.querySelector('[data-testid="inbox-versions"]')?.textContent).not.toContain('AI Judge');
+    expect(button(/^Approve$/, row)).toBeTruthy();
+  });
+
+  it('Details show the masked item, the reason as text, the confidence and the steps', async () => {
+    routes.list = [judge()];
+    await mount(createElement(ApprovalInboxPanel));
+    await click(button(/^Details$/));
+    const sheet = document.body.querySelector('[data-testid="inbox-details"]')!;
+    expect(sheet.querySelector('[data-testid="judge-item"]')?.textContent).toContain(MASK);
+    expect(sheet.textContent).not.toContain('tok-not-masked-1234');
+    expect(sheet.textContent).not.toContain('k-9999');
+    expect(sheet.querySelector('[data-testid="judge-reason"]')?.textContent).toContain('Looks like a repeat <b>refund</b>');
+    expect(sheet.querySelector('[data-testid="judge-reason"] b')?.textContent).toBe('Leaned towards approving');
+    expect(sheet.querySelector('[data-testid="judge-reason"]')?.textContent).toContain('confidence 0.52');
+    expect(sheet.querySelector('[data-testid="judge-steps"]')?.textContent).toContain('two earlier refunds');
+    // A script in the item is text, never an element.
+    expect(sheet.querySelector('script')).toBeNull();
+    expect(sheet.textContent).toContain('<script>alert(1)</script>');
+  });
+
+  it('says so when the run keeps no item text', async () => {
+    routes.list = [judge({ params: {} })];
+    await mount(createElement(ApprovalInboxPanel));
+    await click(button(/^Details$/));
+    expect(document.body.textContent).toContain('keeps no item text');
+  });
+
+  it('the Run Trace card shows Approve and Deny, the judge title and no Edit', async () => {
+    routes.list = [judge()];
+    const wait = { kind: 'wait' as const, spanId: 'run/wait:1', actor: { id: 'human', name: 'A person', type: 'human' as const }, title: 'Refund check', since: iso(2), attrs: { wait: 'approval', tool: 'Refund check', inbox: true, calls: [{ id: 'judge:0', tool: 'Refund check', input: { amount: 40 } }] } };
+    await mount(createElement(ApprovalCard, { wait: wait as never, model: foldJournal([]), executionId: 'ex1' }));
+    expect(host.querySelector('[data-testid="approval-judge-title"]')?.textContent).toContain('could not decide');
+    expect(host.querySelector('[data-testid="approval-inbox-facts"]')?.textContent).not.toContain('AI Judge');
+    expect(host.querySelector('[data-testid="judge-reason"]')?.textContent).toContain('0.52');
+    expect(host.querySelector('[data-testid="approval-approve"]')).toBeTruthy();
+    expect(host.querySelector('[data-testid="approval-deny"]')).toBeTruthy();
+    expect(host.querySelector('[data-testid="approval-edit"]')).toBeNull();
+    await click(host.querySelector('[data-testid="approval-approve"]')!);
+    expect(posts()).toEqual([{ method: 'POST', url: '/api/approval-inbox/jreq1/approve' }]);
+  });
+
+  it('a tool request still renders as before', async () => {
+    routes.list = [view()];
+    await mount(createElement(ApprovalInboxPanel));
+    expect(host.querySelector('[data-testid="inbox-tool"]')?.textContent).toBe('Send Email');
+    expect(host.textContent).not.toContain('Decision');
+  });
+});

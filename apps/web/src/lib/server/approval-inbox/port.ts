@@ -2,8 +2,7 @@
  * The seam between a run that pauses (AP02: the Run an Agent node) and the approval inbox (AP01: the record, the claim, the
  * nudges). Wave ap1; docs/approval-inbox.md.
  *
- * Contract file: backbone/contracts/ap1/inbox-port.ts, copied byte for byte to apps/web/src/lib/server/approval-inbox/port.ts by
- * AP01 (owner) and AP02. Change it in the contracts folder first; the integrator `cmp`s every copy.
+ * This file is the one copy of the contract (the old `backbone/contracts/ap1` folder is gone): edit it here.
  *
  * AP01 registers its implementation once, from the host's side-effect registrations (lib/server/runtime.ts, lesson 10: a later
  * registration replaces an earlier one, so a test that wants a fake imports the real module first, then registers the fake).

@@ -10,8 +10,11 @@
  *   `checkApprovalAlerts`; one message per request and rule; the text names the tool, agent, workflow, destination, expiry and
  *   link, never a parameter value.
  * Nothing else: no Slack app message, no default channel.
+ * A judge request (C13) says which judge could not decide and why in fixed words; its mail also carries the judge's reason (cut),
+ * its alert never does: the reason is a model's words and may quote the item.
  */
 import { nudgeSubject } from '../../shared/approval-inbox';
+import { FALLBACK_WORDS, isFallbackReason, judgeNudgeSubject, type JudgeEvidence } from '../../shared/judge';
 import type { AlertRule } from '../../shared/alerts';
 import { alertStore } from '../alerts/store';
 import { customNotice, type AlertNotice } from '../alerts/message';
@@ -73,17 +76,22 @@ async function mailNudge(row: InboxRow): Promise<void> {
   const shown = JSON.stringify(params, null, 2);
   const preview = shown.length > 2_000 ? `${shown.slice(0, 2_000)}…` : shown;
   const version = (v: string | number | null) => (v === null ? '' : v === 'draft' ? ' (draft)' : ` v${v}`);
-  const subject = nudgeSubject(row.tool, row.workflow_name);
+  const judge = row.kind === 'judge';
+  const evidence = judge ? (JSON.parse(row.evidence ?? 'null') as JudgeEvidence | null) : null;
+  const why = evidence && isFallbackReason(evidence.fallbackReason) ? FALLBACK_WORDS[evidence.fallbackReason] : 'it could not decide';
+  const subject = judge ? judgeNudgeSubject(row.tool, row.workflow_name) : nudgeSubject(row.tool, row.workflow_name);
+  const reason = evidence?.reason ? (evidence.reason.length > 500 ? `${evidence.reason.slice(0, 500)}…` : evidence.reason) : '';
   const expires = row.expires_at;
   const needsYou = needsYouLink(row.id);
   let sent = 0;
   for (const address of to) {
     const links = approvalLinks({ t: 'wf', e: row.execution_id, c: row.call_id }, address, Date.now(), Date.parse(row.expires_at));
     const lines = [
-      `A ${row.trigger_word} run waits for your approval to run “${row.tool}”.`,
-      `Agent: ${row.agent_name}${version(row.agent_version)}`,
+      judge ? `A ${row.trigger_word} run waits for your decision: the AI Judge “${row.tool}” could not decide (${why}).` : `A ${row.trigger_word} run waits for your approval to run “${row.tool}”.`,
+      ...(judge ? [] : [`Agent: ${row.agent_name}${version(row.agent_version)}`]),
       `Workflow: ${row.workflow_name}${version(row.workflow_version === null ? null : String(row.workflow_version))}`,
       ...(row.destination ? [`Goes to: ${row.destination}`] : []),
+      ...(reason ? ['', `The judge said: ${reason}`] : []),
       '',
       preview,
       '',
@@ -91,16 +99,17 @@ async function mailNudge(row: InboxRow): Promise<void> {
       `Deny:    ${links.reject}`,
       `Open in Needs you: ${needsYou}`,
       '',
-      `The links work once. The request expires ${expiryClock(expires)}; if nobody decides by then “${row.tool}” does not run.`,
+      judge ? `The links work once. The request expires ${expiryClock(expires)}; if nobody decides by then it is denied.` : `The links work once. The request expires ${expiryClock(expires)}; if nobody decides by then “${row.tool}” does not run.`,
     ];
     const button = (label: string, href: string, color: string) => `<a href="${escapeHtml(href)}" style="display:inline-block;padding:9px 18px;margin-right:8px;border-radius:8px;background:${color};color:#fff;text-decoration:none;font-weight:600">${label}</a>`;
     const html =
-      `<p>A ${escapeHtml(row.trigger_word)} run waits for your approval to run <code>${escapeHtml(row.tool)}</code>.<br>Agent: <strong>${escapeHtml(row.agent_name)}${escapeHtml(version(row.agent_version))}</strong><br>Workflow: <strong>${escapeHtml(row.workflow_name)}${escapeHtml(version(row.workflow_version === null ? null : String(row.workflow_version)))}</strong></p>` +
+      `<p>${judge ? `A ${escapeHtml(row.trigger_word)} run waits for your decision: the AI Judge <code>${escapeHtml(row.tool)}</code> could not decide (${escapeHtml(why)}).` : `A ${escapeHtml(row.trigger_word)} run waits for your approval to run <code>${escapeHtml(row.tool)}</code>.<br>Agent: <strong>${escapeHtml(row.agent_name)}${escapeHtml(version(row.agent_version))}</strong>`}<br>Workflow: <strong>${escapeHtml(row.workflow_name)}${escapeHtml(version(row.workflow_version === null ? null : String(row.workflow_version)))}</strong></p>` +
       (row.destination ? `<p>Goes to: ${escapeHtml(row.destination)}</p>` : '') +
+      (reason ? `<p>The judge said: ${escapeHtml(reason)}</p>` : '') +
       `<pre style="background:#f4f4f5;padding:10px;border-radius:8px;white-space:pre-wrap">${escapeHtml(preview)}</pre>` +
       `<p>${button('Approve', links.approve, '#16a34a')}${button('Deny', links.reject, '#dc2626')}</p>` +
       `<p><a href="${escapeHtml(needsYou)}">Open in Needs you</a></p>` +
-      `<p style="color:#71717a;font-size:12px">The links work once. The request expires ${escapeHtml(expiryClock(expires))}; if nobody decides by then “${escapeHtml(row.tool)}” does not run.</p>`;
+      `<p style="color:#71717a;font-size:12px">The links work once. The request expires ${escapeHtml(expiryClock(expires))}; if nobody decides by then ${judge ? 'it is denied' : `“${escapeHtml(row.tool)}” does not run`}.</p>`;
     try {
       await sendMail({ to: address, subject, text: lines.join('\n'), html });
       sent++;
@@ -116,6 +125,23 @@ const ALERT_PREFIX = 'approval:';
 /** The alert a rule sends for a request: the tool, agent, workflow, destination, expiry and the link. Never a parameter value. */
 export function approvalNotice(rule: Pick<AlertRule, 'id' | 'name'>, row: InboxRow): AlertNotice {
   const at = (v: string | number | null) => (v === null ? '' : v === 'draft' ? ' (draft)' : ` v${v}`);
+  if (row.kind === 'judge') {
+    const code = (JSON.parse(row.evidence ?? 'null') as JudgeEvidence | null)?.fallbackReason;
+    return customNotice({
+      event: 'approval',
+      rule,
+      about: { id: row.workflow_id, name: row.workflow_name },
+      subject: judgeNudgeSubject(row.tool, row.workflow_name),
+      // Fixed words only: the judge's reason and the item are never in an alert.
+      facts: [
+        { label: 'AI Judge', value: row.tool },
+        { label: 'Why it asks', value: isFallbackReason(code) ? FALLBACK_WORDS[code] : 'it could not decide' },
+        { label: 'Workflow', value: `${row.workflow_name}${at(row.workflow_version)}` },
+        { label: 'Expires', value: expiryClock(row.expires_at) },
+      ],
+      link: needsYouLink(row.id),
+    });
+  }
   return customNotice({
     event: 'approval',
     rule,

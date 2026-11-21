@@ -4,6 +4,7 @@
  * nobody settled yet (read from the journal).
  */
 import type { InboxItemFields } from '../../shared/approval-inbox'; // AP01:
+import { isFallbackReason, judgeTitle, type FallbackReason } from '../../shared/judge'; // C13:
 import type { ExecutionRecord } from '../../shared/types';
 import type { JournalEvent, RunActor, RunCheck } from '../../shared/run-trace';
 import { openAsks } from '../a2a/agent-asks';
@@ -98,6 +99,24 @@ function waitItem(record: ExecutionRecord): NeedsYouItem | undefined {
   return undefined;
 }
 
+/** C13: the reason code a judge request stored (fixed words), never the model's text. */
+function judgeWhyOf(row: { evidence: string | null }): FallbackReason | undefined {
+  try {
+    const why = (JSON.parse(row.evidence ?? 'null') as { fallbackReason?: unknown } | null)?.fallbackReason;
+    return isFallbackReason(why) ? why : undefined;
+  } catch {
+    return undefined;
+  }
+}
+const judgeConfidenceOf = (row: { evidence: string | null }): number | undefined => {
+  try {
+    const c = (JSON.parse(row.evidence ?? 'null') as { confidence?: unknown } | null)?.confidence;
+    return typeof c === 'number' ? c : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 /** AP01: one item per request of an approval-inbox wait that still waits ("“Alert mailer” wants to run “Send Email”"). */
 function inboxItems(record: ExecutionRecord, actor: Actor | undefined): NeedsYouItem[] {
   const wait = record.wait;
@@ -117,13 +136,14 @@ function inboxItems(record: ExecutionRecord, actor: Actor | undefined): NeedsYou
         workflowId: record.workflowId,
         workflowName: record.workflowName,
         kind: 'approval',
-        title: `“${row.agent_name}” wants to run “${row.tool}”`,
+        title: row.kind === 'judge' ? judgeTitle(row.tool, judgeWhyOf(row) ?? 'no decision', judgeConfidenceOf(row)) : `“${row.agent_name}” wants to run “${row.tool}”`,
         detail: [row.destination, workflowVersion !== undefined ? `${record.workflowName} v${workflowVersion}` : record.workflowName].filter(Boolean).join(' · '),
         actor: actorOf,
         ...(spanId && { spanId }),
         since: row.requested_at,
         requestId: row.id,
         inboxStatus: row.status,
+        ...(row.kind === 'judge' && { inboxKind: 'judge' as const, ...(judgeWhyOf(row) && { judgeWhy: judgeWhyOf(row) }) }),
         tool: row.tool,
         agentName: row.agent_name,
         ...(version !== undefined && { agentVersion: version as number | 'draft' }),

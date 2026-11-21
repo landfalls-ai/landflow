@@ -2038,6 +2038,16 @@ export const MIGRATIONS: Migration[] = [
     name: 'brain_facts_project',
     statements: [`CREATE INDEX IF NOT EXISTS brain_facts_project ON brain_facts (project_id, is_latest, last_seen)`],
   },
+  // C13: an approval-inbox request may be an AI Judge's (`kind` 'judge') with the judge's evidence; NULL (every older row) is a tool request
+  {
+    version: 2920,
+    name: 'approval_inbox_kind',
+    statements: [],
+    addColumns: [
+      { table: 'approval_inbox', column: 'kind', definition: 'TEXT' },
+      { table: 'approval_inbox', column: 'evidence', definition: 'TEXT' },
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */

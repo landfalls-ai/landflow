@@ -13,6 +13,8 @@ import { decideAsk } from '@/lib/client/run-controls';
 import { decideToolApprovals, refreshNeedsYou } from '@/lib/client/run-trace';
 import { approveRequest, denyRequest, inboxClock, refreshApprovalInbox, useExecutionRequests, versionName, waitText } from '@/lib/client/approval-inbox'; // AP03:
 import { settledLine, type InboxRequestView } from '@/lib/shared/approval-inbox'; // AP03:
+import { judgeTitle } from '@/lib/shared/judge'; // C13:
+import { JudgeEvidenceView } from '../home/judge-evidence'; // C13:
 import { approvalCase, editedInput, VERDICT_LABEL, type ApprovalCase, type ApprovalWait, type CaseEdit, type ReviewVerdict } from '@/lib/shared/approval-case';
 import { approvalEvidence, type EvidenceLink, type EvidenceRow, type EvidenceTone, type NeedFace } from '@/lib/shared/approval-evidence';
 import type { RunChanges } from '@/lib/shared/run-changes';
@@ -191,10 +193,16 @@ export function ApprovalCard({
           </span>
         </span>
         <div className="min-w-0 flex-1">
+          {request?.kind === 'judge' ? (
+            <div className="text-[14px] leading-5 text-t1" data-testid="approval-judge-title">
+              {judgeTitle(request.tool, request.evidence?.fallbackReason ?? 'no decision', request.evidence?.confidence)}
+            </div>
+          ) : (
           <div className="text-[14px] leading-5 text-t1">
             <b>{who}</b> <span className="text-t2">wants to {c.kind === 'command' ? 'run' : 'use'}</span> <span className="font-mono font-semibold" data-testid="approval-tool">{c.toolName}</span>
             {c.target && <span className="text-t2" data-testid="approval-target"> on {c.target}</span>}
           </div>
+          )}
           {request ? (
             <div className="text-[11.5px] leading-4 text-t3" data-testid="approval-inbox-line">
               {inbox ? waitText({ requestedAt: inbox.requestedAt, expiresAt: inbox.expiresAt }) : request.status === 'waiting' ? '' : settledLine(request, inboxClock)}
@@ -206,10 +214,11 @@ export function ApprovalCard({
       </header>
       {request && (
         <p className="mt-2 text-[12px] text-t2 [overflow-wrap:anywhere]" data-testid="approval-inbox-facts">
-          {versionName(request.agentName, request.agentVersion)} · {versionName(request.workflowName, request.workflowVersion)}
+          {request.kind !== 'judge' && <>{versionName(request.agentName, request.agentVersion)} · </>}{versionName(request.workflowName, request.workflowVersion)}
           {request.destination && <span> · goes to {request.destination.replace(/^to\b[:\s]+/i, '')}</span>}
         </p>
       )}
+      {request?.kind === 'judge' && request.evidence && <div className="mt-3"><JudgeEvidenceView evidence={request.evidence} /></div>}
       {inbox && !inbox.canDecide && <p className="mt-2 text-[12px] text-t3">Only people who can run this workflow decide it.</p>}
       {closed && (
         <p className="mt-2 text-[12.5px] font-medium text-warn" role="status" data-testid="approval-closed">

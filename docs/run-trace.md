@@ -88,6 +88,8 @@ them with the response (`ExecuteResponse.records`, [protocol.md](protocol.md)) o
 way the engine emits a `node.record` event and the journal keeps it in the node's span. The GitHub plugin reports the
 pull requests, issues and branches it creates.
 
+**AI Judge** ([features/ai.md](features/ai.md#ai-judge)) is one span with each model round and tool call as a child, and one `decision` check: `pass` when it approved, `warn` when it denied, and `warn` with the reason in plain words when it could not decide and fell back (a waiting judge shows its [approval card](approval-inbox.md#judge-requests)).
+
 Each model call's tokens, each agent's model, tokens and cost, and a step's details always show. Run ids and trace ids appear only with **Show developer details** on (user menu; [Developer details](ui-review.md#developer-details)); **Open the trace** shows whenever a trace link is set.
 
 ## The screens
