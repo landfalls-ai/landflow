@@ -348,6 +348,9 @@ export function lineOf(note: TeamNote & { score?: number }): string {
   return `- [${note.id}] ${note.kind.replace('_', ' ')} (${standing}, ${scope}, by ${note.author}${note.tainted && !note.verifiedAt ? ', from outside: unchecked' : ''}): ${note.text}${note.answer ? ` -> Answer: ${note.answer}` : ''}${note.disputes ? ` (disputes ${note.disputes})` : ''}`;
 }
 
+/** The mark on a note's line when it came from outside the team and no person has checked it. */
+const outsideMark = (n: TeamNote) => (n.tainted && !n.verifiedAt ? ' (from outside: unchecked)' : '');
+
 /**
  * A short block for the start of a request: the team's open questions and decisions, so members don't re-ask or undo them.
  * Empty when the notebook has neither. Reading them counts as using them.
@@ -363,9 +366,9 @@ export function notebookBlock(binding: NotebookBinding): string {
   return [
     'Team notebook (shared notes: search it with note_search before you start, add what you learn with note_add):',
     wrapMemory('team-notebook', [
-      ...(decisions.length ? ['Decisions so far:', ...decisions.map((n) => `- ${n.text}`)] : []),
-      ...(open.length ? ['Open questions:', ...open.map((n) => `- ${n.text}`)] : []),
-      ...(disputed.length ? ['Disputed (do not rely on these):', ...disputed.map((n) => `- ${n.text}`)] : []),
+      ...(decisions.length ? ['Decisions so far:', ...decisions.map((n) => `- ${n.text}${outsideMark(n)}`)] : []),
+      ...(open.length ? ['Open questions:', ...open.map((n) => `- ${n.text}${outsideMark(n)}`)] : []),
+      ...(disputed.length ? ['Disputed (do not rely on these):', ...disputed.map((n) => `- ${n.text}${outsideMark(n)}`)] : []),
     ]),
   ].join('\n');
 }

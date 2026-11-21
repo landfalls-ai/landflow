@@ -480,7 +480,7 @@ const workLine = (w: WorkItem, n: number, index: PageIndex) => {
 const UNNAMED: Record<BrainFact['subjectType'], string> = { workflow: 'a workflow', agent: 'an agent', nodeType: 'a node type', credential: 'a credential', instance: 'this instance', entity: 'a page' };
 /** A Notion page's passage as one numbered, quoted line: the model reads it as data, and cites it as [n]. */
 const knowledgeLine = (k: KnowledgeHit, n: number) => `[${n}] Notion page “${clip(k.title, 120)}”: “${clip(k.passage.replace(/\s+/g, ' '), 600)}”`;
-const factLine = (f: BrainFact) => `- ${f.subjectName ?? UNNAMED[f.subjectType] ?? 'something'} (${f.kind}): ${clip(f.statement, 240)}`;
+const factLine = (f: BrainFact) => `- ${f.subjectName ?? UNNAMED[f.subjectType] ?? 'something'} (${f.kind}): ${clip(f.statement.replace(/\s+/g, ' '), 240)}`;
 
 /** Write (or rewrite) a page's summary with the brain's model and keep it. */
 export async function writeSummary(entity: BrainEntity, scope: UsageScope | undefined, viewer: Viewer, options: { model?: LanguageModel; signal?: AbortSignal } = {}, db: Database = database()): Promise<WikiSummary> {

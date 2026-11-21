@@ -1097,7 +1097,7 @@ export async function tagMentions(actor: Actor, refs: readonly SentMention[], ca
     if (read.ok || ref.type !== 'node' || !canvas.workflowId || ref.workflowId !== canvas.workflowId) return;
     const node = canvas.workflow.nodes.find((n) => n.id === ref.id);
     if (!node) return;
-    extra.push(`## @${escapeFenceText(node.name)} (node, on the canvas)\n${escapeFenceText(nodeContext(canvas.workflow, node.id, canvas.runs?.[node.id], canvas.types)).slice(0, 1200)}`);
+    extra.push(`## @${escapeFenceText(node.name)} (node, on the canvas)\n${escapeFenceText(nodeContext(canvas.workflow, node.id, canvas.runs?.[node.id], canvas.types).slice(0, 1200))}`);
     reads[i] = { ref, ok: true, label: node.name, summary: `${node.type} on the canvas` };
   });
   const sections = [...(resolved.block ? resolved.block.slice(BLOCK_OPEN.length + 1, resolved.block.length - BLOCK_CLOSE.length - 1).split('\n') : []), ...extra.flatMap((e) => e.split('\n'))];

@@ -244,7 +244,7 @@ export function memoryBlock(agent: Agent, config: AgentConfig, session: AgentSes
   return [
     '## What you remember about this user',
     // C03: the notes are quoted data inside one fence; without notes there is no fence, only the line.
-    notes.length ? wrapMemory('agent-memory', notes.map((n) => `- ${n.text} (${n.at.slice(0, 10)})`)) : '(nothing yet)',
+    notes.length ? wrapMemory('agent-memory', notes.map((n) => `- ${n.text.replace(/\s+/g, ' ')} (${n.at.slice(0, 10)})`)) : '(nothing yet)',
     'Use the remember tool for durable facts worth knowing next time.',
   ].join('\n');
 }

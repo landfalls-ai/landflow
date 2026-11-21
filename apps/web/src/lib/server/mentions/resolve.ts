@@ -53,13 +53,17 @@ export async function resolveMentions(actor: Actor, refs: readonly SentMention[]
       read.push(refusedRead(ref, sent.name));
       continue;
     }
-    const heading = `## @${escapeFenceText(digest.name)} (${MENTION_NOUNS[ref.type]})`;
+    const rawHeading = `## @${digest.name} (${MENTION_NOUNS[ref.type]})`;
+    // Heading and body are escaped as one text, so a sequence cannot be split between them.
+    const joined = escapeFenceText(`${rawHeading}\n${digest.body}`);
+    const heading = escapeFenceText(rawHeading);
     const room = MENTION_LIMITS.totalBytes - used - Buffer.byteLength(heading) - 2;
     if (room < 80) {
       read.push({ ref, ok: false, label: `Left out @${digest.label.slice(0, 60)}: the tags together are too long`, summary: '' });
       continue;
     }
-    const body = clipBytes(escapeFenceText(digest.body), room);
+    // A cut may leave half an entity (`&l`, `&amp`) at the end: drop it, before the ellipsis if there is one.
+    const body = clipBytes(joined.slice(heading.length + 1), room).replace(/&(?:a|am|amp|l|lt|g|gt)(…)?$/, '$1');
     const section = `${heading}\n${body}`;
     used += Buffer.byteLength(section) + 1;
     sections.push(section);
