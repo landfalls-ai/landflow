@@ -25,7 +25,6 @@ export function AlertTicketFields({
   kind: AlertChannelKind;
   config: AlertChannelConfig;
   set: (next: Partial<AlertChannelConfig>) => void;
-  saved?: (field: string) => boolean;
   credentials: readonly { id: string; name: string; type: string }[];
 }) {
   if (kind === 'webhook') {

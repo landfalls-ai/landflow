@@ -8,7 +8,9 @@ import { nanoid } from 'nanoid';
 import { ALERT_SECRET_FIELDS, DEFAULT_COST_THRESHOLD_PERCENT, DEFAULT_FAILURE_RATE, DEFAULT_PLUGIN_GRACE_SECONDS, RULE_KIND_EVENTS, type AlertChannel, type AlertChannelConfig, type AlertChannelKind, type AlertDelivery, type AlertRule } from '../../shared/alerts';
 import { credentials } from '../credentials/vault';
 import { database } from '../db';
+import { isProduction } from '../config';
 import { HttpError } from '../errors';
+import { outboundPolicy } from '../net/safe-fetch';
 
 export class AlertError extends HttpError {
   static readonly errorName: string = 'AlertError';
@@ -98,6 +100,29 @@ function httpUrl(value: string, label: string): string {
   return url.toString();
 }
 
+/** Whether `LANDFLOW_OUTBOUND_ALLOW` names this host (an exact name or `*.suffix`). */
+function hostAllowed(host: string): boolean {
+  const name = host.toLowerCase();
+  return outboundPolicy().allow.some((entry) => (entry.startsWith('*.') ? name.endsWith(entry.slice(1)) : entry === name));
+}
+
+/**
+ * A ServiceNow instance URL as its origin: no user name or password, query or fragment (a path is dropped), and https
+ * unless the development profile is on or LANDFLOW_OUTBOUND_ALLOW names the host.
+ */
+export function serviceNowOrigin(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new AlertError('The ServiceNow instance URL is not a URL');
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new AlertError('The ServiceNow instance URL must be an http(s) URL');
+  if (url.username || url.password || url.search || url.hash) throw new AlertError('The ServiceNow instance URL is the address only, such as https://example.service-now.com: no user name or password, query or fragment');
+  if (url.protocol === 'http:' && isProduction() && !hostAllowed(url.hostname)) throw new AlertError('The ServiceNow instance URL must be https (or its host listed in LANDFLOW_OUTBOUND_ALLOW)');
+  return url.origin;
+}
+
 /** Comma- or newline-separated addresses, each `a@b` or `Name <a@b>`. */
 export function emailAddresses(value: string | undefined): string[] {
   return (value ?? '')
@@ -139,7 +164,7 @@ function checkedConfig(kind: AlertChannelKind, config: AlertChannelConfig): Aler
       break;
     case 'servicenow': {
       if (!kept.url) throw new AlertError('Enter the ServiceNow instance URL');
-      if (!hasSecretReference(kept.url)) kept.url = httpUrl(kept.url, 'ServiceNow instance URL').replace(/\/+$/, '');
+      if (!hasSecretReference(kept.url)) kept.url = serviceNowOrigin(kept.url);
       if (!kept.credentialId) throw new AlertError('Choose a Basic Auth or Bearer Auth credential for ServiceNow');
       const type = credentials.definition(kept.credentialId)?.type;
       if (!type) throw new AlertError('That credential no longer exists: choose a Basic Auth or Bearer Auth credential for ServiceNow');
@@ -338,7 +363,12 @@ export const alertStore = {
     if (!name) throw new AlertError('Enter a name');
     const unknown = rule.channelIds.find((channelId) => !this.channel(channelId));
     if (unknown) throw new AlertError(`Alert channel ${unknown} not found`);
-    const { id, enabled, createdAt, updatedAt, ...data } = normalizedRule(rule);
+    // C12: a ServiceNow channel opens tickets for approval requests and cannot take any other alert.
+    const normalized = normalizedRule(rule);
+    if (rule.channelIds.some((channelId) => this.channel(channelId)?.kind === 'servicenow') && ((normalized.kind ?? 'runs') !== 'runs' || normalized.events.some((event) => event !== 'approval'))) {
+      throw new AlertError('A ServiceNow channel only serves rules for Waits for your approval');
+    }
+    const { id, enabled, createdAt, updatedAt, ...data } = normalized;
     database().upsert('alert_rules', { id, name, enabled: enabled ? 1 : 0, created_at: createdAt, updated_at: updatedAt, data: JSON.stringify({ ...data, name }) });
   },
 

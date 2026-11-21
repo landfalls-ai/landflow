@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AlertChannel } from '@/lib/shared/alerts';
 import { opensTickets } from '@/lib/shared/alerts';
 import { startFakeServiceNow } from './fake-servicenow';
@@ -240,6 +240,11 @@ describe('webhook tickets', () => {
     expect(call.headers['x-landflow-signature']).toBe(signature('sign-me', timestamp, call.body));
     expect(call.json).toMatchObject({ event: 'approval.requested', request: { id: 'req_123', kind: 'tool', subject: ticketRequest.subject, link: ticketRequest.link, expiresAt: ticketRequest.expiresAt } });
     expect(call.body).not.toContain('"params"');
+    // The payload is built by name: a parameter value that reached the request object by mistake never goes out.
+    hooks.length = 0;
+    await openTicket(channel, { ...ticketRequest, params: { token: 'sk-live-should-never-appear' }, facts: [{ label: 'Workflow', value: 'Invoices', secret: 'sk-live-should-never-appear' } as never] } as never);
+    expect(hooks[0]!.body).not.toContain('sk-live-should-never-appear');
+    expect(Object.keys((hooks[0]!.json.request as Record<string, unknown>)).sort()).toEqual(['expiresAt', 'facts', 'id', 'kind', 'link', 'subject']);
   });
 
   it('closes with a signed approval.settled POST naming the ticket', async () => {
@@ -270,8 +275,11 @@ describe('webhook tickets', () => {
     hookDelayMs = 400;
     const real = AbortSignal.timeout.bind(AbortSignal);
     const spy = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => real(100));
-    await expect(openTicket(channel, ticketRequest)).rejects.toThrow(/could not be reached: no answer within/);
-    spy.mockRestore();
+    try {
+      await expect(openTicket(channel, ticketRequest)).rejects.toThrow(/could not be reached: no answer within/);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('keeps sending plain alerts as a signed webhook, and its Test opens and settles a ticket', async () => {
@@ -286,6 +294,99 @@ describe('webhook tickets', () => {
   });
 });
 
+describe('ticket channel review fixes', () => {
+  const rulesRoute = async () => await import('@/app/api/settings/alerts/rules/route');
+  const ruleBody = (channelId: string, events: string[], extra: Record<string, unknown> = {}) => ({ name: 'Needs you', workflows: { mode: 'all' }, events, channelIds: [channelId], ...extra });
+
+  it('a ServiceNow channel serves only rules for Waits for your approval', async () => {
+    const channel = serviceNow();
+    const route = await rulesRoute();
+    const refused = async (body: unknown) => {
+      const response = await route.POST(request(body));
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as { error: string }).error).toBe('A ServiceNow channel only serves rules for Waits for your approval');
+    };
+    await refused(ruleBody(channel.id, ['failed']));
+    await refused(ruleBody(channel.id, ['approval', 'failed']));
+    await refused(ruleBody(channel.id, ['approval'], { kind: 'cost' }));
+    expect((await route.POST(request(ruleBody(channel.id, ['approval'])))).status).toBe(201);
+    // The workflow shortcut goes through the same check.
+    const { PUT } = await import('@/app/api/workflows/[id]/alert/route');
+    const { store } = await import('@/lib/server/store');
+    store.saveWorkflow({ id: 'wf_tickets', name: 'Tickets', nodes: [], connections: {}, active: false } as never);
+    const put = await PUT(new Request('http://landflow.test/api', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ channelIds: [channel.id] }) }), { params: Promise.resolve({ id: 'wf_tickets' }) });
+    expect(put.status).toBe(400);
+  });
+
+  it('keeps the origin of the instance URL and refuses userinfo, a query or a fragment', () => {
+    expect(serviceNow({ url: `${fake.url}/some/path/` }).config.url).toBe(fake.url);
+    for (const url of [`http://user:pw@127.0.0.1:1`, `${fake.url}/?a=1`, `${fake.url}/#x`]) {
+      expect(() => serviceNow({ url })).toThrow(/user name or password, query or fragment/);
+    }
+  });
+
+  describe('https in production', () => {
+    const prior = { profile: process.env.LANDFLOW_PROFILE, allow: process.env.LANDFLOW_OUTBOUND_ALLOW };
+    afterEach(() => {
+      for (const [key, value] of [['LANDFLOW_PROFILE', prior.profile], ['LANDFLOW_OUTBOUND_ALLOW', prior.allow]] as const) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    });
+
+    it('wants https unless the host is allowed or the profile is development', () => {
+      process.env.LANDFLOW_PROFILE = 'production';
+      delete process.env.LANDFLOW_OUTBOUND_ALLOW;
+      expect(() => serviceNow({ url: 'http://dev.service-now.example' })).toThrow(/https/);
+      expect(serviceNow({ url: 'https://dev.service-now.example' }).config.url).toBe('https://dev.service-now.example');
+      process.env.LANDFLOW_OUTBOUND_ALLOW = '*.service-now.example';
+      expect(serviceNow({ url: 'http://dev.service-now.example' }).config.url).toBe('http://dev.service-now.example');
+      process.env.LANDFLOW_PROFILE = 'development';
+      delete process.env.LANDFLOW_OUTBOUND_ALLOW;
+      expect(serviceNow({ url: 'http://dev.service-now.example' }).config.url).toBe('http://dev.service-now.example');
+    });
+
+    it('the production outbound policy refuses a ticket to the metadata address', async () => {
+      process.env.LANDFLOW_PROFILE = 'production';
+      delete process.env.LANDFLOW_OUTBOUND_ALLOW;
+      const channel = { id: 'ach_x', name: 'SN', kind: 'servicenow' as const, config: { url: 'http://169.254.169.254', credentialId: basic.id, table: 'change_request' } };
+      await expect(openTicket(channel, ticketRequest)).rejects.toThrow(/private address|Blocked/);
+      await expect(openTicket({ ...channel, kind: 'webhook', config: { url: 'http://169.254.169.254/x', tickets: true } }, ticketRequest)).rejects.toThrow(/private address|Blocked/);
+    });
+  });
+
+  it('keeps printable characters of a ticket id and fails on an empty one', async () => {
+    const channel = sendable(webhook());
+    hookAnswer = { status: 200, body: { ticket: { id: '  T-\u0007\u001b[31m7\n ' } } };
+    expect((await openTicket(channel, ticketRequest)).id).toBe('T-[31m7');
+    hookAnswer = { status: 200, body: { ticket: { id: ' \u0007\n ' } } };
+    await expect(openTicket(channel, ticketRequest)).rejects.toThrow(/did not answer with a ticket/);
+  });
+
+  it('reads at most 64 KB of an answer', async () => {
+    const channel = sendable(webhook());
+    hookAnswer = { status: 200, body: { ticket: { id: 'T-1' }, pad: 'x'.repeat(100_000) } };
+    await expect(openTicket(channel, ticketRequest)).rejects.toThrow(/did not answer with a ticket/);
+    hookAnswer = { status: 500, body: 'y'.repeat(100_000) };
+    const reason = await openTicket(channel, ticketRequest).catch((e: Error) => e.message);
+    expect(reason.length).toBeLessThan(400);
+  });
+
+  it('resolves a $secrets reference once per call', async () => {
+    const resolve = await import('@/lib/server/secrets/resolve');
+    const spy = vi.spyOn(resolve, 'resolveSecretFields');
+    try {
+      await openTicket(sendable(serviceNow()), ticketRequest);
+      expect(spy).toHaveBeenCalledTimes(1);
+      spy.mockClear();
+      await testTicketChannel(sendable(serviceNow()));
+      expect(spy).toHaveBeenCalledTimes(2); // one per call: the open and the note
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe('ticket fields in Settings', () => {
   const noop = () => {};
   const render = (kind: 'servicenow' | 'webhook', config = {}, name = '') =>
@@ -294,7 +395,6 @@ describe('ticket fields in Settings', () => {
         kind,
         config,
         set: noop,
-        saved: () => false,
         credentials: [
           { id: basic.id, name: name || 'ServiceNow basic', type: 'core.httpBasicAuth' },
           { id: 'x', name: 'Other', type: 'core.openAiApi' },
@@ -313,7 +413,7 @@ describe('ticket fields in Settings', () => {
     const html = render('webhook');
     expect(html).toContain('Opens tickets');
     expect(html).toContain('ticket');
-    expect(renderToStaticMarkup(createElement(AlertTicketFields, { kind: 'slack', config: {}, set: noop, saved: () => false, credentials: [] }))).toBe('');
+    expect(renderToStaticMarkup(createElement(AlertTicketFields, { kind: 'slack', config: {}, set: noop, credentials: [] }))).toBe('');
   });
 
   it('renders a name holding markup as text', () => {

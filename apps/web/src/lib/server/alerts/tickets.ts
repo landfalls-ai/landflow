@@ -9,9 +9,10 @@
  */
 import { credentials } from '../credentials/vault';
 import { redactText } from '../secrets/redact';
-import { channelConfigWithSecrets, refusal, request, signature, type SendableChannel } from './http';
+import { channelConfigWithSecrets, readJson, refusal, request, signature, type SendableChannel } from './http';
 import { publicUrl } from './message';
-import { DEFAULT_TICKET_TABLE, TICKET_CREDENTIAL_TYPES } from './store';
+import { hasSecretReference } from '@landflow/engine';
+import { DEFAULT_TICKET_TABLE, serviceNowOrigin, TICKET_CREDENTIAL_TYPES } from './store';
 
 /** What an approval request says to a ticket system: no parameters, no emailed links. */
 export interface TicketRequest {
@@ -49,6 +50,9 @@ const MAX_SHORT = 160;
 const MAX_DESCRIPTION = 4_000;
 const TEST_LINE = 'Test from Landflow: the channel works.';
 
+/** A ticket id as shown: printable characters only (no control or format characters), trimmed, at most 100. */
+const cleanId = (value: unknown): string => (typeof value === 'string' || typeof value === 'number' ? clip(String(value).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '').trim(), MAX_ID) : '');
+
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
 /** A ticket link is kept and shown only when it is http(s) and not absurdly long (D7). */
@@ -73,20 +77,23 @@ async function serviceNowAuth(channel: SendableChannel): Promise<string> {
   return `Basic ${Buffer.from(`${String(data.user ?? '')}:${String(data.password ?? '')}`).toString('base64')}`;
 }
 
-async function serviceNow(channel: SendableChannel, method: 'POST' | 'PATCH', path: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+/** One Table API call; `$secrets` are resolved once here. Answers the record the system returned and the instance's origin. */
+async function serviceNow(channel: SendableChannel, method: 'POST' | 'PATCH', path: string, body: Record<string, unknown>): Promise<{ result: Record<string, unknown>; origin: string }> {
   const config = await channelConfigWithSecrets(channel);
+  // A literal URL was checked when the channel was saved; one that came from a secret is checked now.
+  const origin = hasSecretReference(channel.config.url) ? serviceNowOrigin(config.url ?? '') : (config.url ?? '').replace(/\/+$/, '');
   const headers = { authorization: await serviceNowAuth(channel), accept: 'application/json' };
-  const response = await request(method, `${(config.url ?? '').replace(/\/+$/, '')}/api/now/table/${path}`, JSON.stringify(body), headers, 'ServiceNow');
+  const response = await request(method, `${origin}/api/now/table/${path}`, JSON.stringify(body), headers, 'ServiceNow');
   if (!response.ok) throw await refusal(response, 'ServiceNow');
-  const answer = (await response.json().catch(() => ({}))) as { result?: Record<string, unknown> };
-  return answer.result ?? {};
+  const answer = await readJson<{ result?: Record<string, unknown> }>(response);
+  return { result: answer.result ?? {}, origin };
 }
 
 const tableOf = (channel: SendableChannel) => channel.config.table || DEFAULT_TICKET_TABLE;
 
 async function openServiceNow(channel: SendableChannel, ticket: TicketRequest): Promise<TicketRef> {
   const table = tableOf(channel);
-  const result = await serviceNow(channel, 'POST', table, {
+  const { result, origin } = await serviceNow(channel, 'POST', table, {
     short_description: clip(ticket.subject, MAX_SHORT),
     description: description(ticket),
     correlation_id: ticket.requestId,
@@ -94,9 +101,8 @@ async function openServiceNow(channel: SendableChannel, ticket: TicketRequest): 
   });
   const key = typeof result.sys_id === 'string' ? result.sys_id : '';
   if (!key || !/^[0-9a-zA-Z]+$/.test(key)) throw new Error('ServiceNow did not answer with the new record’s sys_id');
-  const config = await channelConfigWithSecrets(channel);
-  const id = clip(String(result.number || key), MAX_ID);
-  const url = safeLink(`${(config.url ?? '').replace(/\/+$/, '')}/nav_to.do?uri=${table}.do?sys_id=${key}`);
+  const id = cleanId(result.number) || cleanId(key);
+  const url = safeLink(`${origin}/nav_to.do?uri=${table}.do?sys_id=${key}`);
   return { system: 'servicenow', id, key, ...(url && { url }) };
 }
 
@@ -120,13 +126,14 @@ async function signedPost(channel: SendableChannel, event: string, payload: Reco
 }
 
 async function openWebhook(channel: SendableChannel, ticket: TicketRequest, test: boolean): Promise<TicketRef> {
-  const { requestId, ...rest } = ticket;
-  const response = await signedPost(channel, 'approval.requested', { ...(test && { test: true }), request: { id: requestId, ...rest } });
-  const answer = (await response.json().catch(() => ({}))) as { ticket?: { id?: unknown; url?: unknown } };
-  const id = typeof answer.ticket?.id === 'string' || typeof answer.ticket?.id === 'number' ? String(answer.ticket.id).trim() : '';
+  // Built by name, never spread: only these fields can leave, whatever else the request object carries.
+  const payload = { id: ticket.requestId, kind: ticket.kind, subject: ticket.subject, facts: ticket.facts.map(({ label, value }) => ({ label, value })), link: ticket.link, expiresAt: ticket.expiresAt };
+  const response = await signedPost(channel, 'approval.requested', { ...(test && { test: true }), request: payload });
+  const answer = await readJson<{ ticket?: { id?: unknown; url?: unknown } }>(response);
+  const id = cleanId(answer.ticket?.id);
   if (!id) throw new Error('The webhook did not answer with a ticket: it must answer { "ticket": { "id": "…", "url": "…" } }');
   const url = safeLink(answer.ticket?.url);
-  return { system: 'webhook', id: clip(id, MAX_ID), key: clip(id, MAX_ID), ...(url && { url }) };
+  return { system: 'webhook', id, key: id, ...(url && { url }) };
 }
 
 /** Open a ticket for `request` in a ticket channel. Rejects with a redacted reason when the system refuses or is down. */

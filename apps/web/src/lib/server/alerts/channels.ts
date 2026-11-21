@@ -100,7 +100,7 @@ export async function sendThrough(channel: SendableChannel, notice: AlertNotice)
   try {
     const resolved = { ...channel, config: await channelConfigWithSecrets(channel) };
     // C12: a channel that opens tickets answers its Test by opening one; a plain alert still goes to a ticket webhook as before.
-    if (notice.test && opensTickets(resolved)) return await testTicketChannel(resolved);
+    if (notice.test && opensTickets(resolved)) return await testTicketChannel(channel);
     switch (resolved.kind) {
       case 'email':
         return await sendEmail(resolved.config, notice);
