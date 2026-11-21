@@ -147,6 +147,26 @@ export interface InboxRequestView extends Omit<InboxOpen, 'sessionId' | 'project
   nudged?: { email: number; channels: number };
   /** Whether the caller may Approve or Deny (run access on the workflow, a signed-in person). */
   canDecide: boolean;
+  /** C12: the tickets a ticket channel opened for it; absent when no rule sends it to one. A ticket only notifies and links: it never decides. */
+  tickets?: InboxTicket[];
+}
+
+/** One ticket of a request. `opening` has no id yet (the system was not reached, retrying); a ticket whose close failed still shows as `open`. */
+export interface InboxTicket {
+  system: 'servicenow' | 'webhook';
+  /** The alert channel's id. */
+  channel: string;
+  id?: string;
+  /** An http(s) link, when the system gave one. */
+  url?: string;
+  state: 'opening' | 'open' | 'closed' | 'failed';
+}
+
+/** What a ticket says next to Approve and Deny: "Ticket CHG0031", "Ticket opening…", "Ticket not opened". */
+export function ticketLabel(ticket: Pick<InboxTicket, 'id' | 'state'>): string {
+  if (ticket.state === 'opening') return 'Ticket opening…';
+  if (ticket.state === 'failed' || !ticket.id) return 'Ticket not opened';
+  return `Ticket ${ticket.id}`;
 }
 
 /** The fields a Needs you `approval` item carries when its wait is an inbox request (AP01 adds them, AP03 reads them). */
@@ -163,6 +183,8 @@ export interface InboxItemFields {
   /** C13: `judge` when the request is an AI Judge's; `judgeWhy` is the fixed fallback reason. */
   inboxKind?: InboxKind;
   judgeWhy?: FallbackReason;
+  /** C12: the request's tickets (see InboxRequestView.tickets). */
+  tickets?: InboxTicket[];
 }
 
 /** What a waiting execution's `wait.data.inbox` holds (AP02 writes it, AP01 reads it in decideApproval and Needs you). */

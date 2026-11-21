@@ -432,3 +432,45 @@ describe('a judge request (C13)', () => {
     expect(host.textContent).not.toContain('Decision');
   });
 });
+
+describe('C12: tickets next to Approve and Deny', () => {
+  it('an open ticket is a link that opens in a new tab; opening and failed ones are not links; no tickets renders nothing', async () => {
+    const { renderToStaticMarkup } = await import('react-dom/server');
+    const { TicketLinks } = await import('../src/components/home/ticket-links');
+    const html = renderToStaticMarkup(
+      createElement(TicketLinks, {
+        tickets: [
+          { system: 'servicenow', channel: 'a', id: 'CHG0000001', url: 'https://sn.example/nav_to.do?uri=change_request.do?sys_id=1', state: 'open' },
+          { system: 'servicenow', channel: 'b', state: 'opening' },
+          { system: 'webhook', channel: 'c', state: 'failed' },
+        ],
+      }),
+    );
+    expect(html).toContain('Ticket CHG0000001');
+    expect(html).toMatch(/<a [^>]*href="https:\/\/sn\.example[^"]*"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/);
+    expect(html).toContain('Ticket opening…');
+    expect(html).toContain('Ticket not opened');
+    expect(html.match(/<a /g)).toHaveLength(1);
+    expect(renderToStaticMarkup(createElement(TicketLinks, { tickets: [] }))).toBe('');
+    expect(renderToStaticMarkup(createElement(TicketLinks, {}))).toBe('');
+  });
+
+  it('a row on Home shows the ticket link beside Approve and Deny, and a row with no tickets is as before', async () => {
+    routes.list = [view({ tickets: [{ system: 'servicenow', channel: 'a', id: 'CHG0031', url: 'https://sn.example/chg31', state: 'open' }] }), view({ id: 'req2', callId: 'call2' })];
+    await mount(createElement(ApprovalInboxPanel));
+    const [first, second] = [...host.querySelectorAll('[data-testid="inbox-row"]')];
+    const link = first!.querySelector('a[data-testid="inbox-ticket"]') as HTMLAnchorElement;
+    expect(link.textContent).toContain('Ticket CHG0031');
+    expect(link.target).toBe('_blank');
+    expect(link.rel).toBe('noopener noreferrer');
+    expect(button(/^Approve$/, first)).toBeTruthy();
+    expect(second!.querySelector('[data-testid="inbox-tickets"]')).toBeNull();
+  });
+
+  it('Home’s panel and the Run Trace card pass the request’s tickets through', async () => {
+    const { rowOfView } = await import('../src/lib/client/approval-inbox');
+    const tickets = [{ system: 'servicenow' as const, channel: 'a', id: 'CHG1', url: 'https://sn.example/x', state: 'open' as const }];
+    expect(rowOfView(view({ tickets })).tickets).toEqual(tickets);
+    expect('tickets' in rowOfView(view())).toBe(false);
+  });
+});

@@ -16,6 +16,8 @@
 import { nudgeSubject } from '../../shared/approval-inbox';
 import { FALLBACK_WORDS, isFallbackReason, judgeNudgeSubject, type JudgeEvidence } from '../../shared/judge';
 import type { AlertRule } from '../../shared/alerts';
+import { opensTickets } from '../../shared/alerts';
+import type { TicketRequest } from '../alerts/tickets';
 import { alertStore } from '../alerts/store';
 import { customNotice, type AlertNotice } from '../alerts/message';
 import { watches } from '../alerts/rules';
@@ -28,6 +30,7 @@ import { store } from '../store';
 import { logger } from '../telemetry';
 import { expiryClock, requestRow, recordNudge, type InboxRow } from './store';
 import { maskParams } from '../../shared/approval-inbox';
+import { sweepTickets } from './tickets';
 
 const pending = new Set<Promise<void>>();
 
@@ -159,6 +162,23 @@ export function approvalNotice(rule: Pick<AlertRule, 'id' | 'name'>, row: InboxR
 }
 
 /**
+ * What a ticket says of a request (C12): the alert's subject and fixed facts and the Needs you link, built from `approvalNotice`
+ * so a parameter, a judge's evidence or reason, or an item's text can never reach a ticket, and never the emailed Approve and
+ * Deny links (this module's mail holds those, and does not pass them on).
+ */
+export function ticketRequestOf(row: InboxRow): TicketRequest {
+  const notice = approvalNotice({ id: 'ticket', name: 'ticket' }, row);
+  return {
+    requestId: row.id,
+    kind: row.kind === 'judge' ? 'judge' : 'tool',
+    subject: notice.custom?.subject ?? nudgeSubject(row.tool, row.workflow_name),
+    facts: (notice.custom?.facts ?? []).filter((fact) => !fact.url).map(({ label, value }) => ({ label, value })),
+    link: needsYouLink(row.id),
+    expiresAt: row.expires_at,
+  };
+}
+
+/**
  * The alert service's ticker: for each waiting request and each enabled rule that has the event `approval` and watches the run,
  * send once (the marker is the `waiting` alert's table, keyed `approval:<request id>`).
  */
@@ -169,13 +189,17 @@ export async function checkApprovalAlerts(now: number, send: (rule: AlertRule, n
     if (!rows.some((row) => `${ALERT_PREFIX}${row.id}` === marker.execution_id)) database().delete('alert_waiting_sent', { rule_id: marker.rule_id, execution_id: marker.execution_id });
   }
   const rules = alertStore.rules().filter((rule) => (rule.kind ?? 'runs') === 'runs' && rule.enabled && rule.events.includes('approval') && rule.channelIds.length);
-  if (!rules.length) return;
+  // C12: a ticket channel gets a ticket (its own retries and its close), not the one-shot alert; the plain channels keep today's path.
+  const channels = new Map(alertStore.channels().map((channel) => [channel.id, channel]));
+  await sweepTickets(now, rules, channels, ticketRequestOf);
+  const plain = rules.map((rule) => ({ ...rule, channelIds: rule.channelIds.filter((id) => !channels.has(id) || !opensTickets(channels.get(id)!)) })).filter((rule) => rule.channelIds.length);
+  if (!plain.length) return;
   for (const row of rows) {
     if (Date.parse(row.expires_at) <= now) continue;
     const record = await store.loadExecution(row.execution_id);
     if (!record) continue;
     let channels = 0;
-    for (const rule of rules) {
+    for (const rule of plain) {
       if (!watches(rule, record, store.getWorkflow(row.workflow_id))) continue;
       if (!alertStore.markWaitingSent(rule.id, `${ALERT_PREFIX}${row.id}`)) continue;
       await send(rule, approvalNotice(rule, row));

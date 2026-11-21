@@ -15,6 +15,7 @@ import { approveRequest, denyRequest, inboxClock, refreshApprovalInbox, useExecu
 import { settledLine, type InboxRequestView } from '@/lib/shared/approval-inbox'; // AP03:
 import { judgeTitle } from '@/lib/shared/judge'; // C13:
 import { JudgeEvidenceView } from '../home/judge-evidence'; // C13:
+import { TicketLinks } from '../home/ticket-links'; // C12:
 import { approvalCase, editedInput, VERDICT_LABEL, type ApprovalCase, type ApprovalWait, type CaseEdit, type ReviewVerdict } from '@/lib/shared/approval-case';
 import { approvalEvidence, type EvidenceLink, type EvidenceRow, type EvidenceTone, type NeedFace } from '@/lib/shared/approval-evidence';
 import type { RunChanges } from '@/lib/shared/run-changes';
@@ -210,6 +211,7 @@ export function ApprovalCard({
           ) : (
             <div className="font-mono text-[11px] tabular-nums text-t3">waiting since {clock(wait.since)}</div>
           )}
+          <TicketLinks tickets={request?.tickets} className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-t3" />
         </div>
       </header>
       {request && (
