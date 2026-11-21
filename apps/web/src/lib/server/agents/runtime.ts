@@ -58,6 +58,7 @@ import { notionBrainKnowledgeConfig } from '../brain/notion/knowledge'; // NB06:
 import { hostBinaryClient, storeBinary } from '../binary/access';
 import { DEFAULT_KEPT_TOOL_IMAGES, hydrateToolImages, imageSizeLabel, storeToolImages, type ToolImageMode } from '../nodes/tool-images';
 import { HttpError } from '../errors';
+import { wrapMemory } from '../../shared/memory-fence';
 import { store } from '../store';
 import { agentVersionRow } from './version-rows'; // AG21:
 
@@ -242,7 +243,8 @@ export function memoryBlock(agent: Agent, config: AgentConfig, session: AgentSes
   const notes = agentStore.memories(agent.id, session.userId);
   return [
     '## What you remember about this user',
-    notes.length ? notes.map((n) => `- ${n.text} (${n.at.slice(0, 10)})`).join('\n') : '(nothing yet)',
+    // C03: the notes are quoted data inside one fence; without notes there is no fence, only the line.
+    notes.length ? wrapMemory('agent-memory', notes.map((n) => `- ${n.text.replace(/\s+/g, ' ')} (${n.at.slice(0, 10)})`)) : '(nothing yet)',
     'Use the remember tool for durable facts worth knowing next time.',
   ].join('\n');
 }

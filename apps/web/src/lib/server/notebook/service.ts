@@ -17,6 +17,7 @@ import type { BrainChangeOrigin } from '../../shared/brain-store'; // NB01
 import { homeProjectId } from '../projects/store';
 import { NoteError } from './approve';
 import { embedModel, embedTexts } from './embed';
+import { wrapMemory } from '../../shared/memory-fence';
 import { searchNotes } from './search';
 import { expiryOf, noteStore } from './store';
 
@@ -347,6 +348,9 @@ export function lineOf(note: TeamNote & { score?: number }): string {
   return `- [${note.id}] ${note.kind.replace('_', ' ')} (${standing}, ${scope}, by ${note.author}${note.tainted && !note.verifiedAt ? ', from outside: unchecked' : ''}): ${note.text}${note.answer ? ` -> Answer: ${note.answer}` : ''}${note.disputes ? ` (disputes ${note.disputes})` : ''}`;
 }
 
+/** The mark on a note's line when it came from outside the team and no person has checked it. */
+const outsideMark = (n: TeamNote) => (n.tainted && !n.verifiedAt ? ' (from outside: unchecked)' : '');
+
 /**
  * A short block for the start of a request: the team's open questions and decisions, so members don't re-ask or undo them.
  * Empty when the notebook has neither. Reading them counts as using them.
@@ -358,10 +362,13 @@ export function notebookBlock(binding: NotebookBinding): string {
   const disputed = visibleNotes.filter((n) => n.status === 'disputed' && n.kind !== 'open_question').slice(0, 3);
   if (!open.length && !decisions.length && !disputed.length) return '';
   noteStore.touch([...open, ...decisions]);
+  // C03: the intro line stays outside; the groups sit in one fence, each line escaped whole.
   return [
     'Team notebook (shared notes: search it with note_search before you start, add what you learn with note_add):',
-    ...(decisions.length ? ['Decisions so far:', ...decisions.map((n) => `- ${n.text}`)] : []),
-    ...(open.length ? ['Open questions:', ...open.map((n) => `- ${n.text}`)] : []),
-    ...(disputed.length ? ['Disputed (do not rely on these):', ...disputed.map((n) => `- ${n.text}`)] : []),
+    wrapMemory('team-notebook', [
+      ...(decisions.length ? ['Decisions so far:', ...decisions.map((n) => `- ${n.text}${outsideMark(n)}`)] : []),
+      ...(open.length ? ['Open questions:', ...open.map((n) => `- ${n.text}${outsideMark(n)}`)] : []),
+      ...(disputed.length ? ['Disputed (do not rely on these):', ...disputed.map((n) => `- ${n.text}${outsideMark(n)}`)] : []),
+    ]),
   ].join('\n');
 }
