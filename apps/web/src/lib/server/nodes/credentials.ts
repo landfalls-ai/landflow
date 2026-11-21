@@ -5,6 +5,7 @@
  */
 import Anthropic from '@anthropic-ai/sdk';
 import { defineCredentialType, type NodeOperationError } from '@landflow/sdk';
+import { checkCredentialClaims } from '../jwt-claims';
 import { testGatewayCredential } from '../llm-gateway/models';
 import { OPENAI_BASE_URL, openAiConnection, openAiModels } from './models';
 import { STRANDS_BASE_URL, TYPESAFE_BASE_URL, strandsConnection, systemOneDecide, typesafeConnection, typesafeModels } from './systemone';
@@ -234,7 +235,32 @@ export const jwtAuthCredential = defineCredentialType({
     },
     { name: 'issuer', displayName: 'Issuer', type: 'string', default: '', description: 'Require this `iss` claim (optional)' },
     { name: 'audience', displayName: 'Audience', type: 'string', default: '', description: 'Require this `aud` claim (optional)' },
+    {
+      name: 'boundClaims',
+      displayName: 'Bound Claims',
+      type: 'string',
+      default: '',
+      typeOptions: { rows: 4 },
+      placeholder: 'repository: my-org/my-repo\nref: refs/heads/main',
+      description:
+        'One “claim: value” per line; every line must match the token. * matches within one segment (repo:my-org/app:ref:refs/heads/*). Required for GitHub Actions and GitLab tokens: add repository, project_path or sub.',
+    },
   ],
+  async test(data, ctx) {
+    const rules = checkCredentialClaims(data);
+    if (!rules.ok) return { ok: false, message: rules.message };
+    const url = String(data.jwksUrl ?? '').trim();
+    if (data.keyType !== 'jwks' || !url) return { ok: true, message: 'The credential is complete' };
+    try {
+      const response = await ctx.http(url, { headers: { accept: 'application/json' } });
+      if (!response.ok) return { ok: false, message: `The JWKS URL answered ${response.status}` };
+      const keys = ((await response.json()) as { keys?: unknown[] }).keys;
+      if (!Array.isArray(keys)) return { ok: false, message: 'The JWKS URL did not return a key set' };
+      return { ok: true, message: `The JWKS URL answered with ${keys.length} key${keys.length === 1 ? '' : 's'}` };
+    } catch (caught) {
+      return { ok: false, message: `The JWKS URL could not be read: ${(caught as Error).message}` };
+    }
+  },
 });
 
 /** n8n's Header Auth: one header name and value. */

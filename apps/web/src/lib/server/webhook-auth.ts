@@ -2,7 +2,7 @@
  * Who may call a Webhook trigger or submit a Form Trigger (n8n's names): `authentication` is `none`, `basicAuth`
  * (a Basic Auth credential: user and password), `headerAuth` (a Header Auth credential: header name and value) or
  * `jwtAuth` (a JWT Auth credential: an HS256/384/512 secret, a PEM public key or a JWKS URL, with optional issuer and
- * audience); `options.ipWhitelist` limits callers to a list of addresses and CIDR ranges.
+ * audience and Bound Claims, refused for GitHub Actions and GitLab tokens unless they pin a repository: jwt-claims.ts); `options.ipWhitelist` limits callers to a list of addresses and CIDR ranges.
  *
  * The client address comes from `clientAddress()` (net/client-address.ts): `X-Forwarded-For` trusted up to
  * LANDFLOW_TRUSTED_PROXIES hops; a request with no address counts as 127.0.0.1. Secrets are compared in constant time.
@@ -13,12 +13,16 @@
  * doesn't say which credential, and the host logs a warning with the workflow, node and credential id.
  */
 import { isIP } from 'node:net';
-import { createRemoteJWKSet, importSPKI, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
+import { createRemoteJWKSet, customFetch, importSPKI, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
 import type { JsonObject } from '@landflow/protocol';
 import type { WorkflowNode } from '@landflow/engine';
 import { sameSecret } from './auth/passwords';
 import { credentials } from './credentials/vault';
+import { deniedReadDue, deniedReadUnderCap } from './audit/http';
+import { recordAudit } from './audit';
 import { error } from './http';
+import { checkBoundClaims, checkCredentialClaims, type ClaimsCheck } from './jwt-claims';
+import { OutboundBlockedError, safeFetch } from './net/safe-fetch';
 import { registry } from './plugins/registry';
 import { triggerAuthCredential, triggerAuthUsable } from './projects/credentials';
 import { singleton } from './singleton';
@@ -95,7 +99,8 @@ const keySets = singleton('webhook-jwks', () => new Map<string, JWTVerifyGetKey>
 function jwks(url: string): JWTVerifyGetKey {
   let set = keySets.get(url);
   if (!set) {
-    set = createRemoteJWKSet(new URL(url), { timeoutDuration: 5_000, cooldownDuration: 30_000 });
+    // Through safeFetch, so the outbound policy applies to the issuer's key set like any other call a user can steer.
+    set = createRemoteJWKSet(new URL(url), { timeoutDuration: 5_000, cooldownDuration: 30_000, [customFetch]: (target, init) => safeFetch(target, init) });
     keySets.set(url, set);
   }
   return set;
@@ -209,13 +214,48 @@ export async function checkWebhookAuth(request: Request, workflowId: string, nod
 
   const match = /^Bearer\s+(\S+)$/i.exec(request.headers.get('authorization')?.trim() ?? '');
   if (!match) return { ok: false, response: unauthorized('Send a JWT as “Authorization: Bearer <token>”', 'Bearer') };
+  const jwtAuth = secrets.jwtAuth ?? {};
+  // A credential that trusts a public CI issuer without pinning a repository is refused before its JWKS is fetched.
+  const unsafe = checkCredentialClaims(jwtAuth);
+  if (!unsafe.ok) return { ok: false, response: claimsRefusal(unsafe, workflowId, label, jwtAuth) };
   try {
-    const payload = await verifyJwt(match[1], secrets.jwtAuth ?? {});
+    const payload = await verifyJwt(match[1], jwtAuth);
+    const claims = checkBoundClaims(jwtAuth, payload);
+    if (!claims.ok) return { ok: false, response: claimsRefusal(claims, workflowId, label, jwtAuth, typeof payload.iss === 'string' ? payload.iss : undefined) };
     return { ok: true, jwtPayload: payload as JsonObject, secretHeaders: [] };
   } catch (caught) {
+    if (caught instanceof OutboundBlockedError) {
+      return { ok: false, response: error(`The ${label}’s JWT Auth credential: the JWKS URL is not allowed by the outbound policy (LANDFLOW_OUTBOUND_ALLOW lists exceptions)`, 500) };
+    }
     const message = (caught as Error).message;
     // A credential that can't verify anything is the workflow's problem, not the caller's.
     if (/credential has no|signs with/.test(message)) return { ok: false, response: error(`The ${label}’s JWT Auth credential: ${message}`, 500) };
     return { ok: false, response: unauthorized('Invalid JWT', 'Bearer error="invalid_token"') };
   }
+}
+
+/**
+ * The answer for a refused claim check, and its audit row (the route layer skips webhooks, so it is recorded here):
+ * the reason, the claim's name and the issuer, never the token or a claim's value; once a minute per webhook and reason
+ * so a caller hammering a bound webhook cannot flood the log.
+ */
+function claimsRefusal(check: Exclude<ClaimsCheck, { ok: true }>, workflowId: string, label: string, credential: JsonObject, verifiedIss?: string): Response {
+  const { reason, claim } = check;
+  if (reason === 'claims_invalid') return error(`The ${label}’s JWT Auth credential: ${check.message}`, 500);
+  if (deniedReadDue(`webhook:${workflowId}`, `${label}:${reason}`) && deniedReadUnderCap()) {
+    recordAudit({
+      action: 'api.denied',
+      outcome: 'denied',
+      status: 403,
+      actor: 'anonymous',
+      target: { type: 'workflow', id: workflowId },
+      summary: 'JWT claims refused',
+      details: { reason, ...(claim && { claim }), iss: verifiedIss ?? String(credential.issuer ?? '') },
+    });
+  }
+  if (reason === 'claims_required') {
+    logger.warn('trigger call refused: its JWT Auth credential trusts a public CI issuer and binds no repository', { 'landflow.workflow.id': workflowId, 'landflow.reason': reason });
+    return error(`Forbidden: the ${label}’s JWT Auth credential is unsafe. ${check.message}`, 403);
+  }
+  return error(`Forbidden: the token does not match the “${claim}” claim this ${label} is bound to`, 403);
 }

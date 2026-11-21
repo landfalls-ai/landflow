@@ -32,18 +32,22 @@ const mcpRoute = await import('@/app/mcp/[...path]/route');
 const workflowRoute = await import('@/app/api/workflows/[id]/route');
 const projects = await import('@/lib/server/projects');
 const { logger } = await import('@/lib/server/telemetry/logger');
+const { queryEvents } = await import('@/lib/server/audit/store');
+const { database } = await import('@/lib/server/db');
 
 registry.registerBuiltin(corePlugin);
 
 const ISSUER = 'https://issuer.auth.test';
 let jwksServer: Server;
 let jwksUrl: string;
+let jwksHits = 0;
 let rsa: Awaited<ReturnType<typeof generateKeyPair>>;
 
 beforeAll(async () => {
   rsa = await generateKeyPair('RS256', { extractable: true });
   const jwk = { ...(await exportJWK(rsa.publicKey)), kid: 'k1', alg: 'RS256', use: 'sig' };
   jwksServer = createServer((_req, res) => {
+    jwksHits++;
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ keys: [jwk] }));
   });
@@ -389,5 +393,113 @@ describe('trigger credentials outside the workflow’s project', () => {
     projects.addShare('credential', mcp.credential.id, mcp.team, 'user');
     expect((await initialize('Bearer wrong')).status).toBe(401);
     expect((await initialize('Bearer team-token')).status).toBe(200);
+  });
+});
+
+describe('JWT Auth bound claims and the JWKS fetch (C18)', () => {
+  const GITHUB = 'https://token.actions.githubusercontent.com';
+  const github = (repository: string, claims: Record<string, unknown> = {}) =>
+    new SignJWT({ repository, sub: `repo:${repository}:ref:refs/heads/main`, ref: 'refs/heads/main', ...claims })
+      .setProtectedHeader({ alg: 'RS256', kid: 'k1' })
+      .setIssuer(GITHUB)
+      .setAudience('landflow')
+      .setExpirationTime('5m')
+      .sign(rsa.privateKey);
+  const denied = () => queryEvents({ action: ['api.denied'] }, { limit: 100 }).events.filter((event) => event.summary === 'JWT claims refused');
+
+  it('refuses a token from another repository, starts no run and audits the claim, never the token', async () => {
+    const credential = credentials.create({
+      name: 'CI bound',
+      type: 'core.jwtAuth',
+      data: { keyType: 'jwks', jwksUrl, algorithm: 'RS256', issuer: GITHUB, audience: 'landflow', boundClaims: '# only this repo\nrepository: my-org/app' },
+    });
+    await hook('ci-bound', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential) });
+    const runs = () => store.listExecutions({ workflowId: 'wf_auth_ci_bound' }).length;
+    const ok = await call('ci-bound', { authorization: `Bearer ${await github('my-org/app')}` });
+    expect(ok.status).toBe(200);
+    const before = runs();
+    const info = vi.spyOn(logger, 'info');
+    const warn = vi.spyOn(logger, 'warn');
+    const token = await github('other/app');
+    const refused = await call('ci-bound', { authorization: `Bearer ${token}` });
+    expect(refused.status).toBe(403);
+    expect(runs()).toBe(before);
+    const rows = denied().filter((event) => event.details?.reason === 'claim_mismatch');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ outcome: 'denied', details: { reason: 'claim_mismatch', claim: 'repository' }, target: { type: 'workflow', id: 'wf_auth_ci_bound' } });
+    // Neither the token nor the claim value reaches the log or the audit table.
+    const everything = JSON.stringify([database().all('SELECT * FROM audit_events'), info.mock.calls, warn.mock.calls]);
+    expect(everything).not.toContain(token);
+    expect(everything).not.toContain(token.split('.')[1]);
+    expect(everything).not.toContain('other/app');
+    info.mockRestore();
+    warn.mockRestore();
+    // A throttle: fifty more refusals in the minute add no rows.
+    for (let i = 0; i < 50; i++) expect((await call('ci-bound', { authorization: `Bearer ${token}` })).status).toBe(403);
+    expect(denied().filter((event) => event.details?.reason === 'claim_mismatch')).toHaveLength(1);
+  });
+
+  it('refuses a public CI issuer with no bound claim before any JWKS request, saying what to add', async () => {
+    const credential = credentials.create({ name: 'CI open', type: 'core.jwtAuth', data: { keyType: 'jwks', jwksUrl, algorithm: 'RS256', issuer: GITHUB, audience: 'landflow' } });
+    await hook('ci-open', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential) });
+    const hits = jwksHits;
+    const response = await call('ci-open', { authorization: `Bearer ${await github('anyone/anything')}` });
+    expect(response.status).toBe(403);
+    const message = (await response.json()).error as string;
+    expect(message).toMatch(/Bound Claims/);
+    expect(message).toMatch(/repository: my-org\/my-repo/);
+    expect(jwksHits).toBe(hits);
+    expect(denied().some((event) => event.details?.reason === 'claims_required')).toBe(true);
+  });
+
+  it('treats GitHub’s JWKS host with no issuer the same way', async () => {
+    const credential = credentials.create({ name: 'CI host', type: 'core.jwtAuth', data: { keyType: 'jwks', jwksUrl: `${GITHUB}/.well-known/jwks`, algorithm: 'RS256' } });
+    await hook('ci-host', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential) });
+    const response = await call('ci-host', { authorization: `Bearer ${await github('anyone/anything')}` });
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toMatch(/Bound Claims/);
+  });
+
+  it('refuses by the verified iss when the credential names no CI issuer', async () => {
+    const credential = credentials.create({ name: 'CI iss', type: 'core.jwtAuth', data: { keyType: 'jwks', jwksUrl, algorithm: 'RS256' } });
+    await hook('ci-iss', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential) });
+    const response = await call('ci-iss', { authorization: `Bearer ${await github('anyone/anything')}` });
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toMatch(/Bound Claims/);
+  });
+
+  it('keeps an HS256 credential made before the change working', async () => {
+    const credential = credentials.create({ name: 'Old HS', type: 'core.jwtAuth', data: { keyType: 'passphrase', secret: 'old-secret', algorithm: 'HS256' } });
+    await hook('ci-old', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential) });
+    expect((await call('ci-old', { authorization: `Bearer ${await hs256('old-secret')}` })).status).toBe(200);
+  });
+
+  it('answers 500 for a credential whose bound claims do not parse', async () => {
+    const credential = credentials.create({ name: 'Bad lines', type: 'core.jwtAuth', data: { keyType: 'passphrase', secret: 'x-secret', algorithm: 'HS256', boundClaims: 'nonsense' } });
+    await hook('ci-bad', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential) });
+    const response = await call('ci-bad', { authorization: `Bearer ${await hs256('x-secret')}` });
+    expect(response.status).toBe(500);
+    expect((await response.json()).error).toMatch(/line 1/);
+  });
+
+  it('fetches the JWKS through safeFetch: the outbound policy applies', async () => {
+    const hits = jwksHits;
+    const previous = process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE;
+    process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE = 'true';
+    try {
+      const metadata = credentials.create({ name: 'Metadata JWKS', type: 'core.jwtAuth', data: { keyType: 'jwks', jwksUrl: 'http://169.254.169.254/latest/jwks', algorithm: 'RS256' } });
+      await hook('ci-meta', { authentication: 'jwtAuth' }, { jwtAuth: ref(metadata) });
+      const response = await call('ci-meta', { authorization: `Bearer ${await github('my-org/app')}` });
+      expect(response.status).toBe(500);
+      expect((await response.json()).error).toMatch(/outbound policy/);
+      // The local JWKS server is refused as well, and never contacted.
+      const local = credentials.create({ name: 'Local JWKS', type: 'core.jwtAuth', data: { keyType: 'jwks', jwksUrl: `${jwksUrl}?blocked`, algorithm: 'RS256' } });
+      await hook('ci-local', { authentication: 'jwtAuth' }, { jwtAuth: ref(local) });
+      expect((await call('ci-local', { authorization: `Bearer ${await github('my-org/app')}` })).status).toBe(500);
+      expect(jwksHits).toBe(hits);
+    } finally {
+      if (previous === undefined) delete process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE;
+      else process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE = previous;
+    }
   });
 });
