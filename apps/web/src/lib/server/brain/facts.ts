@@ -276,6 +276,53 @@ export function deleteFact(id: string, db: Database = database()): boolean {
   return removed;
 }
 
+/**
+ * Delete every fact (and its earlier versions) of one subject type whose subject id starts with `prefix` (C09: an agent's
+ * memories of all its people go with the agent). Plain SQL deletes and no change event: a private subject is never mirrored to
+ * Notion or any other store, so nothing listens. Returns the ids so the caller can drop their vectors.
+ */
+export function deleteFactsWhere(where: { subjectType: FactSubject; subjectIdPrefix: string }, db: Database = database()): string[] {
+  const ids = db.all<{ id: string }>('SELECT id FROM brain_facts WHERE subject_type = ? AND substr(subject_id, 1, ?) = ?', where.subjectType, where.subjectIdPrefix.length, where.subjectIdPrefix).map((r) => r.id);
+  db.transaction(() => {
+    for (const id of ids) db.delete('brain_facts', { id });
+  });
+  return ids;
+}
+
+/** How many live facts one subject holds (latest version, not forgotten): static ones, the others, or both. */
+export function countLiveFacts(subject: { subjectType: FactSubject; subjectId: string }, options: { static?: boolean; now?: string } = {}, db: Database = database()): number {
+  const staticSql = options.static === undefined ? '' : ` AND is_static = ${options.static ? 1 : 0}`;
+  return Number(db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM brain_facts WHERE subject_type = ? AND subject_id = ? AND ${LIVE_FACT}${staticSql}`, subject.subjectType, subject.subjectId, options.now ?? new Date().toISOString())?.n ?? 0);
+}
+
+/** The oldest live, non-static facts of one subject (by last sighting), for a bound that forgets the oldest first. */
+export function oldestLiveFacts(subject: { subjectType: FactSubject; subjectId: string }, limit: number, db: Database = database()): BrainFact[] {
+  const rows = db.all<FactRow>(
+    `SELECT ${FACT_COLUMNS} FROM brain_facts WHERE subject_type = ? AND subject_id = ? AND is_static = 0 AND ${LIVE_FACT} ORDER BY last_seen ASC, id ASC LIMIT ${Math.max(1, Math.floor(limit))}`,
+    subject.subjectType,
+    subject.subjectId,
+    new Date().toISOString(),
+  );
+  return rows.flatMap((r) => fromRow(r) ?? []);
+}
+
+/**
+ * The subject ids that start with `prefix` for one private subject type, in order, one page (C09: the people an agent has
+ * memories of, for its editors to pick from). Forgotten memories count: a person whose memories are all forgotten can still be picked.
+ */
+export function factSubjectsPage(where: { subjectType: FactSubject; subjectIdPrefix: string }, page: { limit: number; after?: string }, db: Database = database()): { subjects: string[]; next?: string } {
+  const limit = Math.max(1, Math.min(200, Math.floor(page.limit)));
+  const rows = db.all<{ subject_id: string }>(
+    `SELECT DISTINCT subject_id FROM brain_facts WHERE subject_type = ? AND substr(subject_id, 1, ?) = ?${page.after ? ' AND subject_id > ?' : ''} ORDER BY subject_id ASC LIMIT ${limit + 1}`,
+    where.subjectType,
+    where.subjectIdPrefix.length,
+    where.subjectIdPrefix,
+    ...(page.after ? [page.after] : []),
+  );
+  const shown = rows.slice(0, limit).map((r) => r.subject_id);
+  return { subjects: shown, ...(rows.length > limit && shown.length && { next: shown[shown.length - 1] }) };
+}
+
 function inScope(fact: { subjectType: FactSubject; subjectId: string }, scope?: UsageScope): boolean {
   if (!scope || (!scope.workflows && !scope.agents)) return true;
   if (fact.subjectType === 'workflow') return Boolean(scope.workflows?.has(fact.subjectId));

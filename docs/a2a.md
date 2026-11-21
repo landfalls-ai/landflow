@@ -327,6 +327,28 @@ or moves to the other runtime. The model, key, egress and import are in
 [llm-gateway.md](llm-gateway.md#agents-outside-landflow). The Run Trace's reported tokens stay for reading; the import
 counts the agent's calls from LiteLLM's log, never from the trace, so nothing is counted twice.
 
+### Memory on kagent
+
+An agent deployed with **Cross-session memory** on gets three more tools on its MCP endpoint, `recall_memory { query }`,
+`remember { fact, static?, replaces? }` and `forget_memory { id, reason }`, and its persona ends with "At the start of a task,
+call recall_memory with the memory key from the conversation and the task…". Each takes a **memory key** (`memoryKey`), because
+an agent on kagent cannot tell Landflow whom it is working for.
+
+- **The key.** When Landflow sends the first message of a conversation to a Landflow agent on kagent whose deployed version has
+  memory on (the A2A Agent node, or an agent's A2A tool), it adds the line "Memory key for this person: `mk_…`" after the
+  practices index. The key is `base64url(agent id, user id, expiry)` and an HMAC-SHA256 under the vault's derived key
+  `agent-memory-key`: it names one agent and one person (`workflow:<id>` from a workflow, the session's user from an agent's
+  tool), expires 24 hours after it was written, and is checked against every key of the ring, so a key rotation does not void a
+  conversation in flight. It is signed, not remembered, so it works in queue mode when the A2A call and the MCP call land on
+  different processes. It opens only that person's memories for that agent, which the agent already reads in its own runs.
+- **What a call does.** `recall_memory` answers the same fenced block a Landflow run would get for that person and query
+  ([agents.md](agents.md#agent-capabilities)); `remember` and `forget_memory` act as the Landflow tools do. Without a valid key
+  for this agent (none, forged, expired, another agent's) a call answers "Memory needs the key Landflow gave you in this
+  conversation" and reads or writes nothing. Each call is an `execute_tool` span (`memory` kind) with no key and no memory text.
+- **Not covered.** A caller that is not Landflow (kagent's own UI, another A2A client) gets no key and so no memory; follow-up
+  messages in a conversation carry no new key (the first message's lasts 24 hours); the key is in the conversation, so keep a
+  kagent conversation's transcript as private as the memories.
+
 ### On Claude Code
 
 A cluster can have several Harnesses, and each runs one runtime: kagent's own (ADK), Claude Code, Codex or an image of
@@ -715,7 +737,7 @@ gone, a push to main asked of a person and run or refused by the answer, read-on
   MCP).
 - Push notifications (A2A webhooks) and the gRPC and REST bindings aren't used; long tasks are streamed or polled.
 - The spend of a kagent agent's calls is imported from the gateway's spend log, and with the gateway's callback on, so is the split of each prompt into parts ([llm-gateway.md](llm-gateway.md#the-gateways-split)).
-- An agent on kagent doesn't get cross-session memory, guardrails or usage limits, and its skills are in its system
+- An agent on kagent gets cross-session memory only through the memory key Landflow puts in a conversation's first message ([above](#memory-on-kagent)); it doesn't get guardrails or usage limits, and its skills are in its system
   prompt and `load_skill` rather than kagent skills. Its Claude Code plugins come from GitHub marketplaces only (a
   marketplace on the host or behind a URL has no commit to pin). Landflow
   doesn't watch kagent: drift shows when the status is read, and a redeploy is a click, not automatic.

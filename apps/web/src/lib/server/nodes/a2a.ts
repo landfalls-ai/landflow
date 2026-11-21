@@ -30,10 +30,11 @@ import {
   type AgentCard,
   type HitlRequest,
 } from '../a2a/client';
-import type { AgentTraceSummary } from '../../shared/agents';
+import type { AgentTraceSummary, RemoteRun } from '../../shared/agents';
 import { BlockedNodeError, blockedOf, countBlocked } from '../a2a/blocked';
 import { BLOCKED_LABEL, type BlockedKind } from '../../shared/quota-block';
 import { traceFor, usageOfTrace, withMarker } from '../a2a/agent-trace';
+import { memoryKeyLine, withMemoryKey } from '../kagent/memory-line';
 import { callAgent, landflowTags, taskCall, throttled } from '../a2a/traced';
 import { CUT } from '../journal/content';
 import { CONTEXT_HEADING, type RunContext } from '../../shared/project-context';
@@ -199,7 +200,9 @@ function assertNotFailed(ctx: IExecuteContext, card: AgentCard, result: A2aResul
     const verdict = blockedOf(result.task);
     if (verdict.blocked) {
       countBlocked(verdict.kind, 'a2a');
-      ctx.sendProgress?.({ agent: card.name, state: 'blocked', blocked: { kind: verdict.kind, message: verdict.message, label: verdict.label }, steps: [] });
+      // The typed remote run (W1 follow-up): its `blocked` field is the one the Run Trace badge reads.
+      const blocked: RemoteRun = { agent: card.name, state: 'blocked', blocked: { kind: verdict.kind, message: verdict.message, label: verdict.label }, steps: [] };
+      ctx.sendProgress?.(blocked as unknown as JsonObject);
       ctx.check({ name: 'blocked', status: 'warn', message: BLOCKED_LABEL.unknown, subject: card.name });
       throw new BlockedNodeError(card.name, verdict.kind, verdict.message, itemIndex, verdict.label);
     }
@@ -437,7 +440,9 @@ export const a2aAgentNode = defineNode({
                 (asTool ? currentRunContext()?.projectId : runContextProvider()?.resolve({ caller: 'workflow', workflowId: ctx.getWorkflowId(), executionId: ctx.getExecutionId(), nodeName: ctx.getNode().name }).projectId);
               practiceIndex = practicesIndexFor(endpoint.url, options.practices, text, projectId);
             }
-            const framed = withProjectContext(withPracticesIndex(text, practiceIndex?.text ?? ''), contextBlock);
+            // C09: a Landflow agent on kagent with memory on gets the signed key of the person (a workflow run is `workflow:<id>`) in a new conversation's first message.
+            const keyLine = !contextId && !remembered?.taskId && ctx.getWorkflowId() ? memoryKeyLine(endpoint.url, `workflow:${ctx.getWorkflowId()}`) : undefined;
+            const framed = withProjectContext(withMemoryKey(withPracticesIndex(text, practiceIndex?.text ?? ''), keyLine), contextBlock);
             const message = { text: framed.text, metadata: { ...metadata, ...framed.tags }, ...(contextId && { contextId }), ...(remembered?.taskId && { taskId: remembered.taskId }) };
             const trace = message.taskId ? undefined : traceFor(endpoint.url, ctx.getExecutionId() && ctx.getWorkflowId() ? { executionId: ctx.getExecutionId()!, workflowId: ctx.getWorkflowId()!, nodeId: ctx.getNode().id, member: ctx.getNode().name } : undefined);
             try {

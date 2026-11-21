@@ -14,7 +14,11 @@ const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { credentials } = await import('@/lib/server/credentials/vault');
-const { personaPrompt } = await import('@/lib/shared/persona');
+const { personaPrompt: runtimePersona } = await import('@/lib/shared/persona');
+const { MEMORY_PERSONA_LINE } = await import('@/lib/server/kagent/manifests');
+// C09: the CONFIG has cross-session memory on, so what kagent gets is the persona and the line that says to recall first.
+const personaPrompt = (...args: Parameters<typeof runtimePersona>) => runtimePersona(...args);
+const kagentPrompt = (c: Parameters<typeof runtimePersona>[0]) => `${runtimePersona(c)}\n\n${MEMORY_PERSONA_LINE}`;
 const { kagentManifests, kagentName, toolBindings } = await import('@/lib/server/kagent/manifests');
 const kagentRoute = await import('@/app/api/agents/[id]/kagent/route');
 const publishRoute = await import('@/app/api/agents/[id]/publish/route');
@@ -175,7 +179,7 @@ describe('the persona kagent gets', () => {
     expect(template.spec).toEqual({
       description: CONFIG.description,
       modelConfig: { name: 'text-formatter' },
-      systemPrompt: personaPrompt(agent),
+      systemPrompt: kagentPrompt(agent),
       tools: toolBindings('text-formatter', [
         { name: 'Echo', requireApproval: false },
         { name: 'Shout', requireApproval: true },
@@ -210,7 +214,7 @@ describe('deploying to kagent', () => {
     const { status, data } = await call<{ status: KagentStatus; unavailable: string[] }>(kagentRoute.PUT, agent.id, 'PUT', { credentialId: cluster.id });
     expect(status).toBe(200);
     expect(data.status).toMatchObject({ deployed: true, name: 'text-formatter', namespace: 'kagent', version: 1, inSync: true, drift: [], outdated: false, a2aUrl: 'http://kagent.test:8083/agents/kagent/text-formatter' });
-    expect(data.status.systemPrompt).toBe(personaPrompt(agent.published!.config));
+    expect(data.status.systemPrompt).toBe(kagentPrompt(agent.published!.config));
     expect(kube.requests.filter((r) => r.method === 'PATCH').map((r) => r.path.split('?')[0].split('/').slice(-2).join('/'))).toEqual([
       'secrets/text-formatter-landflow',
       'remotemcpservers/text-formatter',
@@ -218,10 +222,10 @@ describe('deploying to kagent', () => {
       'agenttemplates/text-formatter',
       'agents/text-formatter',
     ]);
-    // Memory needs the person the agent talks to, so kagent gets every tool but `remember`.
+    // C09: memory takes the signed key of the person, so kagent gets the three memory tools beside the others (kagent/memory-tools.ts).
     const tools = (held('agenttemplates', 'text-formatter')!.spec as { tools: Array<{ mcp: { tools: string[]; requireApproval?: boolean } }> }).tools;
     expect(tools.map((t) => [t.mcp.tools, Boolean(t.mcp.requireApproval)])).toEqual([
-      [['Echo', 'load_skill'], false],
+      [['Echo', 'load_skill', 'recall_memory', 'remember', 'forget_memory'], false],
       [['Shout'], true],
     ]);
     expect(held('agents', 'text-formatter')!.spec).toEqual({ template: { ref: { name: 'text-formatter' } }, harnessRef: { name: 'landflow-kagent' } });
@@ -291,7 +295,7 @@ describe('deploying to kagent', () => {
     const published = await call<{ agent: { published: { config: AgentConfig } }; kagent: KagentStatus }>(publishRoute.POST, agent.id, 'POST');
     expect(published.data.kagent).toMatchObject({ inSync: true, version: 2 });
     const systemPrompt = (held('agenttemplates', 'text-formatter')!.spec as { systemPrompt: string }).systemPrompt;
-    expect(systemPrompt).toBe(personaPrompt(published.data.agent.published.config));
+    expect(systemPrompt).toBe(kagentPrompt(published.data.agent.published.config));
     expect(systemPrompt.split('\n\n').slice(0, 4)).toEqual([
       '## Who you are\nRole: Formatter for the content team.',
       '## How you talk\nTone: Brief.',
@@ -310,10 +314,10 @@ describe('deploying to kagent', () => {
     const status = (await call<{ status: KagentStatus }>(kagentRoute.GET, agent.id)).data.status;
     expect(status.inSync).toBe(false);
     expect(status.drift.map((d) => d.field).sort()).toEqual(['ModelConfig', 'systemPrompt', 'tools']);
-    expect(status.drift.find((d) => d.field === 'systemPrompt')).toEqual({ field: 'systemPrompt', landflow: personaPrompt(agent.published!.config), kagent: 'You are a pirate.' });
+    expect(status.drift.find((d) => d.field === 'systemPrompt')).toEqual({ field: 'systemPrompt', landflow: kagentPrompt(agent.published!.config), kagent: 'You are a pirate.' });
     expect(status.systemPrompt).toBe('You are a pirate.');
     // kagent's own defaults aren't drift.
-    (held('agenttemplates', 'drifting')!.spec as Record<string, unknown>).systemPrompt = personaPrompt(agent.published!.config);
+    (held('agenttemplates', 'drifting')!.spec as Record<string, unknown>).systemPrompt = kagentPrompt(agent.published!.config);
     await call(kagentRoute.PUT, agent.id, 'PUT', {});
     (held('modelconfigs', 'drifting')!.spec as Record<string, unknown>).stream = true;
     expect((await call<{ status: KagentStatus }>(kagentRoute.GET, agent.id)).data.status).toMatchObject({ inSync: true, drift: [] });
@@ -396,15 +400,18 @@ describe('the agent’s MCP endpoint', () => {
     expect((await rpc(agent.id, 'tools/list', {}, 'lfk_wrong')).status).toBe(401);
 
     const listed = await rpc(agent.id, 'tools/list', {}, token);
-    expect(listed.body.result?.tools?.map((t) => t.name)).toEqual(['Echo', 'Shout', 'load_skill', 'practices_for', 'practice_cite']);
+    expect(listed.body.result?.tools?.map((t) => t.name)).toEqual(['Echo', 'Shout', 'load_skill', 'recall_memory', 'remember', 'forget_memory', 'practices_for', 'practice_cite']);
     const skill = await rpc(agent.id, 'tools/call', { name: 'load_skill', arguments: { name: 'Headlines' } }, token);
     expect(skill.body.result?.content?.[0].text).toContain('Slugify the headline, then answer with it.');
     // kagent paused on Shout already (its binding has requireApproval), so the call runs.
     const shout = await rpc(agent.id, 'tools/call', { name: 'Shout', arguments: { text: 'hi' } }, token);
     expect(shout.body.result?.isError).toBeFalsy();
     expect(shout.body.result?.content?.[0].text).toContain('hi');
-    const unknown = await rpc(agent.id, 'tools/call', { name: 'remember', arguments: { text: 'x' } }, token);
+    const unknown = await rpc(agent.id, 'tools/call', { name: 'no_such_tool', arguments: { text: 'x' } }, token);
     expect(unknown.body.result?.isError).toBe(true);
+    // C09: `remember` is a tool now, and without the memory key of a person it refuses and writes nothing.
+    const remembered = await rpc(agent.id, 'tools/call', { name: 'remember', arguments: { fact: 'x' } }, token);
+    expect(remembered.body.result?.isError).toBe(true);
   });
 
   it('serves Claude Code’s two servers each their own tools, so none is called past kagent’s pause', async () => {
@@ -412,7 +419,7 @@ describe('the agent’s MCP endpoint', () => {
     await call(kagentRoute.PUT, agent.id, 'PUT', { credentialId: cluster.id, name: 'split', harness: 'landflow-claude' });
     const token = credentials.openSecret(agentStore.get(agent.id)!.kagent!.token!);
     const names = async (query: string) => (await rpc(agent.id, 'tools/list', {}, token, query)).body.result?.tools?.map((t) => t.name);
-    expect(await names('?tools=free')).toEqual(['Echo', 'load_skill', 'practices_for', 'practice_cite']);
+    expect(await names('?tools=free')).toEqual(['Echo', 'load_skill', 'recall_memory', 'remember', 'forget_memory', 'practices_for', 'practice_cite']);
     expect(await names('?tools=approval')).toEqual(['Shout']);
     const past = await rpc(agent.id, 'tools/call', { name: 'Shout', arguments: { text: 'hi' } }, token, '?tools=free');
     expect(past.body.result).toMatchObject({ isError: true, content: [{ text: 'The agent “Text formatter” has no tool Shout' }] });
@@ -448,7 +455,7 @@ describe('the agent’s MCP endpoint', () => {
     agentStore.saveDraft(agent.id, { tools: [{ id: 't9', type: 'node', name: 'Whisper', description: 'Quietly', nodeType: 'core.noOp', parameters: {} }], skills: [] });
     await call(publishRoute.POST, agent.id, 'POST');
     credentials.update(cluster.id, { data: { server } });
-    expect((await rpc(agent.id, 'tools/list', {}, token)).body.result?.tools?.map((t) => t.name)).toEqual(['Echo', 'Shout', 'load_skill', 'practices_for', 'practice_cite']);
+    expect((await rpc(agent.id, 'tools/list', {}, token)).body.result?.tools?.map((t) => t.name)).toEqual(['Echo', 'Shout', 'load_skill', 'recall_memory', 'remember', 'forget_memory', 'practices_for', 'practice_cite']);
   });
 });
 

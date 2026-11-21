@@ -11,6 +11,8 @@ import type { AgentCache } from './agent-cache';
 import type { AgentRouter } from './agent-router';
 import type { AgentFace } from './faces';
 import type { ContextMode, RunContext } from './project-context';
+import type { BlockedKind } from './quota-block';
+import type { SawMemorySource } from './what-it-saw';
 
 export type { AgentMessage };
 
@@ -704,6 +706,8 @@ export interface RemoteRun {
   usage?: TokenUsage;
   /** What the agent reported through Landflow's landflow-harness mod (a Claude Code agent on kagent). */
   trace?: AgentTraceSummary;
+  /** C05: with state `blocked`, why: a provider's quota or credits ran out (the Run Trace badge and the node's check read it). */
+  blocked?: { kind: BlockedKind; message: string; label: string };
 }
 
 /** One step of a session, as the UI shows it. Entries are upserted by id while a run streams. */
@@ -901,6 +905,10 @@ export interface AgentSession {
   execution?: SessionExecution;
   /** The project block this session's run got, and the date it pinned (a resume after approval reuses both). */
   context?: RunContext;
+  /** C09: the memories the last run recalled (ids, versions, scores; never the text), for the Sessions tab. */
+  memory?: SawMemorySource[];
+  /** C09: the exact block, only when the run's trace content is `full` (the same rule as the journal's `saw.memoryText`). */
+  memoryText?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -947,4 +955,20 @@ export interface ModelOption {
   model: string;
   label: string;
   description?: string;
+}
+
+/** One thing an agent remembers about one person (C09): what the agent page lists, and what `forget` and `restore` act on. */
+export interface AgentMemoryView {
+  /** The short handle the prompt shows (`m_…`); the full id goes to the Run Trace. */
+  id: string;
+  text: string;
+  /** Always in the agent's prompt for this person. */
+  static: boolean;
+  version: number;
+  /** When it was first said (ISO). */
+  at: string;
+  /** When it was last said again (ISO). */
+  lastSeen: string;
+  forgottenAt?: string;
+  forgetReason?: string;
 }
