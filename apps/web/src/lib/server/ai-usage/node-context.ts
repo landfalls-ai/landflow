@@ -4,12 +4,15 @@
  * It does not depend on OpenTelemetry's context manager (off under OTEL_SDK_DISABLED and in tests).
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
+import type { NodeRecord } from '@landflow/sdk';
 import { singleton } from '../singleton';
 
 export interface ActiveNode {
   id: string;
   name: string;
   type: string;
+  /** C14: records a check or artifact on this node's span (the engine's `report`); absent outside an engine run. */
+  report?: (record: NodeRecord) => void;
 }
 
 const storage = singleton('ai-active-node', () => new AsyncLocalStorage<ActiveNode>());

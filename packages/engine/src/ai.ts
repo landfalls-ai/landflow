@@ -142,6 +142,11 @@ export interface LanguageModel {
 export interface AgentTool extends ToolSpec {
   /** Node id that implements the tool (for UI highlighting). */
   nodeId?: string;
+  /**
+   * The tool says it only reads (an MCP server's `readOnlyHint` annotation). A hint a server may get wrong, so it
+   * informs, never enforces: a caller may skip an approval for it, not a safety check.
+   */
+  readOnlyHint?: boolean;
   invoke(input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
 }
 
