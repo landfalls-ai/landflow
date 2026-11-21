@@ -5,6 +5,7 @@
  * exports them as JSON Schema for the Python/Go SDKs and the docs.
  */
 import { z } from 'zod';
+import { checkMemoryProvider } from './memory-provider';
 import type { CompositeTypeDescriptor, CredentialTypeDescriptor, NodeDescriptor, NodeMatcher, PluginManifest, PropertyDescriptor } from './types';
 // In a browser, skip zod's `new Function` probe: under the host's page CSP (no unsafe-eval) it is a reported violation.
 // This must run before the first schema is built below; parsing stays the same, just without code generation.
@@ -125,6 +126,7 @@ export const nodeDescriptorSchema: z.ZodType<NodeDescriptor> = z.object({
   properties: z.array(propertySchema),
   usableAsTool: z.boolean().optional(),
   meterAiUsage: z.boolean().optional(),
+  memoryProvider: z.boolean().optional(),
   toolDescription: z.string().optional(),
   delegates: z.boolean().optional(),
   toolInputSchema: z.record(z.string(), z.any()).optional(),
@@ -139,6 +141,11 @@ export const nodeDescriptorSchema: z.ZodType<NodeDescriptor> = z.object({
   mcp: z.literal(false).optional(),
   outputSchema: jsonSchemaObject.optional(),
   toolAnnotations: toolAnnotationsSchema.optional(),
+}).superRefine((node, ctx) => {
+  // C07 AS-6: a memory provider with a wrong shape fails registration, naming the node.
+  if (!node.memoryProvider) return;
+  const problem = checkMemoryProvider(node);
+  if (problem) ctx.addIssue({ code: 'custom', message: problem });
 });
 
 export const credentialTypeSchema: z.ZodType<CredentialTypeDescriptor> = z.object({

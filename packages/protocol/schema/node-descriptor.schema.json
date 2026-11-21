@@ -232,6 +232,9 @@
     "meterAiUsage": {
       "type": "boolean"
     },
+    "memoryProvider": {
+      "type": "boolean"
+    },
     "toolDescription": {
       "type": "string"
     },

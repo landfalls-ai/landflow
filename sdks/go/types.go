@@ -263,6 +263,9 @@ type NodeDescriptor struct {
 	// MeterAiUsage says the node calls a model and reports each call with ExecuteContext.Model: the host counts those
 	// calls in AI usage and refuses the node before it runs once a cap is reached (docs/protocol.md "Model records").
 	MeterAiUsage bool `json:"meterAiUsage,omitempty"`
+	// MemoryProvider flags the node as a memory provider: its operation option holds search, profile, add, forget
+	// and list, and a project can choose it as its memory backend (docs/protocol.md "Memory providers").
+	MemoryProvider bool `json:"memoryProvider,omitempty"`
 }
 
 // NodeCredentialRequirement names a credential type a node can use, by the
