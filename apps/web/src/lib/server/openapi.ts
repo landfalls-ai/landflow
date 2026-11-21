@@ -2350,6 +2350,14 @@ function paths(): Record<string, Record<string, Json>> {
     query: [text('q', 'Search'), text('subjectType', 'workflow, agent, nodeType, credential, instance or entity (subjectId is then <type>/<id>)'), text('subjectId', 'One subject'), text('kind', 'purpose, health, cost, failure, slow, change, dependency, usage, quality or intended'), text('status', 'active (default), stale or all'), text('limit', 'At most this many (1 to 500, default 100)'), text('history', '1 to include earlier versions'), text('forgotten', '1 to list forgotten facts')],
     responses: { 200: reply('The facts', object({ facts: array({ type: 'object' }) }, ['facts'])), 400: invalid },
   });
+  add('get', '/api/brain/graph', {
+    tag: 'Second brain',
+    id: 'brainGraph',
+    summary: 'The memory graph: facts and their subjects',
+    description: 'A page of facts as nodes with the subjects they are about (workflow, agent, entity, project) and edges: `about` from a fact to its subject and, with `history=1`, `updates`, `extends` or `derives` from a version to the one that follows. `about` limits it to one subject (`workflow/<id>`, `agent/<id>`, `entity/<type>/<id>` or a page’s `<type>/<id>`; 404 when you may not read it) and `depth=2` adds the subjects one link away (at most 50). Up to `limit` facts a page (500), newest first, paged by `cursor`; facts you may not see are left out in SQL. `forgotten=1` adds the forgotten facts you may restore, marked. Statements are plain text. A person’s private agent memory never appears.',
+    query: [text('about', 'One subject'), text('depth', '1 (default) or 2'), text('history', '1 adds earlier versions and version edges'), text('forgotten', '1 adds forgotten facts you may restore'), text('limit', '1 to 500 (default 500)'), text('cursor', 'nextCursor of the page before')],
+    responses: { 200: reply('The graph page', object({ nodes: array({ type: 'object' }), edges: array({ type: 'object' }), nextCursor: { type: 'string' } }, ['nodes', 'edges'])), 400: invalid, 404: notFound },
+  });
   add('get', '/api/brain/facts/{id}/versions', {
     tag: 'Second brain',
     id: 'listFactVersions',

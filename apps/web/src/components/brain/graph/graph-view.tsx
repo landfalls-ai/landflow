@@ -51,7 +51,6 @@ export function GraphView({ about, onOpenPage }: { about?: string; onOpenPage: (
   const [versions, setVersions] = useState<BrainFact>();
   // Bumped by every reset load (a toggle, the first read), so the canvas fits again then and not after Load more.
   const [generation, setGeneration] = useState(0);
-  const [truncated, setTruncated] = useState(false);
   const [hover, setHover] = useState<{ node: GraphNode; x: number; y: number }>();
   const seq = useRef(0);
 
@@ -65,7 +64,6 @@ export function GraphView({ about, onOpenPage }: { about?: string; onOpenPage: (
           setData((current) => mergePage(reset ? EMPTY : current, page, history));
           setCursor(page.nextCursor);
           if (reset) setGeneration((g) => g + 1);
-          setTruncated(Boolean(page.truncated));
           setError(undefined);
         })
         .catch((e: Error) => mine === seq.current && setError(e.message))
@@ -103,11 +101,6 @@ export function GraphView({ about, onOpenPage }: { about?: string; onOpenPage: (
           </Button>
         )}
       </div>
-      {truncated && (
-        <p className="text-[12px] text-t3" role="status">
-          This brain has more facts than one graph reads, so the oldest are left out. Open a page’s graph to see its own facts.
-        </p>
-      )}
       {error && (
         <p role="alert" className="text-[13px] text-rd">
           {error}

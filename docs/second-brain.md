@@ -483,6 +483,26 @@ each problem the link has, in Landflow's words, with a link to its Notion page a
 adds them. A project with no link shows none of it. Setting it up is the project's Brain card
 ([notion-brain.md](features/notion-brain.md#setting-it-up)).
 
+#### The graph
+
+The Brain page's **Graph** tab (the graph button in the activity bar, **Show the graph** in ⌘P, and a button in a page's
+breadcrumb bar for that page's graph) draws what the brain knows as a force graph: subjects (workflows, agents, pages and
+projects) as squares, facts as dots, and a thin **About** line from each fact to its subject. **Show history** adds the earlier
+versions of a fact, faded, joined to the next version by an arrow: **Updates** (a new version of the same fact), **Extends** and
+**Derives** (a fact built on another). **Show forgotten** adds the facts you may restore, dashed and red; stale facts are hollow.
+A page's graph has **This page** and **One link away** (the pages it shares work with, or the agents and workflows it uses, at
+most 50). Hover a node for its words (always as text), kind, version, confidence and dates; click a subject to open its page and
+a fact to see its [versions](#fact-versions). Drag to pan, scroll or **+** and **-** to zoom, **0** or **Fit** to see everything,
+arrows to pan. The layout settles in the browser in about two seconds and then stops, and it pauses while the tab is hidden.
+
+It shows 500 facts at a time (**Load more** adds the next 500; the layout keeps where the first ones settled). What you see is
+what the facts list shows you: facts about workflows, agents and pages you cannot open are left out in the query, and a person's
+private agent memory is never in it. A phone shows a list grouped by subject instead, each later version indented under the one it
+replaced (a **List** switch gives the same on a desktop, which is also the way to read it with a screen reader).
+`GET /api/brain/graph` ([api.md](reference/api.md)) serves it. The layout code is adapted from Supermemory's MIT-licensed
+`memory-graph`; its notice is in `apps/web/src/components/brain/graph/NOTICE.md` and the repository's `THIRD_PARTY_NOTICES.md`.
+Code: `components/brain/graph/`, `lib/server/brain/graph.ts`; tests `test/brain-graph.test.ts`, `test/brain-graph-view.test.ts`.
+
 #### The vector collections
 
 Workflows and agents can't read or write `landflow-brain` and `landflow-brain-<project>` with a Vector Store node: the

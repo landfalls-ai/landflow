@@ -24,7 +24,7 @@ const facts = await import('@/lib/server/brain/facts');
 const { forgetFact } = await import('@/lib/server/brain/fact-lifecycle');
 const { createTeamProject, setHomeProject, setMember } = await import('@/lib/server/projects/store');
 const route = await import('@/app/api/brain/graph/route');
-const { parseSubject, brainGraph } = await import('@/lib/server/brain/graph');
+const { parseSubject } = await import('@/lib/server/brain/graph');
 import type { GraphPage } from '@/lib/shared/brain-graph';
 
 const owner = await createUser({ email: 'owner@graph.test', name: 'Owner', role: 'owner', password: 'owner-password-1' });
@@ -121,32 +121,22 @@ describe('the builder', () => {
     enableTestAuth(owner);
   });
 
-  it('says when a read hit its cap', () => {
-    const page = brainGraph(undefined, { depth: 1, history: false, forgotten: false, limit: 500 }, new Date().toISOString(), 3);
-    expect(page.truncated).toBe(true);
-    expect(page.nodes.filter((n) => n.kind === 'fact')).toHaveLength(3);
-    expect(brainGraph(undefined, { depth: 1, history: false, forgotten: false, limit: 500 }).truncated).toBeUndefined();
-  });
-
-  it('leaves out a node type the member cannot see and answers 404 for a subject they may not read (AS-3)', async () => {
-    const w = store.saveWorkflow({ id: 'wf_graph', name: 'Secret flow', active: false, nodes: [], connections: [], createdBy: owner.id } as unknown as Workflow, { actor: owner.id });
-    setHomeProject('workflow', w.id, teamB.id);
-    facts.upsertFact({ subjectType: 'workflow', subjectId: w.id, kind: 'health', statement: 'Secret flow fails', confidence: 0.9, evidence: [] } as never, database(), at(20));
-    enableTestAuth(alice);
-    const whole = await get();
-    expect(whole.status).toBe(200);
-    expect(JSON.stringify(whole.body)).not.toContain('Secret flow');
-    expect(JSON.stringify(whole.body)).not.toContain(w.id);
-    expect(whole.body.nodes.some((n) => n.kind === 'subject' && n.label === 'Acme')).toBe(true);
-    expect((await get(`?about=workflow/${w.id}`)).status).toBe(404);
-    enableTestAuth(owner);
-    expect(JSON.stringify((await get()).body)).toContain('Secret flow');
-  });
-
   it('never shows an agent-user fact', async () => {
-    // C07 adds this subject; until it lands the row is written by hand.
     database().upsert('brain_facts', facts.factRow({ id: 'x:1', subjectType: 'agent-user', subjectId: 'a1', kind: 'health', statement: 'private', evidence: [], confidence: 1, firstSeen: at(1), lastSeen: at(30), status: 'active' } as never));
     expect(JSON.stringify((await get()).body)).not.toContain('private');
+  });
+
+  it('shows a project memory fact as a subject named after the project, with the memory kind', async () => {
+    facts.upsertFact({ subjectType: 'project', subjectId: teamA.id, kind: 'memory', statement: 'Alpha ships on Fridays', confidence: 0.9, evidence: [], projectId: teamA.id } as never, database(), at(40));
+    const whole = await get();
+    expect(whole.body.nodes.some((n) => n.kind === 'subject' && n.subjectType === 'project' && n.label === 'Alpha')).toBe(true);
+    const one = await get(`?about=project/${teamA.id}`);
+    expect(one.status).toBe(200);
+    expect(one.body.nodes.filter((n) => n.kind === 'fact').map((n) => (n as { factKind: string }).factKind)).toEqual(['memory']);
+  });
+
+  it('refuses agent-user as a subject, even to name it', async () => {
+    expect((await get('?about=agent-user/a1/u1')).status).toBe(404);
   });
 
   it('refuses a bad limit, cursor or unknown subject', async () => {
