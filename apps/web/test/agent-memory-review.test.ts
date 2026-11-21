@@ -31,7 +31,7 @@ const { newSession } = await import('@/lib/server/agents/runtime');
 const { asAuthor } = await import('@/lib/server/agents/author');
 const { A2aError, hitlRequestOf, KAGENT_HITL_EXTENSION } = await import('@/lib/server/a2a/client');
 const { memoryToolOf } = await import('@/lib/server/kagent/memory-scrub');
-const { redactValue } = await import('@/lib/server/secrets/redact');
+const { redactValue, redactText, redactJsonText, containsSecretValue } = await import('@/lib/server/secrets/redact');
 const { hideMemoryText } = await import('@/lib/server/journal/memory-visibility');
 const { createUser } = await import('@/lib/server/auth/users');
 const { createTeamProject, setHomeProject, setMember } = await import('@/lib/server/projects/store');
@@ -250,8 +250,14 @@ describe('Claude Code names MCP tools mcp__<server>__<tool> (1, 8)', () => {
 describe('the key is registered with the central redactor, and scrubbed from errors, questions, hints and the mod\'s events (4)', () => {
   const KEY = memoryKeyFor('agent_x', 'usr_a');
 
-  it('the redactor learns a minted key', () => {
+  it('the redactor holds the key’s shape, so a key minted in any process is redacted without being remembered', () => {
     expect(JSON.stringify(redactValue({ error: `failed with ${KEY}` }))).not.toContain(KEY);
+    // A key-shaped string this process never minted (another process's), in text and in JSON text.
+    const foreign = `mk_${'A'.repeat(40)}.${'B'.repeat(43)}`;
+    expect(redactText(`x ${foreign} y`)).toBe('x [redacted] y');
+    expect(redactJsonText(JSON.stringify({ a: `k ${foreign}` }))).not.toContain(foreign);
+    expect(containsSecretValue(foreign)).toBe(true);
+    expect(containsSecretValue('nothing here')).toBe(false);
   });
 
   it('an A2A error, a question and an approval hint carry no key', () => {
@@ -266,6 +272,16 @@ describe('the key is registered with the central redactor, and scrubbed from err
     expect(ingestTrace(trace.id, [{ type: 'guard', rule: 'r', tool: 'Bash', arg: `cat ${KEY}`, reason: `saw ${KEY}` }])).toBe('ok');
     expect(JSON.stringify(trace.summary())).not.toContain('mk_');
     expect(JSON.stringify(trace.summary())).toContain('[memory key]');
+  });
+
+  it('is scrubbed before the cut, so a key at the edge of a field leaves no part of itself; a spawn description too', () => {
+    const trace = openTrace({ baseUrl: 'http://x' });
+    // The key starts 150 characters in: a 200-character cut of the raw text would keep 50 of its characters.
+    const edge = `${'x'.repeat(150)}${KEY}`;
+    expect(ingestTrace(trace.id, [{ type: 'guard', rule: 'r', tool: 'Bash', arg: edge }, { type: 'spawn', agent: 'sub', description: edge }])).toBe('ok');
+    const text = JSON.stringify(trace.summary());
+    expect(text).not.toMatch(/mk_/);
+    expect(text).not.toContain(KEY.slice(3, 40));
   });
 });
 

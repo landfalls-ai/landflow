@@ -12,6 +12,15 @@
  */
 import { singleton } from '../singleton';
 
+/**
+ * Shapes redacted wherever they appear, in every process, without being remembered first: an agent's memory key (C09, kagent/memory-scrub.ts).
+ * A key is minted per conversation, so listing each one among the remembered values would push real secrets out of the list.
+ */
+/** What an agent's memory key looks like (kagent/memory-scrub.ts re-exports it). Global: use it with `replace`. */
+export const MEMORY_KEY_PATTERN = /mk_[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{20,}/g;
+const SHAPES: readonly RegExp[] = [MEMORY_KEY_PATTERN];
+const patterned = (text: string): string => (text.includes('mk_') ? SHAPES.reduce((out, shape) => out.replace(shape, REDACTED), text) : text);
+
 export const REDACTED = '[redacted]';
 /** Shorter values are left alone. */
 export const MIN_LENGTH = 6;
@@ -64,7 +73,8 @@ export function forgetSecretValues(): void {
   state.sorted = undefined;
 }
 
-export const hasSecretValues = () => state.values.size > 0;
+/** Always true now: the pattern rules apply with no remembered value. */
+export const hasSecretValues = () => SHAPES.length > 0 || state.values.size > 0;
 
 function sorted(): string[] {
   state.sorted ??= [...state.values.keys()].sort((a, b) => b.length - a.length);
@@ -73,8 +83,9 @@ function sorted(): string[] {
 
 /** A text with every remembered value replaced. */
 export function redactText(text: string): string {
-  if (!state.values.size || !text) return text;
-  let out = text;
+  if (!text) return text;
+  let out = patterned(text);
+  if (!state.values.size) return out;
   for (const value of sorted()) if (out.includes(value)) out = out.split(value).join(REDACTED);
   return out;
 }
@@ -83,8 +94,10 @@ export function redactText(text: string): string {
 const escaped = (value: string) => JSON.stringify(value).slice(1, -1);
 
 /** JSON text with the values replaced inside its string literals (keys included) only, so the document stays valid. */
-export function redactJsonText(text: string): string {
-  if (!state.values.size || !text) return text;
+export function redactJsonText(input: string): string {
+  if (!input) return input;
+  const text = patterned(input); // a key's characters need no JSON escaping
+  if (!state.values.size) return text;
   const values = sorted();
   if (!values.some((value) => text.includes(escaped(value)))) return text;
   return text.replace(/"(?:[^"\\]|\\.)*"/g, (literal) => {
@@ -99,7 +112,6 @@ export function redactJsonText(text: string): string {
 
 /** A copy of `value` with every remembered value replaced in its strings; `value` itself when nothing matched. */
 export function redactValue<T>(value: T, depth = 0): T {
-  if (!state.values.size) return value;
   if (typeof value === 'string') return redactText(value) as T;
   if (!value || typeof value !== 'object' || depth > 64) return value;
   if (ArrayBuffer.isView(value)) return value;
@@ -134,6 +146,7 @@ export function redactValue<T>(value: T, depth = 0): T {
 
 /** Whether a text holds a remembered value (tests and checks). */
 export function containsSecretValue(text: string): boolean {
+  if (SHAPES.some((shape) => new RegExp(shape.source).test(text))) return true;
   if (!state.values.size) return false;
   return sorted().some((value) => text.includes(value) || text.includes(escaped(value)));
 }

@@ -37,7 +37,7 @@ export type GuardMode = 'strict' | 'enforce' | 'report' | 'off';
 const count = z.number().finite().min(0).max(1e12).catch(0);
 /** The mod's clock, epoch ms (about 1.8e12 now: over the cap of the counts). */
 const clock = z.number().finite().min(0).max(1e14).catch(0);
-const text = (max: number) => z.string().max(4_000).transform((s) => s.slice(0, max));
+const text = (max: number) => z.string().max(4_000).transform((s) => scrubKeys(s).slice(0, max)); // a memory key is taken out before the cut, so a cut cannot leave a part of one
 const eventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('start'), at: clock.optional(), mod: text(40).optional(), guard: z.enum(['strict', 'enforce', 'report', 'off']).optional() }),
   z.object({
@@ -99,7 +99,7 @@ const emptySummary = (): AgentTraceSummary => ({
 function apply(trace: Trace, event: TraceEvent) {
   // An ask is a person's business, not the summary's: it goes to the run (a2a/agent-asks.ts) and the mod polls the answer.
   if (event.type === 'ask') {
-    openAsk(trace.id, trace.run, { askId: event.askId, command: scrubKeys(event.command), cwd: event.cwd, reason: event.reason && scrubKeys(event.reason), agent: event.agent });
+    openAsk(trace.id, trace.run, { askId: event.askId, command: event.command, cwd: event.cwd, reason: event.reason, agent: event.agent });
     return;
   }
   const s = (trace.summary ??= emptySummary());
@@ -145,7 +145,7 @@ function apply(trace: Trace, event: TraceEvent) {
       s.tools.ms += event.ms ?? 0;
       break;
     case 'guard': {
-      const decision: TraceGuardDecision = { rule: event.rule, tool: event.tool, action: event.action ?? 'deny', ...(event.arg && { arg: scrubKeys(event.arg) }), ...(event.reason && { reason: scrubKeys(event.reason) }), ...(event.agent && { agent: event.agent }) };
+      const decision: TraceGuardDecision = { rule: event.rule, tool: event.tool, action: event.action ?? 'deny', ...(event.arg && { arg: event.arg }), ...(event.reason && { reason: event.reason }), ...(event.agent && { agent: event.agent }) };
       if (s.guard.length < MAX_GUARD) s.guard.push(decision);
       break;
     }

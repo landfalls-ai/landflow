@@ -12,6 +12,7 @@ import { resolvePrincipal, currentPrincipal } from './auth/guard';
 import { error } from './http';
 import { getUser } from './auth/users';
 import { liveEventFilter } from './projects/events';
+import { hideMemoryText } from './journal/memory-visibility';
 import { sseResponse, type SseOptions } from './sse';
 
 export const REVALIDATE_MS = 30_000;
@@ -43,13 +44,17 @@ function reauthorize(request: Request): () => Filter | undefined {
 export function eventStream(request: Request, options: EventStreamOptions = {}): Response {
   const authorize = options.authorize ?? reauthorize(request);
   let visible = authorize();
+  // C09: the reader the journal's memory text is checked against (a run's exact memory block is one person's, docs/agents.md); refreshed with the access re-check.
+  let reader: { id: string; role: string } | undefined = currentPrincipal()?.user;
   if (!visible) return error('Sign in again', 401);
   const lastId = request.headers.get('last-event-id');
   return sseResponse(
     request,
     (send, close) => {
       const emit = (event: SeqEvent) => {
-        if (visible?.(event)) send(event, { id: `${bus.bootId}.${event.seq}` });
+        if (!visible?.(event)) return;
+        const out = event.channel === 'journal' && Array.isArray((event as { events?: unknown[] }).events) ? ({ ...event, events: hideMemoryText((event as unknown as { events: Array<{ type: string }> }).events as never[], reader as never) } as SeqEvent) : event;
+        send(out, { id: `${bus.bootId}.${event.seq}` });
       };
       let afterSeq: number | undefined;
       if (lastId) {
@@ -68,7 +73,10 @@ export function eventStream(request: Request, options: EventStreamOptions = {}):
           next = undefined;
         }
         if (!next) close();
-        else visible = next;
+        else {
+          visible = next;
+          if (reader) reader = getUser(reader.id) ?? reader;
+        }
       }, options.revalidateMs ?? REVALIDATE_MS);
       return () => {
         unsubscribe();

@@ -61,7 +61,7 @@ vi.mock('@/lib/server/agents/models', () => ({
 const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
 const { agentStore } = await import('@/lib/server/agents/store');
-const { newSession, runAgent, systemPromptParts, configFor } = await import('@/lib/server/agents/runtime');
+const { newSession, runAgent, systemPromptParts, configFor, decide } = await import('@/lib/server/agents/runtime');
 const { withPractices } = await import('@/lib/server/project-context/practices');
 const { database } = await import('@/lib/server/db');
 const { credentials } = await import('@/lib/server/credentials/vault');
@@ -403,4 +403,36 @@ afterAll(() => {
     if (previousEnv[k] === undefined) delete process.env[k];
     else process.env[k] = previousEnv[k];
   }
+});
+
+describe('C09 a run that paused goes on with the memory of the person it ran for', () => {
+  it('A opened the session, B chatted, a tool paused, B approved: recall, remember and the writes are B’s', async () => {
+    const { registry } = await import('@/lib/server/plugins/registry');
+    const { corePlugin } = await import('@/lib/server/nodes');
+    registry.registerBuiltin(corePlugin);
+    const { rememberMemory } = await import('@/lib/server/agents/memory');
+    const facts = await import('@/lib/server/brain/facts');
+    const agent = agentOf({ memory: { crossSession: true } as AgentConfig['memory'], tools: [{ id: 't1', type: 'node', name: 'Echo', description: 'Echo', nodeType: 'core.noOp', parameters: {}, requireApproval: true }] } as never);
+    await rememberMemory(agent.id, 'u_a', { fact: 'A likes tea', static: true });
+    await rememberMemory(agent.id, 'u_b', { fact: 'B likes coffee', static: true });
+    const session = newSession(agent, { source: 'test', userId: 'u_a', version: 'draft' });
+    script.push(() => ({ toolCalls: [{ id: 'c1', name: 'Echo', input: {} }], stopReason: 'tool_use' }));
+    seenSystems.length = 0;
+    const paused = await runAgent({ agent, session, message: 'do it', memoryUser: 'u_b' });
+    expect(paused.reason).toBe('awaiting_approval');
+    expect(seenSystems[0]).toContain('B likes coffee');
+    expect(seenSystems[0]).not.toContain('A likes tea');
+    // B approves (the approvals route passes no memory user): the resumed run is still B's.
+    script.push(() => ({ toolCalls: [{ id: 'c2', name: 'remember', input: { fact: 'B moved to Porto' } }], stopReason: 'tool_use' }), () => ({ text: 'done' }));
+    seenSystems.length = 0;
+    await decide(agent, paused.session.id, 'c1', true, { by: 'u_b' });
+    expect(seenSystems.length).toBeGreaterThan(0);
+    for (const system of seenSystems) {
+      expect(system).toContain('B likes coffee');
+      expect(system).not.toContain('A likes tea');
+    }
+    const live = (user: string) => facts.listFacts({ subjectType: 'agent-user', subjectId: `${agent.id}/${user}`, limit: 50 }, database()).map((f) => f.statement);
+    expect(live('u_b')).toContain('B moved to Porto');
+    expect(live('u_a')).toEqual(['A likes tea']);
+  });
 });

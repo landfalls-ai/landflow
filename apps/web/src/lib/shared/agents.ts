@@ -892,7 +892,7 @@ export interface AgentSession {
   messages: AgentMessage[];
   timeline: TimelineEntry[];
   /** Tool calls waiting for a person, with the results of the same turn's other calls. */
-  pending?: { calls: PendingCall[]; results: Array<{ id: string; name: string; content: string; isError?: boolean }>; iterations: number };
+  pending?: { calls: PendingCall[]; results: Array<{ id: string; name: string; content: string; isError?: boolean }>; iterations: number; /** C09: whose memory the paused run read and wrote; the resumed run goes on with it, whoever approves (never falls back to the session's first user). */ memoryUser?: string };
   /** The conversation with each A2A agent (by capability id): its context, and a task waiting for an answer. */
   remoteContexts?: Record<string, { contextId: string; taskId?: string; question?: { id: string; questions: string[] } }>;
   usage: TokenUsage;

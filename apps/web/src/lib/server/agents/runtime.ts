@@ -434,7 +434,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       persona: sawPersona(cleanPersona(config.persona)),
       practices: runCtx.practices,
       ...sawMem,
-      ...(sawMem.memoryText && { memoryFor: memoryUser, memoryAgent: agent.id }),
+      ...(recalled?.text && sawMem.memoryText && { memoryFor: memoryUser, memoryAgent: agent.id }),
     });
     // The session record keeps what the run recalled by the same content rule as the journal (applyContent).
     const kept = sessionMemory(sawMem.memory ?? [], sawMem.memoryText, session.execution ? store.getWorkflow(session.execution.workflowId)?.settings?.traceContent : undefined);
@@ -617,7 +617,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       // A remote agent that paused again: wait for the next decision, keeping what is settled.
       const again = decided.filter((d): d is { pending: PendingCall } => !isResult(d)).map((d) => d.pending);
       if (again.length) {
-        session.pending = { calls: again, results: settled, iterations };
+        session.pending = { calls: again, results: settled, iterations, memoryUser };
         return { reason: 'awaiting_approval' };
       }
       const order = pendingOrder(session.messages);
@@ -786,7 +786,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
       // Remote agents that paused for an approval of their own tool calls wait with the calls that need one.
       waiting.push(...ran.filter((r): r is { pending: PendingCall } => !isResult(r)).map((r) => r.pending));
       if (waiting.length) {
-        session.pending = { calls: waiting, results, iterations };
+        session.pending = { calls: waiting, results, iterations, memoryUser };
         return { reason: 'awaiting_approval' };
       }
       const order = turn.toolCalls.map((c) => c.id);
@@ -965,8 +965,9 @@ export async function decide(
     return { status: 'waiting', session: saved };
   }
   const { by, line: _line, refusal: _refusal, ...runOptions } = options;
+  const resumeFor = session.pending?.memoryUser;
   // The person deciding goes on with a chat; a workflow's session goes on for its run.
-  const result = await runAgent({ agent, session, approvals: 'ask', ...runOptions, ...(!session.execution && by && { caller: { startedBy: by } }) });
+  const result = await runAgent({ agent, session, approvals: 'ask', ...(resumeFor && { memoryUser: resumeFor }), ...runOptions, ...(!session.execution && by && { caller: { startedBy: by } }) });
   return { status: 'resumed', ...result };
 }
 

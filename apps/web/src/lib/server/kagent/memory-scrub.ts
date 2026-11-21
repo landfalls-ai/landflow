@@ -5,8 +5,8 @@
  * the A2A client can use it.
  */
 
-/** What a memory key looks like. Always use it with `replace` (it is global, so `test` would keep state). */
-export const MEMORY_KEY_PATTERN = /mk_[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{20,}/g;
+import { MEMORY_KEY_PATTERN } from '../secrets/redact';
+export { MEMORY_KEY_PATTERN };
 
 export const MEMORY_KEY_REDACTED = '[memory key]';
 

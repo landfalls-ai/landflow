@@ -41,6 +41,8 @@ No new page.
 ## Second review
 
 - A kagent deployment made before this commit has no stored `kagent.a2aUrl` (unless the landflow-harness mod's `trace.a2aUrl` was set) and gets no memory key until it is redeployed.
-- The test chat's approval route resumes a session with its own user for `remember` and `forget_memory` writes made after the approval (a resumed run does not read memory again); the first message's run uses the person chatting.
+- A run that pauses for an approval keeps whose memory it ran for (`session.pending.memoryUser`); the resumed run reads and writes that person's memory again (a resumed run reads memory at its start like any run), whoever approves.
 - `saw.memoryFor` and `saw.memoryAgent` (who the memory text is for) are on the journal's saw event and are removed with the text for readers who may not see it.
 - Telegram's author fix is tested through `asAuthor` (agents/author.ts), which all three channel handlers use; the Telegram handler itself has no harness.
+- The live journal stream and the journal read route both hide `saw.memoryText` (and `memoryFor`, `memoryAgent`) from anyone but the person, the agent's editors and admins; a queue-mode relay delivers through the same emit.
+- A memory key's shape (`mk_…`) is a pattern rule of the central redactor (`secrets/redact.ts`), so it is redacted in every process without being remembered; `hasSecretValues()` is now always true.
