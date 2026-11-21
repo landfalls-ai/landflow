@@ -4,7 +4,7 @@
 // Adapted in spirit from Supermemory's `wrapMemoryContext` / `escapeMemoryContextDelimiters` (MIT).
 
 export const MEMORY_TAG = 'landflow-memory';
-export type MemorySource = 'agent-memory' | 'team-notebook' | 'brain-facts';
+export type MemorySource = 'agent-memory' | 'team-notebook' | 'brain-facts' | 'memory';
 
 // A `<` that starts any tag of the landflow- family (open or close, whole or cut, with look-alike spacing).
 // Invisible format characters (zero-width space, soft hyphen, ...: \p{Cf}) count as spacing, as a model may read through them.

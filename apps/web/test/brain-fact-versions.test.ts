@@ -54,7 +54,7 @@ describe('T-1 migrations', () => {
         "INSERT INTO brain_facts (id, subject_type, subject_id, kind, project_id, status, last_seen, data) VALUES ('workflow:old:health', 'workflow', 'old', 'health', NULL, 'active', 'x', '{}')",
       )
       .run();
-    expect(migrateSqlite(sqlite, MIGRATIONS)).toEqual([2912, 2913]);
+    expect(migrateSqlite(sqlite, MIGRATIONS)).toEqual(expect.arrayContaining([2912, 2913])) // later migrations (C07's 2915 ...) run after;
     const row = sqlite.prepare("SELECT version, is_latest, root_id, is_static, parent_id, relation FROM brain_facts WHERE id = 'workflow:old:health'").get();
     expect({ ...row }).toEqual({ version: 1, is_latest: 1, root_id: 'workflow:old:health', is_static: 0, parent_id: null, relation: null });
   });

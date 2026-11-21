@@ -162,6 +162,7 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   // C02:
   'brain.fact_forgotten': 'Forgot a fact in the brain',
   'brain.fact_restored': 'Restored a forgotten fact in the brain',
+  'brain.memory_added': 'Added a memory to a project’s brain',
   'notebook.note_forgotten': 'Forgot a team note',
   'notebook.note_restored': 'Restored a forgotten team note',
   // NB05:
