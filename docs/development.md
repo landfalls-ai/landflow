@@ -117,6 +117,27 @@ filesystem access causes tracing of the whole project".
   `http://127.0.0.1:54566` with dummy keys and `AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null`, so
   `~/.aws` is never read. Use only the development credentials in `deploy/.env.example`.
 
+## History fragments
+
+Every change records its [history.md](history.md) rows in a fragment, so parallel branches never conflict on that page.
+Never edit `docs/history.md` on a package branch.
+
+- **File**: `docs/history.d/<yyyy-mm-dd>-<slug>.md`; the slug is lowercase letters, digits and dashes, up to 60
+  characters. `docs/history.d/README.md` is the one other file allowed; it is never assembled.
+- **Content**: an optional first line `section: <heading text>` (no `## `) names the date section the rows go under
+  (default: the last `## ` section of `history.md`); then one or more rows
+  `| (this change) | <what changed, in plain words> | [page](link) |`. Exactly three columns (the third may be empty);
+  write a `|` inside text as `\|`. Blank lines are ignored; nothing else is allowed.
+- **Links** are paths relative to `docs/` (`reference/api.md#anchor`, or `<../reports/A B.md>` for spaces); the file
+  must exist, anchors are not checked, `http(s)://` URLs are not checked.
+- `pnpm check:history` fails (exit 1, `docs/history.d/<file>:<line>: <problem>`) on a bad name or first line, a row
+  without three columns, a missing link target, or a row that `history.md` already has (delete that fragment). With no
+  fragments it passes. `pnpm check` runs it, and `pnpm test:scripts` (the script's tests).
+- `pnpm history:assemble` appends every fragment's rows to `history.md` under its section (creating `## <section>` with
+  the table header when it is missing), in file-name order, then deletes the fragments. The integrator runs it once per
+  wave, after the last merge and before the gate; running it again changes nothing. It leaves every other row as it is,
+  so a row added to `history.md` directly (an old branch, a hotfix) stays.
+
 ## Working with Claude Code: constitution, agents, feature skill
 
 Claude Code works on this repository with three things checked in beside the code:

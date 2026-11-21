@@ -102,4 +102,4 @@ gate results and the live checks. Merge only when the person says so.
 - Sub-agents never start sub-agents; you orchestrate.
 - Never touch the person's own checkout, other worktrees or `apps/web/.data`.
 - Local only: no cloud, no image push, LocalStack for AWS, development credentials from `deploy/.env.example`.
-- Every commit gets a `docs/history.md` row; the docs move with the code.
+- Every change writes its history rows as a fragment in `docs/history.d/` (never edit `docs/history.md` on a package branch; the integrator runs `pnpm history:assemble` once per wave); the docs move with the code.

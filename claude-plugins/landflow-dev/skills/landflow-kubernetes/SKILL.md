@@ -109,8 +109,8 @@ plugin itself is built first with an SDK: see `docs/plugins.md` and the SDK skil
 4. Build the image (step 3), render, apply. No host change is needed: discovery finds it.
 5. Check (step 7). A plugin in a namespace other than the host's needs `LANDFLOW_K8S_NAMESPACES` and a Role there, or
    the `orbstack-cluster-wide` overlay.
-6. Document it: the table in `docs/platform/kubernetes.md`, `docs/deployment.md` if the steps differ, and a row in
-   `docs/history.md`.
+6. Document it: the table in `docs/platform/kubernetes.md`, `docs/deployment.md` if the steps differ, and a history
+   fragment in `docs/history.d/` (never `docs/history.md`; see `docs/development.md#history-fragments`).
 
 ## 7. Check health
 

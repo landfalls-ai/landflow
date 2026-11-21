@@ -36,8 +36,9 @@ engine, protocol, SDK, transports and CLI are in `packages/`, the Go and Python 
 - Tests sit next to their package; route tests call handlers directly as a synthetic owner (`apps/web/test/setup.ts`).
   Tests against real services skip unless `LANDFLOW_INTEGRATION` names them.
 - Every change updates its docs: the feature page, `docs/reference/` for routes and variables, `docs/limitations.md`
-  and `docs/roadmap.md` when it adds, closes or lifts something, and each commit gets a row in `docs/history.md`. New
-  pages go in `docs/README.md`.
+  and `docs/roadmap.md` when it adds, closes or lifts something, and each change writes its history rows as a fragment in
+  `docs/history.d/` (format in `docs/development.md#history-fragments`); never edit `docs/history.md` on a package
+  branch, the integrator runs `pnpm history:assemble` once per wave. New pages go in `docs/README.md`.
 
 ## Agents and the feature skill
 

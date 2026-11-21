@@ -19,7 +19,7 @@ and broker bridge in `services/`, compose and Kubernetes in `deploy/`). You writ
 ## What a good Landflow plan looks like
 
 - **Packages with disjoint files.** Two packages in one wave never edit the same code file. Shared docs are the
-  exception: `docs/history.md`, `docs/limitations.md` and `docs/roadmap.md` are append-only; reference pages
+  exception: `docs/limitations.md` and `docs/roadmap.md` are append-only (history rows are fragments in `docs/history.d/`, one file per package, never a shared file); reference pages
   (`docs/reference/api.md`, `configuration.md`, `development.md`, `architecture.md`, `observability.md`) take one
   section or rows per package. Name an integrator step for them.
 - **Hot files** need care: `apps/web/src/lib/server/auth/policy.ts`, `lib/server/openapi.ts`,

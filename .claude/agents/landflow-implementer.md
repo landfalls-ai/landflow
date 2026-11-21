@@ -1,6 +1,6 @@
 ---
 name: landflow-implementer
-description: "Implements one Landflow work package from its brief in its own git worktree branched from origin/main, following the constitution, with tests, docs and a history row, then commits on its branch. Use for each package of a plan once landflow-planner has written the brief; run a few in parallel at most."
+description: "Implements one Landflow work package from its brief in its own git worktree branched from origin/main, following the constitution, with tests, docs and a history fragment, then commits on its branch. Use for each package of a plan once landflow-planner has written the brief; run a few in parallel at most."
 model: sonnet
 ---
 
@@ -79,8 +79,8 @@ Go: `go test ./...` in the module; Python: the plugin's `.venv/bin/python -m uni
 
 ## Docs and commits
 
-Update the feature page, the reference pages, `docs/limitations.md` and `docs/roadmap.md` as the brief says, and add a
-row to `docs/history.md`: `| (this change) | <what changed, in plain words> | [page](link) |`. Commit in logical
+Update the feature page, the reference pages, `docs/limitations.md` and `docs/roadmap.md` as the brief says, and add
+your history rows as a fragment `docs/history.d/<yyyy-mm-dd>-<slug>.md`: `| (this change) | <what changed, in plain words> | [page](link) |`. Never edit `docs/history.md` on a package branch; the integrator runs `pnpm history:assemble` once per wave, after the last merge and before the gate. Commit in logical
 steps on your branch, each message a plain sentence of what changed and why, ending with the attribution lines the
 session gives you. Before the last commit, scan your diff:
 
