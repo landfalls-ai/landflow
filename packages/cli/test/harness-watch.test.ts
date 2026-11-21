@@ -227,6 +227,33 @@ describe('the rollout watch', () => {
     expect(gaveUp).toHaveBeenCalledTimes(1);
   });
 
+  it('skips records stamped before the watch began, so a resumed old session does not resend its old limit', async () => {
+    const { dir, day } = sessions();
+    const { watch, posted } = watching(dir);
+    track(watch);
+    await later();
+    const stamped = (iso: string, record: Record<string, unknown>) => line({ timestamp: iso, ...record });
+    const old = new Date(Date.now() - 3_600_000).toISOString();
+    const file = rollout(day, 14);
+    writeFileSync(file, meta(uuid(14)) + stamped(old, { type: 'turn_context', payload: {} }) + stamped(old, { type: 'event_msg', payload: { type: 'task_complete', error: LIMIT } }));
+    await watch.tick();
+    expect(posted).toEqual([]);
+    appendFileSync(file, stamped(new Date(Date.now() + 1_000).toISOString(), { type: 'event_msg', payload: { type: 'task_complete', error: LIMIT } }));
+    await watch.tick();
+    expect(posted).toHaveLength(1);
+  });
+
+  it('says so for an event it could not deliver before stopping', async () => {
+    const { dir, day } = sessions();
+    const lost = vi.fn();
+    const { watch } = watching(dir, { post: async () => Promise.reject(new Error('down')), onGiveUp: lost });
+    await later();
+    writeFileSync(rollout(day, 15), meta(uuid(15)) + turn() + complete(LIMIT));
+    await watch.tick();
+    await watch.stop();
+    expect(lost).toHaveBeenCalledTimes(1);
+  });
+
   it('stop reads what Codex wrote just before it exited', async () => {
     const { dir, day } = sessions();
     const { watch, posted } = watching(dir);

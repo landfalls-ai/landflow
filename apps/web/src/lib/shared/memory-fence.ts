@@ -52,7 +52,8 @@ export function wrapMemory(source: MemorySource, lines: readonly string[]): stri
  */
 export function escapeMemoryFields<T>(value: T, keys: readonly string[] = ['statement', 'summary']): T {
   if (Array.isArray(value)) return value.map((entry) => escapeMemoryFields(entry, keys)) as T;
-  if (value && typeof value === 'object') {
+  // Plain objects only: a Date, a Map or a class instance is left as it is.
+  if (value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {
     return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, typeof entry === 'string' && keys.includes(key) ? escapeFenceText(entry) : escapeMemoryFields(entry, keys)])) as T;
   }
   return value;

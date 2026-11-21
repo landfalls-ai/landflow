@@ -63,7 +63,8 @@ when a provider limit stops one of its turns, so the session shows as Blocked on
 It reads the rollout files of the sessions it starts (`$CODEX_HOME/sessions`, default `~/.codex/sessions`; a session that began
 before the watch is never read) and sends one `quota_blocked` event per stopped turn to `POST /api/harness/codex/hooks`: the
 session id, the kind (usage limit, credits depleted, unknown) and the provider's message, never a prompt, tool output or path.
-It needs an API key with the `harness:write` scope (a key without it is told so once and the watch goes on without reporting),
+It needs an API key with the `harness:write` scope. `landflow login` only saves a key you give it and creates none, so make one for the watch: the hook key from `/connect` (Live status, step 1) or a key from Settings → API keys with `harness:write` ticked, then `LANDFLOW_API_KEY=lf_… landflow harness watch codex` (a key without the scope is told so once and the watch goes on without reporting),
+A Blocked Codex session stays Blocked until it goes stale: the watch sends no other event, and the host accepts no other event from a Codex session.
 ends when `codex` exits and exits with its code. `--json` prints `{ harness, sessionsDir, exitCode, reported }`.
 
 ## Practices: `landflow practices`

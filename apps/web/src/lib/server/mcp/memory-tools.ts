@@ -11,11 +11,12 @@
  * `structuredContent` carries the plain values. A write needs a person: the instance access token has none, so it only reads
  * (as an owner, like the other brain tools).
  */
+import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
 import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import { parseContainer, type MemoryContainer, type MemoryItem } from '../../shared/memory';
 import { FOLDERS, INDEX, LOG, brainTree, indexMarkdown, logMarkdown, pageMarkdown, type TreeFile, type TreeNode } from '../../shared/brain-files';
-import { wrapMemory } from '../../shared/memory-fence';
+import { escapeFenceText, wrapMemory } from '../../shared/memory-fence';
 import type { ApiKeyScope } from '../../shared/auth';
 import { agentStore } from '../agents/store';
 import { agentTeamStore } from '../agent-teams/store';
@@ -83,8 +84,8 @@ export function registerMemoryTools(server: McpServer, ctx: MemoryToolContext): 
   const home = (): string | undefined => (scope ? scope.projectId : actor ? creationProject(actor) : defaultProjectId());
 
   /**
-   * The container a `space` names. On a scoped server it is that project, or a team or agent homed in it; anything else (another
-   * project, a made-up name) is the project itself, so a client cannot reach past its URL. Undefined: no such space.
+   * The container a `space` names. On a scoped server it is that project, or a team homed in it; anything else (another project,
+   * an agent, a made-up name) is the project itself, so a client cannot reach past its URL. Undefined: no such space.
    */
   function containerOf(space: string | undefined): MemoryContainer | undefined {
     const fallback = home();
@@ -92,7 +93,6 @@ export function registerMemoryTools(server: McpServer, ctx: MemoryToolContext): 
     const parsed = named ? (parseContainer(named, actor?.id) ?? (getProject(named) ? ({ kind: 'project', id: named } as const) : undefined)) : fallback ? ({ kind: 'project', id: fallback } as const) : undefined;
     if (!scope) return parsed;
     if (parsed?.kind === 'team' && homeProjectId('agentTeam', parsed.id) === scope.projectId) return parsed;
-    if (parsed?.kind === 'agent' && homeProjectId('agent', parsed.id) === scope.projectId) return parsed;
     return { kind: 'project', id: scope.projectId };
   }
 
@@ -142,10 +142,16 @@ export function registerMemoryTools(server: McpServer, ctx: MemoryToolContext): 
         let via: 'meaning' | 'keywords' = 'keywords';
         const one = space?.trim() ? containerOf(space) : undefined;
         if (space?.trim() && !one) return failure(`No space “${space}”: use project:<id>, team:<id> or agent:<id>`);
-        for (const container of one ? [one] : readableProjects().map((id): MemoryContainer => ({ kind: 'project', id }))) {
-          const found = await memory.search(container, query, options, caller());
-          hits.push(...found.items);
-          if (found.via === 'meaning') via = 'meaning';
+        const containers = one ? [one] : readableProjects().map((id): MemoryContainer => ({ kind: 'project', id }));
+        // Across projects one that fails (a provider down) is skipped and counted on the span; a single named space still fails loudly.
+        const settled = await Promise.allSettled(containers.map((container) => memory.search(container, query, options, caller())));
+        const failed = settled.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+        trace.getActiveSpan()?.setAttributes({ 'landflow.memory.projects': containers.length, 'landflow.memory.skipped': failed.length });
+        if (failed.length && (one || failed.length === settled.length)) throw failed[0]!.reason;
+        for (const result of settled) {
+          if (result.status !== 'fulfilled') continue;
+          hits.push(...result.value.items);
+          if (result.value.via === 'meaning') via = 'meaning';
         }
         hits = hits.sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, limit ?? 10);
         return answer(memoryToolText(hits) || NO_MEMORY, { items: hits.map(plain), via });
@@ -290,7 +296,7 @@ export function registerMemoryTools(server: McpServer, ctx: MemoryToolContext): 
       const size = limit ?? 50;
       const documentsPage = all.slice(offset, offset + size);
       const next = offset + size < all.length ? encodeCursor({ s: String(offset + size), i: 'd' }) : undefined;
-      const text = documentsPage.map((d) => `- ${d.id}: ${d.title}`).join('\n') || 'No documents yet.';
+      const text = documentsPage.map((d) => escapeFenceText(`- ${d.id}: ${d.title}`)).join('\n') || 'No documents yet.';
       return answer(text, { documents: documentsPage, ...(next && { nextCursor: next }) });
     },
   );
@@ -342,7 +348,7 @@ export function registerMemoryTools(server: McpServer, ctx: MemoryToolContext): 
       // An agent's memory of you: only for a person, and never on a project's own server.
       const agents = actor && !scope ? agentStore.list().flatMap((a) => (a.memory.crossSession && canResource(actor, 'agent', a.id, 'read') ? [{ id: `agent:${a.id}`, kind: 'agent' as const, name: a.name }] : [])) : [];
       const spaces = [...projects, ...teams, ...agents];
-      return answer(spaces.map((s) => `- ${s.id}: ${s.name} (${s.kind})`).join('\n') || 'No spaces yet.', { spaces });
+      return answer(spaces.map((s) => escapeFenceText(`- ${s.id}: ${s.name} (${s.kind})`)).join('\n') || 'No spaces yet.', { spaces });
     },
   );
 

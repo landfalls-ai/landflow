@@ -9,6 +9,7 @@ import { MEMORY_LIMITS, type MemoryAddInput, type MemoryContainer, type MemoryIt
 import type { NoteHit, TeamNote } from '../../shared/notebook';
 import { recordAudit } from '../audit';
 import { checkForgetAfter, getFact, listFacts, pageFacts, scoredFactSearch, upsertFact, type FactFilter } from '../brain/facts';
+import { isRequestPerson } from '../brain/store/origin';
 import { forgetFact, indexFact, supersedeFact } from '../brain/fact-lifecycle';
 import { canFact } from '../brain/scope';
 import { vectorFactScores } from '../brain/study';
@@ -156,7 +157,7 @@ export const builtInBackend: MemoryBackend = {
       const match = /^(.*)#v(\d+)$/.exec(input.replaces);
       const chainId = match ? match[1] : input.replaces;
       writableFact(c, chainId, caller); // not found when it is not this container's, or the study's
-      const written = await supersedeFact(chainId, { statement: text, ...(match && { expectedVersion: Number(match[2]) }), ...(caller.origin === 'person' && caller.actor && { replaceStatic: true }) }, who, database());
+      const written = await supersedeFact(chainId, { statement: text, ...(match && { expectedVersion: Number(match[2]) }), ...(caller.origin === 'person' && caller.actor && isRequestPerson(caller.actor.id) && { replaceStatic: true }) }, who, database());
       auditAdded(c, written, caller, true);
       return factItem(written);
     }

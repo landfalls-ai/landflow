@@ -18,6 +18,8 @@ The instance MCP server must be on (Settings → MCP → Access token), or the t
 
 The harnesses on the page come from the registry (`@landflow/protocol/harnesses`), not a list of the page's own.
 
+Codex has no hooks: `landflow harness watch codex` reports a Blocked turn (usage limit, credits) and needs an API key with `harness:write`. `landflow login` creates no key, so use the hook key below or make one in Settings → API keys with `harness:write` ticked, and pass it as `LANDFLOW_API_KEY`. A Blocked Codex session stays Blocked until it goes stale.
+
 ## Live status (Claude Code)
 
 For Claude Code a fourth, optional step appears: **Live status**.

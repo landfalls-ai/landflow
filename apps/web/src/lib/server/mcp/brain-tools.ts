@@ -49,6 +49,9 @@ export interface BrainContext {
   failure: (message: string) => CallToolResult;
 }
 
+/** The string fields of these tools' answers that carry text someone wrote: escaped in place, the JSON shape unchanged. */
+const PROPOSAL_FIELDS = ['statement', 'summary', 'title', 'why', 'effect'] as const;
+const ASK_FIELDS = ['statement', 'summary', 'goal', 'answer', 'title', 'passage', 'note'] as const;
 const READ_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
 const DAY_MS = 86_400_000;
 
@@ -123,7 +126,8 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
       if (workflowId && !covers(scope, { workflowId })) return failure(`Workflow ${workflowId} not found`);
       if (detector && !isDetectorId(detector)) return failure(`Unknown detector ${detector}`);
       const list = listProposals({ status: (status ?? 'open') as ProposalStatus | 'all', workflowId, ...(detector && isDetectorId(detector) && { detector }), scope, limit: limit ?? 50 });
-      return json({ proposals: list.filter((p) => !actor || canProposal(actor, p, 'read')) });
+      // A suggestion's title and reasons can quote what a person or the study wrote: escaped in place (C08 D1).
+      return json(escapeMemoryFields({ proposals: list.filter((p) => !actor || canProposal(actor, p, 'read')) }, PROPOSAL_FIELDS));
     },
   );
 
@@ -141,13 +145,16 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
       const refused = ctx.denied(workflowId, 'read');
       if (refused) return refused;
       return json(
-        escapeMemoryFields({
-          workflowId,
-          name: workflow.name,
-          profile: getProfile('workflow', workflowId) ?? null,
-          facts: factsWithUrls(listFacts({ subjectType: 'workflow', subjectId: workflowId, limit: 50 })), // NB08:
-          proposals: listProposals({ workflowId, status: 'open', limit: 20 }),
-        }),
+        escapeMemoryFields(
+          {
+            workflowId,
+            name: workflow.name,
+            profile: getProfile('workflow', workflowId) ?? null,
+            facts: factsWithUrls(listFacts({ subjectType: 'workflow', subjectId: workflowId, limit: 50 })), // NB08:
+            proposals: listProposals({ workflowId, status: 'open', limit: 20 }),
+          },
+          PROPOSAL_FIELDS,
+        ),
       );
     },
   );
@@ -254,7 +261,7 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
           ...answer,
           pages: withNotionUrls(answer.pages, 'entity', (p) => `${p.type}/${p.id}`, (p) => { const e = getEntity(p.type, p.id); return e && entityProject(e); }),
           facts: factsWithUrls(answer.facts),
-        }),
+        }, ASK_FIELDS),
       );
     },
   );
@@ -271,7 +278,7 @@ export function registerBrainTools(server: McpServer, ctx: BrainContext) {
       }),
       annotations: READ_ONLY,
     },
-    async ({ query, limit }) => json({ results: await searchNotionKnowledge(query, { projects: projectsOf(scope), limit: limit ?? 5 }) }),
+    async ({ query, limit }) => json(escapeMemoryFields({ results: await searchNotionKnowledge(query, { projects: projectsOf(scope), limit: limit ?? 5 }) }, ['passage', 'title'])),
   );
 
   server.registerTool(

@@ -136,8 +136,18 @@ export function watchRollouts(options: RolloutWatchOptions): RolloutWatch {
   };
 
   /** Find files created since the watch began that it does not hold yet. */
+  /** Make room for a new file: close the ones whose turn is over (idle) first; false when every open file is mid-turn. */
+  async function room(): Promise<boolean> {
+    if (tracked.size < MAX_OPEN) return true;
+    for (const file of [...tracked.values()]) {
+      if (file.turnOver) await close(file);
+      if (tracked.size < MAX_OPEN) return true;
+    }
+    return false;
+  }
+
   async function discover() {
-    if (tracked.size >= MAX_OPEN) return;
+    if (!(await room())) return;
     for await (const path of rolloutFiles(options.dir, options.since)) {
       if (seen.has(path)) continue;
       let info;
@@ -158,9 +168,16 @@ export function watchRollouts(options: RolloutWatchOptions): RolloutWatch {
       } catch {
         continue;
       }
-      const start = Math.max(0, info.size - first);
+      // The path may have been swapped between the stat and the open: only the file that was checked is read.
+      if ((await handle.stat().catch(() => undefined))?.ino !== info.ino) {
+        await handle.close().catch(() => {});
+        continue;
+      }
+      // Without a birth time (Linux often has none) the change time stood in for it, and a session resumed after the watch began
+      // looks new: its old content is not read at all, only what is written from now on.
+      const start = info.birthtimeMs > 0 ? Math.max(0, info.size - first) : info.size;
       tracked.set(path, { path, handle, ino: info.ino, pos: start, partial: '', skipFirstLine: start > 0, sessionId: SESSION_ID.exec(path)?.[1] ?? '', turnOver: false, closed: false });
-      if (tracked.size >= MAX_OPEN) return;
+      if (!(await room())) return;
     }
   }
 
@@ -223,6 +240,9 @@ export function watchRollouts(options: RolloutWatchOptions): RolloutWatch {
       const named = typeof limits?.rate_limit_reached_type === 'string' ? limits.rate_limit_reached_type : undefined;
       if (named) file.rateLimitType = named;
     }
+    // A record stamped before the watch began is history (a resumed session): never classified, so an old limit is not sent again.
+    const stamp = typeof record.timestamp === 'string' ? Date.parse(record.timestamp) : Number.NaN;
+    if (Number.isFinite(stamp) && stamp < options.since) return;
     if (file.turnOver) return;
     const verdict = classifyRecord(record, { ...(file.rateLimitType && { rateLimitType: file.rateLimitType }) });
     if (verdict.blocked) {
@@ -270,6 +290,8 @@ export function watchRollouts(options: RolloutWatchOptions): RolloutWatch {
         await close(file);
       }
       await deliver();
+      // What could not be delivered by now is dropped: say so once per event.
+      for (const _lost of queue.splice(0)) options.onGiveUp?.(new Error('the watch stopped before the event could be delivered'));
       stopped = true;
     },
     get delivered() {
