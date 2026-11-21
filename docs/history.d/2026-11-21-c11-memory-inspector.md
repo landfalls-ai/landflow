@@ -1,0 +1,2 @@
+section: 2026-11-21: combined wave 2
+| (this change) | What it saw lists the memory a run was given (the agent's profile and relevant memories, a team's notebook block) with versions and scores, the exact text when the trace content is full, and "forgotten since" marks; a memory search playground (keywords, meaning or hybrid, limit, threshold, rerank) on the knowledge card, the Notebook tab and the Brain page, which changes nothing | [run-trace.md](run-trace.md#what-it-saw) |

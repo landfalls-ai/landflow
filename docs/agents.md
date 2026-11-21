@@ -455,6 +455,7 @@ absent from an agent without any). Publishing needs a model, and a persona part 
     session. When the remote agent pauses for a tool approval, the run pauses with an approval card
     ("*landflow_text* wants to run *changeCase*") answered like any other; its questions go to the
     model. See [a2a.md](a2a.md).
+  - **Try a search** (on a saved knowledge base's dialog, C11): the memory playground runs one search over the saved base with mode, limit, threshold and an optional rerank, shows each score before and after rerank and what the threshold dropped, and changes nothing ([run-trace.md](run-trace.md#memory-playground)).
   - **Knowledge bases** (**Add knowledge base**): a vector store collection the agent searches
     with one tool (`search_knowledge_base({ query })` by default, renameable), returning the best
     passages with their metadata and scores. Settings: the store (SQLite in the data folder,

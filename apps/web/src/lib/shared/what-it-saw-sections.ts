@@ -5,7 +5,7 @@
 import type { AgentPersona } from './agents';
 import { PRACTICES_HEADING } from './practices';
 import { CONTEXT_FOOTER, CONTEXT_HEADING } from './project-context';
-import { SAW_LINE_PREFIXES, SAW_PERSONA_MAX, type SawPersona, type SawSections } from './what-it-saw';
+import { SAW_LINE_PREFIXES, SAW_PERSONA_MAX, type SawMemoryItem, type SawMemorySource, type SawMemorySourceKind, type SawPersona, type SawSections } from './what-it-saw';
 
 const P = SAW_LINE_PREFIXES;
 const after = (line: string, prefix: string) => line.slice(prefix.length).trim();
@@ -46,4 +46,28 @@ export function sawPersona(persona?: AgentPersona): SawPersona {
   const mission = cap(persona?.mission);
   const whatIDo = cap((persona?.whatIDo ?? []).map((l) => l.trim()).filter(Boolean).join('; '));
   return { ...(role && { role }), ...(mission && { mission }), ...(whatIDo && { whatIDo }) };
+}
+
+/** The heading of each memory source (What it saw → Memory). */
+export const SAW_MEMORY_LABEL: Record<SawMemorySourceKind, string> = {
+  'agent-profile': 'Profile',
+  'agent-relevant': 'Relevant',
+  'team-notebook': 'Team notebook',
+};
+
+/** `attrs.saw.memory` as the journal gives it (any JSON): the well-formed sources, none for a run recorded before C11 or without memory. */
+export function sawMemoryOf(value: unknown): SawMemorySource[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((v): SawMemorySource[] => {
+    if (!v || typeof v !== 'object') return [];
+    const s = v as Record<string, unknown>;
+    if (typeof s.source !== 'string' || !(s.source in SAW_MEMORY_LABEL) || !Array.isArray(s.items)) return [];
+    const items = (s.items as unknown[]).flatMap((raw): SawMemoryItem[] => {
+      if (!raw || typeof raw !== 'object' || typeof (raw as SawMemoryItem).id !== 'string') return [];
+      const i = raw as Record<string, unknown>;
+      return [{ id: i.id as string, ...(typeof i.version === 'number' && { version: i.version }), ...(typeof i.kind === 'string' && { kind: i.kind }), ...(i.static === true && { static: true }), ...(typeof i.score === 'number' && { score: i.score }) }];
+    });
+    if (!items.length && !(typeof s.count === 'number' && s.count > 0)) return [];
+    return [{ source: s.source as SawMemorySourceKind, count: typeof s.count === 'number' ? s.count : items.length, items, ...((s.mode === 'meaning' || s.mode === 'keywords') && { mode: s.mode }), ...(typeof s.hash === 'string' && { hash: s.hash }) }];
+  });
 }

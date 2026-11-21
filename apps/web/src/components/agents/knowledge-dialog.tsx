@@ -14,6 +14,7 @@ import { isNodeKnowledge, KNOWLEDGE_NODE_PRESETS } from '@/lib/shared/agents';
 import { NodeCredentials } from '../credentials/node-credentials';
 import { Button } from '../ui/button';
 import { Input, Select } from '../ui/inputs';
+import { PlaygroundButton } from '../memory/playground';
 import { Dialog, Field, ToggleRow } from './dialog';
 import { newId } from './util';
 
@@ -236,7 +237,14 @@ export function KnowledgeDialog({ agentId, tool, onSave, onClose }: { agentId?: 
           </Field>
         </div>
         {tool && agentId && !isNodeKnowledge(tool) ? (
-          <DocumentsPanel agentId={agentId} tool={tool} />
+          <>
+            {/* C11: try a search over this base before the agent does (saved settings: the playground reads the saved base). */}
+            <div className="flex flex-wrap items-center gap-2">
+              <PlaygroundButton source={{ kind: 'kb', agentId, toolId: tool.id }} title={`Try a search: ${tool.name}`} modes={tool.embeddings.provider === 'none' ? ['keyword'] : undefined} threshold={0} />
+              <span className="text-[12px] text-t3">Searches the saved knowledge base and shows the scores. Changes nothing.</span>
+            </div>
+            <DocumentsPanel agentId={agentId} tool={tool} />
+          </>
         ) : (
           <p className="text-[12px] text-t3">Save the knowledge base, then open it again to upload documents.</p>
         )}

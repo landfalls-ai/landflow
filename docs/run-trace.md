@@ -385,6 +385,20 @@ cut to 300 characters; never the instructions) and `practices` (handle and versi
   Practices and Persona. Empty parts are left out. **Show the exact text** folds out the raw block. With the project
   context off it says "Project context off for this agent" (also when practices were given). When the run's trace content
   was `off`, it says the text was not kept; a run with nothing to show draws no section. `saw` is not repeated in the developer's raw **Details**.
+- **Memory** (C11). `attrs.saw` also has `memory` (one entry per source the run was given: the agent's `agent-profile` and
+  `agent-relevant` memories, a team's `team-notebook` block, each with `mode` `meaning` or `keywords`, a `count`, up to 40
+  `items` of `{ id, version, kind, static, score }` and a SHA-256 `hash` prefix of the block) and, when the run's trace content
+  was `full`, `memoryText` (the exact fenced block(s) the prompt got). **What it saw → Memory** lists each item as one line
+  clamped to two lines with its kind, version and score (**Show all** past five); **Show the exact text of the memory** folds out
+  `memoryText` unescaped for reading, as text. Trace content `summaries` keeps ids, kinds, versions, scores and the hash and drops
+  `memoryText`; `off` keeps neither `memory` nor `memoryText`. A run recorded before this, or with no memory, draws no Memory part.
+  On open the part asks `GET /api/memory/items?ids=` (at most 50) for each item's state now: one forgotten since says "forgotten since
+  <date>: <reason>", and a person who may change it gets **Forget** and **Versions**. An item the caller may not see is left as recorded.
+  The notebook block is recorded on the lead's and each agent member's span that got it (a `team-notebook` source with the
+  note ids, and the text on `full`); the agent's profile and relevant memories are recorded by the agent's run (C09). Memory text is read
+  through `journal/memory-visibility.ts`: only the person it was for, the agent's editors and admins get `memoryText`; anyone else who can
+  read the run sees the sources (ids, versions, scores) and no text, so the part then has no exact-text fold. A notebook block names no
+  person, so its text is for admins; the Memory part still lists its notes. The sessions tab shows the sources only (`memory`), never the text.
 - **On the run.** The root span's sheet shows **Project** and **Goal** chips from `attrs.project` and `attrs.goal`.
 - **In sessions.** An agent's **Sessions** tab has the same section as a fold, built from the session's saved context
   and the agent's persona now.
@@ -857,3 +871,16 @@ prompt text. These sheets are for a desktop; on a phone the page still fits.
   didn't call still shows, and a change made during the run doesn't. A kagent agent's runtime is told from its
   deployment (plugins, the mod, the harness name), not read from the cluster.
 - A trace rebuilt from an older run's data has no progress notes, artifacts, checks or decisions.
+
+
+### Memory playground
+
+**Try a search** (the agent's knowledge card, the team's Notebook tab, Brain → What Landflow knows) opens a sheet (a bottom
+sheet on a phone) with a query, mode (keywords, meaning, hybrid; a knowledge base with no embedding model offers keywords only),
+limit (1 to 50, default 10), threshold (0 to 1; 0.3 for notes and facts, 0 for a knowledge base) and rerank (off, a local chat
+model that scores each passage, or a Cohere credential). `POST /api/memory/search` runs one search and changes nothing: no note
+is touched, no store is written, no agent usage row is recorded, nothing is audited. It answers each result's score and its score
+after rerank, what the threshold dropped (count and best score) and the time per stage; with the embedding model down in meaning
+mode it says "The embedding model is unreachable". A knowledge base needs edit access to its agent, a notebook the team's, facts the
+project's; anything else is 404. 20 searches a minute a person (429 with `Retry-After`), a query up to 2,000 characters. The search is
+asked only when the person presses Search.
