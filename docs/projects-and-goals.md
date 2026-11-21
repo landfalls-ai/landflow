@@ -246,7 +246,7 @@ an active link can choose **This project's Notion brain** as its knowledge base.
 
 ## Project settings for agents
 
-A project can set four things for the agents that run in it, next to its allowed nodes, approvers and four-eyes
+A project can set five things for the agents that run in it, next to its allowed nodes, approvers and four-eyes
 (`GET|PATCH /api/projects/:id/settings`, the project's admins). Each is off by default, each only narrows or fills a
 gap, and with none set a run, its prompt, its tools and its cache keys are what they were. The screen for them is the
 project page's **Agents in this project** card; the fields and answers are in [the API](reference/api.md).
@@ -274,6 +274,12 @@ project page's **Agents in this project** card; the fields and answers are in [t
   withheld by project “P” settings". Skills, memory, a team's own tools (its notebook, consults, reports and hand-offs), the project's own
   knowledge base and the tools connected to a Run an Agent node (already under the node allow-list) are never withheld.
 
+- **Memory.** Where the project's remembered facts live: **Built-in** (Landflow's brain, the default) or a plugin that provides
+  memory and the credential it uses (`memory: { backend: 'provider', nodeType, credentialId? }`; `null` goes back to built-in). It
+  serves the project's own container only; teams' notebooks and agents' memories stay built in. The node must be an installed
+  memory provider ([protocol](protocol.md#memory-providers)) and the credential usable in the project, else 400
+  ([details](second-brain.md#memory-backend)).
+
 The run reads the settings once, when it starts (they are cached for a second). Each level narrows: instance, project,
 workflow, and now agents ([governance](features/audit-and-governance.md)). A2A and kagent agents run elsewhere, so the
 allow-lists do not cover them.
@@ -284,8 +290,8 @@ A project's **Settings** tab has the card **Agents in this project** (`#agents`)
 It holds the **Default model** ("Used when neither the workflow's step nor the agent names a model"; pick **None** to
 clear it), the **Knowledge base** (a switch and **Choose…**, which opens the agent builder's dialog; every agent in the
 project can search it as `project_knowledge`), **Allowed agents** (**Everything available** or **Only these**, with the
-project's own agents checked and disabled) and **Allowed tools** (**Every kind** or **Only these**, one box per kind).
-Project admins edit and press one **Save**, which sends only these four fields to `PATCH /api/projects/:id/settings`; a
+project's own agents checked and disabled), **Allowed tools** (**Every kind** or **Only these**, one box per kind) and **Memory**
+(**Built-in**, or a provider and its credential). Project admins edit and press one **Save**, which sends only the fields you changed to `PATCH /api/projects/:id/settings`; a
 400 (a credential the project can't use, an agent that isn't available) shows under the field the save sent, or below
 the card when it sent several. With a provider and no model, Save stays off and the bar says "Choose a model". Everyone
 else reads the values, the two modes as plain text. Without `availableAgents` in the answer the list says "No agents to list". A failed load hides the card without a toast.

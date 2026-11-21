@@ -477,7 +477,7 @@ const workLine = (w: WorkItem, n: number, index: PageIndex) => {
   return `[${n}] ${day(w.at)} ${w.kind}${w.source ? ` (${w.source})` : ''}: ${clip(w.title, 140)}${w.summary ? ` — ${clip(w.summary, 220)}` : ''}${by ? ` · by ${by}` : ''}${w.team ? ` · team ${w.team}` : ''}${pages.length ? ` · about ${pages.map((r) => linkOf(r, index)).join(' ')}` : ''}`;
 };
 // A subject without a name is called by its type, so the model is never shown (and never repeats) a raw id.
-const UNNAMED: Record<BrainFact['subjectType'], string> = { workflow: 'a workflow', agent: 'an agent', nodeType: 'a node type', credential: 'a credential', instance: 'this instance', entity: 'a page' };
+const UNNAMED: Record<BrainFact['subjectType'], string> = { workflow: 'a workflow', agent: 'an agent', nodeType: 'a node type', credential: 'a credential', instance: 'this instance', entity: 'a page', project: 'this project', 'agent-user': 'a person' }; // C07: the last two are new subjects
 /** A Notion page's passage as one numbered, quoted line: the model reads it as data, and cites it as [n]. */
 const knowledgeLine = (k: KnowledgeHit, n: number) => `[${n}] Notion page “${clip(k.title, 120)}”: “${clip(k.passage.replace(/\s+/g, ' '), 600)}”`;
 const factLine = (f: BrainFact) => `- ${f.subjectName ?? UNNAMED[f.subjectType] ?? 'something'} (${f.kind}): ${clip(f.statement.replace(/\s+/g, ' '), 240)}`;

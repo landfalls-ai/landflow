@@ -7,10 +7,13 @@
  * Search: BM25 over the statements, fused with a vector search of `landflow-brain` collections when facts were embedded
  * (./study.ts).
  */
-import type { BrainFact, BrainProfile, FactKind, FactRelation, FactSubject } from '../../shared/brain';
+import { PRIVATE_FACT_SUBJECTS, type BrainFact, type BrainProfile, type FactKind, type FactRelation, type FactSubject } from '../../shared/brain';
+import type { MemorySearchMode } from '../../shared/memory';
 import { database, type Database, type Row } from '../db';
 import { HttpError } from '../errors';
 import { bm25Scores } from '../rag/search';
+import { fuseScores, keywordScore } from '../notebook/search';
+import { decodeCursor, encodeCursor } from '../pagination';
 import { logger } from '../telemetry/logger';
 import type { BrainChangeOrigin } from '../../shared/brain-store'; // NB01
 import { changeOrigin } from './store/origin'; // NB01
@@ -246,11 +249,11 @@ export function upsertFact(input: FactInput, db: Database = database(), now = ne
   return fact;
 }
 
-/** Facts not refreshed since `before` go stale (intended facts, static facts, the outcomes of applied suggestions and the statements people and flows added about an entity stay). */
+/** Facts not refreshed since `before` go stale (intended facts, memories people and flows added (kind memory, subjects project and agent-user: the study never writes them, so it must never stale them), static facts, the outcomes of applied suggestions and the statements people and flows added about an entity stay). */
 export function staleFactsBefore(before: string, db: Database = database()): number {
   // SP13: the whole row goes back (subject_type is NOT NULL, and the check runs before ON CONFLICT), `last_seen` unchanged.
   const rows = db.all<FactRow & { id: string }>(
-    `SELECT id, ${FACT_COLUMNS} FROM brain_facts WHERE status = 'active' AND is_latest = 1 AND is_static = 0 AND last_seen < ? AND kind <> 'intended' AND id NOT LIKE '%:change:pr_%' AND id NOT LIKE 'entity:%:fact_%'`,
+    `SELECT id, ${FACT_COLUMNS} FROM brain_facts WHERE status = 'active' AND is_latest = 1 AND is_static = 0 AND last_seen < ? AND kind <> 'intended' AND kind <> 'memory' AND subject_type NOT IN ('project', 'agent-user') AND id NOT LIKE '%:change:pr_%' AND id NOT LIKE 'entity:%:fact_%'`,
     before,
   );
   const who = changeOrigin(); // NB01
@@ -283,23 +286,32 @@ function inScope(fact: { subjectType: FactSubject; subjectId: string }, scope?: 
   return false;
 }
 
-export function listFacts(
-  filter: {
-    subjectType?: FactSubject;
-    subjectId?: string;
-    kind?: FactKind;
-    status?: 'active' | 'stale' | 'all';
-    scope?: UsageScope;
-    limit?: number;
-    /** Include earlier versions of a chain (default: the latest only). */
-    history?: boolean;
-    /** `exclude` (default) leaves forgotten facts out, `only` lists just them, `include` lists both. */
-    forgotten?: 'exclude' | 'include' | 'only';
-    now?: string;
-  } = {},
-  db: Database = database(),
-): BrainFact[] {
-  const now = filter.now ?? new Date().toISOString();
+export interface FactFilter {
+  subjectType?: FactSubject;
+  subjectId?: string;
+  kind?: FactKind;
+  status?: 'active' | 'stale' | 'all';
+  scope?: UsageScope;
+  /** Only this project's facts (C07; indexed). */
+  projectId?: string;
+  /** Only static facts (`true`) or only the others (`false`). */
+  static?: boolean;
+  limit?: number;
+  /** Include earlier versions of a chain (default: the latest only). */
+  history?: boolean;
+  /** `exclude` (default) leaves forgotten facts out, `only` lists just them, `include` lists both. */
+  forgotten?: 'exclude' | 'include' | 'only';
+  now?: string;
+}
+
+/**
+ * A private subject (an agent's memory of one person) is listed only when the filter names both its type and its id, so
+ * a type alone, a scope or the study never enumerates what a person told an agent (C07 D3).
+ */
+const namesPrivateSubject = (filter: FactFilter) => Boolean(filter.subjectType && filter.subjectId && (PRIVATE_FACT_SUBJECTS as readonly string[]).includes(filter.subjectType));
+
+/** The WHERE of a fact read: everything but the scope, which `pageFacts` adds in SQL and `listFacts` applies in JS. */
+function factWhere(filter: FactFilter, now: string): { where: string[]; params: string[] } {
   const where: string[] = [];
   const params: string[] = [];
   if (filter.subjectType) {
@@ -310,10 +322,18 @@ export function listFacts(
     where.push('subject_id = ?');
     params.push(filter.subjectId);
   }
+  if (filter.projectId) {
+    where.push('project_id = ?');
+    params.push(filter.projectId);
+  }
+  if (!namesPrivateSubject(filter)) {
+    where.push(`subject_type NOT IN (${PRIVATE_FACT_SUBJECTS.map((s) => `'${s}'`).join(', ')})`);
+  }
   if (filter.kind) {
     where.push('kind = ?');
     params.push(filter.kind);
   }
+  if (filter.static !== undefined) where.push(`is_static = ${filter.static ? 1 : 0}`);
   if ((filter.status ?? 'active') !== 'all') {
     where.push('status = ?');
     params.push(filter.status ?? 'active');
@@ -328,6 +348,13 @@ export function listFacts(
     where.push('(forgotten_at IS NOT NULL OR (forget_after IS NOT NULL AND forget_after <= ?))');
     params.push(now);
   }
+  return { where, params };
+}
+
+export function listFacts(filter: FactFilter = {}, db: Database = database()): BrainFact[] {
+  const now = filter.now ?? new Date().toISOString();
+  const { where, params } = factWhere(filter, now);
+  const forgotten = filter.forgotten ?? 'exclude';
   // A scope filter runs in JS (the visible ids are not a column), so only then the limit has to wait for it.
   const scoped = Boolean(filter.scope && (filter.scope.workflows || filter.scope.agents));
   const limit = filter.limit ?? 500;
@@ -337,6 +364,55 @@ export function listFacts(
     .flatMap((r) => fromRow(r, forgotten !== 'exclude') ?? [])
     .filter((f) => inScope(f, filter.scope))
     .slice(0, limit);
+}
+
+const IN_BATCH = 500;
+/** `(subject_type = ? AND subject_id IN (…)) OR …` for what `scope` covers (the same rule as `inScope`); '0' when it covers nothing. */
+function scopeSql(scope: UsageScope | undefined): { sql?: string; params: string[] } {
+  if (!scope || (!scope.workflows && !scope.agents)) return { params: [] };
+  const groups: Array<[string, Set<string> | undefined]> = [['workflow', scope.workflows], ['agent', scope.agents], ['entity', scope.entities]];
+  const parts: string[] = [];
+  const params: string[] = [];
+  for (const [type, ids] of groups) {
+    const list = [...(ids ?? [])];
+    for (let i = 0; i < list.length; i += IN_BATCH) {
+      const chunk = list.slice(i, i + IN_BATCH);
+      parts.push(`(subject_type = '${type}' AND subject_id IN (${chunk.map(() => '?').join(', ')}))`);
+      params.push(...chunk);
+    }
+  }
+  return { sql: parts.length ? `(${parts.join(' OR ')})` : '0 = 1', params };
+}
+
+/**
+ * One keyset page of facts, newest first (`last_seen DESC, id DESC`), with the project, kind and scope in the SQL so a page
+ * is never shrunk after the query (C07; the graph and `list` read through it). `nextCursor` is set when more follow.
+ */
+export function pageFacts(filter: Omit<FactFilter, 'limit'>, page: { limit: number; cursor?: string }, db: Database = database()): { facts: BrainFact[]; nextCursor?: string } {
+  const now = filter.now ?? new Date().toISOString();
+  const { where, params } = factWhere(filter, now);
+  const scope = scopeSql(filter.scope);
+  if (scope.sql) {
+    where.push(scope.sql);
+    params.push(...scope.params);
+  }
+  const cursor = page.cursor ? decodeCursor(page.cursor) : undefined;
+  if (cursor) {
+    where.push('(last_seen < ? OR (last_seen = ? AND id < ?))');
+    params.push(cursor.s, cursor.s, cursor.i);
+  }
+  const limit = Math.max(1, Math.min(500, Math.floor(page.limit)));
+  const rows = db.all<FactRow & { id: string; last_seen: string }>(
+    `SELECT id, last_seen, ${FACT_COLUMNS} FROM brain_facts ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY last_seen DESC, id DESC LIMIT ${limit + 1}`,
+    ...params,
+  );
+  const shown = rows.slice(0, limit);
+  const forgotten = filter.forgotten ?? 'exclude';
+  const last = shown.at(-1);
+  return {
+    facts: shown.flatMap((r) => fromRow(r, forgotten !== 'exclude') ?? []),
+    ...(rows.length > limit && last && { nextCursor: encodeCursor({ s: last.last_seen, i: last.id }) }),
+  };
 }
 
 /** A chain, oldest version first, from any of its ids, paged by version (`after` is the last version of the page before). */
@@ -370,6 +446,41 @@ export function searchFacts(query: string, options: { scope?: UsageScope; limit?
     .slice(0, limit);
 }
 
+export interface ScoredFactOptions {
+  filter: Omit<FactFilter, 'limit'>;
+  mode: MemorySearchMode;
+  /** Facts nearest to the query by meaning (cosine, 0..1), from `vectorFactScores`; none with embeddings off. */
+  vector?: Array<{ factId: string; similarity: number }>;
+  limit: number;
+  threshold: number;
+}
+
+/**
+ * The facts that best match `query` with a 0..1 score (C07 D6): `keyword` is the share of the query's words the fact says,
+ * `meaning` the cosine similarity, `hybrid` the notebook's fusion (`fuseScores`). Reads at most 5,000 candidates; hits under
+ * `threshold` are left out and counted. An empty query lists the newest facts, unscored.
+ */
+export function scoredFactSearch(query: string, options: ScoredFactOptions, db: Database = database()): { hits: Array<{ fact: BrainFact; score: number }>; dropped: { count: number; best?: number }; via: 'meaning' | 'keywords' } {
+  const candidates = listFacts({ ...options.filter, limit: 5_000 }, db);
+  const limit = Math.max(1, options.limit);
+  if (!query.trim()) return { hits: candidates.slice(0, limit).map((fact) => ({ fact, score: 0 })), dropped: { count: 0 }, via: 'keywords' };
+  const similarity = new Map((options.mode === 'keyword' ? [] : (options.vector ?? [])).map((v) => [v.factId, v.similarity]));
+  const useVector = similarity.size > 0;
+  const scored = candidates.map((fact) => {
+    const words = keywordScore(query, [fact.subjectName ?? '', fact.kind, fact.statement].join(' ')) // scoring input, never a prompt;
+    const meaning = similarity.get(fact.id);
+    let score: number;
+    if (options.mode === 'keyword') score = words;
+    else if (options.mode === 'meaning') score = meaning ?? 0;
+    else score = fuseScores(useVector ? (meaning ?? 0) : undefined, words);
+    return { fact, score: Math.min(1, score) };
+  });
+  const matched = scored.filter((r) => r.score > 0);
+  const hits = matched.filter((r) => r.score >= options.threshold).sort((a, b) => b.score - a.score || b.fact.lastSeen.localeCompare(a.fact.lastSeen));
+  const dropped = matched.filter((r) => r.score < options.threshold).map((r) => r.score);
+  return { hits: hits.slice(0, limit), dropped: { count: dropped.length, ...(dropped.length && { best: Math.max(...dropped) }) }, via: useVector ? 'meaning' : 'keywords' };
+}
+
 // ---------------------------------------------------------------------------
 // Profiles
 // ---------------------------------------------------------------------------
@@ -390,7 +501,7 @@ export function listProfiles(subjectType?: FactSubject, db: Database = database(
 
 export function countFacts(db: Database = database()): { facts: number; profiles: number } {
   return {
-    facts: Number(db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM brain_facts WHERE status = 'active' AND ${LIVE_FACT}`, new Date().toISOString())?.n ?? 0),
+    facts: Number(db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM brain_facts WHERE status = 'active' AND subject_type NOT IN (${PRIVATE_FACT_SUBJECTS.map((x) => `'${x}'`).join(', ')}) AND ${LIVE_FACT}`, new Date().toISOString())?.n ?? 0),
     profiles: Number(db.get<{ n: number }>('SELECT COUNT(*) AS n FROM brain_profiles')?.n ?? 0),
   };
 }

@@ -568,10 +568,19 @@ export interface EntityKnowledge {
 // Memory
 // ---------------------------------------------------------------------------
 
-export const FACT_SUBJECTS = ['workflow', 'agent', 'nodeType', 'credential', 'instance', 'entity'] as const;
+export const FACT_SUBJECTS = ['workflow', 'agent', 'nodeType', 'credential', 'instance', 'entity', 'project', 'agent-user'] as const;
 export type FactSubject = (typeof FACT_SUBJECTS)[number];
-export const FACT_KINDS = ['purpose', 'health', 'cost', 'failure', 'slow', 'change', 'dependency', 'usage', 'quality', 'intended'] as const;
+export const FACT_KINDS = ['purpose', 'health', 'cost', 'failure', 'slow', 'change', 'dependency', 'usage', 'quality', 'intended', 'memory'] as const;
 export type FactKind = (typeof FACT_KINDS)[number];
+
+/** The kinds the study writes (C07: a person or a flow may not add these; `intended` and `memory` are theirs). */
+export const STUDY_FACT_KINDS = ['purpose', 'health', 'cost', 'failure', 'slow', 'change', 'dependency', 'usage', 'quality'] as const;
+
+/**
+ * Subjects whose facts are one person's (C07 D3): every brain read leaves them out unless the filter names the subject,
+ * so an agent's memories of a user never reach the Brain page, Ask, Notion or the brain MCP tools.
+ */
+export const PRIVATE_FACT_SUBJECTS = ['agent-user'] as const;
 
 /** How a new fact relates to the one it follows (C01): only `updates` moves a chain forward; the others start a new chain. */
 export const FACT_RELATIONS = ['updates', 'extends', 'derives'] as const;
@@ -678,6 +687,9 @@ export interface BrainStatus {
 /** The reserved name of the brain's vector collections: `landflow-brain` and `landflow-brain-<project>`. */
 export const BRAIN_COLLECTION_PREFIX = 'landflow-brain';
 
+/** The vector collection of private `agent-user` facts (C07 D3): the study never clears it, no knowledge base may open it. */
+export const AGENT_MEMORY_COLLECTION = 'landflow-agent-memory';
+
 /**
  * Whether a vector collection name is one of the brain's: `landflow-brain*`, and (NB06) `landflow-notion-<project>`, the
  * company's Notion pages as knowledge. Workflows and agents can't read or write these (nodes/vector-stores.ts, agents/knowledge.ts).
@@ -685,7 +697,7 @@ export const BRAIN_COLLECTION_PREFIX = 'landflow-brain';
 export const isBrainCollection = (name: string): boolean => {
   const lower = name.trim().toLowerCase();
   const NOTION_KNOWLEDGE_PREFIX = 'landflow-notion'; // NB06: the value of notion-brain.ts's constant (that file imports this one, so it cannot be imported here)
-  return lower === BRAIN_COLLECTION_PREFIX || lower.startsWith(`${BRAIN_COLLECTION_PREFIX}-`) || lower === NOTION_KNOWLEDGE_PREFIX || lower.startsWith(`${NOTION_KNOWLEDGE_PREFIX}-`); // NB06:
+  return lower === BRAIN_COLLECTION_PREFIX || lower.startsWith(`${BRAIN_COLLECTION_PREFIX}-`) || lower === AGENT_MEMORY_COLLECTION || lower === NOTION_KNOWLEDGE_PREFIX || lower.startsWith(`${NOTION_KNOWLEDGE_PREFIX}-`); // NB06:
 };
 
 export const SIMILAR_KINDS = ['workflow', 'agent', 'entity', 'fact'] as const;

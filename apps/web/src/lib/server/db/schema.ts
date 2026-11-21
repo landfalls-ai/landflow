@@ -2018,6 +2018,12 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS team_notes_forgotten ON team_notes (forgotten_at)`,
     ],
   },
+  // C07: memory containers read a project's facts by project (docs/second-brain.md#memory-backend)
+  {
+    version: 2915,
+    name: 'brain_facts_project',
+    statements: [`CREATE INDEX IF NOT EXISTS brain_facts_project ON brain_facts (project_id, is_latest, last_seen)`],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */

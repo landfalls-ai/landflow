@@ -1,7 +1,7 @@
 /** Pure helpers for the "Agents in this project" card (docs/projects-and-goals.md#project-settings-for-agents). */
 import { api } from './api';
 import type { AgentModel } from '../shared/agents';
-import type { ProjectAgentList, ProjectKnowledge, ProjectSettingsView, ProjectToolKinds } from '../shared/project-policy';
+import type { ProjectAgentList, ProjectKnowledge, ProjectMemory, ProjectSettingsView, ProjectToolKinds } from '../shared/project-policy';
 
 /** What the card edits: the four fields the settings route's PATCH takes for agents. */
 export interface AgentSettingsForm {
@@ -9,24 +9,29 @@ export interface AgentSettingsForm {
   knowledge?: ProjectKnowledge;
   agents: ProjectAgentList;
   agentTools: ProjectToolKinds;
+  /** C07: absent: the built-in memory. */
+  memory?: ProjectMemory;
 }
 
 export interface AgentSettingsState {
   form: AgentSettingsForm;
   canEdit: boolean;
   available: Array<{ id: string; name: string; home: boolean }>;
+  /** C07: the memory provider nodes installed here. */
+  memoryProviders: NonNullable<ProjectSettingsView['memoryProviders']>;
 }
 
 const url = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}/settings`;
 
 export const fetchAgentSettings = (projectId: string) => api<ProjectSettingsView>(url(projectId));
 
-/** The PATCH body: the four fields (`null` clears one). */
+/** The PATCH body: the five fields (`null` clears one). */
 export const patchBody = (form: AgentSettingsForm) => ({
   defaultModel: form.defaultModel ?? null,
   knowledge: form.knowledge ?? null,
   agents: form.agents,
   agentTools: form.agentTools,
+  memory: form.memory ?? null,
 });
 
 /**
@@ -48,14 +53,14 @@ export function savePatch(form: AgentSettingsForm, saved: AgentSettingsForm, ava
 }
 
 /** The fields of a PATCH the route can refuse with a 400 (a credential, an Ollama model's credential, an agent id). */
-export type AgentSettingsErrorField = 'defaultModel' | 'knowledge' | 'agents';
+export type AgentSettingsErrorField = 'defaultModel' | 'knowledge' | 'agents' | 'memory';
 
 /**
  * Where a 400 for `patch` goes on the card: under the one field the PATCH sent that the route checks, or at the bottom when
  * it sent several (or none). Cleared fields (`null`) and an allow-list with no ids can't be refused.
  */
 export function errorFieldOf(patch: Partial<ReturnType<typeof patchBody>>): AgentSettingsErrorField | undefined {
-  const checked = (['defaultModel', 'knowledge', 'agents'] as const).filter((key) => (key === 'agents' ? Boolean(patch.agents?.ids.length) : Boolean(patch[key])));
+  const checked = (['defaultModel', 'knowledge', 'agents', 'memory'] as const).filter((key) => (key === 'agents' ? Boolean(patch.agents?.ids.length) : Boolean(patch[key])));
   return checked.length === 1 ? checked[0] : undefined;
 }
 
@@ -71,9 +76,11 @@ export function parseAgentSettings(view: ProjectSettingsView): AgentSettingsStat
       knowledge: s.knowledge,
       agents: s.agents ?? { mode: 'off', ids: [] },
       agentTools: s.agentTools ?? { mode: 'off', kinds: [] },
+      ...(s.memory && { memory: s.memory }),
     },
     canEdit: view.canEdit,
     available: view.availableAgents ?? [],
+    memoryProviders: view.memoryProviders ?? [],
   };
 }
 
