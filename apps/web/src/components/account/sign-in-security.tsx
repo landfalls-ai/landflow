@@ -21,6 +21,9 @@ import { PasskeyEnrol } from './passkeys';
 import { RecoveryCodes } from './recovery-codes';
 import { TotpEnrol } from './totp-enrol';
 
+/** The most passkeys one account can have (the server refuses the eleventh with a 409). */
+const MAX_PASSKEYS = 10;
+
 function useMfaState(initial?: MfaStateView) {
   const [state, setState] = useState<MfaStateView | undefined>(initial);
   const [error, setError] = useState<string>();
@@ -131,6 +134,7 @@ export function SignInSecurity({ initial }: { initial?: MfaStateView } = {}) {
     await load();
   };
   const confirmed = state.factors.filter((factor) => factor.confirmed);
+  const passkeyCount = confirmed.filter((factor) => factor.kind === 'webauthn').length;
   /** A factor was added: show the recovery codes when it brought them, and reload the list. */
   const added = (made?: string[]) => {
     setAdding(undefined);
@@ -175,9 +179,13 @@ export function SignInSecurity({ initial }: { initial?: MfaStateView } = {}) {
         ) : (
           state.canEnrol && (
             <div className="flex flex-wrap gap-2 max-md:flex-col">
-              <Button size="sm" variant="primary" onClick={() => setAdding('passkey')} className="max-md:w-full">
-                <KeyRound className="size-3.5" /> Add a passkey
-              </Button>
+              {passkeyCount >= MAX_PASSKEYS ? (
+                <p className="text-[12px] text-t3 max-md:w-full">You can have up to {MAX_PASSKEYS} passkeys. Remove one to add another.</p>
+              ) : (
+                <Button size="sm" variant="primary" onClick={() => setAdding('passkey')} className="max-md:w-full">
+                  <KeyRound className="size-3.5" /> Add a passkey
+                </Button>
+              )}
               {!confirmed.some((factor) => factor.kind === 'totp') && (
                 <Button size="sm" variant="outline" onClick={() => setAdding('totp')} className="max-md:w-full">
                   <Smartphone className="size-3.5" /> Add authenticator app

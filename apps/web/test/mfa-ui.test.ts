@@ -162,4 +162,16 @@ describe('passkeys (P15b)', () => {
     expect(out).toContain('Authenticator app');
     expect(out).toContain('Name this passkey');
   });
+
+  it('hides Add a passkey at ten with a hint, and tells a person with no way through to ask an admin', async () => {
+    const { SignInSecurity } = await import('../src/components/account/sign-in-security');
+    const ten = Array.from({ length: 10 }, (_, i) => ({ id: `mfa_${i}`, kind: 'webauthn' as const, name: `Key ${i}`, confirmed: true, createdAt: '2026-11-20T10:00:00.000Z' }));
+    const out = html(createElement(SignInSecurity, { initial: state({ factors: ten }) }));
+    expect(out).not.toContain('Add a passkey');
+    expect(out).toContain('up to 10 passkeys');
+    const { MfaStep } = await import('../src/components/auth/mfa-step');
+    const none = html(createElement(MfaStep, { challenge: 'c', methods: [], next: '/', onBack: () => {} }));
+    expect(none).toContain('ask an owner or admin to reset');
+    expect(none).not.toContain('Sign in <');
+  });
 });

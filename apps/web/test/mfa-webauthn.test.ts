@@ -36,6 +36,8 @@ const meRoute = await import('@/app/api/me/mfa/route');
 const factorRoute = await import('@/app/api/me/mfa/[id]/route');
 const stepUpRoute = await import('@/app/api/me/mfa/step-up/route');
 const { request } = await import('./mfa-helpers');
+const policy = await import('@/lib/server/auth/policy');
+const webauthn = await import('@/lib/server/auth/mfa/webauthn');
 
 beforeAll(() => {
   auth.disableTestAuth();
@@ -390,5 +392,104 @@ describe('what reaches the audit log', () => {
     expect(text).toContain('webauthn');
     for (const secret of [key.id, started.body.challenge, started.body.options.challenge, session]) expect(text).not.toContain(secret);
     expect(done.body.factor.id).toBeTruthy();
+  });
+});
+
+describe('review fixes', () => {
+  async function enrolledKey(role: 'owner' | 'admin' | 'member' = 'member') {
+    const user = await newUser(role);
+    const key = device();
+    const { done } = await register(sessionOf(user), key);
+    expect(done.status).toBe(201);
+    return { user, key, factorId: done.body.factor.id as string };
+  }
+
+  it('lets the fifth answer through when it is right (four wrong ones before it)', async () => {
+    const { user, key } = await enrolledKey();
+    const { first } = await signInOptions(user.email);
+    for (let i = 0; i < 4; i++) {
+      const options = await call(signInOptionsRoute.POST, '/api/auth/mfa/options', { body: { challenge: first.body.challenge } });
+      expect((await verify(first.body.challenge, key.get(options.body.options, { origin: 'https://evil.example.test' }))).status).toBe(401);
+    }
+    const options = await call(signInOptionsRoute.POST, '/api/auth/mfa/options', { body: { challenge: first.body.challenge } });
+    expect(options.status).toBe(200);
+    expect((await verify(first.body.challenge, key.get(options.body.options))).status).toBe(200);
+  });
+
+  it('does not count a flagged passkey as a factor: the policy asks to enrol, the last usable one stays, the flagged one can go', async () => {
+    const { user, key, factorId } = await enrolledKey('admin');
+    // Flag it: a clone's lower counter.
+    const first = await signInOptions(user.email);
+    expect((await verify(first.first.body.challenge, key.get(first.options.body.options, { counter: 10 }))).status).toBe(200);
+    const second = await signInOptions(user.email);
+    expect((await verify(second.first.body.challenge, key.get(second.options.body.options, { counter: 5 }))).status).toBe(401);
+    expect(factorRow(factorId)?.flagged_at).toBeTruthy();
+    process.env.LANDFLOW_MFA_REQUIRED = 'admins';
+    try {
+      expect(policy.enrolmentRequired(user, 'password')).toBe(true);
+      // Add a usable one; the policy is satisfied; removing it is refused while the flagged one stays; the flagged one goes freely.
+      const session = sessionOf(user);
+      const good = device();
+      const added = await register(session, good, 'Good');
+      expect(added.done.status).toBe(201);
+      expect(policy.enrolmentRequired(user, 'password')).toBe(false);
+      const start = await call(optionsRoute.POST, '/api/me/mfa/passkeys/options', { session, body: { purpose: 'step-up' } });
+      expect((await call(stepUpRoute.POST, '/api/me/mfa/step-up', { session, body: { method: 'webauthn', challenge: start.body.challenge, response: good.get(start.body.options) } })).status).toBe(200);
+      const goodId = added.done.body.factor.id as string;
+      const refused = await call(factorRoute.DELETE, `/api/me/mfa/${goodId}`, { session, method: 'DELETE' }, { id: goodId });
+      expect(refused.status).toBe(409);
+      expect(refused.body.code).toBe('mfa_required_by_policy');
+      expect((await call(factorRoute.DELETE, `/api/me/mfa/${factorId}`, { session, method: 'DELETE' }, { id: factorId })).status).toBe(200);
+    } finally {
+      delete process.env.LANDFLOW_MFA_REQUIRED;
+    }
+  });
+
+  it('still asks a user whose only passkey is flagged for a second step, with the recovery codes as the way', async () => {
+    const { user, key } = await enrolledKey();
+    const a = await signInOptions(user.email);
+    await verify(a.first.body.challenge, key.get(a.options.body.options, { counter: 10 }));
+    const b = await signInOptions(user.email);
+    await verify(b.first.body.challenge, key.get(b.options.body.options, { counter: 5 }));
+    const login = await call(loginRoute.POST, '/api/auth/login', { body: { email: user.email, password: PASSWORD } });
+    expect(login.status).toBe(202);
+    expect(login.body.methods).toEqual(['recovery']);
+  });
+
+  it('adds up to ten passkeys and one set of recovery codes even when finishes run in parallel', async () => {
+    const fresh = await newUser();
+    const begin = async (u: typeof fresh) => {
+      const started = await webauthn.registrationOptions(u);
+      return { token: started.challenge, response: device().create(started.options) };
+    };
+    const [a, b] = await Promise.all([begin(fresh), begin(fresh)]);
+    const done = await Promise.all([webauthn.finishRegistration(fresh, a.token, 'A', a.response), webauthn.finishRegistration(fresh, b.token, 'B', b.response)]);
+    expect(done.filter((r) => r.recoveryCodes).length).toBe(1);
+
+    const full = await newUser();
+    const session = sessionOf(full);
+    for (let i = 0; i < 9; i++) expect((await register(session, device(), `K${i}`)).done.status).toBe(201);
+    const [c, d] = await Promise.all([begin(full), begin(full)]);
+    const results = await Promise.allSettled([webauthn.finishRegistration(full, c.token, 'C', c.response), webauthn.finishRegistration(full, d.token, 'D', d.response)]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(factors.listFactors(full.id).filter((f) => f.kind === 'webauthn')).toHaveLength(10);
+  });
+
+  it('answers 409 to register options outside development when LANDFLOW_PUBLIC_URL is not set', async () => {
+    const user = await newUser();
+    const session = sessionOf(user);
+    const url = process.env.LANDFLOW_PUBLIC_URL;
+    delete process.env.LANDFLOW_PUBLIC_URL;
+    process.env.LANDFLOW_PROFILE = 'production';
+    try {
+      const refused = await call(optionsRoute.POST, '/api/me/mfa/passkeys/options', { session, body: { purpose: 'register', password: PASSWORD } });
+      expect(refused.status).toBe(409);
+      expect(refused.body.error).toMatch(/LANDFLOW_PUBLIC_URL/);
+      process.env.LANDFLOW_PROFILE = 'development';
+      expect((await call(optionsRoute.POST, '/api/me/mfa/passkeys/options', { session, body: { purpose: 'register', password: PASSWORD } })).status).toBe(200);
+    } finally {
+      delete process.env.LANDFLOW_PROFILE;
+      process.env.LANDFLOW_PUBLIC_URL = url;
+    }
   });
 });

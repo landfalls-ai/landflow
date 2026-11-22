@@ -48,6 +48,19 @@ export function MfaStep({ challenge, methods, next, onBack }: { challenge: strin
   };
 
   const others = available.filter((m) => m !== shown);
+  // A factor that was flagged (and no recovery codes left) leaves no way through: only an admin's reset helps.
+  if (methods.length === 0) {
+    return (
+      <div className="space-y-3.5">
+        <div role="alert" className="flex gap-2 rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[12px] text-rd">
+          <TriangleAlert className="mt-px size-3.5 shrink-0" /> You have no second factor that can sign you in now (a passkey may have been flagged). Please ask an owner or admin to reset your second factor, then sign in again.
+        </div>
+        <Button type="button" variant="primary" className="w-full" onClick={onBack}>
+          Back to sign in
+        </Button>
+      </div>
+    );
+  }
   return (
     <form method="post" onSubmit={submit} className="space-y-3.5">
       <p className="text-[13px] leading-relaxed text-t2">

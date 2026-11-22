@@ -125,8 +125,9 @@ export function removeFactor(actor: UserRecord, sessionId: string | undefined, f
   if (row.confirmed_at) {
     const checked = sessionMfaVerifiedAt(sessionId);
     if (!checked || now - Date.parse(checked) > STEP_UP_MINUTES * 60_000) throw new MfaError('Check your second factor first, then try again', 403, 'mfa_step_up_required');
-    const confirmed = rows(actor.id).filter((r) => r.confirmed_at);
-    if (confirmed.length === 1 && mfaCovers(actor)) throw new MfaError('Your account has to keep a second factor: this instance requires one for your role (LANDFLOW_MFA_REQUIRED)', 409, 'mfa_required_by_policy');
+    // A flagged passkey is refused at sign-in, so it is no factor the policy can count: the last usable one stays, a flagged one may always go.
+    const usable = rows(actor.id).filter((r) => r.confirmed_at && !r.flagged_at);
+    if (!row.flagged_at && usable.length === 1 && mfaCovers(actor)) throw new MfaError('Your account has to keep a second factor: this instance requires one for your role (LANDFLOW_MFA_REQUIRED)', 409, 'mfa_required_by_policy');
   }
   db.transaction(() => {
     db.delete('user_mfa_factors', { id: row.id });

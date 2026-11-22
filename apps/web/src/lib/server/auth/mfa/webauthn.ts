@@ -14,7 +14,9 @@ import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import type { MfaFactorView } from '../../../shared/auth';
 import { recordAudit } from '../../audit';
-import { publicUrl } from '../../config/urls';
+import { isProduction } from '../../config/profile';
+import { publicUrl, publicUrlConfigured } from '../../config/urls';
+import type { Database } from '../../db';
 import { MfaError } from './errors';
 import { authDb } from '../db';
 import type { UserRecord } from '../users';
@@ -77,6 +79,8 @@ export const hasUsablePasskey = (userId: string): boolean => passkeys(userId).so
 /** Step 1 of adding a passkey: options for `navigator.credentials.create()` and the token that must come back with the answer. */
 export async function registrationOptions(user: UserRecord): Promise<{ challenge: string; options: PublicKeyCredentialCreationOptionsJSON }> {
   if (!user.passwordHash) throw new MfaError('Accounts that sign in with single sign-on use their identity provider’s second factor', 409);
+  // A passkey is bound to the relying party id: guessing it from a default would make keys that stop working.
+  if (isProduction() && !publicUrlConfigured()) throw new MfaError('Passkeys need LANDFLOW_PUBLIC_URL set to the address people open Landflow at. Ask an administrator to set it', 409);
   const existing = passkeys(user.id);
   if (existing.length >= MAX_PASSKEYS) throw new MfaError(`You can have up to ${MAX_PASSKEYS} passkeys. Remove one to add another`, 409);
   const rp = relyingParty();
@@ -118,24 +122,28 @@ export async function finishRegistration(user: UserRecord, token: string, name: 
   const credential = verified.verified ? verified.registrationInfo?.credential : undefined;
   if (!credential) throw new MfaError('That passkey could not be verified. Try again.', 400);
   const db = authDb();
-  if (passkeys(user.id).length >= MAX_PASSKEYS) throw new MfaError(`You can have up to ${MAX_PASSKEYS} passkeys. Remove one to add another`, 409);
-  // A credential id is one passkey in the whole instance (also a unique index); the answer names no account.
-  if (db.get('SELECT 1 AS one FROM user_mfa_factors WHERE credential_id = ?', credential.id)) throw new MfaError('That passkey is already registered', 409);
   if (!(await useChallenge(token))) throw new MfaError(GONE, 400);
-  const first = !db.get(`SELECT 1 AS one FROM user_mfa_factors WHERE user_id = ? AND confirmed_at IS NOT NULL LIMIT 1`, user.id);
   const now = new Date().toISOString();
   const id = `mfa_${nanoid(14)}`;
-  db.insertNew('user_mfa_factors', {
-    id,
-    user_id: user.id,
-    kind: 'webauthn',
-    name,
-    credential_id: credential.id,
-    public_key: isoBase64URL.fromBuffer(credential.publicKey),
-    counter: credential.counter,
-    transports: (credential.transports ?? response.response.transports ?? []).join(',') || null,
-    confirmed_at: now,
-    created_at: now,
+  // The cap, the credential check, the insert and "is this the first factor" are decided together, with nothing awaited in between.
+  const first = db.transaction(() => {
+    if (passkeys(user.id).length >= MAX_PASSKEYS) throw new MfaError(`You can have up to ${MAX_PASSKEYS} passkeys. Remove one to add another`, 409);
+    // A credential id is one passkey in the whole instance (also a unique index); the answer names no account.
+    if (db.get('SELECT 1 AS one FROM user_mfa_factors WHERE credential_id = ?', credential.id)) throw new MfaError('That passkey is already registered', 409);
+    const isFirst = !db.get(`SELECT 1 AS one FROM user_mfa_factors WHERE user_id = ? AND confirmed_at IS NOT NULL LIMIT 1`, user.id);
+    db.insertNew('user_mfa_factors', {
+      id,
+      user_id: user.id,
+      kind: 'webauthn',
+      name,
+      credential_id: credential.id,
+      public_key: isoBase64URL.fromBuffer(credential.publicKey),
+      counter: credential.counter,
+      transports: (credential.transports ?? response.response.transports ?? []).join(',') || null,
+      confirmed_at: now,
+      created_at: now,
+    });
+    return isFirst;
   });
   const recoveryCodes = first ? newRecoveryCodes(user.id) : undefined;
   recordAudit({ action: 'auth.mfa_added', target: { type: 'user', id: user.id }, summary: 'Added a second factor', details: { kind: 'webauthn', factorId: id } });
@@ -168,10 +176,10 @@ export async function stepUpOptions(user: UserRecord): Promise<{ challenge: stri
  * moved forward in one conditional write. The library gets counter 0 so it does not judge the counter itself: ours
  * flags a regression (below, or equal and not zero) and audits it.
  */
-export async function verifyPasskey(userId: string, token: string, response: Assertion, now = Date.now()): Promise<boolean> {
-  const expected = await consumeWebauthnChallenge(token, now);
+export async function verifyPasskey(userId: string, token: string, response: Assertion, now = Date.now(), db: Database = authDb()): Promise<boolean> {
+  const expected = await consumeWebauthnChallenge(token, now, db);
   if (!expected) return false;
-  const row = authDb().get<PasskeyRow>(`SELECT * FROM user_mfa_factors WHERE credential_id = ? AND user_id = ? AND kind = 'webauthn' AND confirmed_at IS NOT NULL`, response.id, userId);
+  const row = db.get<PasskeyRow>(`SELECT * FROM user_mfa_factors WHERE credential_id = ? AND user_id = ? AND kind = 'webauthn' AND confirmed_at IS NOT NULL`, response.id, userId);
   if (!row || row.flagged_at) return false;
   const rp = relyingParty();
   let counter: number;
@@ -197,11 +205,11 @@ export async function verifyPasskey(userId: string, token: string, response: Ass
     when: 'flagged_at IS NULL AND (counter IS NULL OR counter < ? OR (counter = 0 AND ? = 0))',
     whenParams: [counter, counter],
     check: (r) => !r.flagged_at && (r.counter == null || Number(r.counter) < counter || (Number(r.counter) === 0 && counter === 0)),
-  });
+  }, db);
   if (forward) return true;
-  const flagged = await takeOnce({ table: 'user_mfa_factors', key: { id: row.id }, set: { flagged_at: at }, when: 'flagged_at IS NULL', whenParams: [], check: (r) => !r.flagged_at });
+  const flagged = await takeOnce({ table: 'user_mfa_factors', key: { id: row.id }, set: { flagged_at: at }, when: 'flagged_at IS NULL', whenParams: [], check: (r) => !r.flagged_at }, db);
   if (flagged) {
-    const user = authDb().get<{ id: string; name: string; email: string }>('SELECT id, name, email FROM users WHERE id = ?', userId);
+    const user = db.get<{ id: string; name: string; email: string }>('SELECT id, name, email FROM users WHERE id = ?', userId);
     recordAudit({ action: 'auth.mfa_flagged', outcome: 'failure', ...(user && { actor: { id: user.id, name: user.name, email: user.email } }), target: { type: 'user', id: userId }, summary: 'Flagged a passkey whose signature counter went back', details: { kind: 'webauthn', factorId: row.id } });
   }
   return false;

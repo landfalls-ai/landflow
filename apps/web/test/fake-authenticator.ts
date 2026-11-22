@@ -37,6 +37,11 @@ export class FakeAuthenticator {
     return b64(this.credentialId);
   }
 
+  /** The public key as the server stores it (COSE, base64url). */
+  get publicKeyB64(): string {
+    return b64(this.coseKey());
+  }
+
   private coseKey(): Uint8Array {
     const jwk = this.publicKey.export({ format: 'jwk' });
     return isoCBOR.encode(new Map<number, number | Uint8Array>([[1, 2], [3, -7], [-1, 1], [-2, new Uint8Array(Buffer.from(jwk.x!, 'base64url'))], [-3, new Uint8Array(Buffer.from(jwk.y!, 'base64url'))]]));

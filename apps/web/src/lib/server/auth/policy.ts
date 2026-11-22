@@ -229,11 +229,11 @@ export function mfaCovers(user: { role: Role }): boolean {
 
 const SSO: SessionMethod[] = ['oidc', 'saml'];
 
-/** True when the policy covers this user, the session is a local one and the user has no confirmed factor: the session may only enrol one. */
+/** True when the policy covers this user, the session is a local one and the user has no usable factor (confirmed and not flagged: a flagged passkey is refused at sign-in): the session may only enrol one. */
 export function enrolmentRequired(user: UserRecord, sessionMethod: SessionMethod | undefined): boolean {
   if (!mfaCovers(user)) return false;
   if (sessionMethod && SSO.includes(sessionMethod)) return false;
-  return !authDb().get('SELECT 1 AS one FROM user_mfa_factors WHERE user_id = ? AND confirmed_at IS NOT NULL LIMIT 1', user.id);
+  return !authDb().get('SELECT 1 AS one FROM user_mfa_factors WHERE user_id = ? AND confirmed_at IS NOT NULL AND flagged_at IS NULL LIMIT 1', user.id);
 }
 
 /** What an enrol-only session may call: who it is, its own factors, and signing out. Everything else answers 403 `mfa_enrolment_required`. */
