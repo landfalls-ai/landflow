@@ -41,6 +41,7 @@ import type { ProjectBriefView } from '@/lib/shared/goals';
 import { ProjectAgentSettings } from './project-agent-settings';
 import { ProjectBudgetCard } from './project-budget-card';
 import { BrainCard } from './brain-card'; // NB07:
+import { CollectionsCard } from './collections-card'; // C21:
 import { TasksTab } from './tasks/tasks-tab'; // PC20
 import { OVERVIEW_KINDS, PROJECT_TABS, projectTab, type ProjectTab } from './project-tabs';
 
@@ -494,6 +495,9 @@ function ProjectSettings({ project, section, onChanged }: { project: ProjectDeta
       {section === 'settings' && <BrainCard projectId={project.id} canEdit={projectRoleCan.create(project.role)} />}
 
       {section === 'settings' && <McpCard project={project} />}
+
+      {/* C21: */}
+      {section === 'settings' && <CollectionsCard projectId={project.id} />}
     </div>
   );
 }

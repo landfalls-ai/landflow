@@ -68,6 +68,7 @@ import { parameterSecrets, rememberResolvedParameters } from '../secrets/resolve
 import { store } from '../store';
 import { variables } from '../variables';
 import { knowledgeTool } from './knowledge';
+import { homeProjectId } from '../projects/store'; // C21:
 import { agentStore } from './store';
 import { MemoryNotFoundError } from '../memory';
 import { memoryKeyLine, withMemoryKey } from '../kagent/memory-line';
@@ -194,7 +195,7 @@ export function buildTools(agent: Agent, config: AgentConfig, mcp: Toolset = { t
           : tool.type === 'knowledge'
             ? isNodeKnowledge(tool)
               ? nodeKnowledgeTool(tool)
-              : knowledgeTool(tool)
+              : knowledgeTool(tool, { asProject: homeProjectId('agent', agent.id), subject: 'agent' }) // C21: the agent's home project asks
             : subAgentTool(tool, agent);
     if ('error' in built) unavailable.push(built.error);
     else tools.push(built);

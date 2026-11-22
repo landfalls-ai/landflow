@@ -7,12 +7,18 @@
 import { agentStore } from '@/lib/server/agents/store';
 import { addKnowledgeDocument, deleteKnowledgeDocument, listKnowledgeDocuments, MAX_UPLOAD_BYTES } from '@/lib/server/agents/knowledge';
 import { FileLoadError } from '@/lib/server/rag/files';
+import { CollectionAccessError } from '@/lib/server/rag/collection-access'; // C21:
 import { error, handler, json } from '@/lib/server/http';
 import type { KnowledgeBaseToolConfig, VectorKnowledgeBaseConfig } from '@/lib/shared/agents';
 import { isNodeKnowledge } from '@/lib/shared/agents';
+import { homeProjectId } from '@/lib/server/projects/store'; // C21:
+import type { KnowledgeInternal } from '@/lib/server/agents/knowledge'; // C21:
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string; toolId: string }> };
+
+/** C21: the agent's home project asks (a collection another project owns answers 403 with the same message whether it exists or not). */
+const askerOf = async ({ params }: Ctx): Promise<KnowledgeInternal> => ({ asProject: homeProjectId('agent', (await params).id), subject: 'agent' });
 
 async function knowledgeOf({ params }: Ctx): Promise<VectorKnowledgeBaseConfig | Response> {
   const { id, toolId } = await params;
@@ -28,8 +34,9 @@ export const GET = handler(async (_request: Request, ctx: Ctx) => {
   const config = await knowledgeOf(ctx);
   if (config instanceof Response) return config;
   try {
-    return json(await listKnowledgeDocuments(config));
+    return json(await listKnowledgeDocuments(config, await askerOf(ctx)));
   } catch (caught) {
+    if (caught instanceof CollectionAccessError) throw caught;
     return error((caught as Error).message, 502);
   }
 });
@@ -48,8 +55,9 @@ export const POST = handler(async (request: Request, ctx: Ctx) => {
       continue;
     }
     try {
-      documents.push(await addKnowledgeDocument(config, { bytes: new Uint8Array(await file.arrayBuffer()), fileName: file.name, ...(file.type && { mimeType: file.type }) }));
+      documents.push(await addKnowledgeDocument(config, { bytes: new Uint8Array(await file.arrayBuffer()), fileName: file.name, ...(file.type && { mimeType: file.type }) }, {}, await askerOf(ctx)));
     } catch (caught) {
+      if (caught instanceof CollectionAccessError) throw caught;
       failed.push({ fileName: file.name, error: [(caught as Error).message, caught instanceof FileLoadError ? caught.description : undefined].filter(Boolean).join(': ') });
     }
   }
@@ -61,5 +69,5 @@ export const DELETE = handler(async (request: Request, ctx: Ctx) => {
   if (config instanceof Response) return config;
   const documentId = new URL(request.url).searchParams.get('documentId');
   if (!documentId) return error('documentId is required');
-  return json({ removed: await deleteKnowledgeDocument(config, documentId) });
+  return json({ removed: await deleteKnowledgeDocument(config, documentId, await askerOf(ctx)) });
 });

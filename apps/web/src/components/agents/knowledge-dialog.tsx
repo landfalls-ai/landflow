@@ -11,6 +11,7 @@ import { BookOpen, FileText, Loader2, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import type { KnowledgeBaseToolConfig, KnowledgeNodePreset, NodeKnowledgeBaseConfig, VectorKnowledgeBaseConfig } from '@/lib/shared/agents';
 import { isNodeKnowledge, KNOWLEDGE_NODE_PRESETS, knowledgeIndexSummary } from '@/lib/shared/agents';
+import { api } from '@/lib/client/api';
 import { NodeCredentials } from '../credentials/node-credentials';
 import { Button } from '../ui/button';
 import { Input, Select } from '../ui/inputs';
@@ -34,7 +35,38 @@ export function KnowledgeTile({ size = 32 }: { size?: number }) {
   );
 }
 
-export function KnowledgeDialog({ agentId, tool, onSave, onClose }: { agentId?: string; tool?: KnowledgeBaseToolConfig; onSave: (tool: KnowledgeBaseToolConfig) => void; onClose: () => void }) {
+/**
+ * C21: the message under the collection field when the project the base belongs to can't use that name (another project owns it), asked
+ * a moment after typing and before saving. Only the SQLite and in-memory stores are checked here: a Postgres collection is keyed by
+ * its connection, which the server checks when the base is saved or used.
+ */
+function useCollectionRefusal(agentId: string | undefined, projectId: string | undefined, value: VectorKnowledgeBaseConfig | undefined): string | undefined {
+  const [home, setHome] = useState<string | undefined>(projectId);
+  const [message, setMessage] = useState<string>();
+  useEffect(() => {
+    if (projectId || !agentId) return;
+    api<{ home: { id: string } }>(`/api/agents/${encodeURIComponent(agentId)}/shares`)
+      .then((s) => setHome(s.home.id || undefined))
+      .catch(() => undefined);
+  }, [agentId, projectId]);
+  const collection = value?.collection.trim();
+  const store = value?.store;
+  useEffect(() => {
+    if (!home || !collection || !store || store === 'pgvector') {
+      setMessage(undefined);
+      return;
+    }
+    const timer = setTimeout(() => {
+      api<{ usable: boolean; message?: string }>(`/api/projects/${encodeURIComponent(home)}/collections?check=${encodeURIComponent(collection)}&store=${store}`)
+        .then((answer) => setMessage(answer.usable ? undefined : answer.message))
+        .catch(() => setMessage(undefined));
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [home, collection, store]);
+  return message;
+}
+
+export function KnowledgeDialog({ agentId, projectId, tool, onSave, onClose }: { agentId?: string; /** C21: the project that will search it (project knowledge); an agent's is its home project. */ projectId?: string; tool?: KnowledgeBaseToolConfig; onSave: (tool: KnowledgeBaseToolConfig) => void; onClose: () => void }) {
   const [source, setSource] = useState<'vector' | 'node'>(tool && isNodeKnowledge(tool) ? 'node' : 'vector');
   const [value, setValue] = useState<VectorKnowledgeBaseConfig>(
     () =>
@@ -51,6 +83,7 @@ export function KnowledgeDialog({ agentId, tool, onSave, onClose }: { agentId?: 
       },
   );
   const [node, setNode] = useState<NodeKnowledgeBaseConfig>(() => (tool && isNodeKnowledge(tool) ? tool : nodeKnowledgeFrom(KNOWLEDGE_NODE_PRESETS[0], tool?.id ?? value.id)));
+  const refusal = useCollectionRefusal(agentId, projectId, source === 'vector' ? value : undefined);
   const set = (patch: Partial<VectorKnowledgeBaseConfig>) => setValue((v) => ({ ...v, ...patch }));
   const setEmbeddings = (patch: Partial<VectorKnowledgeBaseConfig['embeddings']>) => setValue((v) => ({ ...v, embeddings: { ...v.embeddings, ...patch } }));
   const setNodePatch = (patch: Partial<NodeKnowledgeBaseConfig>) => setNode((v) => ({ ...v, ...patch }));
@@ -147,6 +180,11 @@ export function KnowledgeDialog({ agentId, tool, onSave, onClose }: { agentId?: 
           </Field>
           <Field id="kb-collection" label="Collection" required>
             <Input id="kb-collection" value={value.collection} onChange={(e) => set({ collection: e.target.value })} />
+            {refusal && (
+              <p className="mt-1 text-[12px] text-rd" data-testid="kb-collection-refused">
+                {refusal}
+              </p>
+            )}
           </Field>
         </div>
         <Field id="kb-description" label="When to search it" hint="Tells the model what the documents are about">

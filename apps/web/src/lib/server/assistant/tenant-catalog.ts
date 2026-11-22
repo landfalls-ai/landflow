@@ -23,7 +23,7 @@ import { listKnowledgeDocuments } from '../agents/knowledge';
 import { credentials } from '../credentials/vault';
 import { filesDir } from '../nodes/files';
 import { canResource, withOwnership, type Actor } from '../projects';
-import { credentialUsableBy } from '../projects/access';
+import { credentialUsableBy, creationProject } from '../projects/access';
 import { homeProjectId } from '../projects/store';
 import { redactValue } from '../secrets/redact';
 import { store } from '../store';
@@ -255,13 +255,19 @@ async function topFolders(): Promise<CatalogFolder[]> {
 /** The knowledge bases agents search, with document counts, and the folders a new one could come from. */
 export async function catalogKnowledge(actor: Actor | undefined, projectId?: string): Promise<KnowledgeListing> {
   const resources = await agentResources(who(actor), projectId);
+  let asProject: string | undefined;
+  try {
+    asProject = projectId ?? (actor ? creationProject(actor) : undefined);
+  } catch {
+    asProject = undefined;
+  }
   const bases: CatalogKnowledgeBase[] = [];
   for (const k of resources.knowledge) {
     let documents: number | undefined;
     let indexedFrom: string | undefined;
     if (k.store === 'sqlite' || k.store === 'memory') {
       try {
-        const { documents: docs } = await listKnowledgeDocuments({ ...k, id: 'catalog', type: 'knowledge' } as Parameters<typeof listKnowledgeDocuments>[0]);
+        const { documents: docs } = await listKnowledgeDocuments({ ...k, id: 'catalog', type: 'knowledge' } as Parameters<typeof listKnowledgeDocuments>[0], { ...(asProject && { asProject }), subject: 'agent' }); // C21: counted as the asking project
         documents = docs.length;
         const tops = new Set(docs.map((d) => (d.fileName.includes('/') ? d.fileName.split('/')[0] : '')));
         if (tops.size === 1 && [...tops][0]) indexedFrom = [...tops][0];
@@ -277,6 +283,7 @@ export async function catalogKnowledge(actor: Actor | undefined, projectId?: str
       search: k.embeddings.provider === 'none' ? 'keyword' : k.embeddings.model,
       ...(indexedFrom && { indexedFrom }),
       usedBy: k.usedBy,
+      ...(k.access && { level: k.access }),
     });
   }
   const emb = resources.embeddings;

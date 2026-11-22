@@ -26,6 +26,8 @@ import { targetOfKnowledge } from './tool-target'; // AG14:
 import { ollamaUrl } from '../config';
 import { logger } from '../telemetry/logger'; // NB08:
 import { isBrainCollection } from '../../shared/brain'; // NB06:
+import { pgIdentityOf, storeKeyOf } from '../../shared/collections'; // C21:
+import { assertCanRead, assertCanWrite, type Asker } from '../rag/collection-access'; // C21:
 import { NOTION_DATA_NOTE } from '../brain/notion/data-note'; // NB06:
 
 /** The vector store node each kind of store matches (its icon in the timeline, its credential requirement). */
@@ -50,6 +52,32 @@ function credentialFor(nodeType: string, name: string, ref: KnowledgeBaseToolCon
  */
 export interface KnowledgeInternal {
   allowReserved?: boolean;
+  /**
+   * C21: the project that asks (an agent's home project; the project itself for project knowledge). Without one only a collection
+   * nobody owns yet may be used. `subject` words the refusal: "This agent’s project …".
+   */
+  asProject?: string;
+  subject?: Asker['subject'];
+}
+const askerOf = (internal?: KnowledgeInternal): Asker => ({ projectId: internal?.asProject, subject: internal?.subject ?? 'agent' });
+
+/** C21: the key the base's collection is kept under (a pgvector one by its connection and table, as the node keys it). */
+export function collectionKeyOf(config: KnowledgeBaseToolConfig): string {
+  if (config.store !== 'pgvector') return storeKeyOf(config.store, config.collection);
+  return storeKeyOf('pgvector', config.collection, pgIdentityOf(credentialFor(KNOWLEDGE_STORE_NODE.pgvector, 'postgres', config.credential), config.tableName));
+}
+
+/** C21: refuses a base whose collection another project owns (the same message whether it exists or not). Not for the runtime's own Notion brain. */
+function assertReadable(config: KnowledgeBaseToolConfig, internal?: KnowledgeInternal): void {
+  if (internal?.allowReserved) return;
+  assertCanRead(collectionKeyOf(config), config.collection, askerOf(internal));
+}
+
+/** C21: refuses a write (upload, folder index, delete) to a collection the project can't write; the first write to an unowned one claims it. */
+async function assertWritable(config: KnowledgeBaseToolConfig, internal?: KnowledgeInternal): Promise<void> {
+  if (internal?.allowReserved) return;
+  if (isBrainCollection(config.collection ?? '')) throw new Error(reserved(config.collection)); // NB06:
+  await assertCanWrite(collectionKeyOf(config), config.store, config.collection, askerOf(internal));
 }
 const reserved = (collection: string) => `“${collection.trim()}” is the second brain’s own collection`;
 
@@ -57,6 +85,7 @@ function openStore(config: KnowledgeBaseToolConfig, internal?: KnowledgeInternal
   if (!internal?.allowReserved && isBrainCollection(config.collection ?? '')) throw new Error(reserved(config.collection)); // NB06:
   // AG13: keyword search has no real vectors, and Postgres needs them
   if (config.store === 'pgvector' && config.embeddings?.provider === 'none') throw new Error('Keyword search (no embeddings model) works with the SQLite and in-memory stores only: Postgres needs real vectors. Pick an embeddings model');
+  assertReadable(config, internal); // C21: after the cheap config checks (the key of a pgvector base needs its credential)
   if (config.store === 'memory') return new MemoryVectorStore();
   if (config.store === 'sqlite') return new SqliteVectorStore();
   return new PgVectorStore(pgConfig(credentialFor(KNOWLEDGE_STORE_NODE.pgvector, 'postgres', config.credential)), config.tableName?.trim() || 'landflow_vectors');
@@ -119,6 +148,7 @@ export function knowledgeTool(config: KnowledgeBaseToolConfig, internal?: Knowle
     requireApproval: Boolean(config.requireApproval),
     async invoke(input, ctx) {
       const query = String(input.query ?? '');
+      assertReadable(config, internal); // C21: a grant revoked since the tool was built stops the next search
       const searcher = { store, collection: config.collection.trim(), embeddings, options: { searchMode: config.searchMode ?? 'vector' }, ...(ctx.signal && { signal: ctx.signal }) } satisfies Searcher;
       let documents;
       try {
@@ -170,9 +200,10 @@ export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
  * chunks by the recursive splitter, embedded with the base's embeddings model and stored in its collection with
  * `documentId`, `fileName`, `page` (where known) and `uploadedAt` metadata.
  */
-export async function addKnowledgeDocument(config: KnowledgeBaseToolConfig, file: FileInput, extra: JsonObject = {}): Promise<KnowledgeDocument> { // AG13: `extra` (`{ source }`) joins every chunk's metadata
+export async function addKnowledgeDocument(config: KnowledgeBaseToolConfig, file: FileInput, extra: JsonObject = {}, internal?: KnowledgeInternal): Promise<KnowledgeDocument> { // AG13: `extra` (`{ source }`) joins every chunk's metadata
   if (!config.collection?.trim()) throw new Error('The knowledge base has no collection');
-  const store = openStore(config);
+  await assertWritable(config, internal); // C21:
+  const store = openStore(config, internal);
   const embeddings = embeddingsFor(config.embeddings);
   // C20: a file with a known source is indexed again under the document it already is, embedding only what changed.
   if (typeof extra.source === 'string') return syncKnowledgeFile(config, store, embeddings, file, extra as JsonObject & { source: string });
@@ -266,8 +297,9 @@ async function documentCount(config: KnowledgeBaseToolConfig, internal?: Knowled
 }
 
 /** Remove one uploaded document (all its chunks); returns how many chunks went. */
-export function deleteKnowledgeDocument(config: KnowledgeBaseToolConfig, documentId: string): Promise<number> {
-  return openStore(config).deleteWhere(config.collection.trim(), { documentId });
+export async function deleteKnowledgeDocument(config: KnowledgeBaseToolConfig, documentId: string, internal?: KnowledgeInternal): Promise<number> {
+  await assertWritable(config, internal); // C21:
+  return openStore(config, internal).deleteWhere(config.collection.trim(), { documentId });
 }
 
 // ---------------------------------------------------------------------------
@@ -341,9 +373,10 @@ export interface FolderIndex {
  * version until then, and when embedding fails), and the chunks of files that left the folder are removed. A file
  * that can't be read keeps its old chunks and is listed in `failed`.
  */
-export async function indexFolder(config: KnowledgeBaseToolConfig, folder: string): Promise<FolderIndex> {
+export async function indexFolder(config: KnowledgeBaseToolConfig, folder: string, internal?: KnowledgeInternal): Promise<FolderIndex> {
+  await assertWritable(config, internal); // C21:
   const { files, truncated, incomplete, prefix } = await folderFiles(folder);
-  const store = openStore(config);
+  const store = openStore(config, internal);
   const collection = config.collection.trim();
   const result: FolderIndex = { documents: 0, chunks: 0, reused: 0, embedded: 0, removed: 0, failed: [] };
   for (const file of files) {
@@ -352,7 +385,7 @@ export async function indexFolder(config: KnowledgeBaseToolConfig, folder: strin
       const info = await stat(path);
       if (info.size > MAX_UPLOAD_BYTES) throw new Error(`Too large (${Math.round(info.size / 1024 / 1024)} MB; the limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB)`);
       const bytes = new Uint8Array(await readFile(path));
-      const added = (await addKnowledgeDocument(config, { bytes, fileName: file }, { source: file })) as KnowledgeDocumentSync;
+      const added = (await addKnowledgeDocument(config, { bytes, fileName: file }, { source: file }, internal)) as KnowledgeDocumentSync;
       result.documents++;
       result.chunks += added.chunks;
       result.reused += added.reused;

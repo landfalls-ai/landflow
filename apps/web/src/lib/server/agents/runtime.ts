@@ -548,7 +548,7 @@ export async function runAgent(request: RunRequest): Promise<RunResult> {
         const knowledge = rules.settings.knowledge;
         // NB06: the project's own Notion brain is built by the runtime (the only path that may open `landflow-notion-<project>`).
         const notion = knowledge?.enabled && isNotionBrainKnowledge(knowledge.tool) ? notionBrainKnowledgeConfig(rules.projectId, knowledge.tool) : undefined;
-        const built = notion ? ('error' in notion ? notion : knowledgeTool(notion, { allowReserved: true })) : knowledge?.enabled && !isNotionBrainKnowledge(knowledge.tool) ? (isNodeKnowledge(knowledge.tool) ? nodeKnowledgeTool(knowledge.tool) : knowledgeTool(knowledge.tool)) : undefined;
+        const built = notion ? ('error' in notion ? notion : knowledgeTool(notion, { allowReserved: true })) : knowledge?.enabled && !isNotionBrainKnowledge(knowledge.tool) ? (isNodeKnowledge(knowledge.tool) ? nodeKnowledgeTool(knowledge.tool) : knowledgeTool(knowledge.tool, { asProject: rules.projectId, subject: 'project' })) : undefined;
         if (built && 'error' in built) toolset = { ...toolset, tools: kept, unavailable: [...toolset.unavailable, built.error] };
         else if (built) {
           toolset = { ...toolset, tools: dedupe([...kept, { ...built, name: PROJECT_KNOWLEDGE_TOOL, label: notion ? notionBrainLabel(rules.projectName) : 'Project knowledge' }]) };

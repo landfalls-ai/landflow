@@ -85,6 +85,27 @@ These are built by the screens wave (PC02).
 - **Goal dialog**: title, why, level, status, owner, target date, parent, the projects that serve it and linked initiatives.
 - **Project Overview**: a brief card with the fields above, the primary goal and the other goals it serves.
 - **Settings → Company**: the name and mission.
+- **Collections card** (a project's Settings tab): see below.
+
+## Collections
+
+A vector collection (the documents a Vector Store node or a knowledge base searches) belongs to one project (C21). The first
+project to write a new collection owns it; until it is written, the name is open to every project. Another project uses it
+only when an admin of the owner shares it: **read** (search) or **write** (search, upload, index, insert, clear, delete) to a
+project or to **All projects**. The project that asks is the home project of the workflow or agent (project knowledge asks as
+its project). A project that can't use a name gets one message, "This workflow’s project can’t use the collection “x”", whether
+the collection exists or not.
+
+The **Collections card** lists the collections the project owns (with who else may use each, and **Share with…** and **Stop**
+for its admins), the ones shared with it, and, for a project whose collection was in use before this change, the **notice about
+the upgrade**. On upgrade each collection a saved agent, project knowledge setting or workflow names went to the project of
+the oldest resource that names it (`source` "given to this project in the upgrade"); every other project that named it
+**lost access** until an admin of the owner grants it, and the notice on the owner's card lists each such project with
+**Grant read**, **Grant write** and **Dismiss** (the project that lost it sees which project owns it now). Each such pair is also an audit row
+(`collection.access_lost`), and the run is summarised in `collection.adopted`. Collections no saved configuration names stay open until someone writes them.
+A project with an active Notion link also gets **Let this project’s flows read its Notion knowledge**: its own Vector Store nodes can then search `landflow-notion-<project>`
+(never write it, never another project's). Owners and admins of the instance see every project's card, find owners again
+and move a collection to another project through `/api/settings/collections` ([API](reference/api.md)).
 
 ## The API
 
