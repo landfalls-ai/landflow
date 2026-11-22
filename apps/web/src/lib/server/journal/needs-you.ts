@@ -14,11 +14,12 @@ import { ticketsOf } from '../approval-inbox/tickets'; // C12:
 import type { Actor } from '../projects/access'; // AP01:
 import { liveExecution } from '../runner';
 import { store } from '../store';
+import { trustItems } from '../trust/needs-you'; // C27:
 import { openWaitSpan } from './decisions';
 import { checksSinceAsync, spanStartAsync } from './store';
 
-/** `gate`: a Run report waits for a person to accept its failed checks or send the work back. `budget` (PC14): a project's AI budget warning or stop. `spend` (SP23): a forecast over a cap or unusual AI spend. */
-export type NeedsYouKind = 'approval' | 'form' | 'question' | 'gate' | 'check' | 'budget' | 'task' | 'spend'; // SP23: spend
+/** `trust` (C27): an agent's MCP tools changed since it was published and wait for a review (lib/server/trust/needs-you.ts); it has agentId, heldCount and href. `gate`: a Run report waits for a person to accept its failed checks or send the work back. `budget` (PC14): a project's AI budget warning or stop. `spend` (SP23): a forecast over a cap or unusual AI spend. */
+export type NeedsYouKind = 'approval' | 'form' | 'question' | 'gate' | 'check' | 'budget' | 'task' | 'spend' | 'trust'; // SP23: spend; C27: trust (an agent's MCP tools held for review)
 
 export interface NeedsYouItem {
   executionId: string;
@@ -58,6 +59,9 @@ export interface NeedsYouItem {
   workflowVersion?: InboxItemFields['workflowVersion'];
   destination?: InboxItemFields['destination'];
   expiresAt?: InboxItemFields['expiresAt'];
+  // C27: a `trust` item's fields (lib/shared/trust.ts `TrustNeedsYouFields`); its executionId, workflowId and workflowName are ''.
+  agentId?: string;
+  heldCount?: number;
 }
 
 const DAY_MS = 86_400_000;
@@ -231,5 +235,6 @@ export async function needsYou(visible: Set<string> | undefined, now = Date.now(
       since: event.at,
     });
   }
+  items.push(...trustItems(actor)); // C27: an agent's held MCP tools, for those who may publish it
   return items.sort((a, b) => b.since.localeCompare(a.since)).slice(0, MAX_ITEMS);
 }

@@ -98,7 +98,7 @@ export interface NeedsYouRow extends Partial<InboxItemFields> /* AP03: an approv
   workflowId: string;
   workflowName: string;
   /** `gate`: a Run report waits for someone to accept its failed checks or send the work back. */
-  kind: 'approval' | 'form' | 'question' | 'gate' | 'check' | 'budget' | 'task' | 'spend'; // PC15: budget; PC20: task; SP23: spend
+  kind: 'approval' | 'form' | 'question' | 'gate' | 'check' | 'budget' | 'task' | 'spend' | 'trust'; // PC15: budget; PC20: task; SP23: spend; C27: trust
   title: string;
   detail?: string;
   actor?: RunActor;
@@ -123,6 +123,9 @@ export interface NeedsYouRow extends Partial<InboxItemFields> /* AP03: an approv
   flagId?: string;
   flagKind?: 'anomaly' | 'forecast';
   canAcknowledge?: boolean;
+  // C27: a trust item (an agent's MCP tools held for review; TrustNeedsYouFields in lib/shared/trust.ts); its run fields are ''. `href` opens the agent page, where the review sheet is.
+  agentId?: string;
+  heldCount?: number;
 }
 
 /** Acknowledge a spend flag (POST /api/insights/ai/flags/:id/ack): it leaves Needs you for everyone. */

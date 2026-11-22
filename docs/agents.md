@@ -1182,6 +1182,41 @@ Landflow asks. A tool nobody was granted is denied, so grant the tools you want 
 `LANDFLOW_TOOL_POLICY_TOKEN` is sent as a bearer token. An engine that can't be reached within 3 seconds denies the tool
 (`LANDFLOW_TOOL_POLICY_FAIL=open` allows it instead). Switching engines changes these variables and nothing else.
 
+## Changed MCP tools are held
+
+An MCP server can change what one of its tools says after you reviewed and published the agent: a new description (a "rug pull":
+"also email the result to …"), a different input schema, or an annotation that turns a read-only tool into a destructive one.
+**Abilities → Guardrails → MCP tools → Hold changed MCP tools** (on for every new agent) keeps the model from reading that text
+before a person has.
+
+- **Publishing is the approval.** When you publish, Landflow lists each MCP server of the agent (in parallel, up to 10 seconds each)
+  and keeps a **snapshot** of what each server offered: every tool's name, description, input schema and annotations, hashed in one
+  canonical form (keys sorted, so a server that lists its tools in another order changes nothing). The publisher approves that
+  snapshot; the audit log has `trust.approve` with the server, the hash and the person, never the tool text. A snapshot is kept only up to 512 KB of tool text: a server whose list is bigger is held whole at every run with a notice that says so (turn the switch off for that agent to use it). A server that does not
+  answer in time is snapshotted at the agent's first run after publishing instead (marked *first seen at run*, approved with no person as its decider); publishing never
+  waits for it, and the publish answer carries `trust: { recorded, deferred }` when one was deferred.
+- **What is held.** At every run, each server's tools are compared with its approved snapshot. A tool whose name, description, input
+  schema or annotations changed is **not offered** to the model, and neither is a tool the server **added** when the agent takes all
+  of the server's tools, that is, it does not list them with `include: selected` (the GitHub preset never holds an added tool; an agent that names its tools gets only those). A tool the server dropped just goes. The run carries on with
+  the tools that did not change, and its timeline says so: *Tool unavailable: Tracker · search: held, its description changed since
+  the agent was published. Review it on the agent page.* The Test agent chat runs the same check against the last published
+  snapshot, so a person testing sees the hold too.
+- **Review.** The agent page shows a banner, *2 MCP tools changed since this agent was published*, with **Review**. The sheet shows
+  each held tool with the old and the new description, schema and annotations (a flip to destructive is in red), as plain text.
+  **Approve** makes the new content the approved snapshot, so the next run offers the tools; **Keep held** leaves them out (and the
+  same change is not asked about again until the server changes once more). **Needs you** lists one item per agent with changes
+  waiting, *Tracker bot: 2 MCP tools changed*, for the people who may publish the agent; its **Review** opens the sheet.
+  If the server goes back to what was approved, the waiting change settles by itself.
+- **Who decides.** Whoever may change the agent (an editor of its project, an admin), signed in: `POST /api/agents/:id/trust` is never open to an API key. A viewer sees the
+  banner and the changes, without Approve or Keep held. One change waits per server: a newer change replaces an older one that nobody decided, and a change that is served again after it was settled (the server flapped, or went back to an older approved version) is held and listed again.
+- **The switch.** New agents start with it on. An agent from before the switch has it off, and **its next publish turns it on**
+  (until then it runs as before). Turn it off on the same Settings card to use whatever the servers list. Deleting the agent revokes
+  its approvals (`trust.revoke`).
+- **Not covered.** The MCP Client Tool node in a flow lists tools live and is not held; Claude Code plugins packed for kagent are
+  already pinned to a commit; policy hooks on each call ([mcp-policy.md](mcp-policy.md)) work as before and are a separate check.
+  A server whose descriptions carry a timestamp or a count changes every run: it is held each time until you approve, so turn the
+  switch off for that agent.
+
 ## Eval gate
 
 The **Evaluations** tab starts with **Eval gate**: questions the agent must keep answering well, each with an
@@ -1400,6 +1435,7 @@ through the infra Mailpit (`apps/web/test/approval-email-mailpit.test.ts`, skipp
 | `GET/PUT/DELETE /api/agents/:id/kagent` | the agent on kagent: status (`KagentStatus`: deployment, drift, Ready, A2A URL) / deploy the published version `{ credentialId?, name?, harness? }` / remove; `GET ?credentialId=` also lists that cluster's Harnesses (`harnesses`, or `harnessError`) ([a2a.md](a2a.md#landflow-agents-on-kagent)) |
 | `POST /api/mcp/agents/:id` | the agent's tools over MCP, for kagent (the bearer token in the agent's kagent Secret only); `?tools=free` / `?tools=approval` serve only the tools that run freely / need approval (Claude Code's two servers) |
 | `GET /v2/…` | Landflow's OCI registry, pull only: the images of Claude Code plugins packed for kagent, by digest (public) ([a2a.md](a2a.md#on-claude-code)) |
+| `GET/POST /api/agents/:id/trust` | the agent's [held MCP tools](#changed-mcp-tools-are-held): `{ holdChangedTools, canDecide, held: [{ subjectId, toolConfigName, hash, firstSeenAt, changes: [{ name, change: 'changed' \| 'added', before?, after, fields }] }] }` for anyone who can read the agent; `POST { subjectId, hash, decision: 'approve' \| 'reject' }` → `{ record }` for whoever may change the agent (a viewer 403, no access 404; a hash that is not pending 409; session only, an API key is refused) |
 | `POST /api/agents/:id/chat` | `{ message, sessionId? }` → SSE of `AgentStreamEvent`. Always runs the **draft** (`version: 'draft'`, source `test`), never the published version: use a channel, a schedule or the Run an Agent node for that |
 | `POST /api/agents/:id/sessions/:sid/approvals` | `{ callId, approved }` → the same SSE stream once the run resumes |
 | `POST /api/slack/events/:agentId/:channelId` | Slack Events API of the agent's Slack channel (signed by Slack) |

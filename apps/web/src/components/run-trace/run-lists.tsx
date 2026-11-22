@@ -9,13 +9,13 @@ import type { ExecutionSummary } from '@/lib/shared/types';
 import { Badge } from '../ui/badge';
 import { RunTimelineLive } from './run-timeline-card';
 import { SectionTitle } from './parts';
-import { BudgetActions, SpendActions, TaskActions } from './needs-you-actions';
+import { BudgetActions, SpendActions, TaskActions, TrustActions } from './needs-you-actions';
 import { NeedFaces } from './approval-card';
 import { listFaces } from '@/lib/shared/approval-evidence';
 import { isInboxItem, rowOfItem, useRowStates, withDecided } from '@/lib/client/approval-inbox'; // AP03:
 import { InboxRow } from '../home/approval-inbox'; // AP03:
 
-const KIND: Record<NeedsYouRow['kind'], string> = { approval: 'Approval', form: 'Form', question: 'Question', gate: 'Checks failed', check: 'Check failed', budget: 'AI budget', task: 'Task', spend: 'AI spend' };
+const KIND: Record<NeedsYouRow['kind'], string> = { approval: 'Approval', form: 'Form', question: 'Question', gate: 'Checks failed', check: 'Check failed', budget: 'AI budget', task: 'Task', spend: 'AI spend', trust: 'MCP tools' }; // C27: trust
 
 /** AP03: the inbox items just decided that the list already lost, put back where they were (their row says what happened). */
 function withDecidedItems(list: NeedsYouRow[], states: Parameters<typeof withDecided>[1]): NeedsYouRow[] {
@@ -52,6 +52,8 @@ export function NeedsYouList() {
             <TaskRow key={`task:${item.taskRunId ?? item.title}`} item={item} />
           ) : item.kind === 'spend' ? (
             <SpendRow key={`spend:${item.flagId ?? item.title}`} item={item} />
+          ) : item.kind === 'trust' ? (
+            <TrustRow key={`trust:${item.agentId ?? item.title}`} item={item} />
           ) : (
           <li key={`${item.executionId}:${item.spanId ?? item.title}`}>
             <Link href={`/runs/${item.executionId}`} className="flex min-h-[56px] items-center gap-3 px-4 py-2.5 hover:bg-acdim/60">
@@ -149,5 +151,25 @@ export function LiveRuns({ executions }: { executions: ExecutionSummary[] }) {
         ))}
       </div>
     </section>
+  );
+}
+
+/** An agent's MCP tools that a server changed since it was published (C27): the title opens the agent page, Review opens its sheet there. */
+export function TrustRow({ item }: { item: NeedsYouRow }) {
+  return (
+    <li className="px-4 py-2.5">
+      <Link href={item.href ?? '/agents'} className="-mx-2 flex min-h-[56px] items-center gap-3 rounded-xl px-2 hover:bg-acdim/60">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <Badge tone="warning">{KIND.trust}</Badge>
+            <span className="truncate text-[12px] text-t3">{timeAgo(item.since)}</span>
+          </div>
+          <p className="mt-1 text-[14px] font-medium text-t1">{item.title}</p>
+          {item.detail && <p className="text-[12.5px] text-t2">{cut(item.detail, 160)}</p>}
+        </div>
+        <ChevronRight className="size-4 shrink-0 text-t3" />
+      </Link>
+      <TrustActions row={item} className="mt-2" />
+    </li>
   );
 }

@@ -2107,6 +2107,15 @@ export const MIGRATIONS: Migration[] = [
       `CREATE TABLE IF NOT EXISTS vector_collection_grants (store_key TEXT NOT NULL, project_id TEXT NOT NULL, level TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL, PRIMARY KEY (store_key, project_id))`,
     ],
   },
+  // C27: what a person approved, by the hash of its content (docs/agents.md#changed-mcp-tools-are-held): an agent's MCP tools (a snapshot per tool config) and a marketplace plugin's files; `state` is approved, pending, rejected or revoked, `snapshot` is JSON
+  {
+    version: 2928,
+    name: 'trust_records',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS trust_records (subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL, hash TEXT NOT NULL, state TEXT NOT NULL, snapshot TEXT, summary TEXT, decided_by TEXT, decided_at TEXT, first_seen_at TEXT NOT NULL, PRIMARY KEY (subject_kind, subject_id, hash))`,
+      `CREATE INDEX IF NOT EXISTS trust_records_subject ON trust_records (subject_kind, subject_id, state)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -2202,6 +2211,7 @@ export const TABLES = {
   event_outbox: ['topic', 'target_id', 'event_id'], // C19:
   vector_collections: ['store_key'], // C21:
   vector_collection_grants: ['store_key', 'project_id'], // C21:
+  trust_records: ['subject_kind', 'subject_id', 'hash'], // C27:
   harness_sessions: ['id'], // C04:
   harness_events: ['id'], // C04:
   notion_brain_links: ['id'], // NB03:
