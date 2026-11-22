@@ -5,3 +5,5 @@ export { fakeSlack, SLACK_TOKEN } from './slack';
 export type { SlackSeed, SlackState } from './slack';
 export { fakeGitHub, GITHUB_TOKEN } from './github';
 export type { GitHubSeed, GitHubState } from './github';
+export { fakeUpstream } from './upstream';
+export type { UpstreamState } from './upstream';

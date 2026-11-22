@@ -12,7 +12,8 @@
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { KAGENT_RUNTIME_LABELS } from '@landflow/protocol/harnesses';
-import type { Agent, AgentConfig, CredentialRef, KagentDeployment, KagentDrift, KagentGuard, KagentHarness, KagentPlugin, KagentRuntime, KagentStatus } from '../../shared/agents';
+import type { Agent, AgentConfig, CredentialRef, KagentDeployment, KagentDrift, KagentGuard, KagentHarness, KagentPlugin, KagentRouteStatus, KagentRuntime, KagentStatus } from '../../shared/agents';
+import type { KagentSecretRoute } from '../../shared/kagent-routes';
 import { ollamaUrl } from '../config';
 import { agentStore } from '../agents/store';
 import { buildToolset } from '../agents/tools';
@@ -27,30 +28,26 @@ import { memoryStubs } from './memory-tools';
 import { a2aUrlOf, clusterFrom, KAGENT_API, KAGENT_CREDENTIAL, type KagentCluster } from './cluster';
 import { applyObject, deleteObject, getObject, listObjects, type KubeObject } from './kube';
 import { BUILTIN_URL, builtinPin, imageRef, packPlugin } from './oci';
-import { AGENT_ID_LABEL, approvalServerName, kagentManifests, kagentName, landflowEgressName, secretName, validKagentName, type ExposedTool, type ModelSettings } from './manifests';
-import { HttpError } from '../errors';
+import { AGENT_ID_LABEL, approvalServerName, kagentManifests, kagentName, landflowEgressName, ROUTES_HMAC_ANNOTATION, routeObjects, routesName, secretName, validKagentName, type ExposedTool, type ModelSettings, type ResolvedRoute } from './manifests';
+import { recordedRoute, resolveRoutes, routesHashMatches, routesHmac } from './routes';
+import { recordAudit } from '../audit';
+import { KagentError } from './errors';
 import { homeProjectId } from '../projects/store';
 import { blockRuntimeKeys, ensureRuntimeKey, existingRuntimeKey, routeThroughGateway, runtimeKeyBudget } from '../llm-gateway/runtime-keys';
 
-export class KagentError extends HttpError {
-  static readonly errorName: string = 'KagentError';
-  constructor(
-    message: string,
-    status = 400,
-  ) {
-    super(message, status, { expose: true });
-  }
-}
+export { KagentError } from './errors';
 
 /** The objects Landflow may write for an agent named `name`, in the order it applies them. */
 const objectsOf = (name: string) =>
   [
     ['Secret', secretName(name)],
+    ['Secret', routesName(name)],
     ['RemoteMCPServer', name],
     ['RemoteMCPServer', approvalServerName(name)],
     ['ModelConfig', name],
     ['AgentTemplate', name],
     ['EgressPolicy', landflowEgressName(name)],
+    ['EgressPolicy', routesName(name)],
     ['Agent', name],
   ] as const;
 const apiVersionOf = (kind: string) => (kind === 'Secret' ? 'v1' : KAGENT_API);
@@ -191,12 +188,14 @@ interface Target {
   harness: KagentHarness;
   plugins?: KagentPlugin[];
   egressPolicies?: string[];
+  /** Claude Code: the secret routes, resolved, and their keyed hash. */
+  routes?: { entries: ResolvedRoute[]; hash: string };
 }
 
 async function compile(agent: Agent, config: AgentConfig, version: number, name: string, cluster: KagentCluster, token: string, target: Target, mint = false) {
   const { tools, unavailable } = await kagentTools(agent, config);
   const exposed: ExposedTool[] = tools.map((tool) => ({ name: tool.name, requireApproval: tool.requireApproval }));
-  const { harness, plugins, egressPolicies } = target;
+  const { harness, plugins, egressPolicies, routes } = target;
   const model = await modelSettings(config, harness.runtime, { agent, mint, unavailable });
   return {
     gateway: model.gateway ? (harness.runtime === 'claude' ? ('claude' as const) : ('kagent' as const)) : undefined,
@@ -214,6 +213,7 @@ async function compile(agent: Agent, config: AgentConfig, version: number, name:
       runtime: harness.runtime,
       ...(plugins && { plugins }),
       ...(egressPolicies?.length && { egressPolicies }),
+      ...(routes && { routes }),
       landflowEgress: Boolean(plugins?.some((pin) => pin.url === BUILTIN_URL)),
     }),
     unavailable,
@@ -264,7 +264,7 @@ const ours = (object: KubeObject | undefined, agentId: string) => !object || obj
  * Write the published agent to kagent under `name` (default: the last name, else the agent's name as a DNS label). The token
  * kagent calls the agent's tools with is kept across deploys; moving to another name or cluster removes the old resources.
  */
-export async function deployToKagent(agentId: string, input: { credential?: CredentialRef; name?: string; harness?: string; egressPolicies?: string[]; guard?: KagentGuard } = {}): Promise<{ agent: Agent; status: KagentStatus; unavailable: string[] }> {
+export async function deployToKagent(agentId: string, input: { credential?: CredentialRef; name?: string; harness?: string; egressPolicies?: string[]; guard?: KagentGuard; routes?: KagentSecretRoute[] } = {}): Promise<{ agent: Agent; status: KagentStatus; unavailable: string[] }> {
   const agent = agentStore.get(agentId);
   if (!agent) throw new KagentError('Agent not found', 404);
   if (!agent.published) throw new KagentError('Publish the agent first: kagent runs the published version');
@@ -289,6 +289,9 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
   // The agent's own list (an empty one: none), else the one deployed last on this cluster, else the cluster's.
   const egressPolicies = input.egressPolicies ?? (sameCluster ? previous?.egressPolicies : undefined) ?? cluster.egressPolicies ?? [];
   await checkEgressPolicies(cluster, egressPolicies);
+  const { resolved: routes, droppedRoutes } = await routesFor(agent.id, harness, input.routes, sameCluster ? previous?.routes : undefined);
+  const routesHash = routes.length ? routesHmac(routes) : undefined;
+  if (routes.length) await checkRouteObjects(cluster, name, agent.id);
   if (previous && (previous.name !== name || !sameCluster)) {
     await removeResources(previous, agent.id).catch((error) => logger.warn('kagent: the old resources could not be removed', { agentId, error: (error as Error).message }));
   }
@@ -301,7 +304,8 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
   }
   token ??= `lfk_${randomBytes(24).toString('base64url')}`;
   const version = agent.published.version;
-  const { objects, unavailable, gateway } = await compile(agent, agent.published.config, version, name, cluster, token, { harness, plugins, egressPolicies }, true);
+  const { objects, unavailable, gateway } = await compile(agent, agent.published.config, version, name, cluster, token, { harness, plugins, egressPolicies, ...(routesHash && { routes: { entries: routes, hash: routesHash } }) }, true);
+  if (droppedRoutes) unavailable.push('its secret routes (they need the Claude Code runtime)');
   const deployment: KagentDeployment = {
     credential,
     name,
@@ -312,6 +316,7 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
     ...(a2aUrlOf(cluster, name) && { a2aUrl: a2aUrlOf(cluster, name) }),
     ...(plugins.length && { plugins }),
     ...(input.egressPolicies !== undefined || egressPolicies.length ? { egressPolicies } : {}),
+    ...(routesHash && { routes: routes.map(recordedRoute), routesHash, routesPolicyHash: routesHash }),
     ...(guard !== 'enforce' && plugins.some((pin) => pin.url === BUILTIN_URL) && { guard }),
     ...(plugins.some((pin) => pin.url === BUILTIN_URL) && { trace: { url: `${cluster.landflowUrl}/api/agent-trace`, ...(a2aUrlOf(cluster, name) && { a2aUrl: a2aUrlOf(cluster, name) }) } }),
   };
@@ -321,7 +326,8 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
   try {
     // A ModelConfig from an earlier deploy stays only while there is a model (publishing needs one, so it always is).
     for (const object of objects) {
-      if (object.kind !== 'EgressPolicy') {
+      // The routes' policy is not optional: without it the agent would run with a Secret and no way to send it.
+      if (object.kind !== 'EgressPolicy' || object.metadata.name === routesName(name)) {
         await applyObject(cluster.connection, object);
         continue;
       }
@@ -351,10 +357,59 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
   if (!objects.some((o) => o.metadata.name === approval)) await deleteOurs(cluster, 'RemoteMCPServer', approval, agent.id);
   // So does Landflow's EgressPolicy once the agent has no mod to report (another runtime, or no registry).
   if (!objects.some((o) => o.kind === 'EgressPolicy')) await deleteOurs(cluster, 'EgressPolicy', landflowEgressName(name), agent.id).catch(() => undefined);
+  // Routes taken away: both objects go (the Agent stopped naming the policy above).
+  if (!routes.length && previous?.routes?.length) {
+    await deleteOurs(cluster, 'EgressPolicy', routesName(name), agent.id);
+    await deleteOurs(cluster, 'Secret', routesName(name), agent.id);
+  }
+  auditRoutes(agent, previous?.routes ?? [], routes.map(recordedRoute));
   // The cluster answers: what deleted agents left on it while it couldn't goes now.
   await removeLeftovers(credential.id).catch(() => undefined);
   logger.info('kagent: agent deployed', { agentId, name, namespace: cluster.namespace, version, harness: harness.name, runtime: harness.runtime, plugins: plugins.length });
   return { agent: saved, status: await kagentStatus(saved), unavailable };
+}
+
+/**
+ * The routes to write: the request's list, else the one deployed last on this cluster. Only on Claude Code: a request for
+ * routes on another runtime is refused, and routes carried over from an earlier deploy are left out (and reported).
+ */
+async function routesFor(agentId: string, harness: KagentHarness, asked: KagentSecretRoute[] | undefined, kept: KagentSecretRoute[] | undefined) {
+  const list = asked ?? kept ?? [];
+  if (!list.length) return { resolved: [] as ResolvedRoute[], droppedRoutes: false };
+  if (harness.runtime !== 'claude') {
+    if (asked?.length) throw new KagentError(`Secret routes need the Claude Code runtime: the Harness “${harness.name}” runs ${RUNTIME_LABEL[harness.runtime]}, whose tools go through Landflow instead`);
+    return { resolved: [] as ResolvedRoute[], droppedRoutes: true };
+  }
+  return { resolved: await resolveRoutes(agentId, list), droppedRoutes: false };
+}
+
+/** The routes' Secret and policy must be this agent's, or not exist: another agent's (or a hand-made) object of that name is not overwritten. */
+async function checkRouteObjects(cluster: KagentCluster, name: string, agentId: string) {
+  for (const kind of ['Secret', 'EgressPolicy']) {
+    const object = await getObject(cluster.connection, apiVersionOf(kind), kind, cluster.namespace, routesName(name));
+    if (!ours(object, agentId)) throw new KagentError(`kagent already has a ${kind} “${routesName(name)}” in ${cluster.namespace} that Landflow didn’t write for this agent: choose another name`, 409);
+  }
+}
+
+/** One audit event per route added, changed or removed: the agent, the credential's name, the hosts and the header, never a value. */
+function auditRoutes(agent: Agent, before: KagentSecretRoute[], after: KagentSecretRoute[]) {
+  const id = (r: KagentSecretRoute) => `${r.credential.id}|${r.header ?? ''}`;
+  const sig = (r: KagentSecretRoute) => JSON.stringify([r.prefix ?? '', [...r.hosts].sort()]);
+  const was = new Map(before.map((r) => [id(r), r]));
+  const is = new Map(after.map((r) => [id(r), r]));
+  const record = (action: string, verb: string, route: KagentSecretRoute) =>
+    recordAudit({
+      action: `kagent.route.${action}`,
+      target: { type: 'agent', id: agent.id, name: agent.name },
+      summary: `${verb} a secret route of ${agent.name} to kagent: ${route.credential.name} for ${route.hosts.join(', ')}`,
+      details: { agent: agent.name, credential: route.credential.name, credentialId: route.credential.id, hosts: route.hosts, header: route.header ?? '' },
+    });
+  for (const [key, route] of is) {
+    const old = was.get(key);
+    if (!old) record('added', 'Added', route);
+    else if (sig(old) !== sig(route)) record('changed', 'Changed', route);
+  }
+  for (const [key, route] of was) if (!is.has(key)) record('removed', 'Removed', route);
 }
 
 /** Publishing a deployed agent writes the new version to kagent too; a failure is reported, not thrown. */
@@ -479,7 +534,13 @@ function driftOf(expected: KubeObject[], actual: Map<string, KubeObject | undefi
       check('template', want.template, have.template);
       check('harness', want.harnessRef, have.harnessRef);
       check('egressPolicies', want.egressPolicyRefs ?? [], have.egressPolicyRefs ?? []);
-    } else if (object.kind === 'EgressPolicy') check('landflowEgress', want.destinations, have.destinations);
+    } else if (object.kind === 'EgressPolicy') {
+      const hmac = object.metadata.annotations?.[ROUTES_HMAC_ANNOTATION];
+      // The routes' policy: its destinations and the keyed hash it was written with (the Secret itself is never read).
+      if (hmac) {
+        if (!covers(want.destinations, have.destinations) || held.metadata.annotations?.[ROUTES_HMAC_ANNOTATION] !== hmac) drift.push({ field: 'routes', landflow: show(want.destinations) ?? '', ...(have.destinations !== undefined && { kagent: show(have.destinations) }) });
+      } else check('landflowEgress', want.destinations, have.destinations);
+    }
     else if (object.kind === 'RemoteMCPServer') check('mcpServer', { url: want.url, headersFrom: want.headersFrom }, { url: have.url, headersFrom: have.headersFrom });
   }
   return drift;
@@ -515,9 +576,13 @@ export async function kagentStatus(agent: Agent): Promise<KagentStatus> {
     await Promise.all(kept.map(async ([kind, name]) => held.set(keyOf(kind, name), await getObject(cluster.connection, KAGENT_API, kind, cluster.namespace, name))));
     const source = deployedConfig(agent);
     const token = deployment.token ? credentials.openSecret(deployment.token) : '';
-    const target = { harness, plugins: deployment.plugins ?? [], egressPolicies: deployment.egressPolicies ?? cluster.egressPolicies ?? [] };
+    // The routes' shape as deployed (no values): the policy is compared with it, and the vault says whether the Secret is behind.
+    const routes = deployment.routes?.length && deployment.routesPolicyHash ? { entries: deployment.routes.map((route, i) => shapeOf(route, i)), hash: deployment.routesPolicyHash } : undefined;
+    const target = { harness, plugins: deployment.plugins ?? [], egressPolicies: deployment.egressPolicies ?? cluster.egressPolicies ?? [], ...(routes && { routes }) };
     const expected = source ? (await compile(agent, source.config, source.version, deployment.name, cluster, token, target)).objects : [];
     const drift = driftOf(expected, held);
+    const routeState = await routesNow(agent.id, deployment);
+    if (routeState.pending) drift.push({ field: 'routes', landflow: 'A routed credential changed: the Secret is rewritten within a minute' });
     const template = held.get(keyOf('AgentTemplate', deployment.name));
     const systemPrompt = specOf(template).systemPrompt;
     const ready = readyOf(held.get(keyOf('Agent', deployment.name)));
@@ -528,10 +593,55 @@ export async function kagentStatus(agent: Agent): Promise<KagentStatus> {
       ...(a2aUrlOf(cluster, deployment.name) && { a2aUrl: a2aUrlOf(cluster, deployment.name) }),
       inSync: !drift.length && !outdated,
       drift,
+      ...(routeState.routes && { routes: routeState.routes }),
       ...(typeof systemPrompt === 'string' && { systemPrompt }),
       ...(ready && { ready }),
     };
   } catch (error) {
     return { ...base, inSync: false, drift: [], error: (error as Error).message };
   }
+}
+
+/** A deployed route without its value: only what the policy holds, to compare it. */
+const shapeOf = (route: KagentSecretRoute, index: number): ResolvedRoute => ({ key: `r${index}`, header: route.header ?? 'Authorization', prefix: route.prefix ?? '', hosts: route.hosts, value: '', credentialId: route.credential.id, credentialName: route.credential.name });
+
+/**
+ * The deployed routes against the vault now: each with the reason it can't be sent (a credential deleted, changed type, no
+ * longer shared), and whether the vault's values differ from the Secret's (`pending`: the refresh has not rewritten it yet).
+ */
+async function routesNow(agentId: string, deployment: KagentDeployment): Promise<{ routes?: KagentRouteStatus[]; pending?: boolean; resolved?: ResolvedRoute[] }> {
+  if (!deployment.routes?.length) return {};
+  try {
+    const { routes: resolved, broken } = await resolveRoutes(agentId, deployment.routes, { lenient: true });
+    const reasons = new Map(broken.map((b) => [b.index, b.reason]));
+    return {
+      resolved,
+      routes: deployment.routes.map((route, i) => ({ ...route, ...(reasons.has(i) && { broken: `${reasons.get(i)}` }) })),
+      pending: !routesHashMatches(resolved, deployment.routesHash),
+    };
+  } catch (error) {
+    // The stored routes no longer pass the rules (a production host rule since): shown broken as a whole.
+    return { routes: deployment.routes.map((route) => ({ ...route, broken: (error as Error).message })) };
+  }
+}
+
+/**
+ * The refresh (./route-refresh.ts): when the vault's values differ from the Secret's, rewrite the Secret and nothing else,
+ * and keep the new hash. A credential that can't be read now empties its key (the gateway then sends nothing useful) and the
+ * route shows as broken. Returns what changed, or undefined when the Secret is current. Never throws for a route's own fault.
+ */
+export async function refreshRouteSecret(agent: Agent): Promise<{ changed: string[]; broken: string[] } | undefined> {
+  const deployment = agent.kagent;
+  if (!deployment?.routes?.length) return undefined;
+  const { routes: resolved, broken } = await resolveRoutes(agent.id, deployment.routes, { lenient: true });
+  if (routesHashMatches(resolved, deployment.routesHash)) return undefined;
+  const hash = routesHmac(resolved);
+  const cluster = await clusterOf(deployment.credential);
+  const secret = routeObjects({ agentId: agent.id, version: deployment.version ?? 0, cluster }, deployment.name, resolved, hash).find((o) => o.kind === 'Secret')!;
+  await applyObject(cluster.connection, secret);
+  // Another deploy may have written meanwhile (it wrote the same values): record only on top of the deployment this read.
+  const current = agentStore.get(agent.id);
+  if (current?.kagent && current.kagent.deployedAt === deployment.deployedAt) agentStore.setKagent(agent.id, { ...current.kagent, routesHash: hash, routesRefreshedAt: new Date().toISOString() });
+  const changed = deployment.routes.flatMap((route, i) => (resolved[i].value && !broken.some((b) => b.index === i) ? [route.credential.name] : []));
+  return { changed: [...new Set(changed)], broken: broken.map((b) => b.credentialName) };
 }

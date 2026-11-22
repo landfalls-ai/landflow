@@ -194,6 +194,10 @@ export function kagentConnections(agent: Agent): ActorConnection[] {
   }
   const policies = [...(d.egressPolicies ?? []), ...(d.trace ? [`${d.name}-landflow`] : [])];
   for (const policy of new Set(policies)) out.push(policyConnection(policy, d.name));
+  // C26: one row per host a credential is sent to (the credential's name; never the value).
+  for (const route of d.routes ?? []) {
+    for (const host of route.hosts) out.push({ kind: 'network', name: new URL(host).host, detail: `${route.credential.name} · ${route.header ?? 'Authorization'}: the gateway adds it`, icon: 'lucide:key-round', from: 'kagent' });
+  }
   return out;
 }
 

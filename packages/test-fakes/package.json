@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./slack": "./src/slack.ts",
-    "./github": "./src/github.ts"
+    "./github": "./src/github.ts",
+    "./upstream": "./src/upstream.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

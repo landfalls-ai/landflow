@@ -495,6 +495,47 @@ The token's scope is what limits the agents: a fine-grained token on one reposit
 read and write lets them push any branch, `main` included, so protect `main` with a branch rule if agents must never
 land on it (the flows here only push `agents/*` branches and open draft pull requests).
 
+### Secret routes
+
+`landflow-github` is made by hand. **Secret routes** give a Claude Code agent the same thing for any API, from a Landflow
+credential: on the agent's kagent card (Claude Code runtime only) add a route, pick a **Bearer Auth** or **Header Auth**
+credential, list the hosts it may be sent to (`https://` DNS origins, no wildcard, path, user or IP address) and, if the
+default is not right, the header and prefix (Bearer Auth: `Authorization` and `Bearer `; Header Auth: the credential's own
+header and no prefix). A deploy then writes two objects named after the agent, beside the ones in [Landflow agents on
+kagent](#landflow-agents-on-kagent):
+
+- the Secret `<name>-routes`, one key per route (`r0`, `r1`…) holding the credential's bare value, written as `data` so a
+  removed route drops its key;
+- the EgressPolicy `<name>-routes`, a destination per host with `authentication { header, prefix, secretKeyRef }` (the
+  shape of `egress-github.yaml`), which the Agent references after its other policies.
+
+The sandbox sends the header with any value (`curl -H 'Authorization: x' https://api.linear.app/…`) and the gateway puts
+the real one in. The value is in Landflow's vault and that Secret only: not in the AgentTemplate, the persona, the
+EgressPolicy, the agent's record, any API answer, the audit log or a log line. The policy carries the annotation
+`landflow.dev/routes-hmac`, an HMAC-SHA-256 of the routes and their values under a key derived from the vault's, so a
+change shows without reading the Secret and the hash can't be turned back into a value; the status reports drift `routes`
+when the policy's hosts or annotation differ from what was deployed, or when a routed credential has changed and the
+Secret is not yet rewritten.
+
+- **Rotation.** A leader timer (`kagent route refresh`, every minute, 50 agents a tick) compares the vault's values with
+  the stored hash and, when one changed, rewrites **only the Secret** and records the new hash, audited as
+  `kagent.route.refreshed` with the credential names. A credential deleted, changed to another type or no longer shared
+  with the agent's project empties its key and shows the route as broken; fix it and the next tick (or a deploy) writes it.
+- **Rules.** Up to 20 routes per agent and 10 hosts per route; a host belongs to one route; only credentials the agent's
+  home project may use; in the production profile internal hosts (`localhost`, single-label names, `.local`,
+  `.internal`, `.svc`, `.cluster.local`) are refused. A bad route fails the deploy naming it ("Route 2: https://\*.example.com:
+  no wildcards").
+- **Removing.** Emptying the list and redeploying, or removing the agent from kagent, deletes both objects. Each route
+  added, changed or removed is audited (`kagent.route.added`, `.changed`, `.removed`) with the credential's name and hosts.
+- **Unchanged.** Hand-made policies such as `landflow-github` and their Secrets keep working and are never written by
+  Landflow; an object named `<name>-routes` that Landflow did not write for this agent stops the deploy.
+- **Not covered.** Credentials that refresh (OAuth2) or sign each request, body or query substitution, tools that go
+  through Landflow's MCP endpoint (agents on kagent's own runtime), and a proxy in Landflow's request path.
+
+Unit tests run against a fake Kubernetes API and assert the objects; the gateway's swap itself is checked on the kind
+cluster (`apps/web/test/kagent-routes-deploy.test.ts` for the objects, `packages/test-fakes/src/upstream.ts` for the
+header-recording upstream the live check uses).
+
 ### GitHub's MCP tools for agents
 
 Agents can read and review pull requests through GitHub's own MCP server, with a GitHub token Landflow holds. It is an
