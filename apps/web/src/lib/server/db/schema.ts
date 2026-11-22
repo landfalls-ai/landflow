@@ -2057,6 +2057,17 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS approval_tickets_state ON approval_tickets (state, next_at)`,
     ],
   },
+  // C19: webhook subscriptions to a project's run events and the durable outbox their deliveries wait in (docs/features/event-subscriptions.md); `secret` is sealed, `events`, `workflow_ids` and `node_names` are JSON arrays
+  {
+    version: 2924,
+    name: 'event_subscriptions_outbox',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS event_subscriptions (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, url TEXT NOT NULL, events TEXT NOT NULL, workflow_ids TEXT, node_names TEXT, include_output BIGINT NOT NULL DEFAULT 0, ordered BIGINT NOT NULL DEFAULT 1, secret TEXT NOT NULL, enabled BIGINT NOT NULL DEFAULT 1, disabled_reason TEXT, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_delivery TEXT)`,
+      `CREATE INDEX IF NOT EXISTS event_subscriptions_project ON event_subscriptions (project_id)`,
+      `CREATE TABLE IF NOT EXISTS event_outbox (topic TEXT NOT NULL, target_id TEXT NOT NULL, event_id TEXT NOT NULL, created_at TEXT NOT NULL, payload TEXT NOT NULL, attempts BIGINT NOT NULL DEFAULT 0, next_at TEXT NOT NULL, lease_until TEXT, last_error TEXT, dead_at TEXT, PRIMARY KEY (topic, target_id, event_id))`,
+      `CREATE INDEX IF NOT EXISTS event_outbox_due ON event_outbox (topic, target_id, next_at)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -2146,6 +2157,8 @@ export const TABLES = {
   approval_email_used: ['group_id'],
   approval_inbox: ['id'], // AP01:
   approval_tickets: ['request_id', 'channel_id'], // C12:
+  event_subscriptions: ['id'], // C19:
+  event_outbox: ['topic', 'target_id', 'event_id'], // C19:
   harness_sessions: ['id'], // C04:
   harness_events: ['id'], // C04:
   notion_brain_links: ['id'], // NB03:
