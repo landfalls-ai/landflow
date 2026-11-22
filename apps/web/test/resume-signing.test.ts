@@ -124,10 +124,35 @@ describe('resume signatures', () => {
     const id = waiting.executionId;
     const owner = auth.listUsers().find((u) => u.role === 'owner') ?? (await auth.createOwner({ email: 'owner@flow.test', name: 'Owner', password: 'owner-password-1' }));
     const member = await auth.createUser({ email: 'member@flow.test', name: 'Member', role: 'member', password: 'member-password-1' });
-    const keyOf = (user: typeof owner) => auth.createApiKey(user, { label: 'form', scopes: ['workflows:read'] }).token;
-    const as = (token: string) => request(`/form/waiting/${id}`, { headers: { 'x-landflow-api-key': token } });
-    // The member has no access to the workflow: the key doesn't stand in for the signature.
-    expect((await formWaitingRoute.GET(as(keyOf(member)), params(id))).status).toBe(403);
-    expect((await formWaitingRoute.GET(as(keyOf(owner)), params(id))).status).toBe(200);
+    // A session, not an API key: only a person signed in at a browser skips the signature.
+    const sessionOf = (user: typeof owner) => auth.createSession(user, 'password').token;
+    const as = (token: string) => request(`/form/waiting/${id}`, { headers: { cookie: `landflow_session=${token}` } });
+    // The member has no access to the workflow: the session doesn't stand in for the signature.
+    expect((await formWaitingRoute.GET(as(sessionOf(member)), params(id))).status).toBe(403);
+    expect((await formWaitingRoute.GET(as(sessionOf(owner)), params(id))).status).toBe(200);
+  });
+});
+
+describe('an API key does not stand in for the resume signature', () => {
+  it('is refused on a signed form wait, used up or not, where a signed-in session is let in', async () => {
+    mode('production');
+    const owner = auth.listUsers().find((u) => u.role === 'owner') ?? (await auth.createOwner({ email: 'owner@flow.test', name: 'Owner', password: 'owner-password-1' }));
+    const { createApiKey } = await import('@/lib/server/auth/api-keys');
+    const { consumeApiKeyUse } = await import('@/lib/server/auth/api-key-uses');
+    const waiting = await waitFlow('wf_sig_key', 'form');
+    const id = waiting.executionId;
+    const fresh = createApiKey(owner, { label: 'k', scopes: ['workflows:read', 'run'] });
+    const capped = createApiKey(owner, { label: 'k2', scopes: ['workflows:read', 'run'], maxUses: 1 });
+    await consumeApiKeyUse({ id: capped.key.id, maxUses: 1 });
+    for (const token of [fresh.token, capped.token]) {
+      const page = await formWaitingRoute.GET(request(`/form/waiting/${id}`, { headers: { authorization: `Bearer ${token}` } }), params(id));
+      expect(page.status).toBe(403);
+      const submit = await formWaitingRoute.POST(formPost(`/form/waiting/${id}`, 'a@b.test'), params(id));
+      expect(submit.status).toBe(403);
+    }
+    const { createSession } = await import('@/lib/server/auth/sessions');
+    const session = createSession(owner, 'password').token;
+    const page = await formWaitingRoute.GET(request(`/form/waiting/${id}`, { headers: { cookie: `landflow_session=${session}` } }), params(id));
+    expect(page.status).toBe(200);
   });
 });

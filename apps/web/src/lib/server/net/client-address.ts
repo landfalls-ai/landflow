@@ -12,6 +12,9 @@ import { logger } from '../telemetry/logger';
 /** How many reverse proxies sit in front of the host (LANDFLOW_TRUSTED_PROXIES, default 0). */
 export const trustedProxies = (): number => envInt('LANDFLOW_TRUSTED_PROXIES', { fallback: 0, min: 0, max: 16 });
 
+/** Whether LANDFLOW_TRUSTED_PROXIES was set on purpose (even to 0): a key's address allow-list is only as good as this. */
+export const trustedProxiesConfigured = (): boolean => Boolean(process.env.LANDFLOW_TRUSTED_PROXIES?.trim());
+
 /** One address as text: spaces, a port and IPv6 brackets removed; ::ffff:a.b.c.d is the IPv4 address. */
 export function normalizeAddress(raw: string): string {
   let ip = raw.trim();

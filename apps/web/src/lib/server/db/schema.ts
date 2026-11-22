@@ -2086,6 +2086,17 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS event_outbox_dead ON event_outbox (topic, target_id, dead_at)`,
     ],
   },
+  // C17: an API key's allow-list, use cap and last address; the uses are counted in a table of their own so the last-used touch (which rewrites the whole key row) can never overwrite a count (docs/features/authentication.md#api-keys)
+  {
+    version: 2925,
+    name: 'api_key_limits',
+    statements: [`CREATE TABLE IF NOT EXISTS api_key_uses (key_id TEXT PRIMARY KEY, uses BIGINT NOT NULL, updated_at TEXT NOT NULL)`],
+    addColumns: [
+      { table: 'api_keys', column: 'allowed_ips', definition: 'TEXT' },
+      { table: 'api_keys', column: 'max_uses', definition: 'BIGINT' },
+      { table: 'api_keys', column: 'last_used_ip', definition: 'TEXT' },
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -2111,6 +2122,7 @@ export const TABLES = {
   users: ['id'],
   sessions: ['id'],
   api_keys: ['id'],
+  api_key_uses: ['key_id'],
   auth_tokens: ['id'],
   debug_tokens: ['id'],
   workflow_publications: ['workflow_id'],

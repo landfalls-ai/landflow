@@ -48,7 +48,7 @@ export const GET = handler(async (request: Request) => {
     sessionHours: sessionTtlHours(),
     registrySecret: Boolean(process.env.LANDFLOW_REGISTRY_SECRET),
     metricsPublic: metricsPublic(),
-    scim: scimSecurityView(request),
+    scim: await scimSecurityView(request),
   };
   return json(view);
 });
