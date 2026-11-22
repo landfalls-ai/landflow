@@ -10,6 +10,7 @@ import { EMBEDDER_DOWN, PLAYGROUND_LIMITS, type PlaygroundAnswer, type Playgroun
 import { isNodeKnowledge, type AgentToolConfig, type VectorKnowledgeBaseConfig } from '../../shared/agents';
 import { agentStore } from '../agents/store';
 import { knowledgeSearcher } from '../agents/knowledge';
+import { CollectionAccessError } from '../rag/collection-access'; // C21:
 import { ollamaUrl } from '../config';
 import { credentials } from '../credentials/vault';
 import { HttpError } from '../errors';
@@ -68,8 +69,9 @@ async function searchKnowledge(actor: Actor, request: PlaygroundRequest & { sour
   const config = tool as VectorKnowledgeBaseConfig;
   let searcher;
   try {
-    searcher = knowledgeSearcher(config);
+    searcher = knowledgeSearcher(config, { asProject: homeProjectId('agent', agentId), subject: 'agent' }); // C21: the agent's home project asks
   } catch (error) {
+    if (error instanceof CollectionAccessError) throw error;
     throw new HttpError((error as Error).message, 400);
   }
   // Keyword search needs no embedding model; a store with one can do all three.

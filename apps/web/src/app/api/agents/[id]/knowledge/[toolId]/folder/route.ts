@@ -15,6 +15,8 @@ import { canResource } from '@/lib/server/projects/access';
 import { routeActor } from '@/lib/server/projects/http';
 import type { KnowledgeBaseToolConfig } from '@/lib/shared/agents';
 import { isNodeKnowledge } from '@/lib/shared/agents';
+import { CollectionAccessError } from '@/lib/server/rag/collection-access'; // C21:
+import { homeProjectId } from '@/lib/server/projects/store'; // C21:
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string; toolId: string }> };
@@ -38,8 +40,9 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   }
   let result;
   try {
-    result = await indexFolder(tool, folder);
+    result = await indexFolder(tool, folder, { asProject: homeProjectId('agent', id), subject: 'agent' }); // C21:
   } catch (caught) {
+    if (caught instanceof CollectionAccessError) throw caught;
     return error((caught as Error).message, 502);
   }
   // The draft remembers where its knowledge base was indexed from.

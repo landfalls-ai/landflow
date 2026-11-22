@@ -11,6 +11,7 @@ import { brandIcon, brandOfProvider } from '../../shared/brand-icons';
 import { mergeConnections, type ActorConnection } from '../../shared/run-trace';
 import { PACKAGE_POLICY } from '../../shared/team-progress';
 import { registry } from '../plugins/registry';
+import { homeProjectId } from '../projects/store'; // C21:
 import { agentStore } from './store';
 import { listKnowledgeDocuments } from './knowledge';
 // AG12: the vault's names (never data), and what a project's settings change for a run.
@@ -155,7 +156,8 @@ export async function withDocumentCounts(agent: Agent, connections: ActorConnect
       const tool = c.kind === 'knowledge' && c.from === 'agent' && c.toolId ? bases.get(c.toolId) : undefined;
       if (!tool) return c;
       try {
-        return { ...c, documents: (await listKnowledgeDocuments(tool)).documents.length };
+        // C21: counted as the agent's home project; a collection it can't use shows no count
+        return { ...c, documents: (await listKnowledgeDocuments(tool, { asProject: homeProjectId('agent', agent.id), subject: 'agent' })).documents.length };
       } catch {
         return c;
       }

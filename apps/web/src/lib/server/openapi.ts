@@ -3111,6 +3111,44 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(agentSettingsDoc),
     responses: { 200: reply('The settings', settingsView), 400: invalid, 403: errorRef('Not an admin of the project'), 404: notFound },
   });
+  // C21: the vector collections a project owns or may use
+  const collectionView = object({ key: { type: 'string' }, store: { type: 'string' }, name: { type: 'string' }, access: { type: 'string', enum: ['owner', 'read', 'write'] }, ownerProjectId: { type: 'string' }, ownerName: { type: 'string' }, source: { type: 'string', enum: ['first-write', 'upgrade', 'admin'] }, grants: array(object({ projectId: { type: 'string' }, projectName: { type: 'string' }, level: { type: 'string', enum: ['read', 'write'] } }, ['projectId', 'level'])), lostAccess: array(object({ projectId: { type: 'string' }, projectName: { type: 'string' } }, ['projectId'])) }, ['key', 'store', 'name', 'access', 'ownerProjectId', 'source']);
+  add('get', '/api/projects/{id}/collections', {
+    tag: 'Projects',
+    id: 'listProjectCollections',
+    summary: 'The vector collections a project owns or may use',
+    description: 'Any member. `collections` are the ones the project owns and the ones shared with it (`access` owner, read or write); the owner’s admins also see `grants` and `lostAccess` (projects that named the collection before the upgrade and have no access until granted). `lost` is what this project named before the upgrade and no longer reaches; `notion` (with an active Notion link) says whether its flows may read its Notion knowledge. `?check=<name>&store=sqlite|memory` answers `{ usable, message? }` for one name instead.',
+    pathParams: { id: 'The project id' },
+    query: [
+      { name: 'check', description: 'A collection name to check (answers `{ usable, message? }`)', schema: { type: 'string' } },
+      { name: 'store', description: 'sqlite or memory, with `check`', schema: { type: 'string', enum: ['sqlite', 'memory'] } },
+    ],
+    responses: { 200: reply('The collections', object({ collections: array(collectionView), lost: array({ type: 'object', additionalProperties: true }), canManage: { type: 'boolean' }, notion: { type: 'object', additionalProperties: true, nullable: true } }, ['collections', 'lost', 'canManage'])), 404: notFound },
+  });
+  add('post', '/api/projects/{id}/collections/{key}', {
+    tag: 'Projects',
+    id: 'changeProjectCollection',
+    summary: 'Share a collection, stop sharing it, or switch the Notion read',
+    description: 'Admins of the owning project (owners and admins of the instance too); each change is audited with from and to. Body `{ grant: { projectId | "*", level: "read" | "write" } }`, `{ revoke: projectId | "*" }` (also dismisses a lost-access notice) or `{ notionRead: boolean }` (with the project’s own Notion collection key). `key` is the collection’s key, URL-encoded (`sqlite:handbook`).',
+    pathParams: { id: 'The owning project’s id', key: 'The collection key, URL-encoded' },
+    body: jsonBody(object({ grant: object({ projectId: { type: 'string' }, level: { type: 'string', enum: ['read', 'write'] } }, ['projectId', 'level']), revoke: { type: 'string' }, notionRead: { type: 'boolean' } })),
+    responses: { 200: reply('Done', object({ ok: { type: 'boolean' } }, ['ok'])), 400: invalid, 403: errorRef('Not an admin of the project'), 404: notFound },
+  });
+  add('get', '/api/settings/collections', {
+    tag: 'Settings',
+    id: 'listAllCollections',
+    summary: 'Every vector collection on the instance',
+    description: 'Owners and admins. Each claimed collection with its owner, source and grants, the report of the one-time adoption at the upgrade (`adoption`: `at`, `collections`, `lost`, `unresolved`) and the projects.',
+    responses: { 200: reply('The collections', object({ collections: array(collectionView), adoption: { type: 'object', additionalProperties: true }, projects: array({ type: 'object', additionalProperties: true }) }, ['collections'])), 403: errorRef('Not an owner or admin') },
+  });
+  add('post', '/api/settings/collections', {
+    tag: 'Settings',
+    id: 'changeAllCollections',
+    summary: 'Find owners again, or move a collection',
+    description: 'Owners and admins. `{ adopt: true }` looks for owners again (what is owned is kept) and answers `{ adoption }`; `{ transfer: { key, projectId } }` moves a collection to another project (audited).',
+    body: jsonBody(object({ adopt: { type: 'boolean' }, transfer: object({ key: { type: 'string' }, projectId: { type: 'string' } }, ['key', 'projectId']) })),
+    responses: { 200: reply('Done', object({ ok: { type: 'boolean' }, adoption: { type: 'object', additionalProperties: true } })), 400: invalid, 403: errorRef('Not an owner or admin'), 404: notFound },
+  });
   add('get', '/api/agents/{id}/sessions', {
     tag: 'Agents',
     id: 'listAgentSessions',

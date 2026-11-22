@@ -20,6 +20,9 @@ import {
   type PropertyDescriptor,
 } from '@landflow/sdk';
 import { isBrainCollection } from '../../shared/brain';
+import { pgIdentityOf, storeKeyOf, type StoreKind } from '../../shared/collections'; // C21:
+import { assertCanRead, assertCanWrite, brainReadFor, collectionAccess, type Asker } from '../rag/collection-access'; // C21:
+import { homeProjectId, storedHomeProject } from '../projects/store'; // C21:
 import { toToolName, type AgentTool, type AiDocument, type DocumentLoader, type Embeddings, type Reranker, type Retriever } from '@landflow/engine';
 import { createHash } from 'node:crypto';
 import { syncDocument } from '../rag/chunk-diff';
@@ -230,6 +233,10 @@ interface StoreSpec {
   /** The store's own properties (collection first), shown in every mode. */
   properties: PropertyDescriptor[];
   open(ctx: IBaseContext): VectorStore;
+  /** C21: which store this is, for the collection's key. */
+  kind: StoreKind;
+  /** C21: pgvector only: the connection and table the collection lives in. */
+  identity?(ctx: IBaseContext): ReturnType<typeof pgIdentityOf>;
 }
 
 async function connected<T>(ctx: Pick<IBaseContext, 'getNode'> & { getInputConnectionData?: <U>(type: never, index?: number) => Promise<U[]> }, type: string, message: string, description: string): Promise<T> {
@@ -241,9 +248,9 @@ async function connected<T>(ctx: Pick<IBaseContext, 'getNode'> & { getInputConne
 /**
  * C20: insert with "Upsert by Key". The loader's documents are grouped by their item's key; each key is one document
  * whose chunks replace the collection's chunks of that key (`syncDocument`), so only text the collection has not
- * embedded under this model goes to the embeddings model. Items that share a key are one document. The key is collection-wide (C21 scopes collections to a project).
+ * embedded under this model goes to the embeddings model. Items that share a key are one document. C21: the key is the owner's as written; a project that writes through a `write` grant keeps its keys apart (`scope`, its project id), so two projects using one key in one collection never replace each other's chunks.
  */
-async function upsertDocuments(ctx: IBaseContext, store: VectorStore, embeddings: Embeddings, collection: string, documents: AiDocument[], keys: string[], signal?: AbortSignal): Promise<NodeItem[]> {
+async function upsertDocuments(ctx: IBaseContext, store: VectorStore, embeddings: Embeddings, collection: string, documents: AiDocument[], keys: string[], scope: string | undefined, signal?: AbortSignal): Promise<NodeItem[]> {
   const byKey = new Map<string, Array<{ doc: AiDocument; item: number }>>();
   for (const doc of documents) {
     // A document says which item it came from; one that does not (or says an item that is not there) is a loader we can't trust to place it.
@@ -253,14 +260,15 @@ async function upsertDocuments(ctx: IBaseContext, store: VectorStore, embeddings
     }
     byKey.set(keys[item], [...(byKey.get(keys[item]) ?? []), { doc, item }]);
   }
+  const stored = (key: string) => (scope ? `${scope}\u001f${key}` : key);
   // A key whose items loaded no text is a document with no chunks: what the collection held under it goes.
   for (const key of keys) if (!byKey.has(key)) byKey.set(key, []);
   const out: NodeItem[] = [];
   const total = { reused: 0, embedded: 0, removed: 0 };
   for (const [key, entries] of byKey) {
     // The id prefix is a hash of the key and namespaced, so a key can never equal a knowledge base's `documentId`.
-    const documentKey = `upsert:${createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
-    const result = await syncDocument(store, embeddings, { collection, match: { upsertKey: key }, documentKey, chunks: entries.map(({ doc }) => ({ text: doc.pageContent, metadata: { ...doc.metadata, upsertKey: key } })) }, signal);
+    const documentKey = `upsert:${createHash('sha256').update(stored(key)).digest('hex').slice(0, 16)}`;
+    const result = await syncDocument(store, embeddings, { collection, match: { upsertKey: stored(key) }, documentKey, chunks: entries.map(({ doc }) => ({ text: doc.pageContent, metadata: { ...doc.metadata, upsertKey: stored(key) } })) }, signal);
     total.reused += result.reused;
     total.embedded += result.embedded;
     total.removed += result.removed;
@@ -271,17 +279,50 @@ async function upsertDocuments(ctx: IBaseContext, store: VectorStore, embeddings
 }
 
 function vectorStoreNode(spec: StoreSpec) {
-  const collectionOf = (ctx: IBaseContext) => {
+  /**
+   * The collection the node names and who asks (C21). The home project of the workflow asks (never the run's project); an
+   * agent's tools run as `agent:<id>` and ask as the agent's home project. A run with no stored home project (a one-node
+   * workflow an MCP call makes) asks as nobody: it may use only a collection nobody owns, and never claims it.
+   */
+  const askerOf = (ctx: IBaseContext): Asker => {
+    const workflowId = ctx.getWorkflowId();
+    const projectId = !workflowId ? undefined : workflowId.startsWith('agent:') ? homeProjectId('agent', workflowId.slice('agent:'.length)) : storedHomeProject('workflow', workflowId);
+    return { projectId, subject: 'workflow' };
+  };
+  const nameOf = (ctx: IBaseContext) => {
     const collection = String(ctx.getNodeParameter('collection', 0, '') ?? '').trim();
     if (!collection) throw new NodeOperationError('No collection set', { description: 'Set “Collection” to the name the documents are kept under.' });
+    return { collection, asker: askerOf(ctx) };
+  };
+  /**
+   * C21's check: `need` read (search, retrieve) or write (insert, with Clear). A collection another project owns fails with the same
+   * message whether it exists or not; the first write to an unowned one claims it, so a write asks only once the node's other
+   * settings are valid. Returns the key to scope upserts by (none for the brain's Notion collection, which is read only).
+   */
+  const authorize = async (ctx: IBaseContext, named: { collection: string; asker: Asker }, need: 'read' | 'write'): Promise<string | undefined> => {
+    const { collection, asker } = named;
     // The second brain's collections hold facts of every project, so no workflow or agent reads or writes them
-    // (docs/second-brain.md#find-similar): Find Similar and Landflow Usage answer with the caller's access.
+    // (docs/second-brain.md#find-similar): Find Similar and Landflow Usage answer with the caller's access. The one opening
+    // (C21, FR-7): a project's own Notion knowledge, read (never written) by its flows once its admin turned that on.
     if (isBrainCollection(collection)) {
+      if (need === 'read' && brainReadFor(collection, asker.projectId)) return undefined;
       throw new NodeOperationError(`“${collection}” is the second brain’s own collection`, {
         description: 'Workflows and agents can’t read or write the brain’s vector collections. Use a Find Similar or Landflow Usage node, which only return what the workflow’s creator can see.',
       });
     }
-    return collection;
+    const key = storeKeyOf(spec.kind, collection, spec.identity?.(ctx));
+    try {
+      if (need === 'read') assertCanRead(key, collection, asker);
+      else await assertCanWrite(key, spec.kind, collection, asker);
+    } catch (caught) {
+      // The message is the same for "not there" and "not yours"; it names the collection the caller typed and nothing else.
+      throw new NodeOperationError((caught as Error).message, { description: 'Ask an admin of the project that owns the collection to share it with this workflow’s project, or use another collection name.' });
+    }
+    return key;
+  };
+  const collectionFor = async (ctx: IBaseContext, need: 'read' | 'write') => {
+    const named = nameOf(ctx);
+    return { ...named, key: await authorize(ctx, named, need) };
   };
   const embeddingsOf = (ctx: Parameters<typeof connected>[0]) =>
     connected<Embeddings>(ctx, 'ai_embedding', 'No embeddings model connected', `Attach an embeddings sub-node (e.g. Embeddings Ollama) to the “Embedding” slot of “${ctx.getNode().name}”.`);
@@ -316,7 +357,11 @@ function vectorStoreNode(spec: StoreSpec) {
         });
       }
       const store = spec.open(ctx);
-      const collection = collectionOf(ctx);
+      const named = nameOf(ctx);
+      const { collection, asker } = named;
+      // A read is checked now; a write only after the loader and the settings are valid (it may claim the collection).
+      // The brain's closed names are refused first, whatever else is missing.
+      let key = mode === 'insert' ? (isBrainCollection(collection) ? await authorize(ctx, named, 'write') : undefined) : await authorize(ctx, named, 'read');
       const embeddings = await embeddingsOf(ctx);
       const items = ctx.getInputData();
 
@@ -335,13 +380,16 @@ function vectorStoreNode(spec: StoreSpec) {
         if (upsert && missing >= 0) {
           throw new NodeOperationError(`“Upsert by Key” is empty for item ${missing + 1}`, { itemIndex: missing, description: 'Every item needs a key (for example {{ $json.id }}), or leave “Upsert by Key” empty to insert without one.' });
         }
+        key = await authorize(ctx, named, 'write');
         if (clearStore) await store.clear(collection);
         const documents = await loader.load(items);
         if (!documents.length) {
           ctx.logger.warn('The document loader produced no documents: nothing to insert');
           return [[]];
         }
-        if (upsert) return [await upsertDocuments(ctx, store, embeddings, collection, documents, keys, ctx.signal)];
+        // C21: a project that writes through a grant (not the owner) keeps its upsert keys apart from the owner's.
+        const scope = key && asker.projectId && collectionAccess(key, asker.projectId) === 'write' ? asker.projectId : undefined;
+        if (upsert) return [await upsertDocuments(ctx, store, embeddings, collection, documents, keys, scope, ctx.signal)];
         const vectors = await embeddings.embedDocuments(documents.map((doc) => doc.pageContent), ctx.signal);
         const ids = await insertDocuments(
           store,
@@ -382,9 +430,14 @@ function vectorStoreNode(spec: StoreSpec) {
         });
       }
       const store = spec.open(ctx);
+      const named = await collectionFor(ctx, 'read');
+      // C21: a grant revoked while the agent runs stops its next search.
+      const stillReadable = () => {
+        if (named.key) assertCanRead(named.key, named.collection, named.asker);
+      };
       const searcher: Searcher = {
         store,
-        collection: collectionOf(ctx),
+        collection: named.collection,
         embeddings: await embeddingsOf(ctx),
         reranker: await rerankerOf(ctx),
         options: ctx.getNodeParameter<SearchOptionsParam>('options') ?? {},
@@ -400,10 +453,11 @@ function vectorStoreNode(spec: StoreSpec) {
           required: ['query'],
         },
         async invoke(input, signal) {
+          stillReadable();
           const documents = await search({ ...searcher, ...(signal && { signal }) }, String(input.query ?? ''), topK);
           return { results: documents.map((doc) => ({ ...documentJson(doc, includeMetadata), ...(doc.score !== undefined && { score: doc.score }) })) };
         },
-        retrieve: (query, options) => search({ ...searcher, ...(options?.signal && { signal: options.signal }) }, query, options?.topK ?? topK),
+        retrieve: (query, options) => (stillReadable(), search({ ...searcher, ...(options?.signal && { signal: options.signal }) }, query, options?.topK ?? topK)),
       };
     },
   });
@@ -420,6 +474,7 @@ export const inMemoryVectorStoreNode = vectorStoreNode({
   icon: 'lucide:memory-stick',
   keywords: ['memory', 'simple vector store', 'in memory'],
   properties: [collectionProperty('vector_store_key')],
+  kind: 'memory',
   open: () => new MemoryVectorStore(),
 });
 
@@ -430,6 +485,7 @@ export const sqliteVectorStoreNode = vectorStoreNode({
   icon: 'brand:sqlite',
   keywords: ['sqlite', 'local', 'file', 'persistent'],
   properties: [collectionProperty('landflow')],
+  kind: 'sqlite',
   open: () => new SqliteVectorStore(),
 });
 
@@ -500,5 +556,7 @@ export const pgVectorStoreNode = vectorStoreNode({
     collectionProperty('landflow'),
     { name: 'tableName', displayName: 'Table Name', type: 'string', default: 'landflow_vectors', description: 'Created if missing; one table can hold many collections' },
   ],
+  kind: 'pgvector',
+  identity: (ctx) => pgIdentityOf(ctx.getCredentials('postgres'), String(ctx.getNodeParameter('tableName', 0, 'landflow_vectors') || 'landflow_vectors')),
   open: (ctx) => new PgVectorStore(pgConfig(ctx.getCredentials('postgres')), String(ctx.getNodeParameter('tableName', 0, 'landflow_vectors') || 'landflow_vectors')),
 });

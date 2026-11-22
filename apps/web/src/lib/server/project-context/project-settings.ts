@@ -11,6 +11,8 @@ import { getProjectSettings, type projectSettingsPatchSchema } from '../governan
 import { agentAvailableIn, availableAgentIds, credentialUsableBy } from '../projects/access';
 import { getProject, homeProjectId } from '../projects/store';
 import { credentials } from '../credentials/vault';
+import { collectionKeyOf } from '../agents/knowledge'; // C21:
+import { canReadCollection, CollectionAccessError } from '../rag/collection-access'; // C21:
 import { registry } from '../plugins/registry';
 import { checkMemoryProvider } from '@landflow/protocol';
 import { isBrainCollection } from '../../shared/brain'; // NB06:
@@ -86,6 +88,13 @@ export function assertAgentSettingsPatch(projectId: string, patch: Patch): void 
       if (isBrainCollection(tool.collection ?? '')) throw bad(`“${tool.collection.trim()}” is the second brain’s own collection`); // NB06: refused when saved, not only when a run builds it
       checkRef(tool.credential);
       checkRef(tool.embeddings.credential);
+      // C21: a collection another project owns can't be named here (the same message whether it exists or not).
+      try {
+        if (!canReadCollection(collectionKeyOf(tool as Parameters<typeof collectionKeyOf>[0]), projectId)) throw bad(new CollectionAccessError(tool.collection, 'project').message);
+      } catch (caught) {
+        if (caught instanceof HttpError) throw caught;
+        throw bad(`${(caught as Error).message}`);
+      }
     }
   }
   for (const id of patch.agents?.ids ?? []) if (!agentAvailableIn(id, projectId)) throw bad(`“${id}” isn’t available in this project`);

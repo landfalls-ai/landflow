@@ -197,6 +197,8 @@ export const SERVICES: ServiceSpec[] = [
   { name: 'cap-raise trigger', roles: MAIN, start: startCapRaiseTrigger },
   // Projects: credentials and agents (files) and anything else without a project go to the owner's personal project.
   { name: 'project adoption', roles: MAIN, leader: true, start: adoptUnassignedResources },
+  // C21: the vector collections that existed before owners did are adopted once per database (the marker is claimed in Postgres, so two mains starting together adopt once); after the project adoption above, which gives every resource a home.
+  { name: 'collection owners', roles: MAIN, leader: true, start: async () => void (await (await import('./rag/collection-access')).ensureAdoptedAsync()) },
   // Scheduled publishes (lib/server/publish-schedule.ts): one main publishes what is due; a restart re-reads the table.
   { name: 'scheduled publishes', roles: MAIN, leader: true, start: () => publishSchedules.start(), stop: () => publishSchedules.stop() },
   { name: 'scheduler', roles: MAIN, leader: true, start: () => scheduler.start(), stop: () => scheduler.stop() },

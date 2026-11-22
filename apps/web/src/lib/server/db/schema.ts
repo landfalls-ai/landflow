@@ -2097,6 +2097,16 @@ export const MIGRATIONS: Migration[] = [
       { table: 'api_keys', column: 'last_used_ip', definition: 'TEXT' },
     ],
   },
+  // C21: an owner project per vector collection and the grants other projects hold (docs/agents.md#knowledge-bases); a grant row of level 'lost' records what the upgrade took away and gives no access
+  {
+    version: 2926,
+    name: 'vector_collection_access',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS vector_collections (store_key TEXT PRIMARY KEY, store TEXT NOT NULL, name TEXT NOT NULL, owner_project_id TEXT NOT NULL, claimed_by TEXT, claimed_at TEXT NOT NULL, source TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS vector_collections_owner ON vector_collections (owner_project_id)`,
+      `CREATE TABLE IF NOT EXISTS vector_collection_grants (store_key TEXT NOT NULL, project_id TEXT NOT NULL, level TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL, PRIMARY KEY (store_key, project_id))`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -2190,6 +2200,8 @@ export const TABLES = {
   event_subscriptions: ['id'], // C19:
   event_subscription_state: ['subscription_id'], // C19:
   event_outbox: ['topic', 'target_id', 'event_id'], // C19:
+  vector_collections: ['store_key'], // C21:
+  vector_collection_grants: ['store_key', 'project_id'], // C21:
   harness_sessions: ['id'], // C04:
   harness_events: ['id'], // C04:
   notion_brain_links: ['id'], // NB03:

@@ -42,6 +42,7 @@ import { ProjectAgentSettings } from './project-agent-settings';
 import { ProjectBudgetCard } from './project-budget-card';
 import { BrainCard } from './brain-card'; // NB07:
 import { EventSubscriptionsCard } from './event-subscriptions-card'; // C19:
+import { CollectionsCard } from './collections-card'; // C21:
 import { TasksTab } from './tasks/tasks-tab'; // PC20
 import { OVERVIEW_KINDS, PROJECT_TABS, projectTab, type ProjectTab } from './project-tabs';
 
@@ -500,6 +501,9 @@ function ProjectSettings({ project, section, onChanged }: { project: ProjectDeta
 
       {/* C19: */}
       {section === 'settings' && <EventSubscriptionsCard projectId={project.id} />}
+
+      {/* C21: */}
+      {section === 'settings' && <CollectionsCard projectId={project.id} />}
     </div>
   );
 }
