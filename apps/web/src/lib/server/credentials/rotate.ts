@@ -28,7 +28,7 @@ export interface RotationResult {
 }
 
 /** Tables with sealed values: the key columns (as the database's upsert knows them) and the column to scan (a sealed string or JSON holding some). */
-const TABLES: Array<{ table: 'settings' | 'config_files' | 'alert_channels' | 'audit_destinations' | 'audit_signing_keys' | 'external_secret_providers' | 'transport_connections'; key: string; column: string }> = [
+const TABLES: Array<{ table: 'settings' | 'config_files' | 'alert_channels' | 'audit_destinations' | 'audit_signing_keys' | 'external_secret_providers' | 'transport_connections' | 'event_subscriptions'; key: string; column: string }> = [
   { table: 'settings', key: 'key', column: 'value' },
   { table: 'config_files', key: 'name', column: 'data' },
   { table: 'alert_channels', key: 'id', column: 'data' },
@@ -36,6 +36,8 @@ const TABLES: Array<{ table: 'settings' | 'config_files' | 'alert_channels' | 'a
   { table: 'audit_signing_keys', key: 'key_id', column: 'private_key' },
   { table: 'external_secret_providers', key: 'name', column: 'secrets' },
   { table: 'transport_connections', key: 'id', column: 'secrets' },
+  // C19: the signing secret of an event subscription.
+  { table: 'event_subscriptions', key: 'id', column: 'secret' },
 ];
 
 /** A sealed string's shape: v1 is `v1.iv.tag.value`, v2 is `v2.kid.iv.tag.value`; the iv is 12 bytes (16 base64 characters) and the tag 16 bytes (24), so a version such as `v1.2.3.4` is not one. */

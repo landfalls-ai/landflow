@@ -31,7 +31,9 @@ export interface OutboxTable {
 }
 
 export const AUDIT_OUTBOX: OutboxTable = { table: 'audit_outbox', target: 'destination_id', key: ['destination_id', 'event_id'], dead: false };
-export const SUBSCRIPTION_OUTBOX: OutboxTable = { table: 'event_outbox', target: 'target_id', topic: 'subscription', key: ['topic', 'target_id', 'event_id'], dead: true };
+/** The `topic` of run-event subscription rows in `event_outbox`. */
+export const SUBSCRIPTION_TOPIC = 'subscription';
+export const SUBSCRIPTION_OUTBOX: OutboxTable = { table: 'event_outbox', target: 'target_id', topic: SUBSCRIPTION_TOPIC, key: ['topic', 'target_id', 'event_id'], dead: true };
 
 /** The columns every outbox row has (the table's own extra columns ride along untouched). */
 export interface OutboxRow {
