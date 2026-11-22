@@ -46,6 +46,8 @@ const OLD_MAIN = [
   'held trigger events', 'recovery', 'retry timers', 'alerts', 'agent triggers', 'project task wake-ups', 'evaluation schedules', 'online evaluations', 'usage listeners', 'usage trigger', 'second brain',
   // NB04: the Notion brain's push service, a leader service right after the second brain.
   'notion brain',
+  // C19: the event outbox's dispatcher, a leader service.
+  'event outbox',
   'registry gRPC server', 'static plugin seeds', 'kubernetes discovery', 'startup scan', 'node plugins', 'app webhooks', 'agent flow moves', 'IMAP IDLE',
 ];
 
