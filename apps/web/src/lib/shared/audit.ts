@@ -67,6 +67,7 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'auth.password_reset_request': 'Password reset link made',
   'auth.password_reset': 'Password reset',
   'auth.mfa_added': 'Added a second factor',
+  'auth.mfa_flagged': 'Flagged a passkey (its counter went back)',
   'auth.mfa_removed': 'Removed a second factor',
   'auth.mfa_reset': 'Reset a person’s second factors',
   'auth.mfa_recovery_used': 'Used a recovery code',

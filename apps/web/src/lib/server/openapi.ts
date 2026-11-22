@@ -2041,7 +2041,10 @@ function paths(): Record<string, Record<string, Json>> {
     responses: { 200: reply('You', object({ user: ref('Viewer') }, ['user'])), 400: invalid },
   });
   // ---- C16: a second factor for local accounts (docs/features/authentication.md#second-factor) ----
-  const mfaMethod = { type: 'string', enum: ['totp', 'recovery'] };
+  const mfaMethod = { type: 'string', enum: ['webauthn', 'totp', 'recovery'] };
+  /** The browser's JSON for a passkey answer (`@simplewebauthn/browser`); the server verifies it. */
+  const passkeyResponse = { type: 'object', additionalProperties: true, description: 'The authenticator’s answer as @simplewebauthn/browser gives it (`id`, `rawId`, `type`, `response`, `clientExtensionResults`).' };
+  const passkeyOptions = { type: 'object', additionalProperties: true, description: 'Options for `navigator.credentials.create()` or `.get()` (JSON form, for @simplewebauthn/browser).' };
   const mfaFactor = object({ id: { type: 'string' }, kind: { type: 'string', enum: ['totp', 'webauthn'] }, name: { type: 'string' }, confirmed: { type: 'boolean' }, createdAt: { type: 'string' }, lastUsedAt: { type: 'string' }, flagged: { type: 'boolean' } }, ['id', 'kind', 'name', 'confirmed', 'createdAt']);
   add('post', '/api/auth/login', {
     tag: 'Account',
@@ -2062,11 +2065,21 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Account',
     id: 'verifySecondFactor',
     summary: 'Finish a sign-in with a second factor',
-    description: 'Takes the challenge from sign-in (or a password reset) and a code: `totp` (the authenticator app, one step either side, a code works once) or `recovery` (a recovery code, once). Sets the session cookie (method `password+totp` or `password+recovery`). A recovery code also answers `recoveryCodesLeft`. 401 for a wrong code, or an expired, used or burnt challenge (five wrong codes burn it); wrong codes count against the sign-in limits (429).',
+    description: 'Takes the challenge from sign-in (or a password reset) and an answer: `totp` (the authenticator app, one step either side, a code works once), `recovery` (a recovery code, once) or `webauthn` (a passkey, with the `response` to the options from `POST /api/auth/mfa/options`). Sets the session cookie (method `password+totp`, `password+recovery` or `password+webauthn`). A recovery code also answers `recoveryCodesLeft`. 401 for a wrong code, or an expired, used or burnt challenge (five wrong codes burn it); wrong codes count against the sign-in limits (429).',
     public: true,
     publicNote: 'Public: no API key or session; the single-use challenge and the code are the credential.',
-    body: jsonBody(object({ challenge: { type: 'string', maxLength: 100 }, method: mfaMethod, code: { type: 'string', maxLength: 32 } }, ['challenge', 'method', 'code'])),
+    body: jsonBody(object({ challenge: { type: 'string', maxLength: 100 }, method: mfaMethod, code: { type: 'string', maxLength: 32, description: 'For `totp` and `recovery`.' }, response: { ...passkeyResponse, description: 'For `webauthn`: the passkey’s answer.' } }, ['challenge', 'method'])),
     responses: { 200: reply('Signed in', object({ user: ref('Viewer'), recoveryCodesLeft: { type: 'integer' } }, ['user'])), 401: errorRef('Wrong code, or sign in again'), 429: errorRef('Too many failed sign-ins') },
+  });
+  add('post', '/api/auth/mfa/options', {
+    tag: 'Account',
+    id: 'secondFactorPasskeyOptions',
+    summary: 'Options for answering the second step with a passkey',
+    description: 'Takes the sign-in challenge and answers the options for `navigator.credentials.get()`; the browser’s answer goes to `POST /api/auth/mfa/verify` with `method: webauthn`. Asking again replaces the earlier options; each options value works for one answer. 401 for an expired or used challenge, 409 when the account has no usable (unflagged) passkey.',
+    public: true,
+    publicNote: 'Public: no API key or session; the single-use sign-in challenge is the credential.',
+    body: jsonBody(object({ challenge: { type: 'string', maxLength: 100 } }, ['challenge'])),
+    responses: { 200: reply('Options', object({ options: passkeyOptions }, ['options'])), 401: errorRef('Sign in again'), 409: errorRef('No passkey'), 429: errorRef('Too many failed sign-ins') },
   });
   add('get', '/api/me/mfa', {
     tag: 'Account',
@@ -2090,12 +2103,28 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(object({ code: { type: 'string', maxLength: 32 } }, ['code'])),
     responses: { 200: reply('Confirmed', object({ factor: mfaFactor, recoveryCodes: array({ type: 'string' }) }, ['factor'])), 400: errorRef('The code did not work'), 404: notFound, 429: errorRef('Too many failed attempts') },
   });
+  add('post', '/api/me/mfa/passkeys/options', {
+    tag: 'Account',
+    id: 'passkeyOptions',
+    summary: 'Options for adding a passkey, or for a passkey step-up',
+    description: 'With `purpose: register` and your current password (403 when wrong; wrong tries count against the sign-in limits): options for `navigator.credentials.create()`. With `purpose: step-up`: options for `navigator.credentials.get()`. Answers the options and a single-use `challenge` token (5 minutes, you and that purpose only) that goes back with the browser’s answer. The relying party is the host of `LANDFLOW_PUBLIC_URL`. 409 at ten passkeys, for single sign-on accounts, or with no passkey to check.',
+    body: jsonBody(object({ purpose: { type: 'string', enum: ['register', 'step-up'] }, password: { type: 'string', maxLength: 1024 } }, ['purpose'])),
+    responses: { 200: reply('Options', object({ challenge: { type: 'string' }, options: passkeyOptions }, ['challenge', 'options'])), 400: errorRef('Password missing'), 403: errorRef('Wrong password'), 409: errorRef('Not possible for this account'), 429: errorRef('Too many failed attempts') },
+  });
+  add('post', '/api/me/mfa/passkeys', {
+    tag: 'Account',
+    id: 'addPasskey',
+    summary: 'Finish adding a passkey',
+    description: 'Takes the challenge from `POST /api/me/mfa/passkeys/options`, a name and the browser’s answer; verifies origin and relying party against `LANDFLOW_PUBLIC_URL` (attestation `none`). The first second factor of any kind also answers ten `recoveryCodes`, once. 400 when it does not verify or the request expired; 409 for a passkey that is already registered or at ten.',
+    body: jsonBody(object({ challenge: { type: 'string', maxLength: 100 }, name: { type: 'string', minLength: 1, maxLength: 60 }, response: passkeyResponse }, ['challenge', 'name', 'response'])),
+    responses: { 201: reply('Added', object({ factor: mfaFactor, recoveryCodes: array({ type: 'string' }) }, ['factor'])), 400: errorRef('The passkey did not verify'), 409: errorRef('Already registered, or too many') },
+  });
   add('post', '/api/me/mfa/step-up', {
     tag: 'Account',
     id: 'mfaStepUp',
     summary: 'Check your second factor for this session',
-    description: 'A fresh check (an app code or a recovery code) that removing a factor and making new recovery codes need within five minutes.',
-    body: jsonBody(object({ method: mfaMethod, code: { type: 'string', maxLength: 32 } }, ['method', 'code'])),
+    description: 'A fresh check (an app code, a recovery code or a passkey) that removing a factor and making new recovery codes need within five minutes. For `webauthn` send the `challenge` and `response` from `POST /api/me/mfa/passkeys/options` with `purpose: step-up`.',
+    body: jsonBody(object({ method: mfaMethod, code: { type: 'string', maxLength: 32 }, challenge: { type: 'string', maxLength: 100 }, response: passkeyResponse }, ['method'])),
     responses: { 200: reply('Checked', object({ ok: { type: 'boolean' }, recoveryCodesLeft: { type: 'integer' } }, ['ok'])), 401: errorRef('The code did not work'), 409: errorRef('No second factor'), 429: errorRef('Too many failed attempts') },
   });
   add('post', '/api/me/mfa/recovery-codes', {

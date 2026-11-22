@@ -1,9 +1,9 @@
 /**
- * POST /api/auth/mfa/verify { challenge, method: 'totp' | 'recovery', code } (public, gated by the challenge): the second
+ * POST /api/auth/mfa/verify { challenge, method: 'totp' | 'recovery', code } or { challenge, method: 'webauthn', response } (public, gated by the challenge; a passkey's options come from POST /api/auth/mfa/options): the second
  * step of a sign-in. The challenge came from a correct password (POST /api/auth/login or a password reset); it is
  * single use, five minutes, bound to its user, and five answers (each claimed before it is checked) end it. Failures count against the same
  * per-email and per-IP limits as passwords (429 with `retryAfter`) and are audited as `auth.sign_in_failed` with reason
- * `mfa`. A right answer starts the session (`password+totp` or `password+recovery`); a recovery code also answers how
+ * `mfa`. A right answer starts the session (`password+totp`, `password+recovery` or `password+webauthn`); a recovery code also answers how
  * many are left and emails the person when mail is set up.
  */
 import { z } from 'zod';
@@ -13,6 +13,7 @@ import { localSignInAllowed } from '@/lib/server/auth/local-sign-in';
 import { mailConfigured, recoveryUsedMessage, sendMail } from '@/lib/server/auth/mail';
 import { claimAttempt, MAX_WRONG, peekChallenge, useChallenge } from '@/lib/server/auth/mfa/challenges';
 import { verifyTotp } from '@/lib/server/auth/mfa/factors';
+import { assertionSchema, verifyPasskey } from '@/lib/server/auth/mfa/webauthn';
 import { useRecoveryCode } from '@/lib/server/auth/mfa/recovery';
 import { recordAudit } from '@/lib/server/audit';
 import { error, handler, parseBody } from '@/lib/server/http';
@@ -20,13 +21,17 @@ import { logger } from '@/lib/server/telemetry';
 
 export const dynamic = 'force-dynamic';
 
-const schema = z.object({ challenge: z.string().min(1).max(100), method: z.enum(['totp', 'recovery']), code: z.string().trim().min(1, 'Enter the code').max(32) });
+const challengeField = z.string().min(1).max(100);
+const schema = z.discriminatedUnion('method', [
+  z.object({ challenge: challengeField, method: z.enum(['totp', 'recovery']), code: z.string().trim().min(1, 'Enter the code').max(32) }),
+  z.object({ challenge: challengeField, method: z.literal('webauthn'), response: assertionSchema }),
+]);
 const EXPIRED = 'This sign-in has expired. Sign in again.';
 
 export const POST = handler(async (request: Request) => {
   const body = await parseBody(request, schema);
   if (!body.ok) return body.response;
-  const { challenge, method, code } = body.data;
+  const { challenge, method } = body.data;
   const ip = clientIp(request);
   const limits = loginLimits();
   const challenged = peekChallenge(challenge);
@@ -41,13 +46,14 @@ export const POST = handler(async (request: Request) => {
   // Claim one of the challenge's five answers before looking at the code, so answers in flight at once (several mains) can't exceed five.
   const attempt = await claimAttempt(challenge);
   if (attempt === undefined) return error('Too many wrong codes. Sign in again.', 401);
-  const recovered = method === 'recovery' ? await useRecoveryCode(user.id, code) : undefined;
-  const ok = method === 'totp' ? await verifyTotp(user.id, code) : recovered?.ok === true;
+  const recovered = body.data.method === 'recovery' ? await useRecoveryCode(user.id, body.data.code) : undefined;
+  const ok = body.data.method === 'webauthn' ? await verifyPasskey(user.id, challenge, body.data.response) : body.data.method === 'totp' ? await verifyTotp(user.id, body.data.code) : recovered?.ok === true;
   if (!ok) {
     await Promise.all([limits.email.hit(user.email), limits.ip.hit(ip)]);
     recordAudit({ action: 'auth.sign_in_failed', outcome: 'failure', actor: 'anonymous', target: { type: 'user', id: user.id }, summary: 'Failed second-factor sign-in', details: { reason: 'mfa', method } });
     logger.info('second factor failed', { 'landflow.auth.reason': 'mfa' });
     if (attempt >= MAX_WRONG) return error('Too many wrong codes. Sign in again.', 401);
+    if (method === 'webauthn') return error('That passkey didn’t work. Try again, or use another way to sign in.', 401);
     return error(method === 'totp' ? 'That code didn’t work. Check the code in your app (and that your device’s clock is right), or use a recovery code.' : 'That recovery code didn’t work. Each one works once.', 401);
   }
   // The code was right; the challenge is spent here, so one challenge makes one session.
@@ -66,7 +72,7 @@ export const POST = handler(async (request: Request) => {
       }
     }
   }
-  return signedInResponse(request, user, method === 'totp' ? 'password+totp' : 'password+recovery', { ...(left !== undefined && { recoveryCodesLeft: left }) }, 200, {
+  return signedInResponse(request, user, method === 'webauthn' ? 'password+webauthn' : method === 'totp' ? 'password+totp' : 'password+recovery', { ...(left !== undefined && { recoveryCodesLeft: left }) }, 200, {
     mfaVerifiedAt: new Date().toISOString(),
     ...(spent.firstMethod === 'reset' && { via: 'reset' }),
   });

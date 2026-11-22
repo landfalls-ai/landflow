@@ -105,7 +105,7 @@ export function canResetMfa(actor: { id: string; role: Role } | null | undefined
 }
 
 /** Second factors (C16). */
-export type MfaMethod = 'totp' | 'recovery';
+export type MfaMethod = 'webauthn' | 'totp' | 'recovery';
 
 /** A factor as its owner sees it: never the secret. */
 export interface MfaFactorView {

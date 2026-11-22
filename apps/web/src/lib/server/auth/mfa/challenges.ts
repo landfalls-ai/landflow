@@ -4,7 +4,7 @@
  * `POST /api/auth/mfa/verify`: it is not a session and no route accepts it as one. Every answer is claimed first (`claimAttempt`): the fifth ends the challenge, however many are in flight at once.
  * Rows live in `mfa_challenges`, so any main can verify what another made.
  */
-import type { Database } from '../../db';
+import { TABLES, type Database, type SqlValue } from '../../db';
 import { authDb } from '../db';
 import { randomToken, tokenHash } from '../passwords';
 import type { UserRecord } from '../users';
@@ -13,7 +13,8 @@ import { takeOnce } from './once';
 export const CHALLENGE_MINUTES = 5;
 export const MAX_WRONG = 5;
 
-export type ChallengePurpose = 'sign-in';
+/** `sign-in` (the second step), `register` (adding a passkey) and `step-up` (a fresh check by a signed-in person): a token of one purpose answers only that purpose's route. */
+export type ChallengePurpose = 'sign-in' | 'register' | 'step-up';
 export type FirstMethod = 'password' | 'reset';
 
 export interface ChallengeRow {
@@ -79,4 +80,54 @@ export async function useChallenge(token: string, now = Date.now()): Promise<Cha
   const won = await takeOnce({ table: 'mfa_challenges', key: { id }, set: { used_at: iso(now) }, when: 'used_at IS NULL AND expires_at > ?', whenParams: [iso(now)], check: (row) => !row.used_at && String(row.expires_at) > iso(now) });
   if (!won) return undefined;
   return { id, userId: String(won.user_id), purpose: won.purpose as ChallengePurpose, firstMethod: won.first_method as FirstMethod, wrong: Number(won.wrong), expiresAt: String(won.expires_at) };
+}
+
+/**
+ * Remember the WebAuthn challenge a passkey must sign for this token (one at a time: a new one replaces the last),
+ * decided where the row lives. False when the token is not live. The challenge is random, never logged.
+ */
+export async function setWebauthnChallenge(token: string, webauthnChallenge: string, now = Date.now()): Promise<boolean> {
+  if (!token || token.length > 100) return false;
+  const live = (row: Record<string, unknown>) => !row.used_at && String(row.expires_at) > iso(now) && Number(row.wrong) < MAX_WRONG;
+  const won = await takeOnce({ table: 'mfa_challenges', key: { id: tokenHash(token) }, set: { webauthn_challenge: webauthnChallenge }, when: 'used_at IS NULL AND expires_at > ? AND wrong < ?', whenParams: [iso(now), MAX_WRONG], check: live });
+  return Boolean(won);
+}
+
+/**
+ * Take the WebAuthn challenge off the token, once: of several callers only one gets it (and a failed attempt burns it,
+ * so the next try asks for new options). Undefined when the token is spent or expired, or has none. It does not look at
+ * the wrong-answer count: the caller claimed its attempt (`claimAttempt`) first, so the fifth answer must still get its
+ * challenge. On Postgres the take is one statement that locks the row and answers the value it held (`FOR UPDATE`), so a
+ * verify on another main never works from a stale copy.
+ */
+export async function consumeWebauthnChallenge(token: string, now = Date.now(), db: Database = authDb()): Promise<string | undefined> {
+  if (!token || token.length > 100) return undefined;
+  const id = tokenHash(token);
+  if (db.kind === 'postgres') {
+    await db.flush();
+    const taken = await db.direct(async (client) => {
+      const result = await client.query<Record<string, SqlValue>>(
+        `WITH old AS (SELECT id, webauthn_challenge FROM mfa_challenges WHERE id = $1 FOR UPDATE)
+         UPDATE mfa_challenges m SET webauthn_challenge = NULL FROM old
+         WHERE m.id = old.id AND old.webauthn_challenge IS NOT NULL AND m.used_at IS NULL AND m.expires_at > $2
+         RETURNING m.*, old.webauthn_challenge AS previous`,
+        [id, iso(now)],
+      );
+      const row = result.rows[0];
+      if (row) {
+        const notice = db.keyNotice('mfa_challenges', (TABLES.mfa_challenges as readonly string[]).map((c) => row[c]));
+        if (notice) await client.query('SELECT pg_notify($1, $2)', ['landflow_changes', notice]);
+      }
+      return row;
+    });
+    if (!taken) return undefined;
+    const { previous, ...rest } = taken;
+    db.upsertLocal('mfa_challenges', rest);
+    return String(previous);
+  }
+  const row = db.get<{ webauthn_challenge: string | null }>('SELECT webauthn_challenge FROM mfa_challenges WHERE id = ?', id);
+  const expected = row?.webauthn_challenge;
+  if (!expected) return undefined;
+  const won = await takeOnce({ table: 'mfa_challenges', key: { id }, set: { webauthn_challenge: null }, when: 'webauthn_challenge = ? AND used_at IS NULL AND expires_at > ?', whenParams: [expected, iso(now)], check: (r) => r.webauthn_challenge === expected && !r.used_at && String(r.expires_at) > iso(now) }, db);
+  return won ? expected : undefined;
 }

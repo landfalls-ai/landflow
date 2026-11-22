@@ -1,6 +1,5 @@
 /**
- * A person's second factors (`user_mfa_factors`): an authenticator app (TOTP) today, passkeys beside it later (the
- * table already has their columns). The TOTP secret is sealed with the key ring (`sealSecret`, the default purpose: key rotation re-seals only values of that purpose) and
+ * A person's second factors (`user_mfa_factors`): an authenticator app (TOTP) and passkeys (./webauthn). The TOTP secret is sealed with the key ring (`sealSecret`, the default purpose: key rotation re-seals only values of that purpose) and
  * is returned once, at enrolment; a factor counts only once a valid code confirmed it. A code is accepted once: the
  * factor's `last_step` only moves forward (decided in `takeOnce`, so two mains agree). Adding, removing and resetting
  * are audited with ids and kinds, never a secret or a code.
@@ -9,22 +8,18 @@ import { nanoid } from 'nanoid';
 import type { MfaFactorView, MfaMethod } from '../../../shared/auth';
 import { auditedTransaction, recordAudit } from '../../audit';
 import { credentials } from '../../credentials/vault';
-import { HttpError } from '../../errors';
 import { authDb } from '../db';
 import { deleteUserSessions, sessionMfaVerifiedAt } from '../sessions';
 import type { UserRecord } from '../users';
+import { MfaError } from './errors';
+import { hasUsablePasskey, stepUpPasskey, type Assertion } from './webauthn';
 import { takeOnce } from './once';
 import { loginLimits } from '../rate-limit';
 import { deleteRecoveryCodes, newRecoveryCodes, recoveryCodesLeft, useRecoveryCode } from './recovery';
 import { matchingStep, newTotpSecret, otpauthUrl } from './totp';
 import { mfaCovers } from './policy';
 
-export class MfaError extends HttpError {
-  static readonly errorName: string = 'MfaError';
-  constructor(message: string, status = 400, code?: string) {
-    super(message, status, { expose: true, ...(code && { code }) });
-  }
-}
+export { MfaError };
 
 /** A fresh second-factor check (FR-9) is one from the last five minutes. */
 export const STEP_UP_MINUTES = 5;
@@ -60,9 +55,10 @@ export function listFactors(userId: string): MfaFactorView[] {
 
 export const hasConfirmedFactor = (userId: string): boolean => listFactors(userId).some((factor) => factor.confirmed);
 
-/** What can answer a sign-in challenge: the authenticator app (if any) and the recovery codes (if any are left). */
+/** What can answer a sign-in challenge: a passkey (if one is unflagged), the authenticator app (if any) and the recovery codes (if any are left). */
 export function methodsFor(userId: string): MfaMethod[] {
   const methods: MfaMethod[] = [];
+  if (hasUsablePasskey(userId)) methods.push('webauthn');
   if (rows(userId).some((row) => row.kind === 'totp' && row.confirmed_at)) methods.push('totp');
   if (recoveryCodesLeft(userId) > 0) methods.push('recovery');
   return methods;
@@ -129,8 +125,9 @@ export function removeFactor(actor: UserRecord, sessionId: string | undefined, f
   if (row.confirmed_at) {
     const checked = sessionMfaVerifiedAt(sessionId);
     if (!checked || now - Date.parse(checked) > STEP_UP_MINUTES * 60_000) throw new MfaError('Check your second factor first, then try again', 403, 'mfa_step_up_required');
-    const confirmed = rows(actor.id).filter((r) => r.confirmed_at);
-    if (confirmed.length === 1 && mfaCovers(actor)) throw new MfaError('Your account has to keep a second factor: this instance requires one for your role (LANDFLOW_MFA_REQUIRED)', 409, 'mfa_required_by_policy');
+    // A flagged passkey is refused at sign-in, so it is no factor the policy can count: the last usable one stays, a flagged one may always go.
+    const usable = rows(actor.id).filter((r) => r.confirmed_at && !r.flagged_at);
+    if (!row.flagged_at && usable.length === 1 && mfaCovers(actor)) throw new MfaError('Your account has to keep a second factor: this instance requires one for your role (LANDFLOW_MFA_REQUIRED)', 409, 'mfa_required_by_policy');
   }
   db.transaction(() => {
     db.delete('user_mfa_factors', { id: row.id });
@@ -176,6 +173,17 @@ export async function answerSecondFactor(user: UserRecord, ip: string, run: () =
   return { status: 'wrong' };
 }
 
-/** Answer a step-up with an authenticator code or a recovery code. */
-export const stepUpCheck = (user: UserRecord, method: MfaMethod, code: string): Promise<{ ok: boolean; left?: number }> =>
-  method === 'totp' ? verifyTotp(user.id, code).then((ok) => ({ ok })) : useRecoveryCode(user.id, code).then((r) => (r.ok ? { ok: true, left: r.left } : { ok: false }));
+/** What answers a step-up: a code (authenticator app or recovery), or a passkey's assertion for a challenge from `stepUpOptions`. */
+export interface StepUpInput {
+  code?: string;
+  challenge?: string;
+  response?: Assertion;
+}
+
+/** Answer a step-up with an authenticator code, a recovery code or a passkey. */
+export async function stepUpCheck(user: UserRecord, method: MfaMethod, input: StepUpInput): Promise<{ ok: boolean; left?: number }> {
+  if (method === 'webauthn') return { ok: Boolean(input.challenge && input.response && (await stepUpPasskey(user, input.challenge, input.response))) };
+  if (method === 'totp') return { ok: await verifyTotp(user.id, input.code ?? '') };
+  const used = await useRecoveryCode(user.id, input.code ?? '');
+  return used.ok ? { ok: true, left: used.left } : { ok: false };
+}

@@ -73,6 +73,48 @@ describe.skipIf(!enabled)('second-factor one-use decisions in queue mode on Post
     expect(await take(worker)).toBeUndefined();
   });
 
+  it('of two mains taking the same WebAuthn challenge (the real function), one gets it, and a fifth-answer challenge still yields it', async () => {
+    const { consumeWebauthnChallenge } = await import('@/lib/server/auth/mfa/challenges');
+    const { tokenHash } = await import('@/lib/server/auth/passwords');
+    for (let i = 0; i < 5; i++) {
+      const token = `wa-token-${i}`;
+      main.insertNew('mfa_challenges', { id: tokenHash(token), user_id: 'usr_d', purpose: 'sign-in', first_method: 'password', webauthn_challenge: `abc${i}`, wrong: 5, created_at: now(), expires_at: until5(), used_at: null });
+      const got = await Promise.all([consumeWebauthnChallenge(token, Date.now(), main), consumeWebauthnChallenge(token, Date.now(), worker)]);
+      expect(got.filter(Boolean)).toEqual([`abc${i}`]);
+      await until(() => expect([main, worker].map((db) => db.get<{ webauthn_challenge: string | null }>('SELECT webauthn_challenge FROM mfa_challenges WHERE id = ?', tokenHash(token))?.webauthn_challenge)).toEqual([null, null]));
+    }
+  });
+
+  it('of two mains verifying one passkey answer (the real function), one passes; a counter that went back flags the key', async () => {
+    const { verifyPasskey } = await import('@/lib/server/auth/mfa/webauthn');
+    const { tokenHash } = await import('@/lib/server/auth/passwords');
+    const { FakeAuthenticator } = await import('./fake-authenticator');
+    const origin = 'http://localhost:3000';
+    const previousUrl = process.env.LANDFLOW_PUBLIC_URL;
+    process.env.LANDFLOW_PUBLIC_URL = origin;
+    try {
+      const key = new FakeAuthenticator(origin, 'localhost');
+      main.insertNew('user_mfa_factors', { id: 'fac_real', user_id: 'usr_g', kind: 'webauthn', name: 'Key', credential_id: key.id, public_key: key.publicKeyB64, counter: 0, confirmed_at: now(), created_at: now() });
+      const challenge = async (token: string, value: string) => main.insertNew('mfa_challenges', { id: tokenHash(token), user_id: 'usr_g', purpose: 'sign-in', first_method: 'password', webauthn_challenge: value, wrong: 0, created_at: now(), expires_at: until5(), used_at: null });
+      await challenge('pk-1', 'Y2hhbGxlbmdlLW9uZQ');
+      await until(() => expect(worker.get('SELECT 1 AS one FROM mfa_challenges WHERE id = ?', tokenHash('pk-1'))).toBeTruthy());
+      await until(() => expect(worker.get('SELECT 1 AS one FROM user_mfa_factors WHERE id = ?', 'fac_real')).toBeTruthy());
+      const answer = key.get({ challenge: 'Y2hhbGxlbmdlLW9uZQ', rpId: 'localhost' }, { counter: 8 });
+      const both = await Promise.all([verifyPasskey('usr_g', 'pk-1', answer, Date.now(), main), verifyPasskey('usr_g', 'pk-1', answer, Date.now(), worker)]);
+      expect(both.filter(Boolean)).toHaveLength(1);
+      await until(() => expect([main, worker].map((db) => Number(db.get<{ counter: number }>('SELECT counter FROM user_mfa_factors WHERE id = ?', 'fac_real')?.counter))).toEqual([8, 8]));
+      // Another main now sees a counter of 3: refused, flagged on both copies.
+      await challenge('pk-2', 'Y2hhbGxlbmdlLXR3bw');
+      await until(() => expect(worker.get('SELECT 1 AS one FROM mfa_challenges WHERE id = ?', tokenHash('pk-2'))).toBeTruthy());
+      const back = key.get({ challenge: 'Y2hhbGxlbmdlLXR3bw', rpId: 'localhost' }, { counter: 3 });
+      expect(await verifyPasskey('usr_g', 'pk-2', back, Date.now(), worker)).toBe(false);
+      await until(() => expect([main, worker].map((db) => db.get<{ flagged_at: string | null }>('SELECT flagged_at FROM user_mfa_factors WHERE id = ?', 'fac_real')?.flagged_at)).toEqual([expect.any(String), expect.any(String)]));
+    } finally {
+      if (previousUrl === undefined) delete process.env.LANDFLOW_PUBLIC_URL;
+      else process.env.LANDFLOW_PUBLIC_URL = previousUrl;
+    }
+  });
+
   it('of two mains using the same TOTP step, one wins, and a step at or below the last is refused', async () => {
     main.insertNew('user_mfa_factors', { id: 'fac_1', user_id: 'usr_c', kind: 'totp', name: 'App', secret: 's', created_at: now() });
     const claim = (db: Database, step: number) => takeOnce({ table: 'user_mfa_factors', key: { id: 'fac_1' }, set: { last_step: step }, when: 'last_step IS NULL OR last_step < ?', whenParams: [step], check: (row) => row.last_step == null || Number(row.last_step) < step }, db);

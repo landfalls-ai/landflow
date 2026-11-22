@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { safeNext } from '@/lib/shared/auth-paths';
 import { currentPageUser } from '@/lib/server/auth/pages';
-import { hasConfirmedFactor } from '@/lib/server/auth/mfa';
+import { enrolmentRequired } from '@/lib/server/auth/mfa';
 import { AuthShell } from '@/components/auth/auth-forms';
 import { EnrolFlow } from '@/components/account/sign-in-security';
 import { SignOutLink } from '@/components/auth/sign-out-link';
@@ -17,7 +17,8 @@ export default async function SecondFactorPage({ searchParams }: { searchParams:
   const next = safeNext((await searchParams).next);
   const user = await currentPageUser();
   if (!user) redirect('/login');
-  if (hasConfirmedFactor(user.id)) redirect(next);
+  // Not just "has a factor": a flagged passkey is no factor, and the policy still asks this person to add one.
+  if (!enrolmentRequired(user, 'password')) redirect(next);
   return (
     <AuthShell title="Add a second factor" subtitle="This instance asks for a second factor on your account. Add one to go on." footer={<SignOutLink />}>
       <EnrolFlow next={next} />
