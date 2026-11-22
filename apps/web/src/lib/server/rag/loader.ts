@@ -23,22 +23,29 @@ export interface LoadOptions {
   split: (text: string) => Promise<string[]>;
 }
 
+/**
+ * Metadata the re-index writes itself (C20): a workflow's metadata cannot set them, or a plain insert could plant a
+ * chunk that claims another text's hash, or a key another document owns.
+ */
+export const RESERVED_CHUNK_METADATA = ['chunkHash', 'embedKey', 'documentKey', 'upsertKey'] as const;
+const withoutReserved = (metadata: JsonObject): JsonObject => Object.fromEntries(Object.entries(metadata).filter(([key]) => !(RESERVED_CHUNK_METADATA as readonly string[]).includes(key)));
+
 /** Documents for `items`: each item's text split into chunks, with `itemIndex`, `chunk` and the configured metadata. */
 export async function loadDocuments(items: NodeItem[], options: LoadOptions): Promise<AiDocument[]> {
   const documents: AiDocument[] = [];
   for (const [i, item] of items.entries()) {
     if (options.mode === 'binaryData') {
-      const metadata = options.metadata?.(i) ?? {};
+      const metadata = withoutReserved(options.metadata?.(i) ?? {});
       for (const file of (await options.files?.(i)) ?? []) {
-        documents.push(...(await fileDocuments(file, options.split, { itemIndex: i, ...metadata })));
+        documents.push(...(await fileDocuments(file, options.split, { ...metadata, itemIndex: i })));
       }
       continue;
     }
     const text = textOf(options.mode === 'allInputData' ? item.json : options.data?.(i));
     if (!text.trim()) continue;
     const chunks = await options.split(text);
-    const metadata = options.metadata?.(i) ?? {};
-    chunks.forEach((chunk, c) => documents.push({ pageContent: chunk, metadata: { itemIndex: i, chunk: c, ...metadata } }));
+    const metadata = withoutReserved(options.metadata?.(i) ?? {});
+    chunks.forEach((chunk, c) => documents.push({ pageContent: chunk, metadata: { ...metadata, itemIndex: i, chunk: c } }));
   }
   return documents;
 }

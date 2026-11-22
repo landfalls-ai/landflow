@@ -7,6 +7,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import { nanoid } from 'nanoid';
 import { toToolName, type Embeddings } from '@landflow/engine';
+import { NodeOperationError } from '@landflow/sdk';
 import type { VectorKnowledgeBaseConfig as KnowledgeBaseToolConfig } from '../../shared/agents';
 import { credentials } from '../credentials/vault';
 import { openAiConnection } from '../nodes/models';
@@ -15,6 +16,8 @@ import { pgConfig, search, type Searcher } from '../nodes/vector-stores';
 import { registry } from '../plugins/registry';
 import { ollamaEmbeddings, openAiCompatibleEmbeddings } from '../rag/embeddings';
 import { fileDocuments, fileKind, type FileInput } from '../rag/files';
+import { chunkHash, syncDocument, type SyncResult } from '../rag/chunk-diff';
+import { stableChunks } from '../rag/sections';
 import { recursiveCharacterSplit } from '../rag/splitters';
 import { insertDocuments, MemoryVectorStore, PgVectorStore, SqliteVectorStore, type VectorStore } from '../rag/stores';
 import type { JsonObject } from '@landflow/protocol';
@@ -154,6 +157,11 @@ export interface KnowledgeDocument {
   uploadedAt?: string;
 }
 
+/** C20: a document added with a `source` (a folder's file) also says what the pass did with its chunks. */
+export interface KnowledgeDocumentSync extends KnowledgeDocument, Omit<SyncResult, 'ids'> {}
+
+const CHUNKING = { chunkSize: 1000, chunkOverlap: 200 };
+
 /** Files up to this size can be uploaded from the builder. */
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
@@ -166,6 +174,8 @@ export async function addKnowledgeDocument(config: KnowledgeBaseToolConfig, file
   if (!config.collection?.trim()) throw new Error('The knowledge base has no collection');
   const store = openStore(config);
   const embeddings = embeddingsFor(config.embeddings);
+  // C20: a file with a known source is indexed again under the document it already is, embedding only what changed.
+  if (typeof extra.source === 'string') return syncKnowledgeFile(config, store, embeddings, file, extra as JsonObject & { source: string });
   const documentId = `doc_${nanoid(10)}`;
   const uploadedAt = new Date().toISOString();
   const documents = await fileDocuments(file, async (text) => recursiveCharacterSplit(text, { chunkSize: 1000, chunkOverlap: 200 }), { documentId, uploadedAt, ...extra });
@@ -184,6 +194,40 @@ export async function addKnowledgeDocument(config: KnowledgeBaseToolConfig, file
     chunks: documents.length,
     ...(pages.size && { pages: pages.size }),
     uploadedAt,
+  };
+}
+
+/**
+ * C20: add a file that has a `source`, or index it again. Its chunks are cut at content-defined sections, compared with
+ * the chunks the collection holds for that source, and only the new text is embedded; the document keeps its
+ * `documentId` (and `uploadedAt`, until its text changes), so the knowledge list shows one entry per file.
+ */
+async function syncKnowledgeFile(config: KnowledgeBaseToolConfig, store: VectorStore, embeddings: Embeddings, file: FileInput, extra: JsonObject & { source: string }): Promise<KnowledgeDocumentSync> {
+  const collection = config.collection.trim();
+  const stored = await store.metadataWhere(collection, { source: extra.source });
+  const documentId = stored.map((row) => row.metadata.documentId).find((id): id is string => typeof id === 'string') ?? `doc_${nanoid(10)}`;
+  const documents = await fileDocuments(file, async (text) => stableChunks(text, CHUNKING), { ...extra, documentId });
+  if (!documents.length) throw new Error(`${file.fileName ?? 'The file'} has no text to load (scanned PDFs need OCR first)`);
+  // The upload time moves only when the text did: the same chunk hashes are the same file.
+  const before = stored.map((row) => String(row.metadata.chunkHash ?? '')).sort().join();
+  const after = documents.map((doc) => chunkHash(doc.pageContent)).sort().join();
+  const previous = stored.map((row) => row.metadata.uploadedAt).find((at): at is string => typeof at === 'string');
+  const uploadedAt = before === after && previous ? previous : new Date().toISOString();
+  const { ids: _ids, ...counts } = await syncDocument(store, embeddings, {
+    collection,
+    match: { source: extra.source },
+    documentKey: documentId,
+    chunks: documents.map((doc) => ({ text: doc.pageContent, metadata: { ...doc.metadata, uploadedAt } })),
+  });
+  const pages = new Set(documents.map((doc) => doc.metadata.page).filter((page) => page !== undefined));
+  return {
+    documentId,
+    fileName: file.fileName ?? 'document',
+    ...(file.mimeType && { mimeType: file.mimeType }),
+    chunks: documents.length,
+    ...(pages.size && { pages: pages.size }),
+    uploadedAt,
+    ...counts,
   };
 }
 
@@ -238,14 +282,24 @@ export const MAX_FOLDER_FILES = 200;
  * (`runbooks/disk-full.md`), sorted, recursive, skipping dotfiles and anything a symlink leads out of the files directory.
  * Lists only; never reads a file. Throws when the folder is outside the files directory or is not a folder.
  */
-export async function folderFiles(folder: string): Promise<{ root: string; files: string[]; truncated: boolean }> {
+export async function folderFiles(folder: string): Promise<{ root: string; files: string[]; truncated: boolean; incomplete: boolean; prefix: string }> {
   const { root, path } = await resolveInFilesDir(folder);
   const top = await stat(path).catch(() => undefined);
   if (!top?.isDirectory()) throw new Error(`No folder named ${folder} in the files directory`);
   const files: string[] = [];
   let truncated = false;
+  // C20: set when something under the folder could not be read for a reason other than "gone" or "outside": the listing is then
+  // not the folder's whole content, and a pass must not take a missing file for a removed one.
+  let incomplete = false;
   const walk = async (dir: string): Promise<void> => {
-    const entries = (await readdir(dir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
+    let entries;
+    try {
+      entries = (await readdir(dir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
+    } catch (caught) {
+      if (dir === path) throw caught;
+      if ((caught as NodeJS.ErrnoException).code !== 'ENOENT') incomplete = true;
+      return;
+    }
     for (const entry of entries) {
       if (entry.name.startsWith('.')) continue;
       const full = join(dir, entry.name);
@@ -258,44 +312,69 @@ export async function folderFiles(folder: string): Promise<{ root: string; files
           if (files.length >= MAX_FOLDER_FILES) truncated = true;
           else files.push(rel);
         }
-      } catch {
-        // skipped: outside the files directory, or gone since it was listed
+      } catch (caught) {
+        // Skipped: outside the files directory (the refusal) or gone since it was listed. Anything else is a part we could not see.
+        if (!(caught instanceof NodeOperationError) && (caught as NodeJS.ErrnoException).code !== 'ENOENT') incomplete = true;
       }
     }
   };
   await walk(path);
-  return { root, files, truncated };
+  // The folder as the files directory resolves it ("runbooks/../runbooks" is "runbooks"); empty for the directory itself.
+  const prefix = relative(root, path).split(sep).join('/');
+  return { root, files, truncated, incomplete, prefix };
 }
 
 export interface FolderIndex {
   documents: number;
   chunks: number;
+  /** C20: chunks that kept their stored vector, chunks sent to the embeddings model, chunks removed (changed text and files that left the folder). */
+  reused: number;
+  embedded: number;
+  removed: number;
   failed: Array<{ file: string; error: string }>;
 }
 
 /**
  * Index every file of `folder` into the knowledge base, each chunk carrying `source` (the file's path relative to the
- * files directory). Chunks of a file indexed before (same `source`) are removed first, so indexing twice replaces and
- * never duplicates.
+ * files directory). C20: a file indexed before (same `source`) is compared chunk by chunk with what the collection
+ * holds: only new text is embedded, the file's chunks are replaced in one step (the base keeps answering from the old
+ * version until then, and when embedding fails), and the chunks of files that left the folder are removed. A file
+ * that can't be read keeps its old chunks and is listed in `failed`.
  */
 export async function indexFolder(config: KnowledgeBaseToolConfig, folder: string): Promise<FolderIndex> {
-  const { files } = await folderFiles(folder);
+  const { files, truncated, incomplete, prefix } = await folderFiles(folder);
   const store = openStore(config);
   const collection = config.collection.trim();
-  const result: FolderIndex = { documents: 0, chunks: 0, failed: [] };
+  const result: FolderIndex = { documents: 0, chunks: 0, reused: 0, embedded: 0, removed: 0, failed: [] };
   for (const file of files) {
     try {
       const { path } = await resolveInFilesDir(file);
       const info = await stat(path);
       if (info.size > MAX_UPLOAD_BYTES) throw new Error(`Too large (${Math.round(info.size / 1024 / 1024)} MB; the limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB)`);
       const bytes = new Uint8Array(await readFile(path));
-      await store.deleteWhere(collection, { source: file });
-      const added = await addKnowledgeDocument(config, { bytes, fileName: file }, { source: file });
+      const added = (await addKnowledgeDocument(config, { bytes, fileName: file }, { source: file })) as KnowledgeDocumentSync;
       result.documents++;
       result.chunks += added.chunks;
+      result.reused += added.reused;
+      result.embedded += added.embedded;
+      result.removed += added.removed;
     } catch (caught) {
       result.failed.push({ file, error: (caught as Error).message.slice(0, 300) });
     }
+  }
+  // Files that left the folder lose their chunks, but only when the listing is the folder's whole content, and the folder is
+  // a folder of its own: the files directory itself (an empty prefix) can't be told from other folders indexed into the same
+  // collection. Only chunks a folder pass made (they carry a documentId) are removed, never what a workflow inserted.
+  if (!truncated && !incomplete && prefix) {
+    const present = new Set(files);
+    const gone = new Set<string>();
+    const foreign = new Set<string>(); // sources that also hold a chunk no folder pass made
+    for (const { metadata } of await store.metadataOf(collection)) {
+      if (typeof metadata.source !== 'string' || !metadata.source.startsWith(`${prefix}/`) || present.has(metadata.source)) continue;
+      if (typeof metadata.documentId === 'string') gone.add(metadata.source);
+      else foreign.add(metadata.source);
+    }
+    for (const source of gone) if (!foreign.has(source)) result.removed += await store.deleteWhere(collection, { source });
   }
   return result;
 }

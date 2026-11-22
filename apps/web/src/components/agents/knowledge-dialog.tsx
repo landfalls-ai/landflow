@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { BookOpen, FileText, Loader2, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import type { KnowledgeBaseToolConfig, KnowledgeNodePreset, NodeKnowledgeBaseConfig, VectorKnowledgeBaseConfig } from '@/lib/shared/agents';
-import { isNodeKnowledge, KNOWLEDGE_NODE_PRESETS } from '@/lib/shared/agents';
+import { isNodeKnowledge, KNOWLEDGE_NODE_PRESETS, knowledgeIndexSummary } from '@/lib/shared/agents';
 import { NodeCredentials } from '../credentials/node-credentials';
 import { Button } from '../ui/button';
 import { Input, Select } from '../ui/inputs';
@@ -361,7 +361,12 @@ function DocumentsPanel({ agentId, tool }: { agentId: string; tool: VectorKnowle
         </div>
       ))}
       {other > 0 && <p className="text-[11.5px] text-t3">{other} more chunks were inserted by workflows.</p>}
-      {tool.indexedFrom && <p className="text-[11.5px] text-t3">Indexed from {tool.indexedFrom}</p>}{/* AG13: the folder of the files directory it was indexed from */}
+      {tool.indexedFrom && (
+        <p className="text-[11.5px] text-t3">
+          Indexed from {tool.indexedFrom}
+          {tool.lastIndex && <> · last pass: {knowledgeIndexSummary(tool.lastIndex)}</>}{/* C20: what the last pass embedded, reused and removed */}
+        </p>
+      )}{/* AG13: the folder of the files directory it was indexed from */}
     </div>
   );
 }

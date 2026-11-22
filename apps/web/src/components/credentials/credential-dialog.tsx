@@ -21,6 +21,7 @@ import { Button } from '../ui/button';
 import { AppIcon } from '../ui/icon';
 import { FieldLabel, Input, SectionLabel } from '../ui/inputs';
 import { groupCredentialTypes } from './credential-groups';
+import { JWT_AUTH_CREDENTIAL, JwtAuthPresets } from './jwt-auth-presets';
 import { OAuth2Connection, OAuth2Presets } from './oauth2-connect';
 import { useCredentialStore } from './use-credentials';
 import { useDialogFocus } from '../ui/use-dialog-focus';
@@ -318,6 +319,7 @@ export function CredentialDialog({
               {info ? (
                 <>
                   {info.type === OAUTH2_CREDENTIAL && <OAuth2Presets values={values} onChange={setValues} />}
+                  {info.type === JWT_AUTH_CREDENTIAL && <JwtAuthPresets values={values} onChange={setValues} />}
                   <ParamForm nodeType="" properties={properties} values={values} onChange={setValues} expressionScope="credential" />
                   {info.oauth2 && <OAuth2Connection credential={existing} grantType={String(values.grantType ?? 'pkce')} ensureSaved={ensureSaved} onChange={setExisting} />}
                 </>

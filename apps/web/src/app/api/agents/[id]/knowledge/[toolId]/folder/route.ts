@@ -2,8 +2,9 @@
  * AG13: POST { folder } — index a folder of the files directory (LANDFLOW_FILES_DIR) into an agent's knowledge base (the
  * draft's knowledge tool `toolId`): every file the loaders read (Markdown, text, PDF, DOCX, HTML, CSV, JSON; at most 200
  * files, 25 MB each), each chunk's metadata with `source` the file's path relative to the files directory. Indexing a folder
- * again replaces each file's chunks. Answers 200 `{ documents, chunks, failed: [{ file, error }] }`; sets the tool's
- * `indexedFrom` in the draft. 400 for a folder outside the files directory or missing (or a plugin's knowledge base); 404
+ * again embeds only the chunks whose text changed (C20), replaces each file's chunks in one step and removes the chunks
+ * of files that left the folder. Answers 200 `{ documents, chunks, reused, embedded, removed, failed: [{ file, error }] }`;
+ * sets the tool's `indexedFrom` and `lastIndex` (the counts, with the time) in the draft. 400 for a folder outside the files directory or missing (or a plugin's knowledge base); 404
  * for an agent or knowledge base the caller cannot update.
  */
 import { z } from 'zod';
@@ -42,7 +43,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
     return error((caught as Error).message, 502);
   }
   // The draft remembers where its knowledge base was indexed from.
-  const tools = agent.tools.map((t) => (t.id === toolId && t.type === 'knowledge' && !isNodeKnowledge(t) ? { ...t, indexedFrom: folder.replace(/\/+$/, '') } : t));
+  const tools = agent.tools.map((t) => (t.id === toolId && t.type === 'knowledge' && !isNodeKnowledge(t) ? { ...t, indexedFrom: folder.replace(/\/+$/, ''), lastIndex: { at: new Date().toISOString(), documents: result.documents, embedded: result.embedded, reused: result.reused, removed: result.removed, failed: result.failed.length } } : t));
   agentStore.saveDraft(id, { ...configOf(agent), tools });
   return json(result);
 });
