@@ -312,7 +312,7 @@ Start the matching infra services first ([deployment.md](deployment.md)), then r
 |---|---|---|
 | `postgres` | the infra Postgres, database `landflow_test` (or `LANDFLOW_PG_URL`, `LANDFLOW_TEST_DATABASE_URL`) | `pgvector.test.ts` (also the replace, rollback, concurrent-reader and `syncDocument` cases of C20), `vector-store-access.test.ts` (its pgvector case; C21), `postgres.test.ts` (the store, schema `landflow_runtime_test`), `postgres-hot-mirror.test.ts` (the hot mirror: eviction, cold reads through the async seam, promotion, schema `landflow_hot_test`; run it in its own vitest call, as the two share `landflow_test`), `projects-migration.test.ts`, `project-folders-variables.test.ts` |
 | `queue` | the infra Valkey (`LANDFLOW_TEST_VALKEY_URL`, under a throwaway key prefix) and Postgres | `cluster-coordinator.test.ts` (coordinator, leader election, stalled-job takeover, relay), `cluster-postgres.test.ts` (processes following each other's writes, schema `landflow_queue_test`), `config-store-postgres.test.ts` (credentials and settings shared by two processes, in a database it creates and drops), `rotate-key-postgres.test.ts` (the `rotate-key` script re-sealing a credential and a settings row in Postgres, in a database it creates and drops), `audit-chain.postgres.test.ts` (the hash chain sealed by two processes at once, SAML state shared by mains), `transports.postgres.test.ts`, `approval-inbox-cluster-ap1.test.ts` (two processes claim one approval-inbox row in Postgres, exactly one wins; wave ap1), `harness-hooks-cluster.test.ts` (two processes apply hook events to one harness session; a late event never clears Error; also runs under `postgres`; C04), `mfa.postgres.test.ts` (a sign-in challenge, a recovery code, a TOTP step and a WebAuthn challenge and counter taken by two mains at once; C16), `api-key-uses.postgres.test.ts` (a cap of 100 taken by 150 calls from two processes: exactly 100 succeed; C17), `event-outbox.postgres.test.ts` (a worker saves, the leader delivers; a lease across two processes; C19), `collection-access.test.ts` (the claim race), `collection-adoption.test.ts` (two mains adopt once) and `collection-transfer.test.ts` (C21) |
-| `browser` | Chrome on this machine (never downloaded) and a free port; nothing else, the host and the fakes are the tier's own | the Playwright specs in `apps/web/e2e` (`pnpm --filter @landflow/web test:browser`; see [Browser tests](#browser-tests)). Not run by `pnpm test` or the host's vitest |
+| `browser` | Chrome on this machine (never downloaded) and a free port; nothing else, the host and the fakes are the tier's own | the Playwright specs in `apps/web/e2e` (`pnpm test:browser`; see [Browser tests](#browser-tests)). Not run by `pnpm test` or the host's vitest |
 | `sentinel` | `deploy/compose.sentinel.yml` | `valkey-sentinel.integration.test.ts` (the primary is killed; a run in flight and new runs finish on the promoted replica) |
 | `valkey-cluster` | the infra `valkey-cluster` profile | `valkey-cluster.integration.test.ts` |
 | `oidc` | Keycloak (`auth` profile) | `oidc.integration.test.ts` (fills in its login form as alice and bob) |
@@ -454,9 +454,9 @@ the host's engine, so a plugin-level test that wants one runs the node again aft
 tier of its own: opt-in, never part of `pnpm test`, the host's vitest run or `pnpm check`.
 
 ```bash
-LANDFLOW_INTEGRATION=browser pnpm --filter @landflow/web test:browser                          # headless; about 1.5 to 2 minutes
-LANDFLOW_INTEGRATION=browser LANDFLOW_E2E_HEADED=1 pnpm --filter @landflow/web test:browser    # a visible Chrome, for a person's check
-LANDFLOW_INTEGRATION=browser pnpm --filter @landflow/web test:browser --project=phone api-keys # one spec at one size (its setup projects run first)
+LANDFLOW_INTEGRATION=browser pnpm test:browser                          # headless; about 1.5 to 2 minutes
+LANDFLOW_INTEGRATION=browser LANDFLOW_E2E_HEADED=1 pnpm test:browser    # a visible Chrome, for a person's check
+LANDFLOW_INTEGRATION=browser pnpm test:browser --project=phone api-keys # one spec at one size (its setup projects run first)
 ```
 
 - **The flag.** `playwright.config.ts` throws "set LANDFLOW_INTEGRATION=browser" without it (`test/e2e-gate.test.ts`).
@@ -480,8 +480,9 @@ LANDFLOW_INTEGRATION=browser pnpm --filter @landflow/web test:browser --project=
   Fields from the node creator, Execute workflow, the output), `run-trace` (a seeded run, its Run Trace page and Trace
   tab), `api-keys` (create a key, shown once, revoke), `csp-smoke` (the workflow list and an editor with the policy
   enforced and no `securitypolicyviolation`; with `LANDFLOW_E2E_PROD=1` after `pnpm --filter @landflow/web build` it also
-  runs on `next start` in the production profile, in a context of its own). A `credential-picker` flow (an HTTP Request node's header-auth credential created from the node
-  panel and picked, then run against the `upstream` fake) follows when the credential combobox has merged.
+  runs on `next start` in the production profile, in a context of its own). `credential-picker` (an HTTP Request node's header-auth credential created from the node
+  panel with the combobox's `Create “name”` option, cleared with ×, picked again from the list, then run against the
+  `upstream` fake, which answers 200 only to a call carrying the credential's `x-api-key`).
 - **Loopback only.** The `fixtures.ts` guard aborts any request from the page to a host but `localhost` / `127.0.0.1` and
   fails the test that made it (a spec with `test.fail()` shows it does); the host process is held to loopback by the proxy
   settings above. A test's outside service is a fake from `@landflow/test-fakes`, started per worker (`upstream`).
