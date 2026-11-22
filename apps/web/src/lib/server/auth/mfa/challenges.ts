@@ -13,7 +13,8 @@ import { takeOnce } from './once';
 export const CHALLENGE_MINUTES = 5;
 export const MAX_WRONG = 5;
 
-export type ChallengePurpose = 'sign-in';
+/** `sign-in` (the second step), `register` (adding a passkey) and `step-up` (a fresh check by a signed-in person): a token of one purpose answers only that purpose's route. */
+export type ChallengePurpose = 'sign-in' | 'register' | 'step-up';
 export type FirstMethod = 'password' | 'reset';
 
 export interface ChallengeRow {
@@ -79,4 +80,29 @@ export async function useChallenge(token: string, now = Date.now()): Promise<Cha
   const won = await takeOnce({ table: 'mfa_challenges', key: { id }, set: { used_at: iso(now) }, when: 'used_at IS NULL AND expires_at > ?', whenParams: [iso(now)], check: (row) => !row.used_at && String(row.expires_at) > iso(now) });
   if (!won) return undefined;
   return { id, userId: String(won.user_id), purpose: won.purpose as ChallengePurpose, firstMethod: won.first_method as FirstMethod, wrong: Number(won.wrong), expiresAt: String(won.expires_at) };
+}
+
+/**
+ * Remember the WebAuthn challenge a passkey must sign for this token (one at a time: a new one replaces the last),
+ * decided where the row lives. False when the token is not live. The challenge is random, never logged.
+ */
+export async function setWebauthnChallenge(token: string, webauthnChallenge: string, now = Date.now()): Promise<boolean> {
+  if (!token || token.length > 100) return false;
+  const live = (row: Record<string, unknown>) => !row.used_at && String(row.expires_at) > iso(now) && Number(row.wrong) < MAX_WRONG;
+  const won = await takeOnce({ table: 'mfa_challenges', key: { id: tokenHash(token) }, set: { webauthn_challenge: webauthnChallenge }, when: 'used_at IS NULL AND expires_at > ? AND wrong < ?', whenParams: [iso(now), MAX_WRONG], check: live });
+  return Boolean(won);
+}
+
+/**
+ * Take the WebAuthn challenge off the token, once: of several callers only one gets it (and a failed attempt burns it,
+ * so the next try asks for new options). Undefined when the token is not live or has none.
+ */
+export async function consumeWebauthnChallenge(token: string, now = Date.now()): Promise<string | undefined> {
+  if (!token || token.length > 100) return undefined;
+  const id = tokenHash(token);
+  const row = authDb().get<Stored & { webauthn_challenge: string | null }>('SELECT * FROM mfa_challenges WHERE id = ?', id);
+  const expected = row?.webauthn_challenge;
+  if (!expected || !live(row, now)) return undefined;
+  const won = await takeOnce({ table: 'mfa_challenges', key: { id }, set: { webauthn_challenge: null }, when: 'webauthn_challenge = ? AND used_at IS NULL AND expires_at > ?', whenParams: [expected, iso(now)], check: (r) => r.webauthn_challenge === expected && !r.used_at && String(r.expires_at) > iso(now) });
+  return won ? expected : undefined;
 }

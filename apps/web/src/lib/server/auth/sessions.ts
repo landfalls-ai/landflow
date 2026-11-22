@@ -11,7 +11,7 @@ import { authDb } from './db';
 import { randomToken, tokenHash } from './passwords';
 import { getUser, updateUser, UserError, type UserRecord } from './users';
 
-/** `password+totp` and `password+recovery` are a password and a second factor (a passkey adds `password+webauthn` later). */
+/** `password+totp` and `password+recovery` are a password and a second factor (a passkey is `password+webauthn`). */
 export type SessionMethod = 'password' | 'oidc' | 'saml' | 'setup' | 'invite' | 'reset' | 'password+totp' | 'password+recovery' | 'password+webauthn';
 
 export const DEACTIVATED_MESSAGE = 'This account is deactivated. Ask an admin to reactivate it.';

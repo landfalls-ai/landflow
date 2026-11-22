@@ -5,9 +5,8 @@
  * factor counts only after POST /api/me/mfa/totp/<id>/confirm with a current code. An earlier unconfirmed try is dropped.
  */
 import { z } from 'zod';
-import { clientIp, loginLimits, requireUser, verifyPassword } from '@/lib/server/auth';
-import { qrSvgDataUrl, startTotp } from '@/lib/server/auth/mfa';
-import { recordAudit } from '@/lib/server/audit';
+import { clientIp, requireUser } from '@/lib/server/auth';
+import { checkEnrolPassword, qrSvgDataUrl, startTotp } from '@/lib/server/auth/mfa';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 
 export const dynamic = 'force-dynamic';
@@ -18,18 +17,8 @@ export const POST = handler(async (request: Request) => {
   const user = await requireUser();
   const body = await parseBody(request, schema);
   if (!body.ok) return body.response;
-  if (user.passwordHash) {
-    const ip = clientIp(request);
-    const limits = loginLimits();
-    const blocked = (await Promise.all([limits.email.check(user.email), limits.ip.check(ip)])).find((result) => !result.ok);
-    if (blocked) return error('Too many failed attempts. Try again later.', 429, { retryAfter: blocked.retryAfter });
-    if (!(await verifyPassword(body.data.password, user.passwordHash))) {
-      await Promise.all([limits.email.hit(user.email), limits.ip.hit(ip)]);
-      recordAudit({ action: 'auth.sign_in_failed', outcome: 'failure', target: { type: 'user', id: user.id }, summary: 'Wrong password when adding a second factor', details: { reason: 'password', method: 'mfa-enrol' } });
-      // 403, not 401: the person is signed in, and a 401 sends the page to the sign-in form.
-      return error('That password is not right', 403);
-    }
-  }
+  const checked = await checkEnrolPassword(user, body.data.password, clientIp(request));
+  if (!checked.ok) return error(checked.message, checked.status, checked.retryAfter !== undefined ? { retryAfter: checked.retryAfter } : undefined);
   const started = startTotp(user);
   return json({ ...started, qr: await qrSvgDataUrl(started.otpauthUrl) }, { status: 201, headers: { 'cache-control': 'no-store' } });
 });

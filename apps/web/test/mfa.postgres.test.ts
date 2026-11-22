@@ -73,6 +73,22 @@ describe.skipIf(!enabled)('second-factor one-use decisions in queue mode on Post
     expect(await take(worker)).toBeUndefined();
   });
 
+  it('of two mains taking the same WebAuthn challenge, one wins', async () => {
+    main.insertNew('mfa_challenges', { id: 'chal_wa', user_id: 'usr_d', purpose: 'sign-in', first_method: 'password', webauthn_challenge: 'abc', wrong: 0, created_at: now(), expires_at: until5(), used_at: null });
+    const take = (db: Database) => takeOnce({ table: 'mfa_challenges', key: { id: 'chal_wa' }, set: { webauthn_challenge: null }, when: 'webauthn_challenge = ? AND used_at IS NULL AND expires_at > ?', whenParams: ['abc', now()], check: (row) => row.webauthn_challenge === 'abc' }, db);
+    expect((await Promise.all([take(main), take(worker)])).filter(Boolean)).toHaveLength(1);
+  });
+
+  it('of two mains moving a passkey counter to the same value, one wins; a lower or repeated value is refused, and 0 stays allowed on 0', async () => {
+    main.insertNew('user_mfa_factors', { id: 'fac_pk', user_id: 'usr_e', kind: 'webauthn', name: 'Key', credential_id: 'cred_1', public_key: 'k', counter: 3, created_at: now() });
+    const move = (db: Database, counter: number, id = 'fac_pk') => takeOnce({ table: 'user_mfa_factors', key: { id }, set: { counter }, when: 'flagged_at IS NULL AND (counter IS NULL OR counter < ? OR (counter = 0 AND ? = 0))', whenParams: [counter, counter], check: (row) => !row.flagged_at && (row.counter == null || Number(row.counter) < counter || (Number(row.counter) === 0 && counter === 0)) }, db);
+    expect((await Promise.all([move(main, 9), move(worker, 9)])).filter(Boolean)).toHaveLength(1);
+    expect(await move(worker, 9)).toBeUndefined();
+    expect(await move(main, 4)).toBeUndefined();
+    main.insertNew('user_mfa_factors', { id: 'fac_flat', user_id: 'usr_f', kind: 'webauthn', name: 'Flat', credential_id: 'cred_2', public_key: 'k', counter: 0, created_at: now() });
+    expect(await move(main, 0, 'fac_flat')).toBeDefined();
+  });
+
   it('of two mains using the same TOTP step, one wins, and a step at or below the last is refused', async () => {
     main.insertNew('user_mfa_factors', { id: 'fac_1', user_id: 'usr_c', kind: 'totp', name: 'App', secret: 's', created_at: now() });
     const claim = (db: Database, step: number) => takeOnce({ table: 'user_mfa_factors', key: { id: 'fac_1' }, set: { last_step: step }, when: 'last_step IS NULL OR last_step < ?', whenParams: [step], check: (row) => row.last_step == null || Number(row.last_step) < step }, db);

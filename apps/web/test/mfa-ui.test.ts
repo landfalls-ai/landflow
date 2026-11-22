@@ -122,3 +122,44 @@ describe('around the app', () => {
     }
   });
 });
+
+describe('passkeys (P15b)', () => {
+  it('the sign-in step leads with "Use my passkey" and offers the other methods', async () => {
+    const { MfaStep } = await import('../src/components/auth/mfa-step');
+    const out = html(createElement(MfaStep, { challenge: 'c', methods: ['webauthn', 'totp', 'recovery'], next: '/', onBack: () => {} }));
+    expect(out).toContain('Use my passkey');
+    expect(out).not.toMatch(/autocomplete="one-time-code"/i);
+    expect(out).toContain('Use my authenticator app instead');
+    expect(out).toContain('Use a recovery code instead');
+    // Without a passkey the step is the code field it was.
+    expect(html(createElement(MfaStep, { challenge: 'c', methods: ['totp', 'recovery'], next: '/', onBack: () => {} }))).not.toContain('Use a passkey instead');
+  });
+
+  it('Sign-in & security lists passkeys with their names and "flagged", and offers to add one', async () => {
+    const { SignInSecurity } = await import('../src/components/account/sign-in-security');
+    const out = html(
+      createElement(SignInSecurity, {
+        initial: state({
+          factors: [
+            { id: 'mfa_1', kind: 'webauthn', name: 'Work laptop', confirmed: true, createdAt: '2026-11-20T10:00:00.000Z' },
+            { id: 'mfa_2', kind: 'webauthn', name: 'Old key', confirmed: true, createdAt: '2026-11-20T10:00:00.000Z', flagged: true },
+          ],
+        }),
+      }),
+    );
+    expect(out).toContain('Work laptop');
+    expect(out).toContain('Old key');
+    expect(out).toContain('flagged');
+    expect(out).toContain('aria-label="Remove Work laptop"');
+    expect(out).toContain('Add a passkey');
+    expect(out).toContain('Add authenticator app');
+  });
+
+  it('the first-factor page offers a passkey or an app', async () => {
+    const { EnrolFlow } = await import('../src/components/account/sign-in-security');
+    const out = html(createElement(EnrolFlow, { next: '/' }));
+    expect(out).toContain('Passkey');
+    expect(out).toContain('Authenticator app');
+    expect(out).toContain('Name this passkey');
+  });
+});

@@ -137,6 +137,7 @@ S3, the marketplace's git and a few follow-ups. A production host that calls int
 | `secret_provider.create`, `.update`, `.delete` | an external secrets provider | `provider`, `kind`, `enabledFrom`/`enabledTo`, `fieldsChanged` (setting names only) |
 | `auth.mfa_added`, `auth.mfa_removed`, `auth.mfa_recovery_regenerated` | you add or remove a second factor, or make new recovery codes ([second factor](authentication.md#second-factor)) | `kind`, `factorId`, `count`; never a secret or a code |
 | `auth.mfa_reset` | an owner or admin resets another person's second factors (high-value: stored in the same transaction, 503 under `LANDFLOW_AUDIT_FAIL_CLOSED` when the audit log is down) | `kinds`, `count`, `by` (the actor's id) |
+| `auth.mfa_flagged` | a passkey's signature counter went back (a possible clone): the sign-in is refused and the key flagged | `kind`, `factorId`; never the credential id or key |
 | `auth.mfa_recovery_used` | a recovery code signs someone in | `left` |
 | `auth.password_change` | someone changes a password (Settings, profile; an admin); a reset link has `auth.password_reset` | `reason` (`self`, `admin`) |
 | `auth.sign_in_failed` | a SAML or OIDC sign-in is refused or fails | `method` (`saml`, `oidc`), `reason` (`not_configured`, `provider_error`, `refused`, `bad_request`, `error`; no assertion or claim contents); at most one a minute per client address |
