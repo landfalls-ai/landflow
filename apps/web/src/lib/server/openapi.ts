@@ -2125,7 +2125,7 @@ function paths(): Record<string, Record<string, Json>> {
     id: 'createApiKey',
     summary: 'Create an API key',
     description:
-      'The key (`lf_…`) comes back once, as `token`. Only owners and admins create keys with the `admin` scope. `allowedIps` and `maxUses` are fixed at creation (a new key replaces one): a call from another address, or past the cap, gets 401 (“This API key can’t be used from this address” / “This API key has used all its uses”, no fall back to a session) and an `api.denied` audit row; a use is a request that reaches its handler. The same rules hold for SCIM tokens and `/api/mcp`.',
+      'The key (`lf_…`) comes back once, as `token`. Only owners and admins create keys with the `admin` scope. `allowedIps` and `maxUses` are fixed at creation (a new key replaces one): a call from another address, or past the cap, gets 401 (“This API key can’t be used from this address” / “This API key has used all its uses”, no fall back to a session) and an `api.denied` audit row; a use is a request that reaches its handler. The same rules hold for SCIM tokens and `/api/mcp`. In production an address list is refused (400) until `LANDFLOW_TRUSTED_PROXIES` is set.',
     body: jsonBody(
       object(
         { label: { type: 'string', minLength: 1, maxLength: 100 }, scopes: { ...array(ref('ApiKeyScope')), minItems: 1 }, expiresInDays: { type: 'integer', minimum: 1, maximum: 3650, description: 'None: never expires' },

@@ -102,7 +102,7 @@ export function scimRoute<P extends Record<string, string> = Record<string, stri
       const params = ((await context?.params) ?? {}) as P;
       const checked = authenticateScim(request);
       if (!checked.ok && checked.refused) {
-        noteKeyRefusal('ip_not_allowed', checked.refused);
+        noteKeyRefusal(checked.refused.reason, checked.refused.key);
         return scimError(401, checked.message, undefined, { 'www-authenticate': 'Bearer realm="landflow-scim"' });
       }
       if (!checked.ok) {

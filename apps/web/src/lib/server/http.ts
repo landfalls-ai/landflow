@@ -3,7 +3,6 @@ import { ZodError, type ZodType } from 'zod';
 import { withAuth } from './auth/context';
 import { guardRequest } from './auth/guard';
 import { KEY_REFUSAL_MESSAGE } from './auth/api-key-refusal';
-import { countDenied } from './rate-limit/counters';
 import { envInt } from './config';
 import { auditRequestContext, noteAuditPrincipal } from './audit/context';
 import { auditRequest } from './audit/http';
@@ -63,7 +62,7 @@ function answerRequest<A extends unknown[]>(fn: (...args: A) => Promise<Response
         const gate = guardRequest(args[0] instanceof Request ? args[0] : undefined);
         if (!gate.ok) {
           // (Loaded on the first refusal: the audit helpers aren't part of every route's import closure.)
-          if (gate.refused) (await import('./auth/api-key-audit')).noteKeyRefusal(gate.refused.reason, gate.refused.key);
+          if (gate.refused) (await import('./auth/api-key-audit')).noteKeyRefusal(gate.refused.reason, gate.refused.key, 401, true);
           return gate.response;
         }
         noteAuditPrincipal(gate.auth.principal);
@@ -74,7 +73,6 @@ function answerRequest<A extends unknown[]>(fn: (...args: A) => Promise<Response
         const key = gate.auth.principal?.via === 'api-key' ? gate.auth.principal.apiKey : undefined;
         if (key?.maxUses && !(await (await import('./auth/api-key-uses')).consumeApiKeyUse(key)).ok) {
           (await import('./auth/api-key-audit')).noteKeyRefusal('uses_exhausted', { id: key.id, label: key.label ?? key.id });
-          countDenied('uses_exhausted');
           return NextResponse.json({ error: KEY_REFUSAL_MESSAGE.uses_exhausted }, { status: 401, headers: { 'www-authenticate': 'Bearer realm="landflow"' } });
         }
         return await withAuth(gate.auth, () => fn(...args));

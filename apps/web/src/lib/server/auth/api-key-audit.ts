@@ -9,13 +9,16 @@ import { recordAudit } from '../audit';
 import { deniedReadDue, deniedReadUnderCap } from '../audit/http';
 import { type KeyRefusal } from './api-key-refusal';
 import { auditRequestContext } from '../audit/context';
+import { countDenied } from '../rate-limit/counters';
 
 const SUMMARY: Record<KeyRefusal, string> = {
   ip_not_allowed: 'refused: called from an address outside its allow-list',
   uses_exhausted: 'refused: it has used all its uses',
 };
 
-export function noteKeyRefusal(reason: KeyRefusal, key: { id: string; label: string }, status = 401): void {
+export function noteKeyRefusal(reason: KeyRefusal, key: { id: string; label: string }, status = 401, counted = false): void {
+  // Every refusal is counted under its own label, whether or not the audit row is throttled (the guard counts its own: `counted`).
+  if (!counted) countDenied(reason);
   const ctx = auditRequestContext();
   if (!deniedReadDue(`key:${key.id}`, `${reason}:${ctx?.route ?? ctx?.path ?? ''}`) || !deniedReadUnderCap()) {
     // Throttled: this refusal is accounted for, so the generic layer must not write a row of its own for it.

@@ -46,6 +46,9 @@ export function ipEntryProblem(entry: string): string | undefined {
   if (parts.length === 2) {
     const width = family === 4 ? 32 : 128;
     if (!/^\d{1,3}$/.test(parts[1]) || Number(parts[1]) > width) return `${shown} has a prefix outside 0-${width}`;
+    // A range that matches every address (or every IPv4 one, as `::ffff:0:0/96` does) is no list: say so instead of letting it pass.
+    const everyone = Number(parts[1]) === 0 || (family === 6 && /^(::ffff:|0:0:0:0:0:ffff:)/i.test(parts[0]) && Number(parts[1]) <= 96);
+    if (everyone) return `${shown} allows every address: leave the list empty instead`;
   }
   return undefined;
 }

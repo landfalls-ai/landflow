@@ -6,7 +6,11 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+
+// What the guard counts as landflow.http.denied{reason}.
+const countedDenials = vi.hoisted(() => ({ calls: [] as string[] }));
+vi.mock('@/lib/server/rate-limit/counters', () => ({ countDenied: (reason: string) => countedDenials.calls.push(reason), countRateLimitRefused: () => {} }));
 
 const dataDir = mkdtempSync(join(tmpdir(), 'landflow-keys-'));
 const ENV: Record<string, string> = { LANDFLOW_DATA_DIR: dataDir, LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '', LANDFLOW_TRUSTED_PROXIES: '1' };
@@ -24,6 +28,9 @@ const apiKeysRoute = await import('@/app/api/api-keys/route');
 const apiKeyRoute = await import('@/app/api/api-keys/[id]/route');
 const usersRoute = await import('@/app/scim/v2/Users/route');
 const { authenticateMcpRequest, McpAuthError } = await import('@/lib/server/mcp/identity');
+const { setMcpEnabled } = await import('@/lib/server/mcp/instance');
+const mcpRoute = await import('@/app/api/mcp/route');
+const counterValue = (reason: string) => countedDenials.calls.filter((r) => r === reason).length;
 
 beforeAll(() => auth.disableTestAuth());
 afterAll(() => {
@@ -219,5 +226,117 @@ describe('SCIM tokens and the MCP endpoint follow the same rules (FR-9)', () => 
     await expect(authenticateMcpRequest(req('/api/mcp', { key: token, ip: '192.168.1.5' }), { pluginId: '' })).rejects.toBeInstanceOf(McpAuthError);
     await expect(authenticateMcpRequest(req('/api/mcp', { key: token, ip: '10.1.2.3' }), { pluginId: '' })).resolves.toBeTruthy();
     await expect(authenticateMcpRequest(req('/api/mcp', { key: token, ip: '10.1.2.3' }), { pluginId: '' })).rejects.toThrow('used all its uses');
+  });
+});
+
+describe('review round', () => {
+  const sessionFor = (user: typeof owner) => createSession(user, 'password').token;
+  const withEnv = async (env: Record<string, string | undefined>, fn: () => Promise<void>) => {
+    const before: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(env)) {
+      before[k] = process.env[k];
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    try {
+      await fn();
+    } finally {
+      for (const [k, v] of Object.entries(before)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  };
+  const create = (body: Record<string, unknown>) => call(apiKeysRoute.POST, '/api/api-keys', { session: sessionFor(owner), body: { label: 'p', scopes: ['workflows:read'], ...body } });
+
+  it('refuses an allow-list in production when the proxy count was never set, and ignores a forged hop with one proxy', async () => {
+    await withEnv({ LANDFLOW_PROFILE: 'production', LANDFLOW_TRUSTED_PROXIES: undefined }, async () => {
+      const refused = await create({ allowedIps: ['10.0.0.0/8'] });
+      expect(refused.status).toBe(400);
+      expect(JSON.stringify(refused.body)).toContain('LANDFLOW_TRUSTED_PROXIES');
+      expect((await create({})).status).toBe(201);
+      const scim = await call(apiKeysRoute.POST, '/api/api-keys', { session: sessionFor(owner), body: { label: 's', scopes: ['scim'], allowedIps: ['10.0.0.0/8'] } });
+      expect(scim.status).toBe(400);
+    });
+    await withEnv({ LANDFLOW_PROFILE: 'production', LANDFLOW_TRUSTED_PROXIES: '1' }, async () => {
+      const made = await create({ allowedIps: ['10.0.0.0/8'] });
+      expect(made.status).toBe(201);
+      const token = made.body.token as string;
+      expect((await call(workflowsRoute.GET, '/api/workflows', { key: token, ip: '10.1.2.3, 192.168.1.5' })).status).toBe(401);
+    });
+  });
+
+  it('tells the list a flag outside production when the address is unverified', async () => {
+    await withEnv({ LANDFLOW_TRUSTED_PROXIES: '0' }, async () => {
+      const listed = await call(apiKeysRoute.GET, '/api/api-keys', { session: sessionFor(owner) });
+      expect(listed.body.addressUnverified).toBe(true);
+    });
+    const listed = await call(apiKeysRoute.GET, '/api/api-keys', { session: sessionFor(owner) });
+    expect(listed.body.addressUnverified).toBe(false);
+  });
+
+  it('refuses a caller with no address when the key has a list', async () => {
+    const { token } = keys.createApiKey(owner, { label: 'blank', scopes: ['workflows:read'], allowedIps: ['127.0.0.1'] });
+    expect((await call(workflowsRoute.GET, '/api/workflows', { key: token, ip: ' ' })).status).toBe(401);
+  });
+
+  it('counts address refusals under their own label even while the audit row is throttled', async () => {
+    const { token } = keys.createApiKey(owner, { label: 'metric', scopes: ['workflows:read'], allowedIps: ['10.0.0.0/8'] });
+    const before = counterValue('ip_not_allowed');
+    for (let i = 0; i < 3; i++) await call(workflowsRoute.GET, '/api/workflows', { key: token, ip: '192.168.1.5' });
+    expect(counterValue('ip_not_allowed') - before).toBe(3);
+  });
+
+  it('shows the real refusal at the instance MCP endpoint', async () => {
+    setMcpEnabled(true);
+    const { token } = keys.createApiKey(owner, { label: 'mcpi', scopes: ['workflows:read'], allowedIps: ['10.0.0.0/8'], maxUses: 1 });
+    const ask = async (ip: string) => {
+      const response = await (mcpRoute.POST as Handler)(new Request(`${BASE}/api/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${token}`, 'x-forwarded-for': ip }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }) }));
+      return { status: response.status, raw: await response.text() };
+    };
+    const outside = await ask('192.168.1.5');
+    expect(outside.status).toBe(401);
+    expect(outside.raw).toContain('can’t be used from this address');
+    await ask('10.1.2.3');
+    const used = await ask('10.1.2.3');
+    expect(used.status).toBe(401);
+    expect(used.raw).toContain('used all its uses');
+  });
+
+  it('does not touch last used for a used-up key', async () => {
+    const { key, token } = keys.createApiKey(owner, { label: 'quiet', scopes: ['workflows:read'], maxUses: 1 });
+    await call(workflowsRoute.GET, '/api/workflows', { key: token, ip: '10.4.4.4' });
+    const first = keys.getApiKey(key.id)?.lastUsedAt;
+    // Past the once-a-minute touch window, from another address: refused, and the record stays as it was.
+    keys.verifyApiKey(token, { now: Date.now() + 120_000, ip: '10.5.5.5' });
+    expect(keys.getApiKey(key.id)).toMatchObject({ lastUsedAt: first, lastUsedIp: '10.4.4.4' });
+  });
+
+  it('throws, not "used up", when Postgres cannot be reached', async () => {
+    const fake = { kind: 'postgres', direct: () => undefined } as unknown as Parameters<typeof uses.consumeApiKeyUse>[1];
+    await expect(uses.consumeApiKeyUse({ id: 'key_x', maxUses: 2 }, fake)).rejects.toThrow();
+  });
+
+  it('deletes the counts of a user’s keys with the user', async () => {
+    const gone = await auth.createUser({ email: 'gone@example.com', name: 'Gone', role: 'member', password: 'gone-password-1' });
+    const { key, token } = keys.createApiKey(gone, { label: 'g', scopes: ['workflows:read'], maxUses: 5 });
+    await call(workflowsRoute.GET, '/api/workflows', { key: token });
+    expect(usesOf(key.id)).toBe(1);
+    auth.deleteUser(gone.id);
+    expect(usesOf(key.id)).toBeUndefined();
+  });
+
+  it('checks the 50-entry limit after removing duplicates', async () => {
+    const entries = Array.from({ length: 60 }, (_, i) => `10.0.0.${(i % 40) + 1}`);
+    expect((await create({ allowedIps: entries })).status).toBe(201);
+  });
+
+  it('shows a used-up SCIM token and takes a list at creation', async () => {
+    const { scimSecurityView } = await import('@/lib/server/scim/settings');
+    const { token, key } = keys.createApiKey(owner, { label: 'scim2', scopes: ['scim'], maxUses: 1 });
+    await call(usersRoute.GET, '/scim/v2/Users', { key: token });
+    const view = await scimSecurityView();
+    expect(view.tokens.find((t) => t.id === key.id)).toMatchObject({ uses: 1, usedUp: true });
+    expect(view.tokens.find((t) => t.id === key.id)?.lastUsedIp).toBeUndefined();
   });
 });

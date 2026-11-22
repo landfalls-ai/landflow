@@ -18,6 +18,15 @@ export function callerIp(request: Request): string {
   return ip === 'local' ? '127.0.0.1' : ip;
 }
 
+/**
+ * The address an allow-list is checked against: the request's own (`clientAddress`), or undefined when no header names one
+ * (a blank X-Forwarded-For): such a caller is refused, never taken for 127.0.0.1 as webhook triggers do.
+ */
+export function allowListAddress(request: Request): string | undefined {
+  const ip = clientAddress(request);
+  return ip === 'local' ? undefined : ip;
+}
+
 function ipv4Bits(ip: string): bigint {
   return ip.split('.').reduce((acc, part) => (acc << 8n) | BigInt(Number(part) & 255), 0n);
 }

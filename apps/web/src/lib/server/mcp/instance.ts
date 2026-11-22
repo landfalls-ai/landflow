@@ -136,7 +136,8 @@ export async function authenticateInstanceRequest(request: Request, projectId?: 
       if (caller.kind === 'token' || caller.kind === 'idp' || caller.kind === 'apiKey') return asUser(caller);
     } catch (error) {
       if (!(error instanceof McpAuthError)) throw error;
-      if (error.status === 403) return mcpAuthErrorResponse(error);
+      // A key's own refusal (a used-up cap, an address outside its list) says so; an unknown bearer falls through to the generic challenge.
+      if (error.status === 403 || (error.status === 401 && bearer.startsWith('lf_'))) return mcpAuthErrorResponse(error);
     }
   }
   return unauthorized('Send the access token from Settings → MCP, or a Landflow MCP token, as “Authorization: Bearer <token>”');

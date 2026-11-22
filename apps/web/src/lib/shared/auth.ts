@@ -319,6 +319,8 @@ export interface ScimSecurityView {
   baseUrl: string;
   /** SCIM tokens (API keys with the `scim` scope) of every admin. */
   tokens: Array<ApiKeyView & { userName: string }>;
+  /** No reverse proxy count is set (LANDFLOW_TRUSTED_PROXIES): a token's address list can be got around, so the form warns. */
+  addressUnverified: boolean;
   /** Group → project membership or instance role (LANDFLOW_SCIM_GROUP_MAP). */
   groupMap: Record<string, string>;
   groups: number;

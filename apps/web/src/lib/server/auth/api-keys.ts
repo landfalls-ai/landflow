@@ -145,7 +145,7 @@ export function deleteApiKey(id: string): boolean {
 export type ApiKeyCheck =
   | { ok: true; key: ApiKeyRecord; user: UserRecord }
   | { ok: false; reason: 'unknown' | 'expired' }
-  | { ok: false; reason: 'ip_not_allowed'; key: ApiKeyRecord };
+  | { ok: false; reason: 'ip_not_allowed' | 'uses_exhausted'; key: ApiKeyRecord };
 
 /**
  * Look a key up: its record and user when it exists, hasn't expired and the caller's address (`ip`, from callerIp) is on
@@ -163,6 +163,12 @@ export function verifyApiKey(token: string, options: { now?: number; ip?: string
   if (!user || user.disabledAt) return { ok: false, reason: 'unknown' };
   const list = parseList(row.allowed_ips);
   if (!allowed(options.ip, list)) return { ok: false, reason: 'ip_not_allowed', key: fromRow(row) };
+  // A used-up key is refused here from this process's copy of the count (it can only lag low: the authoritative check is
+  // the conditional write after the guard), so a refused call never updates last used or the address.
+  if (row.max_uses) {
+    const used = Number(db.get<{ uses: number }>('SELECT uses FROM api_key_uses WHERE key_id = ?', row.id)?.uses ?? 0);
+    if (used >= Number(row.max_uses)) return { ok: false, reason: 'uses_exhausted', key: fromRow(row) };
+  }
   const touched = singleton('api-key-touched', () => new Map<string, number>());
   if (now - (touched.get(row.id) ?? 0) > TOUCH_EVERY_MS) {
     touched.set(row.id, now);

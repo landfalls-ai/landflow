@@ -28,7 +28,9 @@ export async function consumeApiKeyUse(key: Pick<ApiKeyRecord, 'id'> & { maxUses
         [key.id, cap, at],
       ),
     );
-    const row = result?.rows[0];
+    // No connection to decide on: an error (the caller answers 5xx), never a quiet "used up".
+    if (!result) throw new Error('The API key use count could not be decided: no Postgres connection');
+    const row = result.rows[0];
     if (!row) return { ok: false, reason: 'uses_exhausted' };
     const uses = Number(row.uses);
     // This process's copy follows (nothing is queued: Postgres already holds the number).

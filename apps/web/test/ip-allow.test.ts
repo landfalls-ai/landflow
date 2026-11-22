@@ -21,6 +21,14 @@ describe('ipEntryProblem', () => {
   });
 });
 
+describe('a range that allows everyone', () => {
+  it('is refused with advice, on the server and in the form alike', () => {
+    for (const entry of ['0.0.0.0/0', '::/0', '::ffff:0:0/96', '10.0.0.0/0']) expect(ipEntryProblem(entry), entry).toContain('allows every address');
+    expect(ipEntryProblem('10.0.0.0/8')).toBeUndefined();
+    expect(ipEntryProblem('::ffff:10.0.0.0/104')).toBeUndefined();
+  });
+});
+
 describe('checkAllowList', () => {
   it('refuses more than 50 entries and names the first bad one', () => {
     const many = Array.from({ length: MAX_ALLOW_ENTRIES + 1 }, (_, i) => `10.0.${Math.floor(i / 250)}.${i % 250}`);
@@ -52,6 +60,16 @@ describe('allowed', () => {
     expect(allowed('11.1.2.3', ['::ffff:10.0.0.0/104'])).toBe(false);
     expect(allowed('2001:db8::1', ['2001:db8::/32'])).toBe(true);
     expect(allowed('127.0.0.1', ['localhost'])).toBe(true);
+  });
+});
+
+describe('allowListAddress', () => {
+  it('has no address for a blank X-Forwarded-For, where webhooks take 127.0.0.1', async () => {
+    const { allowListAddress, callerIp } = await import('@/lib/server/net/ip-allow');
+    const blank = new Request('http://x.test/', { headers: { 'x-forwarded-for': ' ' } });
+    expect(allowListAddress(blank)).toBeUndefined();
+    expect(callerIp(blank)).toBe('127.0.0.1');
+    expect(allowListAddress(new Request('http://x.test/', { headers: { 'x-forwarded-for': '10.1.2.3' } }))).toBe('10.1.2.3');
   });
 });
 
