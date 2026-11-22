@@ -18,6 +18,7 @@ import { CopyButton } from '@/components/ui/copy-button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { HelpTip } from '@/components/ui/help-tip';
 import { FieldLabel, Input, SectionLabel, Select } from '@/components/ui/inputs';
+import { KeyLimitFields, useKeyLimits } from './key-limit-fields';
 
 const EXPIRY = [
   { days: 30, label: '30 days' },
@@ -26,15 +27,44 @@ const EXPIRY = [
   { days: 0, label: 'Never' },
 ];
 
+/** What a key's limits say, for its row: "from 10.1.2.3" is the last address (the owner's own view), "3 of 100 uses" the cap. */
+export function keyLimits(key: ApiKeyView): string[] {
+  const lines: string[] = [];
+  if (key.allowedIps?.length) lines.push(`only from ${key.allowedIps.length === 1 ? key.allowedIps[0] : `${key.allowedIps.length} addresses`}`);
+  if (key.maxUses) lines.push(key.usedUp ? 'used up' : `${key.uses ?? 0} of ${key.maxUses} uses`);
+  return lines;
+}
+
 const expired = (key: ApiKeyView) => Boolean(key.expiresAt && Date.parse(key.expiresAt) <= Date.now());
 
+/** A key's facts under its name: when made and last used (and from where), its expiry, and its limits. */
+export function KeyDetails({ apiKey: key }: { apiKey: ApiKeyView }) {
+  const limits = keyLimits(key);
+  return (
+    <>
+      <div className="mt-1 text-[11px] text-t3">
+        Created {timeAgo(key.createdAt)} · {key.lastUsedAt ? `last used ${timeAgo(key.lastUsedAt)}` : 'never used'} ·{' '}
+        {key.expiresAt ? `${expired(key) ? 'expired' : 'expires'} ${new Date(key.expiresAt).toLocaleDateString()}` : 'never expires'}
+        {key.lastUsedIp && ` · from ${key.lastUsedIp}`}
+      </div>
+      {limits.length > 0 && (
+        <div className="mt-0.5 text-[11px] text-t3" title={key.allowedIps?.join(', ')}>
+          {limits.join(' · ')}
+        </div>
+      )}
+    </>
+  );
+}
+
 /** The new-key form. */
-function CreateKey({ onCreated, onCancel }: { onCreated: (token: string, key: ApiKeyView) => void; onCancel: () => void }) {
+export function CreateKey({ onCreated, onCancel, addressUnverified }: { onCreated: (token: string, key: ApiKeyView) => void; onCancel: () => void; addressUnverified?: boolean }) {
   const viewer = useViewer();
   const [label, setLabel] = useState('');
   const [scopes, setScopes] = useState<ApiKeyScope[]>(['workflows:read', 'executions:read']);
   const [days, setDays] = useState(90);
+  // The list and the cap are fixed once the key exists (no edit later): checked as they are typed with the server's own rule.
   const [saving, setSaving] = useState(false);
+  const limits = useKeyLimits();
   // SCIM tokens are made in Settings → Security. `audit:read` reads what its user may (project admins: their projects' events).
   const allowed = API_KEY_SCOPES.filter((s) => s !== 'scim' && (s !== 'admin' || can(viewer, 'apiKeys:admin')));
   const toggle = (scope: ApiKeyScope) => setScopes((list) => (list.includes(scope) ? list.filter((s) => s !== scope) : [...list, scope]));
@@ -43,7 +73,7 @@ function CreateKey({ onCreated, onCancel }: { onCreated: (token: string, key: Ap
     event.preventDefault();
     setSaving(true);
     try {
-      const result = await api<{ key: ApiKeyView; token: string }>('/api/api-keys', { method: 'POST', json: { label: label.trim(), scopes, ...(days && { expiresInDays: days }) } });
+      const result = await api<{ key: ApiKeyView; token: string }>('/api/api-keys', { method: 'POST', json: { label: label.trim(), scopes, ...(days && { expiresInDays: days }), ...limits.body } });
       onCreated(result.token, result.key);
     } catch (e) {
       toast.error((e as Error).message);
@@ -85,11 +115,12 @@ function CreateKey({ onCreated, onCancel }: { onCreated: (token: string, key: Ap
             ))}
           </div>
         </div>
+        <KeyLimitFields limits={limits} addressUnverified={addressUnverified} />
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onCancel}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" loading={saving} disabled={!label.trim() || scopes.length === 0}>
+          <Button type="submit" variant="primary" loading={saving} disabled={!label.trim() || scopes.length === 0 || limits.invalid}>
             Create key
           </Button>
         </div>
@@ -100,14 +131,18 @@ function CreateKey({ onCreated, onCancel }: { onCreated: (token: string, key: Ap
 
 export function ApiKeysSettings() {
   const [keys, setKeys] = useState<ApiKeyView[]>();
+  const [addressUnverified, setAddressUnverified] = useState(false);
   const [error, setError] = useState<string>();
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<{ token: string; label: string }>();
   const [confirm, setConfirm] = useState<string>();
 
   const load = () =>
-    api<{ keys: ApiKeyView[] }>('/api/api-keys')
-      .then((r) => setKeys(r.keys))
+    api<{ keys: ApiKeyView[]; addressUnverified?: boolean }>('/api/api-keys')
+      .then((r) => {
+        setKeys(r.keys);
+        setAddressUnverified(Boolean(r.addressUnverified));
+      })
       .catch((e: Error) => setError(e.message));
   useEffect(() => {
     void load();
@@ -159,6 +194,7 @@ export function ApiKeysSettings() {
 
       {creating ? (
         <CreateKey
+          addressUnverified={addressUnverified}
           onCancel={() => setCreating(false)}
           onCreated={(token, key) => {
             setCreated({ token, label: key.label });
@@ -189,6 +225,7 @@ export function ApiKeysSettings() {
                   <span className="truncate">{key.label}</span>
                   <code className="font-mono text-[11px] font-normal text-t3">lf_…{key.hint}</code>
                   {expired(key) && <Badge tone="danger">expired</Badge>}
+                  {key.usedUp && <Badge tone="danger">used up</Badge>}
                 </div>
                 <div className="mt-1 flex flex-wrap gap-1">
                   {key.scopes.map((scope) => (
@@ -197,10 +234,7 @@ export function ApiKeysSettings() {
                     </Badge>
                   ))}
                 </div>
-                <div className="mt-1 text-[11px] text-t3">
-                  Created {timeAgo(key.createdAt)} · {key.lastUsedAt ? `last used ${timeAgo(key.lastUsedAt)}` : 'never used'} ·{' '}
-                  {key.expiresAt ? `${expired(key) ? 'expired' : 'expires'} ${new Date(key.expiresAt).toLocaleDateString()}` : 'never expires'}
-                </div>
+                <KeyDetails apiKey={key} />
               </div>
               {confirm === key.id ? (
                 <span role="alertdialog" aria-label={`Revoke ${key.label}?`} className="flex items-center gap-1 animate-fade-up">

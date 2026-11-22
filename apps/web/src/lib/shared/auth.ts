@@ -195,6 +195,16 @@ export interface ApiKeyView {
   createdAt: string;
   expiresAt?: string;
   lastUsedAt?: string;
+  /** The address of the last use (written with `lastUsedAt`, so up to a minute behind): personal data, for the key's owner. */
+  lastUsedIp?: string;
+  /** Fixed at creation: the key only works from these addresses and ranges. */
+  allowedIps?: string[];
+  /** Fixed at creation: the key stops after this many uses. */
+  maxUses?: number;
+  /** Uses so far (only with `maxUses`). */
+  uses?: number;
+  /** `uses` reached `maxUses`: kept and listed until deleted. */
+  usedUp?: boolean;
 }
 
 /** GET /api/auth/status: what the sign-in pages need (public). */
@@ -309,6 +319,8 @@ export interface ScimSecurityView {
   baseUrl: string;
   /** SCIM tokens (API keys with the `scim` scope) of every admin. */
   tokens: Array<ApiKeyView & { userName: string }>;
+  /** No reverse proxy count is set (LANDFLOW_TRUSTED_PROXIES): a token's address list can be got around, so the form warns. */
+  addressUnverified: boolean;
   /** Group → project membership or instance role (LANDFLOW_SCIM_GROUP_MAP). */
   groupMap: Record<string, string>;
   groups: number;

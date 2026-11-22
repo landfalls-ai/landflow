@@ -284,6 +284,8 @@ export function deleteUser(id: string): boolean {
   const db = authDb();
   return db.transaction(() => {
     db.delete('sessions', { user_id: id });
+    // The keys' use counts go with them (api_key_uses is keyed by the key's id).
+    for (const key of db.all<{ id: string }>('SELECT id FROM api_keys WHERE user_id = ?', id)) db.delete('api_key_uses', { key_id: key.id });
     db.delete('api_keys', { user_id: id });
     // What only this person could read goes with them: their conversations (owner-only, no admin read), their
     // preferences and their private work events (docs/work-and-briefings.md). Shared work stays with the brain.

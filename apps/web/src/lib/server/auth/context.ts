@@ -22,7 +22,7 @@ export interface Principal {
    */
   enrolOnly?: boolean;
   /** The key (via api-key). */
-  apiKey?: { id: string; scopes: ApiKeyScope[] };
+  apiKey?: { id: string; scopes: ApiKeyScope[]; /** The key's use cap: the request is counted after the guard (http.ts, auth/api-key-uses.ts). */ maxUses?: number; label?: string };
 }
 
 export interface RequestAuth {
