@@ -9,7 +9,8 @@ import { agentStore } from '../agents/store';
 import { modelOptions } from '../agents/models';
 import { ollamaUrl } from '../config';
 import { canResource, type Actor } from '../projects';
-import { creationProject } from '../projects/access'; // C21:
+import { creationProject, isInstanceAdmin, visibleProjectIds } from '../projects/access'; // C21:
+import { listProjects } from '../projects/store'; // C21:
 import { collectionKeyOf } from '../agents/knowledge'; // C21:
 import { collectionAccess } from '../rag/collection-access'; // C21:
 import type { CollectionAccess } from '../../shared/collections'; // C21:
@@ -57,6 +58,20 @@ export function agentModelOf(name: string | undefined): AgentModel | undefined {
   return undefined;
 }
 
+const ACCESS_RANK: Record<CollectionAccess, number> = { none: 0, unclaimed: 1, read: 2, write: 3, owner: 4 };
+
+/** C21: the projects whose access decides what a listing shows: the session's project, else every project the actor sees (never only one). */
+export function askingProjects(actor: Actor, projectId?: string): string[] {
+  if (projectId) return [projectId];
+  try {
+    const own = creationProject(actor);
+    const visible = visibleProjectIds(actor);
+    return [...new Set([...(own ? [own] : []), ...(visible ?? (isInstanceAdmin(actor) ? listProjects().map((p) => p.id) : []))])];
+  } catch {
+    return [];
+  }
+}
+
 export async function agentResources(actor: Actor, projectId?: string): Promise<AgentResources> {
   const local = await modelOptions('ollama', {}).catch(() => []);
   const builder = agentModelOf(builderModel()); // AG02: the host's own model leads, whichever provider it is
@@ -76,13 +91,16 @@ export async function agentResources(actor: Actor, projectId?: string): Promise<
   }
 
   const knowledge = new Map<string, AgentResources['knowledge'][number]>();
-  // C21: only collections the asking project may read (FR-5, AS-8); the session's project, else the actor's own.
-  let asProject: string | undefined;
-  try {
-    asProject = projectId ?? creationProject(actor);
-  } catch {
-    asProject = undefined;
-  }
+  // C21: only collections the asking project may read (FR-5, AS-8): the session's project, else every project the actor sees.
+  const asking = askingProjects(actor, projectId);
+  const best = (key: string): CollectionAccess => {
+    let found: CollectionAccess = 'none';
+    for (const asProject of asking.length ? asking : [undefined]) {
+      const access = collectionAccess(key, asProject);
+      if (ACCESS_RANK[access] > ACCESS_RANK[found]) found = access;
+    }
+    return found;
+  };
   for (const agent of agentStore.list()) {
     const mine = canResource(actor, 'agent', agent.id, 'read') && (!projectId || homeProjectId('agent', agent.id) === projectId);
     for (const tool of agent.tools) {
@@ -91,7 +109,7 @@ export async function agentResources(actor: Actor, projectId?: string): Promise<
       const key = `${tool.store}:${tool.collection}`;
       let access: CollectionAccess;
       try {
-        access = collectionAccess(collectionKeyOf(tool), asProject);
+        access = best(collectionKeyOf(tool));
       } catch {
         continue; // a base whose store can't be reached is not offered
       }
@@ -102,9 +120,22 @@ export async function agentResources(actor: Actor, projectId?: string): Promise<
         if (seen) seen.usedBy.push(agent.name);
         else knowledge.set(key, { ...base, usedBy: [agent.name] });
       } else if ((access === 'read' || access === 'write') && tool.store !== 'pgvector' && !knowledge.has(key)) {
-        // C21: a collection another project shared with this one is offered as it is, without the names of that project's agents
-        // (a pgvector one carries its owner's credential, so it is not offered: name it by hand with a credential of your own).
-        knowledge.set(key, { ...base, usedBy: [], access });
+        // C21: a collection another project shared with this one is offered without anything of its owner's setup: no description,
+        // no server address, no credential, no tool name, and not the names of that project's agents (a pgvector one carries
+        // its owner's credential, so it is not offered at all: name it by hand with a credential of your own).
+        const { provider, model, dimensions, queryPrefix } = tool.embeddings;
+        knowledge.set(key, {
+          type: 'knowledge',
+          source: 'vector',
+          name: `search_${tool.collection}`,
+          description: '',
+          store: tool.store,
+          collection: tool.collection,
+          embeddings: { provider, model, ...(dimensions !== undefined && { dimensions }), ...(queryPrefix && { queryPrefix }) },
+          ...(tool.searchMode && { searchMode: tool.searchMode }),
+          usedBy: [],
+          access,
+        } as AgentResources['knowledge'][number]);
       }
     }
   }

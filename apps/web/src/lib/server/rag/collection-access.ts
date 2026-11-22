@@ -72,17 +72,41 @@ export interface AdoptionReport {
 const adoptedFor = () => singleton('collection-adopted', () => new WeakSet<Database>());
 const adopting = () => singleton('collection-adopting', () => ({ running: false }));
 
-/** Run the adoption before the first check after the upgrade: the marker row makes it once per database. */
+const PENDING_MARKER = (): CollectionRow => ({ store_key: ADOPTED_KEY, store: 'adoption', name: '{}', owner_project_id: '', claimed_by: null, claimed_at: nowIso(), source: 'upgrade' });
+
+/**
+ * Run the adoption before the first check after the upgrade. The marker row is claimed first and the adoption runs only for the
+ * process that claimed it. On SQLite that is one transaction. On Postgres the claim is decided in the database
+ * (`ensureAdoptedAsync`, at boot on the leader and before any write), so two mains starting together adopt once; a check on a
+ * main that has not seen the marker yet does not adopt by itself (it waits for the replicated marker, and until then the
+ * collections read as unowned).
+ */
 function ensureAdopted(): void {
   const handle = db();
   if (adoptedFor().has(handle) || adopting().running) return;
+  if (handle.kind === 'postgres' && !handle.get('SELECT store_key FROM vector_collections WHERE store_key = ?', ADOPTED_KEY)) return;
   adopting().running = true;
   try {
-    if (!handle.get('SELECT store_key FROM vector_collections WHERE store_key = ?', ADOPTED_KEY)) runAdoption(handle, false);
+    if (!handle.get('SELECT store_key FROM vector_collections WHERE store_key = ?', ADOPTED_KEY) && handle.transaction(() => handle.insertNew('vector_collections', { ...PENDING_MARKER() }))) runAdoption(handle, false);
     adoptedFor().add(handle);
   } finally {
     adopting().running = false;
   }
+}
+
+/** The adoption for a database that may be shared with other processes: the marker is claimed through Postgres (INSERT ... ON CONFLICT DO NOTHING), and only the process that got the row adopts. */
+export async function ensureAdoptedAsync(handle: Database = db()): Promise<void> {
+  if (adoptedFor().has(handle)) return;
+  if (replicating() && handle === db()) await refreshRows('vector_collections', { store_key: ADOPTED_KEY });
+  if (!handle.get('SELECT store_key FROM vector_collections WHERE store_key = ?', ADOPTED_KEY) && (await claimCollection(handle, PENDING_MARKER()))) {
+    adopting().running = true;
+    try {
+      runAdoption(handle, false);
+    } finally {
+      adopting().running = false;
+    }
+  }
+  adoptedFor().add(handle);
 }
 
 /** Apply `planAdoption()`: owners for collections nobody claimed, a `lost` row for every other naming project. */
@@ -136,7 +160,8 @@ export function lastAdoption(): AdoptionReport | undefined {
   ensureAdopted();
   const row = db().get<CollectionRow>('SELECT * FROM vector_collections WHERE store_key = ?', ADOPTED_KEY);
   try {
-    return row ? (JSON.parse(row.name) as AdoptionReport) : undefined;
+    const report = row ? (JSON.parse(row.name) as Partial<AdoptionReport>) : undefined;
+    return report?.at ? (report as AdoptionReport) : undefined; // the marker alone ({}) means the adoption is still running
   } catch {
     return undefined;
   }
@@ -207,6 +232,7 @@ export async function claimCollection(handle: Database, row: CollectionRow): Pro
  * no project may write an unclaimed collection but never claims it.
  */
 export async function assertCanWrite(key: string, store: StoreKind, name: string, asker: Asker): Promise<void> {
+  await ensureAdoptedAsync();
   if (replicating()) await refreshRows('vector_collections', { store_key: key });
   const access = collectionAccess(key, asker.projectId);
   if (access === 'owner' || access === 'write') return;
@@ -320,6 +346,52 @@ export function setNotionRead(actor: Actor, projectId: string, on: boolean): voi
   });
 }
 
+/** Before a project's things move or the project goes: the one-time adoption has run, so every owner row exists to be moved. Call it before the transaction. */
+export function settleCollectionsBeforeMove(): void {
+  ensureAdopted();
+}
+
+/**
+ * A project goes with a transfer (or a user is removed and their personal project's things move): its collections are owned by
+ * `toProjectId` from now on, the grants other projects hold on them stay (the new owner's own grant goes), and the grants the
+ * old project held on other collections move to the new one (unless it owns the collection or already holds a grant). Runs in the
+ * caller's transaction; each re-owned collection is audited as `collection.transferred`.
+ */
+export function moveCollections(fromProjectId: string, toProjectId: string, actorId?: string): number {
+  const handle = db();
+  let moved = 0;
+  for (const row of handle.all<CollectionRow>('SELECT * FROM vector_collections WHERE owner_project_id = ? AND store_key <> ?', fromProjectId, ADOPTED_KEY)) {
+    handle.upsert('vector_collections', { ...row, owner_project_id: toProjectId, claimed_by: actorId ?? null, claimed_at: nowIso(), source: 'admin' });
+    handle.delete('vector_collection_grants', { store_key: row.store_key, project_id: toProjectId });
+    recordAudit({
+      action: 'collection.transferred',
+      actor: actorId ? { id: actorId } : 'system',
+      target: { type: 'collection', id: row.store_key, name: row.name },
+      project: toProjectId,
+      summary: `“${row.name}” moved from “${nameOfProject(fromProjectId)}” to “${nameOfProject(toProjectId)}” (its project was deleted or its user removed)`,
+      details: { collection: row.store_key, from: fromProjectId, to: toProjectId, via: 'project transfer' },
+    });
+    moved++;
+  }
+  for (const grant of handle.all<GrantRow>('SELECT * FROM vector_collection_grants WHERE project_id = ?', fromProjectId)) {
+    handle.delete('vector_collection_grants', { store_key: grant.store_key, project_id: fromProjectId });
+    // A project's own Notion switch (a brain key) belongs to that project; the new owner has its own.
+    if (grant.store_key.startsWith('brain:') || ownerRow(grant.store_key)?.owner_project_id === toProjectId) continue;
+    if (!handle.get('SELECT store_key FROM vector_collection_grants WHERE store_key = ? AND project_id = ?', grant.store_key, toProjectId)) handle.upsert('vector_collection_grants', { ...grant, project_id: toProjectId });
+  }
+  return moved;
+}
+
+/** A project goes with nothing to transfer to: the collections it owned and every grant it held or gave go with it. Runs in the caller's transaction. */
+export function dropCollections(projectId: string): void {
+  const handle = db();
+  for (const row of handle.all<CollectionRow>('SELECT * FROM vector_collections WHERE owner_project_id = ? AND store_key <> ?', projectId, ADOPTED_KEY)) {
+    for (const grant of handle.all<GrantRow>('SELECT * FROM vector_collection_grants WHERE store_key = ?', row.store_key)) handle.delete('vector_collection_grants', { store_key: grant.store_key, project_id: grant.project_id });
+    handle.delete('vector_collections', { store_key: row.store_key });
+  }
+  for (const grant of handle.all<GrantRow>('SELECT * FROM vector_collection_grants WHERE project_id = ?', projectId)) handle.delete('vector_collection_grants', { store_key: grant.store_key, project_id: projectId });
+}
+
 /** Instance admin: move a collection to another project (its grants stay, except the new owner's own). Audited. */
 export function transferCollection(actor: Actor, key: string, toProjectId: string): void {
   requireInstanceAdmin(actor);
@@ -343,9 +415,21 @@ export function transferCollection(actor: Actor, key: string, toProjectId: strin
   });
 }
 
-const viewOf = (row: CollectionRow, access: CollectionView['access'], detail: boolean): CollectionView => {
+/** The most collections one answer lists (the rest are cut and `truncated` says so). */
+export const MAX_LISTED = 500;
+
+const placeholders = (n: number) => Array.from({ length: n }, () => '?').join(',');
+
+/** Every grant row of these collections, in one query. */
+function grantsFor(keys: string[]): Map<string, GrantRow[]> {
+  const by = new Map<string, GrantRow[]>();
+  if (!keys.length) return by;
+  for (const grant of db().all<GrantRow>(`SELECT * FROM vector_collection_grants WHERE store_key IN (${placeholders(keys.length)}) ORDER BY project_id`, ...keys)) by.set(grant.store_key, [...(by.get(grant.store_key) ?? []), grant]);
+  return by;
+}
+
+const viewOf = (row: CollectionRow, access: CollectionView['access'], grants?: GrantRow[]): CollectionView => {
   const { store, name } = partsOfKey(row.store_key);
-  const grants = detail ? db().all<GrantRow>('SELECT * FROM vector_collection_grants WHERE store_key = ? ORDER BY project_id', row.store_key) : [];
   return {
     key: row.store_key,
     store,
@@ -354,40 +438,42 @@ const viewOf = (row: CollectionRow, access: CollectionView['access'], detail: bo
     ownerProjectId: row.owner_project_id,
     ownerName: getProject(row.owner_project_id)?.name ?? row.owner_project_id,
     source: row.source as OwnerSource,
-    ...(detail && {
+    ...(grants && {
       grants: grants.filter((g) => g.level !== LOST_LEVEL).map((g) => ({ projectId: g.project_id, projectName: nameOfProject(g.project_id), level: g.level as CollectionLevel })),
       lostAccess: grants.filter((g) => g.level === LOST_LEVEL).map((g) => ({ projectId: g.project_id, projectName: nameOfProject(g.project_id) })),
     }),
   };
 };
 
-/** What GET /api/projects/:id/collections answers: owned and granted, with grants for the owner's admins. */
+/** What GET /api/projects/:id/collections answers: owned and granted (at most MAX_LISTED each), with grants for the owner's admins. */
 export function projectCollections(projectId: string, canManage: boolean): ProjectCollections {
   ensureAdopted();
   const handle = db();
-  const rows = handle.all<CollectionRow>('SELECT * FROM vector_collections WHERE store_key != ? ORDER BY name, store_key', ADOPTED_KEY);
-  const collections: CollectionView[] = [];
-  for (const row of rows) {
-    if (row.owner_project_id === projectId) {
-      collections.push(viewOf(row, 'owner', canManage));
-      continue;
-    }
-    const access = collectionAccess(row.store_key, projectId);
-    if (access === 'read' || access === 'write') collections.push(viewOf(row, access, false));
-  }
+  const owned = handle.all<CollectionRow>('SELECT * FROM vector_collections WHERE owner_project_id = ? AND store_key != ? ORDER BY name, store_key LIMIT ?', projectId, ADOPTED_KEY, MAX_LISTED + 1);
+  const mine = grantsFor(canManage ? owned.slice(0, MAX_LISTED).map((r) => r.store_key) : []);
+  const collections: CollectionView[] = owned.slice(0, MAX_LISTED).map((row) => viewOf(row, 'owner', canManage ? (mine.get(row.store_key) ?? []) : undefined));
+  // what other projects shared with this one (or with every project): the best level of its own grant and the All projects one
+  const level = new Map<string, CollectionLevel>();
+  const held = handle.all<GrantRow>('SELECT * FROM vector_collection_grants WHERE project_id IN (?, ?) AND level IN (?, ?) LIMIT ?', projectId, ALL_PROJECTS_GRANT, 'read', 'write', MAX_LISTED * 4);
+  for (const grant of held) if (!level.has(grant.store_key) || grant.level === 'write') level.set(grant.store_key, grant.level as CollectionLevel);
+  const keys = [...level.keys()].filter((k) => k !== ADOPTED_KEY && !k.startsWith('brain:')).slice(0, MAX_LISTED);
+  const shared = keys.length ? handle.all<CollectionRow>(`SELECT * FROM vector_collections WHERE store_key IN (${placeholders(keys.length)}) AND owner_project_id != ?`, ...keys, projectId) : [];
+  for (const row of shared.sort((a, b) => a.name.localeCompare(b.name) || a.store_key.localeCompare(b.store_key))) collections.push(viewOf(row, level.get(row.store_key)!));
   const lost = handle
-    .all<GrantRow>('SELECT * FROM vector_collection_grants WHERE project_id = ? AND level = ?', projectId, LOST_LEVEL)
+    .all<GrantRow>('SELECT * FROM vector_collection_grants WHERE project_id = ? AND level = ? LIMIT ?', projectId, LOST_LEVEL, MAX_LISTED)
     .flatMap((grant) => {
       const row = ownerRow(grant.store_key);
       return row ? [{ key: grant.store_key, ...partsOfKey(grant.store_key), name: row.name, ownerProjectId: row.owner_project_id, ownerName: getProject(row.owner_project_id)?.name ?? row.owner_project_id }] : [];
     });
-  return { collections, lost, canManage, notion: null };
+  return { collections, lost, canManage, notion: null, ...(owned.length > MAX_LISTED && { truncated: true }) };
 }
 
-/** Instance admin: every claimed collection with its owner and grants, and the last adoption's report. */
-export function allCollections(actor: Actor): { collections: CollectionView[]; adoption: AdoptionReport | undefined; projects: Array<{ id: string; name: string }> } {
+/** Instance admin: every claimed collection with its owner and grants (at most MAX_LISTED, newest names last), and the last adoption's report. */
+export function allCollections(actor: Actor): { collections: CollectionView[]; adoption: AdoptionReport | undefined; projects: Array<{ id: string; name: string }>; truncated?: boolean } {
   requireInstanceAdmin(actor);
   ensureAdopted();
-  const rows = db().all<CollectionRow>('SELECT * FROM vector_collections WHERE store_key != ? ORDER BY name, store_key', ADOPTED_KEY);
-  return { collections: rows.map((row) => viewOf(row, 'owner', true)), adoption: lastAdoption(), projects: listProjects().map((p) => ({ id: p.id, name: p.name })) };
+  const rows = db().all<CollectionRow>('SELECT * FROM vector_collections WHERE store_key != ? ORDER BY name, store_key LIMIT ?', ADOPTED_KEY, MAX_LISTED + 1);
+  const shown = rows.slice(0, MAX_LISTED);
+  const grants = grantsFor(shown.map((r) => r.store_key));
+  return { collections: shown.map((row) => viewOf(row, 'owner', grants.get(row.store_key) ?? [])), adoption: lastAdoption(), projects: listProjects().map((p) => ({ id: p.id, name: p.name })), ...(rows.length > MAX_LISTED && { truncated: true }) };
 }

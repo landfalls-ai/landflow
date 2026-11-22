@@ -9,18 +9,23 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AGENT_MEMORY_COLLECTION } from '@/lib/shared/brain';
-import { brainReadAllowed, canUse, notionKeyOf, pgIdentityOf, storeKeyOf } from '@/lib/shared/collections';
+import { brainReadAllowed, canUse, notionKeyOf, partsOfKey, pgIdentityOf, storeKeyOf } from '@/lib/shared/collections';
 
 describe('store keys and the pure rules', () => {
-  it('trims and lower-cases a name; the store is part of the key', () => {
-    expect(storeKeyOf('sqlite', ' Handbook ')).toBe('sqlite:handbook');
-    expect(storeKeyOf('memory', 'Handbook')).toBe('memory:handbook');
+  it('trims a name and keeps its case (the stores compare names exactly); the store is part of the key', () => {
+    expect(storeKeyOf('sqlite', ' Handbook ')).toBe('sqlite:Handbook');
+    expect(storeKeyOf('memory', 'Handbook')).toBe('memory:Handbook');
+    expect(storeKeyOf('sqlite', 'HR')).not.toBe(storeKeyOf('sqlite', 'hr'));
+    expect(storeKeyOf('sqlite', 'LandFlow-Brain-X')).toBe('brain:landflow-brain-x'); // the brain's names are not case-sensitive
   });
 
   it('a pgvector key names the connection and the table, never a password', () => {
     const pg = pgIdentityOf({ host: 'DB.example', port: 5433, database: 'vec', password: 'secret' }, 'docs');
-    expect(storeKeyOf('pgvector', 'HR', pg)).toBe('pgvector:db.example:5433:vec:docs:hr');
-    expect(storeKeyOf('pgvector', 'hr', pgIdentityOf({}, ''))).toBe('pgvector:localhost:5432:postgres:landflow_vectors:hr');
+    expect(storeKeyOf('pgvector', 'HR', pg)).toBe('pgvector:["db.example",5433,"vec","docs","HR"]');
+    expect(storeKeyOf('pgvector', 'hr', pgIdentityOf({}, ''))).toBe('pgvector:["localhost",5432,"postgres","landflow_vectors","hr"]');
+    // parts that contain the separator can't collide with another set of parts
+    expect(storeKeyOf('pgvector', 'c', pgIdentityOf({ host: 'a:1', database: 'b' }, 't'))).not.toBe(storeKeyOf('pgvector', 'c', pgIdentityOf({ host: 'a', port: 1, database: 'b' }, 't')));
+    expect(partsOfKey(storeKeyOf('pgvector', 'a:b', pg)).name).toBe('a:b');
     expect(() => storeKeyOf('pgvector', 'hr')).toThrow();
   });
 
@@ -90,10 +95,21 @@ describe('claim on first write', () => {
   it('a collection nobody owns is open to read; the first project to write it owns it, and the claim is audited (AS-4)', async () => {
     expect(access.collectionAccess(key, A)).toBe('unclaimed');
     expect(() => access.assertCanRead(key, 'handbook', asker(B))).not.toThrow();
-    await access.assertCanWrite(key, 'sqlite', 'Handbook', asker(A));
+    await access.assertCanWrite(key, 'sqlite', 'handbook', asker(A));
     expect(access.collectionAccess(key, A)).toBe('owner');
     const claimed = queryEvents({ action: ['collection.claimed'] }).events.find((e) => e.target?.id === key);
     expect(claimed?.projectId).toBe(A);
+  });
+
+  it('names that differ only in case are two collections: HR in A and hr in B are each claimed (the stores compare exactly)', async () => {
+    const upper = storeKeyOf('sqlite', 'HR');
+    const lower = storeKeyOf('sqlite', 'hr');
+    await access.assertCanWrite(upper, 'sqlite', 'HR', asker(A));
+    await access.assertCanWrite(lower, 'sqlite', 'hr', asker(B));
+    expect(access.collectionAccess(upper, A)).toBe('owner');
+    expect(access.collectionAccess(upper, B)).toBe('none');
+    expect(access.collectionAccess(lower, B)).toBe('owner');
+    expect(access.collectionAccess(lower, A)).toBe('none');
   });
 
   it('another project is refused to read and to write, with one message (D7, AS-1)', async () => {
@@ -180,6 +196,23 @@ describe('the Notion knowledge switch (FR-7)', () => {
   });
 });
 
+describe('listing many collections', () => {
+  it('lists at most MAX_LISTED, says so, and shows the owner’s grants without one query per row', async () => {
+    const { authDb } = await import('@/lib/server/auth/db');
+    const handle = authDb();
+    handle.transaction(() => {
+      for (let i = 0; i < access.MAX_LISTED + 5; i++) handle.insertNew('vector_collections', { store_key: `sqlite:bulk-${String(i).padStart(4, '0')}`, store: 'sqlite', name: `bulk-${String(i).padStart(4, '0')}`, owner_project_id: C, claimed_by: null, claimed_at: new Date().toISOString(), source: 'first-write' });
+      handle.insertNew('vector_collection_grants', { store_key: 'sqlite:bulk-0000', project_id: A, level: 'read', created_by: null, created_at: new Date().toISOString() });
+    });
+    const view = access.projectCollections(C, true);
+    expect(view.collections.filter((c) => c.access === 'owner')).toHaveLength(access.MAX_LISTED);
+    expect(view.truncated).toBe(true);
+    expect(view.collections.find((c) => c.key === 'sqlite:bulk-0000')?.grants).toEqual([expect.objectContaining({ projectId: A, level: 'read' })]);
+    expect(access.projectCollections(A, false).collections.find((c) => c.key === 'sqlite:bulk-0000')).toMatchObject({ access: 'read' });
+    expect(access.allCollections(owner).truncated).toBe(true);
+  });
+});
+
 describe('transfer', () => {
   it('an owner or admin of the instance moves a collection; others may not', async () => {
     const moved = storeKeyOf('sqlite', 'moving');
@@ -225,5 +258,32 @@ describe.skipIf(!queue)('a claim race in queue mode on Postgres', async () => {
     expect(stored.rows).toEqual([{ owner_project_id: winner }]);
     // the loser's copy learned who owns it
     for (const db of [first, second]) expect(db.get<{ owner_project_id: string }>('SELECT owner_project_id FROM vector_collections WHERE store_key = ?', 'sqlite:race')?.owner_project_id).toBe(winner);
+  });
+  it('two mains start on a database nobody has adopted: one adoption, one set of audit rows (marker claimed in Postgres)', async () => {
+    const { agentStore } = await import('@/lib/server/agents/store');
+    const { setHomeProject } = await import('@/lib/server/projects/store');
+    const kb = { id: 'kb1', type: 'knowledge' as const, source: 'vector' as const, name: 'search', description: 'x', store: 'sqlite' as const, collection: 'dupq', embeddings: { provider: 'none' as const, model: 'bm25' }, topK: 4 };
+    const first = agentStore.create({ name: 'Q one', tools: [kb] });
+    setHomeProject('agent', first.id, A);
+    await new Promise((resolve) => setTimeout(resolve, 8));
+    const second = agentStore.create({ name: 'Q two', tools: [kb] });
+    setHomeProject('agent', second.id, B);
+    const dup = storeKeyOf('sqlite', 'dupq');
+    const count = (action: string) => queryEvents({ action: [action] }).events.filter((e) => action === 'collection.adopted' || e.target?.id === dup).length;
+    const before = { adopted: count('collection.adopted'), lost: count('collection.access_lost') };
+    await admin.query(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
+    await admin.query(`CREATE SCHEMA ${SCHEMA}`);
+    const one = await openPostgres(URL, mkdtempSync(join(tmpdir(), 'landflow-adopt-')), { instanceId: 'adopt-a' });
+    const two = await openPostgres(URL, mkdtempSync(join(tmpdir(), 'landflow-adopt-')), { instanceId: 'adopt-b' });
+    opened.push(one, two);
+    await Promise.all([access.ensureAdoptedAsync(one), access.ensureAdoptedAsync(two)]);
+    await Promise.all([one.flush(), two.flush()]);
+    expect(count('collection.adopted') - before.adopted).toBe(1);
+    expect(count('collection.access_lost') - before.lost).toBe(1);
+    const owners = await admin.query('SELECT owner_project_id FROM vector_collections WHERE store_key = $1', [dup]);
+    expect(owners.rows).toEqual([{ owner_project_id: A }]);
+    const lost = await admin.query('SELECT project_id, level FROM vector_collection_grants WHERE store_key = $1', [dup]);
+    expect(lost.rows).toEqual([{ project_id: B, level: 'lost' }]);
+    expect((await admin.query('SELECT count(*)::int AS n FROM vector_collections WHERE store_key = $1', ['__adopted__'])).rows).toEqual([{ n: 1 }]);
   });
 });

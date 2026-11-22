@@ -23,13 +23,15 @@ import { listKnowledgeDocuments } from '../agents/knowledge';
 import { credentials } from '../credentials/vault';
 import { filesDir } from '../nodes/files';
 import { canResource, withOwnership, type Actor } from '../projects';
-import { credentialUsableBy, creationProject } from '../projects/access';
+import { credentialUsableBy } from '../projects/access';
 import { homeProjectId } from '../projects/store';
 import { redactValue } from '../secrets/redact';
 import { store } from '../store';
 import { agentTeamStore } from '../agent-teams/store';
 import { registry } from '../plugins/registry';
-import { agentResources, builderModel } from './agent-resources';
+import { collectionKeyOf } from '../agents/knowledge';
+import { collectionAccess } from '../rag/collection-access';
+import { agentResources, askingProjects, builderModel } from './agent-resources';
 import { availableTypes, searchNodes } from './research';
 
 /** The instance's view: what the MCP server gives a caller with no user behind it. */
@@ -255,19 +257,16 @@ async function topFolders(): Promise<CatalogFolder[]> {
 /** The knowledge bases agents search, with document counts, and the folders a new one could come from. */
 export async function catalogKnowledge(actor: Actor | undefined, projectId?: string): Promise<KnowledgeListing> {
   const resources = await agentResources(who(actor), projectId);
-  let asProject: string | undefined;
-  try {
-    asProject = projectId ?? (actor ? creationProject(actor) : undefined);
-  } catch {
-    asProject = undefined;
-  }
+  const asking = actor ? askingProjects(who(actor), projectId) : projectId ? [projectId] : [];
   const bases: CatalogKnowledgeBase[] = [];
   for (const k of resources.knowledge) {
     let documents: number | undefined;
     let indexedFrom: string | undefined;
     if (k.store === 'sqlite' || k.store === 'memory') {
       try {
-        const { documents: docs } = await listKnowledgeDocuments({ ...k, id: 'catalog', type: 'knowledge' } as Parameters<typeof listKnowledgeDocuments>[0], { ...(asProject && { asProject }), subject: 'agent' }); // C21: counted as the asking project
+        const config = { ...k, id: 'catalog', type: 'knowledge' } as Parameters<typeof listKnowledgeDocuments>[0];
+        const asProject = asking.find((p) => collectionAccess(collectionKeyOf(config), p) !== 'none'); // C21: counted as a project that may read it
+        const { documents: docs } = await listKnowledgeDocuments(config, { ...(asProject && { asProject }), subject: 'agent' });
         documents = docs.length;
         const tops = new Set(docs.map((d) => (d.fileName.includes('/') ? d.fileName.split('/')[0] : '')));
         if (tops.size === 1 && [...tops][0]) indexedFrom = [...tops][0];

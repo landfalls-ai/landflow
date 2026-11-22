@@ -159,6 +159,9 @@ export function CollectionsCardView({ view, base, post, reload, initiallyOpen }:
                 <div className="mt-2 rounded-[10px] border border-hair bg-wl px-3 py-2 text-[12px] text-t2" data-testid="collection-lost">
                   <div className="font-semibold text-t1">These projects lost access in the upgrade</div>
                   <p className="text-t3">They named this collection before it had an owner. They have no access until you grant it.</p>
+                  <p className="text-t3" data-testid="collection-lost-note">
+                    If you grant write: chunks they added with Upsert by Key before the upgrade are stored under their plain keys, and their upserts through the grant use project-scoped keys, so those won’t match. Clear the collection and insert again to avoid duplicates.
+                  </p>
                   <ul className="mt-1.5 space-y-1.5">
                     {c.lostAccess!.map((l) => (
                       <li key={l.projectId} className="flex flex-wrap items-center gap-2 max-md:flex-col max-md:items-stretch">
@@ -168,7 +171,7 @@ export function CollectionsCardView({ view, base, post, reload, initiallyOpen }:
                             <Button size="sm" variant="outline" className={BTN} onClick={() => post(c.key, { grant: { projectId: l.projectId, level: 'read' } }, `Gave ${nameOf(l)} read access`)}>
                               Grant read
                             </Button>
-                            <Button size="sm" variant="outline" className={BTN} onClick={() => post(c.key, { grant: { projectId: l.projectId, level: 'write' } }, `Gave ${nameOf(l)} write access`)}>
+                            <Button size="sm" variant="outline" className={BTN} onClick={() => post(c.key, { grant: { projectId: l.projectId, level: 'write' } }, `Gave ${nameOf(l)} write access. Their earlier Upsert by Key chunks won’t match: clear the collection and insert again`)}>
                               Grant write
                             </Button>
                             <Button size="sm" variant="ghost" className={BTN} onClick={() => post(c.key, { revoke: l.projectId }, 'Dismissed')}>

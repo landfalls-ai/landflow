@@ -15,6 +15,8 @@ import { agentStore } from '../agents/store';
 import { credentials } from '../credentials/vault';
 import { getProjectSettings } from '../governance/scopes';
 import { homeProjectId, listProjects } from '../projects/store';
+import { publishedVersionId } from '../publications';
+import { productionWorkflow } from '../publish';
 import { store as workflowStore } from '../store';
 
 /** One resource that names a collection. */
@@ -106,7 +108,9 @@ function projectNamings(out: Naming[], unresolved: string[]) {
 function workflowNamings(out: Naming[], unresolved: string[]) {
   for (const workflow of workflowStore.listWorkflows()) {
     const projectId = homeProjectId('workflow', workflow.id);
-    for (const node of workflow.nodes) {
+    // The draft and the published version both count: production runs the published nodes, whatever the draft says now.
+    const published = publishedVersionId(workflow.id) ? productionWorkflow({ ...workflow, active: true }) : undefined;
+    for (const node of [...workflow.nodes, ...(published?.nodes ?? [])]) {
       const kind = STORE_NODES[node.type];
       if (!kind) continue;
       const named = namingOf(`workflow ${workflow.name}`, projectId, workflow.createdAt, kind, node.parameters?.collection, node.credentials?.postgres, node.parameters?.tableName ?? 'landflow_vectors', unresolved);

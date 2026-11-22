@@ -28,9 +28,11 @@ const { agentConnections, withDocumentCounts } = await import('@/lib/server/agen
 const access = await import('@/lib/server/rag/collection-access');
 const { runPlayground } = await import('@/lib/server/memory/playground');
 const { catalogKnowledge } = await import('@/lib/server/assistant/tenant-catalog');
+const { agentResources } = await import('@/lib/server/assistant/agent-resources');
 const { assertAgentSettingsPatch } = await import('@/lib/server/project-context/project-settings');
 const documentsRoute = await import('@/app/api/agents/[id]/knowledge/[toolId]/documents/route');
 const folderRoute = await import('@/app/api/agents/[id]/knowledge/[toolId]/folder/route');
+const agentRoute = await import('@/app/api/agents/[id]/route');
 const { storeKeyOf } = await import('@/lib/shared/collections');
 const { AGENT_MEMORY_COLLECTION } = await import('@/lib/shared/brain');
 
@@ -69,6 +71,7 @@ beforeAll(async () => {
   A = projects.createTeamProject({ name: 'Alpha' }).id;
   B = projects.createTeamProject({ name: 'Beta' }).id;
   projects.setMember(A, alice.id, 'admin');
+  access.collectionAccess('sqlite:__warm__', A); // the one-time adoption runs now, on an empty database, not on the first agent a test makes
 });
 afterAll(() => {
   for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
@@ -194,4 +197,53 @@ describe('the architect’s listing (FR-5, AS-8)', () => {
     access.revokeCollection(alice, storeKeyOf('sqlite', name), B);
     expect(await names(B)).toEqual([]);
   });
+
+  it('a collection shared from another project is listed without the owner’s description, server address, credential or tool name (LOW-7)', async () => {
+    const name = unique('listed-private');
+    const agent = agentStore.create({ name: 'Owner agent', tools: [{ ...base(name), description: 'SECRET-description', name: 'secret_tool', embeddings: { provider: 'ollama', model: 'nomic-embed-text', baseUrl: 'http://owner-host.internal:11434', queryPrefix: 'search_query: ' } }] });
+    setHomeProject('agent', agent.id, A);
+    await access.assertCanWrite(storeKeyOf('sqlite', name), 'sqlite', name, { projectId: A, subject: 'agent' });
+    access.grantCollection(alice, storeKeyOf('sqlite', name), B, 'read');
+    const { knowledge: listed } = await agentResources(owner, B);
+    const entry = listed.find((k) => k.collection === name);
+    expect(entry).toMatchObject({ store: 'sqlite', collection: name, access: 'read', usedBy: [], embeddings: { provider: 'ollama', model: 'nomic-embed-text', queryPrefix: 'search_query: ' } });
+    expect(JSON.stringify(entry)).not.toMatch(/SECRET|owner-host|secret_tool|Owner agent/);
+    access.revokeCollection(alice, storeKeyOf('sqlite', name), B);
+  });
+
+  it('with no project given, what the actor’s projects may read is listed (not only their personal project)', async () => {
+    const name = unique('listed-member');
+    agentIn(A, name, 'Member handbook agent');
+    await access.assertCanWrite(storeKeyOf('sqlite', name), 'sqlite', name, { projectId: A, subject: 'agent' });
+    const bob = await auth.createUser({ email: 'bob@example.com', name: 'Bob', role: 'member', password: 'password-123' });
+    projects.setMember(B, bob.id, 'editor');
+    expect((await agentResources(bob)).knowledge.some((k) => k.collection === name)).toBe(false);
+    access.grantCollection(alice, storeKeyOf('sqlite', name), B, 'read');
+    expect((await agentResources(bob)).knowledge.find((k) => k.collection === name)).toMatchObject({ access: 'read' });
+    access.revokeCollection(alice, storeKeyOf('sqlite', name), B);
+  });
+
+describe('saving an agent’s draft', () => {
+  const save = async (agentId: string, tools: unknown[]) => {
+    const { id: _id, createdAt: _c, updatedAt: _u, published: _p, ...config } = agentStore.get(agentId)! as unknown as Record<string, unknown>;
+    const response = await agentRoute.PUT(new Request(`http://localhost:3000/api/agents/${agentId}`, { method: 'PUT', headers: { cookie: `landflow_session=${session}`, 'content-type': 'application/json' }, body: JSON.stringify({ ...config, tools }) }), { params: Promise.resolve({ id: agentId }) });
+    return { status: response.status, body: (await response.json()) as Record<string, any> };
+  };
+
+  it('refuses a new knowledge base on a collection the agent’s project can’t use, with the one message; one it already holds stays', async () => {
+    const name = unique('draft-private');
+    agentIn(A, name, 'Draft owner');
+    await access.assertCanWrite(storeKeyOf('sqlite', name), 'sqlite', name, { projectId: A, subject: 'agent' });
+    const other = agentIn(B, unique('other-own'), 'Beta agent');
+    const refused = await save(other.id, [...other.tools, base(name, 'kb2')]);
+    expect(refused.status).toBe(403);
+    expect(refused.body.error).toMatch(new RegExp(`This agent.s project can.t use the collection “${name}”`));
+    expect(agentStore.get(other.id)!.tools.some((t) => t.type === 'knowledge' && t.collection === name)).toBe(false);
+    // once shared it can be added, and after the grant is revoked the saved base is kept (only a NEW one is refused)
+    access.grantCollection(alice, storeKeyOf('sqlite', name), B, 'read');
+    expect((await save(other.id, [...other.tools, base(name, 'kb2')])).status).toBe(200);
+    access.revokeCollection(alice, storeKeyOf('sqlite', name), B);
+    expect((await save(other.id, agentStore.get(other.id)!.tools)).status).toBe(200);
+  });
+});
 });

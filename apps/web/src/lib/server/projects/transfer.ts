@@ -17,6 +17,7 @@ import { agentTemplateRows } from '../agents/template-rows';
 import { localTemplates } from '../templates/store';
 import { settleRetired } from '../practices/inbox';
 import { removeProjectSubscriptions } from '../outbox/subscriptions';
+import { dropCollections, moveCollections, settleCollectionsBeforeMove } from '../rag/collection-access'; // C21:
 import { projectVariables } from './variables';
 import {
   auditShare,
@@ -109,6 +110,7 @@ function moveAll(fromProjectId: string, toProjectId: string, options: { includeU
   projectVariables.moveAll(fromProjectId, toProjectId);
   localTemplates.moveProject(fromProjectId, toProjectId);
   agentTemplateRows.moveProject(fromProjectId, toProjectId);
+  moveCollections(fromProjectId, toProjectId, options.actorId); // C21: its vector collections and the grants it held
   forgetProjectSettings(fromProjectId);
   for (const share of sharesTo(fromProjectId)) {
     // A share to the new owner is pointless (it owns or already has it), so it goes with the old project.
@@ -124,6 +126,7 @@ function dropProjectData(projectId: string) {
   projectVariables.removeProject(projectId);
   localTemplates.moveProject(projectId);
   agentTemplateRows.moveProject(projectId);
+  dropCollections(projectId); // C21: its collections and grants go with it
   forgetProjectSettings(projectId);
 }
 
@@ -159,6 +162,7 @@ export function deleteUserWithTransfer(userId: string, target?: TransferTarget, 
   if (user.role === 'owner') throw new ProjectError('The owner can’t be removed', 403);
   const personal = personalProjectId(userId);
   const db = authDb();
+  settleCollectionsBeforeMove(); // C21: the upgrade's adoption has run before anything moves
   const { retired, ...result } = db.transaction(() => {
     const owned = resourcesIn(personal);
     let to: ProjectRecord | undefined;
@@ -189,6 +193,7 @@ export function deleteProjectWithTransfer(projectId: string, transferTo?: string
   if (!project) throw new ProjectError('Project not found', 404);
   if (project.type === 'personal') throw new ProjectError('A personal project goes when its user is removed', 400);
   const db = authDb();
+  settleCollectionsBeforeMove(); // C21: the upgrade's adoption has run before anything moves
   const result = db.transaction(() => {
     let moved: Partial<Record<ResourceKind, number>> = {};
     const owned = resourcesIn(projectId);

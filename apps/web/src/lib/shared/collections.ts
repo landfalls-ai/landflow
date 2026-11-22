@@ -44,16 +44,16 @@ export function pgIdentityOf(data: Record<string, unknown> | undefined, table?: 
 
 /**
  * The key a collection is kept under in the host's database: `memory:<name>`, `sqlite:<name>`,
- * `pgvector:<host>:<port>:<database>:<table>:<name>`. The name is trimmed and lower-cased (a collection that differs only in
- * case is the same collection for access, which can only refuse more). The brain's closed names have one key whatever
- * the store: `brain:<name>`.
+ * `pgvector:<JSON array of host, port, database, table, name>` (a JSON array so no part can run into the next). The name is
+ * trimmed and keeps its case: the stores compare names exactly, so `HR` and `hr` are two collections. The brain's closed
+ * names are not case-sensitive and have one key whatever the store: `brain:<lower-cased name>`.
  */
 export function storeKeyOf(store: StoreKind, name: string, pg?: PgIdentity): string {
-  const clean = name.trim().toLowerCase();
-  if (isBrainCollection(clean)) return `brain:${clean}`;
+  const clean = name.trim();
+  if (isBrainCollection(clean)) return `brain:${clean.toLowerCase()}`;
   if (store === 'pgvector') {
     if (!pg) throw new Error('A pgvector collection key needs its connection');
-    return `pgvector:${pg.host.toLowerCase()}:${pg.port}:${pg.database}:${pg.table.trim()}:${clean}`;
+    return `pgvector:${JSON.stringify([pg.host.toLowerCase(), pg.port, pg.database, pg.table.trim(), clean])}`;
   }
   return `${store}:${clean}`;
 }
@@ -63,8 +63,12 @@ export function partsOfKey(key: string): { store: string; name: string } {
   if (key.startsWith('brain:')) return { store: 'brain', name: key.slice(6) };
   const store = key.slice(0, key.indexOf(':'));
   if (store === 'pgvector') {
-    const [, host, port, database, table, ...rest] = key.split(':');
-    return { store: `pgvector (${host}:${port}/${database}, ${table})`, name: rest.join(':') };
+    try {
+      const [host, port, database, table, name] = JSON.parse(key.slice('pgvector:'.length)) as [string, number, string, string, string];
+      return { store: `pgvector (${host}:${port}/${database}, ${table})`, name };
+    } catch {
+      return { store: 'pgvector', name: key.slice('pgvector:'.length) };
+    }
   }
   return { store, name: key.slice(store.length + 1) };
 }
@@ -113,4 +117,6 @@ export interface ProjectCollections {
   canManage: boolean;
   /** FR-7: whether this project's flows may read its own Notion knowledge collection (shown only when it has one). */
   notion: { collection: string; read: boolean } | null;
+  /** More than the answer's cap are owned: the rest are not listed. */
+  truncated?: boolean;
 }

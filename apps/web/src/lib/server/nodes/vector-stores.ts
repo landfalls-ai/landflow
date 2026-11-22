@@ -22,7 +22,7 @@ import {
 import { isBrainCollection } from '../../shared/brain';
 import { pgIdentityOf, storeKeyOf, type StoreKind } from '../../shared/collections'; // C21:
 import { assertCanRead, assertCanWrite, brainReadFor, collectionAccess, type Asker } from '../rag/collection-access'; // C21:
-import { homeProjectId } from '../projects/store'; // C21:
+import { homeProjectId, storedHomeProject } from '../projects/store'; // C21:
 import { toToolName, type AgentTool, type AiDocument, type DocumentLoader, type Embeddings, type Reranker, type Retriever } from '@landflow/engine';
 import { createHash } from 'node:crypto';
 import { syncDocument } from '../rag/chunk-diff';
@@ -280,20 +280,32 @@ async function upsertDocuments(ctx: IBaseContext, store: VectorStore, embeddings
 
 function vectorStoreNode(spec: StoreSpec) {
   /**
-   * The collection the node names, after C21's check: `need` read (search, retrieve) or write (insert, with Clear). A collection
-   * another project owns fails with the same message whether it exists or not; the first write to an unowned one claims it.
-   * The home project of the workflow asks (never the run's project).
+   * The collection the node names and who asks (C21). The home project of the workflow asks (never the run's project); an
+   * agent's tools run as `agent:<id>` and ask as the agent's home project. A run with no stored home project (a one-node
+   * workflow an MCP call makes) asks as nobody: it may use only a collection nobody owns, and never claims it.
    */
-  const collectionFor = async (ctx: IBaseContext, need: 'read' | 'write') => {
+  const askerOf = (ctx: IBaseContext): Asker => {
+    const workflowId = ctx.getWorkflowId();
+    const projectId = !workflowId ? undefined : workflowId.startsWith('agent:') ? homeProjectId('agent', workflowId.slice('agent:'.length)) : storedHomeProject('workflow', workflowId);
+    return { projectId, subject: 'workflow' };
+  };
+  const nameOf = (ctx: IBaseContext) => {
     const collection = String(ctx.getNodeParameter('collection', 0, '') ?? '').trim();
     if (!collection) throw new NodeOperationError('No collection set', { description: 'Set “Collection” to the name the documents are kept under.' });
-    const workflowId = ctx.getWorkflowId();
-    const asker: Asker = { projectId: workflowId ? homeProjectId('workflow', workflowId) : undefined, subject: 'workflow' };
+    return { collection, asker: askerOf(ctx) };
+  };
+  /**
+   * C21's check: `need` read (search, retrieve) or write (insert, with Clear). A collection another project owns fails with the same
+   * message whether it exists or not; the first write to an unowned one claims it, so a write asks only once the node's other
+   * settings are valid. Returns the key to scope upserts by (none for the brain's Notion collection, which is read only).
+   */
+  const authorize = async (ctx: IBaseContext, named: { collection: string; asker: Asker }, need: 'read' | 'write'): Promise<string | undefined> => {
+    const { collection, asker } = named;
     // The second brain's collections hold facts of every project, so no workflow or agent reads or writes them
     // (docs/second-brain.md#find-similar): Find Similar and Landflow Usage answer with the caller's access. The one opening
     // (C21, FR-7): a project's own Notion knowledge, read (never written) by its flows once its admin turned that on.
     if (isBrainCollection(collection)) {
-      if (need === 'read' && brainReadFor(collection, asker.projectId)) return { collection, asker };
+      if (need === 'read' && brainReadFor(collection, asker.projectId)) return undefined;
       throw new NodeOperationError(`“${collection}” is the second brain’s own collection`, {
         description: 'Workflows and agents can’t read or write the brain’s vector collections. Use a Find Similar or Landflow Usage node, which only return what the workflow’s creator can see.',
       });
@@ -306,7 +318,11 @@ function vectorStoreNode(spec: StoreSpec) {
       // The message is the same for "not there" and "not yours"; it names the collection the caller typed and nothing else.
       throw new NodeOperationError((caught as Error).message, { description: 'Ask an admin of the project that owns the collection to share it with this workflow’s project, or use another collection name.' });
     }
-    return { collection, asker, key };
+    return key;
+  };
+  const collectionFor = async (ctx: IBaseContext, need: 'read' | 'write') => {
+    const named = nameOf(ctx);
+    return { ...named, key: await authorize(ctx, named, need) };
   };
   const embeddingsOf = (ctx: Parameters<typeof connected>[0]) =>
     connected<Embeddings>(ctx, 'ai_embedding', 'No embeddings model connected', `Attach an embeddings sub-node (e.g. Embeddings Ollama) to the “Embedding” slot of “${ctx.getNode().name}”.`);
@@ -341,7 +357,11 @@ function vectorStoreNode(spec: StoreSpec) {
         });
       }
       const store = spec.open(ctx);
-      const { collection, asker, key } = await collectionFor(ctx, mode === 'insert' ? 'write' : 'read');
+      const named = nameOf(ctx);
+      const { collection, asker } = named;
+      // A read is checked now; a write only after the loader and the settings are valid (it may claim the collection).
+      // The brain's closed names are refused first, whatever else is missing.
+      let key = mode === 'insert' ? (isBrainCollection(collection) ? await authorize(ctx, named, 'write') : undefined) : await authorize(ctx, named, 'read');
       const embeddings = await embeddingsOf(ctx);
       const items = ctx.getInputData();
 
@@ -360,6 +380,7 @@ function vectorStoreNode(spec: StoreSpec) {
         if (upsert && missing >= 0) {
           throw new NodeOperationError(`“Upsert by Key” is empty for item ${missing + 1}`, { itemIndex: missing, description: 'Every item needs a key (for example {{ $json.id }}), or leave “Upsert by Key” empty to insert without one.' });
         }
+        key = await authorize(ctx, named, 'write');
         if (clearStore) await store.clear(collection);
         const documents = await loader.load(items);
         if (!documents.length) {

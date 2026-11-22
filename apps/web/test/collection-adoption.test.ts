@@ -48,11 +48,17 @@ beforeAll(async () => {
   const agentA = agentStore.create({ name: 'Support', tools: [kb('faq')] });
   setHomeProject('agent', agentA.id, A);
   await pause();
-  const flowB = store.saveWorkflow({ id: 'wf_adopt_b', name: 'Ingest', nodes: [flowNode('FAQ'), { ...flowNode('{{ $json.kb }}'), id: 'n2', name: 'By expression' }], connections: [] } as never);
+  const flowB = store.saveWorkflow({ id: 'wf_adopt_b', name: 'Ingest', nodes: [flowNode('faq'), { ...flowNode('{{ $json.kb }}'), id: 'n2', name: 'By expression' }], connections: [] } as never);
   setHomeProject('workflow', flowB.id, B);
   await pause();
   const agentC = agentStore.create({ name: 'Notes bot', tools: [kb('notes'), kb('faq')] });
   setHomeProject('agent', agentC.id, C);
+  // Gamma's flow was published naming `pubonly`; its draft has moved on to `drafted` since (production still runs the published one)
+  const { publishDraft } = await import('@/lib/server/publish');
+  const flowD = store.saveWorkflow({ id: 'wf_adopt_pub', name: 'Published', active: true, nodes: [flowNode('pubonly')], connections: [] } as never);
+  setHomeProject('workflow', flowD.id, C);
+  await publishDraft(flowD.id);
+  store.saveWorkflow({ ...store.getWorkflow(flowD.id)!, nodes: [flowNode('drafted')] } as never);
   // a collection only the store knows (written by some earlier flow nobody names now)
   await new SqliteVectorStore().add('stray', [{ pageContent: 'old text', metadata: {}, embedding: [1, 2] }]);
 });
@@ -69,6 +75,12 @@ describe('the strict upgrade', () => {
     expect(access.collectionAccess(faq, C)).toBe('none');
     expect(access.collectionAccess(storeKeyOf('sqlite', 'notes'), C)).toBe('owner');
     expect(access.collectionAccess(storeKeyOf('sqlite', 'notes'), A)).toBe('none');
+  });
+
+  it('a workflow’s published version counts too, not only its draft', () => {
+    expect(access.collectionAccess(storeKeyOf('sqlite', 'pubonly'), C)).toBe('owner');
+    expect(access.collectionAccess(storeKeyOf('sqlite', 'pubonly'), A)).toBe('none');
+    expect(access.collectionAccess(storeKeyOf('sqlite', 'drafted'), C)).toBe('owner');
   });
 
   it('a name built by an expression is listed as not found, and a collection no configuration names stays open', () => {

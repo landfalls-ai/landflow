@@ -94,7 +94,17 @@ project to write a new collection owns it; until it is written, the name is open
 only when an admin of the owner shares it: **read** (search) or **write** (search, upload, index, insert, clear, delete) to a
 project or to **All projects**. The project that asks is the home project of the workflow or agent (project knowledge asks as
 its project). A project that can't use a name gets one message, "This workflow’s project can’t use the collection “x”", whether
-the collection exists or not.
+the collection exists or not. A run with no stored home project (a one-node workflow an MCP call makes) asks as nobody: it uses only a
+collection nobody owns, and never claims it. A write claims the collection only after the node's other settings are valid (a missing
+loader or embeddings model fails first, nothing is claimed). Names are exact: `HR` and `hr` are two collections (the brain's own
+names are not case-sensitive).
+
+**What follows what.** Collections follow the *project*, not a single workflow or agent: moving one workflow or agent to another
+project leaves its collections with the old project, so grant the new project access (or move the collection with
+`/api/settings/collections`). Deleting a project with a transfer, or removing a user with a transfer, moves its collections to the
+target project in the same transaction (audited as `collection.transferred`; the grants it held move too, the new owner's own grant goes);
+deleting one that owned nothing removes its collections' owner rows and every grant it held or gave. A new knowledge base on a collection the agent's
+project can't use is refused when the agent's draft is saved (403).
 
 The **Collections card** lists the collections the project owns (with who else may use each, and **Share with…** and **Stop**
 for its admins), the ones shared with it, and, for a project whose collection was in use before this change, the **notice about
@@ -102,7 +112,9 @@ the upgrade**. On upgrade each collection a saved agent, project knowledge setti
 the oldest resource that names it (`source` "given to this project in the upgrade"); every other project that named it
 **lost access** until an admin of the owner grants it, and the notice on the owner's card lists each such project with
 **Grant read**, **Grant write** and **Dismiss** (the project that lost it sees which project owns it now). Each such pair is also an audit row
-(`collection.access_lost`), and the run is summarised in `collection.adopted`. Collections no saved configuration names stay open until someone writes them.
+(`collection.access_lost`), and the run is summarised in `collection.adopted`. Collections no saved configuration names stay open until someone writes them. The upgrade reads a workflow's draft **and** its published version. When
+you grant **write** to a project that lost access, chunks it added with Upsert by Key before the upgrade are stored under its plain keys, and its upserts through the
+grant use project-scoped keys, so they won't match: clear the collection and insert again (the notice says so).
 A project with an active Notion link also gets **Let this project’s flows read its Notion knowledge**: its own Vector Store nodes can then search `landflow-notion-<project>`
 (never write it, never another project's). Owners and admins of the instance see every project's card, find owners again
 and move a collection to another project through `/api/settings/collections` ([API](reference/api.md)).

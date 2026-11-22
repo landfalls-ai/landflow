@@ -182,6 +182,7 @@ describe('the Collections card', () => {
     expect(out).toContain('Gamma');
     expect(out).toContain('Grant read');
     expect(out).toContain('Grant write');
+    expect(out).toMatch(/Clear the collection and insert again/); // the notice warns that keys upserted before the upgrade won.t match
     expect(out).toContain('Let this project’s flows read its Notion knowledge');
     expect(out).toContain('“notes” now belongs to Delta');
   });

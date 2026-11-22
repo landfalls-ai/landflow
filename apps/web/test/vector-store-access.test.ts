@@ -17,7 +17,7 @@ Object.assign(process.env, { LANDFLOW_DATA_DIR: dataDir, LANDFLOW_REGISTRY_GRPC_
 const { defineNode } = await import('@landflow/sdk');
 const auth = await import('@/lib/server/auth');
 const projects = await import('@/lib/server/projects');
-const { setHomeProject } = await import('@/lib/server/projects/store');
+const { setHomeProject, defaultProjectId } = await import('@/lib/server/projects/store');
 const access = await import('@/lib/server/rag/collection-access');
 const { SqliteVectorStore } = await import('@/lib/server/rag/stores');
 const { storeKeyOf } = await import('@/lib/shared/collections');
@@ -45,12 +45,12 @@ const failure = (result: Flow, node = 'Store') => (result.runData[node] ?? []).f
 /** Run the flow `wf_test` as a workflow of `project`. */
 const asProject = (project: string) => setHomeProject('workflow', 'wf_test', project);
 const store = (collection: string, mode: 'insert' | 'load', extra: Record<string, unknown> = {}, type = 'core.vectorStoreSqlite') => ({ name: 'Store', type, parameters: { mode, collection, ...(mode === 'load' && { prompt: 'returns' }), ...extra } });
-const insert = (collection: string, extra: Record<string, unknown> = {}, input = PAGES, type = 'core.vectorStoreSqlite') =>
-  runFlow([store(collection, 'insert', extra, type), { name: 'Loader', type: 'core.documentDefaultDataLoader', parameters: { jsonMode: 'expressionData', jsonData: '{{ $json.text }}' } }, { name: 'Embeddings', type: 'test.fakeEmbeddings' }], [['Start', 'Store'], ['Loader', 'Store', 'ai_document'], ['Embeddings', 'Store', 'ai_embedding']], { input, extra: { fakeEmbeddings } });
+const insert = (collection: string, extra: Record<string, unknown> = {}, input = PAGES, type = 'core.vectorStoreSqlite', workflowId?: string) =>
+  runFlow([store(collection, 'insert', extra, type), { name: 'Loader', type: 'core.documentDefaultDataLoader', parameters: { jsonMode: 'expressionData', jsonData: '{{ $json.text }}' } }, { name: 'Embeddings', type: 'test.fakeEmbeddings' }], [['Start', 'Store'], ['Loader', 'Store', 'ai_document'], ['Embeddings', 'Store', 'ai_embedding']], { input, extra: { fakeEmbeddings }, ...(workflowId && { workflowId }) });
 const load = (collection: string, type = 'core.vectorStoreSqlite') =>
   runFlow([store(collection, 'load', {}, type), { name: 'Embeddings', type: 'test.fakeEmbeddings' }], [['Start', 'Store'], ['Embeddings', 'Store', 'ai_embedding']], { input: [{}], extra: { fakeEmbeddings } });
-const asTool = (collection: string) =>
-  runFlow([{ name: 'Store', type: 'core.vectorStoreSqlite', parameters: { mode: 'retrieve-as-tool', collection } }, { name: 'Agent', type: 'test.toolUser' }, { name: 'Embeddings', type: 'test.fakeEmbeddings' }], [['Start', 'Agent'], ['Store', 'Agent', 'ai_tool'], ['Embeddings', 'Store', 'ai_embedding']], { input: [{}], extra: { fakeEmbeddings, toolUser } });
+const asTool = (collection: string, workflowId?: string) =>
+  runFlow([{ name: 'Store', type: 'core.vectorStoreSqlite', parameters: { mode: 'retrieve-as-tool', collection } }, { name: 'Agent', type: 'test.toolUser' }, { name: 'Embeddings', type: 'test.fakeEmbeddings' }], [['Start', 'Agent'], ['Store', 'Agent', 'ai_tool'], ['Embeddings', 'Store', 'ai_embedding']], { input: [{}], extra: { fakeEmbeddings, toolUser }, ...(workflowId && { workflowId }) });
 
 let A = '';
 let B = '';
@@ -109,6 +109,41 @@ describe('a collection belongs to the project of the workflow that first wrote i
     expect(await new SqliteVectorStore().count(name)).toBe(2);
     access.revokeCollection(alice, storeKeyOf('sqlite', name), B);
     expect(failure(await load(name))?.message).toMatch(/can.t use the collection/);
+  });
+
+  it('a run with no home project of its own (a one-node mcp_ workflow, an agent of no project) never claims and never reads a claimed collection (fail closed)', async () => {
+    const name = unique('mcp-collection');
+    const key = storeKeyOf('sqlite', name);
+    // nothing stored for this id: it must not be treated as a member of the default project
+    expect(failure(await insert(name, {}, PAGES, 'core.vectorStoreSqlite', 'mcp_oneshot'))).toBeUndefined();
+    expect(access.collectionAccess(key, A)).toBe('unclaimed'); // inserted, but not claimed by anyone
+    expect(access.collectionAccess(key, defaultProjectId())).toBe('unclaimed');
+    const owned = unique('owned-by-a');
+    asProject(A);
+    await insert(owned);
+    const mcp = await runFlow([store(owned, 'load'), { name: 'Embeddings', type: 'test.fakeEmbeddings' }], [['Start', 'Store'], ['Embeddings', 'Store', 'ai_embedding']], { input: [{}], extra: { fakeEmbeddings }, workflowId: 'mcp_oneshot' });
+    expect(failure(mcp)?.message).toMatch(/can.t use the collection/);
+  });
+
+  it('an agent’s node tool (workflow id agent:<id>) asks as the agent’s home project', async () => {
+    const name = unique('agent-tool-collection');
+    asProject(A);
+    await insert(name);
+    setHomeProject('agent', 'agt_a', A);
+    setHomeProject('agent', 'agt_b', B);
+    expect(failure(await asTool(name, 'agent:agt_a'), 'Agent')).toBeUndefined();
+    expect(JSON.stringify((await asTool(name, 'agent:agt_b')).runData)).toMatch(/can.t use the collection/);
+  });
+
+  it('a write that fails on the loader or the embeddings checks does not claim the collection', async () => {
+    const name = unique('unclaimed-until-valid');
+    asProject(A);
+    const noLoader = await runFlow([store(name, 'insert'), { name: 'Embeddings', type: 'test.fakeEmbeddings' }], [['Start', 'Store'], ['Embeddings', 'Store', 'ai_embedding']], { input: PAGES, extra: { fakeEmbeddings } });
+    expect(failure(noLoader)?.message).toMatch(/document loader/i);
+    expect(access.collectionAccess(storeKeyOf('sqlite', name), A)).toBe('unclaimed');
+    const noEmbeddings = await runFlow([store(name, 'insert'), { name: 'Loader', type: 'core.documentDefaultDataLoader', parameters: { jsonMode: 'expressionData', jsonData: '{{ $json.text }}' } }], [['Start', 'Store'], ['Loader', 'Store', 'ai_document']], { input: PAGES });
+    expect(failure(noEmbeddings)).toBeDefined();
+    expect(access.collectionAccess(storeKeyOf('sqlite', name), A)).toBe('unclaimed');
   });
 
   it('an in-memory collection is protected the same way', async () => {
