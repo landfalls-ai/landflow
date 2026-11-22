@@ -153,7 +153,7 @@ describe.skipIf(!enabled)('audit chain and SAML state in queue mode on Postgres'
   it('C18: a single-use token used at once on two mains passes exactly once', async () => {
     const { useTokenOnce } = await import('@/lib/server/token-replay');
     const payload = { iss: 'https://ci.test', jti: `race-${Date.now()}`, exp: Math.floor(Date.now() / 1000) + 300 };
-    const results = await Promise.all([useTokenOnce(payload, 'tok', Date.now(), main), useTokenOnce(payload, 'tok', Date.now(), worker)]);
+    const results = await Promise.all([useTokenOnce(payload, 'tok', { db: main }), useTokenOnce(payload, 'tok', { db: worker })]);
     expect(results.filter((r) => r.ok)).toHaveLength(1);
     expect(results.filter((r) => !r.ok)).toEqual([{ ok: false, reason: 'token_replayed' }]);
   });

@@ -35,6 +35,8 @@ const { logger } = await import('@/lib/server/telemetry/logger');
 const { queryEvents } = await import('@/lib/server/audit/store');
 const { database } = await import('@/lib/server/db');
 const { useTokenOnce } = await import('@/lib/server/token-replay');
+const tokenReplay = await import('@/lib/server/token-replay');
+const { checkWebhookAuth } = await import('@/lib/server/webhook-auth');
 
 registry.registerBuiltin(corePlugin);
 
@@ -612,31 +614,130 @@ describe('JWT Auth single use and run data (C18 W4a)', () => {
     expect(saved).toContain('my-org/app');
     expect(saved).toContain('jwtPayload');
   });
+
+  it('a changed last signature character (a malleable signature) is the same token: 409', async () => {
+    await hook('su-mall', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Single mall', { singleUse: true })) });
+    // No jti, so the key comes from the signed part; RS256 leaves 4 spare bits in the last base64url character.
+    const token = await new SignJWT({ repository: 'my-org/app' }).setProtectedHeader({ alg: 'RS256', kid: 'k1' }).setIssuer(GITHUB).setAudience('landflow').setExpirationTime('5m').sign(rsa.privateKey);
+    expect((await call('su-mall', { authorization: `Bearer ${token}` })).status).toBe(200);
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const last = token.slice(-1);
+    const edited = token.slice(0, -1) + alphabet[alphabet.indexOf(last) ^ 1];
+    expect(edited).not.toBe(token);
+    expect((await call('su-mall', { authorization: `Bearer ${edited}` })).status).toBe(409);
+  });
+
+  it('refuses a token that expires more than 24 hours away, naming the limit', async () => {
+    await hook('su-far', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Single far', { singleUse: true })) });
+    const response = await call('su-far', { authorization: `Bearer ${await github('my-org/app', {}, GITHUB, '25h')}` });
+    expect(response.status).toBe(401);
+    expect((await response.json()).error).toMatch(/24 hours/);
+    expect((await call('su-far', { authorization: `Bearer ${await github('my-org/app', {}, GITHUB, '23h')}` })).status).toBe(200);
+  });
+
+  it('a Form Trigger page view does not spend the token; the submission does, and a replay gets its own page', async () => {
+    const workflow: Workflow = {
+      id: 'wf_auth_su_view',
+      name: 'Single use view',
+      nodes: [
+        {
+          id: 'Form',
+          name: 'Form',
+          type: 'core.formTrigger',
+          typeVersion: 1,
+          position: [0, 0],
+          parameters: { path: 'su-view', formTitle: 'CI', authentication: 'jwtAuth', formFields: { values: [{ fieldLabel: 'Name', fieldType: 'text' }] } },
+          credentials: { jwtAuth: ref(credential('Single view', { singleUse: true })) },
+        },
+      ],
+      connections: [],
+    };
+    store.saveWorkflow(workflow);
+    await publishDraft(workflow.id);
+    const token = await github('my-org/app');
+    const params = { params: Promise.resolve({ path: ['su-view'] }) };
+    const headers = { authorization: `Bearer ${token}` };
+    expect((await formRoute.GET(new Request('http://auth.test/form/su-view', { headers }), params)).status).toBe(200);
+    expect((await formRoute.GET(new Request('http://auth.test/form/su-view', { headers }), params)).status).toBe(200);
+    const post = () => formRoute.POST(new Request('http://auth.test/form/su-view', { method: 'POST', body: new URLSearchParams({ f0: 'Ada' }), headers }), params);
+    expect((await post()).status).toBe(200);
+    const again = await post();
+    expect(again.status).toBe(409);
+    expect(await again.text()).toMatch(/already used/);
+  });
+
+  it('checkWebhookAuth with spend: false verifies without spending', async () => {
+    await hook('su-nospend', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Single nospend', { singleUse: true })) });
+    const node = store.getWorkflow('wf_auth_su_nospend')!.nodes[0] as Parameters<typeof checkWebhookAuth>[2];
+    const token = await github('my-org/app');
+    const req = () => new Request('http://auth.test/x', { headers: { authorization: `Bearer ${token}` } });
+    expect((await checkWebhookAuth(req(), 'wf_auth_su_nospend', node, 'Webhook', 'Webhook', { spend: false })).ok).toBe(true);
+    expect((await checkWebhookAuth(req(), 'wf_auth_su_nospend', node, 'Webhook', 'Webhook', { spend: false })).ok).toBe(true);
+    expect((await checkWebhookAuth(req(), 'wf_auth_su_nospend', node)).ok).toBe(true);
+    expect((await checkWebhookAuth(req(), 'wf_auth_su_nospend', node)).ok).toBe(false);
+  });
+
+  it('does not spend a token that fails a bound claim or a signature', async () => {
+    await hook('su-unspent', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Single unspent', { singleUse: true })) });
+    const sign = (repository: string, key: Awaited<ReturnType<typeof generateKeyPair>>['privateKey'] = rsa.privateKey) =>
+      new SignJWT({ repository }).setProtectedHeader({ alg: 'RS256', kid: 'k1' }).setIssuer(GITHUB).setAudience('landflow').setJti('shared-jti').setExpirationTime('5m').sign(key);
+    expect((await call('su-unspent', { authorization: `Bearer ${await sign('other/app')}` })).status).toBe(403);
+    const stranger = await generateKeyPair('RS256');
+    expect((await call('su-unspent', { authorization: `Bearer ${await sign('my-org/app', stranger.privateKey)}` })).status).toBe(401);
+    expect((await call('su-unspent', { authorization: `Bearer ${await sign('my-org/app')}` })).status).toBe(200);
+  });
+
+  it('is once per credential: the same iss and jti passes under another credential', async () => {
+    await hook('su-cred-a', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Single A', { singleUse: true })) });
+    await hook('su-cred-b', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Single B', { singleUse: true })) });
+    const token = await new SignJWT({ repository: 'my-org/app' }).setProtectedHeader({ alg: 'RS256', kid: 'k1' }).setIssuer(GITHUB).setAudience('landflow').setJti('per-credential').setExpirationTime('5m').sign(rsa.privateKey);
+    expect((await call('su-cred-a', { authorization: `Bearer ${token}` })).status).toBe(200);
+    expect((await call('su-cred-b', { authorization: `Bearer ${token}` })).status).toBe(200);
+    expect((await call('su-cred-a', { authorization: `Bearer ${token}` })).status).toBe(409);
+  });
+
+  it('answers 503 and logs the workflow id when the replay store fails', async () => {
+    await hook('su-down', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Single down', { singleUse: true })) });
+    const spy = vi.spyOn(tokenReplay, 'useTokenOnce').mockRejectedValue(new Error('db down with secret-detail'));
+    const logged = vi.spyOn(logger, 'error');
+    try {
+      const response = await call('su-down', { authorization: `Bearer ${await github('my-org/app')}` });
+      expect(response.status).toBe(503);
+      expect(JSON.stringify(await response.json())).not.toContain('secret-detail');
+      expect(JSON.stringify(logged.mock.calls)).toContain('wf_auth_su_down');
+      expect(JSON.stringify(logged.mock.calls)).not.toContain('secret-detail');
+    } finally {
+      spy.mockRestore();
+      logged.mockRestore();
+    }
+  });
 });
 
 describe('useTokenOnce (token-replay.ts)', () => {
   const payload = (over: Record<string, unknown> = {}) => ({ iss: 'https://a.test', jti: 'j1', exp: Math.floor(Date.now() / 1000) + 300, ...over });
-  it('refuses the second use of a jti and keys it by issuer', async () => {
+  const signed = (tail: string) => `aGVhZGVy.cGF5bG9hZA.${tail}`;
+  it('refuses the second use of a jti and keys it by issuer and credential', async () => {
     const p = payload({ jti: 'unit-1' });
     expect(await useTokenOnce(p, 'tok')).toEqual({ ok: true });
     expect(await useTokenOnce(p, 'tok')).toEqual({ ok: false, reason: 'token_replayed' });
     expect(await useTokenOnce(payload({ jti: 'unit-1', iss: 'https://b.test' }), 'tok')).toEqual({ ok: true });
+    expect(await useTokenOnce(p, 'tok', { credentialId: 'cred_other' })).toEqual({ ok: true });
   });
-  it('hashes the token when there is no jti, and refuses a token with no exp', async () => {
+  it('keys a token with no jti by its signed part, so another signature encoding is the same token', async () => {
     const p = payload({ jti: undefined });
-    expect(await useTokenOnce(p, 'no-jti-token')).toEqual({ ok: true });
-    expect(await useTokenOnce(p, 'no-jti-token')).toEqual({ ok: false, reason: 'token_replayed' });
-    expect(await useTokenOnce(p, 'other-token')).toEqual({ ok: true });
-    expect(await useTokenOnce(payload({ exp: undefined }), 'x')).toEqual({ ok: false, reason: 'no_expiry' });
+    expect(await useTokenOnce(p, signed('sig-one'))).toEqual({ ok: true });
+    expect(await useTokenOnce(p, signed('sig-two'))).toEqual({ ok: false, reason: 'token_replayed' });
+    expect(await useTokenOnce(p, 'other.token.sig')).toEqual({ ok: true });
   });
-  it('forgets the id 30 s after exp, and caps the memory at 24 h', async () => {
+  it('refuses a token with no exp or one more than 24 h away', async () => {
+    expect(await useTokenOnce(payload({ exp: undefined }), 'x')).toEqual({ ok: false, reason: 'no_expiry' });
+    expect(await useTokenOnce(payload({ jti: 'far', exp: Math.floor(Date.now() / 1000) + 25 * 3600 }), 'x')).toEqual({ ok: false, reason: 'exp_too_far' });
+  });
+  it('forgets the id a few seconds after jose stops accepting the token (exp + 30 s)', async () => {
     const now = Date.now();
     const p = payload({ jti: 'unit-2', exp: Math.floor(now / 1000) + 60 });
-    expect(await useTokenOnce(p, 't', now)).toEqual({ ok: true });
-    expect(await useTokenOnce(p, 't', now + 80_000)).toEqual({ ok: false, reason: 'token_replayed' });
-    expect(await useTokenOnce(p, 't', now + 91_000)).toEqual({ ok: true });
-    const long = payload({ jti: 'unit-3', exp: Math.floor(now / 1000) + 30 * 86_400 });
-    expect(await useTokenOnce(long, 't', now)).toEqual({ ok: true });
-    expect(await useTokenOnce(long, 't', now + 25 * 3_600_000)).toEqual({ ok: true });
+    expect(await useTokenOnce(p, 't', { now })).toEqual({ ok: true });
+    expect(await useTokenOnce(p, 't', { now: now + 91_000 })).toEqual({ ok: false, reason: 'token_replayed' });
+    expect(await useTokenOnce(p, 't', { now: now + 100_000 })).toEqual({ ok: true });
   });
 });

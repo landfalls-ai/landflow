@@ -5,7 +5,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { applyJwtPreset, JWT_AUTH_CREDENTIAL, JWT_PRESETS, JwtAuthPresets, claimRowsFromText, textFromClaimRows } from '@/components/credentials/jwt-auth-presets';
+import { applyJwtPreset, JWT_AUTH_CREDENTIAL, JWT_PRESETS, JwtAuthPresets, claimRowsFromText, spliceClaimRows } from '@/components/credentials/jwt-auth-presets';
 import { parseBoundClaims } from '@/lib/shared/bound-claims';
 
 const preset = (id: string) => JWT_PRESETS.find((p) => p.id === id)!;
@@ -19,14 +19,21 @@ describe('presets', () => {
       issuer: 'https://token.actions.githubusercontent.com',
       algorithm: 'RS256',
       singleUse: true,
+      audience: 'landflow',
     });
+    expect(preset('github').hint).toContain('core.getIDToken');
     expect(preset('github').claim).toBe('repository');
   });
 
   it('GitLab CI does the same with project_path', () => {
     const values = applyJwtPreset({}, preset('gitlab'));
     expect(values).toMatchObject({ keyType: 'jwks', jwksUrl: 'https://gitlab.com/oauth/discovery/keys', issuer: 'https://gitlab.com', algorithm: 'RS256', singleUse: true });
+    expect(preset('gitlab').hint).toContain('id_tokens');
     expect(preset('gitlab').claim).toBe('project_path');
+  });
+
+  it('keeps an audience already written', () => {
+    expect(applyJwtPreset({ audience: 'mine' }, preset('github')).audience).toBe('mine');
   });
 
   it('keeps bound claims already written', () => {
@@ -35,18 +42,21 @@ describe('presets', () => {
 });
 
 describe('the claims editor', () => {
-  it('writes rows back as the same text the parser reads, leaving out unfinished rows', () => {
-    const text = textFromClaimRows([
-      { claim: 'repository', pattern: 'my-org/app' },
-      { claim: 'ref', pattern: '' },
-      { claim: 'sub', pattern: 'repo:my-org/app:ref:refs/heads/*' },
-    ]);
-    expect(text).toBe('repository: my-org/app\nsub: repo:my-org/app:ref:refs/heads/*');
-    expect(parseBoundClaims(text).problems).toEqual([]);
-    expect(claimRowsFromText(text)).toEqual([
-      { claim: 'repository', pattern: 'my-org/app' },
-      { claim: 'sub', pattern: 'repo:my-org/app:ref:refs/heads/*' },
-    ]);
+  it('splices edits into the original text, keeping comments, unreadable lines and unfinished rows', () => {
+    const text = '# who may call\nrepository: my-org/app\nnonsense\nref: refs/heads/main';
+    const rows = claimRowsFromText(text);
+    expect(rows.map((r) => [r.claim, r.line])).toEqual([['repository', 1], ['ref', 3]]);
+    // An edit changes its own line only.
+    const edited = spliceClaimRows(text, rows.map((r) => (r.claim === 'repository' ? { ...r, pattern: 'my-org/other' } : r)));
+    expect(edited.text).toBe('# who may call\nrepository: my-org/other\nnonsense\nref: refs/heads/main');
+    // A row removed takes its line with it; the comment and the bad line stay, and later rows keep their place.
+    const removed = spliceClaimRows(text, [rows[1]]);
+    expect(removed.text).toBe('# who may call\nnonsense\nref: refs/heads/main');
+    expect(removed.rows[0].line).toBe(2);
+    // A row emptied mid-edit leaves its line as it was; a new finished row is appended; an unfinished one is not written.
+    const mid = spliceClaimRows(text, [{ ...rows[0], pattern: '' }, rows[1], { claim: 'environment', pattern: 'prod' }, { claim: 'x', pattern: '' }]);
+    expect(mid.text).toBe(`${text}\nenvironment: prod`);
+    expect(parseBoundClaims(mid.text).claims).toHaveLength(3);
   });
 
   it('renders a row per claim, the presets, and the parser’s problem for a bad line', () => {

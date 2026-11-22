@@ -171,9 +171,10 @@ export function triggerAuthRefusal(workflowId: string, node: TriggerNode, label:
 
 /**
  * Check a call to a Webhook or Form Trigger node of `workflowId` against its authentication and IP allow-list. `label`
- * names the trigger in messages; `realm` is the Basic Auth realm (browsers show a sign-in prompt for forms).
+ * names the trigger in messages; `realm` is the Basic Auth realm (browsers show a sign-in prompt for forms). `spend: false`
+ * verifies a single-use token without using it up: a Form Trigger's page view (GET), so the submission can use it.
  */
-export async function checkWebhookAuth(request: Request, workflowId: string, node: TriggerNode, label = 'Webhook', realm = 'Webhook'): Promise<WebhookAuthResult> {
+export async function checkWebhookAuth(request: Request, workflowId: string, node: TriggerNode, label = 'Webhook', realm = 'Webhook', { spend = true }: { spend?: boolean } = {}): Promise<WebhookAuthResult> {
   const options = (node.parameters.options ?? {}) as { ipWhitelist?: string };
   const allowed = parseIpList(options.ipWhitelist);
   if (allowed.length) {
@@ -226,10 +227,19 @@ export async function checkWebhookAuth(request: Request, workflowId: string, nod
     const claims = checkBoundClaims(jwtAuth, payload);
     if (!claims.ok) return { ok: false, response: claimsRefusal(claims, workflowId, label, jwtAuth, typeof payload.iss === 'string' ? payload.iss : undefined) };
     // After the claims (a token that fails them is not spent) and before the route reads the body or starts a run.
-    if (jwtAuth.singleUse === true || jwtAuth.singleUse === 'true') {
-      const use = await useTokenOnce(payload, match[1]);
+    if (spend && (jwtAuth.singleUse === true || jwtAuth.singleUse === 'true')) {
+      const iss = typeof payload.iss === 'string' ? payload.iss : String(jwtAuth.issuer ?? '');
+      let use: Awaited<ReturnType<typeof useTokenOnce>>;
+      try {
+        use = await useTokenOnce(payload, match[1], { credentialId: triggerAuthCredential(node)?.id });
+      } catch {
+        // Not a token problem: say so, and log only which workflow (the error text can hold anything).
+        logger.error('trigger call refused: the single-use token store failed', { 'landflow.workflow.id': workflowId });
+        return { ok: false, response: error(`The ${label} could not check whether this token was used; try again`, 503) };
+      }
       if (!use.ok && use.reason === 'no_expiry') return { ok: false, response: unauthorized('Single use needs tokens with an expiry', 'Bearer error="invalid_token"') };
-      if (!use.ok) return { ok: false, response: replayRefusal(workflowId, label, typeof payload.iss === 'string' ? payload.iss : String(jwtAuth.issuer ?? '')) };
+      if (!use.ok && use.reason === 'exp_too_far') return { ok: false, response: unauthorized('Single use needs tokens that expire within 24 hours', 'Bearer error="invalid_token"') };
+      if (!use.ok) return { ok: false, response: replayRefusal(workflowId, label, iss) };
     }
     return { ok: true, jwtPayload: payload as JsonObject, secretHeaders: [] };
   } catch (caught) {
