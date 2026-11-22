@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Publishes Landflow's docs to agents: docs/published.json lists what is published, this script turns it into
-// docs/llms.txt (committed) and docs/llms-full.txt (built, git-ignored).
+// docs/llms.txt (committed) and docs/llms-full.txt (built, never committed).
 //   node scripts/llms.mjs --check   regenerate in memory; fail on a stale llms.txt or any problem (pnpm check:docs)
 //   node scripts/llms.mjs --write   write both files (pnpm docs:llms); refuses while there are problems
 // Only the manifest's pages are ever read; everything else in docs/ is internal by default. No network, no dependency,
@@ -10,8 +10,14 @@ import { dirname, join, posix } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const REPO_DOCS = 'https://github.com/landfalls-ai/landflow/blob/main/docs/'
-/** Always internal, whatever the manifest says (FR-2); the manifest's `internal` list adds to it. */
-const FIXED_INTERNAL = ['specs/', 'research/', 'history.md', 'constitution.md']
+/** Never publishable, whatever the manifest says (FR-2, AS-2): a manifest entry under one fails. */
+const FIXED_INTERNAL = ['limitations.md', 'roadmap.md', 'history.md', 'history.d/', 'development.md', 'constitution.md', 'specs/', 'research/']
+/**
+ * A link from a published page into one of these fails the check (AS-3); a link to any other unpublished page (the
+ * limitations and roadmap pages are linked everywhere) keeps its words and loses the link. The manifest's `internal`
+ * list adds to it.
+ */
+const LINK_INTERNAL = ['specs/', 'research/', 'history.md', 'constitution.md']
 /** FR-7: the caps in bytes. */
 export const LIMITS = { llms: 20 * 1024, full: 1.5 * 1024 * 1024 }
 /** Folders never listed as "not published": internal, or generated notes. */
@@ -19,14 +25,19 @@ const QUIET = ['specs/', 'research/', 'history.d/']
 
 /**
  * Strings a published page must not hold (public repo): [name, pattern, allowed]. A match the optional `allowed` pattern
- * accepts is fine: the documented development keys (deploy/.env.example) and Docker's own host.docker.internal.
+ * accepts is fine: the two documented development keys (deploy/.env.example), the documented placeholder passwords and the
+ * host names Docker, Podman and OrbStack give the host machine.
  */
 const SECRET_PATTERNS = [
-  ['a home-folder path', /\/Users\/[A-Za-z0-9._-]+|\/home\/[a-z][a-z0-9._-]*\/|C:\\Users\\/],
+  ['a home-folder path', /\/Users\/[A-Za-z0-9._-]+|\/home\/[a-z][a-z0-9._-]*\/|\/root\/[A-Za-z0-9._-]|C:\\Users\\/],
   ['a Claude session link', /Claude-Session|claude\.ai\/(?:code|share|artifact)|session_[A-Za-z0-9]{16,}/],
   ['a private key', /BEGIN [A-Z ]*PRIVATE KEY/],
-  ['a secret-looking token', /AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}|\blf_[A-Za-z0-9_-]{24,}/g, /^sk-landflow-dev-/],
-  ['an internal hostname', /\b(?:[a-z0-9-]+\.)+(?:internal|corp|lan|intranet)\b/gi, /^(?:host|kubernetes)\.docker\.internal$|^host\.[a-z0-9-]+\.internal$/i],
+  ['a secret-looking token', /AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}|\blf_[A-Za-z0-9_-]{24,}/g, /^sk-landflow-dev-(?:master|salt)-only$/],
+  ['a payment, Google, Slack, Notion, Linear, GitLab or Telegram credential', /\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|\bAIza[0-9A-Za-z_-]{30,}|hooks\.slack\.com\/services\/\w+|\bntn_[A-Za-z0-9]{20,}|\bsecret_[A-Za-z0-9]{30,}|\blin_(?:api|oauth)_[A-Za-z0-9]{20,}|\bglpat-[A-Za-z0-9_-]{20,}|\b\d{8,10}:[A-Za-z0-9_-]{30,}\b/],
+  ['a JSON web token', /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/],
+  ['an AWS secret access key', /aws_secret_access_key["']?\s*[=:]\s*["']?[A-Za-z0-9/+=]{40,}/i],
+  ['a password in a URL', /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]+@/i, /:(?:<[^>]*>|pw|pass|password|landflow-dev-only)@$/],
+  ['an internal hostname', /\b(?:[a-z0-9-]+\.)+(?:internal|corp|lan|intranet)\b/gi, /^(?:host\.docker|host\.containers|host\.orb|kubernetes\.docker)\.internal$/i],
 ]
 const EMAIL = /[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})/g
 /** Reserved for examples (RFC 2606 and 6761): the only domains an address may use. */
@@ -71,6 +82,27 @@ function fenceMap(lines) {
       return true
     }
     return false
+  })
+}
+
+/** Marks indented code blocks (four spaces or a tab after a blank line, not under a list item): never rewritten. */
+function indentedCode(lines, fenced) {
+  let inList = false
+  let prevBlank = true
+  let prevCode = false
+  return lines.map((line, i) => {
+    if (fenced[i]) {
+      prevBlank = false
+      prevCode = false
+      return false
+    }
+    const blank = line.trim() === ''
+    const indented = /^(?: {4}|\t)/.test(line)
+    if (!blank && !indented) inList = /^\s*(?:[-*+]|\d+[.)])\s/.test(line)
+    const code = indented && !inList && (prevBlank || prevCode)
+    prevBlank = blank
+    if (!blank) prevCode = code
+    return code
   })
 }
 
@@ -122,7 +154,7 @@ function rewriteBlock(block, ctx) {
     }
     const path = posix.normalize(posix.join(posix.dirname(ctx.path), rawPath.replace(/\/$/, '')))
     if (path.startsWith('..') || path.startsWith('/')) return { text: alt } // outside docs/: the repository, not published
-    if (isInternal(path, ctx.internal)) {
+    if (isInternal(path, ctx.linkInternal)) {
       ctx.problems.push({ message: `docs/${ctx.path}:${line}: links to the internal page ${path} (${target})` })
       return { text: alt }
     }
@@ -140,10 +172,13 @@ function rewriteBlock(block, ctx) {
     return r.text !== undefined ? r.text : `[${alt}](${r.href})`
   })
   // Reference-style definitions: `[name]: target`.
-  text = text.replace(/^([ \t]*\[[^\]]+\]:[ \t]*)(\S+)(.*)$/gm, (all, head, target, tail, offset) => {
+  // Footnotes (`[^n]: text`) are not definitions. A definition goes only when it pointed at a docs page that is not published.
+  text = text.replace(/^([ \t]*\[(?!\^)[^\]]+\]:[ \t]*)(\S+)(.*)$/gm, (all, head, target, tail, offset) => {
     const r = link('', target, false, offset)
     if (!r) return all
-    return r.text !== undefined ? '' : `${head}${r.href}${tail}`
+    if (r.href !== undefined) return `${head}${r.href}${tail}`
+    const file = target.split('#')[0]
+    return file.endsWith('.md') && !posix.normalize(posix.join(posix.dirname(ctx.path), file)).startsWith('..') ? '' : all
   })
   return text.replace(/\u0000(\d+)\u0000/g, (_, i) => spans[Number(i)])
 }
@@ -152,6 +187,7 @@ function rewriteBlock(block, ctx) {
 function pageText(entry, source, ctx) {
   const lines = source.replace(/\r\n/g, '\n').split('\n')
   const fenced = fenceMap(lines)
+  const code = indentedCode(lines, fenced)
   const heads = new Map(headings(lines).map((h) => [h.line, h]))
   const slug = slugOf(entry.path)
   const out = [`<!-- page: ${entry.path} -->`, `# ${entry.title} {#${slug}}`]
@@ -159,12 +195,12 @@ function pageText(entry, source, ctx) {
   // Runs of lines outside code fences are rewritten together (a link's text can wrap); fenced lines pass through.
   let i = 0
   while (i < lines.length) {
-    if (fenced[i]) {
+    if (fenced[i] || code[i]) {
       out.push(lines[i++])
       continue
     }
     let j = i
-    while (j < lines.length && !fenced[j]) j++
+    while (j < lines.length && !fenced[j] && !code[j]) j++
     const block = rewriteBlock(lines.slice(i, j).join('\n'), { ...ctx, path: entry.path, slug, line: i + 1 }).split('\n')
     block.forEach((text, k) => {
       const h = heads.get(i + k)
@@ -200,7 +236,8 @@ function scan(label, text, problems) {
 export function render(root, { limits = LIMITS } = {}) {
   const manifest = loadManifest(root)
   const problems = []
-  const internal = [...FIXED_INTERNAL, ...manifest.internal]
+  const unpublishable = [...FIXED_INTERNAL, ...manifest.internal]
+  const internal = [...LINK_INTERNAL, ...manifest.internal]
   const pages = new Map()
   const texts = new Map()
   for (const section of manifest.sections) {
@@ -210,7 +247,7 @@ export function render(root, { limits = LIMITS } = {}) {
         problems.push({ message: `published.json: ${entry.path} is listed twice` })
         continue
       }
-      if (isInternal(entry.path, internal)) {
+      if (isInternal(entry.path, unpublishable)) {
         problems.push({ message: `published.json: ${entry.path} is internal and cannot be published` })
         continue
       }
@@ -236,7 +273,7 @@ export function render(root, { limits = LIMITS } = {}) {
   for (const [path, source] of texts) scan(`docs/${path}`, source.replace(/\r\n/g, '\n'), problems)
 
   const headingMap = new Map([...texts].map(([path, source]) => [path, headings(source.split('\n'))]))
-  const ctx = { pages, headings: headingMap, internal, problems }
+  const ctx = { pages, headings: headingMap, linkInternal: internal, problems }
   const parts = [...pages.values()].filter((p) => p.full).map((p) => ({ path: p.path, text: pageText(p, texts.get(p.path), ctx) }))
   const header = `# ${manifest.title}\n\n> ${manifest.summary}\n\nThe documentation, in reading order. Each page starts with a \`<!-- page: path -->\` line.\n`
   const full = `${header}\n${parts.map((p) => p.text).join('\n\n')}\n`

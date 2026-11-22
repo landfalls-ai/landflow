@@ -39,7 +39,7 @@ FROM deps AS build
 COPY . .
 # Turns on `output: 'standalone'` in apps/web/next.config.ts.
 ENV LANDFLOW_NEXT_OUTPUT=standalone
-# The docs for agents (docs/published.json → docs/llms.txt and the git-ignored docs/llms-full.txt, C25), served by the host
+# The docs for agents (docs/published.json → docs/llms.txt and the built, uncommitted docs/llms-full.txt, C25), served by the host
 # at /llms.txt and /llms-full.txt. Fails the build on a published page that holds a secret-looking string or an internal link.
 RUN node scripts/llms.mjs --write
 # pulsar-client's package.json is patched (patches/pulsar-client@1.18.0.patch, installed by pnpm in the deps stage): its

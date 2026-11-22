@@ -376,7 +376,5 @@
       ]
     }
   ],
-  "internal": [
-    "history.d/"
-  ]
+  "internal": []
 }

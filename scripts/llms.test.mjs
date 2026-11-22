@@ -93,7 +93,7 @@ test('a link whose text wraps onto the next line is rewritten, and a bad one is 
 })
 
 test('a manifest entry under an internal path fails, naming it (AS-2, FR-2)', (t) => {
-  for (const path of ['research/brain-ui-research.md', 'specs/a.md', 'history.md', 'constitution.md', 'notes/x.md']) {
+  for (const path of ['research/brain-ui-research.md', 'specs/a.md', 'history.md', 'history.d/x.md', 'constitution.md', 'limitations.md', 'roadmap.md', 'development.md', 'notes/x.md']) {
     const root = tree(t, {
       pages: { ...PAGES, [path]: '# Title\n' },
       manifest: withManifest((m) => m.sections[0].pages.push({ path, title: 'Title', description: 'd', full: true })),
@@ -128,6 +128,21 @@ test('home-folder paths, foreign emails, session links and secrets fail (AS-5)',
     'key': 'Key AKIAABCDEFGHIJKLMNOP here.',
     'token': 'Use ghp_abcdefghijklmnopqrstuvwxyz0123456789 here.',
     'pem': '-----BEGIN PRIVATE KEY-----',
+    'stripe': 'Key sk_live_abcdefghijklmnop1234 here.',
+    'stripetest': 'Key rk_test_abcdefghijklmnop1234 here.',
+    'google': 'Key AIzaSyA-abcdefghijklmnopqrstuvwxyz01234 here.',
+    'jwt': 'Token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop here.',
+    'slackhook': 'POST https://hooks.slack.com/services/T000/B000/XXXXXXXX now.',
+    'notion': 'Token ntn_abcdefghijklmnopqrstuvwxyz0123 here.',
+    'notionsecret': 'Token secret_abcdefghijklmnopqrstuvwxyz0123456789ABCDE here.',
+    'linear': 'Token lin_api_abcdefghijklmnopqrstuvwxyz0123 here.',
+    'gitlab': 'Token glpat-abcdefghijklmnopqrst here.',
+    'telegram': 'Token 123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw here.',
+    'awssecret': 'aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYzEXAMPLEKEY',
+    'urlcreds': 'Use postgres://admin:hunter2@db.example.com/app now.',
+    'root': 'Saved in /root/work/file.',
+    'devkey': 'Key sk-landflow-dev-other-thing-here.',
+    'dockerhost': 'Call evil.docker.internal now.',
     'host': 'Call db1.mycompany.internal now.',
     'corp': 'Call vault.corp now.',
   }
@@ -144,9 +159,19 @@ test('home-folder paths, foreign emails, session links and secrets fail (AS-5)',
 })
 
 test('reserved example addresses and hosts pass', (t) => {
-  const line = 'owner@landflow.test alice@example.com dev@mail.example.org http://localhost:3000 http://host.docker.internal:11434 api.landflow-dev.svc.cluster.local sk-landflow-dev-master-only pkg@1.2.3 @landflow/web'
+  const line = 'owner@landflow.test alice@example.com dev@mail.example.org http://localhost:3000 http://host.docker.internal:11434 api.landflow-dev.svc.cluster.local sk-landflow-dev-master-only sk-landflow-dev-salt-only postgres://landflow:landflow-dev-only@postgres:5432/x redis://user:password@h host.containers.internal kubernetes.docker.internal host.orb.internal pkg@1.2.3 @landflow/web'
   const root = tree(t, { pages: { ...PAGES, 'agents.md': `# Agents\n\n${line}\n` } })
   assert.deepEqual(problems(root), [])
+})
+
+test('footnotes and indented code are left alone; a definition is dropped only for a .md inside docs/', (t) => {
+  const page = '# Agents\n\nText[^1] and [ref][r] and [ext][e].\n\n[^1]: A footnote with [link](limitations.md).\n[r]: limitations.md\n[e]: ../CLAUDE.md\n\n    [x](limitations.md)\n'
+  const { full, problems: found } = render(tree(t, { pages: { ...PAGES, 'agents.md': page } }))
+  assert.deepEqual(found, [])
+  assert.ok(full.includes('[^1]: A footnote with link.'))
+  assert.ok(!full.includes('[r]: limitations.md'))
+  assert.ok(full.includes('[e]: ../CLAUDE.md'))
+  assert.ok(full.includes('    [x](limitations.md)'))
 })
 
 test('code fences are neither rewritten nor given anchors, but are scanned', (t) => {
