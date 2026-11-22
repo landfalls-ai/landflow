@@ -3,7 +3,7 @@
 Agents are standalone assistants that use your connected tools and data: you give one a persona,
 a model, skills and capabilities, test it in a chat, publish it, and it then answers on a
 schedule, in Telegram or Slack, or from a workflow. They are modelled on n8n's **Agents (Preview)** (see
-[research/03-n8n-ai-agents.md](research/03-n8n-ai-agents.md) §8 for the n8n walkthrough). They are
+the n8n AI agents research note in the repository, §8, for the n8n walkthrough). They are
 separate from the **AI Agent** node, which runs inside a workflow.
 
 | | AI Agent node | Agent |

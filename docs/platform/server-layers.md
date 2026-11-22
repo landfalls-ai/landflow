@@ -3,7 +3,7 @@
 The host is one Next.js application, `apps/web`. This page lists its layers from the request down to the database: what
 each one owns, where it lives, the rule for adding to it, and one new route followed through all of them. Part of [the
 platform section](README.md). The skill that does the job is `landflow-server-change`. The rules come from
-[../constitution.md](../constitution.md); where this page says "the rule", that page is the source.
+`docs/constitution.md` in the repository; where this page says "the rule", that page is the source.
 
 Paths below are under `apps/web/src/` unless they start with `packages/`.
 
@@ -205,7 +205,7 @@ dispatch, workers and the Valkey client.
 
 **Rule.** Anything the worker imports must work without the UI. A change to the boot, `instrumentation.ts`, the proxy or
 anything the worker imports also needs `next build` and the queue stack's end-to-end script (see
-[../constitution.md](../constitution.md#testing-and-the-regression-gate)). State that must be shared across processes goes
+`docs/constitution.md`, "Testing and the regression gate"). State that must be shared across processes goes
 through Valkey (or the database), not memory.
 
 ## Background jobs
