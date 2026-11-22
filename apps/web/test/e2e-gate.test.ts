@@ -2,11 +2,14 @@
  * The browser tier (apps/web/e2e) is opt-in: its config throws unless LANDFLOW_INTEGRATION names `browser`, vitest never
  * collects a spec file, and the scratch host refuses the live data directory. No browser starts here.
  */
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import vitestConfig from '../vitest.config';
 import { browserTierEnabled, requireBrowserTier } from '../e2e/gate';
-import { assertScratchDataDir, freePort, LIVE_DATA_DIR } from '../e2e/scratch-host';
+import { dataStamp } from '../e2e/global-setup';
+import { assertNoEnvFiles, assertScratchDataDir, freePort, LIVE_DATA_DIR } from '../e2e/scratch-host';
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -52,9 +55,51 @@ describe('the scratch host', () => {
     expect(() => assertScratchDataDir(LIVE_DATA_DIR)).toThrow(/live data directory/);
     expect(() => assertScratchDataDir(join(LIVE_DATA_DIR, 'nested'))).toThrow(/live data directory/);
     expect(() => assertScratchDataDir(join(LIVE_DATA_DIR, '..', '.data-other'))).not.toThrow();
+    expect(() => assertScratchDataDir(join(tmpdir(), 'landflow-e2e-x'))).not.toThrow();
+    // a directory whose name merely starts with two dots is not "outside"
+    expect(() => assertScratchDataDir(join(LIVE_DATA_DIR, '..', '..data-like'))).not.toThrow();
   });
 
   it('asks the OS for a free unprivileged port', async () => {
     expect(await freePort()).toBeGreaterThan(1023);
+  });
+});
+
+describe('assertNoEnvFiles', () => {
+  it('refuses a directory with an .env file, but not .env.example', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'landflow-env-'));
+    try {
+      writeFileSync(join(dir, '.env.example'), 'X=1\n');
+      expect(() => assertNoEnvFiles(dir)).not.toThrow();
+      writeFileSync(join(dir, '.env.local'), 'DATABASE_URL=nope\n');
+      expect(() => assertNoEnvFiles(dir)).toThrow(/\.env\.local/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('dataStamp (the teardown\'s check that apps/web/.data is untouched)', () => {
+  it('is "absent" for a missing directory and changes when a file is added, edited or removed', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'landflow-stamp-'));
+    try {
+      expect(dataStamp(join(dir, 'nope'))).toBe('absent');
+      const same = dataStamp(dir);
+      expect(dataStamp(dir)).toBe(same);
+      writeFileSync(join(dir, 'a.db'), 'x');
+      const added = dataStamp(dir);
+      expect(added).not.toBe(same);
+      const old = new Date(Date.now() - 60_000);
+      utimesSync(join(dir, 'a.db'), old, old);
+      const touched = dataStamp(dir);
+      expect(touched).not.toBe(added);
+      mkdirSync(join(dir, 'sub'));
+      writeFileSync(join(dir, 'sub', 'b'), 'y');
+      expect(dataStamp(dir)).not.toBe(touched);
+      rmSync(join(dir, 'sub'), { recursive: true });
+      expect(dataStamp(dir)).not.toBe(added);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

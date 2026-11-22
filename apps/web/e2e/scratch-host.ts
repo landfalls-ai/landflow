@@ -5,11 +5,11 @@
  * `prod: true` starts `next start` on an existing build instead (the CSP smoke test, `LANDFLOW_E2E_PROD=1`).
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join, relative, resolve, sep } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const WEB_DIR = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -39,7 +39,7 @@ export interface ScratchHost {
 /** Throws when `dir` is the live data directory or inside it. */
 export function assertScratchDataDir(dir: string): void {
   const rel = relative(LIVE_DATA_DIR, resolve(dir));
-  if (rel === '' || (!rel.startsWith('..') && !rel.startsWith(sep))) throw new Error(`scratch host: refusing to use ${dir}: it is apps/web/.data (the live data directory)`);
+  if (rel === '' || !(rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel))) throw new Error(`scratch host: refusing to use ${dir}: it is apps/web/.data (the live data directory)`);
 }
 
 /** A free TCP port on loopback (asked of the OS; the caller binds it a moment later). */
@@ -83,7 +83,14 @@ function tail(file: string): string {
   }
 }
 
+/** Throws when `apps/web` holds a `.env*` file (but `.env.example`): Next would load it into the scratch host, keys and database URL included. */
+export function assertNoEnvFiles(dir: string = WEB_DIR): void {
+  const found = readdirSync(dir).filter((name) => name.startsWith('.env') && name !== '.env.example');
+  if (found.length) throw new Error(`scratch host: refusing to start: ${found.join(', ')} in apps/web would be loaded by Next into the scratch host (real keys or a database URL). Move it away for the run.`);
+}
+
 export async function startScratchHost(options: ScratchHostOptions = {}): Promise<ScratchHost> {
+  assertNoEnvFiles();
   const ownsDir = !options.dataDir;
   const dataDir = options.dataDir ?? mkdtempSync(join(tmpdir(), 'landflow-e2e-'));
   assertScratchDataDir(dataDir);
@@ -95,9 +102,18 @@ export async function startScratchHost(options: ScratchHostOptions = {}): Promis
 
   const env: Record<string, string> = {
     ...baseEnv(),
-    // Never reach beyond loopback: no proxy, and nothing for a vendor client to find.
-    NO_PROXY: '*',
-    no_proxy: '*',
+    // The caller's extras first, so they can never replace what follows (the data directory above all).
+    ...options.env,
+    // The host process itself reaches nothing beyond loopback: every outside fetch goes to a proxy address that refuses
+    // (127.0.0.1:9, the discard port), and loopback is exempt so the fakes and the host's own calls work. The page-level
+    // guard in fixtures.ts covers the browser; this covers the server (a node, a webhook, a model call).
+    NODE_USE_ENV_PROXY: '1',
+    HTTP_PROXY: 'http://127.0.0.1:9',
+    HTTPS_PROXY: 'http://127.0.0.1:9',
+    http_proxy: 'http://127.0.0.1:9',
+    https_proxy: 'http://127.0.0.1:9',
+    NO_PROXY: 'localhost,127.0.0.1,::1',
+    no_proxy: 'localhost,127.0.0.1,::1',
     PORT: String(port),
     LANDFLOW_DATA_DIR: dataDir,
     LANDFLOW_PUBLIC_URL: url,
@@ -112,12 +128,19 @@ export async function startScratchHost(options: ScratchHostOptions = {}): Promis
     LANDFLOW_CSP: 'enforce',
     NEXT_TELEMETRY_DISABLED: '1',
     ...(options.prod && { LANDFLOW_PROFILE: 'production', NODE_ENV: 'production', LANDFLOW_OUTBOUND_BLOCK_PRIVATE: 'false', LANDFLOW_CODE_IN_PROCESS: 'true' }),
-    ...options.env,
   };
 
   const next = createRequire(join(WEB_DIR, 'package.json')).resolve('next/dist/bin/next');
-  const args = options.prod ? [next, 'start', '--port', String(port)] : [next, 'dev', '--port', String(port)];
-  const child = spawn(process.execPath, args, { cwd: WEB_DIR, env, stdio: ['ignore', 'pipe', 'pipe'], detached: false });
+  const args = [next, options.prod ? 'start' : 'dev', '--port', String(port), '--hostname', '127.0.0.1'];
+  // Its own process group, so stop() and a crash of the runner take Next's worker with it (kill -pid).
+  const child = spawn(process.execPath, args, { cwd: WEB_DIR, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  const killGroup = (signal: NodeJS.Signals) => {
+    try {
+      if (child.pid) process.kill(-child.pid, signal);
+    } catch {
+      // already gone
+    }
+  };
   child.stdout?.pipe(log);
   child.stderr?.pipe(log);
 
@@ -126,21 +149,22 @@ export async function startScratchHost(options: ScratchHostOptions = {}): Promis
     if (stopped) return;
     stopped = true;
     if (child.exitCode === null) {
-      child.kill('SIGTERM');
+      killGroup('SIGTERM');
       await new Promise<void>((done) => {
-        const force = setTimeout(() => child.kill('SIGKILL'), 8_000);
+        const force = setTimeout(() => killGroup('SIGKILL'), 8_000);
         child.once('exit', () => {
           clearTimeout(force);
           done();
         });
       });
     }
+    killGroup('SIGKILL'); // whatever the worker still held
     log.end();
     if (ownsDir) rmSync(dataDir, { recursive: true, force: true });
     rmSync(logFile, { force: true });
   };
   // A crashed runner must not leave a host behind.
-  process.once('exit', () => child.kill('SIGKILL'));
+  process.once('exit', () => killGroup('SIGKILL'));
 
   try {
     await waitForHealth(url, child, logFile, options.timeoutMs ?? 240_000);

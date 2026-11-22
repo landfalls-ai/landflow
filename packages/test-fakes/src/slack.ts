@@ -71,11 +71,13 @@ function route(state: SlackState, request: FakeRequest): FakeReply {
     case 'chat.postMessage': {
       const found = find(state, p.channel);
       if (!found) return fail('channel_not_found');
-      if (typeof p.text !== 'string' || !p.text) return fail('no_text');
+      const text = typeof p.text === 'string' ? p.text : '';
+      // Slack takes blocks alone (the text is then only the notification fallback).
+      if (!text && !(Array.isArray(p.blocks) && p.blocks.length)) return fail('no_text');
       const [, channel] = found;
       if (p.thread_ts && !channel.messages.some((m) => m.ts === p.thread_ts)) return fail('thread_not_found');
       state.clock += 1;
-      const message: SlackMessage = { ts: tsOf(state.clock), text: p.text, user: 'U000BOT', ...(p.thread_ts ? { thread_ts: String(p.thread_ts) } : {}), ...(Array.isArray(p.blocks) ? { blocks: p.blocks } : {}) };
+      const message: SlackMessage = { ts: tsOf(state.clock), text, user: 'U000BOT', ...(p.thread_ts ? { thread_ts: String(p.thread_ts) } : {}), ...(Array.isArray(p.blocks) ? { blocks: p.blocks } : {}) };
       channel.messages.push(message);
       return ok({ channel: channel.id, ts: message.ts, message: messageJson(message) });
     }
@@ -135,6 +137,8 @@ export function fakeSlack(seed: Partial<SlackSeed> = {}): Fake<SlackState> {
     token: seed.token ?? SLACK_TOKEN,
     // Slack answers 200 {ok:false} even for a bad token.
     refusal: () => fail('invalid_auth'),
+    // A script answers in Slack's own error shape (a 429 is `ratelimited`, as the node expects).
+    scriptBody: (script) => ({ ok: false, error: script.status === 429 ? 'ratelimited' : 'fatal_error' }),
     initial: () => ({
       channels: Object.fromEntries(names.map((name, i) => [`#${name}`, { id: `C0${String(i + 1).padStart(2, '0')}FAKE`, messages: [] }])),
       users: [

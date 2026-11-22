@@ -112,8 +112,27 @@ const pullJson = (repo: GitHubRepo, pull: GitHubPull, owner: string, name: strin
   html_url: `${WEB}/${owner}/${name}/pull/${pull.number}`,
 });
 
+/** The JSON fields a request may carry (all optional: a client can send anything). */
+interface Payload {
+  ref?: string;
+  sha?: string;
+  message?: string;
+  /** A commit's tree sha, or a new tree's entries. */
+  tree?: string | Array<{ path: string; sha: string }>;
+  base_tree?: string;
+  parents?: string[];
+  content?: string;
+  encoding?: string;
+  head?: string;
+  base?: string;
+  title?: string;
+  body?: string;
+  draft?: boolean;
+  branch?: string;
+}
+
 function repoRoute(repo: GitHubRepo, owner: string, name: string, rest: string, request: FakeRequest): FakeReply {
-  const body = (request.body ?? {}) as Record<string, any>;
+  const body = (request.body ?? {}) as Payload;
   const { method } = request;
   if (rest === '' && method === 'GET') {
     return { body: { id: 1, name, full_name: `${owner}/${name}`, private: true, default_branch: repo.defaultBranch, html_url: `${WEB}/${owner}/${name}`, permissions: { push: true } } };
@@ -125,9 +144,9 @@ function repoRoute(repo: GitHubRepo, owner: string, name: string, rest: string, 
     return id ? { body: { ref: `refs/heads/${m[1]}`, object: { sha: id, type: 'commit' } } } : notFound();
   }
   if (rest === '/git/refs' && method === 'POST') {
-    const branch = String(body.ref).replace(/^refs\/heads\//, '');
+    const branch = String(body.ref ?? '').replace(/^refs\/heads\//, '');
     if (repo.branches[branch]) return invalid('Reference already exists');
-    if (!repo.commits[body.sha]) return invalid('Object does not exist');
+    if (!body.sha || !repo.commits[body.sha]) return invalid('Object does not exist');
     repo.branches[branch] = body.sha;
     refresh(repo);
     return { status: 201, body: { ref: body.ref, object: { sha: body.sha, type: 'commit' } } };
@@ -135,7 +154,7 @@ function repoRoute(repo: GitHubRepo, owner: string, name: string, rest: string, 
   m = /^\/git\/refs\/heads\/(.+)$/.exec(rest);
   if (m && method === 'PATCH') {
     if (!repo.branches[m[1]]) return notFound();
-    if (!repo.commits[body.sha]) return invalid('Object does not exist');
+    if (!body.sha || !repo.commits[body.sha]) return invalid('Object does not exist');
     repo.branches[m[1]] = body.sha;
     refresh(repo);
     return { body: { ref: `refs/heads/${m[1]}`, object: { sha: body.sha } } };
@@ -146,8 +165,9 @@ function repoRoute(repo: GitHubRepo, owner: string, name: string, rest: string, 
     return commit ? { body: { sha: m[1], tree: { sha: commit.tree }, message: commit.message } } : notFound();
   }
   if (rest === '/git/commits' && method === 'POST') {
-    if (!repo.trees[body.tree]) return invalid('Tree SHA does not exist');
-    const id = addCommit(repo, body.message, body.tree, body.parents ?? []);
+    const treeSha = typeof body.tree === 'string' ? body.tree : '';
+    if (!repo.trees[treeSha]) return invalid('Tree SHA does not exist');
+    const id = addCommit(repo, body.message ?? '', treeSha, body.parents ?? []);
     return { status: 201, body: { sha: id, html_url: `${WEB}/${owner}/${name}/commit/${id}`, message: body.message } };
   }
   if (rest === '/git/blobs' && method === 'POST') {
@@ -160,10 +180,10 @@ function repoRoute(repo: GitHubRepo, owner: string, name: string, rest: string, 
     return content === undefined ? notFound() : { body: { sha: m[1], encoding: 'base64', content, size: Buffer.from(content, 'base64').length } };
   }
   if (rest === '/git/trees' && method === 'POST') {
-    const base = repo.trees[body.base_tree];
+    const base = repo.trees[body.base_tree ?? ''];
     if (body.base_tree && !base) return invalid('Base tree does not exist');
     const files = { ...base };
-    for (const entry of body.tree ?? []) {
+    for (const entry of Array.isArray(body.tree) ? body.tree : []) {
       if (!repo.blobs[entry.sha]) return invalid(`GitRPC::BadObjectState: ${entry.path}`);
       files[entry.path] = entry.sha;
     }
@@ -174,7 +194,7 @@ function repoRoute(repo: GitHubRepo, owner: string, name: string, rest: string, 
   if (m) return contents(repo, owner, name, request, m[1] ?? '');
 
   if (rest === '/pulls' && method === 'POST') {
-    const head = String(body.head).replace(/^.*:/, '');
+    const head = String(body.head ?? '').replace(/^.*:/, '');
     if (!repo.branches[head]) return invalid('Validation Failed', [{ resource: 'PullRequest', field: 'head', code: 'invalid' }]);
     if (!repo.branches[String(body.base)]) return invalid('Validation Failed', [{ resource: 'PullRequest', field: 'base', code: 'invalid' }]);
     if (!body.title) return invalid('Validation Failed', [{ resource: 'PullRequest', field: 'title', code: 'missing_field' }]);
@@ -212,7 +232,7 @@ function repoRoute(repo: GitHubRepo, owner: string, name: string, rest: string, 
 
 function contents(repo: GitHubRepo, owner: string, name: string, request: FakeRequest, path: string): FakeReply {
   if (request.method === 'PUT') {
-    const body = (request.body ?? {}) as Record<string, any>;
+    const body = (request.body ?? {}) as Payload;
     const branch = String(body.branch ?? repo.defaultBranch);
     const tip = repo.branches[branch];
     if (!tip) return { status: 404, body: { message: 'Branch not found' } };

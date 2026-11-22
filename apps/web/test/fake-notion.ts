@@ -883,7 +883,12 @@ export async function startFakeNotion(options: FakeNotionOptions = {}): Promise<
   return fake;
 }
 
-/** The contract's view of a running fake: it listens from the start, so `start()` only reports the URL. */
+/**
+ * The contract's view of a running fake: it listens from the start, so `start()` only reports the URL. The log is the
+ * fake's own, mapped: it keeps no headers (`headers` is empty), `raw` is the parsed body serialised again, `refused` means
+ * a 401 (a missing Notion-Version is a 400 and counts as answered), and `scripted` is always false (a scripted failure
+ * is not told apart from a real one in the fake's log).
+ */
 function asFake(notion: FakeNotion, stop: () => Promise<void>): Fake<FakeNotionSnapshot> {
   return {
     name: 'notion',

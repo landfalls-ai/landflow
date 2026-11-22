@@ -86,6 +86,8 @@ export interface FakeSpec<S> {
   auth?: (request: FakeRequest, token: string) => boolean;
   /** The answer to an unauthorised request (default 401 `{ error: 'unauthorized' }`). */
   refusal?: (request: FakeRequest) => FakeReply;
+  /** The body a script without its own `body` sends (default `{ error: 'scripted' }`): a service with its own error shape says so here. */
+  scriptBody?: (script: FakeScript) => unknown;
   /** A fresh state: called at definition and by every `reset()`. */
   initial(): S;
   /** Handle one authorised request: edit `state` and answer. A throw is a 500. */
@@ -121,7 +123,7 @@ export function defineFake<S>(spec: FakeSpec<S>): Fake<S> {
       if (script.left <= 0) scripts.splice(index, 1);
       if (script.delayMs) await new Promise((resolve) => setTimeout(resolve, script.delayMs));
       return {
-        reply: { status: script.status, body: script.body ?? { error: 'scripted' }, ...(script.retryAfter !== undefined && { headers: { 'retry-after': String(script.retryAfter) } }) },
+        reply: { status: script.status, body: script.body ?? spec.scriptBody?.(script) ?? { error: 'scripted' }, ...(script.retryAfter !== undefined && { headers: { 'retry-after': String(script.retryAfter) } }) },
         refused: false,
         scripted: true,
       };
@@ -141,6 +143,8 @@ export function defineFake<S>(spec: FakeSpec<S>): Fake<S> {
       const current = createServer((req, res) => {
         const chunks: Buffer[] = [];
         req.on('data', (chunk: Buffer) => chunks.push(chunk));
+        // A client that drops mid-request must not leave an unhandled error on the server.
+        req.on('error', () => res.destroy());
         req.on('end', async () => {
           const target = new URL(req.url ?? '/', 'http://fake');
           const raw = Buffer.concat(chunks);

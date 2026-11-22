@@ -50,6 +50,21 @@ describe('chat.postMessage', () => {
   });
 });
 
+describe('blocks and scripts', () => {
+  it('takes blocks without text', async () => {
+    expect(await api('chat.postMessage', { channel: '#ops', blocks: [{ type: 'divider' }] })).toMatchObject({ ok: true });
+    expect(slack.state().channels['#ops'].messages[0]).toMatchObject({ text: '', blocks: [{ type: 'divider' }] });
+  });
+
+  it('answers a scripted 429 as Slack does: ratelimited with Retry-After', async () => {
+    slack.script({ status: 429, retryAfter: 2 });
+    const response = await fetch(`${slack.url}/chat.postMessage`, { method: 'POST', headers: { authorization: `Bearer ${slack.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ channel: '#ops', text: 'x' }) });
+    expect(response.status).toBe(429);
+    expect(response.headers.get('retry-after')).toBe('2');
+    expect(await response.json()).toEqual({ ok: false, error: 'ratelimited' });
+  });
+});
+
 describe('reads', () => {
   it('pages conversations.history newest first with a cursor, leaving thread replies out', async () => {
     const id = slack.state().channels['#ops'].id;

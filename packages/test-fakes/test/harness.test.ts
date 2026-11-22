@@ -106,6 +106,13 @@ describe('script', () => {
     expect((await call(fake, '/items')).status).toBe(200);
   });
 
+  it('uses the fake\'s own error body for a script without one', async () => {
+    const fake = defineFake<Counter>({ name: 'own', token: 't', scriptBody: (s) => ({ ok: false, code: s.status }), initial: () => ({ items: [] }), routes: () => ({ body: {} }) });
+    await start(fake);
+    fake.script({ status: 503 });
+    expect(await (await fetch(`${fake.url}/x`)).json()).toEqual({ ok: false, code: 503 });
+  });
+
   it('delays', async () => {
     const fake = await start();
     fake.script({ status: 200, delayMs: 120 });
