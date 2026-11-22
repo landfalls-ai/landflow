@@ -25,6 +25,8 @@ const access = await import('@/lib/server/rag/collection-access');
 const store = await import('@/lib/server/knowledge-sources/store');
 const claim = await import('@/lib/server/knowledge-sources/claim');
 const { runSync, startSync, sourceKeyOf } = await import('@/lib/server/knowledge-sources/sync');
+const { knowledgeSourceScheduler, MAX_CONCURRENT_SYNCS } = await import('@/lib/server/knowledge-sources/scheduler');
+const { listSourceRows } = store;
 
 const unique = (name: string) => `${name}-${Math.random().toString(36).slice(2, 7)}`;
 const base = (collection: string): VectorKnowledgeBaseConfig => ({ id: 'kb1', type: 'knowledge', source: 'vector', name: 'search_docs', description: 'Search the docs', store: 'memory', collection, embeddings: { provider: 'none', model: 'bm25' }, topK: 4 });
@@ -238,5 +240,105 @@ describe('access and one run at a time', () => {
     const run = (await runSync(s.id, 'manual', { connector: leaky }))!;
     expect(JSON.stringify(run)).not.toMatch(/secret|token|Bearer/i);
     expect(run.errors).toEqual([{ item: 'a.md', reason: 'Request failed (403)' }]);
+  });
+});
+
+describe('the scheduler', () => {
+  const T0 = Date.UTC(2030, 0, 1, 8, 0, 0);
+  const minutes = (n: number) => T0 + n * 60_000;
+  /** A folder source on a schedule, due at once. */
+  async function scheduled(schedule: 'hourly' | 'daily' | 'manual', collection = unique('sch')) {
+    const s = folderSource('unused', collection);
+    store.updateSourceRow(s.id, { schedule });
+    await claim.setNextAt(s.id, schedule === 'manual' ? null : new Date(T0).toISOString());
+    return s;
+  }
+  const settledAll = async () => {
+    while (knowledgeSourceScheduler.active()) await new Promise((resolve) => setTimeout(resolve, 5));
+  };
+  const one = (...items: Array<{ key: string }>) => ({ connector: stub(items) });
+  // Only the sources this test made are due: every other source of the file is paused for the duration.
+  const only = (...mine: Array<{ id: string }>) => {
+    for (const row of store.allSourceRows()) store.updateSourceRow(row.id, { paused: mine.some((m) => m.id === row.id) ? 0 : 1, paused_reason: 'other test' });
+  };
+
+  it('starts an hourly source when it is due and not before, again an hour after it ended', async () => {
+    const s = await scheduled('hourly');
+    only(s);
+    expect(await knowledgeSourceScheduler.tick(T0 - 1000, one({ key: 'a' }))).toBe(0);
+    expect(await knowledgeSourceScheduler.tick(T0, one({ key: 'a' }))).toBe(1);
+    await settledAll();
+    const run = store.listRuns(s.id).runs[0];
+    expect(run).toMatchObject({ trigger: 'schedule', status: 'ok', counts: { added: 1 } });
+    expect(claim.stateOf(s.id)!.next_at).toBe(new Date(T0 + 3600_000).toISOString());
+    expect(await knowledgeSourceScheduler.tick(minutes(30), one({ key: 'a' }))).toBe(0);
+    expect(await knowledgeSourceScheduler.tick(minutes(61), one({ key: 'a' }))).toBe(1);
+    await settledAll();
+    expect(store.listRuns(s.id).runs).toHaveLength(2);
+  });
+
+  it('never starts a paused source or a manual one', async () => {
+    const paused = await scheduled('hourly');
+    const manual = await scheduled('manual');
+    only(manual, paused);
+    store.updateSourceRow(paused.id, { paused: 1, paused_reason: 'Paused' });
+    expect(await knowledgeSourceScheduler.tick(minutes(500), one({ key: 'a' }))).toBe(0);
+    expect(store.listRuns(paused.id).runs).toEqual([]);
+    expect(store.listRuns(manual.id).runs).toEqual([]);
+  });
+
+  it('a sync a cap cut short is due again in a minute (D12)', async () => {
+    const s = await scheduled('hourly');
+    only(s);
+    const items = Array.from({ length: SOURCE_LIMITS.itemsPerSync + 5 }, (_, i) => ({ key: `i${i}` }));
+    expect(await knowledgeSourceScheduler.tick(T0, { connector: stub(items) })).toBe(1);
+    await settledAll();
+    expect(store.listRuns(s.id).runs[0].status).toBe('partial');
+    expect(new Date(claim.stateOf(s.id)!.next_at!).getTime() - T0).toBe(SOURCE_LIMITS.retryAfterCapMs);
+    expect(await knowledgeSourceScheduler.tick(T0 + 30_000, { connector: stub(items) })).toBe(0);
+    expect(await knowledgeSourceScheduler.tick(T0 + 61_000, { connector: stub(items) })).toBe(1);
+    await settledAll();
+    expect(store.listRuns(s.id).runs[0]).toMatchObject({ status: 'ok', counts: { added: 5 } });
+  }, 120_000);
+
+  it('an expired lease closes its run as failed “The process stopped” and frees the source', async () => {
+    const s = await scheduled('hourly');
+    only(s);
+    const dead = store.insertRun(s.id, 'schedule', new Date(T0), 'run-dead');
+    expect(await claim.claimSource(s.id, dead.id, T0)).toBe(true);
+    expect(await knowledgeSourceScheduler.tick(T0 + 1000, one({ key: 'a' }))).toBe(0); // the lease still holds
+    expect(await knowledgeSourceScheduler.tick(T0 + claim.LEASE_MS + 1000, one({ key: 'a' }))).toBe(1); // freed, and the source is due again
+    await settledAll();
+    const runs = store.listRuns(s.id).runs;
+    expect(runs.find((r) => r.id === 'run-dead')).toMatchObject({ status: 'failed', note: 'The process stopped' });
+    expect(runs.find((r) => r.id !== 'run-dead')).toMatchObject({ status: 'ok' });
+    expect(claim.stateOf(s.id)!.run_id).toBeNull();
+  });
+
+  it('pauses the sources of a knowledge base that was removed and deletes the sources of an agent that was deleted (D15)', async () => {
+    const noBase = await scheduled('hourly');
+    const noAgent = await scheduled('hourly');
+    only(noBase, noAgent);
+    agentStore.saveDraft(noBase.agent.id, { ...noBase.agent, tools: [] });
+    agentStore.delete(noAgent.agent.id);
+    expect(await knowledgeSourceScheduler.tick(T0, one({ key: 'a' }))).toBe(0);
+    expect(store.getSource(noBase.id)).toMatchObject({ paused: 1, paused_reason: 'The knowledge base was removed' });
+    expect(store.getSource(noAgent.id)).toBeUndefined();
+    expect(listSourceRows(noAgent.agent.id, 'kb1')).toEqual([]);
+  });
+
+  it('runs at most two syncs at once on this process', async () => {
+    const sources = await Promise.all([scheduled('hourly'), scheduled('hourly'), scheduled('hourly'), scheduled('hourly')]);
+    only(...sources);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const slow = { list: async () => (await gate, { items: [], complete: true }), fetch: stub([]).fetch };
+    expect(await knowledgeSourceScheduler.tick(T0, { connector: slow })).toBe(MAX_CONCURRENT_SYNCS);
+    expect(knowledgeSourceScheduler.active()).toBe(2);
+    expect(await knowledgeSourceScheduler.tick(T0 + 1000, { connector: slow })).toBe(0);
+    release();
+    await settledAll();
+    expect(await knowledgeSourceScheduler.tick(T0 + 2000, { connector: slow })).toBe(2);
+    await settledAll();
   });
 });
