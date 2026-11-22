@@ -122,8 +122,9 @@ export function viewerOf(user: UserRecord): Viewer {
   };
 }
 
-export function userView(user: UserRecord): UserView {
-  return { ...viewerOf(user), createdAt: user.createdAt, ...(user.lastLoginAt && { lastLoginAt: user.lastLoginAt }) };
+/** `mfaFactors`: the user's confirmed second factors (counted by `mfaFactorCounts`); never pass `userView` straight to `map`. */
+export function userView(user: UserRecord, mfaFactors?: number): UserView {
+  return { ...viewerOf(user), ...(mfaFactors ? { mfaFactors } : {}), createdAt: user.createdAt, ...(user.lastLoginAt && { lastLoginAt: user.lastLoginAt }) };
 }
 
 export function countUsers(): number {
@@ -313,4 +314,9 @@ export function setUserDisabled(id: string, disabled: boolean): UserRecord {
 /** Display names by user id, for "created by" and lock labels. */
 export function userNames(): Map<string, string> {
   return new Map(authDb().all<{ id: string; name: string }>('SELECT id, name FROM users').map((row) => [row.id, row.name]));
+}
+
+/** Confirmed second factors per user id (Settings → Users shows who has one). */
+export function mfaFactorCounts(): Map<string, number> {
+  return new Map(authDb().all<{ user_id: string; n: number }>('SELECT user_id, COUNT(*) AS n FROM user_mfa_factors WHERE confirmed_at IS NOT NULL GROUP BY user_id').map((row) => [row.user_id, Number(row.n)]));
 }
