@@ -63,6 +63,27 @@ describe('FieldDiff', () => {
   });
 });
 
+describe('tone and title', () => {
+  it('a change can carry a tone for its new value and a title with the full list (the workflow version history keeps its colours and tooltip)', () => {
+    const html = renderToStaticMarkup(
+      createElement(FieldDiff, {
+        changes: [
+          { field: 'Added', label: 'Added', kind: 'changed', after: 'A, B +2', tone: 'good', title: 'A, B, C, D, E, F' },
+          { field: 'Removed', label: 'Removed', kind: 'changed', after: 'X', tone: 'bad' },
+          { field: 'Moved', label: 'Moved', kind: 'changed', after: 'Y', tone: 'muted' },
+          { field: 'Changed', label: 'Changed', kind: 'changed', after: 'Z' },
+        ],
+        unchanged: 0,
+      }),
+    );
+    expect(html).toMatch(/text-gn[^>]*>A, B \+2</);
+    expect(html).toMatch(/text-rd[^>]*>X</);
+    expect(html).toMatch(/text-t3[^>]*>Y</);
+    expect(html).toMatch(/text-t1[^>]*>Z</);
+    expect(html).toContain('title="A, B, C, D, E, F"');
+  });
+});
+
 describe('the history sheet', () => {
   const entries: HistoryEntry[] = [
     { id: 'v1', label: 'v1', by: 'dana', at: '2026-11-01T10:00:00.000Z' },
@@ -77,6 +98,23 @@ describe('the history sheet', () => {
     expect(html).toContain('sam');
     expect(html).toContain('Nov 3');
     expect(html).toContain('live');
+  });
+
+  it('two entries with the same time keep the list order: the one listed first is the newer', async () => {
+    const same = '2026-11-22T10:52:35.000Z';
+    const tied: HistoryEntry[] = [
+      { id: 'v3', label: 'v3', at: same },
+      { id: 'v2', label: 'v2', at: same },
+      { id: 'v1', label: 'v1', at: same },
+    ];
+    const compare = vi.fn(async () => ({ changes: [], unchanged: 0 }));
+    await compareSelected(tied, ['v1', 'v3'], compare);
+    expect(compare).toHaveBeenLastCalledWith('v1', 'v3');
+    await compareSelected(tied, ['v3', 'v2'], compare);
+    expect(compare).toHaveBeenLastCalledWith('v2', 'v3');
+    const html = renderToStaticMarkup(createElement(HistoryList, { entries: tied, selected: [], onToggle: () => {} }));
+    expect(html.indexOf('v3')).toBeLessThan(html.indexOf('v2'));
+    expect(html.indexOf('v2')).toBeLessThan(html.indexOf('v1'));
   });
 
   it('keeps at most two picked, the newest pick replacing the oldest', () => {
@@ -146,6 +184,10 @@ describe('the agent history sheet', () => {
     expect(entries.map((e) => e.label)).toEqual(['v3', 'v2', 'v1']);
     expect(entries[0].note).toBe('Live · used by Alert intake v4 (production)');
     expect(entries[1].note).toBeUndefined();
+    // Who published each, when the list knows.
+    const named = agentHistoryEntries(v(3, '2026-11-03T10:00:00.000Z'), [v(2, '2026-11-02T10:00:00.000Z')], [{ version: 3, publishedAt: '2026-11-03T10:00:00.000Z', publishedBy: 'u1', publishedByName: 'Dana', usedBy: [] }, { version: 2, publishedAt: '2026-11-02T10:00:00.000Z', usedBy: [] }]);
+    expect(named[0].by).toBe('Dana');
+    expect(named[1].by).toBeUndefined();
     expect(agentHistoryEntries(undefined, [v(2, '2026-11-02T10:00:00.000Z')], []).map((e) => e.label)).toEqual(['v2']);
   });
 

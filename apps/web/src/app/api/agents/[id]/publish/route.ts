@@ -8,6 +8,7 @@ import { agentStore, configOf } from '@/lib/server/agents/store';
 import { z } from 'zod';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { redeployIfDeployed } from '@/lib/server/kagent/deploy';
+import { currentPrincipal } from '@/lib/server/auth/guard';
 import { hasPrompt } from '@/lib/shared/persona';
 
 export const dynamic = 'force-dynamic';
@@ -38,7 +39,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
     const now = agentStore.get(id);
     if (!now || JSON.stringify(configOf(now)) !== checked) return error('The draft changed while the eval gate was checking it. Publish again to check the new draft.', 409);
   }
-  const agent = agentStore.publish(id)!;
+  const agent = agentStore.publish(id, currentPrincipal()?.user.id)!;
   if (gate?.run && agent.published) adoptRun(gate.run, agent.published.version);
   const kagent = await redeployIfDeployed(agent);
   return json({ agent: kagent && !('error' in kagent) ? (agentStore.get(id) ?? agent) : agent, ...(kagent && { kagent }), ...(gate && !gate.skipped && { gate }) });

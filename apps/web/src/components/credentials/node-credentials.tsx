@@ -6,7 +6,7 @@
  * ones are created in that project.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pencil, Plus, TriangleAlert } from 'lucide-react';
+import { Pencil, Plus, TriangleAlert, X } from 'lucide-react';
 import type { NodeCredentialRequirement } from '@landflow/protocol';
 import type { CredentialRefs } from '../editor/param-form';
 import { Button } from '../ui/button';
@@ -98,8 +98,14 @@ export function NodeCredentials({
                 <Plus className="size-3.5" />
               </Button>
               {ref && !missing && (
-                <Button size="icon" variant="ghost" onClick={() => setDialog({ requirement: requirement.name, type, id: ref.id })} title="Edit this credential" aria-label="Edit credential">
+                <Button size="icon" variant="ghost" onClick={() => setDialog({ requirement: requirement.name, type, id: ref.id })} title="Edit this credential" aria-label="Edit credential" className="max-md:size-11">
                   <Pencil className="size-3.5" />
+                </Button>
+              )}
+              {/* A credential that was set can be taken off again (the native select had an empty choice); the pick rule leaves a cleared slot alone. */}
+              {ref && (
+                <Button size="icon" variant="ghost" onClick={() => set(requirement.name, undefined)} title="Clear this credential" aria-label="Clear credential" className="max-md:size-11">
+                  <X className="size-3.5" />
                 </Button>
               )}
             </div>

@@ -1,7 +1,8 @@
 'use client';
 /**
  * A grid of typed columns (docs/ui-review.md#controls), drawn from the data tables page's editable table: click a cell to
- * edit it (Enter or Tab saves and Tab moves right, Escape cancels, a boolean is a checkbox), sort by a header, select
+ * edit it, or Tab to it, move with the arrow keys and open it with Enter or F2 (Enter or Tab saves and Tab moves right,
+ * Escape cancels, a boolean is a checkbox), sort by a header, select
  * rows, a sticky header, an empty state, and sideways scrolling on a phone. It fetches nothing and saves nothing: a
  * saved cell calls `onEdit`, a sort `onSort`, a selection `onSelect`; each can be controlled by the page (a server-side
  * sort, a selection a toolbar shows) or left to the grid. The keys are `data-grid-model.ts`.
@@ -9,7 +10,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { cycleSort, gridKey, hasEditor, selectAll, sortRows, startEdit, toggleSelect, valueToDraft, type GridColumnType, type GridContext, type GridKey, type GridState } from './data-grid-model';
+import { cycleSort, gridKey, hasEditor, moveCursor, selectAll, sortRows, startEdit, toggleSelect, valueToDraft, type ArrowKey, type GridColumnType, type GridContext, type GridKey, type GridState } from './data-grid-model';
 
 export type { GridColumnType } from './data-grid-model';
 
@@ -65,6 +66,8 @@ export interface DataGridProps<R extends { id: string | number }> {
   trailingHeader?: ReactNode;
   /** Open a cell for editing, once, when this changes (a row just added). */
   openCell?: { rowId: string; key: string };
+  /** Tab past the last editable cell of a row goes on to the next row (Shift+Tab to the previous); off (the default), editing ends there. */
+  wrapRows?: boolean;
   /** The table's minimum width in pixels: narrower screens scroll sideways. */
   minWidth?: number;
   /** The scroll box's classes (a height cap, the border). */
@@ -138,6 +141,7 @@ export function DataGrid<R extends { id: string | number }>({
   rowActions,
   trailingHeader,
   openCell,
+  wrapRows,
   minWidth,
   className,
   label,
@@ -150,18 +154,35 @@ export function DataGrid<R extends { id: string | number }>({
   const modelColumns = useMemo(() => columns.map((c) => ({ key: c.key, type: c.type, editable: c.editable && !readOnly, options: c.options })), [columns, readOnly]);
   const valueOf = (column: GridColumn<R>, row: R): unknown => (column.value ? column.value(row) : (row as unknown as Record<string, unknown>)[column.key]);
   const shown = useMemo(() => (controlledSort ? rows : sortRows(rows, modelColumns, sort, (row, key) => { const c = columns.find((x) => x.key === key); return c ? valueOf(c, row) : undefined; })), [rows, controlledSort, modelColumns, sort, columns]);
-  const ctx: GridContext = { cols: modelColumns, rows: shown.length, value: (row, col) => valueOf(columns[col], shown[row]) };
+  const rowIds = useMemo(() => shown.map(rowKey), [shown, rowKey]);
+  const ctx: GridContext = { cols: modelColumns, rowIds, wrapRows, value: (rowId, col) => valueOf(columns[col], shown[rowIds.indexOf(rowId)]) };
+  const table = useRef<HTMLTableElement>(null);
+  // After a key ends an edit the focus is on nothing (the editor went): it goes back to the cell, so the keyboard carries on.
+  const refocus = useRef(false);
+  const focusCell = (rowId: string, col: number) => {
+    const el = [...(table.current?.querySelectorAll<HTMLElement>('td[data-col]') ?? [])].find((c) => c.dataset.row === rowId && c.dataset.col === String(col));
+    el?.focus();
+  };
+  useEffect(() => {
+    if (state.editing || !refocus.current) return;
+    refocus.current = false;
+    if (state.cursor) focusCell(state.cursor.rowId, state.cursor.col);
+  });
+  // An edit on a row that is gone is over.
+  useEffect(() => {
+    if (state.editing && !rowIds.includes(state.editing.rowId)) setState((s) => ({ ...s, editing: undefined }));
+  }, [rowIds, state.editing]);
 
   // Open a cell asked for from outside, once per request.
   const opened = useRef<string>('');
   useEffect(() => {
     if (!openCell) return;
     const mark = `${openCell.rowId}:${openCell.key}`;
-    const row = shown.findIndex((r) => rowKey(r) === openCell.rowId);
+    const row = shown.find((r) => rowKey(r) === openCell.rowId);
     const col = columns.findIndex((c) => c.key === openCell.key);
-    if (row < 0 || col < 0 || opened.current === mark || !hasEditor(modelColumns[col])) return;
+    if (!row || col < 0 || opened.current === mark || !hasEditor(modelColumns[col])) return;
     opened.current = mark;
-    setState((s) => startEdit(s, row, col, valueToDraft(columns[col].type, valueOf(columns[col], shown[row]))));
+    setState((s) => startEdit(s, openCell.rowId, col, valueToDraft(columns[col].type, valueOf(columns[col], row))));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openCell, shown]);
 
@@ -169,10 +190,29 @@ export function DataGrid<R extends { id: string | number }>({
     const current: GridState = state.editing && draft !== undefined ? { ...state, editing: { ...state.editing, draft } } : state;
     const out = gridKey(current, key, ctx);
     setState(out.state);
+    // A key that ends the edit hands the focus back to the cell; a click elsewhere (Blur) keeps what it focused.
+    refocus.current = key !== 'Blur' && !out.state.editing;
     if (out.commit) {
-      const row = shown[out.commit.row];
       const column = columns[out.commit.col];
-      if (row && column) void onEdit?.(rowKey(row), column.key, out.commit.value);
+      if (column) void onEdit?.(out.commit.rowId, column.key, out.commit.value);
+    }
+  };
+
+  const cellKey = (e: React.KeyboardEvent, id: string, c: number) => {
+    // Only a key typed on the cell itself, not one bubbling from its editor.
+    if (e.target !== e.currentTarget) return;
+    if (e.key === 'Enter' || e.key === 'F2') {
+      e.preventDefault();
+      setState((s) => gridKey({ ...s, cursor: { rowId: id, col: c } }, 'Enter', ctx).state);
+      return;
+    }
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      const next = moveCursor({ ...state, cursor: { rowId: id, col: c } }, e.key as ArrowKey, ctx);
+      if (next?.cursor) {
+        setState(next);
+        focusCell(next.cursor.rowId, next.cursor.col);
+      }
     }
   };
 
@@ -193,7 +233,7 @@ export function DataGrid<R extends { id: string | number }>({
 
   return (
     <div className={cn('overflow-auto rounded-2xl border border-hair bg-sf', className)}>
-      <table aria-label={label} className="w-full border-separate border-spacing-0 text-[13px]" style={minWidth ? { minWidth } : undefined}>
+      <table ref={table} aria-label={label} className="w-full border-separate border-spacing-0 text-[13px]" style={minWidth ? { minWidth } : undefined}>
         <thead className="sticky top-0 z-10">
           <tr>
             {selectable && (
@@ -233,7 +273,7 @@ export function DataGrid<R extends { id: string | number }>({
         </thead>
         {shown.length > 0 && (
           <tbody>
-            {shown.map((row, r) => {
+            {shown.map((row) => {
               const id = rowKey(row);
               return (
                 <tr key={id} className={cn('group/row', selected.has(id) ? 'bg-acdim' : 'hover:bg-sf2')}>
@@ -262,13 +302,25 @@ export function DataGrid<R extends { id: string | number }>({
                         </td>
                       );
                     }
-                    const isEditing = state.editing?.row === r && state.editing.col === c;
+                    const isEditing = state.editing?.rowId === id && state.editing.col === c;
                     const text = column.format ? column.format(value, row) : value === null || value === undefined ? '' : String(value);
                     return (
                       <td
                         key={column.key}
-                        className={cn('h-9 max-w-0 border-b border-r border-hair', isEditing ? 'px-0.5' : cn(editable ? 'cursor-text' : '', 'px-2.5'), column.className)}
-                        onClick={() => editable && !isEditing && setState((s) => startEdit(s, r, c, valueToDraft(column.type, value)))}
+                        className={cn('h-9 max-w-0 border-b border-r border-hair', isEditing ? 'px-0.5' : cn(editable ? 'cursor-text focus-visible:outline focus-visible:-outline-offset-2 focus-visible:outline-ac' : '', 'px-2.5'), column.className)}
+                        onClick={() => editable && !isEditing && setState((s) => startEdit(s, id, c, valueToDraft(column.type, value)))}
+                        {...(editable && {
+                          'data-row': id,
+                          'data-col': c,
+                          'aria-label': `${typeof column.label === 'string' ? column.label : column.key}, row ${id}`,
+                          ...(!isEditing && {
+                            tabIndex: 0,
+                            onFocus: (e: React.FocusEvent) => {
+                              if (e.target === e.currentTarget) setState((s) => (s.cursor?.rowId === id && s.cursor.col === c ? s : { ...s, cursor: { rowId: id, col: c } }));
+                            },
+                            onKeyDown: (e: React.KeyboardEvent) => cellKey(e, id, c),
+                          }),
+                        })}
                       >
                         {isEditing ? (
                           <Editor type={column.type} options={column.options} suggestions={column.suggestions} placeholder={column.placeholder} initial={state.editing!.draft} onKey={apply} />

@@ -5,7 +5,7 @@
  * `id`, so a renamed tool is one change, not a removal and an addition. Credentials show by name, never by id or data,
  * and the look (icon, color, avatar) is left out. Plain module: no server imports (the sheet runs it in the browser).
  */
-import type { FieldChange } from '@/components/ui/field-diff';
+import type { FieldChange } from './field-change';
 import type { AgentChannel, AgentConfig, AgentSchedule, AgentSkill, AgentToolConfig, CredentialRef } from './agents';
 
 export interface AgentField {
@@ -106,7 +106,8 @@ export function agentFields(config: AgentConfig, names?: CredentialNames): Agent
   if (config.persona) add('persona', 'Persona', lines(config.persona, names));
   add('instructions', 'Instructions', config.instructions);
   for (const skill of config.skills) add(`skill:${skill.id}`, skillLabel(skill), lines(skill, names, ['id']));
-  for (const tool of config.tools) add(`tool:${tool.id}`, toolLabel(tool), lines(tool, names, ['id']));
+  // A knowledge base's `lastIndex` is the state of its last indexing pass, not something the person configured.
+  for (const tool of config.tools) add(`tool:${tool.id}`, toolLabel(tool), lines(tool, names, tool.type === 'knowledge' ? ['id', 'lastIndex'] : ['id']));
   for (const schedule of config.schedules) add(`schedule:${schedule.id}`, scheduleLabel(schedule), lines(schedule, names, ['id']));
   for (const channel of config.channels) add(`channel:${channel.id}`, channelLabel(channel), lines(channel, names, ['id']));
   add('memory', 'Memory', lines(config.memory, names));
@@ -136,7 +137,7 @@ export function diffAgentConfigs(a: AgentConfig, b: AgentConfig, names?: Credent
   // The order the builder reads in: the newer version's fields, with the removed ones back where they were.
   const order: string[] = [];
   const seen = new Set<string>();
-  const place = (list: AgentField[], other: Map<string, AgentField>) => {
+  const place = (list: AgentField[]) => {
     let anchor = -1;
     for (const f of list) {
       if (!seen.has(f.field)) {
@@ -145,10 +146,9 @@ export function diffAgentConfigs(a: AgentConfig, b: AgentConfig, names?: Credent
       }
       anchor = order.indexOf(f.field);
     }
-    void other;
   };
-  place(after, was);
-  place(before, now);
+  place(after);
+  place(before);
   const changes: FieldChange[] = [];
   let unchanged = 0;
   for (const key of order) {

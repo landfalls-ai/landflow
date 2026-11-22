@@ -102,6 +102,16 @@ describe('diffAgentConfigs', () => {
     expect(diff.unchanged).toBe(agentFields(a).length);
   });
 
+  it('leaves a knowledge base’s index state (lastIndex) out, so re-indexing is not a change', () => {
+    const kb = (lastIndex: unknown): AgentToolConfig => ({ id: 'kb1', type: 'knowledge', name: 'runbooks', description: 'Search runbooks', store: 'sqlite', collection: 'runbooks', embeddings: { provider: 'none', model: 'bm25' }, lastIndex } as AgentToolConfig);
+    const a = { ...base(), tools: [kb({ at: '2026-11-01T00:00:00.000Z', documents: 3 })] };
+    const b = { ...base(), tools: [kb({ at: '2026-11-02T00:00:00.000Z', documents: 9 })] };
+    expect(diffAgentConfigs(a, b).changes).toEqual([]);
+    expect(agentFields(a).find((f) => f.field === 'tool:kb1')?.value).not.toContain('lastIndex');
+    // A real change to the knowledge base still shows.
+    expect(diffAgentConfigs(a, { ...b, tools: [{ ...kb(undefined), collection: 'other' } as AgentToolConfig] }).changes).toHaveLength(1);
+  });
+
   it('names schedules, skills, channels and knowledge bases by what they are', () => {
     const config: AgentConfig = {
       ...base(),
@@ -168,6 +178,20 @@ describe('GET /api/agents/:id/versions/:version', () => {
     const first = await get('1', owner.session);
     expect(first.body.config?.instructions).toBe('Answer briefly.');
     expect((await get('2', owner.session)).body.config?.instructions).toBe('Answer briefly and cite sources.');
+  });
+
+  it('the versions list names who published each version, when it was recorded', async () => {
+    const { agentStore } = await storeP;
+    // The publish route passes the person; the store records it with the version.
+    agentStore.saveDraft(agentId, { instructions: 'Answer in two lines.' });
+    agentStore.publish(agentId, owner.id);
+    const listRoute = await import('@/app/api/agents/[id]/versions/route');
+    const res = await listRoute.GET(new Request(`http://localhost:3000/api/agents/${agentId}/versions`, { headers: { cookie: `landflow_session=${owner.session}` } }), { params: Promise.resolve({ id: agentId }) });
+    const body = (await res.json()) as { versions: Array<{ version: number; publishedBy?: string; publishedByName?: string }> };
+    const latest = body.versions.find((v) => v.version === 4);
+    expect(latest).toMatchObject({ publishedBy: owner.id, publishedByName: 'Olive' });
+    // Versions published without a person (before this was recorded) carry no name.
+    expect(body.versions.find((v) => v.version === 1)?.publishedByName).toBeUndefined();
   });
 
   it('is 404 for an unknown version, a bad one, and an agent the caller cannot read', async () => {

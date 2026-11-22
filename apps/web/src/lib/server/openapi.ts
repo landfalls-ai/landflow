@@ -1045,7 +1045,7 @@ function paths(): Record<string, Record<string, Json>> {
     id: 'listAgentVersions',
     summary: 'An agent\u2019s published versions and the workflow versions that pin each',
     description: 'Newest first; `usedBy` lists the workflow versions that pin the version (production first) and holds only workflows the caller can read. Read access is the agent\u2019s.',
-    responses: { 200: reply('The versions', object({ versions: array(object({ version: { type: 'integer' }, publishedAt: { type: 'string', format: 'date-time' }, publishedBy: { type: 'string' }, usedBy: array(object({ workflowId: { type: 'string' }, name: { type: 'string' }, workflowVersion: { type: 'integer' }, production: { type: 'boolean' } }, ['workflowId', 'name', 'workflowVersion', 'production'])) }, ['version', 'publishedAt', 'usedBy'])) }, ['versions'])), 404: notFound },
+    responses: { 200: reply('The versions', object({ versions: array(object({ version: { type: 'integer' }, publishedAt: { type: 'string', format: 'date-time' }, publishedBy: { type: 'string' }, publishedByName: { type: 'string' }, usedBy: array(object({ workflowId: { type: 'string' }, name: { type: 'string' }, workflowVersion: { type: 'integer' }, production: { type: 'boolean' } }, ['workflowId', 'name', 'workflowVersion', 'production'])) }, ['version', 'publishedAt', 'usedBy'])) }, ['versions'])), 404: notFound },
   });
   add('get', '/api/agents/{id}/versions/{version}', {
     tag: 'Agents',

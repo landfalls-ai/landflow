@@ -148,3 +148,46 @@ describe('the warning when the project’s credentials could not be checked', ()
     expect(container.querySelector('[role="status"]')?.textContent).toBe('');
   });
 });
+
+describe('clearing a credential', () => {
+  const picked = { httpHeaderAuth: { id: 'h1', name: 'Echo header' } };
+  const clear = () => container.querySelector<HTMLButtonElement>('button[aria-label="Clear credential"]');
+
+  it('picks the one fitting credential when the node has none (the combobox did not break auto-pick)', () => {
+    const onChange = vi.fn();
+    scopeState = scopeOf('h1');
+    listed = [HEADER];
+    render(base({ onChange }));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(picked);
+  });
+
+  it('has no Clear button until a credential is set (fails if Clear is always drawn)', () => {
+    scopeState = scopeOf('h1');
+    render(base());
+    expect(clear()).toBeNull();
+  });
+
+  it('Clear empties the slot, and auto-pick does not put the one fitting credential back (fails if the Clear button is missing or the slot is refilled)', () => {
+    const onChange = vi.fn();
+    scopeState = scopeOf('h1');
+    listed = [HEADER];
+    render(base({ onChange, value: picked }));
+    expect(onChange).not.toHaveBeenCalled();
+    act(() => clear()!.click());
+    expect(onChange).toHaveBeenLastCalledWith(undefined);
+    // The parent applies it: no value now, one credential still fits, the panel is still open.
+    render(base({ onChange, value: undefined }));
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('Clear also removes a credential that was deleted, so the warning can go', () => {
+    const onChange = vi.fn();
+    scopeState = scopeOf('h1');
+    listed = [BEARER];
+    render(base({ onChange, value: picked }));
+    expect(container.textContent).toContain('was deleted');
+    act(() => clear()!.click());
+    expect(onChange).toHaveBeenLastCalledWith(undefined);
+  });
+});

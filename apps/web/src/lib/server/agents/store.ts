@@ -535,14 +535,15 @@ class AgentStore {
     return this.write({ ...rest, ...next, instructions: withoutWithdrawnToolLines(next.instructions, next.tools), updatedAt: new Date().toISOString() });
   }
 
-  publish(id: string): Agent | undefined {
+  /** Publish the draft as the next version; `by` (a user id) is kept with the version row so the history can say who. */
+  publish(id: string, by?: string): Agent | undefined {
     const agent = this.backend.get(id);
     if (!agent) return undefined;
     const version = (agent.published?.version ?? agent.history[0]?.version ?? 0) + 1;
     const published = { version, publishedAt: new Date().toISOString(), config: configOf(agent) };
     const history = [published, ...agent.history].slice(0, MAX_HISTORY);
     const saved = this.write({ ...agent, published, history, updatedAt: published.publishedAt });
-    recordAgentVersion(saved); // AG21: kept past the 20 in history while a workflow version may pin it
+    recordAgentVersion(saved, by); // AG21: kept past the 20 in history while a workflow version may pin it
     return saved;
   }
 

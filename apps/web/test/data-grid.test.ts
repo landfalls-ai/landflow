@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { cycleSort, draftToValue, gridKey, selectAll, sortRows, startEdit, toggleSelect, valueToDraft, type GridModelColumn, type GridState } from '../src/components/ui/data-grid-model';
+import { cycleSort, draftToValue, gridKey, moveCursor, selectAll, sortRows, startEdit, toggleSelect, valueToDraft, type GridModelColumn, type GridState } from '../src/components/ui/data-grid-model';
 import { DataGrid, type GridColumn } from '../src/components/ui/data-grid';
 
 const cols: GridModelColumn[] = [
@@ -18,75 +18,110 @@ const rows = [
   { id: 'a', name: 'Acme', seats: 3, active: true, plan: 'free' },
   { id: 'b', name: 'Beta', seats: 12, active: false, plan: 'pro' },
 ];
-const ctx = { cols, rows: rows.length, value: (row: number, col: number) => (rows[row] as Record<string, unknown>)[cols[col].key] };
+const ids = rows.map((r) => r.id);
+const ctx = { cols, rowIds: ids, wrapRows: true, value: (rowId: string, col: number) => (rows.find((r) => r.id === rowId) as Record<string, unknown>)[cols[col].key] };
 const idle: GridState = { selected: new Set() };
 
 describe('gridKey', () => {
   it('Enter starts editing the cursor cell with its text', () => {
-    const out = gridKey({ ...idle, cursor: { row: 0, col: 0 } }, 'Enter', ctx);
-    expect(out.state.editing).toEqual({ row: 0, col: 0, draft: 'Acme', initial: 'Acme' });
+    const out = gridKey({ ...idle, cursor: { rowId: 'a', col: 0 } }, 'Enter', ctx);
+    expect(out.state.editing).toEqual({ rowId: 'a', col: 0, draft: 'Acme', initial: 'Acme' });
     expect(out.commit).toBeUndefined();
   });
 
   it('Enter commits the draft and stops editing', () => {
-    const editing = startEdit(idle, 0, 0, 'Acme');
+    const editing = startEdit(idle, 'a', 0, 'Acme');
     const out = gridKey({ ...editing, editing: { ...editing.editing!, draft: 'Acme Corp' } }, 'Enter', ctx);
-    expect(out.commit).toEqual({ row: 0, col: 0, value: 'Acme Corp' });
+    expect(out.commit).toEqual({ rowId: 'a', col: 0, value: 'Acme Corp' });
     expect(out.state.editing).toBeUndefined();
-    expect(out.state.cursor).toEqual({ row: 0, col: 0 });
+    expect(out.state.cursor).toEqual({ rowId: 'a', col: 0 });
   });
 
   it('Tab commits and moves right to the next editable cell, skipping booleans and read-only columns', () => {
-    const at = (draft: string) => ({ ...startEdit(idle, 0, 0, 'Acme'), editing: { row: 0, col: 0, draft, initial: 'Acme' } });
+    const at = (draft: string) => ({ ...startEdit(idle, 'a', 0, 'Acme'), editing: { rowId: 'a', col: 0, draft, initial: 'Acme' } });
     const out = gridKey(at('Acme Corp'), 'Tab', ctx);
-    expect(out.commit).toEqual({ row: 0, col: 0, value: 'Acme Corp' });
-    expect(out.state.editing).toMatchObject({ row: 0, col: 1, initial: '3' });
+    expect(out.commit).toEqual({ rowId: 'a', col: 0, value: 'Acme Corp' });
+    expect(out.state.editing).toMatchObject({ rowId: 'a', col: 1, initial: '3' });
     // seats -> (active is a checkbox, no editor) -> plan
     const next = gridKey({ ...out.state }, 'Tab', ctx);
-    expect(next.state.editing).toMatchObject({ row: 0, col: 3, initial: 'free' });
+    expect(next.state.editing).toMatchObject({ rowId: 'a', col: 3, initial: 'free' });
   });
 
-  it('Tab at the end of a row goes to the first cell of the next row, and from the last cell ends editing', () => {
-    const lastCol = startEdit(idle, 0, 3, 'free');
-    expect(gridKey(lastCol, 'Tab', ctx).state.editing).toMatchObject({ row: 1, col: 0 });
-    const end = startEdit(idle, 1, 3, 'pro');
+  it('with wrapRows, Tab at the end of a row goes to the first cell of the next row, and from the last cell ends editing', () => {
+    const lastCol = startEdit(idle, 'a', 3, 'free');
+    expect(gridKey(lastCol, 'Tab', ctx).state.editing).toMatchObject({ rowId: 'b', col: 0 });
+    const end = startEdit(idle, 'b', 3, 'pro');
     const out = gridKey(end, 'Tab', ctx);
     expect(out.state.editing).toBeUndefined();
   });
 
-  it('Shift+Tab moves left and wraps to the previous row', () => {
-    expect(gridKey(startEdit(idle, 0, 3, 'free'), 'Shift+Tab', ctx).state.editing).toMatchObject({ row: 0, col: 1 });
-    expect(gridKey(startEdit(idle, 1, 0, 'Beta'), 'Shift+Tab', ctx).state.editing).toMatchObject({ row: 0, col: 3 });
-    expect(gridKey(startEdit(idle, 0, 0, 'Acme'), 'Shift+Tab', ctx).state.editing).toBeUndefined();
+  it('without wrapRows, Tab in the last editable cell of a row ends editing (the grids that existed before keep that)', () => {
+    const off = { ...ctx, wrapRows: false };
+    const out = gridKey(startEdit(idle, 'a', 3, 'free'), 'Tab', off);
+    expect(out.state.editing).toBeUndefined();
+    expect(out.state.cursor).toEqual({ rowId: 'a', col: 3 });
+    expect(gridKey(startEdit(idle, 'b', 0, 'Beta'), 'Shift+Tab', off).state.editing).toBeUndefined();
+    // Still moves within the row.
+    expect(gridKey(startEdit(idle, 'a', 0, 'Acme'), 'Tab', off).state.editing).toMatchObject({ rowId: 'a', col: 1 });
+  });
+
+  it('with wrapRows, Shift+Tab moves left and wraps to the previous row', () => {
+    expect(gridKey(startEdit(idle, 'a', 3, 'free'), 'Shift+Tab', ctx).state.editing).toMatchObject({ rowId: 'a', col: 1 });
+    expect(gridKey(startEdit(idle, 'b', 0, 'Beta'), 'Shift+Tab', ctx).state.editing).toMatchObject({ rowId: 'a', col: 3 });
+    expect(gridKey(startEdit(idle, 'a', 0, 'Acme'), 'Shift+Tab', ctx).state.editing).toBeUndefined();
   });
 
   it('commits nothing when the draft is as it was, and still moves', () => {
-    const out = gridKey(startEdit(idle, 0, 0, 'Acme'), 'Tab', ctx);
+    const out = gridKey(startEdit(idle, 'a', 0, 'Acme'), 'Tab', ctx);
     expect(out.commit).toBeUndefined();
-    expect(out.state.editing).toMatchObject({ row: 0, col: 1 });
+    expect(out.state.editing).toMatchObject({ rowId: 'a', col: 1 });
   });
 
   it('Escape cancels without a commit', () => {
-    const editing = startEdit(idle, 0, 0, 'Acme');
+    const editing = startEdit(idle, 'a', 0, 'Acme');
     const out = gridKey({ ...editing, editing: { ...editing.editing!, draft: 'changed' } }, 'Escape', ctx);
     expect(out.commit).toBeUndefined();
     expect(out.state.editing).toBeUndefined();
   });
 
   it('Blur commits a change and ends editing without moving', () => {
-    const editing = startEdit(idle, 1, 1, '12');
+    const editing = startEdit(idle, 'b', 1, '12');
     const out = gridKey({ ...editing, editing: { ...editing.editing!, draft: '15' } }, 'Blur', ctx);
-    expect(out.commit).toEqual({ row: 1, col: 1, value: 15 });
+    expect(out.commit).toEqual({ rowId: 'b', col: 1, value: 15 });
     expect(out.state.editing).toBeUndefined();
   });
 
   it('a boolean cell toggles on Enter without an editor; a read-only cell does nothing', () => {
-    const toggled = gridKey({ ...idle, cursor: { row: 0, col: 2 } }, 'Enter', ctx);
-    expect(toggled.commit).toEqual({ row: 0, col: 2, value: false });
+    const toggled = gridKey({ ...idle, cursor: { rowId: 'a', col: 2 } }, 'Enter', ctx);
+    expect(toggled.commit).toEqual({ rowId: 'a', col: 2, value: false });
     expect(toggled.state.editing).toBeUndefined();
-    const readOnly = gridKey({ ...idle, cursor: { row: 0, col: 4 } }, 'Enter', ctx);
+    const readOnly = gridKey({ ...idle, cursor: { rowId: 'a', col: 4 } }, 'Enter', ctx);
     expect(readOnly.state.editing).toBeUndefined();
     expect(readOnly.commit).toBeUndefined();
+  });
+
+  it('follows the row when the rows are reordered while editing (the cell is tracked by row id, not position)', () => {
+    const editing = { ...startEdit(idle, 'a', 0, 'Acme'), editing: { rowId: 'a', col: 0, draft: 'Acme Corp', initial: 'Acme' } };
+    // A re-sort puts b first: Tab still commits row a and opens row a's next cell, not the row now at position 0.
+    const reordered = { ...ctx, rowIds: ['b', 'a'] };
+    const out = gridKey(editing, 'Tab', reordered);
+    expect(out.commit).toEqual({ rowId: 'a', col: 0, value: 'Acme Corp' });
+    expect(out.state.editing).toMatchObject({ rowId: 'a', col: 1, initial: '3' });
+    // A row that went away ends the edit instead of landing on another.
+    expect(gridKey(editing, 'Tab', { ...ctx, rowIds: ['b'] }).state.editing).toBeUndefined();
+  });
+});
+
+describe('moveCursor', () => {
+  it('arrows move between cells that have an editor: along a row skipping booleans and read-only, down a column by row', () => {
+    const at = (rowId: string, col: number): GridState => ({ ...idle, cursor: { rowId, col } });
+    expect(moveCursor(at('a', 1), 'ArrowRight', ctx)?.cursor).toEqual({ rowId: 'a', col: 3 });
+    expect(moveCursor(at('a', 3), 'ArrowRight', ctx)?.cursor).toEqual({ rowId: 'a', col: 3 });
+    expect(moveCursor(at('a', 3), 'ArrowLeft', ctx)?.cursor).toEqual({ rowId: 'a', col: 1 });
+    expect(moveCursor(at('a', 1), 'ArrowDown', ctx)?.cursor).toEqual({ rowId: 'b', col: 1 });
+    expect(moveCursor(at('b', 1), 'ArrowDown', ctx)?.cursor).toEqual({ rowId: 'b', col: 1 });
+    expect(moveCursor(at('b', 1), 'ArrowUp', ctx)?.cursor).toEqual({ rowId: 'a', col: 1 });
+    expect(moveCursor(idle, 'ArrowDown', ctx)).toBeUndefined();
   });
 });
 
@@ -152,6 +187,15 @@ describe('DataGrid markup', () => {
     expect(html).toMatch(/aria-label="active of row a"[^>]*checked|checked[^>]*aria-label="active of row a"/);
     expect(html).toContain('aria-sort="none"');
     expect(html).toContain('overflow-auto');
+  });
+
+  it('an editable cell is a tab stop named by its column and row; a read-only one is not', () => {
+    const html = renderToStaticMarkup(createElement(DataGrid<Row>, { columns: [...columns, { key: 'ro', label: 'Plan', type: 'text', value: () => 'x' }], rows: data }));
+    expect(html).toMatch(/<td[^>]*tabindex="0"[^>]*aria-label="Name, row a"|<td[^>]*aria-label="Name, row a"[^>]*tabindex="0"/);
+    expect(html).toContain('aria-label="Seats, row b"');
+    expect(html).not.toContain('aria-label="Plan, row a"');
+    // Read-only grid: nothing to tab to.
+    expect(renderToStaticMarkup(createElement(DataGrid<Row>, { columns, rows: data, readOnly: true }))).not.toContain('tabindex="0"');
   });
 
   it('marks the sorted column', () => {

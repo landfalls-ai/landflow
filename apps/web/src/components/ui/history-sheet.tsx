@@ -28,8 +28,14 @@ export interface HistoryCompare {
   unchanged: number;
 }
 
-/** The newest first; entries with the same time keep their order. */
+/** The newest first; entries with the same time keep the order they were given in (newest first, as the pages list them). */
 const newestFirst = (entries: HistoryEntry[]): HistoryEntry[] => [...entries].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+
+/** Whether `a` is older than `b`: by time, and for the same time by position (an entry listed later is older). */
+const olderThan = (entries: HistoryEntry[], a: HistoryEntry, b: HistoryEntry): boolean => {
+  const delta = Date.parse(a.at) - Date.parse(b.at);
+  return delta !== 0 ? delta < 0 : entries.indexOf(a) > entries.indexOf(b);
+};
 
 /** Two may be compared: a third pick drops the earliest pick, a picked entry picked again is let go. */
 export function toggleSelected(selected: string[], id: string): string[] {
@@ -42,7 +48,7 @@ export function pairOf(entries: HistoryEntry[], selected: string[]): [HistoryEnt
   if (selected.length !== 2) return undefined;
   const picked = selected.map((id) => entries.find((e) => e.id === id));
   if (!picked[0] || !picked[1]) return undefined;
-  return Date.parse(picked[0].at) <= Date.parse(picked[1].at) ? [picked[0], picked[1]] : [picked[1], picked[0]];
+  return olderThan(entries, picked[0], picked[1]) ? [picked[0], picked[1]] : [picked[1], picked[0]];
 }
 
 /** Compare the two picked entries, older first; nothing when two are not picked. */

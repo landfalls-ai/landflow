@@ -35,15 +35,23 @@ const NO_RUN_DATA = {};
 
 /** What a version changed against the one before, as the kit's field lines: Added, Removed, Changed and Moved steps by name. */
 function DiffDetail({ diff }: { diff: VersionDiff }) {
-  const rows: Array<[string, string[]]> = [
-    ['Added', diff.nodesAdded],
-    ['Removed', diff.nodesRemoved],
-    ['Changed', diff.nodesChanged],
-    ['Moved', diff.nodesMoved],
+  const rows: Array<[string, string[], FieldChange['tone']]> = [
+    ['Added', diff.nodesAdded, 'good'],
+    ['Removed', diff.nodesRemoved, 'bad'],
+    ['Changed', diff.nodesChanged, undefined],
+    ['Moved', diff.nodesMoved, 'muted'],
   ];
   const changes: FieldChange[] = rows
     .filter(([, names]) => names.length)
-    .map(([label, names]) => ({ field: label, label, kind: 'changed', after: `${names.slice(0, 4).join(', ')}${names.length > 4 ? ` +${names.length - 4}` : ''}`, long: false }));
+    .map(([label, names, tone]) => ({
+      field: label,
+      label,
+      kind: 'changed',
+      after: `${names.slice(0, 4).join(', ')}${names.length > 4 ? ` +${names.length - 4}` : ''}`,
+      long: false,
+      title: names.join(', '),
+      ...(tone && { tone }),
+    }));
   const other = [
     diff.connectionsAdded && `${diff.connectionsAdded} connection${diff.connectionsAdded === 1 ? '' : 's'} added`,
     diff.connectionsRemoved && `${diff.connectionsRemoved} connection${diff.connectionsRemoved === 1 ? '' : 's'} removed`,

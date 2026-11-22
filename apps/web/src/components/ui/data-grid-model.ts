@@ -1,7 +1,8 @@
 /**
  * The data grid's logic without a DOM (components/ui/data-grid.tsx renders it): what a key does to the cell being
  * edited, how a typed draft becomes a value of the column's type, how rows sort and how a selection grows. A cell is
- * `(row, col)`, indexes into the rows and columns as drawn. Plain module: no React, no server imports.
+ * `(rowId, col)`: the row by its id (so a re-sort or an insert while editing leaves the edit where it was) and the
+ * column by its index. Plain module: no React, no server imports.
  */
 
 export type GridColumnType = 'text' | 'number' | 'boolean' | 'select' | 'date';
@@ -16,20 +17,24 @@ export interface GridModelColumn {
 
 export interface GridState {
   /** The cell a key acts on: the last one clicked or edited. */
-  cursor?: { row: number; col: number };
+  cursor?: { rowId: string; col: number };
   /** The cell being edited, its draft text and the text it started with (a draft that equals it commits nothing). */
-  editing?: { row: number; col: number; draft: string; initial: string };
+  editing?: { rowId: string; col: number; draft: string; initial: string };
   sort?: { key: string; dir: 'asc' | 'desc' };
   selected: Set<string>;
 }
 
 export type GridKey = 'Enter' | 'Tab' | 'Shift+Tab' | 'Escape' | 'Blur';
+export type ArrowKey = 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight';
 
 export interface GridContext {
   cols: GridModelColumn[];
-  rows: number;
+  /** The ids of the rows as drawn now, top to bottom. */
+  rowIds: string[];
+  /** Tab past the last editable cell of a row goes to the next row (Shift+Tab, the previous); off, editing ends there. */
+  wrapRows?: boolean;
   /** A cell's value, for the text an editor starts with and for a boolean to flip. */
-  value: (row: number, col: number) => unknown;
+  value: (rowId: string, col: number) => unknown;
 }
 
 /** A value as the text an editor starts with. */
@@ -66,52 +71,68 @@ export function draftToValue(type: GridColumnType, draft: string): unknown {
 /** Whether a column opens an editor: a boolean is a checkbox in its cell and takes no editor. */
 export const hasEditor = (column: GridModelColumn): boolean => Boolean(column.editable) && column.type !== 'boolean';
 
-export function startEdit(state: GridState, row: number, col: number, initial: string): GridState {
-  return { ...state, cursor: { row, col }, editing: { row, col, draft: initial, initial } };
+export function startEdit(state: GridState, rowId: string, col: number, initial: string): GridState {
+  return { ...state, cursor: { rowId, col }, editing: { rowId, col, draft: initial, initial } };
 }
 
-/** The next cell with an editor after (row, col) in `step` direction, wrapping to the next or previous row; undefined past the ends. */
-function neighbour(ctx: GridContext, row: number, col: number, step: 1 | -1): { row: number; col: number } | undefined {
-  let r = row;
+/** The next cell with an editor after the cell in `step` direction; past the row's end it goes to the next or previous row when `wrapRows`, else nowhere. */
+function neighbour(ctx: GridContext, rowId: string, col: number, step: 1 | -1): { rowId: string; col: number } | undefined {
+  let r = ctx.rowIds.indexOf(rowId);
+  if (r < 0) return undefined;
   let c = col + step;
-  while (r >= 0 && r < ctx.rows) {
+  while (r >= 0 && r < ctx.rowIds.length) {
     while (c >= 0 && c < ctx.cols.length) {
-      if (hasEditor(ctx.cols[c])) return { row: r, col: c };
+      if (hasEditor(ctx.cols[c])) return { rowId: ctx.rowIds[r], col: c };
       c += step;
     }
+    if (!ctx.wrapRows) return undefined;
     r += step;
     c = step === 1 ? 0 : ctx.cols.length - 1;
   }
   return undefined;
 }
 
+/** An arrow key moves the cursor to the next cell with an editor: along the row (skipping checkboxes and read-only cells) or down and up the column. Undefined when there is no cursor; the cursor stays at an edge. */
+export function moveCursor(state: GridState, key: ArrowKey, ctx: GridContext): GridState | undefined {
+  const at = state.cursor;
+  const r = at ? ctx.rowIds.indexOf(at.rowId) : -1;
+  if (!at || r < 0) return undefined;
+  if (key === 'ArrowUp' || key === 'ArrowDown') {
+    const next = ctx.rowIds[r + (key === 'ArrowDown' ? 1 : -1)];
+    return { ...state, cursor: { rowId: next ?? at.rowId, col: at.col } };
+  }
+  const step = key === 'ArrowRight' ? 1 : -1;
+  for (let c = at.col + step; c >= 0 && c < ctx.cols.length; c += step) if (hasEditor(ctx.cols[c])) return { ...state, cursor: { rowId: at.rowId, col: c } };
+  return { ...state, cursor: at };
+}
+
 /**
  * What a key does to the grid: the next state, and the edit to save when there is one. Enter on a cell opens its editor
  * (a boolean flips instead, a read-only cell does nothing) and, in the editor, saves; Tab saves and opens the next cell
- * to the right (Shift+Tab the left), wrapping at the row's end and stopping at the grid's; Escape cancels; Blur saves
+ * to the right (Shift+Tab the left), wrapping at the row's end when `wrapRows` and stopping at the grid's; Escape cancels; Blur saves
  * where the editor stands. An unchanged draft saves nothing.
  */
-export function gridKey(state: GridState, key: GridKey, ctx: GridContext): { state: GridState; commit?: { row: number; col: number; value: unknown } } {
+export function gridKey(state: GridState, key: GridKey, ctx: GridContext): { state: GridState; commit?: { rowId: string; col: number; value: unknown } } {
   const editing = state.editing;
   if (!editing) {
     if (key !== 'Enter' || !state.cursor) return { state };
-    const { row, col } = state.cursor;
+    const { rowId, col } = state.cursor;
     const column = ctx.cols[col];
-    if (!column?.editable || row >= ctx.rows) return { state };
-    if (column.type === 'boolean') return { state, commit: { row, col, value: ctx.value(row, col) !== true } };
-    return { state: startEdit(state, row, col, valueToDraft(column.type, ctx.value(row, col))) };
+    if (!column?.editable || !ctx.rowIds.includes(rowId)) return { state };
+    if (column.type === 'boolean') return { state, commit: { rowId, col, value: ctx.value(rowId, col) !== true } };
+    return { state: startEdit(state, rowId, col, valueToDraft(column.type, ctx.value(rowId, col))) };
   }
-  const { row, col, draft, initial } = editing;
-  if (key === 'Escape') return { state: { ...state, cursor: { row, col }, editing: undefined } };
+  const { rowId, col, draft, initial } = editing;
+  const done: GridState = { ...state, cursor: { rowId, col }, editing: undefined };
+  if (key === 'Escape') return { state: done };
   const column = ctx.cols[col];
-  const commit = column && draft !== initial ? { row, col, value: draftToValue(column.type, draft) } : undefined;
-  const done: GridState = { ...state, cursor: { row, col }, editing: undefined };
+  const commit = column && draft !== initial ? { rowId, col, value: draftToValue(column.type, draft) } : undefined;
   if (key === 'Enter' || key === 'Blur') return { state: done, ...(commit && { commit }) };
-  const to = neighbour(ctx, row, col, key === 'Tab' ? 1 : -1);
+  const to = neighbour(ctx, rowId, col, key === 'Tab' ? 1 : -1);
   if (!to) return { state: done, ...(commit && { commit }) };
   // The next cell opens on the value it has now: the commit of this one touches another cell.
   const next = ctx.cols[to.col];
-  return { state: startEdit(done, to.row, to.col, valueToDraft(next.type, ctx.value(to.row, to.col))), ...(commit && { commit }) };
+  return { state: startEdit(done, to.rowId, to.col, valueToDraft(next.type, ctx.value(to.rowId, to.col))), ...(commit && { commit }) };
 }
 
 /** Sort by a column: ascending, then descending, then none; another column starts ascending. */

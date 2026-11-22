@@ -25,7 +25,7 @@ export function agentHistoryEntries(published: AgentVersion | undefined, history
     const use = uses.find((u) => u.version === v.version);
     const pinned = use?.usedBy.length ? usedByLine(use).replace(/^v\d+ · /, '') : undefined;
     const live = published?.version === v.version;
-    return { id: String(v.version), label: `v${v.version}`, at: v.publishedAt, ...(live || pinned ? { note: [live && 'Live', pinned].filter(Boolean).join(' · ') } : {}) };
+    return { id: String(v.version), label: `v${v.version}`, at: v.publishedAt, ...(use?.publishedByName && { by: use.publishedByName }), ...(live || pinned ? { note: [live && 'Live', pinned].filter(Boolean).join(' · ') } : {}) };
   });
 }
 
