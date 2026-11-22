@@ -21,6 +21,7 @@ import {
 } from '@landflow/sdk';
 import { isBrainCollection } from '../../shared/brain';
 import { toToolName, type AgentTool, type AiDocument, type DocumentLoader, type Embeddings, type Reranker, type Retriever } from '@landflow/engine';
+import { createHash } from 'node:crypto';
 import { syncDocument } from '../rag/chunk-diff';
 import {
   insertDocuments,
@@ -240,24 +241,30 @@ async function connected<T>(ctx: Pick<IBaseContext, 'getNode'> & { getInputConne
 /**
  * C20: insert with "Upsert by Key". The loader's documents are grouped by their item's key; each key is one document
  * whose chunks replace the collection's chunks of that key (`syncDocument`), so only text the collection has not
- * embedded under this model goes to the embeddings model. Items that share a key are one document.
+ * embedded under this model goes to the embeddings model. Items that share a key are one document. The key is collection-wide (C21 scopes collections to a project).
  */
 async function upsertDocuments(ctx: IBaseContext, store: VectorStore, embeddings: Embeddings, collection: string, documents: AiDocument[], keys: string[], signal?: AbortSignal): Promise<NodeItem[]> {
-  const byKey = new Map<string, AiDocument[]>();
+  const byKey = new Map<string, Array<{ doc: AiDocument; item: number }>>();
   for (const doc of documents) {
-    const key = keys[Math.min(keys.length - 1, Math.max(0, Number(doc.metadata.itemIndex) || 0))];
-    byKey.set(key, [...(byKey.get(key) ?? []), doc]);
+    // A document says which item it came from; one that does not (or says an item that is not there) is a loader we can't trust to place it.
+    const item = doc.metadata.itemIndex;
+    if (typeof item !== 'number' || !Number.isInteger(item) || item < 0 || item >= keys.length) {
+      throw new NodeOperationError('The document loader gave a document no valid item number', { description: '“Upsert by Key” needs to know which item each document came from: use the Default Data Loader, or turn off “Upsert by Key”.' });
+    }
+    byKey.set(keys[item], [...(byKey.get(keys[item]) ?? []), { doc, item }]);
   }
   // A key whose items loaded no text is a document with no chunks: what the collection held under it goes.
   for (const key of keys) if (!byKey.has(key)) byKey.set(key, []);
   const out: NodeItem[] = [];
   const total = { reused: 0, embedded: 0, removed: 0 };
-  for (const [key, docs] of byKey) {
-    const result = await syncDocument(store, embeddings, { collection, match: { upsertKey: key }, documentKey: key, chunks: docs.map((doc) => ({ text: doc.pageContent, metadata: { ...doc.metadata, upsertKey: key } })) }, signal);
+  for (const [key, entries] of byKey) {
+    // The id prefix is a hash of the key and namespaced, so a key can never equal a knowledge base's `documentId`.
+    const documentKey = `upsert:${createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
+    const result = await syncDocument(store, embeddings, { collection, match: { upsertKey: key }, documentKey, chunks: entries.map(({ doc }) => ({ text: doc.pageContent, metadata: { ...doc.metadata, upsertKey: key } })) }, signal);
     total.reused += result.reused;
     total.embedded += result.embedded;
     total.removed += result.removed;
-    docs.forEach((doc, i) => out.push({ json: { id: result.ids[i], pageContent: doc.pageContent, metadata: { ...doc.metadata, upsertKey: key } }, pairedItem: { item: Math.min(keys.length - 1, Math.max(0, Number(doc.metadata.itemIndex) || 0)) } }));
+    entries.forEach(({ doc, item }, i) => out.push({ json: { id: result.ids[i], pageContent: doc.pageContent, metadata: { ...doc.metadata, upsertKey: key } }, pairedItem: { item } }));
   }
   ctx.logger.info(`Upserted ${byKey.size} document(s) into “${collection}” (${store.kind}): ${total.embedded} chunk(s) embedded, ${total.reused} reused, ${total.removed} removed`);
   return out;

@@ -27,11 +27,11 @@ const PAGES = [
   { id: 'c', text: 'Every laptop has a two year warranty.' },
 ];
 
-const flow = (collection: string, store: Record<string, unknown>, input: Array<Record<string, unknown>> = PAGES) =>
+const flow = (collection: string, store: Record<string, unknown>, input: Array<Record<string, unknown>> = PAGES, loader: Record<string, unknown> = {}) =>
   runFlow(
     [
       { name: 'Store', type: 'core.vectorStoreInMemory', parameters: { mode: 'insert', collection, ...store } },
-      { name: 'Loader', type: 'core.documentDefaultDataLoader', parameters: { jsonMode: 'expressionData', jsonData: '{{ $json.text }}' } },
+      { name: 'Loader', type: 'core.documentDefaultDataLoader', parameters: { jsonMode: 'expressionData', jsonData: '{{ $json.text }}', ...loader } },
       { name: 'Embeddings', type: 'test.countingEmbeddings' },
     ],
     [['Start', 'Store'], ['Loader', 'Store', 'ai_document'], ['Embeddings', 'Store', 'ai_embedding']],
@@ -108,5 +108,50 @@ describe('Vector Store node: Upsert by Key', () => {
     const collection = `upsert_allempty_${Date.now()}`;
     await flow(collection, { upsertKey: '{{ $json.missing }}' });
     expect(await new MemoryVectorStore().count(collection)).toBe(3);
+  });
+});
+
+const meta = (...entries: Array<[string, string]>) => ({ options: { metadata: { metadataValues: entries.map(([name, value]) => ({ name, value })) } } });
+
+describe('Upsert by Key: what a workflow cannot set (review 3, 4, 5)', () => {
+  it('ids are namespaced, so a key can never equal a knowledge base document id', async () => {
+    const collection = `upsert_ids_${Date.now()}`;
+    await flow(collection, { upsertKey: 'doc_abc' });
+    for (const row of await new MemoryVectorStore().metadataOf(collection)) expect(row.id).toMatch(/^upsert:[0-9a-f]{16}:[0-9a-f]{16}:\d+$/);
+  });
+
+  it('metadata named like the re-index fields is dropped on a plain insert', async () => {
+    const collection = `upsert_reserved_${Date.now()}`;
+    await flow(collection, {}, PAGES, meta(['chunkHash', 'forged'], ['embedKey', 'test:m1'], ['documentKey', 'doc_x'], ['upsertKey', 'a']));
+    for (const row of await new MemoryVectorStore().metadataOf(collection)) {
+      expect(row.metadata).not.toHaveProperty('chunkHash');
+      expect(row.metadata).not.toHaveProperty('embedKey');
+      expect(row.metadata).not.toHaveProperty('documentKey');
+      expect(row.metadata).not.toHaveProperty('upsertKey');
+    }
+  });
+
+  it('metadata named itemIndex cannot move a chunk to another item', async () => {
+    const collection = `upsert_index_${Date.now()}`;
+    await flow(collection, { upsertKey: '{{ $json.id }}' }, PAGES, meta(['itemIndex', '0']));
+    const keys = (await new MemoryVectorStore().metadataOf(collection)).map((r) => r.metadata.upsertKey).sort();
+    expect(keys).toEqual(['a', 'b', 'c']);
+  });
+
+  it('a document with no valid itemIndex is a node error, not a guess', async () => {
+    const loose = defineNode({
+      description: { name: 'looseLoader', displayName: 'Loose Loader', description: 'x', version: 1, kind: 'subnode', supplies: 'ai_document', categories: ['AI'], inputs: [], outputs: [{ type: 'ai_document' }], properties: [] },
+      supplyData: () => ({ load: async () => [{ pageContent: 'no index here', metadata: {} }] }),
+    });
+    const result = await runFlow(
+      [
+        { name: 'Store', type: 'core.vectorStoreInMemory', parameters: { mode: 'insert', collection: `upsert_loose_${Date.now()}`, upsertKey: '{{ $json.id }}' } },
+        { name: 'Loader', type: 'test.looseLoader' },
+        { name: 'Embeddings', type: 'test.countingEmbeddings' },
+      ],
+      [['Start', 'Store'], ['Loader', 'Store', 'ai_document'], ['Embeddings', 'Store', 'ai_embedding']],
+      { input: PAGES, extra: { countingEmbeddings: fakeEmbeddings, looseLoader: loose } },
+    );
+    expect(failure(result)?.message).toMatch(/item/i);
   });
 });

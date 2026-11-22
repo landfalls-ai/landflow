@@ -8,7 +8,7 @@
  * - sqlite: `vectors.sqlite` in the host's data directory; brute-force cosine and BM25.
  * - pgvector: a Postgres table with a `vector` column; `<=>` cosine distance and full-text search.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
@@ -26,6 +26,12 @@ export interface StoreInput {
   id?: string;
   pageContent: string;
   metadata: JsonObject;
+  embedding: number[];
+}
+
+/** A stored chunk's text and vector, as `vectorsByHash` returns them. */
+export interface HeldVector {
+  content: string;
   embedding: number[];
 }
 
@@ -49,10 +55,12 @@ export interface VectorStore {
   /** C20: the id and metadata of the documents whose metadata matches `filter` (no text, no embeddings), oldest first. */
   metadataWhere(collection: string, filter: MetadataFilter): Promise<Array<{ id: string; metadata: JsonObject }>>;
   /**
-   * C20: the stored vector of each of `hashes` (a chunk's `chunkHash` metadata) held under the embeddings key `embedKey`,
-   * anywhere in the collection. A hash that is not held is absent from the map.
+   * C20: the stored text and vector of the chunks whose `chunkHash` metadata is one of `hashes` and whose `embedKey` is
+   * `embedKey`, anywhere in the collection, keyed by hash. The metadata is only a claim (a plain insert can write any
+   * metadata): the caller reuses a vector only when the returned text really hashes to the key. A hash that is not held
+   * is absent from the map.
    */
-  vectorsByHash(collection: string, hashes: string[], embedKey: string): Promise<Map<string, number[]>>;
+  vectorsByHash(collection: string, hashes: string[], embedKey: string): Promise<Map<string, HeldVector>>;
   /**
    * C20: remove the documents whose metadata matches `remove` and add `add`, as one step: a reader sees the old set or
    * the new set, and a failure leaves the old set. The dimension check runs before anything is removed. `remove`
@@ -69,6 +77,11 @@ const dimensionError = (collection: string, stored: number, given: number) =>
 function matches(metadata: JsonObject, filter?: MetadataFilter): boolean {
   if (!filter) return true;
   return Object.entries(filter).every(([key, value]) => JSON.stringify(metadata[key]) === JSON.stringify(value));
+}
+
+/** A filter as one string whatever the key order: what a lock on "this document" is taken on. */
+function canonicalFilter(filter: MetadataFilter): string {
+  return JSON.stringify(Object.keys(filter).sort().map((key) => [key, filter[key]]));
 }
 
 function emptyFilterError(): Error {
@@ -163,10 +176,10 @@ export class MemoryVectorStore implements VectorStore {
 
   async vectorsByHash(collection: string, hashes: string[], embedKey: string) {
     const wanted = new Set(hashes);
-    const found = new Map<string, number[]>();
+    const found = new Map<string, HeldVector>();
     for (const record of this.records(collection)) {
       const hash = record.metadata.chunkHash;
-      if (typeof hash === 'string' && wanted.has(hash) && record.metadata.embedKey === embedKey && !found.has(hash)) found.set(hash, [...record.embedding]);
+      if (typeof hash === 'string' && wanted.has(hash) && record.metadata.embedKey === embedKey && !found.has(hash)) found.set(hash, { content: record.pageContent, embedding: [...record.embedding] });
     }
     return found;
   }
@@ -243,6 +256,8 @@ function openSqlite(file: string): DatabaseSync {
     );
     -- C20: a chunk's vector is looked up by the hash of its text; an index on an expression changes no column.
     CREATE INDEX IF NOT EXISTS vectors_chunk_hash ON vectors (collection, json_extract(metadata, '$.chunkHash'));
+    -- C20: a folder pass reads and replaces a file's chunks by their source.
+    CREATE INDEX IF NOT EXISTS vectors_source ON vectors (collection, json_extract(metadata, '$.source'));
   `);
   sqliteDatabases.set(file, db);
   return db;
@@ -350,16 +365,16 @@ export class SqliteVectorStore implements VectorStore {
   }
 
   async vectorsByHash(collection: string, hashes: string[], embedKey: string) {
-    const found = new Map<string, number[]>();
+    const found = new Map<string, HeldVector>();
     for (let start = 0; start < hashes.length; start += 400) {
       const batch = hashes.slice(start, start + 400);
       const rows = this.db
         .prepare(
-          `SELECT json_extract(metadata, '$.chunkHash') AS hash, embedding FROM vectors
+          `SELECT json_extract(metadata, '$.chunkHash') AS hash, content, embedding FROM vectors
            WHERE collection = ? AND json_extract(metadata, '$.chunkHash') IN (${batch.map(() => '?').join(', ')}) AND json_extract(metadata, '$.embedKey') = ?`,
         )
-        .all(collection, ...batch, embedKey) as unknown as Array<{ hash: string; embedding: Uint8Array }>;
-      for (const row of rows) if (!found.has(row.hash)) found.set(row.hash, [...fromBlob(row.embedding)]);
+        .all(collection, ...batch, embedKey) as unknown as Array<{ hash: string; content: string; embedding: Uint8Array }>;
+      for (const row of rows) if (!found.has(row.hash)) found.set(row.hash, { content: row.content, embedding: [...fromBlob(row.embedding)] });
     }
     return found;
   }
@@ -469,20 +484,33 @@ function pgError(error: unknown, collection: string): Error {
   return error instanceof Error ? error : new Error(message);
 }
 
+/**
+ * A quoted index name for `table` and a suffix, within Postgres's 63 bytes: a long table name is cut and given a short
+ * hash of the whole, so two long names that share a prefix still get two indexes (Postgres would cut both the same).
+ */
+export function indexNameOf(table: string, suffix: string): string {
+  const full = `${(table.trim() || 'landflow_vectors').replace(/\./g, '_')}_${suffix}`;
+  if (Buffer.byteLength(full) <= 63) return `"${full}"`;
+  const hash = createHash('sha256').update(full).digest('hex').slice(0, 8);
+  return `"${full.slice(0, 63 - hash.length - 1 - suffix.length - 1)}_${hash}_${suffix}"`;
+}
+
 export class PgVectorStore implements VectorStore {
   readonly kind = 'pgvector' as const;
   readonly system = 'postgresql';
   private readonly table: string;
   private readonly indexName: string;
   private readonly hashIndexName: string;
+  private readonly sourceIndexName: string;
 
   constructor(
     private readonly config: PgConfig,
     tableName = 'landflow_vectors',
   ) {
     this.table = pgTableName(tableName);
-    this.indexName = `"${(tableName.trim() || 'landflow_vectors').replace(/\./g, '_')}_collection_idx"`;
-    this.hashIndexName = `"${(tableName.trim() || 'landflow_vectors').replace(/\./g, '_')}_chunk_hash_idx"`;
+    this.indexName = indexNameOf(tableName, 'collection_idx');
+    this.hashIndexName = indexNameOf(tableName, 'chunk_hash_idx');
+    this.sourceIndexName = indexNameOf(tableName, 'source_idx');
   }
 
   private async pool(): Promise<Pool> {
@@ -503,6 +531,7 @@ export class PgVectorStore implements VectorStore {
       await pool.query(`CREATE INDEX IF NOT EXISTS ${this.indexName} ON ${this.table} (collection)`);
       // C20: a chunk's vector is looked up by the hash of its text (an index; no column changes).
       await pool.query(`CREATE INDEX IF NOT EXISTS ${this.hashIndexName} ON ${this.table} (collection, (metadata->>'chunkHash'))`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS ${this.sourceIndexName} ON ${this.table} (collection, (metadata->>'source'))`);
       ensuredTables.add(key);
     }
     return pool;
@@ -602,15 +631,15 @@ export class PgVectorStore implements VectorStore {
   }
 
   async vectorsByHash(collection: string, hashes: string[], embedKey: string) {
-    const found = new Map<string, number[]>();
+    const found = new Map<string, HeldVector>();
     if (!hashes.length) return found;
     const pool = await this.pool();
-    const { rows } = await pool.query<{ hash: string; embedding: string }>(
-      `SELECT metadata->>'chunkHash' AS hash, embedding::text AS embedding FROM ${this.table}
+    const { rows } = await pool.query<{ hash: string; content: string; embedding: string }>(
+      `SELECT metadata->>'chunkHash' AS hash, content, embedding::text AS embedding FROM ${this.table}
        WHERE collection = $1 AND metadata->>'chunkHash' = ANY($2::text[]) AND metadata->>'embedKey' = $3`,
       [collection, hashes, embedKey],
     );
-    for (const row of rows) if (!found.has(row.hash)) found.set(row.hash, JSON.parse(row.embedding) as number[]);
+    for (const row of rows) if (!found.has(row.hash)) found.set(row.hash, { content: row.content, embedding: JSON.parse(row.embedding) as number[] });
     return found;
   }
 
@@ -623,6 +652,9 @@ export class PgVectorStore implements VectorStore {
     const remove = JSON.stringify(change.remove);
     try {
       await client.query('BEGIN');
+      // Two replaces of one document would each delete the rows they can see and insert their own: a mix. The
+      // transaction lock makes the second wait for the first to commit, so its delete sees the first's rows.
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${this.table}|${collection}|${canonicalFilter(change.remove)}`]);
       // New vectors are held to the size of a document that stays; the delete and the inserts commit together.
       const stays = await client.query<{ dims: number }>(`SELECT vector_dims(embedding) AS dims FROM ${this.table} WHERE collection = $1 AND NOT (metadata @> $2::jsonb) LIMIT 1`, [collection, remove]);
       if (stays.rows[0]) checkDimensions(collection, change.add, Number(stays.rows[0].dims));

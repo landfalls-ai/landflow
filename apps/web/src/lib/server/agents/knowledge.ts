@@ -7,6 +7,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import { nanoid } from 'nanoid';
 import { toToolName, type Embeddings } from '@landflow/engine';
+import { NodeOperationError } from '@landflow/sdk';
 import type { VectorKnowledgeBaseConfig as KnowledgeBaseToolConfig } from '../../shared/agents';
 import { credentials } from '../credentials/vault';
 import { openAiConnection } from '../nodes/models';
@@ -281,14 +282,24 @@ export const MAX_FOLDER_FILES = 200;
  * (`runbooks/disk-full.md`), sorted, recursive, skipping dotfiles and anything a symlink leads out of the files directory.
  * Lists only; never reads a file. Throws when the folder is outside the files directory or is not a folder.
  */
-export async function folderFiles(folder: string): Promise<{ root: string; files: string[]; truncated: boolean }> {
+export async function folderFiles(folder: string): Promise<{ root: string; files: string[]; truncated: boolean; incomplete: boolean; prefix: string }> {
   const { root, path } = await resolveInFilesDir(folder);
   const top = await stat(path).catch(() => undefined);
   if (!top?.isDirectory()) throw new Error(`No folder named ${folder} in the files directory`);
   const files: string[] = [];
   let truncated = false;
+  // C20: set when something under the folder could not be read for a reason other than "gone" or "outside": the listing is then
+  // not the folder's whole content, and a pass must not take a missing file for a removed one.
+  let incomplete = false;
   const walk = async (dir: string): Promise<void> => {
-    const entries = (await readdir(dir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
+    let entries;
+    try {
+      entries = (await readdir(dir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
+    } catch (caught) {
+      if (dir === path) throw caught;
+      if ((caught as NodeJS.ErrnoException).code !== 'ENOENT') incomplete = true;
+      return;
+    }
     for (const entry of entries) {
       if (entry.name.startsWith('.')) continue;
       const full = join(dir, entry.name);
@@ -301,13 +312,16 @@ export async function folderFiles(folder: string): Promise<{ root: string; files
           if (files.length >= MAX_FOLDER_FILES) truncated = true;
           else files.push(rel);
         }
-      } catch {
-        // skipped: outside the files directory, or gone since it was listed
+      } catch (caught) {
+        // Skipped: outside the files directory (the refusal) or gone since it was listed. Anything else is a part we could not see.
+        if (!(caught instanceof NodeOperationError) && (caught as NodeJS.ErrnoException).code !== 'ENOENT') incomplete = true;
       }
     }
   };
   await walk(path);
-  return { root, files, truncated };
+  // The folder as the files directory resolves it ("runbooks/../runbooks" is "runbooks"); empty for the directory itself.
+  const prefix = relative(root, path).split(sep).join('/');
+  return { root, files, truncated, incomplete, prefix };
 }
 
 export interface FolderIndex {
@@ -328,7 +342,7 @@ export interface FolderIndex {
  * that can't be read keeps its old chunks and is listed in `failed`.
  */
 export async function indexFolder(config: KnowledgeBaseToolConfig, folder: string): Promise<FolderIndex> {
-  const { files, truncated } = await folderFiles(folder);
+  const { files, truncated, incomplete, prefix } = await folderFiles(folder);
   const store = openStore(config);
   const collection = config.collection.trim();
   const result: FolderIndex = { documents: 0, chunks: 0, reused: 0, embedded: 0, removed: 0, failed: [] };
@@ -348,16 +362,19 @@ export async function indexFolder(config: KnowledgeBaseToolConfig, folder: strin
       result.failed.push({ file, error: (caught as Error).message.slice(0, 300) });
     }
   }
-  // Files that left the folder lose their chunks. A listing cut at MAX_FOLDER_FILES doesn't know which files are gone.
-  if (!truncated) {
-    const prefix = folder.trim().replace(/^\.\//, '').replace(/\/+$/, '');
-    const under = prefix && prefix !== '.' ? `${prefix}/` : '';
+  // Files that left the folder lose their chunks, but only when the listing is the folder's whole content, and the folder is
+  // a folder of its own: the files directory itself (an empty prefix) can't be told from other folders indexed into the same
+  // collection. Only chunks a folder pass made (they carry a documentId) are removed, never what a workflow inserted.
+  if (!truncated && !incomplete && prefix) {
     const present = new Set(files);
     const gone = new Set<string>();
+    const foreign = new Set<string>(); // sources that also hold a chunk no folder pass made
     for (const { metadata } of await store.metadataOf(collection)) {
-      if (typeof metadata.source === 'string' && metadata.source.startsWith(under) && !present.has(metadata.source)) gone.add(metadata.source);
+      if (typeof metadata.source !== 'string' || !metadata.source.startsWith(`${prefix}/`) || present.has(metadata.source)) continue;
+      if (typeof metadata.documentId === 'string') gone.add(metadata.source);
+      else foreign.add(metadata.source);
     }
-    for (const source of gone) result.removed += await store.deleteWhere(collection, { source });
+    for (const source of gone) if (!foreign.has(source)) result.removed += await store.deleteWhere(collection, { source });
   }
   return result;
 }

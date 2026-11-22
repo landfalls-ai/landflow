@@ -127,7 +127,7 @@ describe.skipIf(!enabled)('PGVector store (Postgres)', () => {
     expect(await ids(c, 'a.md')).toEqual(['1', '2']);
     const found = await store.vectorsByHash(c, ['h1', 'nope'], 'k');
     expect([...found.keys()]).toEqual(['h1']);
-    expect(found.get('h1')!.map((v) => Math.round(v))).toEqual(embed('one'));
+    expect(found.get('h1')!.embedding.map((v) => Math.round(v))).toEqual(embed('one'));
     expect((await store.vectorsByHash(c, ['h1'], 'other')).size).toBe(0);
     expect(await store.replace(c, { remove: { source: 'a.md' }, add: [doc('4', 'a.md', 'four')] })).toEqual({ removed: 2, added: 1 });
     expect(await ids(c, 'a.md')).toEqual(['4']);
@@ -195,5 +195,19 @@ describe.skipIf(!enabled)('PGVector store (Postgres)', () => {
     down = true;
     await expect(syncDocument(store, embeddings, { ...input(), chunks: chunks().map((chunk) => ({ ...chunk, text: `${chunk.text} again` })) })).rejects.toThrow(/down/);
     expect(await store.metadataOf(c)).toEqual(before);
+  });
+
+  it('two replaces of one document at once leave one whole version (review 1)', async () => {
+    const c = 'c20_race';
+    for (let round = 0; round < 15; round++) {
+      await store.clear(c);
+      await store.add(c, Array.from({ length: 6 }, (_, i) => doc(`old-${i}`, 'a.md', `old ${i}`)));
+      const version = (tag: string) => Array.from({ length: 6 }, (_, i) => doc(`${tag}-${i}`, 'a.md', `${tag} ${i}`));
+      const other = new PgVectorStore(pgConfig(credential), TABLE);
+      await Promise.all([store.replace(c, { remove: { source: 'a.md' }, add: version('one') }), other.replace(c, { remove: { source: 'a.md' }, add: version('two') })]);
+      const tags = new Set((await ids(c, 'a.md')).map((id) => id.split('-')[0]));
+      expect([...tags], `round ${round}`).toHaveLength(1);
+      expect(await store.count(c)).toBe(6);
+    }
   });
 });

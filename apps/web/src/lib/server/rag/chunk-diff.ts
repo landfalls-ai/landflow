@@ -16,8 +16,18 @@ import { replaceDocuments, type MetadataFilter, type StoreInput, type VectorStor
 /** SHA-256 of a chunk's text, hex. */
 export const chunkHash = (text: string): string => createHash('sha256').update(text).digest('hex');
 
-/** Which embeddings produced a vector: a vector is reused only under the same provider and model. */
-export const embedKeyOf = (embeddings: Embeddings): string => `${embeddings.provider}:${embeddings.model}`;
+/** What an embeddings object may say beyond the engine's contract: the vector size it asks for and the server it asks. */
+export type EmbeddingsIdentity = Embeddings & { readonly dimensions?: number; readonly endpoint?: string };
+
+/**
+ * Which embeddings produced a vector: a vector is reused only under the same provider, model, requested size and (for
+ * an OpenAI-compatible server, where the same model name can be another model) the same endpoint, kept as a short hash.
+ */
+export function embedKeyOf(embeddings: Embeddings): string {
+  const { dimensions, endpoint } = embeddings as EmbeddingsIdentity;
+  const where = endpoint ? `@${createHash('sha256').update(endpoint.replace(/\/+$/, '')).digest('hex').slice(0, 8)}` : '';
+  return `${embeddings.provider}:${embeddings.model}${dimensions ? `#${dimensions}` : ''}${where}`;
+}
 
 export interface SyncInput {
   collection: string;
@@ -75,7 +85,9 @@ export async function syncDocument(store: VectorStore, embeddings: Embeddings, i
   }
 
   const hashes = [...new Set(prepared.map((chunk) => chunk.hash))];
-  const held = await store.vectorsByHash(collection, hashes, embedKey);
+  // Stored metadata is only a claim: a vector is reused only when the stored text really hashes to the key.
+  const held = new Map<string, number[]>();
+  for (const [hash, chunk] of await store.vectorsByHash(collection, hashes, embedKey)) if (chunkHash(chunk.content) === hash) held.set(hash, chunk.embedding);
   const missing = hashes.filter((hash) => !held.has(hash));
   const textOf = new Map(prepared.map((chunk) => [chunk.hash, chunk.text]));
   let fresh = new Map<string, number[]>();
@@ -87,6 +99,7 @@ export async function syncDocument(store: VectorStore, embeddings: Embeddings, i
     const size = vectors[0]?.length;
     if (held.size && [...held.values()].some((vector) => vector.length !== size)) {
       const all = await embeddings.embedDocuments(hashes.map((hash) => textOf.get(hash)!), signal);
+      if (all.length !== hashes.length) throw new Error(`The embeddings model returned ${all.length} vectors for ${hashes.length} texts`);
       fresh = new Map(hashes.map((hash, i) => [hash, all[i]]));
       held.clear();
     }

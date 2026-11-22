@@ -273,3 +273,43 @@ describe.each(stores)('syncDocument on the %s store', (_name, open) => {
     expect(await store.metadataOf(c)).toEqual(before);
   });
 });
+
+describe('what makes two embeddings the same (review 6)', () => {
+  const base = { provider: 'openai', model: 'm', embedDocuments: async () => [], embedQuery: async () => [] } as Embeddings;
+  it('the size and the endpoint are part of the key', () => {
+    const key = embedKeyOf(base);
+    expect(embedKeyOf({ ...base, dimensions: 256 } as Embeddings)).not.toBe(key);
+    expect(embedKeyOf({ ...base, dimensions: 256 } as Embeddings)).not.toBe(embedKeyOf({ ...base, dimensions: 512 } as Embeddings));
+    expect(embedKeyOf({ ...base, endpoint: 'https://a.example/v1' } as Embeddings)).not.toBe(embedKeyOf({ ...base, endpoint: 'https://b.example/v1' } as Embeddings));
+    expect(embedKeyOf({ ...base, endpoint: 'https://a.example/v1' } as Embeddings)).toBe(embedKeyOf({ ...base, endpoint: 'https://a.example/v1' } as Embeddings));
+  });
+});
+
+describe.each(stores)('syncDocument trusts nothing it did not compute, on the %s store', (_name, open) => {
+  it('a stored chunk whose metadata claims a hash its text does not have is never reused (review 3)', async () => {
+    const store = open();
+    const c = `spoof${++counter}`;
+    const e = counting();
+    const real = 'the real text of the paragraph';
+    // Planted by a plain insert: the hash of `real`, the model key, but other text and a poisoned vector.
+    await store.add(c, [{ pageContent: 'something else entirely', metadata: { chunkHash: chunkHash(real), embedKey: embedKeyOf(e.embeddings) }, embedding: new Array(DIMENSIONS).fill(9) }]);
+    const result = await syncDocument(store, e.embeddings, { collection: c, match: { source: 'x.md' }, documentKey: 'doc_x', chunks: [{ text: real, metadata: { source: 'x.md' } }] });
+    expect(result).toMatchObject({ embedded: 1, reused: 0 });
+    expect(e.texts).toEqual([real]);
+    const [hit] = await store.similaritySearch(c, hashEmbed(real), 5, { source: 'x.md' });
+    expect(hit.pageContent).toBe(real);
+    expect(hit.score).toBeCloseTo(1, 5);
+  });
+
+  it('a re-embed after a size change must return one vector per text (review 8)', async () => {
+    const store = open();
+    const c = `resize${++counter}`;
+    const first = counting();
+    const chunks = (n: number) => Array.from({ length: n }, (_, i) => ({ text: `text ${i} words`, metadata: { source: 'r.md' } }));
+    await syncDocument(store, first.embeddings, { collection: c, match: { source: 'r.md' }, documentKey: 'doc_r', chunks: chunks(2) });
+    // Same model key, another vector size, and a model that then answers with too few vectors.
+    let call = 0;
+    const odd: Embeddings = { ...first.embeddings, embedDocuments: async (texts) => (++call === 1 ? texts.map(() => [1, 2]) : [[1, 2]]) };
+    await expect(syncDocument(store, odd, { collection: c, match: { source: 'r2.md' }, documentKey: 'doc_r2', chunks: [...chunks(2), { text: 'new text here', metadata: { source: 'r2.md' } }] })).rejects.toThrow(/vectors for/);
+  });
+});

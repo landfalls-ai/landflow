@@ -17,7 +17,7 @@ import { loadDocuments, metadataEntries, textOf } from '@/lib/server/rag/loader'
 import { llmReranker, rankByScores } from '@/lib/server/rag/rerank';
 import { bm25Scores, cosineSimilarity, reciprocalRankFusion, searchTerms } from '@/lib/server/rag/search';
 import { CODE_SEPARATORS, recursiveCharacterSplit, tokenize, tokenSplit } from '@/lib/server/rag/splitters';
-import { insertDocuments, MemoryVectorStore, searchStore, SqliteVectorStore, type VectorStore } from '@/lib/server/rag/stores';
+import { indexNameOf, insertDocuments, MemoryVectorStore, searchStore, SqliteVectorStore, type VectorStore } from '@/lib/server/rag/stores';
 import { outputsOf, runFlow, type FlowEdge, type FlowNode } from './helpers';
 
 // ---------------------------------------------------------------------------
@@ -578,7 +578,7 @@ describe.each([
     await store.add(c, [doc('1', 'a.md', 'one', { chunkHash: 'h1', embedKey: 'k' }), doc('2', 'a.md', 'two', { chunkHash: 'h2', embedKey: 'other' }), doc('3', 'a.md', 'three')]);
     const found = await store.vectorsByHash(c, ['h1', 'h2', 'h3'], 'k');
     expect([...found.keys()]).toEqual(['h1']);
-    expect(Array.from(found.get('h1')!)).toEqual(hashEmbed('one'));
+    expect(Array.from(found.get('h1')!.embedding)).toEqual(hashEmbed('one'));
     expect((await store.vectorsByHash(c, [], 'k')).size).toBe(0);
   });
 
@@ -610,5 +610,16 @@ describe.each([
     const bad = { id: '8', pageContent: 'bad', metadata, embedding: hashEmbed('bad') };
     await expect(store.replace(c, { remove: { source: 'a.md' }, add: [doc('7', 'a.md', 'seven'), bad] })).rejects.toThrow();
     expect((await store.metadataOf(c)).map((r) => r.id).sort()).toEqual(['1', '2']);
+  });
+});
+
+describe('index names (review 10)', () => {
+  it('stay under 63 bytes, differ for long table names that share a prefix, and are unchanged for short ones', () => {
+    expect(indexNameOf('landflow_vectors', 'collection_idx')).toBe('"landflow_vectors_collection_idx"');
+    const a = indexNameOf(`${'x'.repeat(60)}_a`, 'chunk_hash_idx');
+    const b = indexNameOf(`${'x'.repeat(60)}_b`, 'chunk_hash_idx');
+    expect(Buffer.byteLength(a.slice(1, -1))).toBeLessThanOrEqual(63);
+    expect(Buffer.byteLength(b.slice(1, -1))).toBeLessThanOrEqual(63);
+    expect(a).not.toBe(b);
   });
 });

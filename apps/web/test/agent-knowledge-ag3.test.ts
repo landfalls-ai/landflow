@@ -4,7 +4,7 @@
  * knowledge base is searched by keywords (Landflow's BM25, no call); with no source the design asks and invents nothing.
  * The architect is scripted and the embeddings server is a local fake; nothing leaves this machine.
  */
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -406,5 +406,47 @@ describe('indexing a folder again (C20)', () => {
     const one = await addKnowledgeDocument(kb, { bytes: Buffer.from('Keep the journal to 730 MB.'), fileName: 'a.md' });
     const two = await addKnowledgeDocument(kb, { bytes: Buffer.from('Keep the journal to 730 MB.'), fileName: 'a.md' });
     expect(one.documentId).not.toBe(two.documentId);
+  });
+
+  it('a subfolder that can’t be read keeps its chunks (review 2)', async () => {
+    const { indexFolder } = await import('@/lib/server/agents/knowledge');
+    const { SqliteVectorStore } = await import('@/lib/server/rag/stores');
+    const kb = prepare(`c20-unreadable-${Date.now()}`);
+    mkdirSync(join(files, sub, 'deep'), { recursive: true });
+    put('deep/d.md', base(10).replace(/word/g, 'deep'));
+    await indexFolder(kb, sub);
+    const before = (await new SqliteVectorStore().metadataWhere(kb.collection, { source: `${sub}/deep/d.md` })).length;
+    expect(before).toBeGreaterThan(0);
+    chmodSync(join(files, sub, 'deep'), 0o000);
+    try {
+      const second = await indexFolder(kb, sub);
+      expect(second.removed).toBe(0);
+      expect((await new SqliteVectorStore().metadataWhere(kb.collection, { source: `${sub}/deep/d.md` })).length).toBe(before);
+    } finally {
+      chmodSync(join(files, sub, 'deep'), 0o755);
+    }
+  });
+
+  it('the folder as written does not decide what goes: "." removes nothing, a path with .. is the folder it resolves to (review 7)', async () => {
+    const { indexFolder } = await import('@/lib/server/agents/knowledge');
+    const { SqliteVectorStore } = await import('@/lib/server/rag/stores');
+    const kb = prepare(`c20-prefix-${Date.now()}`);
+    await indexFolder(kb, sub);
+    // Chunks of the collection that belong to other folders (and one inserted without a documentId).
+    const other = new SqliteVectorStore();
+    await other.add(kb.collection, [
+      { id: 'o1', pageContent: 'elsewhere', metadata: { source: 'elsewhere/x.md', documentId: 'doc_o' }, embedding: [1, 2, 3] },
+      { id: 'o2', pageContent: 'by a workflow', metadata: { source: `${sub}/gone.md` }, embedding: [1, 2, 3] },
+    ]);
+    const root = await indexFolder(kb, '.');
+    expect(root.removed).toBe(0);
+    expect((await other.metadataWhere(kb.collection, { source: 'elsewhere/x.md' })).length).toBe(1);
+    put('c.md', '   '); // not removed either way: it is present
+    rmSync(join(files, sub, 'b.md'));
+    const viaDots = await indexFolder(kb, `${sub}/../${sub}`);
+    expect(viaDots.removed).toBeGreaterThan(0);
+    expect((await other.metadataWhere(kb.collection, { source: 'elsewhere/x.md' })).length).toBe(1);
+    // A chunk with no documentId was not made by a folder pass: it stays.
+    expect((await other.metadataWhere(kb.collection, { source: `${sub}/gone.md` })).length).toBe(1);
   });
 });
