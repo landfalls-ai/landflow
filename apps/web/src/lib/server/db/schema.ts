@@ -2071,6 +2071,21 @@ export const MIGRATIONS: Migration[] = [
     ],
     addColumns: [{ table: 'sessions', column: 'mfa_verified_at', definition: 'TEXT' }],
   },
+  // C19: webhook subscriptions to a project's run events and the durable outbox their deliveries wait in (docs/features/event-subscriptions.md); `secret` is sealed, `events`, `workflow_ids` and `node_names` are JSON arrays, `event_subscription_state.last_delivery` is JSON
+  {
+    version: 2924,
+    name: 'event_subscriptions_outbox',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS event_subscriptions (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, url TEXT NOT NULL, events TEXT NOT NULL, workflow_ids TEXT, node_names TEXT, include_output BIGINT NOT NULL DEFAULT 0, ordered BIGINT NOT NULL DEFAULT 1, secret TEXT NOT NULL, enabled BIGINT NOT NULL DEFAULT 1, disabled_reason TEXT, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      // The leader's note of each attempt lives apart from the subscription, so noting a delivery never rewrites what an admin changed.
+      `CREATE TABLE IF NOT EXISTS event_subscription_state (subscription_id TEXT PRIMARY KEY, last_delivery TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS event_subscriptions_project ON event_subscriptions (project_id)`,
+      `CREATE TABLE IF NOT EXISTS event_outbox (topic TEXT NOT NULL, target_id TEXT NOT NULL, event_id TEXT NOT NULL, created_at TEXT NOT NULL, payload TEXT NOT NULL, attempts BIGINT NOT NULL DEFAULT 0, next_at TEXT NOT NULL, lease_until TEXT, last_error TEXT, dead_at TEXT, PRIMARY KEY (topic, target_id, event_id))`,
+      `CREATE INDEX IF NOT EXISTS event_outbox_due ON event_outbox (topic, target_id, next_at)`,
+      `CREATE INDEX IF NOT EXISTS event_outbox_order ON event_outbox (topic, target_id, created_at, event_id)`,
+      `CREATE INDEX IF NOT EXISTS event_outbox_dead ON event_outbox (topic, target_id, dead_at)`,
+    ],
+  },
   // C21: an owner project per vector collection and the grants other projects hold (docs/agents.md#knowledge-bases); a grant row of level 'lost' records what the upgrade took away and gives no access
   {
     version: 2926,
@@ -2170,6 +2185,9 @@ export const TABLES = {
   approval_email_used: ['group_id'],
   approval_inbox: ['id'], // AP01:
   approval_tickets: ['request_id', 'channel_id'], // C12:
+  event_subscriptions: ['id'], // C19:
+  event_subscription_state: ['subscription_id'], // C19:
+  event_outbox: ['topic', 'target_id', 'event_id'], // C19:
   vector_collections: ['store_key'], // C21:
   vector_collection_grants: ['store_key', 'project_id'], // C21:
   harness_sessions: ['id'], // C04:

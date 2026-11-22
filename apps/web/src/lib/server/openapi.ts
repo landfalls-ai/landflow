@@ -2240,6 +2240,41 @@ function paths(): Record<string, Record<string, Json>> {
   });
   add('get', '/api/projects/{id}/mcp', { tag: 'MCP', id: 'getProjectMcp', summary: 'A project’s MCP server', description: 'Where the project’s scoped instance MCP server is served and whether its gateway route is registered.', pathParams: { id: 'The project id' }, responses: { 200: reply('The state', { type: 'object', additionalProperties: true }), 404: notFound } });
   add('patch', '/api/projects/{id}/mcp', { tag: 'MCP', id: 'updateProjectMcp', summary: 'Register a project’s MCP server on the gateway', description: 'Project admins (and instance owners and admins). `gateway: true` makes the gateway sync add `/mcp/projects/<name>` (while the instance server is on).', pathParams: { id: 'The project id' }, body: jsonBody(object({ gateway: { type: 'boolean' } }, ['gateway'])), responses: { 200: reply('The state', { type: 'object', additionalProperties: true }), 400: invalid, 403: errorRef('Not a project admin'), 404: notFound } });
+  // C19: a project's event subscriptions (docs/features/event-subscriptions.md).
+  const eventTypes = { type: 'string', enum: ['run.started', 'run.finished', 'run.failed', 'node.finished'] };
+  const subscriptionDoc = object(
+    {
+      id: { type: 'string' }, projectId: { type: 'string' }, name: { type: 'string' }, url: { type: 'string' }, events: array(eventTypes),
+      workflowIds: { type: ['array', 'null'], items: { type: 'string' }, description: 'Null: every workflow of the project' }, nodeNames: array({ type: 'string' }),
+      includeOutput: { type: 'boolean' }, ordered: { type: 'boolean' }, enabled: { type: 'boolean' }, disabledReason: { type: ['string', 'null'] },
+      createdAt: { type: 'string' }, updatedAt: { type: 'string' }, lastDelivery: { type: ['object', 'null'], additionalProperties: true },
+      backlog: { type: 'integer', description: 'Events waiting to be delivered' }, dead: { type: 'integer', description: 'Events given up on after 72 hours' }, lastError: { type: ['string', 'null'] }, oldestAgeSeconds: { type: 'integer' },
+    },
+    ['id', 'projectId', 'name', 'url', 'events', 'enabled', 'backlog', 'dead'],
+  );
+  const subscriptionInput = {
+    name: { type: 'string', maxLength: 120 }, url: { type: 'string', description: 'http or https; an address the outbound policy blocks is a 400' }, events: array(eventTypes),
+    workflowIds: { type: ['array', 'null'], items: { type: 'string' } }, nodeNames: { ...array({ type: 'string' }), description: 'The steps `node.finished` is sent for (required with that event)' },
+    includeOutput: { type: 'boolean' }, ordered: { type: 'boolean' },
+  };
+  const subscriptionPath = { id: 'The project id', subscriptionId: 'The subscription id' };
+  const adminOnly = errorRef('Not an admin of the project');
+  add('get', '/api/projects/{id}/event-subscriptions', { tag: 'Projects', id: 'listEventSubscriptions', summary: 'A project’s event subscriptions', description: 'Members of the project. Each has its backlog, dead events, last delivery and last error; never the signing secret.', pathParams: { id: 'The project id' }, responses: { 200: reply('The subscriptions', object({ subscriptions: array(subscriptionDoc), canEdit: { type: 'boolean' } }, ['subscriptions', 'canEdit'])), 404: notFound } });
+  add('post', '/api/projects/{id}/event-subscriptions', {
+    tag: 'Projects', id: 'createEventSubscription', summary: 'Add an event subscription',
+    description: 'Project admins (and instance owners and admins). Landflow makes the signing secret and answers it once. Run events are sent as signed POSTs with a stable `x-landflow-event-id`, at least once and in order; see the feature page. At most 20 per project (409).',
+    pathParams: { id: 'The project id' }, body: jsonBody(object(subscriptionInput, ['name', 'url', 'events'])),
+    responses: { 201: reply('The subscription and its secret (shown once)', object({ subscription: subscriptionDoc, secret: { type: 'string' } }, ['subscription', 'secret'])), 400: invalid, 403: adminOnly, 404: notFound, 409: errorRef('The project already has 20') },
+  });
+  add('patch', '/api/projects/{id}/event-subscriptions/{subscriptionId}', {
+    tag: 'Projects', id: 'updateEventSubscription', summary: 'Change an event subscription',
+    description: 'Project admins. Any field of the create body, `enabled` (turning it on clears why it was off) and `newSecret: true`, which replaces the signing secret and answers the new one once.',
+    pathParams: subscriptionPath, body: jsonBody(object({ ...subscriptionInput, enabled: { type: 'boolean' }, newSecret: { type: 'boolean' } })),
+    responses: { 200: reply('The subscription (and the new secret, once)', object({ subscription: subscriptionDoc, secret: { type: 'string' } }, ['subscription'])), 400: invalid, 403: adminOnly, 404: notFound },
+  });
+  add('delete', '/api/projects/{id}/event-subscriptions/{subscriptionId}', { tag: 'Projects', id: 'deleteEventSubscription', summary: 'Remove an event subscription', description: 'Project admins. Events still waiting for it are dropped.', pathParams: subscriptionPath, responses: { 200: reply('Removed', ok), 403: adminOnly, 404: notFound } });
+  add('post', '/api/projects/{id}/event-subscriptions/{subscriptionId}/retry', { tag: 'Projects', id: 'retryEventSubscription', summary: 'Retry an event subscription now', description: 'Project admins. Waiting events are due at once and the ones given up on after 72 hours are queued again.', pathParams: subscriptionPath, responses: { 200: reply('How many events it touched', object({ retried: { type: 'integer' } }, ['retried'])), 403: adminOnly, 404: notFound } });
+  add('post', '/api/projects/{id}/event-subscriptions/{subscriptionId}/test', { tag: 'Projects', id: 'testEventSubscription', summary: 'Send a test event', description: 'Project admins. One signed `test` event straight to the URL, not through the queue; a receiver that refuses is a 200 with `ok: false`.', pathParams: subscriptionPath, responses: { 200: reply('What the receiver answered', object({ ok: { type: 'boolean' }, status: { type: 'integer' }, message: { type: 'string' } }, ['ok', 'message'])), 403: adminOnly, 404: notFound } });
   add('get', '/api/mcp/tools', {
     tag: 'MCP',
     id: 'listMcpTools',

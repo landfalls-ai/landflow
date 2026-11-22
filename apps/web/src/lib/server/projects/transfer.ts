@@ -16,6 +16,7 @@ import { forgetProjectSettings } from '../governance/scopes';
 import { agentTemplateRows } from '../agents/template-rows';
 import { localTemplates } from '../templates/store';
 import { settleRetired } from '../practices/inbox';
+import { removeProjectSubscriptions } from '../outbox/subscriptions';
 import { projectVariables } from './variables';
 import {
   auditShare,
@@ -173,6 +174,7 @@ export function deleteUserWithTransfer(userId: string, target?: TransferTarget, 
     }
     db.delete('project_members', { user_id: userId });
     db.delete('scim_group_members', { user_id: userId });
+    removeProjectSubscriptions(personal);
     const retired = removeProjectRows(personal);
     if (!deleteUser(userId)) throw new ProjectError('User not found', 404);
     return { moved, retired, ...(to && { to }) };
@@ -199,6 +201,7 @@ export function deleteProjectWithTransfer(projectId: string, transferTo?: string
     } else {
       dropProjectData(projectId);
     }
+    removeProjectSubscriptions(projectId);
     const retired = removeProjectRows(projectId);
     return { moved, retired };
   });
