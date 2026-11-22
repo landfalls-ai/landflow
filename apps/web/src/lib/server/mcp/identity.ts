@@ -19,7 +19,8 @@
 import { createRemoteJWKSet, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
 import { can, type ApiKeyScope, type Role } from '../../shared/auth';
 import { API_KEY_PREFIX, SESSION_COOKIE } from '../../shared/auth-paths';
-import { KEY_REFUSAL_MESSAGE, noteKeyRefusal } from '../auth/api-key-audit';
+import { noteKeyRefusal } from '../auth/api-key-audit';
+import { KEY_REFUSAL_MESSAGE } from '../auth/api-key-refusal';
 import { consumeApiKeyUse } from '../auth/api-key-uses';
 import { verifyApiKey } from '../auth/api-keys';
 import { callerIp } from '../net/ip-allow';

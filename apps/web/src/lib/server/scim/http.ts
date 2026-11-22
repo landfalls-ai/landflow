@@ -5,7 +5,8 @@
  * as the token's user, so "who changed this" works as it does for API keys.
  */
 import { noteAuditPrincipal } from '../audit/context';
-import { KEY_REFUSAL_MESSAGE, noteKeyRefusal } from '../auth/api-key-audit';
+import { noteKeyRefusal } from '../auth/api-key-audit';
+import { KEY_REFUSAL_MESSAGE } from '../auth/api-key-refusal';
 import { consumeApiKeyUse } from '../auth/api-key-uses';
 import { withAuth, type Principal } from '../auth/context';
 import { clientIp } from '../auth/rate-limit';

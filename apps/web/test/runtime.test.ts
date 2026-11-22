@@ -170,7 +170,9 @@ describe('routes wait on readiness', () => {
     // db/reads.ts (store.ts) come in, three small leaf modules; the budget follows (79 * 1.1 rounds up to 87).
     // Wave 6 merge, re-measured: 89. P26's db/hot-mirror.ts and db/replication-metrics.ts (db/database.ts) and P29's
     // telemetry/fingerprint.ts (the logger) come in, three small leaf modules; the budget follows (81 * 1.1 rounds up to 90).
-    expect(closure.size).toBeLessThan(Math.ceil(81 * 1.1));
+    // W4a P16, re-measured: 92. net/ip-allow.ts and shared/ip-entry.ts (the guard's address check through auth/api-keys.ts) and
+    // auth/api-key-refusal.ts (the messages) come in; the audit and use-count helpers are imported on first use. The budget follows (84 * 1.1 rounds up to 93).
+    expect(closure.size).toBeLessThan(Math.ceil(84 * 1.1));
   });
 
   it('handler() boots through the registered bootstrapper, and rejects rather than hangs without one', async () => {

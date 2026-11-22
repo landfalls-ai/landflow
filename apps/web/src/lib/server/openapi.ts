@@ -367,6 +367,11 @@ const schemas: Record<string, Json> = {
       createdAt: { type: 'string' },
       expiresAt: { type: 'string' },
       lastUsedAt: { type: 'string' },
+      lastUsedIp: { type: 'string', description: 'The address of the last use (up to a minute behind): personal data, shown to the key’s owner only' },
+      allowedIps: { ...array({ type: 'string' }), description: 'Fixed at creation: the key only works from these addresses and CIDR ranges' },
+      maxUses: { type: 'integer', description: 'Fixed at creation: the key stops after this many uses' },
+      uses: { type: 'integer', description: 'Uses so far (with `maxUses`)' },
+      usedUp: { type: 'boolean', description: '`uses` reached `maxUses`; the key stays listed until deleted' },
     },
     ['id', 'label', 'hint', 'scopes', 'createdAt'],
   ),
@@ -2119,10 +2124,14 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Account',
     id: 'createApiKey',
     summary: 'Create an API key',
-    description: 'The key (`lf_…`) comes back once, as `token`. Only owners and admins create keys with the `admin` scope.',
+    description:
+      'The key (`lf_…`) comes back once, as `token`. Only owners and admins create keys with the `admin` scope. `allowedIps` and `maxUses` are fixed at creation (a new key replaces one): a call from another address, or past the cap, gets 401 (“This API key can’t be used from this address” / “This API key has used all its uses”, no fall back to a session) and an `api.denied` audit row; a use is a request that reaches its handler. The same rules hold for SCIM tokens and `/api/mcp`.',
     body: jsonBody(
       object(
-        { label: { type: 'string', minLength: 1, maxLength: 100 }, scopes: { ...array(ref('ApiKeyScope')), minItems: 1 }, expiresInDays: { type: 'integer', minimum: 1, maximum: 3650, description: 'None: never expires' } },
+        { label: { type: 'string', minLength: 1, maxLength: 100 }, scopes: { ...array(ref('ApiKeyScope')), minItems: 1 }, expiresInDays: { type: 'integer', minimum: 1, maximum: 3650, description: 'None: never expires' },
+          allowedIps: { ...array({ type: 'string', maxLength: 100 }), maxItems: 50, description: 'IPv4/IPv6 addresses or CIDR ranges, `localhost`; none: any address. A bad entry answers 400 naming it' },
+          maxUses: { type: 'integer', minimum: 1, maximum: 1000000, description: 'None: no cap' },
+        },
         ['label', 'scopes'],
       ),
     ),

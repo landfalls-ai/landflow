@@ -5,7 +5,7 @@
  */
 import { can, type ApiKeyScope } from '../../shared/auth';
 import { API_KEY_PREFIX } from '../../shared/auth-paths';
-import { KEY_REFUSAL_MESSAGE } from '../auth/api-key-audit';
+import { KEY_REFUSAL_MESSAGE } from '../auth/api-key-refusal';
 import { verifyApiKey } from '../auth/api-keys';
 import { callerIp } from '../net/ip-allow';
 import type { UserRecord } from '../auth/users';

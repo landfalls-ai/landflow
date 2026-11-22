@@ -13,7 +13,7 @@ import { NextResponse } from 'next/server';
 import { BACKGROUND_HEADER, can, hasScope, type Action, type Viewer } from '../../shared/auth';
 import { API_KEY_HEADER, API_KEY_PREFIX, isPublicPath, PATH_HEADER, SESSION_COOKIE } from '../../shared/auth-paths';
 import { verifyApiKey } from './api-keys';
-import { KEY_REFUSAL_MESSAGE, noteKeyRefusal } from './api-key-audit';
+import { KEY_REFUSAL_MESSAGE } from './api-key-refusal';
 import { callerIp } from '../net/ip-allow';
 import { requestAuth, type Principal, type RequestAuth } from './context';
 import { looksLikeDebugToken } from './debug-tokens';
@@ -111,7 +111,8 @@ export function registrySecretOk(request: Request): boolean {
 
 export const metricsPublic = () => process.env.LANDFLOW_METRICS_PUBLIC === 'true';
 
-export type GuardResult = { ok: true; auth: RequestAuth } | { ok: false; response: Response };
+/** `refused`: the key behind an address refusal; the caller (http.ts) writes its audit row, since the audit layer imports this guard. */
+export type GuardResult = { ok: true; auth: RequestAuth } | { ok: false; response: Response; refused?: { reason: 'ip_not_allowed'; key: { id: string; label: string } } };
 
 /** A refusal: counted as landflow.http.denied{reason} (rate-limit/counters.ts) and answered as JSON. */
 const deny = (reason: string, message: string, status: number, extra: Record<string, unknown> = {}) => {
@@ -144,8 +145,7 @@ export function guardRequest(request: Request | undefined): GuardResult {
   // session, so it needs no proof.
   const resolved = request ? resolvePrincipal(request, { touch: !isBackground(request, method, path) }) : ({ ok: true } as Resolved);
   if (!resolved.ok) {
-    if (resolved.refused) noteKeyRefusal(resolved.refused.reason, resolved.refused.key);
-    return { ok: false, response: deny('bad_credentials', resolved.message, resolved.status) };
+    return { ok: false, response: deny('bad_credentials', resolved.message, resolved.status), ...(resolved.refused && { refused: resolved.refused }) };
   }
   const principal = resolved.principal ?? testPrincipal();
   if (!principal) {

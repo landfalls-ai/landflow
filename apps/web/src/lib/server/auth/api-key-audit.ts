@@ -7,15 +7,8 @@
  */
 import { recordAudit } from '../audit';
 import { deniedReadDue, deniedReadUnderCap } from '../audit/http';
+import { type KeyRefusal } from './api-key-refusal';
 import { auditRequestContext } from '../audit/context';
-
-export type KeyRefusal = 'ip_not_allowed' | 'uses_exhausted';
-
-/** What a refusal says to the caller: never the list. */
-export const KEY_REFUSAL_MESSAGE: Record<KeyRefusal, string> = {
-  ip_not_allowed: 'This API key can’t be used from this address',
-  uses_exhausted: 'This API key has used all its uses',
-};
 
 const SUMMARY: Record<KeyRefusal, string> = {
   ip_not_allowed: 'refused: called from an address outside its allow-list',
