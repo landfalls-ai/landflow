@@ -947,6 +947,12 @@ with **Changed:**, the fields that differ from the version before (name, model, 
 limits and so on; the look is left out). **Restore** copies a version into the draft and publishes nothing, so you
 can read it, test it and publish it as a new version. `POST /api/agents/:id/restore { version }`.
 
+**Version history** in the same menu opens the kit's history sheet: every published version with when it went live, who
+published it (versions published since the person was recorded) and the workflows that pin it. Pick any two and
+**Compare** shows what changed field by field (instructions, model, one tool, a skill, a schedule or a channel; credentials by
+name, never their data), reading both versions from `GET /api/agents/:id/versions/:version`. **Restore** is on each kept
+version.
+
 ### Versions and the workflows that pin them
 
 Every agent version is also kept in the `agent_versions` table (migration 2906), so a version older than the 20 in the
