@@ -216,9 +216,16 @@ function SubscriptionDialog({ projectId, editing, workflows, onClose, onSaved }:
           </div>
         )}
         <div className="space-y-2">
-          <Switch checked={fields.includeOutput} onChange={(on) => set({ includeOutput: on })} label="Include the last step’s first 5 items" />
+          {/* The Switch carries its words only as an aria-label, so the visible text sits beside it (as the MCP card does). */}
+          <div className="flex items-center gap-2.5">
+            <Switch checked={fields.includeOutput} onChange={(on) => set({ includeOutput: on })} label="Include the last step’s first 5 items" />
+            <span className="text-[13px] font-semibold text-t1">Include the last step’s first 5 items</span>
+          </div>
           <p className="text-[12px] text-t3">Off by default: events carry ids, status and times only. The items may hold personal or secret values a workflow produced.</p>
-          <Switch checked={fields.ordered} onChange={(on) => set({ ordered: on })} label="Deliver one at a time, in order" />
+          <div className="flex items-center gap-2.5">
+            <Switch checked={fields.ordered} onChange={(on) => set({ ordered: on })} label="Deliver one at a time, in order" />
+            <span className="text-[13px] font-semibold text-t1">Deliver one at a time, in order</span>
+          </div>
         </div>
         {error && <p className="text-[12px] text-rd">{error}</p>}
       </div>

@@ -110,8 +110,9 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - A session saved without a project (before wave 7) follows the agent's home project now, so moving the agent moves
   those sessions with it; a session with a project stays where it ran.
 - The Agents page lists every agent, whatever a project's allow-list says; only the pickers apply it. A2A and kagent
-  agents run elsewhere, so a project's allowed agents and tool kinds do not cover them. A project's knowledge base names
-  a collection that is global, as an agent's own is: another project that names the same collection reads the same data.
+  agents run elsewhere, so a project's allowed agents and tool kinds do not cover them. A vector collection now belongs
+  to a project and others reach it through grants ([projects-and-goals.md](projects-and-goals.md#collections); the
+  limits are under "Combined wave 4a" below).
 - The online evaluation report of an agent filters the scores the viewer may read from the newest 500, so a viewer who
   can read few sessions may see fewer than the page asks; its totals and trend are the agent's own counts.
 - The agent screens (wave 8): the Agents list reads each agent's availability with its own request, so a long list makes
@@ -426,7 +427,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
 
 ## Sessions and sign-in (backend hardening, 2026-11)
 
-- Local accounts have no second factor (no TOTP or passkeys); `LANDFLOW_LOCAL_SIGN_IN=off` makes an instance SSO-only so the identity provider's MFA applies. Passwords have a fixed minimum of 8 characters and no breached-password check (local-only, no external calls). Password reset is refused for users the mode excludes (Settings → Users still offers to make a link for them; the link is then refused); first-run setup and invite acceptance still sign in once with the password they set.
+- Local accounts can add one authenticator app, passkeys and recovery codes ([second factor](features/authentication.md#second-factor)); there is one authenticator per account, single sign-on sessions (OIDC, SAML) are never asked for a second factor (their provider's is relied on; `LANDFLOW_LOCAL_SIGN_IN=off` makes an instance SSO-only), and the TOTP secret is sealed on the default seal purpose (so key rotation re-seals it). Passwords have a fixed minimum of 8 characters and no breached-password check (local-only, no external calls). Password reset is refused for users the mode excludes (Settings → Users still offers to make a link for them; the link is then refused); first-run setup and invite acceptance still sign in once with the password they set.
 - The idle limit (`LANDFLOW_SESSION_IDLE_HOURS`) tells background requests from use only by the `X-Landflow-Background` header the browser's own timers send (and `GET /api/events` by its path). A client timer added without `background: true` keeps an open tab's session alive, a plugin's or extension's own polling with the session cookie counts as use, and use is recorded at most once a minute, so the limit is accurate to about a minute.
 
 - **Developer details** ([ui-review.md](ui-review.md#developer-details)): with the switch off (the default) the Debug access dialog on the Run Trace page still opens from the header's ⋯ menu and speaks in plain words, and only the tool names behind them wait for the switch; the switch is per person and does not change what the API returns. An unfolded plugin card shows its endpoints (address, last error) and its transport policy only with the switch on, so a builder who wants to see an offline endpoint's error or change the policy turns it on first.
@@ -840,10 +841,14 @@ Seen in AG18's live pass (production profile, Claude): a create-an-agent ask in 
 - The engine's `retryOnFail` re-calls a blocked provider (it cannot tell a Blocked failure from any other); within one node execute and within a team run a blocked agent is not asked again, but across retries and runs it is. The text fallback matches provider phrasing only, so an unusual wording is an ordinary failure.
 - A plain agent (not a team) calling a blocked A2A tool shows the error row without the Run Trace badge; the member badge is put on its call span by `agent-teams/runtime.ts`.
 
-### CI JWT bound claims (C18, first slice)
+### CI JWT bound claims and keyless triggers (C18)
 
-- Bound Claims on JWT Auth are a text field (`claim: pattern` per line, top-level claims only, a claim name cannot contain `:`). Single use of a token (`jti`), the GitHub and GitLab presets, the claims editor, the token payload in run data and the API workload login are not built yet (C18, wave W4a).
+- Bound Claims on JWT Auth are a text field (`claim: pattern` per line, top-level claims only, a claim name cannot contain `:`). Single use of a token, the GitHub and GitLab presets, the claims editor and the token payload in run data are built (C18, W4a).
 - Only `repository`, `project_path`, `sub` and the id claims (`repository_id`, `repository_owner_id`, `project_id`, `namespace_id`) with a literal owner count as binding; a self-managed GitLab issuer is not recognised as a public CI issuer (only gitlab.com, GitHub Actions and GitHub Enterprise Cloud hosts are). Other shared CI issuers (Buildkite, Terraform Cloud) are not covered: a credential for them needs no binding.
+
+- The API workload login (a token calling `POST /api/workflows/:id/run` with no `lf_` key, C18 FR-8) is not built; a published webhook with bound claims covers CI.
+- Single Use refuses a CI retry that reuses a token (even with the same `Idempotency-Key`); a token without `exp` is refused while Single Use is on. Single Use is once per credential, refuses tokens that expire more than 24 h ahead, and keeps used-token ids in `saml_replay` until 35 s after `exp`; test URLs spend the token; a Form Trigger page view does not.
+- `item.json.jwtPayload` keeps every verified claim (C18-D2); only the token itself is kept out of run data.
 
 ### Claude Code live status (C04, C15)
 
@@ -940,3 +945,58 @@ Seen in AG18's live pass (production profile, Claude): a create-an-agent ask in 
 - A ticket opens within one ticker period (30 s) of the request, and closes likewise; a ServiceNow `state` is set only for the outcomes the channel maps.
 - No ticket system decides; Jira and others are a webhook away; no custom field mapping.
 - `alerts-settings.tsx` is past 800 lines (splitting it is a follow-up).
+
+## Combined wave 4a (2026-11-21)
+
+### Second factor (C16)
+
+- A second factor is optional (`LANDFLOW_MFA_REQUIRED=off` in every profile); there are no SMS or email codes, no "trust this browser", no password-change screen on Sign-in & security, and one authenticator app per account.
+- A sole owner who loses both the phone and the recovery codes cannot be reset by anyone (only an owner resets an owner, and there is one): nobody may edit the live database. Keep the codes.
+- TOTP needs a device clock within about 30 seconds of the server's.
+- The second-factor check on `/api/me/mfa*` and the sign-in step count against the sign-in limits, which are per process unless Valkey is set up (queue mode).
+- An OIDC sign-in whose verified email matches an existing local account links to it (existing behaviour, `signInUser` in `auth/oidc.ts`) and signs in without the second step, even if that account has an authenticator app. Anyone who controls an identity-provider account with that email therefore bypasses the local factor. Linking was not changed; the mitigation is `LANDFLOW_LOCAL_SIGN_IN=off` or an IdP that verifies email ownership. A later step could ask for the local factor when an SSO sign-in links to a local account that has one.
+- WebAuthn needs `LANDFLOW_PUBLIC_URL` to be the address the browser uses (the relying party id is its host, the expected origin its origin); behind a proxy or on another port without it every passkey call fails (outside development, adding a passkey answers 409 until it is set). `localhost` works over http, anything else needs https. Changing it makes existing passkeys unusable.
+- Passkeys are only a second factor (no passwordless sign-in); attestation is `none`, so there is no check of the authenticator's maker or model; a passkey cannot be renamed (remove and add again); at most ten per account, checked per main in queue mode, so two mains racing can leave an account at eleven.
+- A passkey whose signature counter goes back or repeats is flagged and refused for good until removed; synced passkeys that report a counter that does not move forward (but is not 0) would trip this, and the person must add the passkey again.
+
+### API keys (C17)
+
+- An API key's allow-list and use cap are fixed at creation: changing either means a new key (no PATCH, no rotate button; "rotate" is create-new-then-delete).
+- A capped key costs one Postgres round trip per request in queue mode (the exact count is decided in the database); a key with no cap costs nothing extra.
+- The last address a key was used from is written with the once-a-minute last-used touch, so it can lag by a minute (and in Postgres mode it follows the process that wrote it).
+- The allow-list is only as good as `LANDFLOW_TRUSTED_PROXIES`: with none counted (unset or 0) a caller can write its own `X-Forwarded-For` and get around the list (the same as rate limits and webhook allow-lists). In production a key or SCIM token with an address list is refused (400) until the variable is set on purpose; outside production `GET /api/api-keys` and the SCIM view carry `addressUnverified` and the forms warn. A caller with no address is refused by any list. `/connect` does not offer an allow-list or cap.
+- A use is a request that reaches its handler: a request refused for a scope, a role or the rate limiter is free. A key that is used up stays listed until the owner deletes it.
+- Webhook `ipWhitelist` entries are still not validated at save (a malformed entry never matches, so it fails closed); only API key lists are checked.
+- An expiry is still optional for API keys ("never" stays a choice, C17-D1).
+
+### Event subscriptions (C19)
+
+- Event subscriptions deliver at least once, ordered per subscription: receivers drop duplicates by `x-landflow-event-id`. A receiver down for 72 hours has the events given up on (kept 30 more days, back with Retry now).
+- `node.finished` events arrive after the run ends (derived from the saved run data), not while it runs, and only for named steps.
+- A subscription gets events from runs saved after it was made; nothing is replayed.
+- Failure alert channels and the error workflow stay best-effort with no retry (not on the outbox yet); Notion's outbox (`notion_brain_outbox`) and approval tickets keep their own retry queues; only the audit SIEM outbox shares the core.
+- Events carry no run data unless "Include the last step's first 5 items" is on; the output is the saved run data, cut to 64 KB.
+- A subscription's waiting events are bounded by count (10,000) and by payload bytes (128 MB): beyond either, the oldest are given up on, so a receiver that stays down while a subscription includes output cannot grow the database without limit.
+- Members of a project see a subscription's URL origin and the HTTP status of a failure only; admins see the whole URL and the receiver's error text. An event's error text is cut to 2,000 characters.
+- The addresses are checked against the outbound policy when saved (literal addresses) and on every send (what a name resolves to); a name that resolves privately at save time is accepted and then fails at send time.
+
+### Chunk diffing (C20)
+
+- Chunk reuse covers folder indexing, the Notion walk and the Vector Store node with "Upsert by Key". A single upload in the knowledge dialog is a new document each time (not diffed).
+- Chunks stored before C20 have no hash, so the first index of each file (and the first walk of a Notion page that changes) embeds it once; the new section cuts change every file's chunk text then too.
+- Reuse is exact text under the same provider, model, requested vector size and (for OpenAI-compatible servers and Ollama) endpoint; a vector is reused only when the stored text really hashes to the key, so metadata planted by a plain insert can't poison it. The Upsert by Key key is collection-wide within a project's access (see collections below): two flows using one key in one collection replace each other's chunks.
+- A folder whose listing could not read a subfolder (permissions) removes nothing that pass; indexing the files directory itself (`.`) never removes chunks of files that left; a folder listing cut at 200 files removes nothing that left the folder; files that left the folder lose their chunks only when that folder's pass runs (nothing watches the folder).
+- The Vector Store node keeps the splitter sub-node's cuts: only folder indexing and the Notion walk cut at content-defined sections, so a node whose splitter packs greedily reuses fewer chunks after an insertion.
+
+### Collection access (C21)
+
+- A collection nobody has written and no saved configuration names stays open to every project until a project writes it (it is then claimed by that project); the upgrade adopts only names written literally in an agent's knowledge base (draft or published), a project's knowledge setting or a workflow's Vector Store node (current definition): a name built by an expression (`{{ ... }}`) is not adopted, is listed in the report as not found, and if another project wrote that collection first the project that builds the name lost access (C21-D2 strict).
+- A project that lost access in the upgrade has no access until an admin of the owner grants it back; the notice lives on the owner's card; "Find owners again" lists a dismissed notice again while the project still names the collection.
+- A pgvector collection is keyed by the connection (host, port, database), the table and the name (a JSON array, so no part runs into another), not by credential, so two credentials to one database and table are one collection. Names keep their case (`HR` and `hr` are two collections, as the stores treat them); only the brain's own names are case-insensitive.
+- The knowledge-base picker does not offer a pgvector collection that another project shared (it carries that project's credential); name it by hand with a credential of your own.
+- The dialog's inline "your project can't use this name" check covers the SQLite and in-memory stores in an agent's knowledge dialog; the agent's draft save (`PUT /api/agents/:id`) refuses a NEW base on a collection the project can't read (403, a base already held stays), project knowledge says it when saved (400), and a Postgres name is refused there too (its key needs the credential, so the dialog cannot check it as you type).
+- The claim is a probe. A project that may write learns that a name is owned by someone else when its write is refused (the same message as for a name that does not exist only for reads); an unowned name is claimed by the attempt. The refusal never names the owner.
+- On Postgres, a main that has not yet seen the adoption marker (the first seconds of the first start after the upgrade, before the leader's `collection owners` service ran) reads every collection as unowned until the marker replicates; writes wait for it. The marker is claimed in Postgres (`ON CONFLICT DO NOTHING RETURNING`), so two mains starting together adopt once.
+- Moving ONE workflow or agent to another project leaves its collections with the old project (collections follow projects). Deleting a project, or removing a user, with a transfer moves the collections to the target (audited, same transaction).
+- Lists answer at most 500 collections (`truncated: true` says more exist). The instance-wide collections list and "Find owners again" are API only (`/api/settings/collections`); instance owners and admins see every project's card.
+- A granted write keeps the grantee's Upsert-by-Key keys apart from the owner's; the key stored for a grantee is `<project id>\u001f<key>`, so the grantee's chunks of one key can't replace the owner's. Other metadata (a plain insert) is not scoped.
