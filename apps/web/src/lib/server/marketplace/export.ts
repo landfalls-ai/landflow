@@ -69,9 +69,12 @@ export function claudeColor(hex: string): string | undefined {
   return best?.[0];
 }
 
-/** The config an export keeps: no schedules or channels (they are bound to this instance's credentials), no credentials. */
+/**
+ * The config an export keeps: no schedules or channels (they are bound to this instance's credentials), no credentials, and no
+ * "Hold changed MCP tools" switch (C27: it belongs to this instance's snapshots of its servers; an installed agent starts with it on).
+ */
 export function portableConfig(config: AgentConfig): Partial<AgentConfig> {
-  const { schedules: _schedules, channels: _channels, ...rest } = structuredClone(config);
+  const { schedules: _schedules, channels: _channels, holdChangedTools: _hold, ...rest } = structuredClone(config);
   if (rest.model) delete rest.model.credential;
   rest.tools = rest.tools.map((tool) => {
     const { credentials: _credentials, ...kept } = tool as typeof tool & { credentials?: unknown };

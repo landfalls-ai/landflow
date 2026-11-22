@@ -59,7 +59,9 @@ import { callAgent, landflowTags, remoteRunOf, throttled } from '../a2a/traced';
 import { credentials } from '../credentials/vault';
 import { safeEndpoint, type ToolTarget } from '../../shared/tool-target'; // AG14:
 import { targetOfA2a, targetOfAgent, targetOfMcp, targetOfNode, targetOfWorkflow } from './tool-target'; // AG14:
-import { agentToolsFrom, endpointFrom, listMcpTools, resourceAndPromptTools, selectTools } from '../mcp/client';
+import { agentToolsFrom, endpointFrom, listMcpTools, resourceAndPromptTools, selectTools, type McpEndpoint } from '../mcp/client';
+import type { Tool as McpTool } from '@modelcontextprotocol/client';
+import { heldLine, holdChangedTools, lastPublisherOf, mcpSubject } from '../trust/mcp-tools'; // C27:
 import { githubMcpUrl, githubToolsOf, isGithubPreset } from '../mcp/github';
 import { registry } from '../plugins/registry';
 import { workflowForCall } from '../publish';
@@ -217,12 +219,15 @@ export function dedupe(tools: BuiltTool[]): BuiltTool[] {
 /** buildTools plus the tools of the agent's MCP servers and A2A agents, read from each (in parallel), and the flow's. */
 export async function buildToolset(agent: Agent, config: AgentConfig, flow: AgentTool[] = [], flowTargets?: Map<string, ToolTarget>): Promise<Toolset> {
   const listed = await Promise.all(
-    config.tools.flatMap((tool) => (tool.type === 'mcp' ? [mcpServerTools(tool)] : tool.type === 'a2a' ? [a2aAgentTool(tool).then((t) => ('error' in t ? t : [t]))] : [])),
+    config.tools.flatMap((tool) => (tool.type === 'mcp' ? [mcpServerTools(tool, config.holdChangedTools ? { agentId: agent.id } : undefined)] : tool.type === 'a2a' ? [a2aAgentTool(tool).then((t) => ('error' in t ? t : { tools: [t], notes: [] }))] : [])),
   );
   const remote: Toolset = { tools: [], unavailable: [] };
   for (const result of listed) {
     if ('error' in result) remote.unavailable.push(result.error);
-    else remote.tools.push(...result);
+    else {
+      remote.tools.push(...result.tools);
+      remote.unavailable.push(...result.notes); // C27: tools held for review
+    }
   }
   const built = buildTools(agent, config, remote);
   return flow.length ? { ...built, tools: dedupe([...built.tools, ...flow.map((tool) => flowTool(tool, flowTargets?.get(tool.name)))]) } : built;
@@ -255,35 +260,55 @@ export function flowTool(tool: AgentTool, target?: ToolTarget): BuiltTool {
 
 export const MCP_CLIENT_TOOL = 'core.mcpClientTool';
 
-/** Each tool an MCP server lists (after the include filter), with the server's schema. */
-async function mcpServerTools(config: McpServerToolConfig): Promise<BuiltTool[] | { error: string }> {
+/** One MCP server config, reached: its endpoint and the tools it lists after the include filter (GitHub's: after its allow-list). */
+export async function listMcpConfigTools(config: McpServerToolConfig): Promise<{ endpoint: McpEndpoint; parameters: Record<string, unknown>; github: boolean; selected: McpTool[] } | { error: string }> {
   const resolved = registry.resolve(MCP_CLIENT_TOOL);
   if ('error' in resolved) return { error: `${config.name}: ${resolved.error}` };
+  const github = isGithubPreset(config);
+  // GitHub's server: the bundled one unless the agent names another; always a bearer token, which is the credential.
+  const parameters = github
+    ? { ...config.parameters, authentication: 'bearerAuth', endpointUrl: String(config.parameters.endpointUrl ?? '').trim() || githubMcpUrl() }
+    : config.parameters;
+  const resolveSecrets = () => credentials.resolveFor({ type: MCP_CLIENT_TOOL, credentials: config.credentials, parameters }, resolved.descriptor);
+  // An OAuth2 credential's token is renewed before the call (it may have expired since the last run).
+  const secrets = (await credentials.freshen(resolveSecrets())) ?? resolveSecrets();
+  const endpoint = endpointFrom(parameters, secrets);
+  // A 401 mid-run (the token was revoked or expired early): renew it by force and use the new header once.
+  if (parameters.authentication === 'mcpOAuth2') {
+    endpoint.reauth = async () => {
+      const renewed = await credentials.freshen(resolveSecrets(), true);
+      return renewed ? endpointFrom(parameters, renewed).headers : undefined;
+    };
+  }
+  const { include, includeTools, excludeTools } = parameters;
+  // GitHub's server: only what the agent's access allows, whatever the server lists (lib/server/mcp/github.ts).
+  const selected = github ? githubToolsOf(config, await listMcpTools(endpoint)) : selectTools(await listMcpTools(endpoint), include, includeTools, excludeTools);
+  return { endpoint, parameters, github, selected };
+}
+
+/**
+ * Each tool an MCP server lists (after the include filter), with the server's schema. `hold` (C27, the agent's "Hold changed MCP
+ * tools" switch): a tool whose content changed since the agent was published is not offered; it joins the run's notices instead.
+ */
+async function mcpServerTools(config: McpServerToolConfig, hold?: { agentId: string }): Promise<{ tools: BuiltTool[]; notes: string[] } | { error: string }> {
   try {
-    const github = isGithubPreset(config);
-    // GitHub's server: the bundled one unless the agent names another; always a bearer token, which is the credential.
-    const parameters = github
-      ? { ...config.parameters, authentication: 'bearerAuth', endpointUrl: String(config.parameters.endpointUrl ?? '').trim() || githubMcpUrl() }
-      : config.parameters;
-    const resolveSecrets = () => credentials.resolveFor({ type: MCP_CLIENT_TOOL, credentials: config.credentials, parameters }, resolved.descriptor);
-    // An OAuth2 credential's token is renewed before the call (it may have expired since the last run).
-    const secrets = (await credentials.freshen(resolveSecrets())) ?? resolveSecrets();
-    const endpoint = endpointFrom(parameters, secrets);
-    // A 401 mid-run (the token was revoked or expired early): renew it by force and use the new header once.
-    if (parameters.authentication === 'mcpOAuth2') {
-      endpoint.reauth = async () => {
-        const renewed = await credentials.freshen(resolveSecrets(), true);
-        return renewed ? endpointFrom(parameters, renewed).headers : undefined;
-      };
+    const listed = await listMcpConfigTools(config);
+    if ('error' in listed) return listed;
+    const { endpoint, parameters, github } = listed;
+    const { extras } = parameters;
+    let selected = listed.selected;
+    const notes: string[] = [];
+    if (hold) {
+      const result = holdChangedTools(mcpSubject(hold.agentId, config.id), selected, { takesAll: !github && parameters.include !== 'selected', lastPublisher: lastPublisherOf(hold.agentId) });
+      selected = result.offered;
+      notes.push(...result.held.map((change) => heldLine(config.name, change)));
     }
-    const { include, includeTools, excludeTools, extras } = parameters;
     const tools = [
-      // GitHub's server: only what the agent's access allows, whatever the server lists (lib/server/mcp/github.ts).
-      ...agentToolsFrom(endpoint, github ? githubToolsOf(config, await listMcpTools(endpoint)) : selectTools(await listMcpTools(endpoint), include, includeTools, excludeTools)),
+      ...agentToolsFrom(endpoint, selected),
       // Resources and prompts as tools (list_resources, read_resource, list_prompts, get_prompt), when the server config asks.
       ...(github ? [] : resourceAndPromptTools(endpoint, Array.isArray(extras) ? extras.map(String) : [])),
     ];
-    return tools.map((tool) => ({
+    const built = tools.map((tool): BuiltTool => ({
       // Shown with the MCP Client Tool's icon in the timeline.
       kind: 'node' as const,
       nodeType: MCP_CLIENT_TOOL,
@@ -297,6 +322,7 @@ async function mcpServerTools(config: McpServerToolConfig): Promise<BuiltTool[] 
         return { output: await tool.invoke(input, ctx.signal) };
       },
     }));
+    return { tools: built, notes };
   } catch (error) {
     return { error: `${config.name}: ${(error as Error).message}` };
   }

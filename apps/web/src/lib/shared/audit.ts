@@ -222,6 +222,10 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'sync.export': 'Exported Git sync files',
   'datatable.export': 'Exported a data table',
   'agent.tool_approval': 'Approved or denied an agent’s tool call',
+  // C27: content-keyed trust (docs/agents.md#changed-mcp-tools-are-held)
+  'trust.approve': 'Approved content by its hash (an agent’s MCP tools, a marketplace plugin)',
+  'trust.reject': 'Kept changed MCP tools held',
+  'trust.revoke': 'Revoked what was approved by hash',
   'api.denied': 'Request refused (401/403)',
   'api.request': 'API request',
 };

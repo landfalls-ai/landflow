@@ -451,6 +451,11 @@ export interface AgentConfig {
   projectContext?: ContextMode;
   /** Whether approved practices (docs/practices.md) go into this agent's prompt. Absent = on. */
   practices?: 'on' | 'off';
+  /**
+   * C27: hold an MCP tool whose description, schema or annotations changed since the agent was published (docs/agents.md#changed-mcp-tools-are-held).
+   * New agents have it on, and publishing turns it on for an agent that has no value yet. Absent = off (an agent from before it existed).
+   */
+  holdChangedTools?: boolean;
 }
 
 export interface AgentVersion {

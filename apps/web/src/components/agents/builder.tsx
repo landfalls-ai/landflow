@@ -49,6 +49,7 @@ import { AgentAvatar } from './avatar';
 import { AvatarDialog } from './avatar-dialog';
 import { CapabilitiesCard } from './capabilities-card';
 import { GuardrailsCard } from './guardrails-card';
+import { HeldToolsBanner } from './held-tools'; // C27:
 import { KagentCard } from './kagent-card';
 import { publishLine, type AgentPublish } from '@/lib/shared/agent-card'; // AG05:
 import { Dialog, Field } from './dialog';
@@ -876,6 +877,8 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
             )}
           </div>
         )}
+        {/* C27: MCP tools a server changed since this agent was published, held until someone reviews them. */}
+        <HeldToolsBanner agentId={agentId} refreshKey={testing} />
         <div className={cn('mx-auto w-full px-4 pb-16 pt-7 sm:px-6', tab === 'persona' ? 'max-w-[1160px]' : tab === 'activity' ? 'max-w-[960px]' : 'max-w-[680px]')}>
           <div className="flex animate-fade-up items-center gap-4">
             <AvatarButton agentId={agentId} config={draft} update={update} />

@@ -10,6 +10,7 @@ import { error, handler, json, parseBody } from '@/lib/server/http';
 import { redeployIfDeployed } from '@/lib/server/kagent/deploy';
 import { currentPrincipal } from '@/lib/server/auth/guard';
 import { hasPrompt } from '@/lib/shared/persona';
+import { approveOnPublish } from '@/lib/server/trust/publish';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
@@ -41,8 +42,10 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   }
   const agent = agentStore.publish(id, currentPrincipal()?.user.id)!;
   if (gate?.run && agent.published) adoptRun(gate.run, agent.published.version);
+  // C27: what each MCP server lists now is what the publisher approved; a server that is slow is snapshotted at its first run.
+  const trust = await approveOnPublish(currentPrincipal()?.user, agent);
   const kagent = await redeployIfDeployed(agent);
-  return json({ agent: kagent && !('error' in kagent) ? (agentStore.get(id) ?? agent) : agent, ...(kagent && { kagent }), ...(gate && !gate.skipped && { gate }) });
+  return json({ agent: kagent && !('error' in kagent) ? (agentStore.get(id) ?? agent) : agent, ...(kagent && { kagent }), ...(trust.deferred.length && { trust }), ...(gate && !gate.skipped && { gate }) });
 });
 
 export const DELETE = handler(async (_request: Request, { params }: Ctx) => {
