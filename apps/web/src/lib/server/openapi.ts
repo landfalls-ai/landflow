@@ -47,6 +47,8 @@ interface Operation {
   description?: string;
   /** A trigger URL: no API key or session (lib/shared/auth-paths.ts), the trigger checks its callers itself. */
   public?: boolean;
+  /** What replaces the trigger sentence on a public route that is not a trigger (sign-in steps). */
+  publicNote?: string;
   /** Descriptions of path parameters. */
   pathParams?: Record<string, string>;
   query?: Array<{ name: string; description: string; schema: Json; required?: boolean }>;
@@ -74,7 +76,7 @@ function operation(method: Method, path: string, spec: Operation): Json {
       operationId: spec.id,
       tags: [spec.tag],
       summary: spec.summary,
-      description: [spec.description, PUBLIC_TEXT].filter(Boolean).join('\n\n'),
+      description: [spec.description, spec.publicNote ?? PUBLIC_TEXT].filter(Boolean).join('\n\n'),
       security: [],
       'x-landflow-public': true,
       ...(parameters.length && { parameters }),
@@ -2032,6 +2034,85 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Rename yourself or change your password',
     body: jsonBody(object({ name: { type: 'string', minLength: 1, maxLength: 120 }, currentPassword: { type: 'string' }, newPassword: { type: 'string', minLength: 8, maxLength: 256 } })),
     responses: { 200: reply('You', object({ user: ref('Viewer') }, ['user'])), 400: invalid },
+  });
+  // ---- C16: a second factor for local accounts (docs/features/authentication.md#second-factor) ----
+  const mfaMethod = { type: 'string', enum: ['totp', 'recovery'] };
+  const mfaFactor = object({ id: { type: 'string' }, kind: { type: 'string', enum: ['totp', 'webauthn'] }, name: { type: 'string' }, confirmed: { type: 'boolean' }, createdAt: { type: 'string' }, lastUsedAt: { type: 'string' }, flagged: { type: 'boolean' } }, ['id', 'kind', 'name', 'confirmed', 'createdAt']);
+  add('post', '/api/auth/login', {
+    tag: 'Account',
+    id: 'signIn',
+    summary: 'Sign in with a password',
+    description: 'Sets the session cookie. A user with a second factor gets 202 instead: a single-use `challenge` (5 minutes, good only for `POST /api/auth/mfa/verify`) and no cookie. Failed attempts are limited per email and per IP (429 with `retryAfter`).',
+    public: true,
+    publicNote: 'Public: no API key or session; the password is the credential.',
+    body: jsonBody(object({ email: { type: 'string' }, password: { type: 'string' } }, ['email', 'password'])),
+    responses: {
+      200: reply('Signed in', object({ user: ref('Viewer') }, ['user'])),
+      202: reply('The password was right and a second factor is next', object({ mfaRequired: { type: 'boolean', enum: [true] }, methods: array(mfaMethod), challenge: { type: 'string' } }, ['mfaRequired', 'methods', 'challenge'])),
+      401: errorRef('Wrong email or password'),
+      429: errorRef('Too many failed sign-ins (`retryAfter` seconds)'),
+    },
+  });
+  add('post', '/api/auth/mfa/verify', {
+    tag: 'Account',
+    id: 'verifySecondFactor',
+    summary: 'Finish a sign-in with a second factor',
+    description: 'Takes the challenge from sign-in (or a password reset) and a code: `totp` (the authenticator app, one step either side, a code works once) or `recovery` (a recovery code, once). Sets the session cookie (method `password+totp` or `password+recovery`). A recovery code also answers `recoveryCodesLeft`. 401 for a wrong code, or an expired, used or burnt challenge (five wrong codes burn it); wrong codes count against the sign-in limits (429).',
+    public: true,
+    publicNote: 'Public: no API key or session; the single-use challenge and the code are the credential.',
+    body: jsonBody(object({ challenge: { type: 'string', maxLength: 100 }, method: mfaMethod, code: { type: 'string', maxLength: 32 } }, ['challenge', 'method', 'code'])),
+    responses: { 200: reply('Signed in', object({ user: ref('Viewer'), recoveryCodesLeft: { type: 'integer' } }, ['user'])), 401: errorRef('Wrong code, or sign in again'), 429: errorRef('Too many failed sign-ins') },
+  });
+  add('get', '/api/me/mfa', {
+    tag: 'Account',
+    id: 'getMyMfa',
+    summary: 'Your second factors',
+    description: 'The factors (never a secret), recovery codes left, what `LANDFLOW_MFA_REQUIRED` asks of you and whether this session passed a second-factor check in the last five minutes.',
+    responses: { 200: reply('Your state', object({ factors: array(mfaFactor), recoveryCodesLeft: { type: 'integer' }, mode: { type: 'string', enum: ['off', 'admins', 'all'] }, covered: { type: 'boolean' }, enrolmentRequired: { type: 'boolean' }, recentlyVerified: { type: 'boolean' }, canEnrol: { type: 'boolean' } }, ['factors', 'recoveryCodesLeft', 'mode', 'covered', 'enrolmentRequired', 'recentlyVerified', 'canEnrol'])) },
+  });
+  add('post', '/api/me/mfa/totp', {
+    tag: 'Account',
+    id: 'startTotp',
+    summary: 'Start adding an authenticator app',
+    description: 'Answers the `secret`, the `otpauthUrl` and a `qr` SVG data URL, once. The factor counts after the confirm call. 409 when you already have an app or sign in with single sign-on.',
+    responses: { 201: reply('Started', object({ factorId: { type: 'string' }, secret: { type: 'string' }, otpauthUrl: { type: 'string' }, qr: { type: 'string' } }, ['factorId', 'secret', 'otpauthUrl', 'qr'])), 409: errorRef('Not possible for this account') },
+  });
+  add('post', '/api/me/mfa/totp/{id}/confirm', {
+    tag: 'Account',
+    id: 'confirmTotp',
+    summary: 'Confirm an authenticator app with a current code',
+    description: 'The first confirmed factor also makes ten recovery codes, answered once as `recoveryCodes`. A code works once. Wrong codes count against the sign-in limits.',
+    body: jsonBody(object({ code: { type: 'string', maxLength: 32 } }, ['code'])),
+    responses: { 200: reply('Confirmed', object({ factor: mfaFactor, recoveryCodes: array({ type: 'string' }) }, ['factor'])), 400: errorRef('The code did not work'), 404: notFound, 429: errorRef('Too many failed attempts') },
+  });
+  add('post', '/api/me/mfa/step-up', {
+    tag: 'Account',
+    id: 'mfaStepUp',
+    summary: 'Check your second factor for this session',
+    description: 'A fresh check (an app code or a recovery code) that removing a factor and making new recovery codes need within five minutes.',
+    body: jsonBody(object({ method: mfaMethod, code: { type: 'string', maxLength: 32 } }, ['method', 'code'])),
+    responses: { 200: reply('Checked', object({ ok: { type: 'boolean' }, recoveryCodesLeft: { type: 'integer' } }, ['ok'])), 401: errorRef('The code did not work'), 409: errorRef('No second factor'), 429: errorRef('Too many failed attempts') },
+  });
+  add('post', '/api/me/mfa/recovery-codes', {
+    tag: 'Account',
+    id: 'newRecoveryCodes',
+    summary: 'Make a new set of recovery codes',
+    description: 'Ten codes, answered once; the old set stops working. Needs a second-factor check from the last five minutes (403 `mfa_step_up_required`).',
+    responses: { 200: reply('The new codes', object({ recoveryCodes: array({ type: 'string' }) }, ['recoveryCodes'])), 403: errorRef('Check your second factor first'), 409: errorRef('No second factor') },
+  });
+  add('delete', '/api/me/mfa/{id}', {
+    tag: 'Account',
+    id: 'removeMfaFactor',
+    summary: 'Remove one of your second factors',
+    description: 'Needs a second-factor check from the last five minutes (403 `mfa_step_up_required`). Your last factor is refused (409 `mfa_required_by_policy`) while `LANDFLOW_MFA_REQUIRED` covers you; removing the last one otherwise deletes the recovery codes.',
+    responses: { 200: reply('Removed', ok), 403: errorRef('Check your second factor first'), 404: notFound, 409: errorRef('Your role must keep a second factor') },
+  });
+  add('delete', '/api/users/{id}/mfa', {
+    tag: 'Account',
+    id: 'resetUserMfa',
+    summary: 'Reset a person’s second factors',
+    description: 'For someone locked out. The owner resets anyone’s but their own; an admin resets members’ and other admins’, never the owner’s; nobody their own. Ends the person’s sessions and records `auth.mfa_reset` in the same transaction (503 and no change when audit is fail-closed and down).',
+    responses: { 200: reply('Reset', object({ ok: { type: 'boolean' }, removed: { type: 'integer' } }, ['ok', 'removed'])), 400: errorRef('Use Sign-in & security for yourself'), 403: errorRef('Not allowed for that role'), 404: notFound, 503: errorRef('The audit log is unavailable') },
   });
   add('get', '/api/api-keys', { tag: 'Account', id: 'listApiKeys', summary: 'List your API keys', responses: { 200: reply('Your keys (never the keys themselves)', object({ keys: array(ref('ApiKey')) }, ['keys'])) } });
   add('post', '/api/api-keys', {

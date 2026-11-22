@@ -23,7 +23,7 @@ import { AuthError } from './errors';
 import { countDenied } from '../rate-limit/counters';
 import { registryOpen } from '../plugins/registry-policy';
 import { sameSecret } from './passwords';
-import { resourceRule, routePolicy } from './policy';
+import { enrolmentRequired, enrolOnlyAllowed, resourceRule, routePolicy } from './policy';
 import { sessionUser } from './sessions';
 import { testPrincipal } from './test-bypass';
 import { setupRequired, viewerOf, type UserRecord } from './users';
@@ -62,7 +62,7 @@ export function resolvePrincipal(request: Request, { touch = true }: { touch?: b
     return { ok: true, principal: { user: checked.user, via: 'api-key', apiKey: { id: checked.key.id, scopes: checked.key.scopes } } };
   }
   const found = sessionUser(readCookie(request, SESSION_COOKIE), Date.now(), { touch });
-  if (found) return { ok: true, principal: { user: found.user, via: 'session', sessionId: found.session.id } };
+  if (found) return { ok: true, principal: { user: found.user, via: 'session', sessionId: found.session.id, sessionMethod: found.session.method, ...(enrolmentRequired(found.user, found.session.method) && { enrolOnly: true }) } };
   return { ok: true };
 }
 
@@ -141,6 +141,12 @@ export function guardRequest(request: Request | undefined): GuardResult {
   const principal = resolved.principal ?? testPrincipal();
   if (!principal) {
     return { ok: false, response: deny('unauthenticated', 'Sign in, or send an API key (Authorization: Bearer lf_…)', 401, setupRequired() ? { setupRequired: true } : {}) };
+  }
+
+  // A covered user without a second factor: this session may only enrol one (docs/features/authentication.md#second-factor).
+  // API keys, MCP tokens and SCIM tokens are not asked.
+  if (principal.enrolOnly && !enrolOnlyAllowed(method, path)) {
+    return { ok: false, response: deny('mfa_enrolment_required', 'Add a second factor first: Sign-in & security', 403, { code: 'mfa_enrolment_required' }) };
   }
 
   const policy = routePolicy(method, path);

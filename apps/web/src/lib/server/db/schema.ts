@@ -2057,6 +2057,20 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS approval_tickets_state ON approval_tickets (state, next_at)`,
     ],
   },
+  // C16: a second factor for local accounts (docs/features/authentication.md#second-factor): the factors (a TOTP secret sealed with the key ring; the passkey columns are for the step that follows), the one-use recovery codes (keyed hashes), the sign-in challenges (the token's SHA-256 is the id) and when a session last passed a second-factor check
+  {
+    version: 2923,
+    name: 'mfa',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS user_mfa_factors (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, secret TEXT, credential_id TEXT, public_key TEXT, counter BIGINT, transports TEXT, last_step BIGINT, confirmed_at TEXT, flagged_at TEXT, created_at TEXT NOT NULL, last_used_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS user_mfa_factors_user ON user_mfa_factors (user_id)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS user_mfa_factors_credential ON user_mfa_factors (credential_id)`,
+      `CREATE TABLE IF NOT EXISTS user_recovery_codes (user_id TEXT NOT NULL, code_hash TEXT NOT NULL, created_at TEXT NOT NULL, used_at TEXT, PRIMARY KEY (user_id, code_hash))`,
+      `CREATE TABLE IF NOT EXISTS mfa_challenges (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, purpose TEXT NOT NULL, first_method TEXT NOT NULL, session_id TEXT, webauthn_challenge TEXT, wrong BIGINT NOT NULL DEFAULT 0, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS mfa_challenges_expires ON mfa_challenges (expires_at)`,
+    ],
+    addColumns: [{ table: 'sessions', column: 'mfa_verified_at', definition: 'TEXT' }],
+  },
   // C21: an owner project per vector collection and the grants other projects hold (docs/agents.md#knowledge-bases); a grant row of level 'lost' records what the upgrade took away and gives no access
   {
     version: 2926,
@@ -2214,6 +2228,9 @@ export const TABLES = {
   project_workspaces: ['project_id'],
   // PC19:
   project_tasks: ['id'],
+  user_mfa_factors: ['id'], // C16:
+  user_recovery_codes: ['user_id', 'code_hash'], // C16:
+  mfa_challenges: ['id'], // C16:
   task_runs: ['id'],
 } as const satisfies Record<string, readonly string[]>;
 

@@ -4,9 +4,13 @@
  * API, applied by the guard before any handler runs; routes the table doesn't name need the `admin` scope from an
  * API key and nothing extra from a session.
  */
-import type { Action, ApiKeyScope } from '../../shared/auth';
+import type { Action, ApiKeyScope, Role } from '../../shared/auth';
 import { underPath } from '../../shared/auth-paths';
 import type { ResourceAction, ResourceKind } from '../../shared/projects';
+import { envString } from '../config';
+import { authDb } from './db';
+import type { SessionMethod } from './sessions';
+import type { UserRecord } from './users';
 
 export interface RoutePolicy {
   /** Scope an API key needs; `any` = any valid key. */
@@ -32,6 +36,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/auth/me')) return { scope: 'any' };
   if (under('/api/api-keys')) return { scope: 'any', sessionOnly: true };
   // B02: a person's own preferences and chats; an API key can't read them (the handlers answer the owner only).
+  // C16: your own second factors; a session only (an API key can't add or remove one).
+  if (under('/api/me/mfa')) return { scope: 'any', sessionOnly: true };
   if (under('/api/me/preferences') || under('/api/conversations')) return { scope: 'any', sessionOnly: true };
   if (path === '/api/openapi.json') return { scope: 'any' };
 
@@ -52,6 +58,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   // External secrets providers and environments (promotion, pull, settings): changes are admin; anyone sees the environment.
   if (under('/api/external-secrets')) return read ? { scope: 'admin' } : { scope: 'admin', action: 'settings:manage' };
   if (under('/api/environment')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'settings:manage' };
+  // C16: resetting a person's second factors is a session's act, never an API key's (like /api/api-keys): a stolen admin key can't strip a factor.
+  if (/^\/api\/users\/[^/]+\/mfa$/.test(path)) return { scope: 'admin', action: 'users:manage', sessionOnly: true };
   if (under('/api/users')) return read ? { scope: 'admin' } : { scope: 'admin', action: 'users:manage' };
   if (under('/api/settings/mcp')) return { scope: 'admin', action: 'mcp:manage' };
   // The MCP tool browser (every exposed plugin's tools): anyone who reads workflows; the endpoints themselves are public paths.
@@ -199,4 +207,38 @@ function resourceAction(kind: ResourceRule['kind'], rest: string, method: string
   if (READ_METHODS.has(method)) return 'read';
   if (method === 'DELETE' && !rest && kind !== 'execution') return 'delete';
   return 'update';
+}
+
+// ---- the second-factor policy (C16) ----
+// Here, beside the route policy, because the guard reads it on every request (and test/runtime.test.ts caps the guard's static import closure).
+// Who must have a second factor (`LANDFLOW_MFA_REQUIRED`: `off`, `admins`, `all`) is computed on each request, so a session made before
+// the mode was switched on is caught too; single sign-on sessions are never asked. See docs/features/authentication.md#second-factor.
+
+export type MfaMode = 'off' | 'admins' | 'all';
+
+export function mfaMode(): MfaMode {
+  const value = envString('LANDFLOW_MFA_REQUIRED')?.trim().toLowerCase();
+  return value === 'admins' || value === 'all' ? value : 'off';
+}
+
+/** Does the current mode cover a user of this role? */
+export function mfaCovers(user: { role: Role }): boolean {
+  const mode = mfaMode();
+  return mode === 'all' || (mode === 'admins' && (user.role === 'owner' || user.role === 'admin'));
+}
+
+const SSO: SessionMethod[] = ['oidc', 'saml'];
+
+/** True when the policy covers this user, the session is a local one and the user has no confirmed factor: the session may only enrol one. */
+export function enrolmentRequired(user: UserRecord, sessionMethod: SessionMethod | undefined): boolean {
+  if (!mfaCovers(user)) return false;
+  if (sessionMethod && SSO.includes(sessionMethod)) return false;
+  return !authDb().get('SELECT 1 AS one FROM user_mfa_factors WHERE user_id = ? AND confirmed_at IS NOT NULL LIMIT 1', user.id);
+}
+
+/** What an enrol-only session may call: who it is, its own factors, and signing out. Everything else answers 403 `mfa_enrolment_required`. */
+export function enrolOnlyAllowed(method: string, path: string): boolean {
+  if (path === '/api/auth/me' && method === 'GET') return true;
+  if (path === '/api/me/mfa' || path.startsWith('/api/me/mfa/')) return true;
+  return path === '/api/auth/logout';
 }

@@ -6,7 +6,7 @@
  */
 import { z } from 'zod';
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from '@/lib/shared/auth';
-import { clientIp, deleteUserSessions, findToken, formLimit, getUser, markTokenUsed, setPassword, signedInResponse } from '@/lib/server/auth';
+import { clientIp, deleteUserSessions, findToken, formLimit, getUser, hasConfirmedFactor, markTokenUsed, secondStepResponse, setPassword, signedInResponse } from '@/lib/server/auth';
 import { localSignInAllowed } from '@/lib/server/auth/local-sign-in';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { recordAudit } from '@/lib/server/audit';
@@ -47,5 +47,7 @@ export const POST = handler(async (request: Request) => {
   markTokenUsed(reset.id);
   deleteUserSessions(user.id);
   recordAudit({ action: 'auth.password_reset', actor: { id: user.id, name: user.name, email: user.email }, target: { type: 'user', id: user.id, name: user.email }, summary: `${user.email} reset their password` });
+  // A reset link is not a way round a second factor (C16 FR-7): a user with one still answers it.
+  if (hasConfirmedFactor(user.id)) return secondStepResponse(user, 'reset');
   return signedInResponse(request, user, 'reset');
 });

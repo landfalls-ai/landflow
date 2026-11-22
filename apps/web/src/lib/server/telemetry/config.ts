@@ -63,4 +63,4 @@ export function traceUrl(traceId: string | undefined): string | undefined {
  * debug a conversation, and only `sessionToken`, `sessionSecret` and `sessionCookie` are credentials.
  */
 export const SECRET_KEY =
-  /^(?!.*(?:url|uri|endpoint|host|type|algorithm)$)(?!.*(?:key|token|session|credentials?)[._-]?id$)(?:.*(?:token|secret|password|authorization|api[-_]?key|cookie|private[-_]?key|passphrase|signature|connection[-_]?string|session[-_]?(?:token|secret|cookie))|.*dsn$|credentials$)/i;
+  /^(?!.*(?:url|uri|endpoint|host|type|algorithm)$)(?!.*(?:key|token|session|credentials?)[._-]?id$)(?:.*(?:token|secret|password|authorization|api[-_]?key|cookie|private[-_]?key|passphrase|signature|connection[-_]?string|session[-_]?(?:token|secret|cookie))|recovery[-_]?codes?|.*challenge|.*dsn$|credentials$)/i;
