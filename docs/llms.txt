@@ -1,0 +1,76 @@
+# Landflow
+
+> Landflow is a low-code workflow platform modelled on n8n, where every node is a plugin written in TypeScript, Python or Go and discovered over HTTP, gRPC or a message broker. These are its docs: building flows and agents, connecting tools, running and operating the host, and the API, configuration and plugin protocol references.
+
+## Start here
+
+- [Landflow platform guide](/llms-full.txt#platform-readme-md): The platform guide: one page per area for people, each with a skill that tells Claude how to do the same job.
+- [Platform overview](/llms-full.txt#platform-overview-md): The whole platform on one page: the processes, one run from trigger to Run Trace, where data lives, who may do what.
+- [Agents](/llms-full.txt#platform-agents-md): What a Landflow agent is, where it runs, how a flow calls it, and the routes that make, publish and chat with one.
+- [Agent best practices](/llms-full.txt#platform-agent-best-practices-md): What to follow when building an agent in Landflow, by hand or through Spotlight.
+- [Connect your harness](https://github.com/landfalls-ai/landflow/blob/main/docs/connect-your-harness.md): Connect a coding tool (Claude Code, Cursor, Codex CLI, Gemini CLI, VS Code, any MCP client) to Landflow with /connect.
+- [Architecture](https://github.com/landfalls-ai/landflow/blob/main/docs/architecture.md): How Landflow is put together: the processes, what each owns, how a run moves through them and where the code is.
+
+## Build
+
+- [Building and debugging a flow](/llms-full.txt#features-editor-md): The editor: canvas, node creator, runs, pinned data, debugging, versions and templates; importing from n8n and Flowise.
+- [Engine](/llms-full.txt#features-engine-md): The engine: data model, durable runtime, queue mode and HA, triggers, flow nodes, rate limits and the Code node.
+- [Composite nodes](https://github.com/landfalls-ai/landflow/blob/main/docs/composites.md): Composite nodes: canvas groups typed by a contract (slots, rules, ports), checked in the editor and run as one step.
+- [AI agents](/llms-full.txt#features-ai-md): AI Agent and its sub-nodes, AI Judge, hosted chat and widget, RAG, guardrails, evaluations and MCP.
+- [Agents (Preview)](/llms-full.txt#agents-md): Standalone agents: personas, skills, capabilities, channels, schedules, memory, knowledge, testing and publishing.
+- [Agent teams](https://github.com/landfalls-ai/landflow/blob/main/docs/agent-teams.md): Agent teams: a lead, reporting lines and reviewers, the org chart, budgets and publishing.
+- [Team notebook](https://github.com/landfalls-ai/landflow/blob/main/docs/team-notebook.md): The team notebook: shared notes members write while they work, search by meaning, disputes and promotion.
+- [Team templates](https://github.com/landfalls-ai/landflow/blob/main/docs/templates.md): Team templates: a team, its agents and its flow saved as one template and created again with fresh ids.
+- [Editor assistant](https://github.com/landfalls-ai/landflow/blob/main/docs/assistant.md): The editor assistant: after-run suggestions and Spotlight, the chat that builds, fixes and publishes flows and agents.
+- [Files and binary data](/llms-full.txt#features-files-md): Files and binary data: items carry file references, never bytes, so files of any size move through a flow.
+- [Settings, variables, data tables and insights](/llms-full.txt#features-settings-and-data-md): Settings, variables, data tables and insights.
+- [Event subscriptions](/llms-full.txt#features-event-subscriptions-md): Event subscriptions: signed POSTs of a project's run events to a URL.
+- [Git sync](/llms-full.txt#features-git-sync-md): Git sync: workflows as files you review and version in Git, shared with the CLI.
+- [Practices](https://github.com/landfalls-ai/landflow/blob/main/docs/practices.md): Practices: rules in the brain that every connected agent follows, each approved by a person.
+- [Projects and goals](https://github.com/landfalls-ai/landflow/blob/main/docs/projects-and-goals.md): Projects and goals: the company mission, the goal tree, the goals a project serves and the project brief.
+- [Second brain: learning from how Landflow is used](https://github.com/landfalls-ai/landflow/blob/main/docs/second-brain.md): The second brain: the usage ledger, detectors, the Suggestions inbox, facts and the Brain page.
+- [Work events and the daily briefing](https://github.com/landfalls-ai/landflow/blob/main/docs/work-and-briefings.md): Work events from people's own tools and the daily briefing each person gets back.
+- [Run Trace](https://github.com/landfalls-ai/landflow/blob/main/docs/run-trace.md): Run Trace: each run's journal told so a person can follow it, with the Story, Trace, Team, Spend and Report screens.
+- [The approval inbox](https://github.com/landfalls-ai/landflow/blob/main/docs/approval-inbox.md): The approval inbox: production approvals that wait for a person in Needs you, with expiry and one claim behind every door.
+- [Alert triage and Landfall war rooms](https://github.com/landfalls-ai/landflow/blob/main/docs/triage.md): Alert triage and Landfall war rooms: the triage, Landfall and threat-intel plugins and their flows.
+- [Runbooks from Landfall war rooms](https://github.com/landfalls-ai/landflow/blob/main/docs/runbooks.md): Runbooks made from closed Landfall war rooms, found by alert kind.
+- [Landflow on a phone](https://github.com/landfalls-ai/landflow/blob/main/docs/mobile.md): How Landflow's screens work below 768 px: the tab bar, full-screen pages, touch and type.
+
+## Connect
+
+- [Integrations](/llms-full.txt#features-integrations-md): Integrations: messaging, productivity, Google Workspace, databases, work ingest templates and GitHub into the brain.
+- [Clickland](/llms-full.txt#features-clickland-md): Clickland observability: the plugin, Clickland as a knowledge base, alert triage and telemetry into Clickland.
+- [Landledger](/llms-full.txt#features-landledger-md): Landledger cost approvals: the plugin, budget requests, Slack approvals and variance notes.
+- [Notion as the brain](/llms-full.txt#features-notion-brain-md): Notion as the brain: a project linked to a Notion page, the sync, edits that come back and the write scope.
+- [Remote agents over A2A, and kagent next to Landflow](/llms-full.txt#a2a-md): Remote agents over A2A 1.0, kagent next to Landflow, and tracing across both.
+- [Marketplace](/llms-full.txt#marketplace-md): The Marketplace: Claude Code plugin marketplaces as agents, skills, node plugins and flows; flow share pages.
+- [Writing plugins](/llms-full.txt#plugins-md): Writing plugins: the node interface, autodiscovery and branding.
+- [Plan: one plugin, every transport, and MCP](https://github.com/landfalls-ai/landflow/blob/main/docs/transports.md): Transports: HTTP, gRPC, brokers, Auto, the claim check and MCP faces for one plugin.
+- [agentgateway in Landflow: what we verified](https://github.com/landfalls-ai/landflow/blob/main/docs/mcp-gateway.md): agentgateway in Landflow: sync, identity and tokens, as verified.
+- [The LLM gateway (LiteLLM)](https://github.com/landfalls-ai/landflow/blob/main/docs/llm-gateway.md): The LLM gateway (LiteLLM): models, caps, spend by project, agent, person and model, and the AI page.
+- [The landflow-brain Claude Code mod](https://github.com/landfalls-ai/landflow/blob/main/docs/landflow-brain-mod.md): The landflow-brain Claude Code mod: your own session as a held, private work event, reviewed before it is sent.
+- [Web Search](https://github.com/landfalls-ai/landflow/blob/main/docs/web-search.md): Web Search: SearXNG, Brave Search and Tavily as an agent tool.
+- [Writing node plugins with the SDKs](/llms-full.txt#platform-sdk-readme-md): Writing node plugins with the TypeScript, Python and Go SDKs.
+- [What a plugin can do](/llms-full.txt#platform-sdk-capabilities-md): Everything a node plugin can use, with a sample and what each SDK supports.
+- [Build a plugin in TypeScript](/llms-full.txt#platform-sdk-typescript-md): Build a plugin in TypeScript: an action with a credential, two outputs and a poll trigger.
+- [Build a plugin in Python](/llms-full.txt#platform-sdk-python-md): Build a plugin in Python: an action with a credential, two outputs and a poll trigger.
+- [Build a plugin in Go](/llms-full.txt#platform-sdk-go-md): Build a plugin in Go: an action with a credential, two outputs and a poll trigger.
+
+## Operate
+
+- [Deploying Landflow](https://github.com/landfalls-ai/landflow/blob/main/docs/deployment.md): Deploying Landflow: the Compose stacks, queue mode, Kubernetes and the other pieces around the host.
+- [Landflow on Kubernetes](/llms-full.txt#platform-kubernetes-md): Landflow on Kubernetes: what runs in the cluster, how the pieces connect and how the manifests fit.
+- [The host's layers](/llms-full.txt#platform-server-layers-md): The host's layers from the request down to the database, and one new route followed through them.
+- [Authentication](/llms-full.txt#features-authentication-md): Authentication: users, roles, projects, API keys, OIDC, SAML and SCIM.
+- [Audit log and governance](/llms-full.txt#features-audit-and-governance-md): The audit log and governance: who did what, retention, export and the rules around changes.
+- [External secrets and environments](/llms-full.txt#features-secrets-and-environments-md): External secrets and environments: credentials that read from a secret store at run time.
+- [Observability](/llms-full.txt#features-observability-md): Observability in the product: one trace per execution, metrics and logs.
+- [Observability](https://github.com/landfalls-ai/landflow/blob/main/docs/observability.md): The observability contract: OpenTelemetry spans, metrics, logs and token and cost tracking.
+- [Postgres write queue](/llms-full.txt#features-postgres-write-queue-md): Postgres mode's write queue: the spool, the blocked state, recovery and metrics.
+
+## Reference
+
+- [HTTP API](/llms-full.txt#reference-api-md): The HTTP API: every route under /api, grouped by area.
+- [Configuration](/llms-full.txt#reference-configuration-md): Configuration: every environment variable, its default and what it does.
+- [Landflow Plugin Protocol — `landflow.plugin/v1`](/llms-full.txt#protocol-md): The Landflow plugin protocol (landflow.plugin/v1): descriptors, execution, credentials, binary data and transports.
+- [CLI](/llms-full.txt#features-cli-md): The landflow command line: workflows, runs, executions, data tables, variables, Git sync and your AI spend.

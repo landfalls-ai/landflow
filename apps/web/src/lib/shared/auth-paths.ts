@@ -50,6 +50,9 @@ export const PUBLIC_ROUTES = [
   // Protected resource metadata (RFC 9728) of the MCP endpoints and the instance's Server Card (which checks its callers itself).
   '/.well-known/oauth-protected-resource',
   '/.well-known/mcp',
+  // The docs for agents (docs/llms.txt, docs/llms-full.txt, built into the host): public text, no query or path is read. Documentation only: any `.txt` outside /api already counts as a static asset (isStaticAsset).
+  '/llms.txt',
+  '/llms-full.txt',
   // OAuth2 credential callback (the provider redirects the browser here).
   '/api/oauth2/callback',
   // Plugins announce themselves and heartbeat here (optionally with LANDFLOW_REGISTRY_SECRET).

@@ -65,7 +65,7 @@ repository's marketplace. A skill links to its page here instead of repeating it
 
 - [../architecture.md](../architecture.md): every subsystem and a code map.
 - [../development.md](../development.md): setup, where to start reading, conventions and every test command.
-- [../constitution.md](../constitution.md): the rules every change starts from.
+- The constitution (`docs/constitution.md` in the repository): the rules every change starts from.
 - [../limitations.md](../limitations.md) and [../roadmap.md](../roadmap.md): what is missing, and what each wave built.
 - The contributor agents in [`.claude/agents/`](../../.claude/agents) and the feature skill
   [`.claude/skills/landflow-feature`](../../.claude/skills/landflow-feature/SKILL.md) are for working on this repository

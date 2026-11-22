@@ -1,0 +1,380 @@
+{
+  "title": "Landflow",
+  "summary": "Landflow is a low-code workflow platform modelled on n8n, where every node is a plugin written in TypeScript, Python or Go and discovered over HTTP, gRPC or a message broker. These are its docs: building flows and agents, connecting tools, running and operating the host, and the API, configuration and plugin protocol references.",
+  "sections": [
+    {
+      "name": "Start here",
+      "pages": [
+        {
+          "path": "platform/README.md",
+          "title": "Landflow platform guide",
+          "description": "The platform guide: one page per area for people, each with a skill that tells Claude how to do the same job.",
+          "full": true
+        },
+        {
+          "path": "platform/overview.md",
+          "title": "Platform overview",
+          "description": "The whole platform on one page: the processes, one run from trigger to Run Trace, where data lives, who may do what.",
+          "full": true
+        },
+        {
+          "path": "platform/agents.md",
+          "title": "Agents",
+          "description": "What a Landflow agent is, where it runs, how a flow calls it, and the routes that make, publish and chat with one.",
+          "full": true
+        },
+        {
+          "path": "platform/agent-best-practices.md",
+          "title": "Agent best practices",
+          "description": "What to follow when building an agent in Landflow, by hand or through Spotlight.",
+          "full": true
+        },
+        {
+          "path": "connect-your-harness.md",
+          "title": "Connect your harness",
+          "description": "Connect a coding tool (Claude Code, Cursor, Codex CLI, Gemini CLI, VS Code, any MCP client) to Landflow with /connect.",
+          "full": false
+        },
+        {
+          "path": "architecture.md",
+          "title": "Architecture",
+          "description": "How Landflow is put together: the processes, what each owns, how a run moves through them and where the code is.",
+          "full": false
+        }
+      ]
+    },
+    {
+      "name": "Build",
+      "pages": [
+        {
+          "path": "features/editor.md",
+          "title": "Building and debugging a flow",
+          "description": "The editor: canvas, node creator, runs, pinned data, debugging, versions and templates; importing from n8n and Flowise.",
+          "full": true
+        },
+        {
+          "path": "features/engine.md",
+          "title": "Engine",
+          "description": "The engine: data model, durable runtime, queue mode and HA, triggers, flow nodes, rate limits and the Code node.",
+          "full": true
+        },
+        {
+          "path": "composites.md",
+          "title": "Composite nodes",
+          "description": "Composite nodes: canvas groups typed by a contract (slots, rules, ports), checked in the editor and run as one step.",
+          "full": false
+        },
+        {
+          "path": "features/ai.md",
+          "title": "AI agents",
+          "description": "AI Agent and its sub-nodes, AI Judge, hosted chat and widget, RAG, guardrails, evaluations and MCP.",
+          "full": true
+        },
+        {
+          "path": "agents.md",
+          "title": "Agents (Preview)",
+          "description": "Standalone agents: personas, skills, capabilities, channels, schedules, memory, knowledge, testing and publishing.",
+          "full": true
+        },
+        {
+          "path": "agent-teams.md",
+          "title": "Agent teams",
+          "description": "Agent teams: a lead, reporting lines and reviewers, the org chart, budgets and publishing.",
+          "full": false
+        },
+        {
+          "path": "team-notebook.md",
+          "title": "Team notebook",
+          "description": "The team notebook: shared notes members write while they work, search by meaning, disputes and promotion.",
+          "full": false
+        },
+        {
+          "path": "templates.md",
+          "title": "Team templates",
+          "description": "Team templates: a team, its agents and its flow saved as one template and created again with fresh ids.",
+          "full": false
+        },
+        {
+          "path": "assistant.md",
+          "title": "Editor assistant",
+          "description": "The editor assistant: after-run suggestions and Spotlight, the chat that builds, fixes and publishes flows and agents.",
+          "full": false
+        },
+        {
+          "path": "features/files.md",
+          "title": "Files and binary data",
+          "description": "Files and binary data: items carry file references, never bytes, so files of any size move through a flow.",
+          "full": true
+        },
+        {
+          "path": "features/settings-and-data.md",
+          "title": "Settings, variables, data tables and insights",
+          "description": "Settings, variables, data tables and insights.",
+          "full": true
+        },
+        {
+          "path": "features/event-subscriptions.md",
+          "title": "Event subscriptions",
+          "description": "Event subscriptions: signed POSTs of a project's run events to a URL.",
+          "full": true
+        },
+        {
+          "path": "features/git-sync.md",
+          "title": "Git sync",
+          "description": "Git sync: workflows as files you review and version in Git, shared with the CLI.",
+          "full": true
+        },
+        {
+          "path": "practices.md",
+          "title": "Practices",
+          "description": "Practices: rules in the brain that every connected agent follows, each approved by a person.",
+          "full": false
+        },
+        {
+          "path": "projects-and-goals.md",
+          "title": "Projects and goals",
+          "description": "Projects and goals: the company mission, the goal tree, the goals a project serves and the project brief.",
+          "full": false
+        },
+        {
+          "path": "second-brain.md",
+          "title": "Second brain: learning from how Landflow is used",
+          "description": "The second brain: the usage ledger, detectors, the Suggestions inbox, facts and the Brain page.",
+          "full": false
+        },
+        {
+          "path": "work-and-briefings.md",
+          "title": "Work events and the daily briefing",
+          "description": "Work events from people's own tools and the daily briefing each person gets back.",
+          "full": false
+        },
+        {
+          "path": "run-trace.md",
+          "title": "Run Trace",
+          "description": "Run Trace: each run's journal told so a person can follow it, with the Story, Trace, Team, Spend and Report screens.",
+          "full": false
+        },
+        {
+          "path": "approval-inbox.md",
+          "title": "The approval inbox",
+          "description": "The approval inbox: production approvals that wait for a person in Needs you, with expiry and one claim behind every door.",
+          "full": false
+        },
+        {
+          "path": "triage.md",
+          "title": "Alert triage and Landfall war rooms",
+          "description": "Alert triage and Landfall war rooms: the triage, Landfall and threat-intel plugins and their flows.",
+          "full": false
+        },
+        {
+          "path": "runbooks.md",
+          "title": "Runbooks from Landfall war rooms",
+          "description": "Runbooks made from closed Landfall war rooms, found by alert kind.",
+          "full": false
+        },
+        {
+          "path": "mobile.md",
+          "title": "Landflow on a phone",
+          "description": "How Landflow's screens work below 768 px: the tab bar, full-screen pages, touch and type.",
+          "full": false
+        }
+      ]
+    },
+    {
+      "name": "Connect",
+      "pages": [
+        {
+          "path": "features/integrations.md",
+          "title": "Integrations",
+          "description": "Integrations: messaging, productivity, Google Workspace, databases, work ingest templates and GitHub into the brain.",
+          "full": true
+        },
+        {
+          "path": "features/clickland.md",
+          "title": "Clickland",
+          "description": "Clickland observability: the plugin, Clickland as a knowledge base, alert triage and telemetry into Clickland.",
+          "full": true
+        },
+        {
+          "path": "features/landledger.md",
+          "title": "Landledger",
+          "description": "Landledger cost approvals: the plugin, budget requests, Slack approvals and variance notes.",
+          "full": true
+        },
+        {
+          "path": "features/notion-brain.md",
+          "title": "Notion as the brain",
+          "description": "Notion as the brain: a project linked to a Notion page, the sync, edits that come back and the write scope.",
+          "full": true
+        },
+        {
+          "path": "a2a.md",
+          "title": "Remote agents over A2A, and kagent next to Landflow",
+          "description": "Remote agents over A2A 1.0, kagent next to Landflow, and tracing across both.",
+          "full": true
+        },
+        {
+          "path": "marketplace.md",
+          "title": "Marketplace",
+          "description": "The Marketplace: Claude Code plugin marketplaces as agents, skills, node plugins and flows; flow share pages.",
+          "full": true
+        },
+        {
+          "path": "plugins.md",
+          "title": "Writing plugins",
+          "description": "Writing plugins: the node interface, autodiscovery and branding.",
+          "full": true
+        },
+        {
+          "path": "transports.md",
+          "title": "Plan: one plugin, every transport, and MCP",
+          "description": "Transports: HTTP, gRPC, brokers, Auto, the claim check and MCP faces for one plugin.",
+          "full": false
+        },
+        {
+          "path": "mcp-gateway.md",
+          "title": "agentgateway in Landflow: what we verified",
+          "description": "agentgateway in Landflow: sync, identity and tokens, as verified.",
+          "full": false
+        },
+        {
+          "path": "llm-gateway.md",
+          "title": "The LLM gateway (LiteLLM)",
+          "description": "The LLM gateway (LiteLLM): models, caps, spend by project, agent, person and model, and the AI page.",
+          "full": false
+        },
+        {
+          "path": "landflow-brain-mod.md",
+          "title": "The landflow-brain Claude Code mod",
+          "description": "The landflow-brain Claude Code mod: your own session as a held, private work event, reviewed before it is sent.",
+          "full": false
+        },
+        {
+          "path": "web-search.md",
+          "title": "Web Search",
+          "description": "Web Search: SearXNG, Brave Search and Tavily as an agent tool.",
+          "full": false
+        },
+        {
+          "path": "platform/sdk/README.md",
+          "title": "Writing node plugins with the SDKs",
+          "description": "Writing node plugins with the TypeScript, Python and Go SDKs.",
+          "full": true
+        },
+        {
+          "path": "platform/sdk/capabilities.md",
+          "title": "What a plugin can do",
+          "description": "Everything a node plugin can use, with a sample and what each SDK supports.",
+          "full": true
+        },
+        {
+          "path": "platform/sdk/typescript.md",
+          "title": "Build a plugin in TypeScript",
+          "description": "Build a plugin in TypeScript: an action with a credential, two outputs and a poll trigger.",
+          "full": true
+        },
+        {
+          "path": "platform/sdk/python.md",
+          "title": "Build a plugin in Python",
+          "description": "Build a plugin in Python: an action with a credential, two outputs and a poll trigger.",
+          "full": true
+        },
+        {
+          "path": "platform/sdk/go.md",
+          "title": "Build a plugin in Go",
+          "description": "Build a plugin in Go: an action with a credential, two outputs and a poll trigger.",
+          "full": true
+        }
+      ]
+    },
+    {
+      "name": "Operate",
+      "pages": [
+        {
+          "path": "deployment.md",
+          "title": "Deploying Landflow",
+          "description": "Deploying Landflow: the Compose stacks, queue mode, Kubernetes and the other pieces around the host.",
+          "full": false
+        },
+        {
+          "path": "platform/kubernetes.md",
+          "title": "Landflow on Kubernetes",
+          "description": "Landflow on Kubernetes: what runs in the cluster, how the pieces connect and how the manifests fit.",
+          "full": true
+        },
+        {
+          "path": "platform/server-layers.md",
+          "title": "The host's layers",
+          "description": "The host's layers from the request down to the database, and one new route followed through them.",
+          "full": true
+        },
+        {
+          "path": "features/authentication.md",
+          "title": "Authentication",
+          "description": "Authentication: users, roles, projects, API keys, OIDC, SAML and SCIM.",
+          "full": true
+        },
+        {
+          "path": "features/audit-and-governance.md",
+          "title": "Audit log and governance",
+          "description": "The audit log and governance: who did what, retention, export and the rules around changes.",
+          "full": true
+        },
+        {
+          "path": "features/secrets-and-environments.md",
+          "title": "External secrets and environments",
+          "description": "External secrets and environments: credentials that read from a secret store at run time.",
+          "full": true
+        },
+        {
+          "path": "features/observability.md",
+          "title": "Observability",
+          "description": "Observability in the product: one trace per execution, metrics and logs.",
+          "full": true
+        },
+        {
+          "path": "observability.md",
+          "title": "Observability",
+          "description": "The observability contract: OpenTelemetry spans, metrics, logs and token and cost tracking.",
+          "full": false
+        },
+        {
+          "path": "features/postgres-write-queue.md",
+          "title": "Postgres write queue",
+          "description": "Postgres mode's write queue: the spool, the blocked state, recovery and metrics.",
+          "full": true
+        }
+      ]
+    },
+    {
+      "name": "Reference",
+      "pages": [
+        {
+          "path": "reference/api.md",
+          "title": "HTTP API",
+          "description": "The HTTP API: every route under /api, grouped by area.",
+          "full": true
+        },
+        {
+          "path": "reference/configuration.md",
+          "title": "Configuration",
+          "description": "Configuration: every environment variable, its default and what it does.",
+          "full": true
+        },
+        {
+          "path": "protocol.md",
+          "title": "Landflow Plugin Protocol — `landflow.plugin/v1`",
+          "description": "The Landflow plugin protocol (landflow.plugin/v1): descriptors, execution, credentials, binary data and transports.",
+          "full": true
+        },
+        {
+          "path": "features/cli.md",
+          "title": "CLI",
+          "description": "The landflow command line: workflows, runs, executions, data tables, variables, Git sync and your AI spend.",
+          "full": true
+        }
+      ]
+    }
+  ],
+  "internal": []
+}
