@@ -29,6 +29,8 @@ import { isBrainCollection } from '../../shared/brain'; // NB06:
 import { pgIdentityOf, storeKeyOf } from '../../shared/collections'; // C21:
 import { assertCanRead, assertCanWrite, type Asker } from '../rag/collection-access'; // C21:
 import { NOTION_DATA_NOTE } from '../brain/notion/data-note'; // NB06:
+import { agentStore } from './store'; // C22:
+import { isNodeKnowledge, type KnowledgeBaseToolConfig as AnyKnowledgeBase, type VectorKnowledgeBaseConfig } from '../../shared/agents'; // C22:
 
 /** The vector store node each kind of store matches (its icon in the timeline, its credential requirement). */
 export const KNOWLEDGE_STORE_NODE: Record<KnowledgeBaseToolConfig['store'], string> = {
@@ -314,7 +316,7 @@ export const MAX_FOLDER_FILES = 200;
  * (`runbooks/disk-full.md`), sorted, recursive, skipping dotfiles and anything a symlink leads out of the files directory.
  * Lists only; never reads a file. Throws when the folder is outside the files directory or is not a folder.
  */
-export async function folderFiles(folder: string): Promise<{ root: string; files: string[]; truncated: boolean; incomplete: boolean; prefix: string }> {
+export async function folderFiles(folder: string, limit: number = MAX_FOLDER_FILES): Promise<{ root: string; files: string[]; truncated: boolean; incomplete: boolean; prefix: string }> { // C22: a source lists up to its own cap
   const { root, path } = await resolveInFilesDir(folder);
   const top = await stat(path).catch(() => undefined);
   if (!top?.isDirectory()) throw new Error(`No folder named ${folder} in the files directory`);
@@ -341,7 +343,7 @@ export async function folderFiles(folder: string): Promise<{ root: string; files
         const info = await stat(full);
         if (info.isDirectory()) await walk(full);
         else if (info.isFile() && fileKind({ bytes: new Uint8Array(0), fileName: entry.name })) {
-          if (files.length >= MAX_FOLDER_FILES) truncated = true;
+          if (files.length >= limit) truncated = true;
           else files.push(rel);
         }
       } catch (caught) {
@@ -410,4 +412,20 @@ export async function indexFolder(config: KnowledgeBaseToolConfig, folder: strin
     for (const source of gone) if (!foreign.has(source)) result.removed += await store.deleteWhere(collection, { source });
   }
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// C22: what a knowledge source needs of a knowledge base
+// ---------------------------------------------------------------------------
+
+/** The draft's vector knowledge base `toolId` of an agent (where a person edits it, and what a sync writes with); undefined when the agent or the base is gone, or a plugin answers it. */
+export function knowledgeConfigOf(agentId: string, toolId: string): VectorKnowledgeBaseConfig | undefined {
+  const tool = agentStore.get(agentId)?.tools.find((t): t is AnyKnowledgeBase => t.type === 'knowledge' && t.id === toolId);
+  return tool && !isNodeKnowledge(tool) ? tool : undefined;
+}
+
+/** Delete the chunks whose metadata matches `filter` (a source's chunks, one item's chunks); access-checked like any write. Returns how many went. */
+export async function deleteChunksWhere(config: VectorKnowledgeBaseConfig, filter: Record<string, string>, internal?: KnowledgeInternal): Promise<number> {
+  await assertWritable(config, internal);
+  return openStore(config, internal).deleteWhere(config.collection.trim(), filter);
 }
