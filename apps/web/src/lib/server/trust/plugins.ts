@@ -5,6 +5,9 @@
  * new confirm; any other hash does, and says what the last approval was.
  */
 import { getUser } from '../auth/users';
+import { createHash } from 'node:crypto';
+import type { NodePluginManifest } from '../../shared/marketplace';
+import { canonicalJson } from './canonical';
 import { currentApproval, isApproved } from './store';
 
 export const pluginSubject = (marketplace: string, plugin: string): string => `${marketplace}/${plugin}`;
@@ -23,4 +26,15 @@ export function pluginTrust(subjectId: string, hash: string): PluginTrust {
     approved: false,
     ...(last && { previous: { hash: last.hash, at: last.decidedAt ?? last.firstSeenAt, ...(last.decidedBy && { by: getUser(last.decidedBy)?.name ?? last.decidedBy }) } }),
   };
+}
+
+/**
+ * What a person's yes covers: the downloaded files (`contentHash`) AND how they are run (id, runtime, install and start commands,
+ * environment, transports). The same files with another start command are not what was approved.
+ */
+export function pluginTrustHash(filesHash: string, manifest: NodePluginManifest): string {
+  const { id, runtime, install, start, env, transports } = manifest;
+  return `sha256:${createHash('sha256')
+    .update(filesHash + canonicalJson({ id, runtime, install, start, env, transports }))
+    .digest('hex')}`;
 }

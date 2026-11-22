@@ -8,7 +8,7 @@ import type { NeedsYouItem } from '../journal/needs-you';
 import { canResource, type Actor } from '../projects/access';
 import type { TrustNeedsYouFields } from '../../shared/trust';
 import { heldCount, heldViewOf } from './mcp-tools';
-import { pendingFor } from './store';
+import { pendingSubjects } from './store';
 
 export type TrustNeedsYouItem = NeedsYouItem & TrustNeedsYouFields;
 
@@ -17,7 +17,7 @@ const MAX_ITEMS = 100;
 export function trustItems(actor: Actor | undefined): TrustNeedsYouItem[] {
   if (!actor) return [];
   const ids = new Set<string>();
-  for (const record of pendingFor('mcp-tools', 'agent:')) ids.add(record.subjectId.slice('agent:'.length).split('/')[0]);
+  for (const subject of pendingSubjects('mcp-tools', 'agent:')) ids.add(subject.slice('agent:'.length).split('/')[0]);
   const items: TrustNeedsYouItem[] = [];
   for (const id of ids) {
     if (items.length >= MAX_ITEMS) break;

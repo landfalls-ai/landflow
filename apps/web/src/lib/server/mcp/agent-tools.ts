@@ -6,6 +6,8 @@
  * never HTTP; `publish_agent` runs the eval gate exactly as `POST /api/agents/:id/publish` does and has no way to skip it.
  * A caller who may not update an agent gets "Agent … not found". Registered by instanceServer (./instance-tools.ts).
  */
+import { currentPrincipal } from '../auth/guard';
+import { publishAndTrust } from '../trust/publish'; // C27:
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
@@ -168,8 +170,10 @@ export function registerAgentTools(server: McpServer, ctx: AgentToolsContext) {
       if (!gate.verdict.ok) return json({ id, published: false, held: true, verdict: gate.verdict, ...(gate.run && { average: gate.run.average }) });
       const now = agentStore.get(id);
       if (!now || JSON.stringify(configOf(now)) !== checked) return failure('The draft changed while the eval gate was checking it. Publish again to check the new draft.');
-      const agent = agentStore.publish(id)!;
+      const published = publishAndTrust(id, currentPrincipal()?.user)!;
+      const agent = published.agent;
       if (gate.run && agent.published) adoptRun(gate.run, agent.published.version);
+      await published.trust;
       const kagent = await redeployIfDeployed(agent);
       return json({ id, published: agent.published?.version ?? true, ...(!gate.skipped && { verdict: gate.verdict }), ...(kagent && { kagent }) });
     },

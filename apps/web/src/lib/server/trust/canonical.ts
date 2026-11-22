@@ -55,3 +55,9 @@ export function toolsHash(tools: ToolContent[]): string {
 export function snapshotOf(tools: ToolContent[]): { tools: Array<ToolContent & { fp: string }> } {
   return { tools: tools.map((tool) => ({ ...contentOf(tool), fp: toolFingerprint(tool) })).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)) };
 }
+
+/** The most a stored snapshot may weigh (the JSON of its tools): a server whose tools add up to more is held with a note, not compared. */
+export const MAX_SNAPSHOT_BYTES = 512 * 1024;
+
+/** Whether `tools` are too large to snapshot. */
+export const snapshotTooLarge = (tools: ToolContent[]): boolean => Buffer.byteLength(JSON.stringify(snapshotOf(tools)), 'utf8') > MAX_SNAPSHOT_BYTES;

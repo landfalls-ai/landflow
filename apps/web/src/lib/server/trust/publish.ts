@@ -9,7 +9,8 @@ import type { Agent } from '../../shared/agents';
 import type { Actor } from '../projects/access';
 import { listMcpConfigTools } from '../agents/tools';
 import { logger } from '../telemetry/logger';
-import { snapshotOf, toolsHash } from './canonical';
+import { agentStore } from '../agents/store';
+import { snapshotOf, snapshotTooLarge, toolsHash } from './canonical';
 import { mcpSubject } from './mcp-tools';
 import { approve, currentApproval } from './store';
 
@@ -45,8 +46,13 @@ export async function approveOnPublish(actor: Pick<Actor, 'id'> | undefined, age
         return;
       }
       const subject = mcpSubject(agent.id, config.id);
-      const hash = toolsHash(listed.selected);
       try {
+        // Too large to snapshot: left for the run, which holds it with a note (nothing can be compared).
+        if (snapshotTooLarge(listed.selected)) {
+          result.deferred.push(config.id);
+          return;
+        }
+        const hash = toolsHash(listed.selected);
         // Already approved as it is: nothing to record again.
         if (currentApproval('mcp-tools', subject)?.hash !== hash) approve(actor, 'mcp-tools', subject, hash, snapshotOf(listed.selected) as unknown as JsonObject, 'published');
         result.recorded.push(config.id);
@@ -59,4 +65,19 @@ export async function approveOnPublish(actor: Pick<Actor, 'id'> | undefined, age
   result.recorded.sort();
   result.deferred.sort();
   return result;
+}
+
+/**
+ * The one way an agent is published: the new version, then the snapshot of its MCP servers approved as the publisher. Every publish path
+ * (the route, Spotlight and MCP publishes, a template's agents, the analyst) goes through here. `trust` never rejects; a caller that cannot
+ * wait (a synchronous one) leaves it running, and a server that is slow is snapshotted at its first run anyway.
+ */
+export function publishAndTrust(agentId: string, publisher?: Pick<Actor, 'id'>): { agent: Agent; trust: Promise<PublishTrust> } | undefined {
+  const agent = agentStore.publish(agentId, publisher?.id);
+  if (!agent) return undefined;
+  const trust = approveOnPublish(publisher, agent).catch((error): PublishTrust => {
+    logger.warn('Could not record the MCP tools approved at publish', { agentId, error: (error as Error).message });
+    return { recorded: [], deferred: [] };
+  });
+  return { agent, trust };
 }

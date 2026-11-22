@@ -22,6 +22,7 @@ import type {
   MarketplaceFlowView,
   MarketplaceLocation,
   MarketplaceSummary,
+  NodePluginManifest,
   PluginDetail,
   ResolvedSource,
 } from '../../shared/marketplace';
@@ -29,7 +30,7 @@ import type { KagentPlugin } from '../../shared/agents';
 import { flowLink } from '../../shared/marketplace';
 import { agentStore } from '../agents/store';
 import { currentPrincipal } from '../auth/guard';
-import { pluginSubject, pluginTrust } from '../trust/plugins'; // C27:
+import { pluginSubject, pluginTrust, pluginTrustHash } from '../trust/plugins'; // C27:
 import { approve } from '../trust/store'; // C27:
 import { onConfigChanged } from '../config-store';
 import { clusterActive, clusterState } from '../cluster/state';
@@ -42,7 +43,7 @@ import { agentFromClaude, skillFromClaude, titleCase } from './map';
 import { commandLine, contentHash, downloadPlugin, freePort, nodePlugins, portFree, readInstallMarker, writeInstallMarker, type SupervisedPlugin } from './node-plugins';
 import { importTemplate, previewTemplate } from '../templates';
 import { localTemplates } from '../templates/store';
-import { loadFlows, loadPlugin, pool, readFlow, type MarketplaceEntry } from './plugin';
+import { loadFlows, loadPlugin, nodeManifestFromDir, pool, readFlow, type MarketplaceEntry } from './plugin';
 import { HttpError } from '../errors';
 import { clearTreeCache, FetchError, fetchJson, fetchLimited, readerFor } from './reader';
 import { locationLabel, parseMarketplaceInput, resolveSource, sourceLabel } from './sources';
@@ -192,6 +193,20 @@ function linkExported(created: Array<{ file: ClaudeAgentFile; id: string }>, tea
   });
   const made = agentTeamStore.create({ ...team.team, members: members as never });
   teams.push({ id: made.id, name: made.draft.name });
+}
+
+/** C27: installs of one plugin key run one after another (the move into place and the approval are not safe to interleave). */
+const installLocks = new Map<string, Promise<unknown>>();
+async function withInstallLock<T>(key: string, work: () => Promise<T>): Promise<T> {
+  const before = installLocks.get(key) ?? Promise.resolve();
+  const run = before.then(work, work);
+  const settled = run.catch(() => undefined);
+  installLocks.set(key, settled);
+  try {
+    return await run;
+  } finally {
+    if (installLocks.get(key) === settled) installLocks.delete(key);
+  }
 }
 
 export const marketplace = {
@@ -415,15 +430,21 @@ export const marketplace = {
     // approves. The folder is removed on every way out except the install, which moves it into place.
     const subject = pluginSubject(marketplaceName(m), name);
     const stagedDir = nodePlugin ? join(marketplaceStore.dir, 'staging', nanoid(12)) : undefined;
-    let staged: { hash: string; source: ResolvedSource } | undefined;
+    let staged: { hash: string; trustHash: string; manifest: NodePluginManifest; source: ResolvedSource } | undefined;
     try {
       if (nodePlugin && stagedDir) {
         sweepStaging();
         // A branch or tag is pinned to its commit, so queue mode's other processes download the very same files.
         const downloadSource = await pinnedSource(detail.source);
         await downloadPlugin(readerFor(downloadSource), stagedDir);
-        staged = { hash: contentHash(stagedDir), source: downloadSource };
-        const trusted = pluginTrust(subject, staged.hash);
+        // What runs is read again from the downloaded files (plus the marketplace entry's block), not from the unpinned listing, and the
+        // approval covers the files AND that run recipe: a changed start command or environment is asked about even with the same files.
+        const entry = m.entries?.find((e) => e.name === name);
+        const manifest = nodeManifestFromDir(stagedDir, entry?.landflow);
+        if (!manifest) throw new MarketplaceError(`“${name}” has no valid node plugin manifest in the files that were downloaded`, 422);
+        const files = contentHash(stagedDir);
+        staged = { hash: files, trustHash: pluginTrustHash(files, manifest), manifest, source: downloadSource };
+        const trusted = pluginTrust(subject, staged.trustHash);
         if (!trusted.approved) {
           if (!options.confirm) {
             const commit = downloadSource.kind === 'github' ? (downloadSource.sha ?? (/^[0-9a-f]{40}$/i.test(downloadSource.ref) ? downloadSource.ref : undefined)) : undefined;
@@ -431,28 +452,34 @@ export const marketplace = {
               needsConfirmation: true,
               plugin: name,
               repository,
-              ...(nodePlugin.install && { install: commandLine(nodePlugin.install) }),
-              command: commandLine(nodePlugin.start),
+              ...(staged.manifest.install && { install: commandLine(staged.manifest.install) }),
+              command: commandLine(staged.manifest.start),
               warning: trusted.previous
                 ? `“${name}” changed since you approved it on ${trusted.previous.at.slice(0, 10)}. Installing downloads the new code from ${repository} and runs it on this machine as the host’s user. Only install plugins you trust.`
                 : `Installing “${name}” downloads code from ${repository} and runs it on this machine as the host’s user. Only install plugins you trust.`,
-              hash: staged.hash,
+              hash: staged.trustHash,
               ...(commit && { commit }),
               ...(trusted.previous && { changedSince: trusted.previous }),
             };
           }
-          if (options.hash && options.hash !== staged.hash) throw new MarketplaceError('The plugin changed while you were confirming. Look at what it is now before you install.', 409, { hash: staged.hash });
+          if (options.hash && options.hash !== staged.trustHash) throw new MarketplaceError('The plugin changed while you were confirming. Look at what it is now before you install.', 409, { hash: staged.trustHash });
         }
       }
-      return await this.installConfirmed(id, name, detail, m, pluginKey, staged && stagedDir ? { dir: stagedDir, ...staged, subject, previouslyApproved: pluginTrust(subject, staged.hash).approved } : undefined);
+      const prepared = staged && stagedDir ? { dir: stagedDir, ...staged, subject, previouslyApproved: pluginTrust(subject, staged.trustHash).approved } : undefined;
+      // One install of a plugin at a time in this process; the second finds it installed and is refused.
+      return await withInstallLock(pluginKey, async () => {
+        if (marketplaceStore.installedOne(pluginKey)) throw new MarketplaceError(`${pluginKey} is already installed`, 409);
+        return this.installConfirmed(id, name, detail, m, pluginKey, prepared);
+      });
     } finally {
       if (stagedDir) rmSync(stagedDir, { recursive: true, force: true });
     }
   },
 
   /** Not for callers: `install` after its confirmation and hash checks. */
-  async installConfirmed(id: string, name: string, detail: PluginDetail, m: StoredMarketplace, pluginKey: string, staged: { dir: string; hash: string; source: ResolvedSource; subject: string; previouslyApproved: boolean } | undefined): Promise<InstallResult> {
-    const { nodePlugin } = detail;
+  async installConfirmed(id: string, name: string, detail: PluginDetail, m: StoredMarketplace, pluginKey: string, staged: { dir: string; hash: string; trustHash: string; manifest: NodePluginManifest; source: ResolvedSource; subject: string; previouslyApproved: boolean } | undefined): Promise<InstallResult> {
+    // The manifest that runs is the one read from the downloaded files and hashed with them.
+    const nodePlugin = staged?.manifest ?? detail.nodePlugin;
     return traceMarketplace('install', { 'landflow.marketplace.id': id, 'landflow.marketplace.plugin': name, 'landflow.marketplace.node_plugin': Boolean(nodePlugin) }, async () => {
       const createdAgents: Array<{ id: string; name: string }> = [];
       const createdFrom: Array<{ file: ClaudeAgentFile; id: string }> = [];
@@ -532,7 +559,7 @@ export const marketplace = {
         };
         marketplaceStore.saveInstalled(installed);
         // C27: the yes is recorded against the hash that ran (a reinstall of an approved hash records nothing new).
-        if (staged && !staged.previouslyApproved) approve(currentPrincipal()?.user, 'marketplace-plugin', staged.subject, staged.hash, undefined, `installed from ${sourceLabel(detail.source, undefined)}`);
+        if (staged && !staged.previouslyApproved) approve(currentPrincipal()?.user, 'marketplace-plugin', staged.subject, staged.trustHash, undefined, `installed from ${sourceLabel(detail.source, undefined)}`);
         if (nodeRecord) announceNodePlugins();
         logger.info('marketplace plugin installed', {
           'landflow.marketplace.plugin': pluginKey,

@@ -162,6 +162,19 @@ describe('POST /api/agents/:id/trust', () => {
   });
 });
 
+describe('who can decide (review fix 4, 10)', () => {
+  it('POST is session-only: an API key is refused by the route policy; GET reads like any agent read', async () => {
+    const { routePolicy } = await import('@/lib/server/auth/policy');
+    expect(routePolicy('POST', '/api/agents/ag_1/trust')).toEqual({ scope: 'workflows:write', sessionOnly: true });
+    expect(routePolicy('GET', '/api/agents/ag_1/trust')).toEqual({ scope: 'workflows:read' });
+  });
+  it('the view says whether the caller may decide', async () => {
+    const agent = await heldAgent();
+    expect(((await (await get(agent.id, editor)).json()) as AgentTrustView).canDecide).toBe(true);
+    expect(((await (await get(agent.id, viewer)).json()) as AgentTrustView).canDecide).toBe(false);
+  });
+});
+
 describe('Needs you', () => {
   it('lists one trust item for those who may update the agent, not for a viewer or an outsider', async () => {
     const agent = await heldAgent();

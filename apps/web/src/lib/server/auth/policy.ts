@@ -111,6 +111,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   // NB03: a project's Notion link status (docs/features/notion-brain.md); every write stays session-or-workflows:write like /api/projects.
   // NB07: the problems list is words and ids, so it reads like the link it belongs to.
   if (read && /^\/api\/projects\/[^/]+\/brain\/notion(\/problems)?$/.test(path)) return { scope: 'brain:read' };
+  // C27: approving or keeping held a changed MCP tool is a person's decision (docs/agents.md#changed-mcp-tools-are-held), never an API key's; reading the list is an agent read.
+  if (!read && /^\/api\/agents\/[^/]+\/trust$/.test(path)) return { scope: 'workflows:write', sessionOnly: true };
   if (['/api/workflows', '/api/folders', '/api/data-tables', '/api/agents', '/api/agent-teams', '/api/agent-templates', '/api/skills', '/api/node-types', '/api/credential-types', '/api/expressions', '/api/projects', '/api/templates', '/api/composites', '/api/runbooks'].some(under)) {
     return { scope: read ? 'workflows:read' : 'workflows:write' };
   }

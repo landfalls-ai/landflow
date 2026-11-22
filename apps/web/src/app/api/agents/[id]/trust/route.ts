@@ -1,9 +1,9 @@
 /**
  * An agent's held MCP tools (docs/agents.md#changed-mcp-tools-are-held).
  *
- * GET → `{ holdChangedTools, held: [{ subjectId, toolConfigName, hash, firstSeenAt, changes: [{ name, change, before?, after, fields }] }] }`:
+ * GET → `{ holdChangedTools, canDecide, held: [{ subjectId, toolConfigName, hash, firstSeenAt, changes: [{ name, change, before?, after, fields }] }] }`:
  * the tools a server changed (or added, when the agent takes all its tools) since the agent was published, with the old and the new
- * content. Anyone who can read the agent may call it.
+ * content, and `canDecide` (the caller may change the agent). Anyone who can read the agent may call it. POST is session-only (auth/policy.ts): an API key cannot decide.
  * POST `{ subjectId, hash, decision: 'approve' | 'reject' }` → `{ record }`: Approve makes the new content the approved one, so the
  * next run offers the tools; Reject keeps them held. Whoever may publish the agent (update access) may decide; a viewer gets 403 and anyone who cannot see the agent 404. A hash that is not pending for this agent's server is 409.
  */
@@ -23,7 +23,7 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
   const id = (await params).id;
   const agent = agentStore.get(id);
   if (!agent || !canResource(routeActor(), 'agent', id, 'read')) return error('Agent not found', 404);
-  const view: AgentTrustView = { holdChangedTools: Boolean((agent.published?.config ?? agent).holdChangedTools), held: heldViewOf(agent) };
+  const view: AgentTrustView = { holdChangedTools: Boolean((agent.published?.config ?? agent).holdChangedTools), canDecide: canResource(routeActor(), 'agent', id, 'update'), held: heldViewOf(agent) };
   return json(view);
 });
 

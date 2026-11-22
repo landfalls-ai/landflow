@@ -255,9 +255,9 @@ of the same shape, is a node plugin:
 What installing does:
 
 1. **Downloads and hashes first, then asks.** The plugin is downloaded into a staging folder
-   (`<data dir>/marketplace/staging/<random>`, removed after every answer) and its files are hashed. Without
+   (`<data dir>/marketplace/staging/<random>`, removed after every answer) and its files are hashed together with how it runs (the manifest read again from the downloaded files and the marketplace entry: id, runtime, install and start commands, environment, transports), so the same files with another start command are a changed plugin. Without
    `confirm: true` the API answers `409` with the repository, the install command, the start command, the pinned
-   commit (a GitHub source) and the **`hash`** of the files that were downloaded. The drawer shows them in a warning
+   commit (a GitHub source) and the **`hash`** of the files and the run recipe. The drawer shows them in a warning
    ("This runs code on this machine") with an **I trust it — install and run** button, and sends the `hash` back with
    `confirm: true`: if the files are not those any more (the source moved while you read), the answer is `409` and
    nothing is installed, so a yes never covers files nobody saw. A confirm without a `hash` (a script) installs what was

@@ -3,13 +3,13 @@
  * A real MCP server on 127.0.0.1 whose tool definitions the test edits between runs; `buildToolset` is the one filter point.
  * Also the switch (new agents on, existing ones on at their next publish) and the snapshot a publish records.
  */
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
 import type { Agent, AgentConfig } from '@/lib/shared/agents';
@@ -27,7 +27,8 @@ const { closeMcpClients } = await import('@/lib/server/mcp/client');
 const { agentStore } = await import('@/lib/server/agents/store');
 const trust = await import('@/lib/server/trust/store');
 const { mcpSubject } = await import('@/lib/server/trust/mcp-tools');
-const { approveOnPublish } = await import('@/lib/server/trust/publish');
+const { approveOnPublish, publishAndTrust } = await import('@/lib/server/trust/publish');
+const { MAX_SNAPSHOT_BYTES } = await import('@/lib/server/trust/canonical');
 const { queryEvents } = await import('@/lib/server/audit/store');
 registry.registerBuiltin(corePlugin);
 
@@ -117,6 +118,7 @@ describe('holding changed MCP tools at listing', () => {
     expect(set.unavailable).toEqual([]);
     const current = trust.currentApproval('mcp-tools', mcpSubject(agent.id, 'tool_mcp'));
     expect(current?.summary).toBe('first seen at run');
+    expect(current?.decidedBy).toBeUndefined(); // no person decided it
     expect(current?.snapshot?.tools).toHaveLength(2);
   });
 
@@ -199,6 +201,95 @@ describe('holding changed MCP tools at listing', () => {
     const [pending] = trust.pendingFor('mcp-tools', subject);
     trust.approve({ id: 'u' }, 'mcp-tools', subject, pending.hash, pending.snapshot, 'search changed');
     expect(names(await toolset(agent))).toEqual(['create', 'search']);
+  });
+});
+
+describe('a hash seen again, and the snapshot cap (review fix 2, 3)', () => {
+  it('a change that flaps (held, served as before, held again) is held and pending again', async () => {
+    const agent = await agentWith();
+    const subject = mcpSubject(agent.id, 'tool_mcp');
+    await toolset(agent);
+    tools[0].description = 'D2';
+    expect(names(await toolset(agent))).toEqual(['create']);
+    tools = initial();
+    expect(names(await toolset(agent))).toEqual(['create', 'search']);
+    expect(trust.pendingFor('mcp-tools', subject)).toHaveLength(0);
+    tools[0].description = 'D2';
+    expect(names(await toolset(agent))).toEqual(['create']);
+    expect(trust.pendingFor('mcp-tools', subject)).toHaveLength(1);
+  });
+
+  it('a server rolled back to what was approved before the last approval is held for review, not silently', async () => {
+    const agent = await agentWith();
+    const subject = mcpSubject(agent.id, 'tool_mcp');
+    await toolset(agent);
+    tools[0].description = 'D2';
+    await toolset(agent);
+    const [pending] = trust.pendingFor('mcp-tools', subject);
+    trust.approve({ id: 'u' }, 'mcp-tools', subject, pending.hash, pending.snapshot, 'D2');
+    tools = initial(); // back to the first approved content
+    expect(names(await toolset(agent))).toEqual(['create']);
+    expect(trust.pendingFor('mcp-tools', subject)).toHaveLength(1);
+  });
+
+  it('a snapshot over the cap holds the server\'s tools with a note and stores nothing', async () => {
+    const agent = await agentWith();
+    const subject = mcpSubject(agent.id, 'tool_mcp');
+    tools[0].description = 'x'.repeat(MAX_SNAPSHOT_BYTES + 10);
+    const set = await toolset(agent);
+    expect(names(set)).toEqual([]);
+    expect(set.unavailable.join('\n')).toContain('too large to compare');
+    expect(trust.currentApproval('mcp-tools', subject)).toBeUndefined();
+    expect(trust.pendingFor('mcp-tools', subject)).toHaveLength(0);
+  });
+
+  it('publish defers a server whose snapshot is over the cap', async () => {
+    const agent = await agentWith();
+    tools[0].description = 'x'.repeat(MAX_SNAPSHOT_BYTES + 10);
+    const result = await approveOnPublish({ id: 'p' }, agentStore.publish(agent.id, 'p')!);
+    expect(result).toEqual({ recorded: [], deferred: ['tool_mcp'] });
+  });
+
+  it('a hash that cannot be computed is deferred, not thrown (review fix 7)', async () => {
+    const agent = await agentWith();
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    tools[0].description = 'fine';
+    const published = agentStore.publish(agent.id, 'p')!;
+    const real = await import('@/lib/server/trust/canonical');
+    const spy = vi.spyOn(real, 'toolsHash').mockImplementation(() => {
+      throw new Error('boom');
+    });
+    try {
+      await expect(approveOnPublish({ id: 'p' }, published)).resolves.toEqual({ recorded: [], deferred: ['tool_mcp'] });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe('every publish path records the snapshot (review fix 5)', () => {
+  it('publishAndTrust publishes and approves the publisher\'s view', async () => {
+    const agent = await agentWith();
+    const done = publishAndTrust(agent.id, { id: 'p9' })!;
+    expect(done.agent.published?.version).toBe(1);
+    expect(await done.trust).toEqual({ recorded: ['tool_mcp'], deferred: [] });
+    expect(trust.currentApproval('mcp-tools', mcpSubject(agent.id, 'tool_mcp'))).toMatchObject({ decidedBy: 'p9', summary: 'published' });
+    expect(publishAndTrust('ag_missing')).toBeUndefined();
+  });
+
+  it('no caller publishes an agent straight through the store', () => {
+    const root = join(__dirname, '../src');
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) walk(path);
+        else if (/\.tsx?$/.test(entry.name) && /agentStore\.publish\(/.test(readFileSync(path, 'utf8'))) offenders.push(path.slice(root.length + 1));
+      }
+    };
+    walk(root);
+    expect(offenders).toEqual(['lib/server/trust/publish.ts']);
   });
 });
 

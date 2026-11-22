@@ -61,7 +61,7 @@ import { safeEndpoint, type ToolTarget } from '../../shared/tool-target'; // AG1
 import { targetOfA2a, targetOfAgent, targetOfMcp, targetOfNode, targetOfWorkflow } from './tool-target'; // AG14:
 import { agentToolsFrom, endpointFrom, listMcpTools, resourceAndPromptTools, selectTools, type McpEndpoint } from '../mcp/client';
 import type { Tool as McpTool } from '@modelcontextprotocol/client';
-import { heldLine, holdChangedTools, lastPublisherOf, mcpSubject } from '../trust/mcp-tools'; // C27:
+import { heldLine, holdChangedTools, mcpSubject } from '../trust/mcp-tools'; // C27:
 import { githubMcpUrl, githubToolsOf, isGithubPreset } from '../mcp/github';
 import { registry } from '../plugins/registry';
 import { workflowForCall } from '../publish';
@@ -299,9 +299,9 @@ async function mcpServerTools(config: McpServerToolConfig, hold?: { agentId: str
     let selected = listed.selected;
     const notes: string[] = [];
     if (hold) {
-      const result = holdChangedTools(mcpSubject(hold.agentId, config.id), selected, { takesAll: !github && parameters.include !== 'selected', lastPublisher: lastPublisherOf(hold.agentId) });
+      const result = holdChangedTools(mcpSubject(hold.agentId, config.id), selected, { takesAll: !github && parameters.include !== 'selected' });
       selected = result.offered;
-      notes.push(...result.held.map((change) => heldLine(config.name, change)));
+      notes.push(...result.held.map((change) => heldLine(config.name, change)), ...(result.note ? [`${config.name}: ${result.note}`] : []));
     }
     const tools = [
       ...agentToolsFrom(endpoint, selected),

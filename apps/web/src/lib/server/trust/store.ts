@@ -75,9 +75,30 @@ export function recordOf(kind: SubjectKind, subjectId: string, hash: string, db:
   return row && fromRow(row);
 }
 
-/** Note a change nobody approved: written once per hash (a second run seeing the same change rewrites nothing). Returns whether it was written. */
+/**
+ * Note a change nobody approved. Written once per hash while it waits: a second run seeing the same change rewrites nothing. A hash whose
+ * record is gone from the review (superseded when the server flapped, or an older approval the server rolled back to) is pending again with
+ * a fresh first-seen time; a rejected hash stays rejected. The subject's other pending changes are superseded: one waits at a time.
+ * Returns whether the record was (re)written.
+ */
 export function recordPending(kind: SubjectKind, subjectId: string, hash: string, snapshot: JsonObject, summary: string, db: Database = database()): boolean {
-  return db.insertNew('trust_records', { subject_kind: kind, subject_id: subjectId, hash, state: 'pending', snapshot: JSON.stringify(snapshot), summary: clip(summary) ?? null, decided_by: null, decided_at: null, first_seen_at: nowIso() });
+  const existing = recordOf(kind, subjectId, hash, db);
+  if (existing?.state === 'pending' || existing?.state === 'rejected') return false;
+  const row = { subject_kind: kind, subject_id: subjectId, hash, state: 'pending', snapshot: JSON.stringify(snapshot), summary: clip(summary) ?? null, decided_by: null, decided_at: null, first_seen_at: nowIso() };
+  // An approved hash is only here when it is not the current approval (the caller compares with that), so it goes back to review.
+  return db.transaction(() => {
+    supersedePending(kind, subjectId, hash, db);
+    if (existing) db.upsert('trust_records', row);
+    else return db.insertNew('trust_records', row);
+    return true;
+  });
+}
+
+/** The subjects (distinct) that start with `subjectIdPrefix` and have a pending change. */
+export function pendingSubjects(kind: SubjectKind, subjectIdPrefix: string, db: Database = database()): string[] {
+  return db
+    .all<{ subject_id: string }>(`SELECT DISTINCT subject_id FROM trust_records WHERE subject_kind = ? AND subject_id LIKE ? ESCAPE '\\' AND state = 'pending' ORDER BY subject_id`, kind, prefixPattern(subjectIdPrefix))
+    .map((row) => row.subject_id);
 }
 
 /** The pending records of the subjects that start with `subjectIdPrefix`, oldest first. */
@@ -94,10 +115,10 @@ export function approve(actor: Pick<Actor, 'id'> | undefined, kind: SubjectKind,
 
 /**
  * The first view of a subject nobody snapshotted (an agent published before this existed, a server that did not answer at publish):
- * approved as `decidedBy` (the last publisher) but audited as the system, since no person decided it just now.
+ * approved with no decider (`decided_by` null, the summary says why) and audited as the system, since no person decided it.
  */
-export function approveFirstSeen(decidedBy: string | undefined, kind: SubjectKind, subjectId: string, hash: string, snapshot: JsonObject, summary: string, db: Database = database()): TrustRecord {
-  return approveAs(undefined, decidedBy, kind, subjectId, hash, snapshot, summary, db);
+export function approveFirstSeen(kind: SubjectKind, subjectId: string, hash: string, snapshot: JsonObject, summary: string, db: Database = database()): TrustRecord {
+  return approveAs(undefined, undefined, kind, subjectId, hash, snapshot, summary, db);
 }
 
 function approveAs(auditActor: Pick<Actor, 'id'> | undefined, decidedBy: string | undefined, kind: SubjectKind, subjectId: string, hash: string, snapshot: JsonObject | undefined, summary: string | undefined, db: Database): TrustRecord {

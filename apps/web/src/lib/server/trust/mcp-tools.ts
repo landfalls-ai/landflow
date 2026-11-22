@@ -12,7 +12,7 @@ import type { Agent, McpServerToolConfig } from '../../shared/agents';
 import { toolChanges, type HeldToolsView, type ToolChange, type ToolContent, type ToolField } from '../../shared/trust';
 import { isGithubPreset } from '../mcp/github';
 import { database } from '../db';
-import { snapshotOf, toolsHash } from './canonical';
+import { snapshotOf, snapshotTooLarge, toolsHash } from './canonical';
 import { approveFirstSeen, currentApproval, pendingFor, recordPending, supersedePending, type TrustRecord } from './store';
 import type { JsonObject } from '@landflow/protocol';
 
@@ -24,13 +24,13 @@ export const agentSubjects = (agentId: string): string => `agent:${agentId}/`;
 export interface HoldResult<T> {
   offered: T[];
   held: ToolChange[];
+  /** A note for the run when the whole server was held instead of compared (its tools are too large to snapshot). */
+  note?: string;
 }
 
 export interface HoldOptions {
   /** The config offers every tool the server lists (not an explicit list): a tool the server adds is held too. */
   takesAll: boolean;
-  /** Who published last: the first-seen snapshot is attributed to them. */
-  lastPublisher?: string;
 }
 
 const FIELD_WORDS: Record<ToolField, string> = { description: 'description', inputSchema: 'input schema', annotations: 'annotations', title: 'title' };
@@ -42,19 +42,18 @@ export function heldLine(label: string, change: ToolChange): string {
     : `${label} · ${change.name}: held, its ${change.fields.map((f) => FIELD_WORDS[f]).join(' and ')} changed since the agent was published. Review it on the agent page.`;
 }
 
-/** Who published the agent's latest version (a user id), for a first-seen snapshot. */
-export function lastPublisherOf(agentId: string): string | undefined {
-  return database().get<{ published_by: string | null }>('SELECT published_by FROM agent_versions WHERE agent_id = ? ORDER BY version DESC LIMIT 1', agentId)?.published_by ?? undefined;
-}
-
 const summaryOf = (held: ToolChange[]) => held.map((c) => `${c.name} ${c.change === 'added' ? 'added' : `${c.fields.map((f) => FIELD_WORDS[f]).join('+')} changed`}`).join('; ');
 
 /** Filter one config's listed tools against its approved snapshot (D9-D11); writes a pending record when something is held. */
 export function holdChangedTools<T extends ToolContent>(subjectId: string, tools: T[], options: HoldOptions): HoldResult<T> {
+  if (snapshotTooLarge(tools)) {
+    // Too large to keep a snapshot of, so nothing can be compared: the server's tools are held, and the note says how to go on.
+    return { offered: [], held: [], note: `${tools.length} tool${tools.length === 1 ? '' : 's'} held: the server's tool list is too large to compare with what was approved. Turn off "Hold changed MCP tools" for this agent to use it.` };
+  }
   const approved = currentApproval('mcp-tools', subjectId);
   const live = snapshotOf(tools) as unknown as JsonObject;
   if (!approved) {
-    approveFirstSeen(options.lastPublisher, 'mcp-tools', subjectId, toolsHash(tools), live, 'first seen at run');
+    approveFirstSeen('mcp-tools', subjectId, toolsHash(tools), live, 'first seen at run');
     return { offered: tools, held: [] };
   }
   const known = ((approved.snapshot?.tools ?? []) as unknown as ToolContent[]) ?? [];

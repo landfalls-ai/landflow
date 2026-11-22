@@ -96,6 +96,47 @@ describe('the trust store on SQLite', () => {
   });
 });
 
+describe('the trust store: a hash seen again is held again (review fix 2, 3, 6)', () => {
+  const sub = 'agent:ag_flap/tool_1';
+  const snap = snapshotOf([search]);
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  it('a superseded (flapped) hash that the server serves again is pending again, with a fresh first-seen time', async () => {
+    trust.recordPending('mcp-tools', sub, 'hx', snap, 'x');
+    const first = trust.recordOf('mcp-tools', sub, 'hx')!.firstSeenAt;
+    trust.supersedePending('mcp-tools', sub);
+    expect(trust.recordOf('mcp-tools', sub, 'hx')?.state).toBe('revoked');
+    await sleep(5);
+    expect(trust.recordPending('mcp-tools', sub, 'hx', snap, 'x again')).toBe(true);
+    const again = trust.recordOf('mcp-tools', sub, 'hx')!;
+    expect(again.state).toBe('pending');
+    expect(again.firstSeenAt > first).toBe(true);
+  });
+  it('an older approved hash that the server rolls back to is pending again', () => {
+    trust.approve(actor, 'mcp-tools', 'agent:ag_roll/t', 'ha', snap, 'a');
+    trust.approve(actor, 'mcp-tools', 'agent:ag_roll/t', 'hb', snap, 'b');
+    expect(trust.recordPending('mcp-tools', 'agent:ag_roll/t', 'ha', snap, 'rolled back')).toBe(true);
+    expect(trust.recordOf('mcp-tools', 'agent:ag_roll/t', 'ha')?.state).toBe('pending');
+    expect(trust.currentApproval('mcp-tools', 'agent:ag_roll/t')?.hash).toBe('hb');
+  });
+  it('a rejected hash stays rejected', () => {
+    trust.recordPending('mcp-tools', 'agent:ag_rej/t', 'hr', snap, 'r');
+    trust.reject(actor, 'mcp-tools', 'agent:ag_rej/t', 'hr');
+    expect(trust.recordPending('mcp-tools', 'agent:ag_rej/t', 'hr', snap, 'r')).toBe(false);
+    expect(trust.recordOf('mcp-tools', 'agent:ag_rej/t', 'hr')?.state).toBe('rejected');
+  });
+  it('a new pending hash supersedes the subject\'s older pending ones: one is waiting at a time', () => {
+    for (const h of ['h1', 'h2', 'h3']) trust.recordPending('mcp-tools', 'agent:ag_many/t', h, snap, h);
+    expect(trust.pendingFor('mcp-tools', 'agent:ag_many/').map((r) => r.hash)).toEqual(['h3']);
+    expect(trust.pendingSubjects('mcp-tools', 'agent:ag_many/')).toEqual(['agent:ag_many/t']);
+  });
+  it('a first-seen approval has no decider and says so', () => {
+    const record = trust.approveFirstSeen('mcp-tools', 'agent:ag_first/t', 'hf', snap, 'first seen at run');
+    expect(record.decidedBy).toBeUndefined();
+    expect(trust.currentApproval('mcp-tools', 'agent:ag_first/t')).toMatchObject({ summary: 'first seen at run' });
+    expect(trust.currentApproval('mcp-tools', 'agent:ag_first/t')?.decidedBy).toBeUndefined();
+  });
+});
+
 describe('the trust store over a Postgres-mode database', () => {
   it('queues the rows through the write sink', () => {
     const queued: Array<{ op: string; table: string }> = [];

@@ -71,6 +71,8 @@ export interface HeldToolsView {
 
 export interface AgentTrustView {
   holdChangedTools: boolean;
+  /** The caller may approve or keep held (who may change the agent). */
+  canDecide: boolean;
   held: HeldToolsView[];
 }
 

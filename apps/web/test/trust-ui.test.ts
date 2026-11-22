@@ -88,6 +88,13 @@ describe('the agent page banner and review sheet', () => {
     expect(onDecide).toHaveBeenLastCalledWith(expect.anything(), 'reject');
   });
 
+  it('hides Approve and Keep held from someone who may not decide, and says why (review fix 10)', () => {
+    mount(createElement(HeldToolsSheet, { held: held(), open: true, canDecide: false, onClose: () => undefined, onDecide: vi.fn() }));
+    const sheet = document.body.querySelector('[role="dialog"]')!;
+    expect([...sheet.querySelectorAll('button')].some((b) => b.textContent === 'Approve' || b.textContent === 'Keep held')).toBe(false);
+    expect(sheet.textContent).toContain('Only someone who can change this agent can approve');
+  });
+
   it('turns a held change into fields: old and new, an added tool new only, a risky annotation flip in red', () => {
     const [changed, added] = held()[0].changes;
     const fields = heldChangeFields(changed);
