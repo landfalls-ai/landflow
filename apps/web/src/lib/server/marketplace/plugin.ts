@@ -3,6 +3,8 @@
  * marketplace entry combines with plugin.json) into what Landflow can use: agents, skills, a
  * Landflow node-plugin manifest, and the components that don't run here yet.
  */
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { z } from 'zod';
 import { LANDFLOW_AGENT_KIND, LANDFLOW_TEAM_KIND, type ClaudeAgentFile, type ClaudeSkillFile, type LandflowAgentData, type LandflowTeamData, type MarketplaceFlow, type NodePluginManifest, type PluginDetail, type UnsupportedComponent } from '../../shared/marketplace';
 import { fileSchema } from '../templates/schema';
@@ -116,6 +118,23 @@ export function parseNodeManifest(value: unknown): NodePluginManifest | undefine
     ...(transports?.length && { transports }),
     ...(env && Object.keys(env).length && { env: env as Record<string, string> }),
   };
+}
+
+/**
+ * A node plugin's manifest as the downloaded files say it (`landflow.plugin.json` merged with the marketplace entry's `landflow` block),
+ * read from `dir` after the pinned download: what the install runs and what the trust hash covers (C27).
+ */
+export function nodeManifestFromDir(dir: string, entryLandflow: unknown): NodePluginManifest | undefined {
+  const entry = entryLandflow && typeof entryLandflow === 'object' ? (entryLandflow as object) : undefined;
+  const path = join(dir, 'landflow.plugin.json');
+  if (!existsSync(path)) return parseNodeManifest(entry);
+  try {
+    const file = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+    if (file && typeof file === 'object' && !Array.isArray(file)) return parseNodeManifest({ ...file, ...entry }) ?? parseNodeManifest(entry);
+  } catch {
+    // Not JSON: the entry's block alone, as the listing did.
+  }
+  return parseNodeManifest(entry);
 }
 
 const under = (files: RepoFile[], dir: string) => {

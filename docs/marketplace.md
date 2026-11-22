@@ -254,10 +254,21 @@ of the same shape, is a node plugin:
 
 What installing does:
 
-1. **Asks.** Without `confirm: true` the API answers `409` with the repository, the install
-   command and the start command. The drawer shows them in a warning ("This runs code on this
-   machine") with an **I trust it — install and run** button.
-2. **Downloads** the plugin's files to `<data dir>/marketplace/plugins/<name>`:
+1. **Downloads and hashes first, then asks.** The plugin is downloaded into a staging folder
+   (`<data dir>/marketplace/staging/<random>`, removed after every answer) and its files are hashed together with how it runs (the manifest read again from the downloaded files and the marketplace entry: id, runtime, install and start commands, environment, transports), so the same files with another start command are a changed plugin. Without
+   `confirm: true` the API answers `409` with the repository, the install command, the start command, the pinned
+   commit (a GitHub source) and the **`hash`** of the files and the run recipe. The drawer shows them in a warning
+   ("This runs code on this machine") with an **I trust it — install and run** button, and sends the `hash` back with
+   `confirm: true`: if the files are not those any more (the source moved while you read), the answer is `409` and
+   nothing is installed, so a yes never covers files nobody saw. A confirm without a `hash` (a script) installs what was
+   downloaded.
+   - **The yes is recorded against the hash** (`trust.approve`: marketplace, plugin, hash, person), under the marketplace
+     and plugin name, so it outlives an uninstall.
+   - **A reinstall of files that were approved before needs no confirm.** Files with another hash do: the warning and the
+     drawer say *Changed since you approved it on <date>*, and the API answer carries `changedSince`
+     `{ hash, at, by }`. There is no update button: an update is an uninstall and an install, and the install is where
+     the changed files are asked about.
+2. **Downloads** the plugin's files to `<data dir>/marketplace/plugins/<name>` (the staged files, moved into place):
    - at most 500 files, 25 MB in total, 10 MB per file;
    - `node_modules`, `.git` and `.venv` are skipped;
    - every path is checked to stay inside the directory.
@@ -332,7 +343,7 @@ variables above. It does **not** get the host's API keys, `LANDFLOW_ENCRYPTION_K
 | `DELETE /api/marketplaces/:id` | `{ ok }`. `409` while plugins from it are installed; `400` for the built-in one |
 | `GET /api/marketplaces/:id/plugins/:name[?fresh=1]` | `{ plugin: PluginDetail }`: manifest, agents, skills, unsupported, nodePlugin, flows (`MarketplaceFlow[]`, each with `needs` and `link`), readme, warnings |
 | `GET /api/marketplaces/:id/plugins/:name/flow?path=` | `{ flow: MarketplaceFlowView }` for the share page: the flow as a template preview (nothing saved), the plugin's other flows, `templateId` once installed, and `link`. `:id` may be the marketplace's name. `400` without `path`; `404` for an unknown flow, and `404 { missing: "marketplace" }` when the marketplace isn't added |
-| `POST /api/marketplaces/:id/plugins/:name/install` `{ confirm? }` | `201 InstallResult` `{ installed, notSupported, warnings }`. `409 InstallConfirmation` for a node plugin without `confirm`. `422` when nothing in it runs in Landflow, or for an unsupported source |
+| `POST /api/marketplaces/:id/plugins/:name/install` `{ confirm?, hash? }` | `201 InstallResult` `{ installed, notSupported, warnings }`. `409 InstallConfirmation` (with `hash`, `commit?`, `changedSince?`) for a node plugin whose files are not approved yet and no `confirm`; `409` with `details.hash` when `confirm` comes with a `hash` that is no longer the files' hash. `422` when nothing in it runs in Landflow, or for an unsupported source |
 | `GET /api/marketplaces/installed` | `{ installed }`, with node-plugin process status |
 | `DELETE /api/marketplaces/installed/:pluginId` | `{ removed: { agents, skills, nodePlugin, flows? } }` (`pluginId` = `name@marketplace`, URL-encoded; `flows` counts the templates removed) |
 | `GET /api/marketplaces/installed/:pluginId/logs` | `{ lines }` |
@@ -367,8 +378,8 @@ All of it lives under `LANDFLOW_DATA_DIR` (default `apps/web/.data`):
 - **Agents and skills are text.** Installing them runs nothing, but their instructions come from
   a third party and the model follows them. Agents are installed as unpublished drafts with no
   tools, so they can't act until you add capabilities and publish.
-- **Node plugins run third-party code** as the host's user. The confirmation step, the minimal
-  environment and the file limits reduce the risk, but they are not a sandbox. Only install
+- **Node plugins run third-party code** as the host's user. The confirmation step (bound to the hash of the files, and asked
+  again when they change), the minimal environment and the file limits reduce the risk, but they are not a sandbox. Only install
   plugins from repositories you trust, and prefer marketplace entries pinned with a `sha`.
 - `npm install` runs with `--ignore-scripts` by default. A plugin's own `install` command can
   still do anything; the confirmation shows it.

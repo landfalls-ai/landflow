@@ -22,6 +22,9 @@ import { SectionLabel } from '../ui/inputs';
 import { useDialogFocus } from '../ui/use-dialog-focus';
 import { UNSUPPORTED_LABEL } from './use-marketplace';
 
+/** A date as the confirmation says it (the day, in the reader's locale). */
+const stampDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+
 const MODEL_LABEL: Record<string, string> = { sonnet: 'Sonnet', opus: 'Opus', haiku: 'Haiku', inherit: 'Sonnet (inherit)' };
 
 export function ContentsBadges({ detail }: { detail: Pick<PluginDetail, 'agents' | 'skills' | 'nodePlugin' | 'unsupported'> & { flows?: PluginDetail['flows'] } }) {
@@ -36,6 +39,58 @@ export function ContentsBadges({ detail }: { detail: Pick<PluginDetail, 'agents'
           Unsupported: {detail.unsupported.map((u) => UNSUPPORTED_LABEL[u.kind] ?? u.kind).join(', ')}
         </Badge>
       )}
+    </div>
+  );
+}
+
+/** What installing a node plugin will run, as the confirmation shows it (C27: with the hash of the downloaded files, and what changed since the last approval). */
+export function InstallConfirmBox({ confirm, busy, onCancel, onConfirm }: { confirm: InstallConfirmation; busy?: boolean; onCancel: () => void; onConfirm: () => void }) {
+  return (
+    <div className="rounded-xl border border-warnbd bg-warndim px-4 py-3">
+      <div className="flex items-center gap-2 text-[13px] font-semibold text-warn">
+        <TriangleAlert className="size-4" /> This runs code on this machine
+      </div>
+      {confirm.changedSince && (
+        <p className="mt-1.5 text-[12px] font-semibold text-warn" data-testid="plugin-changed-since">
+          Changed since you approved it on {stampDate(confirm.changedSince.at)}
+          {confirm.changedSince.by ? ` (${confirm.changedSince.by})` : ''}
+        </p>
+      )}
+      <p className="mt-1.5 text-[12px] leading-relaxed text-t1">{confirm.warning}</p>
+      <dl className="mt-2.5 grid grid-cols-[88px_1fr] gap-x-3 gap-y-1 text-[12px]">
+        <dt className="text-t3">Repository</dt>
+        <dd className="break-all font-mono text-[11px] text-t1">{confirm.repository}</dd>
+        {confirm.install && (
+          <>
+            <dt className="text-t3">Install</dt>
+            <dd className="break-all font-mono text-[11px] text-t1">{confirm.install}</dd>
+          </>
+        )}
+        <dt className="text-t3">Runs</dt>
+        <dd className="break-all font-mono text-[11px] text-t1">{confirm.command}</dd>
+        {confirm.commit && (
+          <>
+            <dt className="text-t3">Commit</dt>
+            <dd className="break-all font-mono text-[11px] text-t1">{confirm.commit}</dd>
+          </>
+        )}
+        {confirm.hash && (
+          <>
+            <dt className="text-t3">Files</dt>
+            <dd className="break-all font-mono text-[11px] text-t1" title="The hash of the downloaded files; your yes covers exactly these">
+              {confirm.hash}
+            </dd>
+          </>
+        )}
+      </dl>
+      <div className="mt-3 flex justify-end gap-2">
+        <Button variant="ghost" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button variant="danger" size="sm" onClick={onConfirm} loading={busy}>
+          I trust it — install and run
+        </Button>
+      </div>
     </div>
   );
 }
@@ -73,7 +128,7 @@ export function PluginDrawer({ marketplaceId, name, onClose, onChanged }: { mark
   const install = async (confirmed = false) => {
     setBusy(true);
     try {
-      const done = await api<InstallResult>(`/api/marketplaces/${marketplaceId}/plugins/${encodeURIComponent(name)}/install`, { method: 'POST', json: { confirm: confirmed } });
+      const done = await api<InstallResult>(`/api/marketplaces/${marketplaceId}/plugins/${encodeURIComponent(name)}/install`, { method: 'POST', json: { confirm: confirmed, ...(confirmed && confirm?.hash && { hash: confirm.hash }) } });
       setResult(done);
       setConfirm(undefined);
       toast.success(`Installed ${done.installed.id}`);
@@ -82,7 +137,11 @@ export function PluginDrawer({ marketplaceId, name, onClose, onChanged }: { mark
     } catch (e) {
       const body = e instanceof ApiError ? (e.body as InstallConfirmation | undefined) : undefined;
       if (body?.needsConfirmation) setConfirm(body);
-      else toast.error((e as Error).message);
+      else {
+        // C27: the files changed between the confirmation and the yes (409): what was shown is stale, so ask again from the start.
+        if (e instanceof ApiError && e.status === 409) setConfirm(undefined);
+        toast.error((e as Error).message);
+      }
     } finally {
       setBusy(false);
     }
@@ -167,34 +226,7 @@ export function PluginDrawer({ marketplaceId, name, onClose, onChanged }: { mark
               </div>
 
               {result && <InstallSummary result={result} />}
-              {confirm && (
-                <div className="rounded-xl border border-warnbd bg-warndim px-4 py-3">
-                  <div className="flex items-center gap-2 text-[13px] font-semibold text-warn">
-                    <TriangleAlert className="size-4" /> This runs code on this machine
-                  </div>
-                  <p className="mt-1.5 text-[12px] leading-relaxed text-t1">{confirm.warning}</p>
-                  <dl className="mt-2.5 grid grid-cols-[88px_1fr] gap-x-3 gap-y-1 text-[12px]">
-                    <dt className="text-t3">Repository</dt>
-                    <dd className="break-all font-mono text-[11px] text-t1">{confirm.repository}</dd>
-                    {confirm.install && (
-                      <>
-                        <dt className="text-t3">Install</dt>
-                        <dd className="break-all font-mono text-[11px] text-t1">{confirm.install}</dd>
-                      </>
-                    )}
-                    <dt className="text-t3">Runs</dt>
-                    <dd className="break-all font-mono text-[11px] text-t1">{confirm.command}</dd>
-                  </dl>
-                  <div className="mt-3 flex justify-end gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => setConfirm(undefined)}>
-                      Cancel
-                    </Button>
-                    <Button variant="danger" size="sm" onClick={() => void install(true)} loading={busy}>
-                      I trust it — install and run
-                    </Button>
-                  </div>
-                </div>
-              )}
+              {confirm && <InstallConfirmBox confirm={confirm} busy={busy} onCancel={() => setConfirm(undefined)} onConfirm={() => void install(true)} />}
 
               {detail.agents.length > 0 && (
                 <section>

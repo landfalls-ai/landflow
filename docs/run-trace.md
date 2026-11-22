@@ -207,6 +207,16 @@ figure; the detail says the usual day, the score, the runs and the surfaces. **A
 again if the day's value doubles); **Open** shows the AI page at that day, narrowed to what the item is about. Nothing here
 changes a cap, a budget or a run.
 
+### Needs you for changed MCP tools
+
+When an MCP server changes (or adds) a tool after an agent was published, a run leaves it out and says so in its timeline as a
+notice, *Tool unavailable: Tracker · search: held, its description changed since the agent was published*, and the change is
+an item in **Needs you** (kind **MCP tools**, *Tracker bot: 2 MCP tools changed*) for the people who may publish the agent. It
+counts in Home's tile and the rail's badge. **Review** opens the agent page with the review sheet, where the old and the new text
+sit side by side and **Approve** or **Keep held** decides ([agents.md](agents.md#changed-mcp-tools-are-held)). The item has no run
+(`executionId`, `workflowId` and `workflowName` are `''`; `agentId`, `heldCount` and `href` are set) and leaves the list when the
+change is decided or the server goes back to what was approved.
+
 ### The versions a run used
 
 Under the header a line says which versions ran ("workflow v4 · Alert triager v2"): `RunVersionsLine`, from the

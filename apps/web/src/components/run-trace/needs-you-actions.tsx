@@ -15,11 +15,13 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/inputs';
 import { cn } from '@/lib/utils';
 
-export type NeedsYouActionId = 'resume' | 'raise' | 'dismiss' | 'open' | 'approve' | 'deny' | 'acknowledge'; // PC20: approve, deny; SP23: acknowledge
+export type NeedsYouActionId = 'resume' | 'raise' | 'dismiss' | 'open' | 'approve' | 'deny' | 'acknowledge' | 'review'; // PC20: approve, deny; SP23: acknowledge
 export type NeedsYouAction = { id: NeedsYouActionId; label: string };
 
 /** What a viewer may do from a row; [] for every kind that is not a project item. */
 export function actionsFor(row: Pick<NeedsYouRow, 'kind' | 'incidentKind' | 'canRaise' | 'canResume' | 'taskRunStatus' | 'canDecide'> & { canAcknowledge?: boolean }): NeedsYouAction[] {
+  // C27: an agent's changed MCP tools: Review opens the agent page's sheet (the decision is made there, where the old and new text show).
+  if (row.kind === 'trust') return [{ id: 'review', label: 'Review' }];
   // SP23: AI spend: Acknowledge (it leaves the list for everyone), and Open (the AI page at the day).
   if (row.kind === 'spend') return [...(row.canAcknowledge ? [{ id: 'acknowledge' as const, label: 'Acknowledge' }] : []), { id: 'open', label: 'Open' }];
   // PC20: a task's run: Approve and Deny for one who may decide a requested run, else open the task; a waiting run opens its session.
@@ -258,6 +260,20 @@ export function SpendActions({ row, className }: { row: Pick<NeedsYouRow, 'kind'
           </Button>
         ),
       )}
+    </div>
+  );
+}
+
+/** The button of one changed-MCP-tools item (C27): Review opens the agent page with the review sheet open. */
+export function TrustActions({ row, className }: { row: Pick<NeedsYouRow, 'kind' | 'href'>; className?: string }) {
+  const tall = 'max-md:min-h-[44px]';
+  return (
+    <div className={cn('flex flex-wrap gap-2', className)}>
+      {actionsFor(row).map((a) => (
+        <Link key={a.id} href={`${row.href ?? '/agents'}?review=tools`} className={cn('inline-flex h-7 items-center rounded-[10px] border border-hair bg-wl px-3 text-[12.5px] font-medium text-t1 hover:border-ac', tall)}>
+          {a.label}
+        </Link>
+      ))}
     </div>
   );
 }
