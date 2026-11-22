@@ -11,11 +11,13 @@
  */
 import type { ExecutionRecord, ExecutionState } from '../../shared/types';
 import { MAX_EVENT_BODY_BYTES, MAX_OUTPUT_ITEMS, type RunEventType } from '../../shared/event-subscriptions';
+import { singleton } from '../singleton';
 import { homeProjectId } from '../projects/store';
 import { publicUrl } from '../config/urls';
 import { logger } from '../telemetry/logger';
 import { enqueue, SUBSCRIPTION_OUTBOX } from './core';
-import { matching, projectSubscriptions, type EventSubscription } from './subscriptions';
+import { recordEnqueueFailure } from './metrics';
+import { hasSubscriptions, matching, projectSubscriptions, type EventSubscription } from './subscriptions';
 
 export interface RunEvent {
   id: string;
@@ -75,10 +77,22 @@ export function runEvents(record: ExecutionRecord, previous: ExecutionState | un
   return events;
 }
 
-/** The first items of a node's main output, as plain JSON. */
-function outputItems(record: ExecutionRecord, nodeId: string | undefined, limit: number): unknown[] {
+/** The longest error text an event carries. */
+const MAX_ERROR_CHARS = 2_000;
+const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text);
+
+/** The first `limit` items of a node's main output, as plain JSON, and how many there are in all (counted, not mapped: a run may hold tens of thousands). */
+function outputItems(record: ExecutionRecord, nodeId: string | undefined, limit: number): { items: unknown[]; total: number } {
   const run = nodeId ? record.runData?.[nodeId]?.filter((r) => r.source === 'main').at(-1) : undefined;
-  return (run?.outputs?.flat() ?? []).slice(0, limit).map((item) => ({ json: item.json }));
+  const items: unknown[] = [];
+  let total = 0;
+  for (const branch of run?.outputs ?? []) {
+    for (const item of branch) {
+      if (items.length < limit) items.push({ json: item.json });
+      total += 1;
+    }
+  }
+  return { items, total };
 }
 
 /** The JSON body a subscription receives: ids, status and times; the last step's items only when it asked for them (cut to 64 KB). */
@@ -88,31 +102,33 @@ export function eventPayload(event: RunEvent, record: ExecutionRecord, subscript
     type: event.type,
     createdAt: event.at,
     projectId: subscription.projectId,
-    workflow: { id: event.workflowId, name: event.workflowName },
+    workflow: { id: event.workflowId, name: clip(event.workflowName, 200) },
     execution: { id: event.executionId, status: event.status, mode: event.mode, startedAt: event.startedAt, ...(event.finishedAt && { finishedAt: event.finishedAt }), url: `${publicUrl()}/executions/${event.executionId}` },
-    ...(event.error && { error: event.error }),
-    ...(event.node && { node: { name: event.node.name, status: event.node.status } }),
+    ...(event.error && { error: { message: clip(event.error.message, MAX_ERROR_CHARS), ...(event.error.node && { node: clip(event.error.node, 200) }) } }),
+    ...(event.node && { node: { name: clip(event.node.name, 200), status: event.node.status } }),
   };
-  if (!subscription.includeOutput || event.type === 'run.started') return JSON.stringify(body);
-  const all = outputItems(record, event.node?.id ?? record.lastNodeId, Number.POSITIVE_INFINITY);
-  let items = all.slice(0, MAX_OUTPUT_ITEMS);
+  const plain = JSON.stringify(body);
+  if (!subscription.includeOutput || event.type === 'run.started') return plain;
+  const found = outputItems(record, event.node?.id ?? record.lastNodeId, MAX_OUTPUT_ITEMS);
+  let items = found.items;
   // Over the cap: drop items from the end until the body fits.
   while (items.length && Buffer.byteLength(JSON.stringify({ ...body, output: items, outputTruncated: true })) > MAX_EVENT_BODY_BYTES) items = items.slice(0, -1);
-  const truncated = items.length < all.length;
+  const truncated = items.length < found.total;
   return JSON.stringify({ ...body, output: items, ...(truncated && { outputTruncated: true }) });
 }
 
 /** Strictly increasing creation times, so two events written in the same millisecond keep their order (run.started before node.finished before run.finished). */
-let lastMs = 0;
+const clock = () => singleton('event-outbox-clock', () => ({ lastMs: 0 }));
 function nextCreatedAt(): string {
-  lastMs = Math.max(lastMs + 1, Date.now());
-  return new Date(lastMs).toISOString();
+  const held = clock();
+  held.lastMs = Math.max(held.lastMs + 1, Date.now());
+  return new Date(held.lastMs).toISOString();
 }
 
 /** Called after rows are written, outside the dispatcher's module (set by it): wakes the dispatcher on this process. */
-let kick: (() => void) | undefined;
+const kicker = () => singleton('event-outbox-kick', () => ({ fn: undefined as (() => void) | undefined }));
 export function setEventKick(fn: (() => void) | undefined) {
-  kick = fn;
+  kicker().fn = fn;
 }
 
 /**
@@ -121,7 +137,7 @@ export function setEventKick(fn: (() => void) | undefined) {
  */
 export function writeOutboxRows(record: ExecutionRecord, previousStatus: () => ExecutionState | undefined): void {
   try {
-    if (record.status === 'waiting' || !record.workflowId) return;
+    if (record.status === 'waiting' || !record.workflowId || !hasSubscriptions()) return;
     const projectId = homeProjectId('workflow', record.workflowId);
     if (!projectId) return;
     const subscriptions = projectSubscriptions(projectId);
@@ -134,8 +150,9 @@ export function writeOutboxRows(record: ExecutionRecord, previousStatus: () => E
         if (enqueue(SUBSCRIPTION_OUTBOX, subscription.id, { eventId: event.id, createdAt: nextCreatedAt(), payload: eventPayload(event, record, subscription) })) written += 1;
       }
     }
-    if (written) kick?.();
+    if (written) kicker().fn?.();
   } catch (error) {
+    recordEnqueueFailure();
     logger.warn('could not queue run events', { 'landflow.execution.id': record.executionId, error: (error as Error).message });
   }
 }

@@ -202,3 +202,33 @@ describe('changing, retrying, testing and deleting', () => {
     expect(queryEvents({ action: ['event_subscription.deleted'] }, { limit: 1 }).events[0]).toMatchObject({ target: { id } });
   });
 });
+
+describe('what members see, and who may ask for output', () => {
+  it('shows a member the status of a failure but not the receiver’s words; an admin sees all of it', async () => {
+    const id = (await list(admin)).body.subscriptions[0].id;
+    database().insertNew('event_outbox', { topic: 'subscription', target_id: id, event_id: 'ex_err:run.failed', created_at: new Date().toISOString(), payload: '{}', attempts: 2, next_at: new Date().toISOString(), last_error: 'The receiver answered HTTP 500: secret-token-in-body' });
+    database().upsert('event_subscription_state', { subscription_id: id, last_delivery: JSON.stringify({ at: new Date().toISOString(), status: 500, ms: 4, error: 'The receiver answered HTTP 500: secret-token-in-body' }), updated_at: new Date().toISOString() });
+    const member = (await list(viewer)).body.subscriptions.find((s: { id: string }) => s.id === id);
+    expect(JSON.stringify(member)).not.toContain('secret-token-in-body');
+    expect(member.lastError).toBe('The receiver answered HTTP 500');
+    const adminView = (await list(admin)).body.subscriptions.find((s: { id: string }) => s.id === id);
+    expect(adminView.lastError).toContain('secret-token-in-body');
+  });
+
+  it('refuses includeOutput from an API key without executions:read, and allows it with', async () => {
+    const asKey = async (scopes: Array<'workflows:write' | 'executions:read'>, body: unknown, id = team) => {
+      const record = await auth.createUser({ email: `k${scopes.length}${Math.random().toString(36).slice(2, 6)}@example.com`, name: 'Key', role: 'member', password: 'password-123' });
+      projects.setMember(team, record.id, 'admin');
+      const { token } = auth.createApiKey(record, { label: 'k', scopes });
+      const response = await (collection.POST as unknown as Route)(new Request(`http://localhost:3000/api/projects/${id}/event-subscriptions`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) }), { params: Promise.resolve({ id }) });
+      return { status: response.status, body: (await response.json()) as Record<string, any> };
+    };
+    for (const s of (await list(admin)).body.subscriptions as Array<{ id: string }>) await call(item.DELETE, 'DELETE', admin, { id: team, subscriptionId: s.id });
+    const refused = await asKey(['workflows:write'], input({ includeOutput: true }));
+    expect(refused.status).toBe(403);
+    expect(refused.body.error).toMatch(/executions:read/);
+    expect((await asKey(['workflows:write'], input())).status).toBe(201);
+    expect((await asKey(['workflows:write', 'executions:read'], input({ includeOutput: true }))).status).toBe(201);
+    expect((await create(admin, input({ includeOutput: true }))).status).toBe(201);
+  });
+});

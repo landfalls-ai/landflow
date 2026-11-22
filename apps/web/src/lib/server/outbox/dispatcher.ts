@@ -12,7 +12,7 @@
  * after a minute, then the next leader delivers.
  */
 import { nanoid } from 'nanoid';
-import { DEAD_AFTER_MS, MAX_BACKLOG_PER_SUBSCRIPTION } from '../../shared/event-subscriptions';
+import { DEAD_AFTER_MS, MAX_BACKLOG_BYTES, MAX_BACKLOG_PER_SUBSCRIPTION } from '../../shared/event-subscriptions';
 import { database } from '../db';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
@@ -29,6 +29,10 @@ const DEAD_KEPT_MS = 30 * 86_400_000;
 /** The most rows one subscription is delivered per pass (a backlog is worked off over several passes). */
 const PER_PASS = 50;
 const PARALLEL = 10;
+/** How long one subscription may keep working in one pass: a pass that runs long hands over, and the next tick continues. */
+const PASS_BUDGET_MS = 30_000;
+/** A row of an unknown subscription is dropped once it is this old (a leader that has not heard of a new subscription yet must not drop its rows). */
+const ORPHAN_AFTER_MS = 10 * 60_000;
 
 type EventRow = OutboxRow & { target_id: string; payload: string };
 
@@ -37,22 +41,37 @@ interface State {
   timer?: ReturnType<typeof setInterval>;
   maintenance?: ReturnType<typeof setInterval>;
   kickTimer?: ReturnType<typeof setTimeout>;
-  current?: Promise<number>;
+  /** Subscriptions with a pass in progress on this process: a slow receiver holds only its own. */
+  active?: Set<string>;
 }
 const state = () => singleton<State>('event-outbox-dispatcher', () => ({ running: false }));
 
-/** Dead-letter the oldest live rows of `subscriptionId` beyond the bound. Returns how many. */
-export function enforceBacklog(subscriptionId: string, now = Date.now(), bound = MAX_BACKLOG_PER_SUBSCRIPTION): number {
+/**
+ * Dead-letter the oldest live rows of `subscriptionId` beyond the row bound, and beyond the byte bound (the payloads of the
+ * waiting rows: a subscription that asks for output may hold up to 64 KB an event). Returns how many.
+ */
+export function enforceBacklog(subscriptionId: string, now = Date.now(), bound = MAX_BACKLOG_PER_SUBSCRIPTION, byteBound = MAX_BACKLOG_BYTES): number {
   const db = database();
-  const live = Number(db.get<{ n: number | bigint }>('SELECT COUNT(*) AS n FROM event_outbox WHERE topic = ? AND target_id = ? AND dead_at IS NULL', SUBSCRIPTION_TOPIC, subscriptionId)?.n ?? 0);
-  if (live <= bound) return 0;
-  const rows = db.all<EventRow>('SELECT * FROM event_outbox WHERE topic = ? AND target_id = ? AND dead_at IS NULL ORDER BY created_at, event_id LIMIT ?', SUBSCRIPTION_TOPIC, subscriptionId, live - bound);
-  settleRows(SUBSCRIPTION_OUTBOX, rows, { error: new Error('backlog full'), dead: true }, now);
-  return rows.length;
+  const totals = db.get<{ n: number | bigint; bytes: number | bigint | null }>('SELECT COUNT(*) AS n, SUM(LENGTH(payload)) AS bytes FROM event_outbox WHERE topic = ? AND target_id = ? AND dead_at IS NULL', SUBSCRIPTION_TOPIC, subscriptionId);
+  const live = Number(totals?.n ?? 0);
+  let bytes = Number(totals?.bytes ?? 0);
+  if (live <= bound && bytes <= byteBound) return 0;
+  let drop = Math.max(0, live - bound);
+  const dead: EventRow[] = [];
+  // Oldest first, until both bounds hold.
+  const oldest = db.all<EventRow>('SELECT * FROM event_outbox WHERE topic = ? AND target_id = ? AND dead_at IS NULL ORDER BY created_at, event_id LIMIT ?', SUBSCRIPTION_TOPIC, subscriptionId, live);
+  for (const row of oldest) {
+    if (drop <= 0 && bytes <= byteBound) break;
+    dead.push(row);
+    bytes -= row.payload.length;
+    drop -= 1;
+  }
+  settleRows(SUBSCRIPTION_OUTBOX, dead, { error: new Error('backlog full'), dead: true }, now);
+  return dead.length;
 }
 
 /** Deliver one claimed row; settle it. Returns whether it was delivered. */
-async function deliverRow(subscription: EventSubscription, secret: string, row: EventRow, now: number): Promise<boolean> {
+async function deliverRow(subscription: EventSubscription, secret: string, row: EventRow, now: () => number): Promise<boolean> {
   const type = (() => {
     try {
       return String((JSON.parse(row.payload) as { type?: string }).type ?? 'event');
@@ -61,29 +80,30 @@ async function deliverRow(subscription: EventSubscription, secret: string, row: 
     }
   })();
   const result = await deliverEvent({ url: subscription.url, secret }, { id: row.event_id, type }, row.payload);
-  const old = now - Date.parse(row.created_at) >= DEAD_AFTER_MS;
+  const old = now() - Date.parse(row.created_at) >= DEAD_AFTER_MS;
   if (result.ok) {
-    settleRows(SUBSCRIPTION_OUTBOX, [row], { ok: true }, Date.now());
+    settleRows(SUBSCRIPTION_OUTBOX, [row], { ok: true }, now());
     noteDelivery(subscription.id, result.delivery);
     recordDelivery('delivered');
     return true;
   }
   const error = new Error(result.delivery.error ?? 'Delivery failed');
-  settleRows(SUBSCRIPTION_OUTBOX, [row], { error, ...(old && { dead: true }) }, Date.now());
-  noteDelivery(subscription.id, result.delivery, result.gone ? 'The receiver answered 410 Gone' : undefined);
+  settleRows(SUBSCRIPTION_OUTBOX, [row], { error, ...(old && { dead: true }) }, now());
+  noteDelivery(subscription.id, result.delivery, result.gone ? { reason: 'The receiver answered 410 Gone', url: subscription.url } : undefined);
   recordDelivery(result.gone ? 'gone' : old ? 'dead' : 'failed');
   logger.warn('event delivery failed', { 'landflow.event_subscription.id': subscription.id, 'landflow.event.id': row.event_id, ...(result.delivery.status && { 'http.response.status_code': result.delivery.status }), ...(old && { 'landflow.outbox.dead': true }) });
   return false;
 }
 
-/** Deliver what is due to one subscription. Returns how many events it took. */
-async function drainSubscription(subscription: EventSubscription, now: number): Promise<number> {
+/** Deliver what is due to one subscription. Returns how many events it took. `now` reads the clock at each claim and settle (a test passes a fixed one). */
+async function drainSubscription(subscription: EventSubscription, now: () => number): Promise<number> {
   const secret = openSecret(subscription);
+  const started = Date.now();
   let delivered = 0;
   if (subscription.ordered) {
     // One at a time, oldest first: stop at the first failure so a later event never overtakes it.
-    for (let n = 0; n < PER_PASS; n++) {
-      const [row] = claimDue<EventRow>(SUBSCRIPTION_OUTBOX, subscription.id, 1, now, true);
+    for (let n = 0; n < PER_PASS && Date.now() - started < PASS_BUDGET_MS; n++) {
+      const [row] = claimDue<EventRow>(SUBSCRIPTION_OUTBOX, subscription.id, 1, now(), true);
       if (!row) break;
       if (!(await deliverRow(subscription, secret, row, now))) break;
       delivered += 1;
@@ -91,8 +111,8 @@ async function drainSubscription(subscription: EventSubscription, now: number): 
     }
     return delivered;
   }
-  for (let round = 0; round < PER_PASS / PARALLEL; round++) {
-    const rows = claimDue<EventRow>(SUBSCRIPTION_OUTBOX, subscription.id, PARALLEL, now, false);
+  for (let round = 0; round < PER_PASS / PARALLEL && Date.now() - started < PASS_BUDGET_MS; round++) {
+    const rows = claimDue<EventRow>(SUBSCRIPTION_OUTBOX, subscription.id, PARALLEL, now(), false);
     if (!rows.length) break;
     const results = await Promise.all(rows.map((row) => deliverRow(subscription, secret, row, now)));
     delivered += results.filter(Boolean).length;
@@ -106,37 +126,51 @@ async function stillEnabled(id: string): Promise<boolean> {
   return Number(database().get<{ enabled: number | bigint }>('SELECT enabled FROM event_subscriptions WHERE id = ?', id)?.enabled ?? 0) === 1;
 }
 
-/** One pass over every enabled subscription with due rows. Returns how many events were delivered. `now` is for tests (a fake clock). */
-export function drainSubscriptions(now = Date.now()): Promise<number> {
+/**
+ * One pass over every enabled subscription with due rows. Each subscription works on its own: one that is still busy with
+ * a slow receiver is left to finish while the others are served. Returns how many events this call delivered. `at` is for
+ * tests (a fake clock); without it every claim and settle reads the clock when it happens.
+ */
+export async function drainSubscriptions(at?: number): Promise<number> {
   const s = state();
-  if (s.current) return s.current;
-  const run = (async () => {
-    let total = 0;
-    try {
-      const due = new Set(database().all<{ target_id: string }>('SELECT DISTINCT target_id FROM event_outbox WHERE topic = ? AND dead_at IS NULL AND next_at <= ?', SUBSCRIPTION_TOPIC, new Date(now).toISOString()).map((row) => row.target_id));
-      const subscriptions = allSubscriptions().filter((subscription) => subscription.enabled && due.has(subscription.id));
-      const results = await Promise.allSettled(subscriptions.map((subscription) => drainSubscription(subscription, now)));
-      for (const result of results) {
-        if (result.status === 'fulfilled') total += result.value;
-        else logger.warn('event subscription pass failed', { error: (result.reason as Error).message });
-      }
-    } catch (error) {
-      logger.warn('event outbox pass failed', { error: (error as Error).message });
+  const active = (s.active ??= new Set<string>());
+  const now = at === undefined ? () => Date.now() : () => at;
+  let total = 0;
+  try {
+    const due = new Set(database().all<{ target_id: string }>('SELECT DISTINCT target_id FROM event_outbox WHERE topic = ? AND dead_at IS NULL AND next_at <= ?', SUBSCRIPTION_TOPIC, new Date(now()).toISOString()).map((row) => row.target_id));
+    const mine = allSubscriptions().filter((subscription) => subscription.enabled && due.has(subscription.id) && !active.has(subscription.id));
+    for (const subscription of mine) active.add(subscription.id);
+    const results = await Promise.allSettled(
+      mine.map((subscription) =>
+        drainSubscription(subscription, now).finally(() => {
+          active.delete(subscription.id);
+        }),
+      ),
+    );
+    for (const result of results) {
+      if (result.status === 'fulfilled') total += result.value;
+      else logger.warn('event subscription pass failed', { error: (result.reason as Error).message });
     }
-    return total;
-  })();
-  s.current = run;
-  void run.finally(() => {
-    if (s.current === run) s.current = undefined;
-  });
-  return run;
+  } catch (error) {
+    logger.warn('event outbox pass failed', { error: (error as Error).message });
+  }
+  return total;
 }
 
 /** Once a minute: the backlog bound of each subscription, and dead rows older than 30 days. */
 export function maintainOutbox(now = Date.now()): { dead: number; pruned: number } {
   let dead = 0;
   try {
-    for (const subscription of allSubscriptions()) dead += enforceBacklog(subscription.id, now);
+    const known = new Set<string>();
+    for (const subscription of allSubscriptions()) {
+      known.add(subscription.id);
+      dead += enforceBacklog(subscription.id, now);
+    }
+    // Rows whose subscription is gone (deleted while a pass held them, or by another process) are dropped once they are old.
+    const cut = new Date(now - ORPHAN_AFTER_MS).toISOString();
+    for (const row of database().all<{ target_id: string; event_id: string }>('SELECT target_id, event_id FROM event_outbox WHERE topic = ? AND created_at < ?', SUBSCRIPTION_TOPIC, cut)) {
+      if (!known.has(row.target_id)) database().delete('event_outbox', { topic: SUBSCRIPTION_TOPIC, target_id: row.target_id, event_id: row.event_id });
+    }
     const pruned = pruneDead(SUBSCRIPTION_OUTBOX, now - DEAD_KEPT_MS);
     if (dead) logger.warn('event outbox backlog bound reached', { 'landflow.outbox.dead': dead });
     return { dead, pruned };
@@ -180,7 +214,8 @@ export const eventOutbox = {
     if (s.maintenance) clearInterval(s.maintenance);
     if (s.kickTimer) clearTimeout(s.kickTimer);
     s.timer = s.maintenance = s.kickTimer = undefined;
-    await s.current?.catch(() => 0);
+    // A pass in progress settles its own rows; wait a moment for the busy subscriptions.
+    for (let i = 0; i < 50 && s.active?.size; i++) await new Promise((r) => setTimeout(r, 100));
   },
 };
 

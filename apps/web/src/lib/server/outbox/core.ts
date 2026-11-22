@@ -62,6 +62,12 @@ function scope(t: OutboxTable, targetId: string): { sql: string; args: SqlValue[
   return { sql: `${t.target} = ?${t.topic ? ' AND topic = ?' : ''}${t.dead ? ' AND dead_at IS NULL' : ''}`, args: [targetId, ...(t.topic ? [t.topic] : [])] };
 }
 
+/** Whether the row is still stored: a row claimed before its target was deleted must not be written back. */
+function stored(t: OutboxTable, row: OutboxRow): boolean {
+  const where = t.key.map((column) => `${column} = ?`).join(' AND ');
+  return Boolean(database().get(`SELECT 1 AS one FROM ${t.table} WHERE ${where}`, ...t.key.map((column) => row[column] as SqlValue)));
+}
+
 /** The columns that identify `row`, for `delete`. */
 function keyOf(t: OutboxTable, row: OutboxRow): Row {
   return Object.fromEntries(t.key.map((column) => [column, row[column] as SqlValue]));
@@ -124,6 +130,8 @@ export function settleRows(t: OutboxTable, rows: OutboxRow[], outcome: SettleOut
     }
     let next = 0;
     for (const row of rows) {
+      // Deleted while it was being delivered (its subscription or destination went): nothing to write back.
+      if (!stored(t, row)) continue;
       const attempts = Number(row.attempts) + 1;
       const last_error = outcome.error.message.slice(0, MAX_ERROR_CHARS);
       if (outcome.dead) {

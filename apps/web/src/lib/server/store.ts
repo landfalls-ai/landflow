@@ -310,8 +310,17 @@ class Store {
     return this.executionsWithStatus('waiting').reverse();
   }
 
-  deleteExecution(id: string): boolean {
+  /**
+   * Delete an execution and what hangs on it. `ending` is the finished record of a run that is not kept (a workflow that
+   * saves no successful or failed runs): the saving listeners see it first, in this transaction, so its end event is
+   * written exactly when its row is deleted (the event outbox, outbox/events.ts).
+   */
+  deleteExecution(id: string, ending?: ExecutionRecord): boolean {
     const deleted = this.db.transaction(() => {
+      if (ending && !backtestScope()) {
+        const previousStatus = () => this.db.get<{ status: ExecutionState }>('SELECT status FROM executions WHERE id = ?', id)?.status;
+        for (const listener of [...savingListeners()]) listener(ending, previousStatus);
+      }
       const deleted = this.db.delete('executions', { id }) > 0;
       this.db.delete('execution_steps', { execution_id: id });
       this.db.delete('execution_checkpoints', { execution_id: id });

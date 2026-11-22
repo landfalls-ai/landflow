@@ -44,6 +44,10 @@ const { outboxHealth, deliveryTally } = await import('@/lib/server/outbox/metric
 const { SUBSCRIPTION_OUTBOX } = await import('@/lib/server/outbox/core');
 const { singleton } = await import('@/lib/server/singleton');
 const { SERVICES } = await import('@/lib/server/runtime');
+const { persist } = await import('@/lib/server/runner/persist');
+const { deleteProjectWithTransfer } = await import('@/lib/server/projects/transfer');
+const { queryEvents } = await import('@/lib/server/audit/store');
+const { claimDue, settleRows } = await import('@/lib/server/outbox/core');
 
 ensureExecutionReactions();
 
@@ -258,7 +262,7 @@ describe('saveExecution writes the rows in its own transaction', () => {
     let withHook = Infinity;
     for (let i = 0; i < 3; i++) withHook = Math.min(withHook, timeSaves());
     expect(insert.mock.calls.filter(([table]) => table === 'event_outbox')).toHaveLength(0);
-    // A loose bound on a noisy machine: the hook is a map lookup, not a query.
+    // A loose bound on a noisy machine: with no subscription anywhere the hook returns before it looks anything up.
     if (!process.env.CI_SLOW) expect(withHook).toBeLessThan(without * 1.6 + 25);
     insert.mockRestore();
   });
@@ -452,5 +456,207 @@ describe('delivery', () => {
     const entry = SERVICES.find((service) => service.name === 'event outbox');
     expect(entry).toMatchObject({ leader: true });
     expect(entry?.roles).not.toContain('worker');
+  });
+});
+
+// ---- review fixes ------------------------------------------------------------------------------------------------------
+
+describe('a workflow that does not keep its executions still announces its end', () => {
+  it('writes the end event in the transaction that deletes the execution', () => {
+    clean();
+    const { subscription } = subscribe({ events: ['run.finished', 'run.failed'] });
+    const running = record(WF, 'running');
+    store.saveExecution(running);
+    const done = { ...running, status: 'error', finishedAt: new Date().toISOString(), error: { message: 'boom' } } as ExecutionRecord;
+    persist(done, { saveFailedExecutions: false });
+    expect(database().get('SELECT id FROM executions WHERE id = ?', done.executionId)).toBeUndefined();
+    expect(rows(subscription.id).map((r) => r.event_id)).toEqual([`${done.executionId}:run.failed`]);
+    const ok = record(WF, 'success');
+    persist(ok, { saveSuccessfulExecutions: false });
+    expect(rows(subscription.id).map((r) => r.event_id)).toContain(`${ok.executionId}:run.finished`);
+  });
+
+  it('writes nothing when the delete fails', () => {
+    clean();
+    const { subscription } = subscribe({ events: ['run.finished'] });
+    const off = onExecutionSaving(() => {
+      throw new Error('disk full');
+    });
+    try {
+      expect(() => persist(record(WF, 'success'), { saveSuccessfulExecutions: false })).toThrow('disk full');
+    } finally {
+      off();
+    }
+    expect(rows(subscription.id)).toHaveLength(0);
+  });
+});
+
+describe('the dispatcher never undoes an admin’s change', () => {
+  it('keeps the last delivery apart from the subscription row, and a 410 disables only what it must', async () => {
+    clean();
+    const { subscription } = subscribe({ events: ['run.failed'] });
+    failing();
+    // The admin changes the URL and name after the leader read the row but before it noted the delivery.
+    const stale = subs.getSubscription(subscription.id)!;
+    subs.updateSubscription(subscription.id, { name: 'Renamed by admin', includeOutput: true });
+    subs.noteDelivery(subscription.id, { at: new Date().toISOString(), status: 200, ms: 3 });
+    expect(stale.name).toBe('Receiver');
+    expect(subs.getSubscription(subscription.id)).toMatchObject({ name: 'Renamed by admin', includeOutput: true });
+    expect(subs.subscriptionView(subscription.id)!.lastDelivery).toMatchObject({ status: 200 });
+    // A 410 for an address the admin has since replaced does not turn the new one off.
+    subs.noteDelivery(subscription.id, { at: new Date().toISOString(), status: 410, ms: 3 }, { reason: 'The receiver answered 410 Gone', url: 'http://old.example.test/hook' });
+    expect(subs.getSubscription(subscription.id)!.enabled).toBe(true);
+    subs.noteDelivery(subscription.id, { at: new Date().toISOString(), status: 410, ms: 3 }, { reason: 'The receiver answered 410 Gone', url: receiverUrl });
+    expect(subs.getSubscription(subscription.id)).toMatchObject({ enabled: false, name: 'Renamed by admin', includeOutput: true });
+    // A new URL starts it again.
+    subs.updateSubscription(subscription.id, { url: `${receiverUrl}2` });
+    expect(subs.getSubscription(subscription.id)).toMatchObject({ enabled: true, disabledReason: null });
+  });
+});
+
+describe('rows that were deleted stay deleted', () => {
+  it('settling a claimed row of a deleted subscription writes nothing back', () => {
+    clean();
+    const { subscription } = subscribe({ events: ['run.failed'] });
+    failing();
+    const claimed = claimDue(SUBSCRIPTION_OUTBOX, subscription.id, 1, Date.now() + 100, true);
+    expect(claimed).toHaveLength(1);
+    subs.deleteSubscription(subscription.id);
+    settleRows(SUBSCRIPTION_OUTBOX, claimed, { error: new Error('late') }, Date.now());
+    settleRows(SUBSCRIPTION_OUTBOX, claimed, { error: new Error('late'), dead: true }, Date.now());
+    expect(rows(subscription.id)).toEqual([]);
+  });
+
+  it('maintenance removes old rows whose subscription is gone, and leaves young ones', () => {
+    clean();
+    const db = database();
+    const base = Date.now();
+    const put = (id: string, age: number) => db.insertNew('event_outbox', { topic: 'subscription', target_id: 'evs_gone', event_id: id, created_at: new Date(base - age).toISOString(), payload: '{}', attempts: 0, next_at: new Date(base).toISOString() });
+    put('old', 3_600_000);
+    put('young', 1_000);
+    maintainOutbox(base);
+    expect(rows('evs_gone').map((r) => r.event_id)).toEqual(['young']);
+  });
+});
+
+describe('deleting a project deletes its subscriptions', () => {
+  it('removes them and their rows in the same transaction, with the audit event', () => {
+    clean();
+    const doomed = createTeamProject({ name: 'Doomed' }).id;
+    const { subscription } = subscribe({ events: ['run.failed'] }, doomed);
+    database().insertNew('event_outbox', { topic: 'subscription', target_id: subscription.id, event_id: 'x:run.failed', created_at: new Date().toISOString(), payload: '{}', attempts: 0, next_at: new Date().toISOString() });
+    deleteProjectWithTransfer(doomed);
+    expect(subs.getSubscription(subscription.id)).toBeUndefined();
+    expect(rows(subscription.id)).toEqual([]);
+    expect(database().get('SELECT * FROM event_subscription_state WHERE subscription_id = ?', subscription.id)).toBeUndefined();
+    expect(queryEvents({ action: ['event_subscription.deleted'] }, { limit: 1 }).events[0]).toMatchObject({ target: { id: subscription.id }, projectId: doomed });
+  });
+});
+
+describe('time, concurrency and bounds', () => {
+  it('takes the lease from the clock at the moment of the claim, not from the start of the pass', async () => {
+    clean();
+    const { subscription } = subscribe({ events: ['run.failed'] });
+    failing();
+    const slow = createServer((_req, res) => setTimeout(() => res.writeHead(200).end('ok'), 700));
+    await new Promise<void>((done) => slow.listen(0, '127.0.0.1', done));
+    const port = (slow.address() as { port: number }).port;
+    subs.updateSubscription(subscription.id, { url: `http://127.0.0.1:${port}/slow` });
+    try {
+      const pass = drainSubscriptions();
+      await new Promise((r) => setTimeout(r, 300));
+      const lease = Date.parse(rows(subscription.id)[0]!.lease_until!);
+      expect(Math.abs(lease - (Date.now() + 60_000))).toBeLessThan(1_500);
+      expect(await pass).toBe(1);
+    } finally {
+      await new Promise<void>((done) => slow.close(() => done()));
+    }
+  });
+
+  it('a slow receiver does not hold up another subscription’s delivery', async () => {
+    clean();
+    const slowHits: string[] = [];
+    const slow = createServer((req, res) => {
+      slowHits.push(String(req.headers['x-landflow-event-id']));
+      setTimeout(() => res.writeHead(200).end('ok'), 1_500);
+    });
+    await new Promise<void>((done) => slow.listen(0, '127.0.0.1', done));
+    const port = (slow.address() as { port: number }).port;
+    const { subscription: slowSub } = subscribe({ name: 'Slow', url: `http://127.0.0.1:${port}/slow`, events: ['run.failed'], workflowIds: [WF] });
+    const { subscription: fastSub } = subscribe({ name: 'Fast', events: ['run.failed'], workflowIds: [WF2] });
+    try {
+      store.saveExecution(record(WF, 'error'));
+      const first = drainSubscriptions();
+      await new Promise((r) => setTimeout(r, 200));
+      store.saveExecution(record(WF2, 'error'));
+      const start = Date.now();
+      expect(await drainSubscriptions()).toBe(1);
+      expect(Date.now() - start).toBeLessThan(1_000);
+      expect(hits).toHaveLength(1);
+      expect(rows(fastSub.id)).toEqual([]);
+      await first;
+      expect(rows(slowSub.id)).toEqual([]);
+    } finally {
+      await new Promise<void>((done) => slow.close(() => done()));
+    }
+  });
+
+  it('dead-letters the oldest rows beyond a byte cap as well as a row cap', () => {
+    clean();
+    const { subscription } = subscribe({ events: ['run.failed'] });
+    const db = database();
+    const base = Date.now();
+    db.transaction(() => {
+      for (let i = 0; i < 10; i++) db.insertNew('event_outbox', { topic: 'subscription', target_id: subscription.id, event_id: `big_${i}`, created_at: new Date(base + i).toISOString(), payload: 'x'.repeat(1_000), attempts: 0, next_at: new Date(base + i).toISOString() });
+    });
+    expect(enforceBacklog(subscription.id, base, 100, 4_500)).toBe(6);
+    const live = rows(subscription.id).filter((r) => !r.dead_at).map((r) => r.event_id);
+    expect(live).toEqual(['big_6', 'big_7', 'big_8', 'big_9']);
+    expect(rows(subscription.id).find((r) => r.dead_at)?.last_error).toBe('backlog full');
+  });
+
+  it('scopes the backlog stats to the subscriptions asked about', () => {
+    clean();
+    const { subscription } = subscribe({ events: ['run.failed'] });
+    const other = createTeamProject({ name: 'Other stats' }).id;
+    const { subscription: theirs } = subscribe({ events: ['run.failed'] }, other);
+    const put = (target: string) => database().insertNew('event_outbox', { topic: 'subscription', target_id: target, event_id: `s_${target}`, created_at: new Date().toISOString(), payload: '{}', attempts: 0, next_at: new Date().toISOString() });
+    put(subscription.id);
+    put(theirs.id);
+    expect(subs.listSubscriptions(projectId).map((s) => [s.id, s.backlog])).toEqual([[subscription.id, 1]]);
+  });
+});
+
+describe('what an event holds', () => {
+  it('cuts a very long error message and keeps the whole body under 64 KB without output', () => {
+    const r = record(WF, 'error', { error: { message: 'e'.repeat(500_000), nodeName: 'n'.repeat(50_000) } });
+    const body = eventPayload(runEvents(r, 'running')[0]!, r, { projectId: 'p', includeOutput: false });
+    expect(Buffer.byteLength(body)).toBeLessThanOrEqual(64 * 1024);
+    expect(JSON.parse(body).error.message.length).toBeLessThanOrEqual(2_001);
+  });
+
+  it('counts a big output without turning all of it into items', () => {
+    const many = Array.from({ length: 50_000 }, (_, i) => ({ i }));
+    const r = record(WF, 'success', { lastNodeId: 'n1', runData: { n1: [run('success', many)] } });
+    const body = JSON.parse(eventPayload(runEvents(r, 'running')[0]!, r, { projectId: 'p', includeOutput: true }));
+    expect(body.output).toHaveLength(5);
+    expect(body.outputTruncated).toBe(true);
+  });
+
+  it('counts an enqueue failure instead of only logging it', async () => {
+    clean();
+    subscribe({ events: ['run.failed'] });
+    const db = database();
+    const spy = vi.spyOn(db, 'insertNew').mockImplementation((table: string) => {
+      if (table === 'event_outbox') throw new Error('nope');
+      return true;
+    });
+    const before = deliveryTally().enqueue_failed ?? 0;
+    try {
+      store.saveExecution(record(WF, 'error'));
+    } finally {
+      spy.mockRestore();
+    }
+    expect(deliveryTally().enqueue_failed ?? 0).toBe(before + 1);
   });
 });

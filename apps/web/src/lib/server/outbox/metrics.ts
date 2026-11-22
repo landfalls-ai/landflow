@@ -11,7 +11,7 @@ import { SUBSCRIPTION_TOPIC } from './core';
 
 const SCOPE = 'landflow-outbox';
 
-export type DeliveryOutcome = 'delivered' | 'failed' | 'dead' | 'gone';
+export type DeliveryOutcome = 'delivered' | 'failed' | 'dead' | 'gone' | 'enqueue_failed';
 
 const cache = () => singleton('outbox-metrics', () => ({ current: undefined as { provider: MeterProvider; delivered: Counter } | undefined, outcomes: new Map<string, number>() }));
 
@@ -62,3 +62,8 @@ export function recordDelivery(outcome: DeliveryOutcome) {
 
 /** What this process counted so far (tests, diagnostics). */
 export const deliveryTally = (): Record<string, number> => Object.fromEntries(cache().outcomes);
+
+/** A run's events could not be written with its save (the save went on without them): worth an alert. */
+export function recordEnqueueFailure() {
+  recordDelivery('enqueue_failed');
+}

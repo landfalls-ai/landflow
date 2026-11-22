@@ -4,14 +4,14 @@ Part of the [Landflow docs](../README.md). A project's admins can send the run e
 
 ## Setting one up
 
-Project → Settings → **Event subscriptions** (project admins, and instance owners and admins, add and change; every member of the project sees the list). **Add subscription** takes:
+Project → Settings → **Event subscriptions** (project admins, and instance owners and admins, add and change; every member of the project sees the list, but only admins see the whole URL, which may carry a token, and the receiver's own error text: members see the origin and the HTTP status). **Add subscription** takes:
 
 - a name and the URL events go to (http or https). The address must be one the [outbound policy](audit-and-governance.md#outbound-requests) allows: in the production profile a private address is refused when you save, with the reason, unless `LANDFLOW_OUTBOUND_ALLOW` lists it. The same check runs again on every send, so a name that starts to resolve to a private address stops being called;
 - the events: **A run starts** (`run.started`), **A run finishes** (`run.finished`, also for a canceled run), **A run fails** (`run.failed`), **A chosen step finishes** (`node.finished`, needs at least one step name);
 - optionally the workflows (all of the project's by default);
 - **Include the last step's first 5 items** (off by default), and **Deliver one at a time, in order** (on by default).
 
-Landflow makes the signing secret (`whsec_…`), shows it once when the subscription is added, and keeps it sealed like a credential. **Edit** can make a new one, which replaces the old at once. At most 20 subscriptions per project. A subscription only gets events from runs saved after it was made.
+Landflow makes the signing secret (`whsec_…`), shows it once when the subscription is added, and keeps it sealed like a credential. **Edit** can make a new one, which replaces the old at once. Changing the URL of a subscription that was turned off by a 410 turns it on again. Deleting a project deletes its subscriptions and their waiting events (audited per subscription). An API key can only turn on the output option with the `executions:read` scope. At most 20 subscriptions per project. A subscription only gets events from runs saved after it was made.
 
 ## What is sent
 
@@ -43,8 +43,8 @@ Event ids are `<executionId>:run.started`, `<executionId>:run.finished` or `:run
 - **In order.** An ordered subscription gets its events one at a time in the order the runs were saved; a later event never passes an earlier one that is waiting to be tried again. A subscription set to **not** ordered sends up to 10 at once and is not held up by one failing event.
 - **A 410 Gone** turns the subscription off ("The receiver answered 410 Gone"); turn it on again from Edit once the receiver is back.
 - **72 hours.** An event still failing 72 hours after it was made is **given up on**: it stays, the card shows "N given up" with the last error, and **Retry now** queues it again (and makes waiting events due at once). Given-up events are removed after 30 more days.
-- **Backlog.** Up to 10,000 waiting events per subscription; beyond that the dispatcher gives up on the oldest ("backlog full"), never the save of a run.
-- **Which events.** A run that is `waiting` (a person or a wait node) sends nothing; its end sends `run.finished` or `run.failed`. A run saved twice never queues an event twice. `node.finished` is worked out from the finished run's data, so it arrives after the run, in the order run start, steps, run end.
+- **Backlog.** Up to 10,000 waiting events and 128 MB of waiting payload per subscription; beyond either the dispatcher gives up on the oldest ("backlog full"), never the save of a run.
+- **Which events.** A run that is `waiting` (a person or a wait node) sends nothing; its end sends `run.finished` or `run.failed`. A run saved twice never queues an event twice. A workflow that does not keep its successful or failed runs still sends the end event: it is written in the transaction that deletes the run. `node.finished` is worked out from the finished run's data, so it arrives after the run, in the order run start, steps, run end.
 
 **Send test** posts one signed `test` event straight to the URL (not through the queue) and says what the receiver answered. The card shows the last delivery and, for a subscription that is behind, how many are waiting and for how long.
 

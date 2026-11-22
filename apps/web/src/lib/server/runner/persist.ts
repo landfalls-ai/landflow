@@ -28,8 +28,8 @@ function keepExecution(record: ExecutionRecord, settings: WorkflowSettings = {})
 
 export function persist(record: ExecutionRecord, settings: WorkflowSettings | undefined, keep = false) {
   if (!keep && !keepExecution(record, settings)) {
-    // It may have been saved while it waited.
-    store.deleteExecution(record.executionId);
+    // It may have been saved while it waited. Its end is still announced to event subscriptions, in the delete's transaction.
+    store.deleteExecution(record.executionId, record);
     return;
   }
   // The resume state's run data duplicates the record's: keep one copy on disk.

@@ -6,6 +6,9 @@
   - A subscription gets events from runs saved after it was made; nothing is replayed.
   - Failure alert channels and the error workflow stay best-effort with no retry (not on the outbox yet); Notion's outbox (`notion_brain_outbox`) and approval tickets keep their own retry queues; only the audit SIEM outbox shares the core.
   - Events carry no run data unless "Include the last step's first 5 items" is on; the output is the saved run data, cut to 64 KB.
+  - A subscription's waiting events are bounded by count (10,000) and by payload bytes (128 MB): beyond either, the oldest are given up on, so a receiver that stays down while a subscription includes output cannot grow the database without limit.
+  - Members of a project see a subscription's URL origin and the HTTP status of a failure only; admins see the whole URL and the receiver's error text.
+  - An event's error text is cut to 2,000 characters.
   - The addresses are checked against the outbound policy when saved (literal addresses) and on every send (what a name resolves to); a name that resolves privately at save time is accepted and then fails at send time.
 - `docs/roadmap.md`: C19 (run events through an outbox: event subscriptions per project, the shared outbox core, the audit outbox on it): built. Open: alert channels and the error workflow on the outbox; live `node.finished` (needs a durable node event); a broker sink (Kafka, NATS); Notion's outbox and approval tickets on the core; C12-style delegated approval callbacks can enqueue here.
 - `docs/README.md`: feature map line: "Run events to a URL (event subscriptions: signed webhooks per project, at least once, in order, retried for 72 hours) → [features/event-subscriptions.md](features/event-subscriptions.md)".
@@ -14,5 +17,5 @@
 - `docs/features/audit-and-governance.md`: done on this branch (the SIEM outbox on the shared core).
 - `docs/reference/api.md` and `openapi.ts`: P18's last task, written after merging `combined/w4a`; the integrator resolves a conflict on the api.md row beside P15a's and P16's.
 - `docs/reference/configuration.md`: no new variables (the limits are constants: 20 subscriptions per project, 10,000 waiting events, 64 KB, 10 s, 72 h).
-- Migration 2924 only (`event_subscriptions`, `event_outbox`); P16's 2925 and P20's 2926 are theirs. P18's seam edited `db/schema.ts` and `lib/shared/audit.ts` (labels `event_subscription.*`); P20's `collection.*` labels are P20's own.
+- Migration 2924 only (`event_subscriptions`, `event_subscription_state`, `event_outbox`); P16's 2925 and P20's 2926 are theirs. P18's seam edited `db/schema.ts` and `lib/shared/audit.ts` (labels `event_subscription.*`); P20's `collection.*` labels are P20's own.
 - `test/runtime.test.ts` (not on the ownership list) gained the `event outbox` service name in its ordered list; nothing else changed there.

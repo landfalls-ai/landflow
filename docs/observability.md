@@ -267,7 +267,7 @@ histograms in **milliseconds** with buckets `1, 5, 10, 25, 50, 100, 250, 500, 10
 | `landflow.audit.outbox.oldest_age` | gauge (s) | age of the oldest undelivered outbox row |
 | `landflow.outbox.backlog` | gauge | `topic` (`subscription`): run events waiting to be delivered to [event subscriptions](features/event-subscriptions.md) (the leader reports it with every host's view of the table; never a subscription id) |
 | `landflow.outbox.oldest_age_s` | gauge (s) | `topic`: age of the oldest waiting run event |
-| `landflow.outbox.delivered` | counter | `topic`, `outcome` (`delivered`, `failed`, `dead` given up after 72 h, `gone` a 410): delivery attempts of run events, counted by the leader |
+| `landflow.outbox.delivered` | counter | `topic`, `outcome` (`delivered`, `failed`, `dead` given up after 72 h, `gone` a 410, `enqueue_failed` a run's events could not be written with its save, counted on the process that saved): delivery attempts of run events |
 
 **Breaking change for dashboards:** `landflow.workflow.id` is no longer a label on `landflow.schedule.lag` (a
 histogram), `landflow.trigger.fires`, `landflow.webhook.requests` and `landflow.runtime.events`: one series per

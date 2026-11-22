@@ -19,6 +19,8 @@ export const MAX_SUBSCRIPTIONS_PER_PROJECT = 20;
 export const MAX_EVENT_BODY_BYTES = 64 * 1024;
 /** Undelivered rows kept per subscription; the dispatcher dead-letters the oldest beyond it. */
 export const MAX_BACKLOG_PER_SUBSCRIPTION = 10_000;
+/** The most payload bytes a subscription's waiting events may hold (the oldest are given up on beyond it). */
+export const MAX_BACKLOG_BYTES = 128 * 1024 * 1024;
 /** How long a row is retried before it is dead-lettered. */
 export const DEAD_AFTER_MS = 72 * 3_600_000;
 /** How many items of the last step an event carries with "include output". */
