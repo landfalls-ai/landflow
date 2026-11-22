@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
 import { API_KEY_SCOPES, can, SCOPE_LABELS, type ApiKeyScope, type ApiKeyView } from '@/lib/shared/auth';
+import { checkAllowList } from '@/lib/shared/ip-entry';
 import { useViewer } from '@/components/auth/viewer';
 import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
@@ -17,7 +18,7 @@ import { Button } from '@/components/ui/button';
 import { CopyButton } from '@/components/ui/copy-button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { HelpTip } from '@/components/ui/help-tip';
-import { FieldLabel, Input, SectionLabel, Select } from '@/components/ui/inputs';
+import { FieldLabel, Input, SectionLabel, Select, Textarea } from '@/components/ui/inputs';
 
 const EXPIRY = [
   { days: 30, label: '30 days' },
@@ -26,15 +27,53 @@ const EXPIRY = [
   { days: 0, label: 'Never' },
 ];
 
+/** The lines of the address box: one entry each; commas and spaces also separate them. */
+const entriesOf = (text: string) => text.split(/[\s,]+/).map((entry) => entry.trim()).filter(Boolean);
+
+/** What a key's limits say, for its row: "from 10.1.2.3" is the last address (the owner's own view), "3 of 100 uses" the cap. */
+export function keyLimits(key: ApiKeyView): string[] {
+  const lines: string[] = [];
+  if (key.allowedIps?.length) lines.push(`only from ${key.allowedIps.length === 1 ? key.allowedIps[0] : `${key.allowedIps.length} addresses`}`);
+  if (key.maxUses) lines.push(key.usedUp ? 'used up' : `${key.uses ?? 0} of ${key.maxUses} uses`);
+  return lines;
+}
+
 const expired = (key: ApiKeyView) => Boolean(key.expiresAt && Date.parse(key.expiresAt) <= Date.now());
 
+/** A key's facts under its name: when made and last used (and from where), its expiry, and its limits. */
+export function KeyDetails({ apiKey: key }: { apiKey: ApiKeyView }) {
+  const limits = keyLimits(key);
+  return (
+    <>
+      <div className="mt-1 text-[11px] text-t3">
+        Created {timeAgo(key.createdAt)} · {key.lastUsedAt ? `last used ${timeAgo(key.lastUsedAt)}` : 'never used'} ·{' '}
+        {key.expiresAt ? `${expired(key) ? 'expired' : 'expires'} ${new Date(key.expiresAt).toLocaleDateString()}` : 'never expires'}
+        {key.lastUsedIp && ` · from ${key.lastUsedIp}`}
+      </div>
+      {limits.length > 0 && (
+        <div className="mt-0.5 text-[11px] text-t3" title={key.allowedIps?.join(', ')}>
+          {limits.join(' · ')}
+        </div>
+      )}
+    </>
+  );
+}
+
 /** The new-key form. */
-function CreateKey({ onCreated, onCancel }: { onCreated: (token: string, key: ApiKeyView) => void; onCancel: () => void }) {
+export function CreateKey({ onCreated, onCancel }: { onCreated: (token: string, key: ApiKeyView) => void; onCancel: () => void }) {
   const viewer = useViewer();
   const [label, setLabel] = useState('');
   const [scopes, setScopes] = useState<ApiKeyScope[]>(['workflows:read', 'executions:read']);
   const [days, setDays] = useState(90);
+  const [addresses, setAddresses] = useState('');
+  const [cap, setCap] = useState('');
   const [saving, setSaving] = useState(false);
+  // The list and the cap are fixed once the key exists (no edit later): checked here with the server's own rule as they are typed.
+  const list = entriesOf(addresses);
+  const checked = list.length ? checkAllowList(list) : undefined;
+  const problem = checked && !checked.ok ? checked.problem : undefined;
+  const maxUses = cap.trim() === '' ? undefined : Number(cap);
+  const capProblem = maxUses !== undefined && (!Number.isInteger(maxUses) || maxUses < 1 || maxUses > 1_000_000) ? 'Use a whole number from 1 to 1,000,000' : undefined;
   // SCIM tokens are made in Settings → Security. `audit:read` reads what its user may (project admins: their projects' events).
   const allowed = API_KEY_SCOPES.filter((s) => s !== 'scim' && (s !== 'admin' || can(viewer, 'apiKeys:admin')));
   const toggle = (scope: ApiKeyScope) => setScopes((list) => (list.includes(scope) ? list.filter((s) => s !== scope) : [...list, scope]));
@@ -43,7 +82,7 @@ function CreateKey({ onCreated, onCancel }: { onCreated: (token: string, key: Ap
     event.preventDefault();
     setSaving(true);
     try {
-      const result = await api<{ key: ApiKeyView; token: string }>('/api/api-keys', { method: 'POST', json: { label: label.trim(), scopes, ...(days && { expiresInDays: days }) } });
+      const result = await api<{ key: ApiKeyView; token: string }>('/api/api-keys', { method: 'POST', json: { label: label.trim(), scopes, ...(days && { expiresInDays: days }), ...(checked?.ok && { allowedIps: checked.entries }), ...(maxUses && !capProblem && { maxUses }) } });
       onCreated(result.token, result.key);
     } catch (e) {
       toast.error((e as Error).message);
@@ -85,11 +124,23 @@ function CreateKey({ onCreated, onCancel }: { onCreated: (token: string, key: Ap
             ))}
           </div>
         </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_200px]">
+          <div>
+            <FieldLabel>Only from these addresses (optional)</FieldLabel>
+            <Textarea value={addresses} onChange={(e) => setAddresses(e.target.value)} rows={3} placeholder={'10.0.0.0/8\n203.0.113.7'} aria-label="Only from these addresses" aria-invalid={Boolean(problem)} className="font-mono text-[12px]" />
+            <p className={cn('mt-1 text-[11px]', problem ? 'text-rd' : 'text-t3')}>{problem ?? 'One address or range (10.0.0.0/8) per line, up to 50. Leave empty to allow any address. Can’t be changed later.'}</p>
+          </div>
+          <div>
+            <FieldLabel>Stop after (optional)</FieldLabel>
+            <Input value={cap} onChange={(e) => setCap(e.target.value)} inputMode="numeric" placeholder="No limit" aria-label="Stop after this many uses" aria-invalid={Boolean(capProblem)} />
+            <p className={cn('mt-1 text-[11px]', capProblem ? 'text-rd' : 'text-t3')}>{capProblem ?? 'Uses; the key is kept, marked “used up”.'}</p>
+          </div>
+        </div>
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onCancel}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" loading={saving} disabled={!label.trim() || scopes.length === 0}>
+          <Button type="submit" variant="primary" loading={saving} disabled={!label.trim() || scopes.length === 0 || Boolean(problem) || Boolean(capProblem)}>
             Create key
           </Button>
         </div>
@@ -189,6 +240,7 @@ export function ApiKeysSettings() {
                   <span className="truncate">{key.label}</span>
                   <code className="font-mono text-[11px] font-normal text-t3">lf_…{key.hint}</code>
                   {expired(key) && <Badge tone="danger">expired</Badge>}
+                  {key.usedUp && <Badge tone="danger">used up</Badge>}
                 </div>
                 <div className="mt-1 flex flex-wrap gap-1">
                   {key.scopes.map((scope) => (
@@ -197,10 +249,7 @@ export function ApiKeysSettings() {
                     </Badge>
                   ))}
                 </div>
-                <div className="mt-1 text-[11px] text-t3">
-                  Created {timeAgo(key.createdAt)} · {key.lastUsedAt ? `last used ${timeAgo(key.lastUsedAt)}` : 'never used'} ·{' '}
-                  {key.expiresAt ? `${expired(key) ? 'expired' : 'expires'} ${new Date(key.expiresAt).toLocaleDateString()}` : 'never expires'}
-                </div>
+                <KeyDetails apiKey={key} />
               </div>
               {confirm === key.id ? (
                 <span role="alertdialog" aria-label={`Revoke ${key.label}?`} className="flex items-center gap-1 animate-fade-up">

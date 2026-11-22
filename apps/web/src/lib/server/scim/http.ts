@@ -5,6 +5,8 @@
  * as the token's user, so "who changed this" works as it does for API keys.
  */
 import { noteAuditPrincipal } from '../audit/context';
+import { KEY_REFUSAL_MESSAGE, noteKeyRefusal } from '../auth/api-key-audit';
+import { consumeApiKeyUse } from '../auth/api-key-uses';
 import { withAuth, type Principal } from '../auth/context';
 import { clientIp } from '../auth/rate-limit';
 import { publicOrigin } from '../auth/cookies';
@@ -98,11 +100,20 @@ export function scimRoute<P extends Record<string, string> = Record<string, stri
     async (request: Request, context?: { params?: Promise<P> }): Promise<Response> => {
       const params = ((await context?.params) ?? {}) as P;
       const checked = authenticateScim(request);
+      if (!checked.ok && checked.refused) {
+        noteKeyRefusal('ip_not_allowed', checked.refused);
+        return scimError(401, checked.message, undefined, { 'www-authenticate': 'Bearer realm="landflow-scim"' });
+      }
       if (!checked.ok) {
         recordScimAuthFailure(clientIp(request), checked.status, checked.message, checked.keyId && checked.userId ? { keyId: checked.keyId, userId: checked.userId } : undefined);
         return scimError(checked.status, checked.message, undefined, checked.status === 401 ? { 'www-authenticate': 'Bearer realm="landflow-scim"' } : {});
       }
       const { caller } = checked;
+      // A capped token: this call is one of its uses (counted in the database, as for every other key).
+      if (caller.maxUses && !(await consumeApiKeyUse({ id: caller.keyId, maxUses: caller.maxUses })).ok) {
+        noteKeyRefusal('uses_exhausted', { id: caller.keyId, label: caller.label ?? caller.keyId });
+        return scimError(401, KEY_REFUSAL_MESSAGE.uses_exhausted, undefined, { 'www-authenticate': 'Bearer realm="landflow-scim"' });
+      }
       const principal: Principal = { user: caller.user, via: 'api-key', apiKey: { id: caller.keyId, scopes: caller.scopes } };
       noteAuditPrincipal(principal);
       return withAuth({ principal }, () => fn({ request, caller, base: scimBaseUrl(request) }, params));

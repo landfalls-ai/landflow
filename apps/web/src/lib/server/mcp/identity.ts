@@ -19,7 +19,10 @@
 import { createRemoteJWKSet, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
 import { can, type ApiKeyScope, type Role } from '../../shared/auth';
 import { API_KEY_PREFIX, SESSION_COOKIE } from '../../shared/auth-paths';
+import { KEY_REFUSAL_MESSAGE, noteKeyRefusal } from '../auth/api-key-audit';
+import { consumeApiKeyUse } from '../auth/api-key-uses';
 import { verifyApiKey } from '../auth/api-keys';
+import { callerIp } from '../net/ip-allow';
 import { looksLikeDebugToken } from '../auth/debug-tokens';
 import { readCookie } from '../auth/cookies';
 import { sameSecret } from '../auth/passwords';
@@ -278,8 +281,17 @@ export async function authenticateMcpRequest(request: Request, resource: { plugi
     // A debug token reads one execution through /api/mcp and does nothing else (docs/specs/19-debug-token.md).
     if (looksLikeDebugToken(bearer)) throw new McpAuthError('A debug token works only for explain_failure, get_run_trace and get_execution at /api/mcp', 403, challenge);
     if (bearer.startsWith(API_KEY_PREFIX)) {
-      const checked = verifyApiKey(bearer);
+      const checked = verifyApiKey(bearer, { ip: callerIp(request) });
+      if (!checked.ok && checked.reason === 'ip_not_allowed') {
+        noteKeyRefusal('ip_not_allowed', checked.key);
+        throw new McpAuthError(KEY_REFUSAL_MESSAGE.ip_not_allowed, 401, challenge);
+      }
       if (!checked.ok) throw new McpAuthError(checked.reason === 'expired' ? 'This API key has expired' : 'Invalid API key', 401, challenge);
+      // A capped key: this call is one of its uses.
+      if (checked.key.maxUses && !(await consumeApiKeyUse(checked.key)).ok) {
+        noteKeyRefusal('uses_exhausted', checked.key);
+        throw new McpAuthError(KEY_REFUSAL_MESSAGE.uses_exhausted, 401, challenge);
+      }
       return userCaller('apiKey', checked.user, { issuer: instanceUrl(), keyScopes: checked.key.scopes, keyId: checked.key.id });
     }
     const claims = unverifiedClaims(bearer);

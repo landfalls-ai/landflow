@@ -7,6 +7,7 @@
 import { nanoid } from 'nanoid';
 import { API_KEY_SCOPES, can, type ApiKeyScope, type ApiKeyView } from '../../shared/auth';
 import { API_KEY_PREFIX } from '../../shared/auth-paths';
+import { allowed } from '../net/ip-allow';
 import { singleton } from '../singleton';
 import { authDb } from './db';
 import { randomToken, tokenHash } from './passwords';
@@ -22,9 +23,13 @@ interface ApiKeyRow {
   created_at: string;
   expires_at: string | null;
   last_used_at: string | null;
+  allowed_ips?: string | null;
+  max_uses?: number | null;
+  last_used_ip?: string | null;
 }
 
-export interface ApiKeyRecord extends ApiKeyView {
+/** A key as stored: `uses` is not here (it is counted in api_key_uses, ./api-key-uses, and joined into the view). */
+export interface ApiKeyRecord extends Omit<ApiKeyView, 'uses' | 'usedUp'> {
   userId: string;
 }
 
@@ -50,12 +55,26 @@ function fromRow(row: ApiKeyRow): ApiKeyRecord {
     createdAt: row.created_at,
     ...(row.expires_at && { expiresAt: row.expires_at }),
     ...(row.last_used_at && { lastUsedAt: row.last_used_at }),
+    ...(row.last_used_ip && { lastUsedIp: row.last_used_ip }),
+    ...(parseList(row.allowed_ips).length && { allowedIps: parseList(row.allowed_ips) }),
+    ...(row.max_uses && { maxUses: Number(row.max_uses) }),
   };
 }
 
-export function apiKeyView(key: ApiKeyRecord): ApiKeyView {
+function parseList(text: string | null | undefined): string[] {
+  try {
+    const parsed = JSON.parse(text ?? '[]') as unknown;
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** The key as the API shows it; `uses` (api-key-uses.ts) makes the count and "used up" part of it. */
+export function apiKeyView(key: ApiKeyRecord, uses?: number): ApiKeyView {
   const { userId: _userId, ...view } = key;
-  return view;
+  if (!key.maxUses || uses === undefined) return view;
+  return { ...view, uses, usedUp: uses >= key.maxUses };
 }
 
 /**
@@ -79,7 +98,10 @@ function newKey(): string {
 }
 
 /** Create a key for `user`; the result's `token` is the key, shown once. */
-export function createApiKey(user: UserRecord, input: { label: string; scopes: ApiKeyScope[]; expiresAt?: string }): { key: ApiKeyRecord; token: string } {
+export function createApiKey(
+  user: UserRecord,
+  input: { label: string; scopes: ApiKeyScope[]; expiresAt?: string; /** Already checked (checkAllowList). */ allowedIps?: string[]; maxUses?: number },
+): { key: ApiKeyRecord; token: string } {
   const token = newKey();
   const row: ApiKeyRow = {
     id: `key_${nanoid(12)}`,
@@ -91,6 +113,9 @@ export function createApiKey(user: UserRecord, input: { label: string; scopes: A
     created_at: new Date().toISOString(),
     expires_at: input.expiresAt ?? null,
     last_used_at: null,
+    allowed_ips: input.allowedIps?.length ? JSON.stringify(input.allowedIps) : null,
+    max_uses: input.maxUses ?? null,
+    last_used_ip: null,
   };
   authDb().insertNew('api_keys', { ...row });
   return { key: fromRow(row), token };
@@ -108,13 +133,27 @@ export function getApiKey(id: string): ApiKeyRecord | undefined {
 }
 
 export function deleteApiKey(id: string): boolean {
-  return authDb().delete('api_keys', { id }) > 0;
+  const db = authDb();
+  // The count goes with the key (a leftover row would only be dead weight: ids are never reused).
+  return db.transaction(() => {
+    db.delete('api_key_uses', { key_id: id });
+    return db.delete('api_keys', { id }) > 0;
+  });
 }
 
-export type ApiKeyCheck = { ok: true; key: ApiKeyRecord; user: UserRecord } | { ok: false; reason: 'unknown' | 'expired' };
+/** `key` is set when the key is known but refused (an address outside its list), for the audit row. */
+export type ApiKeyCheck =
+  | { ok: true; key: ApiKeyRecord; user: UserRecord }
+  | { ok: false; reason: 'unknown' | 'expired' }
+  | { ok: false; reason: 'ip_not_allowed'; key: ApiKeyRecord };
 
-/** Look a key up: its record and user when it exists and hasn't expired. */
-export function verifyApiKey(token: string, now = Date.now()): ApiKeyCheck {
+/**
+ * Look a key up: its record and user when it exists, hasn't expired and the caller's address (`ip`, from callerIp) is on
+ * its allow-list. Free of side effects but the last-used touch: the use cap is counted apart (./api-key-uses), after the
+ * guard, so that the audit layer's second look at a refused request never counts.
+ */
+export function verifyApiKey(token: string, options: { now?: number; ip?: string } = {}): ApiKeyCheck {
+  const now = options.now ?? Date.now();
   if (!token.startsWith(API_KEY_PREFIX) || token.length > 200) return { ok: false, reason: 'unknown' };
   const db = authDb();
   const row = db.get<ApiKeyRow>('SELECT * FROM api_keys WHERE key_hash = ?', tokenHash(token));
@@ -122,10 +161,13 @@ export function verifyApiKey(token: string, now = Date.now()): ApiKeyCheck {
   if (row.expires_at && Date.parse(row.expires_at) <= now) return { ok: false, reason: 'expired' };
   const user = getUser(row.user_id);
   if (!user || user.disabledAt) return { ok: false, reason: 'unknown' };
+  const list = parseList(row.allowed_ips);
+  if (!allowed(options.ip, list)) return { ok: false, reason: 'ip_not_allowed', key: fromRow(row) };
   const touched = singleton('api-key-touched', () => new Map<string, number>());
   if (now - (touched.get(row.id) ?? 0) > TOUCH_EVERY_MS) {
     touched.set(row.id, now);
-    db.upsert('api_keys', { ...row, last_used_at: new Date(now).toISOString() });
+    // The whole row is rewritten: nothing the use count needs lives in it.
+    db.upsert('api_keys', { ...row, last_used_at: new Date(now).toISOString(), ...(options.ip && { last_used_ip: options.ip }) });
   }
   return { ok: true, key: fromRow(row), user };
 }

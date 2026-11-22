@@ -13,6 +13,8 @@ import { NextResponse } from 'next/server';
 import { BACKGROUND_HEADER, can, hasScope, type Action, type Viewer } from '../../shared/auth';
 import { API_KEY_HEADER, API_KEY_PREFIX, isPublicPath, PATH_HEADER, SESSION_COOKIE } from '../../shared/auth-paths';
 import { verifyApiKey } from './api-keys';
+import { KEY_REFUSAL_MESSAGE, noteKeyRefusal } from './api-key-audit';
+import { callerIp } from '../net/ip-allow';
 import { requestAuth, type Principal, type RequestAuth } from './context';
 import { looksLikeDebugToken } from './debug-tokens';
 import { readCookie } from './cookies';
@@ -46,7 +48,8 @@ export function apiKeyOf(request: Request): string | undefined {
   return bearer?.startsWith(API_KEY_PREFIX) && !bearer.startsWith('lf_mcp_') ? bearer : undefined;
 }
 
-export type Resolved = { ok: true; principal?: Principal } | { ok: false; status: 401; message: string };
+/** `refused` names the key behind an address refusal (for the audit row, written by the guard: the audit layer's second look must not repeat it). */
+export type Resolved = { ok: true; principal?: Principal } | { ok: false; status: 401; message: string; refused?: { reason: 'ip_not_allowed'; key: { id: string; label: string } } };
 
 /** Who the request's credentials belong to. An API key that doesn't check out fails (no fallback to the cookie). */
 /** `touch: false` resolves without marking the session as used (see sessionUser). */
@@ -57,9 +60,12 @@ export function resolvePrincipal(request: Request, { touch = true }: { touch?: b
   }
   const key = apiKeyOf(request);
   if (key) {
-    const checked = verifyApiKey(key);
-    if (!checked.ok) return { ok: false, status: 401, message: checked.reason === 'expired' ? 'This API key has expired' : 'Invalid API key' };
-    return { ok: true, principal: { user: checked.user, via: 'api-key', apiKey: { id: checked.key.id, scopes: checked.key.scopes } } };
+    const checked = verifyApiKey(key, { ip: callerIp(request) });
+    if (!checked.ok) {
+      if (checked.reason === 'ip_not_allowed') return { ok: false, status: 401, message: KEY_REFUSAL_MESSAGE.ip_not_allowed, refused: { reason: checked.reason, key: { id: checked.key.id, label: checked.key.label } } };
+      return { ok: false, status: 401, message: checked.reason === 'expired' ? 'This API key has expired' : 'Invalid API key' };
+    }
+    return { ok: true, principal: { user: checked.user, via: 'api-key', apiKey: { id: checked.key.id, scopes: checked.key.scopes, label: checked.key.label, ...(checked.key.maxUses && { maxUses: checked.key.maxUses }) } } };
   }
   const found = sessionUser(readCookie(request, SESSION_COOKIE), Date.now(), { touch });
   if (found) return { ok: true, principal: { user: found.user, via: 'session', sessionId: found.session.id, sessionMethod: found.session.method, ...(enrolmentRequired(found.user, found.session.method) && { enrolOnly: true }) } };
@@ -137,7 +143,10 @@ export function guardRequest(request: Request | undefined): GuardResult {
   // it leaves last_seen_at alone, so the idle limit still ends a session left open in a tab. The header can only shorten a
   // session, so it needs no proof.
   const resolved = request ? resolvePrincipal(request, { touch: !isBackground(request, method, path) }) : ({ ok: true } as Resolved);
-  if (!resolved.ok) return { ok: false, response: deny('bad_credentials', resolved.message, resolved.status) };
+  if (!resolved.ok) {
+    if (resolved.refused) noteKeyRefusal(resolved.refused.reason, resolved.refused.key);
+    return { ok: false, response: deny('bad_credentials', resolved.message, resolved.status) };
+  }
   const principal = resolved.principal ?? testPrincipal();
   if (!principal) {
     return { ok: false, response: deny('unauthenticated', 'Sign in, or send an API key (Authorization: Bearer lf_…)', 401, setupRequired() ? { setupRequired: true } : {}) };

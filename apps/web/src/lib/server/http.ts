@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { ZodError, type ZodType } from 'zod';
 import { withAuth } from './auth/context';
 import { guardRequest } from './auth/guard';
+import { consumeApiKeyUse } from './auth/api-key-uses';
+import { KEY_REFUSAL_MESSAGE, noteKeyRefusal } from './auth/api-key-audit';
+import { countDenied } from './rate-limit/counters';
 import { envInt } from './config';
 import { auditRequestContext, noteAuditPrincipal } from './audit/context';
 import { auditRequest } from './audit/http';
@@ -63,6 +66,14 @@ function answerRequest<A extends unknown[]>(fn: (...args: A) => Promise<Response
         noteAuditPrincipal(gate.auth.principal);
         const refused = args[0] instanceof Request ? await limitRequest(args[0], gate.auth.principal?.user.id) : undefined;
         if (refused) return refused;
+        // A capped API key: this request is one of its uses (after the guard and the limiter, so refusals never count; an
+        // awaited write decided in the database, never in this process: auth/api-key-uses.ts).
+        const key = gate.auth.principal?.via === 'api-key' ? gate.auth.principal.apiKey : undefined;
+        if (key?.maxUses && !(await consumeApiKeyUse(key)).ok) {
+          noteKeyRefusal('uses_exhausted', { id: key.id, label: key.label ?? key.id });
+          countDenied('uses_exhausted');
+          return NextResponse.json({ error: KEY_REFUSAL_MESSAGE.uses_exhausted }, { status: 401, headers: { 'www-authenticate': 'Bearer realm="landflow"' } });
+        }
         return await withAuth(gate.auth, () => fn(...args));
       } catch (caught) {
         return answer(caught, args[0], options);

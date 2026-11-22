@@ -13,7 +13,6 @@
  * runs, lib/server/projects/credentials.ts): otherwise every call gets 403 before any secret is compared, the response
  * doesn't say which credential, and the host logs a warning with the workflow, node and credential id.
  */
-import { isIP } from 'node:net';
 import { createRemoteJWKSet, customFetch, importSPKI, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
 import type { JsonObject } from '@landflow/protocol';
 import type { WorkflowNode } from '@landflow/engine';
@@ -29,7 +28,7 @@ import { registry } from './plugins/registry';
 import { triggerAuthCredential, triggerAuthUsable } from './projects/credentials';
 import { useTokenOnce } from './token-replay';
 import { singleton } from './singleton';
-import { clientAddress } from './net/client-address';
+import { callerIp, ipMatches, parseIpList } from './net/ip-allow';
 import { logger } from './telemetry/logger';
 import type { WebhookAuthentication } from './nodes/webhook-auth';
 
@@ -39,58 +38,8 @@ export type WebhookAuthResult =
 
 const HMAC = ['HS256', 'HS384', 'HS512'];
 
-// ---------------------------------------------------------------------------
-// IP allow-list
-// ---------------------------------------------------------------------------
-
-/** The caller's address, from the trusted-proxy rules in net/client-address.ts; 127.0.0.1 when no header names one. */
-export function callerIp(request: Request): string {
-  const ip = clientAddress(request);
-  return ip === 'local' ? '127.0.0.1' : ip;
-}
-
-function ipv4Bits(ip: string): bigint {
-  return ip.split('.').reduce((acc, part) => (acc << 8n) | BigInt(Number(part) & 255), 0n);
-}
-
-function ipv6Bits(ip: string): bigint | undefined {
-  let address = ip.toLowerCase();
-  const v4 = /(\d+\.\d+\.\d+\.\d+)$/.exec(address);
-  if (v4) {
-    const bits = ipv4Bits(v4[1]);
-    address = `${address.slice(0, -v4[1].length)}${(bits >> 16n).toString(16)}:${(bits & 0xffffn).toString(16)}`;
-  }
-  const [head, tail] = address.split('::');
-  const left = head ? head.split(':') : [];
-  const right = tail !== undefined ? (tail ? tail.split(':') : []) : [];
-  const groups = tail !== undefined ? [...left, ...Array(8 - left.length - right.length).fill('0'), ...right] : left;
-  if (groups.length !== 8) return undefined;
-  return groups.reduce((acc, group) => (acc << 16n) | BigInt(parseInt(group || '0', 16) & 0xffff), 0n);
-}
-
-/** Whether `ip` matches one entry: an address, or a CIDR range (`10.0.0.0/8`, `2001:db8::/32`). */
-export function ipMatches(ip: string, entry: string): boolean {
-  const [range, prefixText] = entry.trim().split('/');
-  const family = isIP(range);
-  if (!family || isIP(ip) !== family) return entry.trim().toLowerCase() === 'localhost' && (ip === '127.0.0.1' || ip === '::1');
-  const width = family === 4 ? 32 : 128;
-  const prefix = prefixText === undefined ? width : Number(prefixText);
-  if (!Number.isInteger(prefix) || prefix < 0 || prefix > width) return false;
-  const bits = (value: string) => (family === 4 ? ipv4Bits(value) : (ipv6Bits(value) ?? -1n));
-  const a = bits(ip);
-  const b = bits(range);
-  if (a < 0n || b < 0n) return false;
-  const shift = BigInt(width - prefix);
-  return a >> shift === b >> shift;
-}
-
-/** The allow-list entries (comma, space or newline separated); empty: everyone. */
-export function parseIpList(value: unknown): string[] {
-  return String(value ?? '')
-    .split(/[\s,]+/)
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
+// The IP allow-list helpers moved to ./net/ip-allow (API keys use them too); these names stay importable from here.
+export { callerIp, ipMatches, parseIpList };
 
 // ---------------------------------------------------------------------------
 // JWT
