@@ -39,8 +39,9 @@ function Status({ on, labels = ['On', 'Off'] }: { on: boolean; labels?: [string,
   );
 }
 
-export function SecuritySettings() {
-  const [view, setView] = useState<SecurityView>();
+/** `initial` is what the first render shows before the view loads (tests render it on the server). */
+export function SecuritySettings({ initial }: { initial?: SecurityView } = {}) {
+  const [view, setView] = useState<SecurityView | undefined>(initial);
   const [error, setError] = useState<string>();
   useEffect(() => {
     api<SecurityView>('/api/settings/security')
@@ -126,6 +127,21 @@ export function SecuritySettings() {
             give the IdP this instance’s metadata at <Env>/api/auth/saml/metadata</Env>. Map IdP attributes with <Env>LANDFLOW_SAML_ROLE_MAP</Env> and <Env>LANDFLOW_SAML_PROJECT_MAP</Env>.
           </p>
         </StatusRow>
+      )}
+      {view.mfa && (
+        <Card className="px-5 py-4">
+          <div className="mb-2 flex items-center gap-2">
+            <ShieldCheck className="size-4 text-t3" strokeWidth={1.8} />
+            <SectionLabel>Second factor</SectionLabel>
+          </div>
+          <Row label="Required">
+            <span data-testid="mfa-mode">Second factor required: {view.mfa.mode}</span>{' '}
+            <span className="text-t3">
+              (<Env>LANDFLOW_MFA_REQUIRED</Env>: <Env>off</Env>, <Env>admins</Env> or <Env>all</Env>)
+            </span>
+          </Row>
+          <p className="mt-1 text-[12px] text-t3">Anyone with a local account can add an authenticator app under Sign-in &amp; security. Single sign-on sessions are never asked, and API keys are not affected.</p>
+        </Card>
       )}
       {view.scim && <ScimSettings scim={view.scim} />}
 

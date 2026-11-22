@@ -23,6 +23,7 @@ import { verifyApiKey } from '../auth/api-keys';
 import { looksLikeDebugToken } from '../auth/debug-tokens';
 import { readCookie } from '../auth/cookies';
 import { sameSecret } from '../auth/passwords';
+import { enrolmentRequired } from '../auth/policy';
 import { sessionUser } from '../auth/sessions';
 import { findUserByOidc, type UserRecord } from '../auth/users';
 import { singleton } from '../singleton';
@@ -310,7 +311,11 @@ export async function authenticateMcpRequest(request: Request, resource: { plugi
 
   // 3. The UI's own calls.
   const found = sessionUser(readCookie(request, SESSION_COOKIE));
-  if (found) return userCaller('session', found.user, { issuer: instanceUrl() });
+  if (found) {
+    // A covered account with no second factor yet may only enrol one (the guard's rule, which this public route would skip).
+    if (enrolmentRequired(found.user, found.session.method)) throw new McpAuthError('Add a second factor first: Sign-in & security', 403, challenge);
+    return userCaller('session', found.user, { issuer: instanceUrl() });
+  }
 
   throw new McpAuthError('Sign in, or send a Landflow MCP token, an access token of the identity provider, or an API key as “Authorization: Bearer …”', 401, challenge);
 }
