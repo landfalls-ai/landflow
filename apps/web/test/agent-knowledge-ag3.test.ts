@@ -4,7 +4,7 @@
  * knowledge base is searched by keywords (Landflow's BM25, no call); with no source the design asks and invents nothing.
  * The architect is scripted and the embeddings server is a local fake; nothing leaves this machine.
  */
-import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { AgentConfig, VectorKnowledgeBaseConfig } from '@/lib/shared/agents';
 import { agentAsk, knowledgeFolderOf } from '@/lib/shared/agent-ask';
+import { knowledgeIndexSummary } from '@/lib/shared/agents';
 
 // An agent the caller cannot update (another user's): the route says 404.
 const foreign = new Set<string>();
@@ -46,6 +47,8 @@ process.env.LANDFLOW_FILES_DIR = files;
 // reuse scenarios seed one), and this file's 'existing: false' readings are about a tenant that has none.
 process.env.LANDFLOW_DATA_DIR = join(root, 'data');
 const embedCalls: string[] = [];
+const embeddedTexts: string[] = []; // C20: every text the fake model was asked to embed
+let embedDown = false; // C20: the fake model answers 500
 let embedServer: Server;
 
 beforeAll(async () => {
@@ -60,6 +63,8 @@ beforeAll(async () => {
     if (req.url === '/api/tags') return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ models: [] }));
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as { input?: string | string[] };
     const inputs = Array.isArray(body.input) ? body.input : [body.input ?? ''];
+    if (embedDown && req.url === '/api/embed') return void res.writeHead(500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'model is down' }));
+    if (req.url === '/api/embed') embeddedTexts.push(...inputs);
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ embeddings: inputs.map((t) => [t.includes('journal') ? 1 : 0, t.length % 7, 1]), model: 'm' }));
   });
   await new Promise<void>((resolve) => embedServer.listen(0, '127.0.0.1', resolve));
@@ -231,11 +236,16 @@ describe('the folder route and the search', () => {
     const rows = await collectionRows('runbooks');
     expect(rows).toHaveLength(done.chunks);
     expect(rows.every((r) => String(r.metadata.source).startsWith('runbooks/'))).toBe(true);
-    const again = (await (await folder(agentId, toolId, { folder: 'runbooks' })).json()) as typeof done;
-    expect(again).toEqual(done);
+    const again = (await (await folder(agentId, toolId, { folder: 'runbooks' })).json()) as typeof done & { reused: number; embedded: number; removed: number };
+    // C20: nothing changed, so nothing is embedded and every chunk is reused.
+    expect(again).toMatchObject({ documents: done.documents, chunks: done.chunks, failed: [], embedded: 0, removed: 0, reused: done.chunks });
     expect(await collectionRows('runbooks')).toHaveLength(done.chunks);
     const { agentStore } = await import('@/lib/server/agents/store');
-    expect((agentStore.get(agentId)!.tools.find((t) => t.id === toolId) as VectorKnowledgeBaseConfig).indexedFrom).toBe('runbooks');
+    const saved = agentStore.get(agentId)!.tools.find((t) => t.id === toolId) as VectorKnowledgeBaseConfig;
+    expect(saved.indexedFrom).toBe('runbooks');
+    // C20: the draft remembers the last pass for the knowledge dialog.
+    expect(saved.lastIndex).toMatchObject({ documents: 4, embedded: 0, reused: done.chunks, removed: 0, failed: 0 });
+    expect(knowledgeIndexSummary(saved.lastIndex!)).toBe(`4 documents · 0 embedded, ${done.chunks} reused, 0 removed`);
   });
 
   it('refuses a folder outside the files directory (400) and an agent the caller cannot update (404)', async () => {
@@ -300,5 +310,143 @@ describe('embeddings', () => {
     const { output } = await tool.invoke({ query: 'journal' }, {} as never);
     expect((output as { results: unknown[] }).results).toHaveLength(1);
     expect(embedCalls.filter((u) => u === '/api/embed').length).toBeGreaterThan(0);
+  });
+});
+
+// C20: re-indexing a folder embeds only what changed, keeps each file's document, and removes files that left.
+describe('the last pass in words (C20)', () => {
+  it('says documents, embedded, reused and removed, and failures only when there are some', () => {
+    expect(knowledgeIndexSummary({ documents: 12, embedded: 3, reused: 241, removed: 5 })).toBe('12 documents · 3 embedded, 241 reused, 5 removed');
+    expect(knowledgeIndexSummary({ documents: 1, embedded: 0, reused: 2, removed: 0, failed: 1 })).toBe('1 document · 0 embedded, 2 reused, 0 removed, 1 failed');
+  });
+});
+
+describe('indexing a folder again (C20)', () => {
+  const sub = 'c20-notes';
+  const base = (n: number) => Array.from({ length: n }, (_, i) => `Section ${i}: ${Array.from({ length: 28 }, (_, w) => `word${i}x${w}`).join(' ')}.`).join('\n\n');
+  const config = (collection: string): VectorKnowledgeBaseConfig => ({ id: 't', type: 'knowledge', name: 'search_notes', description: 'notes', store: 'sqlite', collection, embeddings: { provider: 'ollama', model: 'm', baseUrl: process.env.OLLAMA_URL }, searchMode: 'vector' });
+  const put = (name: string, text: string) => writeFileSync(join(files, sub, name), text);
+  const prepare = (collection: string) => {
+    rmSync(join(files, sub), { recursive: true, force: true });
+    mkdirSync(join(files, sub), { recursive: true });
+    put('a.md', base(60));
+    put('b.md', base(20).replace(/word/g, 'term'));
+    put('c.md', base(20).replace(/word/g, 'item'));
+    embeddedTexts.length = 0;
+    embedDown = false;
+    return config(collection);
+  };
+
+  it('the second pass embeds nothing and the knowledge list keeps its documents (AS-5, D6)', async () => {
+    const { indexFolder, listKnowledgeDocuments } = await import('@/lib/server/agents/knowledge');
+    const kb = prepare(`c20-same-${Date.now()}`);
+    const first = await indexFolder(kb, sub);
+    expect(first).toMatchObject({ documents: 3, reused: 0, removed: 0, failed: [] });
+    expect(first.embedded).toBe(first.chunks);
+    const ids = (await listKnowledgeDocuments(kb)).documents.map((d) => [d.fileName, d.documentId]).sort();
+    embeddedTexts.length = 0;
+    const second = await indexFolder(kb, sub);
+    expect(second).toMatchObject({ documents: 3, embedded: 0, removed: 0, reused: first.chunks, failed: [] });
+    expect(embeddedTexts).toHaveLength(0);
+    expect((await listKnowledgeDocuments(kb)).documents.map((d) => [d.fileName, d.documentId]).sort()).toEqual(ids);
+    console.log(`C20 folder: first pass ${first.chunks} chunks embedded ${first.embedded}; second pass embedded ${second.embedded}, reused ${second.reused}`);
+  });
+
+  it('an edited file embeds its changed chunks, a deleted file loses its chunks', async () => {
+    const { indexFolder, listKnowledgeDocuments } = await import('@/lib/server/agents/knowledge');
+    const { SqliteVectorStore } = await import('@/lib/server/rag/stores');
+    const kb = prepare(`c20-edit-${Date.now()}`);
+    const first = await indexFolder(kb, sub);
+    const aChunks = (await new SqliteVectorStore().metadataWhere(kb.collection, { source: `${sub}/a.md` })).length;
+    put('a.md', base(60).replace('Section 30:', 'Section 30 (edited):'));
+    embeddedTexts.length = 0;
+    const second = await indexFolder(kb, sub);
+    console.log(`C20 folder: edit in a ${aChunks}-chunk file of ${first.chunks}: embedded ${second.embedded}, reused ${second.reused}, removed ${second.removed}`);
+    expect(second.embedded).toBeGreaterThanOrEqual(1);
+    expect(second.embedded).toBeLessThanOrEqual(4);
+    expect(embeddedTexts).toHaveLength(second.embedded);
+    expect(second.reused).toBe(second.chunks - second.embedded);
+    // The file b.md left the folder.
+    rmSync(join(files, sub, 'b.md'));
+    embeddedTexts.length = 0;
+    const third = await indexFolder(kb, sub);
+    expect(third).toMatchObject({ documents: 2, embedded: 0, failed: [] });
+    expect(third.removed).toBeGreaterThan(0);
+    const listed = (await listKnowledgeDocuments(kb)).documents;
+    expect(listed.map((d) => d.fileName).sort()).toEqual([`${sub}/a.md`, `${sub}/c.md`]);
+    expect(await new SqliteVectorStore().metadataWhere(kb.collection, { source: `${sub}/b.md` })).toEqual([]);
+  });
+
+  it('a file that can’t be read is reported and keeps its old chunks; a failing model leaves the base answering', async () => {
+    const { indexFolder } = await import('@/lib/server/agents/knowledge');
+    const { SqliteVectorStore } = await import('@/lib/server/rag/stores');
+    const kb = prepare(`c20-fail-${Date.now()}`);
+    await indexFolder(kb, sub);
+    const before = await new SqliteVectorStore().metadataOf(kb.collection);
+    put('b.md', '   ');
+    const empty = await indexFolder(kb, sub);
+    expect(empty.failed.map((f) => f.file)).toEqual([`${sub}/b.md`]);
+    expect(await new SqliteVectorStore().metadataOf(kb.collection)).toHaveLength(before.length);
+    put('a.md', base(60).replace('Section 10:', 'Section 10 changed:'));
+    embedDown = true;
+    try {
+      const down = await indexFolder(kb, sub);
+      expect(down.failed.map((f) => f.file)).toContain(`${sub}/a.md`);
+    } finally {
+      embedDown = false;
+    }
+    // The old chunks of a.md still answer: every id that was there is still there.
+    const after = new Set((await new SqliteVectorStore().metadataOf(kb.collection)).map((r) => r.id));
+    for (const row of before) expect(after.has(row.id)).toBe(true);
+  });
+
+  it('a single upload (no source) is a new document each time, as before', async () => {
+    const { addKnowledgeDocument } = await import('@/lib/server/agents/knowledge');
+    const kb = config(`c20-upload-${Date.now()}`);
+    const one = await addKnowledgeDocument(kb, { bytes: Buffer.from('Keep the journal to 730 MB.'), fileName: 'a.md' });
+    const two = await addKnowledgeDocument(kb, { bytes: Buffer.from('Keep the journal to 730 MB.'), fileName: 'a.md' });
+    expect(one.documentId).not.toBe(two.documentId);
+  });
+
+  it('a subfolder that can’t be read keeps its chunks (review 2)', async () => {
+    const { indexFolder } = await import('@/lib/server/agents/knowledge');
+    const { SqliteVectorStore } = await import('@/lib/server/rag/stores');
+    const kb = prepare(`c20-unreadable-${Date.now()}`);
+    mkdirSync(join(files, sub, 'deep'), { recursive: true });
+    put('deep/d.md', base(10).replace(/word/g, 'deep'));
+    await indexFolder(kb, sub);
+    const before = (await new SqliteVectorStore().metadataWhere(kb.collection, { source: `${sub}/deep/d.md` })).length;
+    expect(before).toBeGreaterThan(0);
+    chmodSync(join(files, sub, 'deep'), 0o000);
+    try {
+      const second = await indexFolder(kb, sub);
+      expect(second.removed).toBe(0);
+      expect((await new SqliteVectorStore().metadataWhere(kb.collection, { source: `${sub}/deep/d.md` })).length).toBe(before);
+    } finally {
+      chmodSync(join(files, sub, 'deep'), 0o755);
+    }
+  });
+
+  it('the folder as written does not decide what goes: "." removes nothing, a path with .. is the folder it resolves to (review 7)', async () => {
+    const { indexFolder } = await import('@/lib/server/agents/knowledge');
+    const { SqliteVectorStore } = await import('@/lib/server/rag/stores');
+    const kb = prepare(`c20-prefix-${Date.now()}`);
+    await indexFolder(kb, sub);
+    // Chunks of the collection that belong to other folders (and one inserted without a documentId).
+    const other = new SqliteVectorStore();
+    await other.add(kb.collection, [
+      { id: 'o1', pageContent: 'elsewhere', metadata: { source: 'elsewhere/x.md', documentId: 'doc_o' }, embedding: [1, 2, 3] },
+      { id: 'o2', pageContent: 'by a workflow', metadata: { source: `${sub}/gone.md` }, embedding: [1, 2, 3] },
+    ]);
+    const root = await indexFolder(kb, '.');
+    expect(root.removed).toBe(0);
+    expect((await other.metadataWhere(kb.collection, { source: 'elsewhere/x.md' })).length).toBe(1);
+    put('c.md', '   '); // not removed either way: it is present
+    rmSync(join(files, sub, 'b.md'));
+    const viaDots = await indexFolder(kb, `${sub}/../${sub}`);
+    expect(viaDots.removed).toBeGreaterThan(0);
+    expect((await other.metadataWhere(kb.collection, { source: 'elsewhere/x.md' })).length).toBe(1);
+    // A chunk with no documentId was not made by a folder pass: it stays.
+    expect((await other.metadataWhere(kb.collection, { source: `${sub}/gone.md` })).length).toBe(1);
   });
 });

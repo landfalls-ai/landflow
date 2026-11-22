@@ -132,6 +132,25 @@ export interface VectorKnowledgeBaseConfig extends ToolBase {
   searchMode?: 'vector' | 'hybrid' | 'keyword'; // AG13: `keyword` ranks by BM25 alone and never embeds the query
   /** AG13: the folder this knowledge base was indexed from, relative to the files directory (`runbooks`). */
   indexedFrom?: string;
+  /** C20: what the last folder pass did: documents read, chunks sent to the embeddings model, chunks that kept their vector, chunks removed. */
+  lastIndex?: KnowledgeIndexPass;
+}
+
+/** One folder index pass of a knowledge base (the folder route's answer, with the time). */
+export interface KnowledgeIndexPass {
+  at: string;
+  documents: number;
+  embedded: number;
+  reused: number;
+  removed: number;
+  failed?: number;
+}
+
+/** "12 documents · 3 embedded, 241 reused, 5 removed": the last pass in the words of the knowledge dialog. */
+export function knowledgeIndexSummary(pass: Pick<KnowledgeIndexPass, 'documents' | 'embedded' | 'reused' | 'removed' | 'failed'>): string {
+  const documents = `${pass.documents} document${pass.documents === 1 ? '' : 's'}`;
+  const failed = pass.failed ? `, ${pass.failed} failed` : '';
+  return `${documents} · ${pass.embedded} embedded, ${pass.reused} reused, ${pass.removed} removed${failed}`;
 }
 
 /**

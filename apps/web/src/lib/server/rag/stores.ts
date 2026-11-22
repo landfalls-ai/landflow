@@ -8,7 +8,7 @@
  * - sqlite: `vectors.sqlite` in the host's data directory; brute-force cosine and BM25.
  * - pgvector: a Postgres table with a `vector` column; `<=>` cosine distance and full-text search.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
@@ -29,6 +29,12 @@ export interface StoreInput {
   embedding: number[];
 }
 
+/** A stored chunk's text and vector, as `vectorsByHash` returns them. */
+export interface HeldVector {
+  content: string;
+  embedding: number[];
+}
+
 /** Exact-match conditions on metadata fields (all must hold). */
 export type MetadataFilter = Record<string, JsonValue>;
 
@@ -46,6 +52,21 @@ export interface VectorStore {
   metadataOf(collection: string): Promise<Array<{ id: string; metadata: JsonObject }>>;
   /** Delete the documents whose metadata matches `filter`; returns how many went. */
   deleteWhere(collection: string, filter: MetadataFilter): Promise<number>;
+  /** C20: the id and metadata of the documents whose metadata matches `filter` (no text, no embeddings), oldest first. */
+  metadataWhere(collection: string, filter: MetadataFilter): Promise<Array<{ id: string; metadata: JsonObject }>>;
+  /**
+   * C20: the stored text and vector of the chunks whose `chunkHash` metadata is one of `hashes` and whose `embedKey` is
+   * `embedKey`, anywhere in the collection, keyed by hash. The metadata is only a claim (a plain insert can write any
+   * metadata): the caller reuses a vector only when the returned text really hashes to the key. A hash that is not held
+   * is absent from the map.
+   */
+  vectorsByHash(collection: string, hashes: string[], embedKey: string): Promise<Map<string, HeldVector>>;
+  /**
+   * C20: remove the documents whose metadata matches `remove` and add `add`, as one step: a reader sees the old set or
+   * the new set, and a failure leaves the old set. The dimension check runs before anything is removed. `remove`
+   * must not be empty (that would empty the collection: use `clear`).
+   */
+  replace(collection: string, change: { remove: MetadataFilter; add: StoreInput[] }): Promise<{ removed: number; added: number }>;
   count(collection: string): Promise<number>;
   collections(): Promise<Array<{ name: string; count: number }>>;
 }
@@ -56,6 +77,15 @@ const dimensionError = (collection: string, stored: number, given: number) =>
 function matches(metadata: JsonObject, filter?: MetadataFilter): boolean {
   if (!filter) return true;
   return Object.entries(filter).every(([key, value]) => JSON.stringify(metadata[key]) === JSON.stringify(value));
+}
+
+/** A filter as one string whatever the key order: what a lock on "this document" is taken on. */
+function canonicalFilter(filter: MetadataFilter): string {
+  return JSON.stringify(Object.keys(filter).sort().map((key) => [key, filter[key]]));
+}
+
+function emptyFilterError(): Error {
+  return new Error('replace needs a metadata filter to say which documents it replaces');
 }
 
 function checkDimensions(collection: string, documents: StoreInput[], stored?: number) {
@@ -138,6 +168,38 @@ export class MemoryVectorStore implements VectorStore {
     return removed;
   }
 
+  async metadataWhere(collection: string, filter: MetadataFilter) {
+    return this.records(collection)
+      .filter((record) => matches(record.metadata, filter))
+      .map((record) => ({ id: record.id, metadata: structuredClone(record.metadata) }));
+  }
+
+  async vectorsByHash(collection: string, hashes: string[], embedKey: string) {
+    const wanted = new Set(hashes);
+    const found = new Map<string, HeldVector>();
+    for (const record of this.records(collection)) {
+      const hash = record.metadata.chunkHash;
+      if (typeof hash === 'string' && wanted.has(hash) && record.metadata.embedKey === embedKey && !found.has(hash)) found.set(hash, { content: record.pageContent, embedding: [...record.embedding] });
+    }
+    return found;
+  }
+
+  async replace(collection: string, change: { remove: MetadataFilter; add: StoreInput[] }) {
+    if (!Object.keys(change.remove).length) throw emptyFilterError();
+    const existing = memoryCollections.get(collection) ?? new Map<string, MemoryRecord>();
+    const staying = [...existing.values()].find((record) => !matches(record.metadata, change.remove));
+    checkDimensions(collection, change.add, staying?.embedding.length);
+    // Build the next set aside, then swap it in: nothing is written until every record is built.
+    const next = new Map([...existing].filter(([, record]) => !matches(record.metadata, change.remove)));
+    const removed = existing.size - next.size;
+    for (const doc of change.add) {
+      const id = doc.id ?? randomUUID();
+      next.set(id, { id, pageContent: doc.pageContent, metadata: structuredClone(doc.metadata), embedding: Float32Array.from(doc.embedding) });
+    }
+    memoryCollections.set(collection, next);
+    return { removed, added: change.add.length };
+  }
+
   async count(collection: string) {
     return memoryCollections.get(collection)?.size ?? 0;
   }
@@ -192,6 +254,10 @@ function openSqlite(file: string): DatabaseSync {
       created_at TEXT NOT NULL,
       PRIMARY KEY (collection, id)
     );
+    -- C20: a chunk's vector is looked up by the hash of its text; an index on an expression changes no column.
+    CREATE INDEX IF NOT EXISTS vectors_chunk_hash ON vectors (collection, json_extract(metadata, '$.chunkHash'));
+    -- C20: a folder pass reads and replaces a file's chunks by their source.
+    CREATE INDEX IF NOT EXISTS vectors_source ON vectors (collection, json_extract(metadata, '$.source'));
   `);
   sqliteDatabases.set(file, db);
   return db;
@@ -285,6 +351,61 @@ export class SqliteVectorStore implements VectorStore {
     return ids.length;
   }
 
+  /** Rows whose metadata matches `filter`: string and number conditions in SQL, anything else (booleans, objects) in code. */
+  private matching(collection: string, filter: MetadataFilter): Array<{ id: string; metadata: JsonObject }> {
+    const sqlKeys = Object.entries(filter).filter(([key, value]) => /^[A-Za-z0-9_-]+$/.test(key) && (typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))));
+    const params: Array<string | number> = [collection];
+    const conditions = sqlKeys.map(([key, value]) => (params.push(value as string | number), `json_extract(metadata, '$.${key}') = ?`));
+    const rows = this.db.prepare(`SELECT id, metadata FROM vectors WHERE collection = ?${conditions.map((c) => ` AND ${c}`).join('')} ORDER BY created_at, id`).all(...params) as unknown as Array<{ id: string; metadata: string }>;
+    return rows.map((row) => ({ id: row.id, metadata: JSON.parse(row.metadata) as JsonObject })).filter((row) => matches(row.metadata, filter));
+  }
+
+  async metadataWhere(collection: string, filter: MetadataFilter) {
+    return this.matching(collection, filter);
+  }
+
+  async vectorsByHash(collection: string, hashes: string[], embedKey: string) {
+    const found = new Map<string, HeldVector>();
+    for (let start = 0; start < hashes.length; start += 400) {
+      const batch = hashes.slice(start, start + 400);
+      const rows = this.db
+        .prepare(
+          `SELECT json_extract(metadata, '$.chunkHash') AS hash, content, embedding FROM vectors
+           WHERE collection = ? AND json_extract(metadata, '$.chunkHash') IN (${batch.map(() => '?').join(', ')}) AND json_extract(metadata, '$.embedKey') = ?`,
+        )
+        .all(collection, ...batch, embedKey) as unknown as Array<{ hash: string; content: string; embedding: Uint8Array }>;
+      for (const row of rows) if (!found.has(row.hash)) found.set(row.hash, { content: row.content, embedding: [...fromBlob(row.embedding)] });
+    }
+    return found;
+  }
+
+  async replace(collection: string, change: { remove: MetadataFilter; add: StoreInput[] }) {
+    if (!Object.keys(change.remove).length) throw emptyFilterError();
+    const { db } = this;
+    const insert = db.prepare('INSERT OR REPLACE INTO vectors (collection, id, content, metadata, embedding, dimensions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    const remove = db.prepare('DELETE FROM vectors WHERE collection = ? AND id = ?');
+    const now = new Date().toISOString();
+    // IMMEDIATE takes the write lock first: another process replacing the same document waits, and a reader sees the old rows or the new ones.
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const going = this.matching(collection, change.remove).map((row) => row.id);
+      const goingSet = new Set(going);
+      // New vectors are held to the size of a document that stays; among the first going + 1 rows one stays, if any does.
+      const other = (db.prepare('SELECT id, dimensions FROM vectors WHERE collection = ? LIMIT ?').all(collection, going.length + 1) as unknown as Array<{ id: string; dimensions: number }>).find((row) => !goingSet.has(row.id));
+      checkDimensions(collection, change.add, other?.dimensions);
+      for (const id of going) remove.run(collection, id);
+      for (const doc of change.add) {
+        const id = doc.id ?? randomUUID();
+        insert.run(collection, id, doc.pageContent, JSON.stringify(doc.metadata), toBlob(doc.embedding), doc.embedding.length, now);
+      }
+      db.exec('COMMIT');
+      return { removed: going.length, added: change.add.length };
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   async count(collection: string) {
     return Number((this.db.prepare('SELECT COUNT(*) AS n FROM vectors WHERE collection = ?').get(collection) as { n: number }).n);
   }
@@ -363,18 +484,33 @@ function pgError(error: unknown, collection: string): Error {
   return error instanceof Error ? error : new Error(message);
 }
 
+/**
+ * A quoted index name for `table` and a suffix, within Postgres's 63 bytes: a long table name is cut and given a short
+ * hash of the whole, so two long names that share a prefix still get two indexes (Postgres would cut both the same).
+ */
+export function indexNameOf(table: string, suffix: string): string {
+  const full = `${(table.trim() || 'landflow_vectors').replace(/\./g, '_')}_${suffix}`;
+  if (Buffer.byteLength(full) <= 63) return `"${full}"`;
+  const hash = createHash('sha256').update(full).digest('hex').slice(0, 8);
+  return `"${full.slice(0, 63 - hash.length - 1 - suffix.length - 1)}_${hash}_${suffix}"`;
+}
+
 export class PgVectorStore implements VectorStore {
   readonly kind = 'pgvector' as const;
   readonly system = 'postgresql';
   private readonly table: string;
   private readonly indexName: string;
+  private readonly hashIndexName: string;
+  private readonly sourceIndexName: string;
 
   constructor(
     private readonly config: PgConfig,
     tableName = 'landflow_vectors',
   ) {
     this.table = pgTableName(tableName);
-    this.indexName = `"${(tableName.trim() || 'landflow_vectors').replace(/\./g, '_')}_collection_idx"`;
+    this.indexName = indexNameOf(tableName, 'collection_idx');
+    this.hashIndexName = indexNameOf(tableName, 'chunk_hash_idx');
+    this.sourceIndexName = indexNameOf(tableName, 'source_idx');
   }
 
   private async pool(): Promise<Pool> {
@@ -393,9 +529,30 @@ export class PgVectorStore implements VectorStore {
           PRIMARY KEY (collection, id)
         )`);
       await pool.query(`CREATE INDEX IF NOT EXISTS ${this.indexName} ON ${this.table} (collection)`);
+      // C20: a chunk's vector is looked up by the hash of its text (an index; no column changes).
+      await pool.query(`CREATE INDEX IF NOT EXISTS ${this.hashIndexName} ON ${this.table} (collection, (metadata->>'chunkHash'))`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS ${this.sourceIndexName} ON ${this.table} (collection, (metadata->>'source'))`);
       ensuredTables.add(key);
     }
     return pool;
+  }
+
+  /** Insert (or update by id) `documents` in batches of 200 through `runner`: the pool, or one client inside a transaction. */
+  private async insertBatches(runner: Pick<Pool, 'query'>, collection: string, documents: StoreInput[], ids: string[]) {
+    for (let start = 0; start < documents.length; start += 200) {
+      const batch = documents.slice(start, start + 200);
+      const values: unknown[] = [];
+      const rows = batch.map((doc, i) => {
+        values.push(collection, ids[start + i], doc.pageContent, JSON.stringify(doc.metadata), vectorLiteral(doc.embedding));
+        const p = i * 5;
+        return `($${p + 1}, $${p + 2}, $${p + 3}, $${p + 4}::jsonb, $${p + 5}::vector)`;
+      });
+      await runner.query(
+        `INSERT INTO ${this.table} (collection, id, content, metadata, embedding) VALUES ${rows.join(', ')}
+         ON CONFLICT (collection, id) DO UPDATE SET content = EXCLUDED.content, metadata = EXCLUDED.metadata, embedding = EXCLUDED.embedding`,
+        values,
+      );
+    }
   }
 
   async add(collection: string, documents: StoreInput[]): Promise<string[]> {
@@ -407,20 +564,7 @@ export class PgVectorStore implements VectorStore {
     if (stored.rows[0]) checkDimensions(collection, documents, Number(stored.rows[0].dims));
     const ids = documents.map((doc) => doc.id ?? randomUUID());
     try {
-      for (let start = 0; start < documents.length; start += 200) {
-        const batch = documents.slice(start, start + 200);
-        const values: unknown[] = [];
-        const rows = batch.map((doc, i) => {
-          values.push(collection, ids[start + i], doc.pageContent, JSON.stringify(doc.metadata), vectorLiteral(doc.embedding));
-          const p = i * 5;
-          return `($${p + 1}, $${p + 2}, $${p + 3}, $${p + 4}::jsonb, $${p + 5}::vector)`;
-        });
-        await pool.query(
-          `INSERT INTO ${this.table} (collection, id, content, metadata, embedding) VALUES ${rows.join(', ')}
-           ON CONFLICT (collection, id) DO UPDATE SET content = EXCLUDED.content, metadata = EXCLUDED.metadata, embedding = EXCLUDED.embedding`,
-          values,
-        );
-      }
+      await this.insertBatches(pool, collection, documents, ids);
     } catch (error) {
       throw pgError(error, collection);
     }
@@ -478,6 +622,54 @@ export class PgVectorStore implements VectorStore {
     return result.rowCount ?? 0;
   }
 
+  async metadataWhere(collection: string, filter: MetadataFilter) {
+    const pool = await this.pool();
+    const params: unknown[] = [collection];
+    const where = Object.keys(filter).length ? ` AND metadata @> $${params.push(JSON.stringify(filter))}::jsonb` : '';
+    const { rows } = await pool.query<{ id: string; metadata: JsonObject }>(`SELECT id, metadata FROM ${this.table} WHERE collection = $1${where} ORDER BY created_at, id`, params);
+    return rows;
+  }
+
+  async vectorsByHash(collection: string, hashes: string[], embedKey: string) {
+    const found = new Map<string, HeldVector>();
+    if (!hashes.length) return found;
+    const pool = await this.pool();
+    const { rows } = await pool.query<{ hash: string; content: string; embedding: string }>(
+      `SELECT metadata->>'chunkHash' AS hash, content, embedding::text AS embedding FROM ${this.table}
+       WHERE collection = $1 AND metadata->>'chunkHash' = ANY($2::text[]) AND metadata->>'embedKey' = $3`,
+      [collection, hashes, embedKey],
+    );
+    for (const row of rows) if (!found.has(row.hash)) found.set(row.hash, { content: row.content, embedding: JSON.parse(row.embedding) as number[] });
+    return found;
+  }
+
+  async replace(collection: string, change: { remove: MetadataFilter; add: StoreInput[] }) {
+    if (!Object.keys(change.remove).length) throw emptyFilterError();
+    checkDimensions(collection, change.add);
+    const pool = await this.pool();
+    const client = await pool.connect();
+    const ids = change.add.map((doc) => doc.id ?? randomUUID());
+    const remove = JSON.stringify(change.remove);
+    try {
+      await client.query('BEGIN');
+      // Two replaces of one document would each delete the rows they can see and insert their own: a mix. The
+      // transaction lock makes the second wait for the first to commit, so its delete sees the first's rows.
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${this.table}|${collection}|${canonicalFilter(change.remove)}`]);
+      // New vectors are held to the size of a document that stays; the delete and the inserts commit together.
+      const stays = await client.query<{ dims: number }>(`SELECT vector_dims(embedding) AS dims FROM ${this.table} WHERE collection = $1 AND NOT (metadata @> $2::jsonb) LIMIT 1`, [collection, remove]);
+      if (stays.rows[0]) checkDimensions(collection, change.add, Number(stays.rows[0].dims));
+      const deleted = await client.query(`DELETE FROM ${this.table} WHERE collection = $1 AND metadata @> $2::jsonb`, [collection, remove]);
+      await this.insertBatches(client, collection, change.add, ids);
+      await client.query('COMMIT');
+      return { removed: deleted.rowCount ?? 0, added: change.add.length };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw pgError(error, collection);
+    } finally {
+      client.release();
+    }
+  }
+
   async count(collection: string) {
     const pool = await this.pool();
     const { rows } = await pool.query<{ n: string }>(`SELECT COUNT(*) AS n FROM ${this.table} WHERE collection = $1`, [collection]);
@@ -512,6 +704,11 @@ export interface SearchOptions {
 /** Store documents with their embeddings, in a `vector_store.insert` span. */
 export function insertDocuments(store: VectorStore, collection: string, documents: StoreInput[]): Promise<string[]> {
   return traceVectorStore('insert', { store: store.kind, system: store.system, collection }, () => store.add(collection, documents), (ids) => ids.length);
+}
+
+/** C20: replace a document's chunks in a `vector_store.replace` span; `count` is the chunks written. */
+export function replaceDocuments(store: VectorStore, collection: string, change: { remove: MetadataFilter; add: StoreInput[] }): Promise<{ removed: number; added: number }> {
+  return traceVectorStore('replace', { store: store.kind, system: store.system, collection }, () => store.replace(collection, change), (result) => result.added);
 }
 
 /**

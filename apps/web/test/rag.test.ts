@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { indexedPorts, portParameters, visiblePorts } from '@landflow/protocol';
 import { defineNode, type JsonObject } from '@landflow/sdk';
 import type { AiDocument, Embeddings, LanguageModel } from '@landflow/engine';
@@ -17,7 +17,7 @@ import { loadDocuments, metadataEntries, textOf } from '@/lib/server/rag/loader'
 import { llmReranker, rankByScores } from '@/lib/server/rag/rerank';
 import { bm25Scores, cosineSimilarity, reciprocalRankFusion, searchTerms } from '@/lib/server/rag/search';
 import { CODE_SEPARATORS, recursiveCharacterSplit, tokenize, tokenSplit } from '@/lib/server/rag/splitters';
-import { insertDocuments, MemoryVectorStore, searchStore, SqliteVectorStore, type VectorStore } from '@/lib/server/rag/stores';
+import { indexNameOf, insertDocuments, MemoryVectorStore, searchStore, SqliteVectorStore, type VectorStore } from '@/lib/server/rag/stores';
 import { outputsOf, runFlow, type FlowEdge, type FlowNode } from './helpers';
 
 // ---------------------------------------------------------------------------
@@ -548,5 +548,78 @@ describe('end to end: insert, then an AI Agent searches the store as a tool', ()
     // The search shows up as a tool run of the store, and the query embedding as a sub-run of the embeddings model.
     expect(result.runData.Handbook.some((r) => r.source === 'tool' && r.status === 'success')).toBe(true);
     expect(result.runData.Embeddings.some((r) => r.source === 'embedding')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C20: metadataWhere, vectorsByHash and the one-step replace
+// ---------------------------------------------------------------------------
+
+let replaceCounter = 0;
+describe.each([
+  ['memory', () => new MemoryVectorStore()],
+  ['sqlite', () => new SqliteVectorStore(join(dir, `replace-${Math.random().toString(36).slice(2)}.sqlite`))],
+] as Array<[string, () => VectorStore]>)('replace on the %s store', (_name, open) => {
+  let c = '';
+  beforeEach(() => { c = `replace${++replaceCounter}`; }); // the memory store's collections are shared by the process
+  const doc = (id: string, source: string, text: string, extra: JsonObject = {}) => ({ id, pageContent: text, metadata: { source, ...extra }, embedding: hashEmbed(text) });
+
+  it('metadataWhere filters like deleteWhere', async () => {
+    const store = open();
+    await store.add(c, [doc('1', 'a.md', 'one'), doc('2', 'a.md', 'two'), doc('3', 'b.md', 'three', { page: 2 })]);
+    expect((await store.metadataWhere(c, { source: 'a.md' })).map((r) => r.id).sort()).toEqual(['1', '2']);
+    expect((await store.metadataWhere(c, { source: 'b.md', page: 2 })).map((r) => r.id)).toEqual(['3']);
+    expect(await store.metadataWhere(c, { source: 'none' })).toEqual([]);
+    expect(await store.metadataWhere('other', { source: 'a.md' })).toEqual([]);
+  });
+
+  it('vectorsByHash returns the vectors of the hashes held under one embeddings key', async () => {
+    const store = open();
+    await store.add(c, [doc('1', 'a.md', 'one', { chunkHash: 'h1', embedKey: 'k' }), doc('2', 'a.md', 'two', { chunkHash: 'h2', embedKey: 'other' }), doc('3', 'a.md', 'three')]);
+    const found = await store.vectorsByHash(c, ['h1', 'h2', 'h3'], 'k');
+    expect([...found.keys()]).toEqual(['h1']);
+    expect(Array.from(found.get('h1')!.embedding)).toEqual(hashEmbed('one'));
+    expect((await store.vectorsByHash(c, [], 'k')).size).toBe(0);
+  });
+
+  it('removes the matched chunks and adds the new ones in one step', async () => {
+    const store = open();
+    await store.add(c, [doc('1', 'a.md', 'one'), doc('2', 'a.md', 'two'), doc('3', 'b.md', 'three')]);
+    expect(await store.replace(c, { remove: { source: 'a.md' }, add: [doc('4', 'a.md', 'four')] })).toEqual({ removed: 2, added: 1 });
+    expect((await store.metadataOf(c)).map((r) => r.id).sort()).toEqual(['3', '4']);
+    // A chunk may be removed and added again under the same id.
+    expect(await store.replace(c, { remove: { source: 'a.md' }, add: [doc('4', 'a.md', 'four again')] })).toEqual({ removed: 1, added: 1 });
+    expect((await store.similaritySearch(c, hashEmbed('four again'), 1))[0].pageContent).toBe('four again');
+    expect(await store.count(c)).toBe(2);
+    await expect(store.replace(c, { remove: {}, add: [] })).rejects.toThrow(/filter/);
+  });
+
+  it('a dimension mismatch fails before anything is removed', async () => {
+    const store = open();
+    await store.add(c, [doc('1', 'a.md', 'one'), doc('3', 'b.md', 'three')]);
+    await expect(store.replace(c, { remove: { source: 'a.md' }, add: [{ id: '9', pageContent: 'x', metadata: { source: 'a.md' }, embedding: [1, 2] }] })).rejects.toThrow(/dimensional/);
+    expect((await store.metadataOf(c)).map((r) => r.id).sort()).toEqual(['1', '3']);
+  });
+
+  it('a write that fails half-way leaves the old chunks as they were', async () => {
+    const store = open();
+    await store.add(c, [doc('1', 'a.md', 'one'), doc('2', 'a.md', 'two')]);
+    // A value that throws when it is read fails while the second chunk is written.
+    const metadata = { source: 'a.md' } as JsonObject;
+    Object.defineProperty(metadata, 'boom', { enumerable: true, get: () => { throw new Error('boom'); } });
+    const bad = { id: '8', pageContent: 'bad', metadata, embedding: hashEmbed('bad') };
+    await expect(store.replace(c, { remove: { source: 'a.md' }, add: [doc('7', 'a.md', 'seven'), bad] })).rejects.toThrow();
+    expect((await store.metadataOf(c)).map((r) => r.id).sort()).toEqual(['1', '2']);
+  });
+});
+
+describe('index names (review 10)', () => {
+  it('stay under 63 bytes, differ for long table names that share a prefix, and are unchanged for short ones', () => {
+    expect(indexNameOf('landflow_vectors', 'collection_idx')).toBe('"landflow_vectors_collection_idx"');
+    const a = indexNameOf(`${'x'.repeat(60)}_a`, 'chunk_hash_idx');
+    const b = indexNameOf(`${'x'.repeat(60)}_b`, 'chunk_hash_idx');
+    expect(Buffer.byteLength(a.slice(1, -1))).toBeLessThanOrEqual(63);
+    expect(Buffer.byteLength(b.slice(1, -1))).toBeLessThanOrEqual(63);
+    expect(a).not.toBe(b);
   });
 });

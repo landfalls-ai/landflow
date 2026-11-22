@@ -238,9 +238,9 @@ Log, the four databases and every row Landflow made for a page, fact, practice o
   does not wait the 15 minutes. A page gone from the walk (trashed, moved out of scope, no longer shared) loses its doc and its
   chunks, but a walk that could not read a branch deletes nothing. It never calls `/v1/search`, and it keeps the pull's other
   keys in the link's `cursors`.
-- **The index.** Each doc is cut into passages of about 1,000 characters (150 overlap, the splitter knowledge bases use), each
+- **The index.** Each doc is cut into passages of about 1,000 characters (150 overlap, after content-defined sections, C20), each
   starting with the page title, and kept in the SQLite vector collection `landflow-notion-<project>` with the doc's hash, URL and
-  path in every passage's metadata. Search is BM25 always; with the brain's embeddings on (`LANDFLOW_BRAIN_EMBEDDINGS`, the model
+  path in every passage's metadata. A changed page is indexed **chunk by chunk** (C20): a passage whose text is unchanged keeps its stored vector, only new text is embedded, and the page's passages are replaced in one step, so one edited paragraph costs about one embedding and search never sees half a page; a moved page re-embeds nothing. Passage ids come from the passage's hash (`<link>:<page>:<hash16>:<n>`), not its position. Search is BM25 always; with the brain's embeddings on (`LANDFLOW_BRAIN_EMBEDDINGS`, the model
   the facts use; unset means `nomic-embed-text`) it is hybrid. Each pass first asks the model once: if it does not answer, the
   pages are indexed with keyword vectors and `cursors.knowledge.embeddings` says `bm25`, so Ask, MCP and the agents' tool still
   find them; a later pass where the model answers clears the collection and indexes it again with vectors (one dimension a
