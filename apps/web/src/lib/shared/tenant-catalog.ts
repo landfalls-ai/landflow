@@ -92,6 +92,8 @@ export interface CatalogKnowledgeBase {
   indexedFrom?: string;
   /** The agents that search it. */
   usedBy: string[];
+  /** C21: set when another project owns the collection and shared it with the asking project (read-only unless `write`). */
+  level?: 'read' | 'write';
 }
 
 export interface CatalogModel {

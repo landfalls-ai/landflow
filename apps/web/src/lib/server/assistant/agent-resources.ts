@@ -9,6 +9,11 @@ import { agentStore } from '../agents/store';
 import { modelOptions } from '../agents/models';
 import { ollamaUrl } from '../config';
 import { canResource, type Actor } from '../projects';
+import { creationProject, isInstanceAdmin, visibleProjectIds } from '../projects/access'; // C21:
+import { listProjects } from '../projects/store'; // C21:
+import { collectionKeyOf } from '../agents/knowledge'; // C21:
+import { collectionAccess } from '../rag/collection-access'; // C21:
+import type { CollectionAccess } from '../../shared/collections'; // C21:
 import { homeProjectId } from '../projects/store';
 import { KEYWORD_EMBEDDINGS } from './knowledge-setup';
 import { DEFAULT_ASSISTANT_MODEL } from './model';
@@ -22,7 +27,7 @@ export interface AgentResources {
   /** The chat models an agent can use, best first: local (Ollama) ones that call tools, Spotlight's own model first. */
   models: ModelChoice[];
   /** Knowledge bases other agents search, one per store and collection. */
-  knowledge: Array<Omit<KnowledgeBaseToolConfig, 'id'> & { usedBy: string[] }>;
+  knowledge: Array<Omit<KnowledgeBaseToolConfig, 'id'> & { usedBy: string[]; /** C21: set when another project owns it and shared it with the asking project. */ access?: 'read' | 'write' }>;
   /** The embeddings a new knowledge base gets: a local embeddings model, else keyword search (AG13: provider `none`). */
   embeddings?: KnowledgeBaseToolConfig['embeddings'];
 }
@@ -53,6 +58,20 @@ export function agentModelOf(name: string | undefined): AgentModel | undefined {
   return undefined;
 }
 
+const ACCESS_RANK: Record<CollectionAccess, number> = { none: 0, unclaimed: 1, read: 2, write: 3, owner: 4 };
+
+/** C21: the projects whose access decides what a listing shows: the session's project, else every project the actor sees (never only one). */
+export function askingProjects(actor: Actor, projectId?: string): string[] {
+  if (projectId) return [projectId];
+  try {
+    const own = creationProject(actor);
+    const visible = visibleProjectIds(actor);
+    return [...new Set([...(own ? [own] : []), ...(visible ?? (isInstanceAdmin(actor) ? listProjects().map((p) => p.id) : []))])];
+  } catch {
+    return [];
+  }
+}
+
 export async function agentResources(actor: Actor, projectId?: string): Promise<AgentResources> {
   const local = await modelOptions('ollama', {}).catch(() => []);
   const builder = agentModelOf(builderModel()); // AG02: the host's own model leads, whichever provider it is
@@ -72,17 +91,52 @@ export async function agentResources(actor: Actor, projectId?: string): Promise<
   }
 
   const knowledge = new Map<string, AgentResources['knowledge'][number]>();
+  // C21: only collections the asking project may read (FR-5, AS-8): the session's project, else every project the actor sees.
+  const asking = askingProjects(actor, projectId);
+  const best = (key: string): CollectionAccess => {
+    let found: CollectionAccess = 'none';
+    for (const asProject of asking.length ? asking : [undefined]) {
+      const access = collectionAccess(key, asProject);
+      if (ACCESS_RANK[access] > ACCESS_RANK[found]) found = access;
+    }
+    return found;
+  };
   for (const agent of agentStore.list()) {
-    if (!canResource(actor, 'agent', agent.id, 'read')) continue;
-    if (projectId && homeProjectId('agent', agent.id) !== projectId) continue;
+    const mine = canResource(actor, 'agent', agent.id, 'read') && (!projectId || homeProjectId('agent', agent.id) === projectId);
     for (const tool of agent.tools) {
       // A plugin's knowledge base (Clickland) has no collection to share: only vector stores are offered.
       if (tool.type !== 'knowledge' || isNodeKnowledge(tool)) continue;
       const key = `${tool.store}:${tool.collection}`;
+      let access: CollectionAccess;
+      try {
+        access = best(collectionKeyOf(tool));
+      } catch {
+        continue; // a base whose store can't be reached is not offered
+      }
+      if (access === 'none') continue;
       const { id: _id, ...base } = tool;
-      const seen = knowledge.get(key);
-      if (seen) seen.usedBy.push(agent.name);
-      else knowledge.set(key, { ...base, usedBy: [agent.name] });
+      if (mine) {
+        const seen = knowledge.get(key);
+        if (seen) seen.usedBy.push(agent.name);
+        else knowledge.set(key, { ...base, usedBy: [agent.name] });
+      } else if ((access === 'read' || access === 'write') && tool.store !== 'pgvector' && !knowledge.has(key)) {
+        // C21: a collection another project shared with this one is offered without anything of its owner's setup: no description,
+        // no server address, no credential, no tool name, and not the names of that project's agents (a pgvector one carries
+        // its owner's credential, so it is not offered at all: name it by hand with a credential of your own).
+        const { provider, model, dimensions, queryPrefix } = tool.embeddings;
+        knowledge.set(key, {
+          type: 'knowledge',
+          source: 'vector',
+          name: `search_${tool.collection}`,
+          description: '',
+          store: tool.store,
+          collection: tool.collection,
+          embeddings: { provider, model, ...(dimensions !== undefined && { dimensions }), ...(queryPrefix && { queryPrefix }) },
+          ...(tool.searchMode && { searchMode: tool.searchMode }),
+          usedBy: [],
+          access,
+        } as AgentResources['knowledge'][number]);
+      }
     }
   }
 
