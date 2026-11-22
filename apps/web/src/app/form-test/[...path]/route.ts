@@ -42,12 +42,19 @@ const tooLarge = (limit: number) =>
   messagePage({ title: 'File too large', message: `Uploads can be up to ${Math.floor(limit / (1024 * 1024))} MiB.`, status: 413 });
 
 /** The trigger's authentication and IP allow-list (as on /form/<path>), refused calls as an HTML page. */
-async function refused(request: Request, workflowId: string, node: WorkflowNode): Promise<Response | undefined> {
-  const auth = await checkWebhookAuth(request, workflowId, node, 'Form Trigger', 'Form');
+async function refused(request: Request, workflowId: string, node: WorkflowNode, spend = true): Promise<Response | undefined> {
+  const auth = await checkWebhookAuth(request, workflowId, node, 'Form Trigger', 'Form', { spend });
   if (auth.ok) return undefined;
   const { status } = auth.response;
-  const message = status === 403 ? 'You are not allowed to open this form.' : status === 401 ? 'Sign in to open this form.' : 'This form is not set up correctly.';
-  const page = messagePage({ title: status === 403 ? 'Access denied' : status === 401 ? 'Sign-in required' : 'Form unavailable', message, status });
+  const message =
+    status === 403
+      ? 'You are not allowed to open this form.'
+      : status === 401
+        ? 'Sign in to open this form.'
+        : status === 409
+          ? 'This sign-in token was already used. Get a new token and submit again.'
+          : 'This form is not set up correctly.';
+  const page = messagePage({ title: status === 403 ? 'Access denied' : status === 401 ? 'Sign-in required' : status === 409 ? 'Token already used' : 'Form unavailable', message, status });
   const challenge = auth.response.headers.get('www-authenticate');
   if (challenge) page.headers.set('www-authenticate', challenge);
   return page;
@@ -65,7 +72,7 @@ export const GET = handler(async (request: Request, { params }: Ctx) => {
   const path = normalizePath((await params).path.join('/'));
   const found = await findTestListener('form', path);
   if (!found) return testFormMiss();
-  const denied = await refused(request, found.listener.workflow.id, found.node);
+  const denied = await refused(request, found.listener.workflow.id, found.node, false);
   if (denied) return denied;
   if (found.claimed) return submitted(found.listener);
   return formPage(triggerPage(found.node), { action: `/form-test/${path}` });

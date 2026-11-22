@@ -415,7 +415,7 @@ items still open (its "Wave 6" section); this page is the short list to check be
 - **Readiness in Postgres mode**: the `database` check runs on the in-process copy, so it cannot see Postgres go away; loss shows as `writeQueue` lag after `LANDFLOW_READY_MAX_WRITE_LAG_SECONDS` once a write is queued, a host with no pending write stays ready, and the LISTEN connection is not checked. No probe answers before boot ends, because Next holds requests until instrumentation finishes.
 - **Plugin registration** ([plugins.md](plugins.md#registration-rules)): the production profile needs `LANDFLOW_REGISTRY_SECRET` on the host and every announcing plugin (or `LANDFLOW_REGISTRY_OPEN=true`). Without a secret the development registry accepts any endpoint it can reach; the full outbound address policy (beyond refusing link-local and metadata addresses) comes later.
 - **Audit coverage** ([audit-and-governance.md](features/audit-and-governance.md)): OAuth2 token storage after a credential connects has no event of its own; a git push exports variable values (`pushToRepository`) with only the generic line; a refused read is recorded at most once a minute per caller and route and 60 a minute in all (the rest are dropped; the guard's own refusals are still counted by `landflow.http.denied`); a project made through the API is recorded inside its creating transaction: a rolled-back creation takes its event row with it, but the event's OpenTelemetry log record and process log line stay.
-- **Outbound address policy** ([audit-and-governance.md](features/audit-and-governance.md#outbound-requests)): `safeFetch` covers the HTTP Request node (and other in-process nodes' `ctx.http`), alert channels, HTTP SIEM destinations, remote MCP servers, RAG embeddings and rerank, OpenAI-compatible model, chat and embedding calls (the credential's Base URL), and OIDC and SAML metadata. Not covered: remote plugins (their own processes, trusted through the registry secret), Postgres, Valkey, S3 and the broker clients (configured infrastructure), syslog destinations (a raw socket to a configured host), the marketplace's git (runs the git binary), the OAuth2 token flow (`credentials/oauth2-flow.ts`), audit anchoring webhooks, Slack, the A2A client, templates fetched from a URL and the Ollama model nodes' own calls, and these calls to user- or credential-supplied URLs: the MCP OAuth discovery and client registration (`mcp/oauth.ts`; the one that matters most, since a remote MCP server can point its protected-resource metadata at an internal address), the MCP identity issuer metadata and JWKS (`mcp/identity.ts`), governance notification webhooks (`governance/notify.ts`), Microsoft Teams (`teams/index.ts`), the agent policy webhook (`agents/policy.ts`), HTTP secret providers (`secrets/providers/http.ts`), the System One node's Base URL (`nodes/systemone.ts`), transcription (`assistant/transcribe.ts`) and the Brain's audience lookups (`brain/audience.ts`): each is a follow-up. A production host that calls internal services must list them in `LANDFLOW_OUTBOUND_ALLOW`. In-process nodes' webhook and trigger contexts do not get the guarded client yet (execution, load-options and credential tests do). Proxies from the environment (`HTTP_PROXY`) are not used for guarded calls.
+- **Outbound address policy** ([audit-and-governance.md](features/audit-and-governance.md#outbound-requests)): `safeFetch` covers the HTTP Request node (and other in-process nodes' `ctx.http`), alert channels, HTTP SIEM destinations, remote MCP servers, RAG embeddings and rerank, OpenAI-compatible model, chat and embedding calls (the credential's Base URL), and OIDC and SAML metadata. Not covered: remote plugins (their own processes, trusted through the registry secret), Postgres, Valkey, S3 and the broker clients (configured infrastructure), syslog destinations (a raw socket to a configured host), the marketplace's git (runs the git binary), the OAuth2 token flow (`credentials/oauth2-flow.ts`), audit anchoring webhooks, Slack, the A2A client, templates fetched from a URL and the Ollama model nodes' own calls, and these calls to user- or credential-supplied URLs: the MCP OAuth discovery and client registration (`mcp/oauth.ts`; the one that matters most, since a remote MCP server can point its protected-resource metadata at an internal address), the MCP identity issuer metadata and JWKS (`mcp/identity.ts`), governance notification webhooks (`governance/notify.ts`), Microsoft Teams (`teams/index.ts`), HTTP secret providers (`secrets/providers/http.ts`), the System One node's Base URL (`nodes/systemone.ts`), transcription (`assistant/transcribe.ts`) and the Brain's audience lookups (`brain/audience.ts`): each is a follow-up. A production host that calls internal services must list them in `LANDFLOW_OUTBOUND_ALLOW`. In-process nodes' webhook and trigger contexts do not get the guarded client yet (execution, load-options and credential tests do). Proxies from the environment (`HTTP_PROXY`) are not used for guarded calls.
 
 ## Audit reliability and observability (backend hardening, 2026-11)
 
@@ -847,7 +847,7 @@ Seen in AG18's live pass (production profile, Claude): a create-an-agent ask in 
 
 ### Claude Code live status (C04, C15)
 
-- Only Claude Code sends status. Codex (wrapper) and OpenCode (plugin) are registry entries with no event names until verified live; `POST /api/harness/codex/hooks` accepts only the `quota_blocked` event (C08, see Combined wave 2). The hook names were checked against Claude Code 2.1.330; kagent's pinned 2.1.285 was not installed here.
+- Only Claude Code sends status. Codex is a `wrapper` entry (`landflow harness watch codex`; it reports only `quota_blocked`, and is not yet checked against a live Codex that hit a limit) and OpenCode is an `mcp-only` entry with no status signals until verified live; `POST /api/harness/codex/hooks` accepts only the `quota_blocked` event (C08, see Combined wave 2). The hook names were checked against Claude Code 2.1.330; kagent's pinned 2.1.285 was not installed here.
 - A session's order kind (seq or time) is fixed by its first event. An event of the other kind never moves the status (it is stored). Without `X-Landflow-Hook-Seq` (an HTTP hook, not the generated command hook) events are ordered by receive time, so two events in flight at once can swap. The generated order number is one clock in microseconds; two hooks in the same microsecond could still tie, and a tie never moves a status backwards.
 - An older event is stored but does not count toward a session's prompt and tool counts.
 - Error and Blocked sessions stay Error or Blocked while quiet (only Idle-by-silence is shown stale); both close after 24 hours.
@@ -905,3 +905,38 @@ Seen in AG18's live pass (production profile, Claude): a create-an-agent ask in 
 - A facts playground searches one project's facts (the caller's home project when none is given), not every project at once, and reads at most 5,000 facts per search.
 - A team-notebook block's exact text in What it saw shows to admins only (the notebook is not a person's memory).
 - `dropped.best` of a facts search may count a hit the caller may not read (a score only).
+
+## Combined wave 3 (2026-11-21)
+
+### MCP policy hooks (C14)
+
+- MCP policy hooks cover what goes through Landflow's MCP client (`callMcpTool`, `readMcpResource`, `getMcpPrompt`): not kagent agents' direct MCP calls, not calls through the agentgateway, not inbound calls to Landflow's own MCP server, not non-MCP tools.
+- A standalone agent chat (no workflow node) has no span: the model reads the denial and the audit event and counter still record it, but there is no `policy` check (`activeNode()` is empty there).
+- `aroundNode` is passed only by `runner/run.ts` and `mcp/trigger.ts` (every `executeWorkflow` caller in the host), so workflow runs, sub-workflows and tool sub-runs get the `policy` check. Not covered, the check is missing but the audit event and counter still record the decision: standalone agent sessions (test chat, A2A, channels, schedules of an agent), team runs on the agent runtime, and Spotlight or architect calls outside a run.
+- The request carries no agent version or team (the usage scope does not hold them yet).
+- The allow cache (60 s) is per process and per run: a worker that did not see the allow asks the hook again.
+- Arguments reach the hook whole (never cut, 256 KB cap for the request); values under secret-looking keys are masked and listed in `masked`, so a service cannot see them. Receivers must reject stale timestamps (over 5 min) and repeated `requestId`s.
+- A hook cannot rewrite arguments, only allow or deny; credential injection is C26.
+- A tool's read-only flag (`AgentTool.readOnlyHint`) is the MCP server's own hint, not a guarantee; nothing here relies on it for safety.
+- `mcp/approval-mode.ts` still reads `process.env` directly.
+
+### AI Judge (C13)
+
+- The AI Judge's read-only check rests on hints: for Landflow and plugin nodes on what the platform derives (the operation's name, the node's annotations), for MCP tools on the server's `readOnlyHint` plus an admin listing the server in `LANDFLOW_JUDGE_TRUSTED_MCP`. A listed server that mislabels a writing tool is still trusted; an admin lists only servers they trust.
+- The judge's per-round 1,024 output-token cap is not enforced (the engine's `generate` has no such field); the chat model's Max Tokens applies.
+- The editor's REST save does not run the judge's read-only tool check and does not warn about unsafe AI Judge tools (the MCP validate and save tools do); a bad tool fails the step at run time.
+- No publish-card line for judge steps (Needs you shows them once they wait).
+- A judge in a run that cannot wait (MCP or tool call, the hosted chat) denies with `fallbackReason: "cannot wait"`; the editor's chat wait is for manual and chat runs only.
+- Several uncertain items in one run are asked one after the other, not as a batch.
+- The fence frames the item and tool results as data; it does not detect prompt injection.
+
+### Approval tickets (C12)
+
+- A ServiceNow channel refuses plain alerts (a failed-run rule cannot use it; the "Notify on failure" picker leaves it out); it serves only rules with *Waits for your approval* (the rule's save refuses anything else).
+- ServiceNow is tested against a local fake of its Table API only, not a real instance; field names beyond `short_description`, `description`, `correlation_id`, `work_notes` and `state` are not mapped (no custom fields).
+- A webhook channel with Opens tickets still sends plain alerts like any webhook; only its Test and the approval tickets differ.
+- A lost answer during a leader hand-over can open a second ticket (the row stays `opening` and retries; the request id is the correlation id, so the ticket system can de-duplicate).
+- A close that fails three times leaves the ticket open (audit `approval.ticket.failed`; nothing else shows it).
+- A ticket opens within one ticker period (30 s) of the request, and closes likewise; a ServiceNow `state` is set only for the outcomes the channel maps.
+- No ticket system decides; Jira and others are a webhook away; no custom field mapping.
+- `alerts-settings.tsx` is past 800 lines (splitting it is a follow-up).

@@ -264,6 +264,14 @@ export const jwtAuthCredential = defineCredentialType({
       description:
         'One “claim: value” per line; every line must match the token. * matches within one segment and stops at / and : (repo:my-org/app:ref:refs/heads/*; GitHub’s repo:my-org/app:* never matches). Required for GitHub Actions and GitLab tokens: bind repository, project_path or sub with the owner written out (no * before the first /).',
     },
+    {
+      name: 'singleUse',
+      displayName: 'Single Use',
+      type: 'boolean',
+      default: false,
+      description:
+        'Accept each token once (by its jti, or a hash of the token): a token copied from a log cannot start a second run. Needs tokens with an expiry. A CI job must mint a token per call, so a retry that reuses one is refused.',
+    },
   ],
   async test(data, ctx) {
     const rules = checkCredentialClaims(data);
