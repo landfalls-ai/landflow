@@ -83,6 +83,25 @@ export function onExecutionFinished(listener: FinishedListener): () => void {
   };
 }
 
+/** What runs in the transaction of a save: gets the record and a way to read the status the execution had before this save. */
+type SavingListener = (record: ExecutionRecord, previousStatus: () => ExecutionState | undefined) => void;
+const savingListeners = () => singleton('store-execution-saving', () => [] as SavingListener[]);
+
+/**
+ * Run `listener` inside the transaction that saves an execution (every save, not a backtest's run), before the row is
+ * written, so `previousStatus()` still reads the status the execution had. What it writes (the event outbox rows,
+ * outbox/events.ts) commits or rolls back with the execution; a listener that throws stops the save, so it must catch
+ * its own errors. Returns the unsubscribe.
+ */
+export function onExecutionSaving(listener: SavingListener): () => void {
+  const listeners = savingListeners();
+  listeners.push(listener);
+  return () => {
+    const at = listeners.indexOf(listener);
+    if (at >= 0) listeners.splice(at, 1);
+  };
+}
+
 /** Statuses that were never shown in the history before they finished: left out of stats(). */
 const IN_FLIGHT = new Set<ExecutionState>(['running', 'queued']);
 
@@ -198,7 +217,15 @@ class Store {
   // ---- executions ---------------------------------------------------------
 
   saveExecution(record: ExecutionRecord) {
-    this.db.upsert('executions', executionRow(trimRunData(record)));
+    const saving = backtestScope() ? [] : [...savingListeners()];
+    if (!saving.length) this.db.upsert('executions', executionRow(trimRunData(record)));
+    else {
+      this.db.transaction(() => {
+        const previousStatus = () => this.db.get<{ status: ExecutionState }>('SELECT status FROM executions WHERE id = ?', record.executionId)?.status;
+        for (const listener of saving) listener(record, previousStatus);
+        this.db.upsert('executions', executionRow(trimRunData(record)));
+      });
+    }
     if (IN_FLIGHT.has(record.status)) return;
     // A backtest's run of a detector flow (brain/backtest.ts) is deleted afterwards and counts nowhere.
     if (backtestScope()) return;
@@ -283,8 +310,17 @@ class Store {
     return this.executionsWithStatus('waiting').reverse();
   }
 
-  deleteExecution(id: string): boolean {
+  /**
+   * Delete an execution and what hangs on it. `ending` is the finished record of a run that is not kept (a workflow that
+   * saves no successful or failed runs): the saving listeners see it first, in this transaction, so its end event is
+   * written exactly when its row is deleted (the event outbox, outbox/events.ts).
+   */
+  deleteExecution(id: string, ending?: ExecutionRecord): boolean {
     const deleted = this.db.transaction(() => {
+      if (ending && !backtestScope()) {
+        const previousStatus = () => this.db.get<{ status: ExecutionState }>('SELECT status FROM executions WHERE id = ?', id)?.status;
+        for (const listener of [...savingListeners()]) listener(ending, previousStatus);
+      }
       const deleted = this.db.delete('executions', { id }) > 0;
       this.db.delete('execution_steps', { execution_id: id });
       this.db.delete('execution_checkpoints', { execution_id: id });

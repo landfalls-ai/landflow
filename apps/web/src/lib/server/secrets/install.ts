@@ -8,8 +8,8 @@ import { singleton } from '../singleton';
 import { addLogScrubber } from '../telemetry/logger';
 import { hasSecretValues, redactJsonText, redactValue } from './redact';
 
-/** Tables whose rows hold run data: their JSON columns are redacted before they are written. */
-const RUN_TABLES = new Set(['executions', 'execution_steps', 'execution_checkpoints']);
+/** Tables whose rows hold run data (`event_outbox` carries a run's error and, when asked, its output): their JSON columns are redacted before they are written. */
+const RUN_TABLES = new Set(['executions', 'execution_steps', 'execution_checkpoints', 'event_outbox']);
 
 export function installRedaction(): void {
   singleton('external-secrets-redaction', () => {

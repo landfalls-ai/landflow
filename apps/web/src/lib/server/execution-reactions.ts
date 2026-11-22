@@ -8,12 +8,15 @@
 import { recordExecutionInsights } from './insights';
 import { retentionTick } from './settings';
 import { singleton } from './singleton';
-import { onExecutionFinished } from './store';
+import { writeOutboxRows } from './outbox/events';
+import { onExecutionFinished, onExecutionSaving } from './store';
 import { recordExecutionUsage } from './usage/ledger';
 
 /** Register the reactions once per process (idempotent across module graphs). */
 export function ensureExecutionReactions(): void {
   singleton('execution-reactions', () => {
+    // Run events for event subscriptions (outbox/events.ts): written in the save's own transaction, so a saved run always has its rows.
+    onExecutionSaving(writeOutboxRows);
     // Insights first: its rollup keeps the run's counts after retention deletes the execution.
     onExecutionFinished(({ summary }) => recordExecutionInsights(summary));
     // The usage ledger too (docs/second-brain.md): what ran, failed and was slow, without the items.
