@@ -4,6 +4,11 @@
  * back the "Test connection" button.
  */
 import Anthropic from '@anthropic-ai/sdk';
+import { ListBucketsCommand, S3Client } from '@aws-sdk/client-s3'; // C22:
+import { lookup } from 'node:dns/promises'; // C22:
+import { isIP } from 'node:net'; // C22:
+import { stripBrackets } from '../net/addresses'; // C22:
+import { assertAddressAllowed, assertUrlAllowed } from '../net/safe-fetch'; // C22:
 import { defineCredentialType, type NodeOperationError } from '@landflow/sdk';
 import { checkCredentialClaims, parseBoundClaims } from '../jwt-claims';
 import { testGatewayCredential } from '../llm-gateway/models';
@@ -310,4 +315,68 @@ export const httpHeaderAuthCredential = defineCredentialType({
     { name: 'name', displayName: 'Header Name', type: 'string', required: true, placeholder: 'X-API-Key' },
     { name: 'value', displayName: 'Header Value', type: 'string', required: true, typeOptions: { password: true } },
   ],
+});
+
+// ---------------------------------------------------------------------------
+// C22: S3 (knowledge sources)
+// ---------------------------------------------------------------------------
+
+/**
+ * The outbound policy for an address a person typed (an S3 endpoint, a site's start address): literal addresses, and every address
+ * the name resolves to, are refused in the production profile unless LANDFLOW_OUTBOUND_ALLOW lists them. The AWS SDK makes its own
+ * connections, so this is the check before them. Throws OutboundBlockedError.
+ */
+export async function assertOutboundTarget(url: URL): Promise<void> {
+  assertUrlAllowed(url);
+  const host = stripBrackets(url.hostname);
+  if (isIP(host)) return;
+  for (const entry of await lookup(host, { all: true }).catch(() => [])) assertAddressAllowed(host, entry.address);
+}
+
+/**
+ * An S3 client built from the credential's own keys: never the default AWS chain (no profile, no environment, no instance role), so
+ * what a source reads is what the person gave it. Path-style by default (LocalStack, MinIO).
+ */
+export function s3ClientOf(data: Record<string, unknown>): S3Client {
+  const accessKeyId = String(data.accessKeyId ?? '').trim();
+  const secretAccessKey = String(data.secretAccessKey ?? '').trim();
+  if (!accessKeyId || !secretAccessKey) throw new Error('The S3 credential needs an access key id and a secret access key');
+  const endpoint = String(data.endpoint ?? '').trim();
+  return new S3Client({
+    region: String(data.region ?? '').trim() || 'us-east-1',
+    ...(endpoint && { endpoint }),
+    forcePathStyle: data.forcePathStyle !== false && data.forcePathStyle !== 'false',
+    credentials: { accessKeyId, secretAccessKey },
+    maxAttempts: 2,
+  });
+}
+
+/** An S3 (or S3-compatible) account for knowledge sources: keys, region and, for LocalStack or MinIO, the endpoint. */
+export const s3ApiCredential = defineCredentialType({
+  name: 's3Api',
+  displayName: 'S3',
+  description: 'An S3 bucket account, or an S3-compatible server (LocalStack: http://127.0.0.1:54566, MinIO). Knowledge sources read from it; the AWS default credentials are never used.',
+  icon: 'lucide:cloud',
+  documentationUrl: 'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html',
+  properties: [
+    { name: 'endpoint', displayName: 'Endpoint', type: 'string', default: '', description: 'Leave empty for AWS. LocalStack: http://127.0.0.1:54566' },
+    { name: 'region', displayName: 'Region', type: 'string', default: 'us-east-1' },
+    { name: 'accessKeyId', displayName: 'Access Key ID', type: 'string', default: '', required: true },
+    { name: 'secretAccessKey', displayName: 'Secret Access Key', type: 'string', default: '', required: true, typeOptions: { password: true } },
+    { name: 'forcePathStyle', displayName: 'Force Path Style', type: 'boolean', default: true, description: 'On for LocalStack and MinIO' },
+  ],
+  async test(data) {
+    let client: S3Client | undefined;
+    try {
+      const endpoint = String(data.endpoint ?? '').trim();
+      if (endpoint) await assertOutboundTarget(new URL(endpoint));
+      client = s3ClientOf(data);
+      const listed = await client.send(new ListBucketsCommand({}), { abortSignal: AbortSignal.timeout(5_000) });
+      return { ok: true, message: `Connected: ${listed.Buckets?.length ?? 0} bucket${listed.Buckets?.length === 1 ? '' : 's'} visible` };
+    } catch (error) {
+      return { ok: false, message: (error as Error).message };
+    } finally {
+      client?.destroy();
+    }
+  },
 });

@@ -8,6 +8,8 @@ export type SourceKind = 'folder' | 'googleDrive' | 's3' | 'crawl';
 export type SourceSchedule = 'manual' | 'hourly' | 'daily';
 
 export const SOURCE_KINDS: readonly SourceKind[] = ['folder', 's3', 'crawl', 'googleDrive'];
+/** The kinds a person can add: a connector that is not finished is left out here (C22-D1) and nowhere else. */
+export const ENABLED_SOURCE_KINDS: readonly SourceKind[] = ['folder'];
 export const SOURCE_SCHEDULES: readonly SourceSchedule[] = ['manual', 'hourly', 'daily'];
 
 export const SOURCE_KIND_LABEL: Record<SourceKind, string> = { folder: 'Folder', googleDrive: 'Google Drive', s3: 'S3 bucket', crawl: 'Website' };
@@ -44,8 +46,10 @@ export interface SyncCounts {
   /** Chunks sent to the embeddings model, and chunks that kept their stored vector. */
   embedded: number;
   reused: number;
+  /** Items the source asked us to leave alone (a page robots.txt forbids). */
+  skipped: number;
 }
-export const EMPTY_COUNTS: SyncCounts = { seen: 0, added: 0, changed: 0, removed: 0, failed: 0, embedded: 0, reused: 0 };
+export const EMPTY_COUNTS: SyncCounts = { seen: 0, added: 0, changed: 0, removed: 0, failed: 0, embedded: 0, reused: 0, skipped: 0 };
 
 export type SyncStatus = 'running' | 'ok' | 'partial' | 'failed';
 
@@ -109,8 +113,8 @@ export const SOURCE_LIMITS = {
 
 /** "added 3, changed 1, removed 0 · 12 embedded, 240 reused": the counts of one run in a line. */
 export function syncSummary(run: Pick<SyncRunView, 'counts'>): string {
-  const { added, changed, removed, failed, embedded, reused } = run.counts;
-  const head = `added ${added}, changed ${changed}, removed ${removed}${failed ? `, failed ${failed}` : ''}`;
+  const { added, changed, removed, failed, embedded, reused, skipped } = run.counts;
+  const head = `added ${added}, changed ${changed}, removed ${removed}${failed ? `, failed ${failed}` : ''}${skipped ? `, skipped ${skipped}` : ''}`;
   return embedded || reused ? `${head} · ${embedded} embedded, ${reused} reused` : head;
 }
 

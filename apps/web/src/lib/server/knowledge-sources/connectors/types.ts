@@ -27,6 +27,10 @@ export interface Listing {
   complete: boolean;
   /** Why it is not whole (a cap, a part that could not be read). */
   note?: string;
+  /** Items the source asked us to leave alone (robots.txt): counted, never fetched. */
+  skipped?: number;
+  /** Items that could not be read while listing (a page that errored): shown in the run, and the listing is then not complete. */
+  problems?: Array<{ item: string; reason: string }>;
 }
 
 export interface Connector {

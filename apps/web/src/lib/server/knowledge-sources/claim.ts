@@ -6,8 +6,8 @@
  */
 import { database, type Database } from '../db';
 
-/** A lease lasts this long unless renewed (the runner renews about every 30 seconds). */
-export const LEASE_MS = 2 * 60_000;
+/** A lease lasts this long unless renewed (the runner's heartbeat renews it every quarter of that). */
+export const LEASE_MS = 5 * 60_000;
 
 export interface StateRow {
   source_id: string;

@@ -8,8 +8,8 @@
  * Secrets: a run's errors and note hold the item's name and a short reason, never file bytes, tokens or credential values.
  */
 import { randomUUID } from 'node:crypto';
-import { SOURCE_LIMITS, type SourceKind, type SyncCounts, type SyncRunView } from '../../shared/knowledge-sources';
-import { addKnowledgeDocument, deleteChunksWhere, knowledgeConfigOf, type KnowledgeDocumentSync } from '../agents/knowledge';
+import { EMPTY_COUNTS, SOURCE_LIMITS, type SourceKind, type SyncCounts, type SyncRunView } from '../../shared/knowledge-sources';
+import { addKnowledgeDocument, deleteChunksWhere, knowledgeConfigOf, type KnowledgeDocumentSync, type KnowledgeInternal } from '../agents/knowledge';
 import { homeProjectId } from '../projects/store';
 import { CollectionAccessError } from '../rag/collection-access';
 import { logger } from '../telemetry/logger';
@@ -54,7 +54,7 @@ export async function runSync(sourceId: string, trigger: 'schedule' | 'manual', 
 
 async function execute(row: SourceRow, runId: string, options: SyncOptions): Promise<SyncRunView> {
   const clock = options.now ?? Date.now;
-  const counts: SyncCounts = { seen: 0, added: 0, changed: 0, removed: 0, failed: 0, embedded: 0, reused: 0 };
+  const counts: SyncCounts = { ...EMPTY_COUNTS };
   const errors: SyncRunView['errors'] = [];
   let status: 'ok' | 'partial' | 'failed' = 'ok';
   let note: string | undefined;
@@ -63,6 +63,9 @@ async function execute(row: SourceRow, runId: string, options: SyncOptions): Pro
     status = 'failed';
     note = message;
   };
+  // The lease is renewed by a timer, so one slow fetch or a long crawl never lets it run out while the process lives.
+  const heartbeat = setInterval(() => void renewLease(row.id, runId, clock()).catch(() => undefined), LEASE_MS / 4);
+  heartbeat.unref?.();
   const deadline = AbortSignal.timeout(SOURCE_LIMITS.deadlineMs);
   const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
   try {
@@ -73,34 +76,36 @@ async function execute(row: SourceRow, runId: string, options: SyncOptions): Pro
       return finish();
     }
     const internal = { asProject: homeProjectId('agent', row.agent_id), subject: 'agent' as const };
-    const connector = options.connector ?? buildConnector(row);
     const previous = itemsOf(row.id);
+    let connector: Connector;
     let listing;
     try {
+      connector = options.connector ?? (await buildConnector(row));
       listing = await connector.list(signal, previous);
     } catch (caught) {
       fail(signal.aborted ? 'Stopped at the 30 minute limit' : `Could not list the source: ${reasonOf(caught)}`);
       return finish();
     }
     counts.seen = listing.items.length;
+    counts.skipped = listing.skipped ?? 0;
+    for (const problem of listing.problems ?? []) {
+      counts.failed++;
+      if (errors.length < SOURCE_LIMITS.errorsKept) errors.push(problem);
+    }
     const listed = new Set(listing.items.map((item) => item.key));
     const todo = listing.items.filter((item) => previous.get(item.key)?.version !== item.version);
-    let renewed = clock();
-
     let stopped = false;
+    let tried = 0;
     for (const item of todo) {
       if (signal.aborted) {
         stopped = true;
         break;
       }
-      if (counts.added + counts.changed + counts.failed >= SOURCE_LIMITS.itemsPerSync) {
+      if (tried >= SOURCE_LIMITS.itemsPerSync) {
         capped = true;
         break;
       }
-      if (clock() - renewed > LEASE_MS / 4) {
-        await renewLease(row.id, runId, clock());
-        renewed = clock();
-      }
+      tried++;
       try {
         await writeItem(row, item, previous.has(item.key), connector, config, internal, counts, signal);
       } catch (caught) {
@@ -148,6 +153,7 @@ async function execute(row: SourceRow, runId: string, options: SyncOptions): Pro
   }
 
   async function finish(): Promise<SyncRunView> {
+    clearInterval(heartbeat);
     finishRun(runId, { status, counts, errors, ...(note && { note }), at: new Date(clock()) });
     pruneRuns(row.id);
     const view = viewOfRun(getRun(runId)!);
@@ -158,7 +164,7 @@ async function execute(row: SourceRow, runId: string, options: SyncOptions): Pro
   }
 }
 
-async function writeItem(row: SourceRow, item: SourceItem, existed: boolean, connector: Connector, config: NonNullable<ReturnType<typeof knowledgeConfigOf>>, internal: { asProject: string; subject: 'agent' }, counts: SyncCounts, signal: AbortSignal): Promise<void> {
+async function writeItem(row: SourceRow, item: SourceItem, existed: boolean, connector: Connector, config: NonNullable<ReturnType<typeof knowledgeConfigOf>>, internal: KnowledgeInternal, counts: SyncCounts, signal: AbortSignal): Promise<void> {
   const file = await connector.fetch(item, signal);
   if (file.bytes.length > SOURCE_LIMITS.fileBytes) throw new Error(`Too large (${Math.round(file.bytes.length / 1024 / 1024)} MB; the limit is ${SOURCE_LIMITS.fileBytes / 1024 / 1024} MB)`);
   const extra = { source: sourceKeyOf(row.id, item.key), sourceId: row.id, sourceKind: row.kind as SourceKind, fileName: item.name, ...(item.url && { url: item.url }) };
