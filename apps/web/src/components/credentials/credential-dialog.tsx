@@ -121,6 +121,7 @@ export function CredentialDialog({
   onClose,
   onSaved,
   projectId,
+  initialName,
   overSheet,
 }: {
   /** Draw above a bottom sheet (z-[60]), as the Spotlight card does; the default stays z-50 so the expression menu (z-[60]) shows over it. */
@@ -129,6 +130,8 @@ export function CredentialDialog({
   credentialId?: string;
   /** Create it in this project (default: the viewer's personal project). */
   projectId?: string;
+  /** The name a new credential starts with (the combobox's "Create “Billing API”"). */
+  initialName?: string;
   /** Restrict the type picker (a node's requirement); one type skips the picker. */
   allowedTypes?: string[];
   onClose: () => void;
@@ -141,7 +144,7 @@ export function CredentialDialog({
   // A phone: a bottom sheet that keeps the focus inside (docs/mobile.md#sheets-and-dialogs).
   useDialogFocus(panel, phone);
   const [existing, setExisting] = useState<CredentialDetail>();
-  const [name, setName] = useState('');
+  const [name, setName] = useState(initialName ?? '');
   const [values, setValues] = useState<Record<string, unknown>>({});
   // The fields as the server last sent them: what a save compares the form with.
   const [savedValues, setSavedValues] = useState<Record<string, unknown>>({});

@@ -4,6 +4,7 @@ import { agentStore } from '@/lib/server/agents/store';
 import { error, handler, json } from '@/lib/server/http';
 import { canResource } from '@/lib/server/projects/access';
 import { routeActor } from '@/lib/server/projects/http';
+import { getUser } from '@/lib/server/auth/users';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
@@ -13,6 +14,6 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
   if (!agentStore.get(id) || !canResource(routeActor(), 'agent', id, 'read')) return error('Agent not found', 404);
   // Workflows the caller cannot open stay out of `usedBy` (an agent shared with all projects is readable by everyone).
   const actor = routeActor();
-  const versions = agentVersionUses(id).map((v) => ({ ...v, usedBy: v.usedBy.filter((u) => canResource(actor, 'workflow', u.workflowId, 'read')) }));
+  const versions = agentVersionUses(id).map((v) => ({ ...v, ...(v.publishedBy && getUser(v.publishedBy) && { publishedByName: getUser(v.publishedBy)!.name }), usedBy: v.usedBy.filter((u) => canResource(actor, 'workflow', u.workflowId, 'read')) }));
   return json({ versions });
 });

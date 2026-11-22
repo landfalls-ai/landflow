@@ -1045,7 +1045,14 @@ function paths(): Record<string, Record<string, Json>> {
     id: 'listAgentVersions',
     summary: 'An agent\u2019s published versions and the workflow versions that pin each',
     description: 'Newest first; `usedBy` lists the workflow versions that pin the version (production first) and holds only workflows the caller can read. Read access is the agent\u2019s.',
-    responses: { 200: reply('The versions', object({ versions: array(object({ version: { type: 'integer' }, publishedAt: { type: 'string', format: 'date-time' }, publishedBy: { type: 'string' }, usedBy: array(object({ workflowId: { type: 'string' }, name: { type: 'string' }, workflowVersion: { type: 'integer' }, production: { type: 'boolean' } }, ['workflowId', 'name', 'workflowVersion', 'production'])) }, ['version', 'publishedAt', 'usedBy'])) }, ['versions'])), 404: notFound },
+    responses: { 200: reply('The versions', object({ versions: array(object({ version: { type: 'integer' }, publishedAt: { type: 'string', format: 'date-time' }, publishedBy: { type: 'string' }, publishedByName: { type: 'string' }, usedBy: array(object({ workflowId: { type: 'string' }, name: { type: 'string' }, workflowVersion: { type: 'integer' }, production: { type: 'boolean' } }, ['workflowId', 'name', 'workflowVersion', 'production'])) }, ['version', 'publishedAt', 'usedBy'])) }, ['versions'])), 404: notFound },
+  });
+  add('get', '/api/agents/{id}/versions/{version}', {
+    tag: 'Agents',
+    id: 'getAgentVersion',
+    summary: 'The config of one published version of an agent',
+    description: 'For comparing two versions (the history sheet). `config` is the agent\u2019s config as published, credentials as `{ id, name }` references, never data; `publishedByName` is the person who published it when known. A draft is not a version: an unknown version, or an agent the caller cannot read, is 404.',
+    responses: { 200: reply('The version', object({ version: { type: 'integer' }, publishedAt: { type: ['string', 'null'], format: 'date-time' }, publishedBy: { type: 'string' }, publishedByName: { type: 'string' }, config: { type: 'object', additionalProperties: true } }, ['version', 'config'])), 404: notFound },
   });
   add('get', '/api/agents/{id}/versions/{version}/connections', {
     tag: 'Agents',

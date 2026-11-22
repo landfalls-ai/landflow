@@ -14,6 +14,7 @@ import {
   CircleCheck,
   Download,
   FlaskConical,
+  History,
   Loader2,
   MoreHorizontal,
   Package,
@@ -43,6 +44,7 @@ import { Segmented } from '../ui/segmented';
 import { useCredentials } from '../credentials/use-credentials';
 import { askAbout, askDetail } from '../../lib/client/ask-about';
 import { MenuItem, MenuLabel, MenuSeparator, Popover } from '../ui/popover';
+import { AgentHistory } from './agent-history';
 import { AgentAvatar } from './avatar';
 import { AvatarDialog } from './avatar-dialog';
 import { CapabilitiesCard } from './capabilities-card';
@@ -411,6 +413,8 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
   // AG05: `skipEval` is only ever the person's own click on "Publish anyway" in the held notice.
   // AG21: which workflow versions pin each published version of this agent ("v2 · used by Alert intake v4 (production)").
   const [uses, setUses] = useState<AgentVersionUse[]>([]);
+  // C23: the version history sheet (compare two published versions).
+  const [historyOpen, setHistoryOpen] = useState(false);
   const liveVersion = agent?.published?.version;
   const loadUses = useCallback(async () => {
     const answer = await api<{ versions: AgentVersionUse[] }>(`/api/agents/${agentId}/versions`, { background: true }).catch(() => undefined);
@@ -727,6 +731,14 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
                       <>
                         <MenuSeparator />
                         <MenuLabel>History</MenuLabel>
+                        <MenuItem
+                          onClick={() => {
+                            close();
+                            setHistoryOpen(true);
+                          }}
+                        >
+                          <History /> Version history
+                        </MenuItem>
                         <div className="max-h-40 overflow-y-auto">
                           {agent.history.map((v, i) => {
                             const older = agent.history[i + 1];
@@ -1021,6 +1033,18 @@ export function AgentBuilder({ agentId, initialTarget = { tab: 'persona' }, init
         </Dialog>
       )}
       {modal?.kind === 'availability' && <AvailabilityDialog agentId={agentId} agentName={draft.name} canEdit={canMakeAvailable(ownershipOfSummary(agents?.find((a) => a.id === agentId)))} onClose={() => setModal(null)} />}
+      {agent && (
+        <AgentHistory
+          agentId={agentId}
+          open={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          published={agent.published}
+          history={agent.history}
+          uses={uses}
+          canRestore={(v) => !sameConfig(draft, v.config)}
+          onRestore={(version) => void restore(version)}
+        />
+      )}
       {modal?.kind === 'plugin' && <ExportPluginDialog base={`/api/agents/${agentId}`} title={draft.name} onClose={() => setModal(null)} />}
       {modal?.kind === 'template' && (
         <SaveTemplateDialog agent={{ id: agentId, name: draft.name, description: draft.description }} onClose={() => setModal(null)} />
