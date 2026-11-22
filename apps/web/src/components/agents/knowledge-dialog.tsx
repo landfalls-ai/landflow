@@ -16,6 +16,7 @@ import { NodeCredentials } from '../credentials/node-credentials';
 import { Button } from '../ui/button';
 import { Input, Select } from '../ui/inputs';
 import { PlaygroundButton } from '../memory/playground';
+import { SourcesPanel } from './knowledge-sources';
 import { Dialog, Field, ToggleRow } from './dialog';
 import { newId } from './util';
 
@@ -82,6 +83,7 @@ export function KnowledgeDialog({ agentId, projectId, tool, onSave, onClose }: {
         searchMode: 'hybrid',
       },
   );
+  const [sourceCount, setSourceCount] = useState(0); // C22
   const [node, setNode] = useState<NodeKnowledgeBaseConfig>(() => (tool && isNodeKnowledge(tool) ? tool : nodeKnowledgeFrom(KNOWLEDGE_NODE_PRESETS[0], tool?.id ?? value.id)));
   const refusal = useCollectionRefusal(agentId, projectId, source === 'vector' ? value : undefined);
   const set = (patch: Partial<VectorKnowledgeBaseConfig>) => setValue((v) => ({ ...v, ...patch }));
@@ -281,7 +283,8 @@ export function KnowledgeDialog({ agentId, projectId, tool, onSave, onClose }: {
               <PlaygroundButton source={{ kind: 'kb', agentId, toolId: tool.id }} title={`Try a search: ${tool.name}`} modes={tool.embeddings.provider === 'none' ? ['keyword'] : undefined} threshold={0} />
               <span className="text-[12px] text-t3">Searches the saved knowledge base and shows the scores. Changes nothing.</span>
             </div>
-            <DocumentsPanel agentId={agentId} tool={tool} />
+            <DocumentsPanel agentId={agentId} tool={tool} sourceCount={sourceCount} />
+            <SourcesPanel agentId={agentId} toolId={tool.id} onCount={setSourceCount} />
           </>
         ) : (
           <p className="text-[12px] text-t3">Save the knowledge base, then open it again to upload documents.</p>
@@ -322,7 +325,7 @@ interface DocumentRow {
 }
 
 /** Uploaded documents of a saved knowledge base: list, upload (several at once) and delete. */
-function DocumentsPanel({ agentId, tool }: { agentId: string; tool: VectorKnowledgeBaseConfig }) {
+function DocumentsPanel({ agentId, tool, sourceCount = 0 }: { agentId: string; tool: VectorKnowledgeBaseConfig; sourceCount?: number }) {
   const base = `/api/agents/${agentId}/knowledge/${tool.id}/documents`;
   const input = useRef<HTMLInputElement>(null);
   const [rows, setRows] = useState<DocumentRow[] | null>(null);
@@ -402,6 +405,7 @@ function DocumentsPanel({ agentId, tool }: { agentId: string; tool: VectorKnowle
       {tool.indexedFrom && (
         <p className="text-[11.5px] text-t3">
           Indexed from {tool.indexedFrom}
+          {sourceCount > 0 && <> · {sourceCount} {sourceCount === 1 ? 'source' : 'sources'}</>}
           {tool.lastIndex && <> · last pass: {knowledgeIndexSummary(tool.lastIndex)}</>}{/* C20: what the last pass embedded, reused and removed */}
         </p>
       )}{/* AG13: the folder of the files directory it was indexed from */}
