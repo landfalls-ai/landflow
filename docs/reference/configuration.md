@@ -148,6 +148,7 @@ still works.
 |---|---|---|
 | `ANTHROPIC_API_KEY` *(secret)* | – | for the Anthropic Chat Model |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | the Ollama used by the AI flow builder and the editor assistant, and the default of the Ollama chat and embeddings nodes |
+| `LANDFLOW_KNOWLEDGE_DRIVE_URL` | `https://www.googleapis.com` | the Google Drive API a knowledge source reads from, for a local fake in development and tests ([agents.md](../agents.md#sources)); ignored with one warning in the production profile, where sources always call Google |
 | `LANDFLOW_BUILDER_MODEL` | `qwen3-coder:30b` | model the AI flow builder, the editor assistant and the brain's analyst use: an Ollama model name, `anthropic/<model>` (e.g. `anthropic/claude-sonnet-5-5`, with `ANTHROPIC_API_KEY` or `ant auth login`) or `openai/<model>` (with `OPENAI_API_KEY`, `OPENAI_BASE_URL`) |
 | `LANDFLOW_BUILDER_TIMEOUT_SECONDS` | `600` | how long the AI flow builder (Describe a workflow, Spotlight's first draft) waits for the model; it reads the whole node catalog first, so a slow local model with many plugins online needs minutes |
 | `LANDFLOW_TOOL_POLICY` / `LANDFLOW_TOOL_POLICY_URL` / `LANDFLOW_TOOL_POLICY_TOKEN` *(secret)* / `LANDFLOW_TOOL_POLICY_FAIL` | `rules` / – / – / `closed` | an external policy engine (`opa` or `openfga`) that also decides which tools an agent's caller may use; an unreachable engine denies unless `LANDFLOW_TOOL_POLICY_FAIL=open` ([agents.md](../agents.md#tool-access)) |

@@ -3044,6 +3044,64 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(object({ projectIds: { type: 'array', items: { type: 'string' }, maxItems: 100, uniqueItems: true }, all: { type: 'boolean' } }, ['projectIds', 'all'])),
     responses: { 200: reply('The availability', agentSharesDoc), 400: invalid, 403: errorRef('Not an admin of the agent’s project'), 404: notFound },
   });
+  // C22: a knowledge base's sources and their sync history
+  const knowledgeSource = { type: 'object', additionalProperties: true, description: 'A SourceView (lib/shared/knowledge-sources.ts): id, kind (`folder`, `s3`, `crawl`, `googleDrive`), name, settings, credential (id and name, never a value), schedule (`manual`, `hourly`, `daily`), paused, pausedReason, running, lastRun, nextAt, createdAt' };
+  const sourceBody = object({ kind: { type: 'string', enum: ['folder', 's3', 'crawl', 'googleDrive'] }, name: { type: 'string' }, settings: { type: 'object', additionalProperties: true, description: 'folder: `{ folder }`; s3: `{ bucket, prefix }`; crawl: `{ startUrl, maxDepth (0 to 3), maxPages (1 to 500) }`; googleDrive: `{ folderId, includeSubfolders }`' }, credentialId: { type: 'string', description: 'An `s3Api` credential (S3) or a connected Google OAuth2 credential (Drive), one the agent’s project may use' }, schedule: { type: 'string', enum: ['manual', 'hourly', 'daily'] } }, ['kind', 'settings', 'schedule']);
+  add('get', '/api/agents/{id}/knowledge/{toolId}/sources', {
+    tag: 'Agents',
+    id: 'listKnowledgeSources',
+    summary: 'A knowledge base’s sources',
+    description: 'Callers who may update the agent; anyone else gets 404. Each source with its last run and the time of the next sync. Agent knowledge bases only.',
+    pathParams: { id: 'The agent id', toolId: 'The knowledge base’s tool id' },
+    responses: { 200: reply('The sources', object({ sources: array(knowledgeSource) }, ['sources'])), 404: notFound },
+  });
+  add('post', '/api/agents/{id}/knowledge/{toolId}/sources', {
+    tag: 'Agents',
+    id: 'addKnowledgeSource',
+    summary: 'Add a source to a knowledge base',
+    description: 'At most 20 sources a base; the same place twice is 409. A site start address on a private network is refused when `LANDFLOW_OUTBOUND_BLOCK_PRIVATE` is on (400); a credential the agent’s project may not use is 403 and one of the wrong type 400. A scheduled source syncs for the first time at the next check. Audited as `knowledge_source.created`, with the credential’s name.',
+    pathParams: { id: 'The agent id', toolId: 'The knowledge base’s tool id' },
+    body: jsonBody(sourceBody),
+    responses: { 201: reply('The source', knowledgeSource), 400: invalid, 403: errorRef('The credential is not one the agent’s project may use'), 404: notFound, 409: errorRef('The same place is already a source') },
+  });
+  add('patch', '/api/agents/{id}/knowledge/{toolId}/sources/{sourceId}', {
+    tag: 'Agents',
+    id: 'updateKnowledgeSource',
+    summary: 'Pause, resume or change a source',
+    description: '`name`, `schedule`, `paused` and `settings` (checked again); a field left out keeps its value. Audited as `knowledge_source.updated`.',
+    pathParams: { id: 'The agent id', toolId: 'The knowledge base’s tool id', sourceId: 'The source id' },
+    body: jsonBody(object({ name: { type: 'string' }, schedule: { type: 'string', enum: ['manual', 'hourly', 'daily'] }, paused: { type: 'boolean' }, settings: { type: 'object', additionalProperties: true } })),
+    responses: { 200: reply('The source', knowledgeSource), 400: invalid, 404: notFound },
+  });
+  add('delete', '/api/agents/{id}/knowledge/{toolId}/sources/{sourceId}', {
+    tag: 'Agents',
+    id: 'removeKnowledgeSource',
+    summary: 'Remove a source',
+    description: '`?deleteChunks=1` also deletes the chunks the source wrote (never an uploaded document or another source’s); without it they stay. A source that is syncing answers 409. Audited as `knowledge_source.removed`.',
+    pathParams: { id: 'The agent id', toolId: 'The knowledge base’s tool id', sourceId: 'The source id' },
+    query: [{ name: 'deleteChunks', description: '`1` deletes the chunks it wrote', schema: { type: 'string', enum: ['1'] } }],
+    responses: { 200: reply('Removed', object({ removedChunks: { type: 'integer' } }, ['removedChunks'])), 404: notFound, 409: errorRef('A sync of this source is running') },
+  });
+  add('post', '/api/agents/{id}/knowledge/{toolId}/sources/{sourceId}/sync', {
+    tag: 'Agents',
+    id: 'syncKnowledgeSource',
+    summary: 'Sync a source now',
+    description: 'Starts a sync and answers at once; `GET …/runs` shows how it went. One sync per source runs at a time, across every process: another answers 409 with the running run’s id.',
+    pathParams: { id: 'The agent id', toolId: 'The knowledge base’s tool id', sourceId: 'The source id' },
+    responses: { 202: reply('Started', object({ runId: { type: 'string' } }, ['runId'])), 404: notFound, 409: errorRef('A sync of this source is running (`runId`)') },
+  });
+  add('get', '/api/agents/{id}/knowledge/{toolId}/sources/{sourceId}/runs', {
+    tag: 'Agents',
+    id: 'listKnowledgeSourceRuns',
+    summary: 'A source’s sync runs',
+    description: 'Newest first, the last 100 kept: when, by whom (`schedule` or `manual`), the result, the counts (seen, added, changed, removed, failed, skipped, embedded, reused), up to 50 failed items with the reason, and a note when a run stopped short.',
+    pathParams: { id: 'The agent id', toolId: 'The knowledge base’s tool id', sourceId: 'The source id' },
+    query: [
+      { name: 'limit', description: 'At most this many (default 20, at most 100)', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } },
+      { name: 'cursor', description: 'Opaque; the previous page’s `next`', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The runs', object({ runs: array({ type: 'object', additionalProperties: true }), next: { type: 'string' } }, ['runs'])), 400: invalid, 404: notFound },
+  });
   add('get', '/api/agents', {
     tag: 'Agents',
     id: 'listAgents',
