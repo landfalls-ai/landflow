@@ -5,11 +5,13 @@
  * lib/shared/auth.ts (`can`), the public allow-list in lib/shared/auth-paths.ts.
  */
 import { NextResponse } from 'next/server';
-import type { LinkResponse } from '../../shared/auth';
+import type { LinkResponse, MfaChallengeResponse } from '../../shared/auth';
 import { logger } from '../telemetry';
 import { emailedOrigin, setSessionCookie } from './cookies';
 import { inviteMessage, mailConfigured, resetMessage, sendMail } from './mail';
 import { clientIp } from './rate-limit';
+import { openChallenge, type FirstMethod } from './mfa/challenges';
+import { methodsFor } from './mfa/factors';
 import { createSession, type SessionMethod } from './sessions';
 import { viewerOf, type UserRecord } from './users';
 
@@ -41,9 +43,20 @@ export async function deliverLink(
 }
 
 /** Start a session for `user` and answer `{ user, ...extra }` with the session cookie set. */
-export function signedInResponse(request: Request, user: UserRecord, method: SessionMethod, extra: Record<string, unknown> = {}, status = 200): NextResponse {
-  const { token, expiresAt } = createSession(user, method, { ip: clientIp(request), userAgent: request.headers.get('user-agent') ?? undefined });
+export function signedInResponse(request: Request, user: UserRecord, method: SessionMethod, extra: Record<string, unknown> = {}, status = 200, meta: { mfaVerifiedAt?: string; via?: string } = {}): NextResponse {
+  const { token, expiresAt } = createSession(user, method, { ip: clientIp(request), userAgent: request.headers.get('user-agent') ?? undefined, ...meta });
   const response = NextResponse.json({ user: viewerOf(user), ...extra }, { status });
   setSessionCookie(response, request, token, expiresAt);
   return response;
 }
+
+/**
+ * The answer to a correct password for a user with a second factor: 202 with a single-use challenge and the methods
+ * that can answer it, and no session cookie. `POST /api/auth/mfa/verify` turns the challenge into a session.
+ */
+export async function secondStepResponse(user: UserRecord, firstMethod: FirstMethod): Promise<NextResponse> {
+  const body: MfaChallengeResponse = { mfaRequired: true, methods: methodsFor(user.id), challenge: await openChallenge(user, 'sign-in', firstMethod) };
+  return NextResponse.json(body, { status: 202, headers: { 'cache-control': 'no-store' } });
+}
+
+export { hasConfirmedFactor } from './mfa/factors';

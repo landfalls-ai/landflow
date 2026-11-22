@@ -267,3 +267,14 @@ export function resetMessage(input: { to: string; link: string }): MailMessage {
   );
   return { to: input.to, subject: 'Reset your Landflow password', ...body };
 }
+
+/** C16: a recovery code was just used to sign in (so a person who didn't do it can tell). */
+export function recoveryUsedMessage(input: { to: string; left: number; link: string }): MailMessage {
+  const body = layout(
+    'A recovery code was used',
+    [`A recovery code was used to sign in to your Landflow account. You have ${input.left} left.`, 'If it was you, you can make a new set in Sign-in & security. If it wasn’t, change your password and ask an admin to reset your second factor.'],
+    { label: 'Open Sign-in & security', url: input.link },
+    'You get this email each time a recovery code is used.',
+  );
+  return { to: input.to, subject: 'A recovery code was used to sign in to Landflow', ...body };
+}

@@ -14,7 +14,8 @@ export const GET = handler(async (request: Request) => {
   } catch {
     return json({ status: 'ok' });
   }
-  if (!resolved.ok || !resolved.principal) return json({ status: 'ok' });
+  // An enrol-only session (no second factor yet under LANDFLOW_MFA_REQUIRED) gets no counts either.
+  if (!resolved.ok || !resolved.principal || resolved.principal.enrolOnly) return json({ status: 'ok' });
   const plugins = registry.list();
   return json({
     status: 'ok',

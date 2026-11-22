@@ -1,9 +1,9 @@
 'use client';
-/** The user menu at the bottom of the sidebar: who is signed in (name, email, role), the theme, Build a plugin, Connect your harness, API keys, Users and sign out. */
+/** The user menu at the bottom of the sidebar: who is signed in (name, email, role), the theme, Build a plugin, Connect your harness, Sign-in & security, API keys, Users and sign out. */
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { BookOpenText, ChevronsUpDown, KeyRound, LogOut, PlugZap, Users } from 'lucide-react';
+import { BookOpenText, ChevronsUpDown, KeyRound, LogOut, PlugZap, ShieldCheck, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { can, ROLE_LABELS } from '@/lib/shared/auth';
 import { api } from '@/lib/client/api';
@@ -111,6 +111,9 @@ export function UserMenu({ defaultOpen = false }: { defaultOpen?: boolean } = {}
           </Link>
           <Link role="menuitem" href="/connect" onClick={() => setOpen(false)} className={item}>
             <PlugZap className="size-4 shrink-0" strokeWidth={1.7} /> Connect your harness
+          </Link>
+          <Link role="menuitem" href="/account/security" onClick={() => setOpen(false)} className={item}>
+            <ShieldCheck className="size-4 shrink-0" strokeWidth={1.7} /> Sign-in &amp; security
           </Link>
           <Link role="menuitem" href="/settings#api-keys" onClick={() => setOpen(false)} className={item}>
             <KeyRound className="size-4 shrink-0" strokeWidth={1.7} /> API keys
