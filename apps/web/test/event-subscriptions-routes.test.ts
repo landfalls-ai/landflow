@@ -92,7 +92,7 @@ const input = (over: Record<string, unknown> = {}) => ({ name: 'Receiver', url: 
 
 describe('creating and reading', () => {
   it('lets a project admin add one: 201, the secret once, none in the list, and an audit event', async () => {
-    const made = await create(admin, input());
+    const made = await create(admin, input({ url: `${receiverUrl}?token=hunter2` }));
     expect(made.status, JSON.stringify(made.body)).toBe(201);
     expect(made.body.secret).toMatch(/^whsec_/);
     expect(made.body.subscription).toMatchObject({ name: 'Receiver', events: ['run.failed'], enabled: true, backlog: 0, dead: 0, projectId: team });
@@ -102,6 +102,10 @@ describe('creating and reading', () => {
     expect(listed.body.canEdit).toBe(false);
     expect(listed.body.subscriptions).toHaveLength(1);
     expect(JSON.stringify(listed.body)).not.toContain(made.body.secret);
+    // A viewer sees the host only: a path or query may carry a token. An admin sees the whole URL.
+    expect(JSON.stringify(listed.body)).not.toContain('hunter2');
+    expect(listed.body.subscriptions[0].url).toBe(new URL(receiverUrl).origin);
+    expect(JSON.stringify((await list(admin)).body)).toContain('hunter2');
     expect((await list(admin)).body.canEdit).toBe(true);
     const event = queryEvents({ action: ['event_subscription.created'] }, { limit: 1 }).events[0]!;
     expect(event).toMatchObject({ target: { id: made.body.subscription.id }, projectId: team });
