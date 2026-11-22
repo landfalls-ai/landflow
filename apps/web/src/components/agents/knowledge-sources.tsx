@@ -24,7 +24,7 @@ import { Field } from './dialog';
 export function sourceStatusLine(source: SourceView, now = Date.now()): string {
   if (source.running) return 'Syncing now…';
   const parts: string[] = [];
-  if (source.paused) parts.push(`Paused${source.pausedReason ? `: ${source.pausedReason}` : ''}`);
+  if (source.paused) parts.push(source.pausedReason && !/^paused/i.test(source.pausedReason) ? `Paused: ${source.pausedReason}` : 'Paused');
   if (source.lastRun) parts.push(`${syncStatusLabel(source.lastRun.status)} ${timeAgo(source.lastRun.startedAt)}`);
   else if (!source.paused) parts.push('Not synced yet');
   if (!source.paused && source.nextAt && source.schedule !== 'manual') {
@@ -202,16 +202,16 @@ function HistorySheet({ agentId, toolId, source, onClose }: { agentId: string; t
   }, [load]);
   const columns: Array<GridColumn<SyncRunView>> = [
     { key: 'startedAt', label: 'Started', type: 'text', format: (v) => timeAgo(String(v)), width: 90 },
-    { key: 'trigger', label: 'By', type: 'text', format: (v) => (v === 'manual' ? 'Sync now' : 'Schedule'), width: 90 },
-    { key: 'status', label: 'Result', type: 'text', format: (v) => syncStatusLabel(v as SyncRunView['status']), width: 100 },
-    { key: 'counts', label: 'What changed', type: 'text', render: (row) => <span>{syncSummary(row)}</span>, width: 320 },
-    { key: 'note', label: 'Note', type: 'text', render: (row) => <span title={row.errors.map((e) => `${e.item}: ${e.reason}`).join('\n')}>{[row.note, row.errors[0] && `${row.errors[0].item}: ${row.errors[0].reason}`].filter(Boolean).join(' · ')}</span>, width: 300 },
+    { key: 'trigger', label: 'By', type: 'text', format: (v) => (v === 'manual' ? 'Manual' : 'Schedule'), width: 100 },
+    { key: 'status', label: 'Result', type: 'text', format: (v) => syncStatusLabel(v as SyncRunView['status']), width: 120 },
+    { key: 'counts', label: 'What changed', type: 'text', render: (row) => <span>{syncSummary(row)}</span>, width: 460 },
+    { key: 'note', label: 'Note', type: 'text', render: (row) => <span title={row.errors.map((e) => `${e.item}: ${e.reason}`).join('\n')}>{[row.note, row.errors[0] && `${row.errors[0].item}: ${row.errors[0].reason}`].filter(Boolean).join(' · ')}</span>, width: 260 },
   ];
   return (
-    <Sheet open onClose={onClose} title={`History: ${source.name}`} className="md:max-w-[760px]">
+    <Sheet open onClose={onClose} title={`History: ${source.name}`} className="md:max-w-[960px]">
       <div className="space-y-2 p-3" data-testid="kb-source-history">
         {problem && <p className="text-[12px] text-rd">{problem}</p>}
-        <DataGrid columns={columns} rows={runs ?? []} readOnly minWidth={700} label="Sync runs" empty={<span className="text-[12px] text-t3">{runs ? 'No syncs yet.' : 'Loading…'}</span>} className="max-h-[50dvh]" />
+        <DataGrid columns={columns} rows={runs ?? []} readOnly minWidth={1000} label="Sync runs" empty={<span className="text-[12px] text-t3">{runs ? 'No syncs yet.' : 'Loading…'}</span>} className="max-h-[50dvh]" />
         {next && (
           <Button variant="outline" size="sm" onClick={() => void load(next)}>
             Older runs
