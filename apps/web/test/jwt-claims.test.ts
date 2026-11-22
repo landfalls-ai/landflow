@@ -179,3 +179,21 @@ describe('the JWT Auth credential', () => {
     expect(await test({ keyType: 'passphrase', secret: 's' })).toMatchObject({ ok: true });
   });
 });
+
+describe('the shared bound-claims parser (C18 W4a)', () => {
+  it('round-trips through formatBoundClaims and is the parser the server re-exports', async () => {
+    const shared = await import('@/lib/shared/bound-claims');
+    const text = '# who may call\nrepository: my-org/app\nsub: repo:my-org/app:ref:refs/heads/*';
+    const parsed = shared.parseBoundClaims(text);
+    expect(parsed.problems).toEqual([]);
+    expect(shared.formatBoundClaims(parsed.claims)).toBe('repository: my-org/app\nsub: repo:my-org/app:ref:refs/heads/*');
+    expect(shared.parseBoundClaims(shared.formatBoundClaims(parsed.claims)).claims).toEqual(parsed.claims);
+    expect(parseBoundClaims).toBe(shared.parseBoundClaims);
+  });
+
+  it('imports nothing from the server', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(join(process.cwd(), 'src/lib/shared/bound-claims.ts'), 'utf8');
+    expect(source).not.toMatch(/from '[^']*server/);
+  });
+});

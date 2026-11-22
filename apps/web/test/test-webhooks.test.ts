@@ -390,6 +390,23 @@ describe('test webhooks', () => {
     await listening.closed;
   });
 
+  it('a single-use JWT is spent by the test URL too (the token is checked before the listener is taken)', async () => {
+    const { SignJWT } = await import('jose');
+    const login = credentials.create({ name: 'Test hook jwt', type: 'core.jwtAuth', data: { keyType: 'passphrase', secret: 'tw-single-use-secret', algorithm: 'HS256', singleUse: true } });
+    const token = await new SignJWT({ sub: 'ci' }).setProtectedHeader({ alg: 'HS256' }).setJti('tw-once').setExpirationTime('5m').sign(new TextEncoder().encode('tw-single-use-secret'));
+    const wf = workflowOf('wf_tw_single', [hook('tw-single', { authentication: 'jwtAuth' }, { jwtAuth: { id: login.id, name: login.name } })], []);
+    let listening = await listen('wf_tw_single', 'Hook', wf);
+    expect((await postJson('tw-single', {}, { authorization: `Bearer ${token}` })).status).toBe(200);
+    await listening.closed;
+    listening = await listen('wf_tw_single', 'Hook', wf);
+    const again = await postJson('tw-single', {}, { authorization: `Bearer ${token}` });
+    expect(again.status).toBe(409);
+    // The refused call left the editor listening: a fresh token still works.
+    const fresh = await new SignJWT({ sub: 'ci' }).setProtectedHeader({ alg: 'HS256' }).setJti('tw-twice').setExpirationTime('5m').sign(new TextEncoder().encode('tw-single-use-secret'));
+    expect((await postJson('tw-single', {}, { authorization: `Bearer ${fresh}` })).status).toBe(200);
+    await listening.closed;
+  });
+
   it('stores uploaded files as item.binary, as production does', async () => {
     const listening = await listen('wf_tw_upload', 'Hook', workflowOf('wf_tw_upload', [hook('tw-upload'), noOp('After')], [['Hook', 'After']]));
     const { executionId } = await listening.next('listening');
