@@ -62,7 +62,7 @@ export function resolvePrincipal(request: Request, { touch = true }: { touch?: b
     return { ok: true, principal: { user: checked.user, via: 'api-key', apiKey: { id: checked.key.id, scopes: checked.key.scopes } } };
   }
   const found = sessionUser(readCookie(request, SESSION_COOKIE), Date.now(), { touch });
-  if (found) return { ok: true, principal: { user: found.user, via: 'session', sessionId: found.session.id, sessionMethod: found.session.method } };
+  if (found) return { ok: true, principal: { user: found.user, via: 'session', sessionId: found.session.id, sessionMethod: found.session.method, ...(enrolmentRequired(found.user, found.session.method) && { enrolOnly: true }) } };
   return { ok: true };
 }
 
@@ -145,7 +145,7 @@ export function guardRequest(request: Request | undefined): GuardResult {
 
   // A covered user without a second factor: this session may only enrol one (docs/features/authentication.md#second-factor).
   // API keys, MCP tokens and SCIM tokens are not asked.
-  if (principal.via === 'session' && enrolmentRequired(principal.user, principal.sessionMethod) && !enrolOnlyAllowed(method, path)) {
+  if (principal.enrolOnly && !enrolOnlyAllowed(method, path)) {
     return { ok: false, response: deny('mfa_enrolment_required', 'Add a second factor first: Sign-in & security', 403, { code: 'mfa_enrolment_required' }) };
   }
 

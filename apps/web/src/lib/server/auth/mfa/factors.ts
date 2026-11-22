@@ -80,6 +80,8 @@ export function startTotp(user: UserRecord): { factorId: string; secret: string;
   if (!user.passwordHash) throw new MfaError('Accounts that sign in with single sign-on use their identity provider’s second factor', 409);
   const db = authDb();
   if (rows(user.id).some((row) => row.kind === 'totp' && row.confirmed_at)) throw new MfaError('You already have an authenticator app. Remove it first to add another', 409);
+  // An enrolment left unconfirmed for UNCONFIRMED_MINUTES is dropped (anyone's), so abandoned secrets don't pile up.
+  for (const stale of db.all<{ id: string }>('SELECT id FROM user_mfa_factors WHERE confirmed_at IS NULL AND created_at < ?', new Date(Date.now() - UNCONFIRMED_MINUTES * 60_000).toISOString())) db.delete('user_mfa_factors', { id: stale.id });
   const secret = newTotpSecret();
   const id = `mfa_${nanoid(14)}`;
   db.transaction(() => {
@@ -98,7 +100,7 @@ async function claimStep(factorId: string, step: number, now: number): Promise<b
 /** Confirm an enrolment with a current code. The first confirmed factor makes the recovery codes, returned once. */
 export async function confirmTotp(user: UserRecord, factorId: string, code: string, now = Date.now()): Promise<{ ok: boolean; recoveryCodes?: string[] }> {
   const row = authDb().get<FactorRow>('SELECT * FROM user_mfa_factors WHERE id = ? AND user_id = ?', factorId, user.id);
-  if (!row || row.kind !== 'totp' || row.confirmed_at || !row.secret) throw new MfaError('Nothing to confirm: start again', 404);
+  if (!row || row.kind !== 'totp' || row.confirmed_at || !row.secret || now - Date.parse(row.created_at) > UNCONFIRMED_MINUTES * 60_000) throw new MfaError('Nothing to confirm: start again', 404);
   const step = matchingStep(credentials.openSecret(row.secret), code, now);
   if (step === undefined || !(await claimStep(row.id, step, now))) return { ok: false };
   const first = !hasConfirmedFactor(user.id);

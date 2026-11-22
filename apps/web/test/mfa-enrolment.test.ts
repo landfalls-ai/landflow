@@ -55,7 +55,7 @@ const codeFor = (secret: string) => (later(), totp.totpAt(secret, totp.stepAt())
 
 /** Add and confirm an authenticator app through the routes, as the signed-in person. */
 async function enrol(session: string) {
-  const started = await call(totpRoute.POST, '/api/me/mfa/totp', { session });
+  const started = await call(totpRoute.POST, '/api/me/mfa/totp', { session, body: { password: PASSWORD } });
   expect(started.status, JSON.stringify(started.body)).toBe(201);
   const confirmed = await call(confirmRoute.POST, `/api/me/mfa/totp/${started.body.factorId}/confirm`, { session, body: { code: codeFor(started.body.secret) } }, { id: started.body.factorId });
   expect(confirmed.status, JSON.stringify(confirmed.body)).toBe(200);
@@ -130,7 +130,7 @@ describe('your factors', () => {
   it('starts, confirms (with recovery codes once), lists without a secret and audits it', async () => {
     const user = await newUser('member');
     const session = auth.createSession(user, 'password').token;
-    const started = await call(totpRoute.POST, '/api/me/mfa/totp', { session });
+    const started = await call(totpRoute.POST, '/api/me/mfa/totp', { session, body: { password: PASSWORD } });
     expect(started.body.qr).toMatch(/^data:image\/svg\+xml;base64,/);
     expect(started.body.otpauthUrl).toContain(started.body.secret);
 
@@ -145,7 +145,7 @@ describe('your factors', () => {
     expect(JSON.stringify(state.body)).not.toContain(started.body.secret);
     expect(queryEvents({ action: ['auth.mfa_added'] }).events.some((e) => e.target?.id === user.id)).toBe(true);
     // A second authenticator app is refused while one is there.
-    expect((await call(totpRoute.POST, '/api/me/mfa/totp', { session })).status).toBe(409);
+    expect((await call(totpRoute.POST, '/api/me/mfa/totp', { session, body: { password: PASSWORD } })).status).toBe(409);
   });
 
   it('refuses to remove a factor without a recent check, then removes it after a step-up and drops the codes', async () => {
@@ -196,7 +196,7 @@ describe('your factors', () => {
   it('does not let an account without a password enrol (single sign-on accounts use their provider)', async () => {
     const sso = await auth.createUser({ email: `sso${++n}@example.test`, name: 'Sso', role: 'member', oidc: { issuer: 'https://idp.test', subject: 'abc' } });
     const session = auth.createSession(sso, 'oidc').token;
-    expect((await call(totpRoute.POST, '/api/me/mfa/totp', { session })).status).toBe(409);
+    expect((await call(totpRoute.POST, '/api/me/mfa/totp', { session, body: { password: PASSWORD } })).status).toBe(409);
     expect((await call(meRoute.GET, '/api/me/mfa', { session })).body.canEnrol).toBe(false);
   });
 });

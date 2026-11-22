@@ -16,6 +16,11 @@ export interface Principal {
   sessionId?: string;
   /** How the session was made (via session): the guard's enrolment rule reads it. */
   sessionMethod?: SessionMethod;
+  /**
+   * A covered account with no second factor yet (LANDFLOW_MFA_REQUIRED): this session may only enrol one. The guard refuses it
+   * everywhere else; a public route that reads the session cookie itself must treat it as no one (see ./policy `enrolmentRequired`).
+   */
+  enrolOnly?: boolean;
   /** The key (via api-key). */
   apiKey?: { id: string; scopes: ApiKeyScope[] };
 }

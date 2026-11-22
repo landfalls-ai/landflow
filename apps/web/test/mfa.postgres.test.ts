@@ -87,4 +87,13 @@ describe.skipIf(!enabled)('second-factor one-use decisions in queue mode on Post
     const results = await Promise.all(Array.from({ length: 8 }, (_v, i) => bump(i % 2 ? main : worker)));
     expect(results.filter(Boolean)).toHaveLength(5);
   });
+
+  it('claimAttempt lets at most five of twenty parallel answers be evaluated, across two mains', async () => {
+    const { claimAttempt } = await import('@/lib/server/auth/mfa/challenges');
+    const { createHash } = await import('node:crypto');
+    const token = 'parallel-token';
+    main.insertNew('mfa_challenges', { id: createHash('sha256').update(token).digest('hex'), user_id: 'usr_a', purpose: 'sign-in', first_method: 'password', wrong: 0, created_at: now(), expires_at: until5(), used_at: null });
+    const results = await Promise.all(Array.from({ length: 20 }, (_v, i) => claimAttempt(token, Date.now(), i % 2 ? main : worker)));
+    expect(results.filter((r) => r !== undefined)).toHaveLength(5);
+  });
 });

@@ -20,15 +20,17 @@ interface Started {
 /** `initial` shows the enrolment already started (tests render it on the server). */
 export function TotpEnrol({ onConfirmed, onCancel, initial }: { onConfirmed: (recoveryCodes?: string[]) => void; onCancel?: () => void; initial?: Started }) {
   const [started, setStarted] = useState<Started | undefined>(initial);
+  const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 
-  const start = async () => {
+  const start = async (event: FormEvent) => {
+    event.preventDefault();
     setBusy(true);
     setError(undefined);
     try {
-      setStarted(await api<Started>('/api/me/mfa/totp', { method: 'POST' }));
+      setStarted(await api<Started>('/api/me/mfa/totp', { method: 'POST', json: { password } }));
     } catch (caught) {
       setError((caught as Error).message);
     } finally {
@@ -51,20 +53,25 @@ export function TotpEnrol({ onConfirmed, onCancel, initial }: { onConfirmed: (re
 
   if (!started) {
     return (
-      <div className="space-y-3">
+      <form method="post" onSubmit={start} className="space-y-3">
         <p className="text-[12px] leading-relaxed text-t2">An authenticator app (1Password, Google Authenticator, Authy and others) makes a 6-digit code every 30 seconds. You enter it after your password.</p>
+        <label className="block max-w-[260px] max-md:max-w-none">
+          <FieldLabel>Your password</FieldLabel>
+          <Input type="password" name="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+          <span className="mt-1 block text-[11px] text-t3">Asked so nobody on a session left open can add their own app.</span>
+        </label>
         {error && <Problem message={error} />}
-        <div className="flex gap-2">
-          <Button variant="primary" size="sm" loading={busy} onClick={() => void start()}>
+        <div className="flex gap-2 max-md:flex-col">
+          <Button type="submit" variant="primary" size="sm" loading={busy} className="max-md:w-full">
             <Smartphone className="size-3.5" /> Add authenticator app
           </Button>
           {onCancel && (
-            <Button variant="ghost" size="sm" onClick={onCancel}>
+            <Button type="button" variant="ghost" size="sm" onClick={onCancel} className="max-md:w-full">
               Cancel
             </Button>
           )}
         </div>
-      </div>
+      </form>
     );
   }
   return (

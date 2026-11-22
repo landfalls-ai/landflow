@@ -58,6 +58,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   // External secrets providers and environments (promotion, pull, settings): changes are admin; anyone sees the environment.
   if (under('/api/external-secrets')) return read ? { scope: 'admin' } : { scope: 'admin', action: 'settings:manage' };
   if (under('/api/environment')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'settings:manage' };
+  // C16: resetting a person's second factors is a session's act, never an API key's (like /api/api-keys): a stolen admin key can't strip a factor.
+  if (/^\/api\/users\/[^/]+\/mfa$/.test(path)) return { scope: 'admin', action: 'users:manage', sessionOnly: true };
   if (under('/api/users')) return read ? { scope: 'admin' } : { scope: 'admin', action: 'users:manage' };
   if (under('/api/settings/mcp')) return { scope: 'admin', action: 'mcp:manage' };
   // The MCP tool browser (every exposed plugin's tools): anyone who reads workflows; the endpoints themselves are public paths.

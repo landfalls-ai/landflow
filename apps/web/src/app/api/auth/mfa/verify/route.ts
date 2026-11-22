@@ -1,7 +1,7 @@
 /**
  * POST /api/auth/mfa/verify { challenge, method: 'totp' | 'recovery', code } (public, gated by the challenge): the second
  * step of a sign-in. The challenge came from a correct password (POST /api/auth/login or a password reset); it is
- * single use, five minutes, bound to its user, and five wrong answers burn it. Failures count against the same
+ * single use, five minutes, bound to its user, and five answers (each claimed before it is checked) end it. Failures count against the same
  * per-email and per-IP limits as passwords (429 with `retryAfter`) and are audited as `auth.sign_in_failed` with reason
  * `mfa`. A right answer starts the session (`password+totp` or `password+recovery`); a recovery code also answers how
  * many are left and emails the person when mail is set up.
@@ -11,7 +11,7 @@ import { clientIp, getUser, loginLimits, signedInResponse } from '@/lib/server/a
 import { emailedOrigin } from '@/lib/server/auth/cookies';
 import { localSignInAllowed } from '@/lib/server/auth/local-sign-in';
 import { mailConfigured, recoveryUsedMessage, sendMail } from '@/lib/server/auth/mail';
-import { noteWrong, peekChallenge, useChallenge } from '@/lib/server/auth/mfa/challenges';
+import { claimAttempt, MAX_WRONG, peekChallenge, useChallenge } from '@/lib/server/auth/mfa/challenges';
 import { verifyTotp } from '@/lib/server/auth/mfa/factors';
 import { useRecoveryCode } from '@/lib/server/auth/mfa/recovery';
 import { recordAudit } from '@/lib/server/audit';
@@ -38,13 +38,16 @@ export const POST = handler(async (request: Request) => {
   }
   if (!challenged || !user || user.disabledAt || !localSignInAllowed(user)) return error(EXPIRED, 401);
 
+  // Claim one of the challenge's five answers before looking at the code, so answers in flight at once (several mains) can't exceed five.
+  const attempt = await claimAttempt(challenge);
+  if (attempt === undefined) return error('Too many wrong codes. Sign in again.', 401);
   const recovered = method === 'recovery' ? await useRecoveryCode(user.id, code) : undefined;
   const ok = method === 'totp' ? await verifyTotp(user.id, code) : recovered?.ok === true;
   if (!ok) {
     await Promise.all([limits.email.hit(user.email), limits.ip.hit(ip)]);
     recordAudit({ action: 'auth.sign_in_failed', outcome: 'failure', actor: 'anonymous', target: { type: 'user', id: user.id }, summary: 'Failed second-factor sign-in', details: { reason: 'mfa', method } });
     logger.info('second factor failed', { 'landflow.auth.reason': 'mfa' });
-    if ((await noteWrong(challenge)) === 'burned') return error('Too many wrong codes. Sign in again.', 401);
+    if (attempt >= MAX_WRONG) return error('Too many wrong codes. Sign in again.', 401);
     return error(method === 'totp' ? 'That code didn’t work. Check the code in your app (and that your device’s clock is right), or use a recovery code.' : 'That recovery code didn’t work. Each one works once.', 401);
   }
   // The code was right; the challenge is spent here, so one challenge makes one session.

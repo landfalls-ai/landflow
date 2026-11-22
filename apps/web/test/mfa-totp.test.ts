@@ -157,10 +157,9 @@ describe('factors, recovery codes and challenges (stored)', () => {
     expect(challenges.peekChallenge(token)).toBeUndefined();
 
     const burnt = await challenges.openChallenge(user, 'sign-in', 'password');
-    for (let i = 0; i < 4; i++) expect(await challenges.noteWrong(burnt)).toBe('again');
-    expect(await challenges.noteWrong(burnt)).toBe('burned');
+    for (let i = 1; i <= 5; i++) expect(await challenges.claimAttempt(burnt)).toBe(i);
+    expect(await challenges.claimAttempt(burnt)).toBeUndefined();
     expect(challenges.peekChallenge(burnt)).toBeUndefined();
-    expect(await challenges.useChallenge(burnt)).toBeUndefined();
 
     const old = await challenges.openChallenge(user, 'sign-in', 'reset');
     const later = Date.now() + 5 * 60_000 + 1000;
