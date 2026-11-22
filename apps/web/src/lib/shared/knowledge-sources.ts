@@ -9,7 +9,7 @@ export type SourceSchedule = 'manual' | 'hourly' | 'daily';
 
 export const SOURCE_KINDS: readonly SourceKind[] = ['folder', 's3', 'crawl', 'googleDrive'];
 /** The kinds a person can add: a connector that is not finished is left out here (C22-D1) and nowhere else. */
-export const ENABLED_SOURCE_KINDS: readonly SourceKind[] = ['folder'];
+export const ENABLED_SOURCE_KINDS: readonly SourceKind[] = ['folder', 's3', 'crawl', 'googleDrive'];
 export const SOURCE_SCHEDULES: readonly SourceSchedule[] = ['manual', 'hourly', 'daily'];
 
 export const SOURCE_KIND_LABEL: Record<SourceKind, string> = { folder: 'Folder', googleDrive: 'Google Drive', s3: 'S3 bucket', crawl: 'Website' };

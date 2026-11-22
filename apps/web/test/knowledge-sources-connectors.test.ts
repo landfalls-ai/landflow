@@ -9,14 +9,23 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { fakeS3, putObject, deleteObject, S3_SECRET_KEY } from '@landflow/test-fakes/s3';
 import { fakeSite, removePage, setPage, setRobots } from '@landflow/test-fakes/site';
+import { acceptOnly, DOC, fakeDrive, putFile, removeFile } from '@landflow/test-fakes/drive';
+import { defineCredentialType, definePlugin } from '@landflow/sdk';
+import { startFakeOAuth2 } from './fake-oauth2';
 import type { ItemRow } from '@/lib/server/knowledge-sources/store';
 
-Object.assign(process.env, { LANDFLOW_DATA_DIR: mkdtempSync(join(tmpdir(), 'landflow-ks-conn-')), LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '' });
+Object.assign(process.env, { LANDFLOW_PUBLIC_URL: 'http://landflow.test', LANDFLOW_DATA_DIR: mkdtempSync(join(tmpdir(), 'landflow-ks-conn-')), LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '' });
 
 const { s3Connector } = await import('@/lib/server/knowledge-sources/connectors/s3');
 const { SourceError } = await import('@/lib/server/knowledge-sources/connectors/types');
 const { crawlConnector, CRAWL_SPACING_MS } = await import('@/lib/server/knowledge-sources/connectors/crawl');
 const { parseRobots, robotsAllow } = await import('@/lib/server/knowledge-sources/connectors/robots');
+const { driveConnector, driveBase, vaultTokens } = await import('@/lib/server/knowledge-sources/connectors/drive');
+const { registry } = await import('@/lib/server/plugins/registry');
+const { corePlugin } = await import('@/lib/server/nodes');
+const { credentials } = await import('@/lib/server/credentials/vault');
+const authorizeRoute = await import('@/app/api/credentials/[id]/oauth2/authorize/route');
+const callbackRoute = await import('@/app/api/oauth2/callback/route');
 const signal = new AbortController().signal;
 const asPrevious = (items: Array<{ key: string; version: string; name: string; extra?: string }>): Map<string, ItemRow> => new Map(items.map((i) => [i.key, { source_id: 's', item_key: i.key, version: i.version, name: i.name, size: null, extra: i.extra ?? null, synced_at: '' }]));
 
@@ -245,5 +254,171 @@ describe('crawl', () => {
     } finally {
       delete process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE;
     }
+  });
+});
+
+describe('Google Drive', () => {
+  const drive = fakeDrive();
+  const folder = (includeSubfolders = false, folderId = 'folder-top') => ({ folderId, includeSubfolders });
+  const tokens = (initial: string, renewed = initial) => {
+    const calls = { token: 0, renew: 0 };
+    return { calls, source: { token: async () => (calls.token++, initial), renew: async () => (calls.renew++, renewed) } };
+  };
+  beforeAll(async () => {
+    await drive.start();
+    process.env.LANDFLOW_KNOWLEDGE_DRIVE_URL = drive.url;
+  });
+  afterAll(async () => {
+    delete process.env.LANDFLOW_KNOWLEDGE_DRIVE_URL;
+    await drive.stop();
+  });
+  beforeEach(() => drive.reset());
+
+  it('lists the three files of the folder, leaving the shortcut and the subfolder (AS-1)', async () => {
+    const connector = driveConnector(folder(), tokens(drive.token).source);
+    const listing = await connector.list(signal, new Map());
+    expect(listing.complete).toBe(true);
+    expect(listing.items.map((i) => i.name).sort()).toEqual(['Expenses.md', 'Onboarding.md', 'holidays.txt']);
+    expect(listing.skipped).toBe(1); // the shortcut
+    expect(listing.items.find((i) => i.key === 'doc-expenses')!.url).toMatch(/\/doc-expenses\/view$/);
+  });
+
+  it('walks subfolders only when asked; a Sheet is a CSV item', async () => {
+    const listing = await driveConnector(folder(true), tokens(drive.token).source).list(signal, new Map());
+    expect(listing.items.map((i) => i.name).sort()).toEqual(['Expenses.md', 'On call.md', 'Onboarding.md', 'Rota.csv', 'holidays.txt']);
+    const query = (r: { query: URLSearchParams }) => r.query.get('q');
+    expect(drive.requests().map(query).filter(Boolean)).toEqual(["'folder-top' in parents and trashed = false", "'folder-sub' in parents and trashed = false"]);
+  });
+
+  it('versions: modifiedTime for a Doc, md5 for a file; an edit moves only its own version (AS-1)', async () => {
+    const connector = driveConnector(folder(), tokens(drive.token).source);
+    const first = await connector.list(signal, new Map());
+    expect(first.items.find((i) => i.key === 'txt-holidays')!.version).toMatch(/^[0-9a-f]{32}$/);
+    expect(first.items.find((i) => i.key === 'doc-expenses')!.version).toMatch(/^2026-01-01T/);
+    await putFile(drive, { id: 'doc-expenses', name: 'Expenses', mimeType: DOC, parents: ['folder-top'], content: '# Expenses\n\nNew rules.\n' });
+    const second = await connector.list(signal, new Map());
+    const moved = second.items.filter((i) => i.version !== first.items.find((j) => j.key === i.key)!.version).map((i) => i.key);
+    expect(moved).toEqual(['doc-expenses']);
+    expect(new TextDecoder().decode((await connector.fetch(second.items.find((i) => i.key === 'doc-expenses')!, signal)).bytes)).toContain('New rules.');
+  });
+
+  it('exports Docs as Markdown, Sheets as CSV, and downloads other files as they are', async () => {
+    const connector = driveConnector(folder(true), tokens(drive.token).source);
+    const items = (await connector.list(signal, new Map())).items;
+    const text = async (key: string) => new TextDecoder().decode((await connector.fetch(items.find((i) => i.key === key)!, signal)).bytes);
+    expect(await text('doc-onboarding')).toContain('# Onboarding');
+    expect(await text('sheet-rota')).toContain('1,Ana');
+    expect(await text('txt-holidays')).toContain('first Monday');
+    const exports = drive.requests().filter((r) => r.path.endsWith('/export')).map((r) => r.query.get('mimeType'));
+    expect(exports).toEqual(['text/markdown', 'text/csv']);
+    expect(drive.requests().some((r) => r.query.get('alt') === 'media')).toBe(true);
+  });
+
+  it('falls back to a text export when Google will not give Markdown', async () => {
+    const strict = fakeDrive({ markdownExport: false });
+    await strict.start();
+    process.env.LANDFLOW_KNOWLEDGE_DRIVE_URL = strict.url;
+    try {
+      const connector = driveConnector(folder(), tokens(strict.token).source);
+      const item = (await connector.list(signal, new Map())).items.find((i) => i.key === 'doc-expenses')!;
+      expect(new TextDecoder().decode((await connector.fetch(item, signal)).bytes)).toContain('# Expenses');
+      expect(strict.requests().filter((r) => r.path.endsWith('/export')).map((r) => r.query.get('mimeType'))).toEqual(['text/markdown', 'text/plain']);
+    } finally {
+      process.env.LANDFLOW_KNOWLEDGE_DRIVE_URL = drive.url;
+      await strict.stop();
+    }
+  });
+
+  it('a file removed from Drive is no longer listed', async () => {
+    await removeFile(drive, 'doc-onboarding');
+    expect((await driveConnector(folder(), tokens(drive.token).source).list(signal, new Map())).items.map((i) => i.key)).not.toContain('doc-onboarding');
+  });
+
+  it('a 401 renews the token once and asks again; the error of a refused folder keeps Google’s words and no token', async () => {
+    await acceptOnly(drive, 'ya29.renewed');
+    const t = tokens('ya29.stale', 'ya29.renewed');
+    const listing = await driveConnector(folder(), t.source).list(signal, new Map());
+    expect(listing.items).toHaveLength(3);
+    expect(t.calls).toEqual({ token: 1, renew: 1 });
+    expect(drive.requests().filter((r) => r.status === 401)).toHaveLength(1);
+    const refused = tokens('ya29.stale', 'ya29.still-wrong');
+    const message = await driveConnector(folder(), refused.source).list(signal, new Map()).catch((e: Error) => e.message);
+    expect(message).toBe('Google Drive answered 401: Invalid Credentials');
+    expect(refused.calls.renew).toBe(1); // not in a loop
+  });
+
+  it('a folder Google does not know is a failure of the listing', async () => {
+    await expect(driveConnector(folder(false, 'nope-nope'), tokens(drive.token).source).list(signal, new Map())).resolves.toMatchObject({ items: [] }); // an empty folder lists empty, like Google
+    drive.script({ status: 404, times: 1 });
+    await expect(driveConnector(folder(), tokens(drive.token).source).list(signal, new Map())).rejects.toThrow(/Google Drive answered 404/);
+  });
+
+  it('LANDFLOW_KNOWLEDGE_DRIVE_URL points the API at the fake; the production profile ignores it', () => {
+    expect(driveBase()).toBe(drive.url);
+    process.env.LANDFLOW_PROFILE = 'production';
+    try {
+      expect(driveBase()).toBe('https://www.googleapis.com');
+    } finally {
+      delete process.env.LANDFLOW_PROFILE;
+    }
+  });
+
+  describe('with the vault’s OAuth2 credential', () => {
+    let oauth: Awaited<ReturnType<typeof startFakeOAuth2>>;
+    beforeAll(async () => {
+      oauth = await startFakeOAuth2({ expiresIn: 3600 });
+      const google = definePlugin({
+        info: { id: 'google', name: 'Google', version: '1.0.0', language: 'typescript' },
+        credentialTypes: [
+          defineCredentialType({
+            name: 'googleOAuth2Api',
+            displayName: 'Google OAuth2',
+            extends: ['oAuth2Api'],
+            properties: [
+              { name: 'authUrl', displayName: 'Authorization URL', type: 'hidden', default: `${oauth.url}/authorize` },
+              { name: 'accessTokenUrl', displayName: 'Access Token URL', type: 'hidden', default: `${oauth.url}/token` },
+              { name: 'scope', displayName: 'Scope', type: 'hidden', default: 'drive.readonly' },
+            ],
+          }),
+        ],
+        nodes: [],
+      });
+      registry.registerBuiltin(corePlugin);
+      registry.registerBuiltin(google);
+    });
+    afterAll(() => oauth.close());
+
+    /** Connect through the routes the way a browser would. */
+    async function connected(): Promise<string> {
+      const created = credentials.create({ name: 'Drive', type: 'google.googleOAuth2Api', data: { clientId: 'client-1', clientSecret: 'secret-1' } as never });
+      const params = { params: Promise.resolve({ id: created.id }) };
+      const start = await authorizeRoute.GET(new Request(`http://landflow.test/api/credentials/${created.id}/oauth2/authorize`), params);
+      const consent = await fetch(new URL(start.headers.get('location')!), { redirect: 'manual' });
+      const page = await callbackRoute.GET(new Request(new URL(consent.headers.get('location')!), { headers: { cookie: start.headers.get('set-cookie')!.split(';')[0] } }));
+      expect(page.status).toBe(200);
+      return created.id;
+    }
+
+    it('renews a token that is about to expire once, before the first request, and sends the new one', async () => {
+      const id = await connected();
+      const old = credentials.dataFor({ id, name: 'Drive' }, 'google.googleOAuth2Api').accessToken;
+      const stored = credentials.oauth2(id).token!;
+      credentials.saveOAuth2Token(id, { ...stored, expires_at: new Date(Date.now() - 5_000).toISOString() });
+      await acceptOnly(drive, '*');
+      const refreshes = () => oauth.tokenRequests.filter((r) => r.params.grant_type === 'refresh_token').length;
+      const before = refreshes();
+      const listing = await driveConnector(folder(), vaultTokens(id)).list(signal, new Map());
+      expect(listing.items).toHaveLength(3);
+      expect(refreshes()).toBe(before + 1);
+      const sent = drive.requests().at(-1)!.headers.authorization;
+      expect(sent).toBe(`Bearer ${credentials.dataFor({ id, name: 'Drive' }, 'google.googleOAuth2Api').accessToken}`);
+      expect(sent).not.toBe(`Bearer ${old}`);
+    });
+
+    it('a credential that was never connected says so in words', async () => {
+      const created = credentials.create({ name: 'Unconnected', type: 'google.googleOAuth2Api', data: { clientId: 'client-1', clientSecret: 'secret-1' } as never });
+      await expect(driveConnector(folder(), vaultTokens(created.id)).list(signal, new Map())).rejects.toThrow(/not connected/);
+      await expect(driveConnector(folder(), vaultTokens('cred-gone')).list(signal, new Map())).rejects.toThrow(/deleted/);
+    });
   });
 });
