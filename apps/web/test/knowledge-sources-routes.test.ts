@@ -166,6 +166,27 @@ describe('creating, listing, changing, removing', () => {
   });
 });
 
+describe('the same place, collection-wide (review)', () => {
+  it('changing a source to a place another source of the same collection has is 409, also when that source is on another agent; removing leaves no state', async () => {
+    const one = agentIn(A);
+    const first = folderOf(unique('shared-a'));
+    const second = folderOf(unique('shared-b'));
+    const a = await create(one.id, folderInput(first));
+    const b = await create(one.id, folderInput(second));
+    const clash = await call(oneRoute.PATCH, 'PATCH', one.id, { sourceId: b.body.id, json: { settings: { folder: first } } });
+    expect(clash.status).toBe(409);
+    expect(store.getSource(b.body.id)!.location).toBe(second);
+    // a second agent on the same collection: its source for the same folder is the same place
+    const twin = agentStore.create({ name: unique('twin'), tools: [one.tools[0]] });
+    setHomeProject('agent', twin.id, A);
+    expect((await create(twin.id, folderInput(first))).status).toBe(409);
+    const moved = await call(oneRoute.PATCH, 'PATCH', one.id, { sourceId: b.body.id, json: { settings: { folder: folderOf(unique('free')) } } });
+    expect(moved.status).toBe(200);
+    expect((await call(oneRoute.DELETE, 'DELETE', one.id, { sourceId: a.body.id })).status).toBe(200);
+    expect(claim.stateOf(a.body.id)).toBeUndefined();
+  });
+});
+
 describe('credentials (AS-10)', () => {
   const s3Credential = (project?: string) => {
     const credential = credentials.create({ name: unique('LocalStack'), type: 'core.s3Api', data: { endpoint: 'http://127.0.0.1:54566', region: 'us-east-1', accessKeyId: 'AKIADUMMYKEYFORTESTS', secretAccessKey: 'dummy-secret-for-tests-only', forcePathStyle: true } as never });

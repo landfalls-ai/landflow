@@ -21,6 +21,8 @@ export const knowledgeSourceScheduler = singleton('knowledge-source-scheduler', 
   let timer: ReturnType<typeof setInterval> | undefined;
   let ticking = false;
   const running = new Set<Promise<unknown>>();
+  /** Sources whose agent was not found on the last checks (a source is deleted only after two in a row). */
+  const missing = new Map<string, number>();
 
   /** Run what is due at `now` (tests pass a clock and a connector). Returns how many syncs it started. */
   async function tick(now = Date.now(), options: SyncOptions = {}): Promise<number> {
@@ -37,11 +39,18 @@ export const knowledgeSourceScheduler = singleton('knowledge-source-scheduler', 
       let started = 0;
       for (const row of allSourceRows()) {
         if (!agentStore.get(row.agent_id)) {
-          // D15: an agent that was deleted takes its sources with it.
+          // D15: an agent that was deleted takes its sources with it. A store that has not loaded yet (a leader that just took over
+          // in Postgres mode) also answers "no such agent", so nothing is deleted unless the store holds agents and the agent was
+          // missing on two checks in a row; until then the source is only skipped.
+          const missed = (missing.get(row.id) ?? 0) + 1;
+          missing.set(row.id, missed);
+          if (missed < 2 || !agentStore.list().length) continue;
+          missing.delete(row.id);
           deleteSource(row.id);
           recordAudit({ action: 'knowledge_source.removed', actor: 'system', target: { type: 'agent', id: row.agent_id }, project: null, summary: `Removed the ${row.kind} source “${row.name}”: its agent was deleted`, details: { sourceId: row.id, kind: row.kind, source: row.name, agentDeleted: true } });
           continue;
         }
+        missing.delete(row.id);
         if (!knowledgeConfigOf(row.agent_id, row.tool_id)) {
           // D15: a knowledge base that was removed pauses its sources and says why.
           if (!row.paused) updateSourceRow(row.id, { paused: 1, paused_reason: 'The knowledge base was removed' });
@@ -53,7 +62,7 @@ export const knowledgeSourceScheduler = singleton('knowledge-source-scheduler', 
         const due = state?.next_at ? state.next_at <= new Date(now).toISOString() : row.schedule !== 'manual';
         if (!due) continue;
         if (running.size >= MAX_CONCURRENT_SYNCS) break;
-        const sync = await startSync(row.id, 'schedule', { ...options, now: () => now });
+        const sync = await startSync(row.id, 'schedule', options); // the real clock: `now` only decides what is due
         if (!sync) continue; // another process took it
         started++;
         const work = sync.done.finally(() => running.delete(work));

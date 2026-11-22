@@ -14,12 +14,16 @@ import { createHash } from 'node:crypto';
 import type { CrawlSettings } from '../../../shared/knowledge-sources';
 import { safeFetch } from '../../net/safe-fetch';
 import type { FileInput } from '../../rag/files';
+import { readCapped, TooLargeError, megabytes } from './bounded';
 import { CRAWL_AGENT, parseRobots, robotsAllow, type RobotsRules } from './robots';
 import { SourceError, type Connector, type SourceItem } from './types';
 
 /** Milliseconds between two requests to the site. */
 export const CRAWL_SPACING_MS = 500;
-const MAX_PAGE_BYTES = 5 * 1024 * 1024;
+const MAX_PAGE_BYTES = 2 * 1024 * 1024;
+const MAX_ROBOTS_BYTES = 512 * 1024;
+/** What the listing keeps in memory for `fetch` (changed pages); past it a page is left for the next sync and the listing is not whole. */
+export const KEPT_BUDGET_BYTES = 100 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
 const MAX_LINKS_KEPT = 200;
 const SKIPPED_EXTENSIONS = /\.(png|jpe?g|gif|svg|webp|ico|css|js|mjs|zip|gz|tgz|mp4|mp3|wav|woff2?|ttf|exe|dmg)$/i;
@@ -52,11 +56,13 @@ function linksOf(html: string, base: URL): string[] {
 
 type Hop = { kind: 'page'; url: URL; response: Response } | { kind: 'offsite'; to: string } | { kind: 'seen'; url: URL };
 
-export function crawlConnector(settings: CrawlSettings, options: { spacingMs?: number } = {}): Connector {
+export function crawlConnector(settings: CrawlSettings, options: { spacingMs?: number; keptBudgetBytes?: number } = {}): Connector {
   const spacing = options.spacingMs ?? CRAWL_SPACING_MS;
+  const keptBudget = options.keptBudgetBytes ?? KEPT_BUDGET_BYTES;
   const start = new URL(settings.startUrl);
   const kept = new Map<string, { file: FileInput }>();
   let last = 0;
+  let keptBytes = 0;
 
   /** One request, at least `spacing` after the last. */
   async function request(url: URL, headers: Record<string, string>, signal: AbortSignal): Promise<Response> {
@@ -96,7 +102,7 @@ export function crawlConnector(settings: CrawlSettings, options: { spacingMs?: n
 
   async function readRobots(signal: AbortSignal): Promise<RobotsRules> {
     const response = await request(new URL('/robots.txt', start.origin), {}, signal);
-    if (response.ok) return parseRobots((await response.text()).slice(0, 512 * 1024));
+    if (response.ok) return parseRobots(decode(await readCapped(response.body, MAX_ROBOTS_BYTES, { truncate: true })));
     await response.body?.cancel().catch(() => undefined);
     if ([401, 403, 404, 410].includes(response.status) || (response.status >= 300 && response.status < 400)) return parseRobots(''); // no robots.txt: everything is allowed
     throw new SourceError(`robots.txt could not be read (${response.status}); the crawl does not start without it`);
@@ -167,9 +173,12 @@ export function crawlConnector(settings: CrawlSettings, options: { spacingMs?: n
             await response.body?.cancel().catch(() => undefined);
             continue; // an image, a download: not a page
           }
-          const bytes = new Uint8Array(await response.arrayBuffer());
-          if (bytes.length > MAX_PAGE_BYTES) {
-            problems.push({ item: finalUrl, reason: `Too large (${Math.round(bytes.length / 1024 / 1024)} MB; the limit for a page is ${MAX_PAGE_BYTES / 1024 / 1024} MB)` });
+          let bytes: Uint8Array;
+          try {
+            bytes = await readCapped(response.body, MAX_PAGE_BYTES);
+          } catch (caught) {
+            if (!(caught instanceof TooLargeError)) throw caught;
+            problems.push({ item: finalUrl, reason: `Too large (the limit for a page is ${megabytes(MAX_PAGE_BYTES)})` });
             complete = false;
             continue;
           }
@@ -179,9 +188,19 @@ export function crawlConnector(settings: CrawlSettings, options: { spacingMs?: n
           const version = etag ? `etag:${etag}` : modified ? `lm:${modified}` : `sha:${createHash('sha256').update(bytes).digest('hex')}`;
           links = type === 'text/html' || type === 'application/xhtml+xml' ? linksOf(text, hop.url) : [];
           const name = (type === 'text/plain' || type === 'text/markdown' ? undefined : titleOf(text)) ?? (hop.url.pathname === '/' ? hop.url.host : hop.url.pathname);
+          const changed = before?.version !== version;
+          if (changed && keptBytes + bytes.length > keptBudget) {
+            problems.push({ item: finalUrl, reason: 'Left for the next sync: this sync already holds as much as it may keep in memory' });
+            complete = false;
+            note = note ?? 'The pages of this sync filled the memory it may use';
+            continue;
+          }
           pages++;
           items.push({ key: finalUrl, name, version, size: bytes.length, mimeType: type, url: finalUrl, extra: JSON.stringify({ links }) });
-          if (before?.version !== version) kept.set(finalUrl, { file: { bytes, fileName: name, mimeType: type } });
+          if (changed) {
+            kept.set(finalUrl, { file: { bytes, fileName: name, mimeType: type } });
+            keptBytes += bytes.length;
+          }
         }
         if (depth < settings.maxDepth) {
           for (const link of links) {
@@ -197,6 +216,7 @@ export function crawlConnector(settings: CrawlSettings, options: { spacingMs?: n
       const page = kept.get(item.key);
       if (!page) throw new SourceError('The page was not kept from the crawl');
       kept.delete(item.key);
+      keptBytes -= page.file.bytes.length;
       return page.file;
     },
   };

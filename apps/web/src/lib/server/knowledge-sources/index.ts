@@ -13,10 +13,10 @@ import { credentials } from '../credentials/vault';
 import { HttpError } from '../errors';
 import { credentialUsableBy } from '../projects/access';
 import { homeProjectId } from '../projects/store';
-import { setNextAt, stateOf } from './claim';
+import { claimSource, releaseSource, setNextAt, stateOf } from './claim';
 import { nextDue } from './schedule';
 import { startSync } from './sync';
-import { countSources, deleteSource, getSource, insertSource, listRuns, listSourceRows, updateSourceRow, viewOfRun, type SourceRow } from './store';
+import { countSources, DuplicateSourceError, deleteSource, findDuplicate, getSource, insertSource, listRuns, listSourceRows, updateSourceRow, viewOfRun, type SourceRow } from './store';
 import { credentialTypeOf, SourceSettingsError, validateSettings } from './validate';
 
 export class KnowledgeSourceError extends HttpError {
@@ -115,7 +115,7 @@ export async function updateSource(sourceId: string, patch: SourcePatch): Promis
   }
   if (patch.settings !== undefined) {
     const checked = await validateSettings(row.kind as SourceView['kind'], { ...(JSON.parse(row.settings) as object), ...patch.settings });
-    if (checked.location !== row.location && listSourceRows(row.agent_id, row.tool_id).some((other) => other.id !== row.id && other.kind === row.kind && other.location === checked.location)) throw new KnowledgeSourceError('This knowledge base already has that source', 409);
+    if (checked.location !== row.location && findDuplicate(row.collection_key, row.kind, checked.location, row.id)) throw new DuplicateSourceError();
     change.settings = JSON.stringify(checked.settings);
     change.location = checked.location;
   }
@@ -139,12 +139,20 @@ export async function removeSource(sourceId: string, options: { deleteChunks: bo
   const row = getSource(sourceId);
   if (!row) throw new KnowledgeSourceError('Source not found', 404);
   if (isRunning(row)) throw new KnowledgeSourceError('A sync of this source is running; remove it when it has finished', 409);
+  // Take the claim first: a sync cannot start between the check above and the delete below, and Sync now answers 409 meanwhile.
+  const claimId = `remove-${randomUUID()}`;
+  if (!(await claimSource(sourceId, claimId, Date.now()))) throw new KnowledgeSourceError('A sync of this source is running; remove it when it has finished', 409);
   let removedChunks = 0;
-  if (options.deleteChunks) {
-    const config = knowledgeConfigOf(row.agent_id, row.tool_id);
-    if (config) removedChunks = await deleteChunksWhere(config, { sourceId }, { asProject: homeProjectId('agent', row.agent_id), subject: 'agent' });
+  try {
+    if (options.deleteChunks) {
+      const config = knowledgeConfigOf(row.agent_id, row.tool_id);
+      if (config) removedChunks = await deleteChunksWhere(config, { sourceId }, { asProject: homeProjectId('agent', row.agent_id), subject: 'agent' });
+    }
+    deleteSource(sourceId);
+  } catch (caught) {
+    await releaseSource(sourceId, claimId, null).catch(() => undefined);
+    throw caught;
   }
-  deleteSource(sourceId);
   auditOf('knowledge_source.removed', row, row.agent_id, `Removed the ${row.kind} source “${row.name}”${options.deleteChunks ? ` and ${removedChunks} chunk${removedChunks === 1 ? '' : 's'}` : ', keeping its chunks'}`, { deletedChunks: options.deleteChunks, removedChunks });
   return { removedChunks };
 }

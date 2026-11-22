@@ -73,16 +73,17 @@ export async function claimSource(sourceId: string, runId: string, now: number, 
   return Boolean(won);
 }
 
-/** Push the holder's lease out; a run that no longer holds the claim changes nothing. */
-export async function renewLease(sourceId: string, runId: string, now: number, handle: Database = database()): Promise<void> {
+/** Push the holder's lease out; a run that no longer holds the claim changes nothing and gets `false`. */
+export async function renewLease(sourceId: string, runId: string, now: number, handle: Database = database()): Promise<boolean> {
   if (handle.kind !== 'postgres') {
-    handle.transaction(() => {
+    return handle.transaction(() => {
       const row = stateOf(sourceId, handle);
-      if (row?.run_id === runId) handle.upsert('knowledge_source_state', asRow({ ...row, lease_until: iso(now + LEASE_MS), updated_at: iso(now) }));
+      if (row?.run_id !== runId) return false;
+      handle.upsert('knowledge_source_state', asRow({ ...row, lease_until: iso(now + LEASE_MS), updated_at: iso(now) }));
+      return true;
     });
-    return;
   }
-  await conditional(handle, 'UPDATE knowledge_source_state SET lease_until = $1, updated_at = $2 WHERE source_id = $3 AND run_id = $4 RETURNING *', [iso(now + LEASE_MS), iso(now), sourceId, runId], sourceId);
+  return Boolean(await conditional(handle, 'UPDATE knowledge_source_state SET lease_until = $1, updated_at = $2 WHERE source_id = $3 AND run_id = $4 RETURNING *', [iso(now + LEASE_MS), iso(now), sourceId, runId], sourceId));
 }
 
 /** End the holder's claim and say when the source is next due (`null`: not scheduled); a stale holder changes nothing. */

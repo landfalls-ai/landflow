@@ -4,11 +4,13 @@
  * back the "Test connection" button.
  */
 import Anthropic from '@anthropic-ai/sdk';
-import { ListBucketsCommand, S3Client } from '@aws-sdk/client-s3'; // C22:
+import type { S3Client } from '@aws-sdk/client-s3'; // C22: loaded on first use (s3ClientOf), not at start
 import { lookup } from 'node:dns/promises'; // C22:
 import { isIP } from 'node:net'; // C22:
 import { stripBrackets } from '../net/addresses'; // C22:
-import { assertAddressAllowed, assertUrlAllowed } from '../net/safe-fetch'; // C22:
+import { Agent as HttpAgent } from 'node:http'; // C22:
+import { Agent as HttpsAgent } from 'node:https'; // C22:
+import { assertAddressAllowed, assertUrlAllowed, guardedLookup, outboundPolicy } from '../net/safe-fetch'; // C22:
 import { defineCredentialType, type NodeOperationError } from '@landflow/sdk';
 import { checkCredentialClaims, parseBoundClaims } from '../jwt-claims';
 import { testGatewayCredential } from '../llm-gateway/models';
@@ -330,19 +332,31 @@ export async function assertOutboundTarget(url: URL): Promise<void> {
   assertUrlAllowed(url);
   const host = stripBrackets(url.hostname);
   if (isIP(host)) return;
-  for (const entry of await lookup(host, { all: true }).catch(() => [])) assertAddressAllowed(host, entry.address);
+  let answers: Array<{ address: string }>;
+  try {
+    answers = await lookup(host, { all: true });
+  } catch (caught) {
+    // A name that does not resolve is refused when private addresses are blocked: it could resolve to one a moment later.
+    if (outboundPolicy().blockPrivate) throw new Error(`Blocked: ${host} could not be resolved (${(caught as Error).message})`);
+    return;
+  }
+  for (const entry of answers) assertAddressAllowed(host, entry.address);
 }
 
 /**
  * An S3 client built from the credential's own keys: never the default AWS chain (no profile, no environment, no instance role), so
  * what a source reads is what the person gave it. Path-style by default (LocalStack, MinIO).
  */
-export function s3ClientOf(data: Record<string, unknown>): S3Client {
+export async function s3ClientOf(data: Record<string, unknown>): Promise<S3Client> {
   const accessKeyId = String(data.accessKeyId ?? '').trim();
   const secretAccessKey = String(data.secretAccessKey ?? '').trim();
   if (!accessKeyId || !secretAccessKey) throw new Error('The S3 credential needs an access key id and a secret access key');
   const endpoint = String(data.endpoint ?? '').trim();
+  const { S3Client } = await import('@aws-sdk/client-s3');
+  // Every connection the SDK makes (a virtual-hosted bucket name is a host of its own) resolves through the outbound policy's
+  // guarded lookup, so the address that is checked is the address that is connected to.
   return new S3Client({
+    requestHandler: { httpAgent: new HttpAgent({ lookup: guardedLookup as never }), httpsAgent: new HttpsAgent({ lookup: guardedLookup as never }) },
     region: String(data.region ?? '').trim() || 'us-east-1',
     ...(endpoint && { endpoint }),
     forcePathStyle: data.forcePathStyle !== false && data.forcePathStyle !== 'false',
@@ -370,7 +384,8 @@ export const s3ApiCredential = defineCredentialType({
     try {
       const endpoint = String(data.endpoint ?? '').trim();
       if (endpoint) await assertOutboundTarget(new URL(endpoint));
-      client = s3ClientOf(data);
+      client = await s3ClientOf(data);
+      const { ListBucketsCommand } = await import('@aws-sdk/client-s3');
       const listed = await client.send(new ListBucketsCommand({}), { abortSignal: AbortSignal.timeout(5_000) });
       return { ok: true, message: `Connected: ${listed.Buckets?.length ?? 0} bucket${listed.Buckets?.length === 1 ? '' : 's'} visible` };
     } catch (error) {

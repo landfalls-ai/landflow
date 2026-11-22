@@ -64,9 +64,17 @@ const asRow = (row: object) => row as Record<string, string | number | null>;
 
 // ---- sources ------------------------------------------------------------------------------------------------
 
+/**
+ * Another source of the same place (collection, kind, location), if any. The index on those columns is not unique on purpose: in
+ * Postgres mode a write is replayed later, so a unique violation there would never reach the caller (and would stall the replay);
+ * this in-process check names the problem instead. Two processes adding the same place at the same moment could both succeed: that
+ * leaves two sources doing the same sync, which wastes work and harms nothing.
+ */
+export const findDuplicate = (collectionKey: string, kind: string, location: string, exceptId?: string): SourceRow | undefined =>
+  db().get<SourceRow>('SELECT * FROM knowledge_sources WHERE collection_key = ? AND kind = ? AND location = ? AND id <> ?', collectionKey, kind, location, exceptId ?? '');
+
 export function insertSource(row: SourceRow): void {
-  // The unique index is the backstop; the check names the problem (Postgres mode replays the write later, so its violation would not reach the caller).
-  if (db().get('SELECT id FROM knowledge_sources WHERE collection_key = ? AND kind = ? AND location = ?', row.collection_key, row.kind, row.location)) throw new DuplicateSourceError();
+  if (findDuplicate(row.collection_key, row.kind, row.location)) throw new DuplicateSourceError();
   db().upsert('knowledge_sources', asRow(row));
 }
 

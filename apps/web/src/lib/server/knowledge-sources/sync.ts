@@ -18,13 +18,16 @@ import { buildConnector } from './connectors';
 import type { Connector, SourceItem } from './connectors/types';
 import { deleteItem, finishRun, getSource, insertRun, itemsOf, pruneRuns, putItem, updateSourceRow, viewOfRun, getRun, type SourceRow } from './store';
 import { nextDue } from './schedule';
+import { credentialProblem } from './validate';
 
 export interface SyncOptions {
   signal?: AbortSignal;
   /** Tests: a connector in place of the kind's own. */
   connector?: Connector;
-  /** Tests: the clock. */
+  /** Tests: the clock (the scheduler never passes one: a run's lease and heartbeat follow the real time). */
   now?: () => number;
+  /** Tests: milliseconds between lease renewals (default a quarter of the lease). */
+  heartbeatMs?: number;
 }
 
 /** The `source` metadata a source's chunks carry: the unit C20's per-document match uses. */
@@ -34,11 +37,16 @@ const reasonOf = (caught: unknown): string => (caught instanceof Error ? caught.
 
 /** Begin a sync: `undefined` when one already runs (the claim was refused), else the run's id and the promise of its result (never rejects). */
 export async function startSync(sourceId: string, trigger: 'schedule' | 'manual', options: SyncOptions = {}): Promise<{ runId: string; done: Promise<SyncRunView> } | undefined> {
-  const row = getSource(sourceId);
-  if (!row) return undefined;
+  if (!getSource(sourceId)) return undefined;
   const clock = options.now ?? Date.now;
   const runId = randomUUID();
   if (!(await claimSource(sourceId, runId, clock()))) return undefined;
+  // The source may have been removed between the first read and the claim: let go and do nothing.
+  const row = getSource(sourceId);
+  if (!row) {
+    await releaseSource(sourceId, runId, null).catch(() => undefined);
+    return undefined;
+  }
   const run = insertRun(sourceId, trigger, new Date(clock()), runId);
   const done = execute(row, run.id, options).catch((caught) => {
     logger.warn('a knowledge source sync stopped on an unexpected error', { 'landflow.source.id': sourceId, error: reasonOf(caught) });
@@ -63,16 +71,34 @@ async function execute(row: SourceRow, runId: string, options: SyncOptions): Pro
     status = 'failed';
     note = message;
   };
-  // The lease is renewed by a timer, so one slow fetch or a long crawl never lets it run out while the process lives.
-  const heartbeat = setInterval(() => void renewLease(row.id, runId, clock()).catch(() => undefined), LEASE_MS / 4);
+  // The lease is renewed by a timer on the clock that decides leases, so one slow fetch or a long crawl never lets it run out while
+  // the process lives. A renewal that finds the claim gone (the scheduler freed it and closed the run) stops this run: it writes nothing more.
+  const lostClaim = new AbortController();
+  let lost = false;
+  const heartbeat = setInterval(() => {
+    void renewLease(row.id, runId, clock())
+      .then((held) => {
+        if (held || lost) return;
+        lost = true;
+        clearInterval(heartbeat);
+        lostClaim.abort();
+      })
+      .catch(() => undefined);
+  }, options.heartbeatMs ?? LEASE_MS / 4);
   heartbeat.unref?.();
   const deadline = AbortSignal.timeout(SOURCE_LIMITS.deadlineMs);
-  const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
+  const signal = AbortSignal.any([...(options.signal ? [options.signal] : []), deadline, lostClaim.signal]);
   try {
     const config = knowledgeConfigOf(row.agent_id, row.tool_id);
     if (!config) {
       fail('The knowledge base was removed');
       updateSourceRow(row.id, { paused: 1, paused_reason: 'The knowledge base was removed' });
+      return finish();
+    }
+    const unusable = credentialProblem(row.kind as SourceKind, row.credential_id, row.agent_id);
+    if (unusable) {
+      fail(unusable);
+      updateSourceRow(row.id, { paused: 1, paused_reason: unusable });
       return finish();
     }
     const internal = { asProject: homeProjectId('agent', row.agent_id), subject: 'agent' as const };
@@ -83,7 +109,7 @@ async function execute(row: SourceRow, runId: string, options: SyncOptions): Pro
       connector = options.connector ?? (await buildConnector(row));
       listing = await connector.list(signal, previous);
     } catch (caught) {
-      fail(signal.aborted ? 'Stopped at the 30 minute limit' : `Could not list the source: ${reasonOf(caught)}`);
+      fail(lost ? 'The process stopped' : signal.aborted ? 'Stopped at the 30 minute limit' : `Could not list the source: ${reasonOf(caught)}`);
       return finish();
     }
     counts.seen = listing.items.length;
@@ -154,6 +180,8 @@ async function execute(row: SourceRow, runId: string, options: SyncOptions): Pro
 
   async function finish(): Promise<SyncRunView> {
     clearInterval(heartbeat);
+    // The scheduler closed this run when it freed the claim (and another run may hold the source now): leave both as they are.
+    if (lost) return viewOfRun(getRun(runId)!);
     finishRun(runId, { status, counts, errors, ...(note && { note }), at: new Date(clock()) });
     pruneRuns(row.id);
     const view = viewOfRun(getRun(runId)!);

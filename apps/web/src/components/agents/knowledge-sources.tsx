@@ -12,7 +12,8 @@ import { addSource, listSources, patchSource, removeSource, sourceRuns, syncSour
 import { timeAgo, plural } from '@/lib/client/format';
 import { ENABLED_SOURCE_KINDS, SCHEDULE_LABEL, SOURCE_CREDENTIAL_TYPE, SOURCE_KIND_LABEL, SOURCE_LIMITS, SOURCE_SCHEDULES, sourceLocation, syncStatusLabel, syncSummary, type SourceKind, type SourceSchedule, type SourceView, type SyncRunView } from '@/lib/shared/knowledge-sources';
 import { CredentialCombobox } from '../credentials/credential-combobox';
-import { useCredentials } from '../credentials/use-credentials';
+import { api } from '@/lib/client/api';
+import type { CredentialSummary } from '@/lib/shared/types';
 import { Button } from '../ui/button';
 import { DataGrid, type GridColumn } from '../ui/data-grid';
 import { Input, Select } from '../ui/inputs';
@@ -122,6 +123,7 @@ export function SourcesPanel({ agentId, toolId, onCount }: { agentId: string; to
       ))}
       {adding && (
         <AddSource
+          agentId={agentId}
           onClose={() => setAdding(false)}
           onAdd={async (input) => {
             await addSource(agentId, toolId, input);
@@ -224,7 +226,7 @@ function HistorySheet({ agentId, toolId, source, onClose }: { agentId: string; t
 
 const PLACEHOLDER: Record<SourceKind, string> = { folder: 'runbooks', s3: 'docs', crawl: 'https://docs.example.com/', googleDrive: 'Folder id from the Drive link' };
 
-function AddSource({ onClose, onAdd }: { onClose: () => void; onAdd: (input: Parameters<typeof addSource>[2]) => Promise<void> }) {
+function AddSource({ agentId, onClose, onAdd }: { agentId: string; onClose: () => void; onAdd: (input: Parameters<typeof addSource>[2]) => Promise<void> }) {
   const [kind, setKind] = useState<SourceKind>('folder');
   const [schedule, setSchedule] = useState<SourceSchedule>('daily');
   const [folder, setFolder] = useState('');
@@ -238,9 +240,15 @@ function AddSource({ onClose, onAdd }: { onClose: () => void; onAdd: (input: Par
   const [credential, setCredential] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string>();
-  const { credentials } = useCredentials();
+  // Only the credentials the agent's own project may use (the server checks again when the source is saved and at every sync).
+  const [credentials, setCredentials] = useState<CredentialSummary[]>([]);
+  useEffect(() => {
+    api<{ credentials: CredentialSummary[] }>(`/api/credentials?agentId=${encodeURIComponent(agentId)}`)
+      .then((r) => setCredentials(r.credentials))
+      .catch(() => setCredentials([]));
+  }, [agentId]);
   const type = SOURCE_CREDENTIAL_TYPE[kind];
-  const usable = (credentials ?? []).filter((c) => c.type === type);
+  const usable = credentials.filter((c) => c.type === type);
   useEffect(() => setCredential(undefined), [kind]);
   useEffect(() => {
     if (type && !credential && usable.length === 1) setCredential(usable[0].id);

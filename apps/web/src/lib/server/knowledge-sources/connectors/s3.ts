@@ -4,10 +4,11 @@
  * AWS chain) and its endpoint was checked against the outbound policy. Only the kinds the loaders read are items; "folder" placeholder
  * keys and other files are skipped. Errors keep the S3 error's name and message, never the keys.
  */
-import { GetObjectCommand, ListObjectsV2Command, type S3Client } from '@aws-sdk/client-s3';
+import type { S3Client } from '@aws-sdk/client-s3';
 import { SOURCE_LIMITS, type S3Settings } from '../../../shared/knowledge-sources';
 import { assertOutboundTarget, s3ClientOf } from '../../nodes/credentials';
 import { fileKind } from '../../rag/files';
+import { megabytes, readCapped, TooLargeError } from './bounded';
 import { SourceError, type Connector, type SourceItem } from './types';
 
 const nameOf = (key: string) => key.slice(key.lastIndexOf('/') + 1);
@@ -25,11 +26,12 @@ export function s3Connector(settings: S3Settings, data: Record<string, unknown>)
     if (client) return client;
     const endpoint = String(data.endpoint ?? '').trim();
     if (endpoint) await assertOutboundTarget(new URL(endpoint));
-    return (client = s3ClientOf(data));
+    return (client = await s3ClientOf(data));
   };
   return {
     async list(signal) {
       const s3 = await open();
+      const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
       const items: SourceItem[] = [];
       let token: string | undefined;
       let seen = 0;
@@ -55,14 +57,16 @@ export function s3Connector(settings: S3Settings, data: Record<string, unknown>)
     },
     async fetch(item, signal) {
       const s3 = await open();
+      const { GetObjectCommand } = await import('@aws-sdk/client-s3');
       if ((item.size ?? 0) > SOURCE_LIMITS.fileBytes) throw new SourceError(`Too large (${Math.round((item.size ?? 0) / 1024 / 1024)} MB; the limit is ${SOURCE_LIMITS.fileBytes / 1024 / 1024} MB)`);
       try {
         const object = await s3.send(new GetObjectCommand({ Bucket: settings.bucket, Key: item.key }), { abortSignal: signal });
-        const bytes = await object.Body?.transformToByteArray();
-        if (!bytes) throw new SourceError('The object has no content');
+        if ((object.ContentLength ?? 0) > SOURCE_LIMITS.fileBytes) throw new SourceError(`Too large (${megabytes(object.ContentLength ?? 0)}; the limit is ${megabytes(SOURCE_LIMITS.fileBytes)})`);
+        if (!object.Body) throw new SourceError('The object has no content');
+        const bytes = await readCapped(object.Body, SOURCE_LIMITS.fileBytes);
         return { bytes, fileName: item.name, ...(object.ContentType && object.ContentType !== 'application/octet-stream' && { mimeType: object.ContentType }) };
       } catch (caught) {
-        if (caught instanceof SourceError) throw caught;
+        if (caught instanceof SourceError) throw caught instanceof TooLargeError ? new SourceError(`Too large (the limit is ${megabytes(SOURCE_LIMITS.fileBytes)})`) : caught;
         throw new SourceError(reasonOf(caught));
       }
     },

@@ -2113,7 +2113,7 @@ export const MIGRATIONS: Migration[] = [
     name: 'knowledge_sources',
     statements: [
       `CREATE TABLE IF NOT EXISTS knowledge_sources (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, tool_id TEXT NOT NULL, collection_key TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, location TEXT NOT NULL, settings TEXT NOT NULL, credential_id TEXT, schedule TEXT NOT NULL, paused BIGINT NOT NULL DEFAULT 0, paused_reason TEXT, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS knowledge_sources_where ON knowledge_sources (collection_key, kind, location)`,
+      `CREATE INDEX IF NOT EXISTS knowledge_sources_where ON knowledge_sources (collection_key, kind, location)`,
       `CREATE INDEX IF NOT EXISTS knowledge_sources_agent ON knowledge_sources (agent_id, tool_id)`,
       `CREATE TABLE IF NOT EXISTS knowledge_source_state (source_id TEXT PRIMARY KEY, run_id TEXT, lease_until TEXT, next_at TEXT, last_run TEXT, updated_at TEXT NOT NULL)`,
       `CREATE TABLE IF NOT EXISTS knowledge_source_items (source_id TEXT NOT NULL, item_key TEXT NOT NULL, version TEXT NOT NULL, name TEXT, size BIGINT, extra TEXT, synced_at TEXT NOT NULL, PRIMARY KEY (source_id, item_key))`,

@@ -14,6 +14,7 @@ import { credentials } from '../../credentials/vault';
 import { safeFetch } from '../../net/safe-fetch';
 import { fileKind } from '../../rag/files';
 import { logger } from '../../telemetry/logger';
+import { readCapped } from './bounded';
 import { SourceError, type Connector, type SourceItem } from './types';
 
 const GOOGLE = 'https://www.googleapis.com';
@@ -164,8 +165,7 @@ export function driveConnector(settings: DriveSettings, tokens: TokenSource): Co
         if ((item.size ?? 0) > SOURCE_LIMITS.fileBytes) throw new SourceError(`Too large (${Math.round((item.size ?? 0) / 1024 / 1024)} MB; the limit is ${SOURCE_LIMITS.fileBytes / 1024 / 1024} MB)`);
         response = await call(`/drive/v3/files/${id}?alt=media`, signal);
       }
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      if (bytes.length > SOURCE_LIMITS.fileBytes) throw new SourceError(`Too large (${Math.round(bytes.length / 1024 / 1024)} MB; the limit is ${SOURCE_LIMITS.fileBytes / 1024 / 1024} MB)`);
+      const bytes = await readCapped(response.body, SOURCE_LIMITS.fileBytes); // counted after decompression; past the cap the rest is never read
       return { bytes, fileName: item.name, ...(!native && item.mimeType && { mimeType: item.mimeType }) };
     },
   };

@@ -7,7 +7,7 @@
 import { mkdirSync, mkdtempSync, rmSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { VectorKnowledgeBaseConfig } from '@/lib/shared/agents';
 import { SOURCE_LIMITS } from '@/lib/shared/knowledge-sources';
 
@@ -257,6 +257,8 @@ describe('the scheduler', () => {
     while (knowledgeSourceScheduler.active()) await new Promise((resolve) => setTimeout(resolve, 5));
   };
   const one = (...items: Array<{ key: string }>) => ({ connector: stub(items) });
+  /** The tick's options with the test clock at `t` (the scheduler itself never passes a clock: a real run follows real time). */
+  const at = (t: number, options: { connector: ReturnType<typeof stub> }) => ({ ...options, now: () => t });
   // Only the sources this test made are due: every other source of the file is paused for the duration.
   const only = (...mine: Array<{ id: string }>) => {
     for (const row of store.allSourceRows()) store.updateSourceRow(row.id, { paused: mine.some((m) => m.id === row.id) ? 0 : 1, paused_reason: 'other test' });
@@ -265,14 +267,14 @@ describe('the scheduler', () => {
   it('starts an hourly source when it is due and not before, again an hour after it ended', async () => {
     const s = await scheduled('hourly');
     only(s);
-    expect(await knowledgeSourceScheduler.tick(T0 - 1000, one({ key: 'a' }))).toBe(0);
-    expect(await knowledgeSourceScheduler.tick(T0, one({ key: 'a' }))).toBe(1);
+    expect(await knowledgeSourceScheduler.tick(T0 - 1000, at(T0 - 1000, one({ key: 'a' })))).toBe(0);
+    expect(await knowledgeSourceScheduler.tick(T0, at(T0, one({ key: 'a' })))).toBe(1);
     await settledAll();
     const run = store.listRuns(s.id).runs[0];
     expect(run).toMatchObject({ trigger: 'schedule', status: 'ok', counts: { added: 1 } });
     expect(claim.stateOf(s.id)!.next_at).toBe(new Date(T0 + 3600_000).toISOString());
-    expect(await knowledgeSourceScheduler.tick(minutes(30), one({ key: 'a' }))).toBe(0);
-    expect(await knowledgeSourceScheduler.tick(minutes(61), one({ key: 'a' }))).toBe(1);
+    expect(await knowledgeSourceScheduler.tick(minutes(30), at(minutes(30), one({ key: 'a' })))).toBe(0);
+    expect(await knowledgeSourceScheduler.tick(minutes(61), at(minutes(61), one({ key: 'a' })))).toBe(1);
     await settledAll();
     expect(store.listRuns(s.id).runs).toHaveLength(2);
   });
@@ -282,7 +284,7 @@ describe('the scheduler', () => {
     const manual = await scheduled('manual');
     only(manual, paused);
     store.updateSourceRow(paused.id, { paused: 1, paused_reason: 'Paused' });
-    expect(await knowledgeSourceScheduler.tick(minutes(500), one({ key: 'a' }))).toBe(0);
+    expect(await knowledgeSourceScheduler.tick(minutes(500), at(minutes(500), one({ key: 'a' })))).toBe(0);
     expect(store.listRuns(paused.id).runs).toEqual([]);
     expect(store.listRuns(manual.id).runs).toEqual([]);
   });
@@ -291,12 +293,12 @@ describe('the scheduler', () => {
     const s = await scheduled('hourly');
     only(s);
     const items = Array.from({ length: SOURCE_LIMITS.itemsPerSync + 5 }, (_, i) => ({ key: `i${i}` }));
-    expect(await knowledgeSourceScheduler.tick(T0, { connector: stub(items) })).toBe(1);
+    expect(await knowledgeSourceScheduler.tick(T0, at(T0, { connector: stub(items) }))).toBe(1);
     await settledAll();
     expect(store.listRuns(s.id).runs[0].status).toBe('partial');
     expect(new Date(claim.stateOf(s.id)!.next_at!).getTime() - T0).toBe(SOURCE_LIMITS.retryAfterCapMs);
-    expect(await knowledgeSourceScheduler.tick(T0 + 30_000, { connector: stub(items) })).toBe(0);
-    expect(await knowledgeSourceScheduler.tick(T0 + 61_000, { connector: stub(items) })).toBe(1);
+    expect(await knowledgeSourceScheduler.tick(T0 + 30_000, at(T0 + 30_000, { connector: stub(items) }))).toBe(0);
+    expect(await knowledgeSourceScheduler.tick(T0 + 61_000, at(T0 + 61_000, { connector: stub(items) }))).toBe(1);
     await settledAll();
     expect(store.listRuns(s.id).runs[0]).toMatchObject({ status: 'ok', counts: { added: 5 } });
   }, 120_000);
@@ -306,8 +308,8 @@ describe('the scheduler', () => {
     only(s);
     const dead = store.insertRun(s.id, 'schedule', new Date(T0), 'run-dead');
     expect(await claim.claimSource(s.id, dead.id, T0)).toBe(true);
-    expect(await knowledgeSourceScheduler.tick(T0 + 1000, one({ key: 'a' }))).toBe(0); // the lease still holds
-    expect(await knowledgeSourceScheduler.tick(T0 + claim.LEASE_MS + 1000, one({ key: 'a' }))).toBe(1); // freed, and the source is due again
+    expect(await knowledgeSourceScheduler.tick(T0 + 1000, at(T0 + 1000, one({ key: 'a' })))).toBe(0); // the lease still holds
+    expect(await knowledgeSourceScheduler.tick(T0 + claim.LEASE_MS + 1000, at(T0 + claim.LEASE_MS + 1000, one({ key: 'a' })))).toBe(1); // freed, and the source is due again
     await settledAll();
     const runs = store.listRuns(s.id).runs;
     expect(runs.find((r) => r.id === 'run-dead')).toMatchObject({ status: 'failed', note: 'The process stopped' });
@@ -321,7 +323,9 @@ describe('the scheduler', () => {
     only(noBase, noAgent);
     agentStore.saveDraft(noBase.agent.id, { ...noBase.agent, tools: [] });
     agentStore.delete(noAgent.agent.id);
-    expect(await knowledgeSourceScheduler.tick(T0, one({ key: 'a' }))).toBe(0);
+    expect(await knowledgeSourceScheduler.tick(T0, at(T0, one({ key: 'a' })))).toBe(0);
+    expect(store.getSource(noAgent.id)).toBeDefined(); // missing once: only skipped (a store that has not loaded would say the same)
+    expect(await knowledgeSourceScheduler.tick(T0 + 1000, at(T0 + 1000, one({ key: 'a' })))).toBe(0);
     expect(store.getSource(noBase.id)).toMatchObject({ paused: 1, paused_reason: 'The knowledge base was removed' });
     expect(store.getSource(noAgent.id)).toBeUndefined();
     expect(listSourceRows(noAgent.agent.id, 'kb1')).toEqual([]);
@@ -333,12 +337,108 @@ describe('the scheduler', () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
     const slow = { list: async () => (await gate, { items: [], complete: true }), fetch: stub([]).fetch };
-    expect(await knowledgeSourceScheduler.tick(T0, { connector: slow })).toBe(MAX_CONCURRENT_SYNCS);
+    expect(await knowledgeSourceScheduler.tick(T0, at(T0, { connector: slow }))).toBe(MAX_CONCURRENT_SYNCS);
     expect(knowledgeSourceScheduler.active()).toBe(2);
-    expect(await knowledgeSourceScheduler.tick(T0 + 1000, { connector: slow })).toBe(0);
+    expect(await knowledgeSourceScheduler.tick(T0 + 1000, at(T0 + 1000, { connector: slow }))).toBe(0);
     release();
     await settledAll();
-    expect(await knowledgeSourceScheduler.tick(T0 + 2000, { connector: slow })).toBe(2);
+    expect(await knowledgeSourceScheduler.tick(T0 + 2000, at(T0 + 2000, { connector: slow }))).toBe(2);
     await settledAll();
+  });
+});
+
+describe('a long sync and a lost claim (review: the lease follows real time)', () => {
+  afterEach(() => vi.useRealTimers());
+  async function scheduledNow(schedule: 'hourly' | 'daily') {
+    const s = folderSource('unused');
+    store.updateSourceRow(s.id, { schedule });
+    await claim.setNextAt(s.id, new Date(Date.now() - 1000).toISOString());
+    return s;
+  }
+  // Only this test's source is looked at: every other source of the file is paused.
+  const only = (mine: { id: string }) => {
+    for (const row of store.allSourceRows()) store.updateSourceRow(row.id, { paused: row.id === mine.id ? 0 : 1, paused_reason: 'other test' });
+  };
+
+  it('a sync of more than five minutes keeps its lease, so no second run is claimed (heartbeat on the real clock)', async () => {
+    const s = await scheduledNow('hourly');
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const slow = { list: async () => (await gate, { items: [], complete: true }), fetch: stub([]).fetch };
+    only(s);
+    expect(await knowledgeSourceScheduler.tick(Date.now(), { connector: slow })).toBe(1);
+    const runId = claim.stateOf(s.id)!.run_id;
+    for (let minute = 0; minute < 8; minute++) {
+      await vi.advanceTimersByTimeAsync(60_000);
+      // the scheduler looks every 30 s: it must find the claim held, never expired, and start nothing
+      expect(await knowledgeSourceScheduler.tick(Date.now(), { connector: slow })).toBe(0);
+      expect(claim.stateOf(s.id)!.run_id).toBe(runId);
+    }
+    expect(Date.now() - new Date(store.listRuns(s.id).runs[0].startedAt).getTime()).toBeGreaterThan(claim.LEASE_MS);
+    expect(store.listRuns(s.id).runs).toHaveLength(1);
+    release();
+    while (knowledgeSourceScheduler.active()) await vi.advanceTimersByTimeAsync(5);
+    expect(store.listRuns(s.id).runs[0].status).toBe('ok');
+  });
+
+  it('a run whose claim the scheduler took back stops at its next renewal and leaves the run the scheduler closed as it is', async () => {
+    const s = folderSource('unused');
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let aborted = false;
+    const connector = { list: async (signal: AbortSignal) => (signal.addEventListener('abort', () => (aborted = true)), await gate, { items: [{ key: 'a', name: 'a.md', version: '1' }], complete: true }), fetch: stub([{ key: 'a' }]).fetch };
+    const started = (await startSync(s.id, 'manual', { connector, heartbeatMs: 20 }))!;
+    // another process's scheduler found the lease expired and closed the run
+    await knowledgeSourceScheduler.tick(Date.now() + claim.LEASE_MS + 60_000, { connector: stub([]) });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(aborted).toBe(true);
+    release();
+    const view = await started.done;
+    expect(view).toMatchObject({ status: 'failed', note: 'The process stopped' });
+    expect(store.listRuns(s.id).runs.find((r) => r.id === started.runId)).toMatchObject({ status: 'failed', note: 'The process stopped' });
+    expect(await docs(s)).toHaveLength(0); // nothing written after the claim was lost
+  });
+});
+
+describe('the credential is checked again at every sync (review)', () => {
+  const s3Source = (credentialId: string | null) => {
+    const s = folderSource('unused');
+    store.updateSourceRow(s.id, { kind: 's3', credential_id: credentialId, settings: JSON.stringify({ bucket: 'docs', prefix: '' }), location: unique('docs/') });
+    return s;
+  };
+  const wrongProject = async () => {
+    const { credentials } = await import('@/lib/server/credentials/vault');
+    const { registry } = await import('@/lib/server/plugins/registry');
+    const { corePlugin } = await import('@/lib/server/nodes');
+    registry.registerBuiltin(corePlugin);
+    const credential = credentials.create({ name: unique('Elsewhere'), type: 'core.s3Api', data: { endpoint: '', region: 'us-east-1', accessKeyId: 'AKIADUMMYKEYFORTESTS', secretAccessKey: 'dummy-secret-for-tests-only', forcePathStyle: true } as never });
+    setHomeProject('credential', credential.id, B);
+    return credential;
+  };
+
+  it('a credential that was deleted, or that the agent’s project can no longer use, fails the run and pauses the source with the reason', async () => {
+    const gone = s3Source('cred-deleted');
+    const run1 = (await runSync(gone.id, 'manual', { connector: stub([{ key: 'a' }]) }))!;
+    expect(run1).toMatchObject({ status: 'failed', note: 'The credential was deleted' });
+    expect(store.getSource(gone.id)).toMatchObject({ paused: 1, paused_reason: 'The credential was deleted' });
+    expect(await docs(gone)).toHaveLength(0);
+
+    const credential = await wrongProject();
+    const other = s3Source(credential.id);
+    const run2 = (await runSync(other.id, 'manual', { connector: stub([{ key: 'a' }]) }))!;
+    expect(run2.status).toBe('failed');
+    expect(run2.note).toMatch(/can’t use the credential/);
+    expect(store.getSource(other.id)!.paused).toBe(1);
+    expect(run2.note).not.toMatch(/dummy-secret/);
+  });
+});
+
+describe('a source that is removed while a sync starts (review)', () => {
+  it('startSync finds nothing to do for a source deleted before the claim, and leaves no state behind', async () => {
+    const s = folderSource('unused');
+    store.deleteSource(s.id);
+    expect(await startSync(s.id, 'manual', { connector: stub([{ key: 'a' }]) })).toBeUndefined();
+    expect(claim.stateOf(s.id)).toBeUndefined();
   });
 });

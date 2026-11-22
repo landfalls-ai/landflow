@@ -5,7 +5,10 @@
 import { SOURCE_LIMITS, SOURCE_CREDENTIAL_TYPE, type CrawlSettings, type DriveSettings, type FolderSettings, type S3Settings, type SourceKind } from '../../shared/knowledge-sources';
 import { folderFiles } from '../agents/knowledge';
 import { HttpError } from '../errors';
+import { credentials } from '../credentials/vault';
 import { assertOutboundTarget } from '../nodes/credentials';
+import { credentialUsableBy } from '../projects/access';
+import { homeProjectId } from '../projects/store';
 
 export class SourceSettingsError extends HttpError {
   static readonly errorName: string = 'SourceSettingsError';
@@ -83,3 +86,18 @@ export async function validateSettings(kind: SourceKind, raw: Record<string, unk
 
 /** The type of credential a kind needs, or undefined when it needs none. */
 export const credentialTypeOf = (kind: SourceKind): string | undefined => SOURCE_CREDENTIAL_TYPE[kind];
+
+/**
+ * Why a source's credential can't be used right now, or undefined: it is gone, it is not the type the kind needs, or the agent's
+ * home project may no longer use it. Asked at every sync (the credential or the agent's project can change after the source was added).
+ */
+export function credentialProblem(kind: SourceKind, credentialId: string | null, agentId: string): string | undefined {
+  const type = credentialTypeOf(kind);
+  if (!type) return undefined;
+  if (!credentialId) return 'The source has no credential';
+  const found = credentials.list().find((c) => c.id === credentialId);
+  if (!found) return 'The credential was deleted';
+  if (found.type !== type) return `The credential is now a ${found.type}, not a ${type}`;
+  if (!credentialUsableBy(credentialId, homeProjectId('agent', agentId))) return `This agent’s project can’t use the credential “${found.name}”`;
+  return undefined;
+}

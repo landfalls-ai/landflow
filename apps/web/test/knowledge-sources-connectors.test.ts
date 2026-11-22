@@ -3,6 +3,9 @@
  * lists, the version marker it gives, what it never touches (keys outside the prefix, another host, a page robots.txt forbids),
  * and the limits. Nothing leaves this machine.
  */
+import http from 'node:http';
+import zlib from 'node:zlib';
+import { ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,7 +22,9 @@ Object.assign(process.env, { LANDFLOW_PUBLIC_URL: 'http://landflow.test', LANDFL
 const { s3Connector } = await import('@/lib/server/knowledge-sources/connectors/s3');
 const { SourceError } = await import('@/lib/server/knowledge-sources/connectors/types');
 const { crawlConnector, CRAWL_SPACING_MS } = await import('@/lib/server/knowledge-sources/connectors/crawl');
-const { parseRobots, robotsAllow } = await import('@/lib/server/knowledge-sources/connectors/robots');
+const { parseRobots, robotsAllow, patternMatches } = await import('@/lib/server/knowledge-sources/connectors/robots');
+const bounded = await import('@/lib/server/knowledge-sources/connectors/bounded');
+const { assertOutboundTarget, s3ClientOf } = await import('@/lib/server/nodes/credentials');
 const { driveConnector, driveBase, vaultTokens } = await import('@/lib/server/knowledge-sources/connectors/drive');
 const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
@@ -420,5 +425,159 @@ describe('Google Drive', () => {
       await expect(driveConnector(folder(), vaultTokens(created.id)).list(signal, new Map())).rejects.toThrow(/not connected/);
       await expect(driveConnector(folder(), vaultTokens('cred-gone')).list(signal, new Map())).rejects.toThrow(/deleted/);
     });
+  });
+});
+
+describe('limits on what a source can make the host hold (review: bounded reads)', () => {
+  const { readCapped, TooLargeError } = bounded;
+  const { gzipSync } = zlib;
+
+  it('readCapped counts what arrives, stops past the cap and can truncate', async () => {
+    const chunks = async function* () {
+      for (let i = 0; i < 10; i++) yield new Uint8Array(100);
+    };
+    await expect(readCapped(chunks(), 500)).rejects.toBeInstanceOf(TooLargeError);
+    expect((await readCapped(chunks(), 500, { truncate: true })).length).toBe(500);
+    expect((await readCapped(chunks(), 5000)).length).toBe(1000);
+    expect((await readCapped(new Response('hello').body, 100)).length).toBe(5);
+    expect((await readCapped(null, 10)).length).toBe(0);
+  });
+
+  /** A site whose home page is 60 MB of zeros after gzip (a few dozen KB on the wire), and whose robots.txt is as big. */
+  function bombSite() {
+    const bomb = gzipSync(Buffer.alloc(60 * 1024 * 1024));
+    const server = http.createServer((request, response) => {
+      response.writeHead(200, { 'content-type': request.url === '/robots.txt' ? 'text/plain' : 'text/html', 'content-encoding': 'gzip' });
+      response.end(bomb);
+    });
+    return new Promise<{ url: string; close: () => Promise<void> }>((resolve) => server.listen(0, '127.0.0.1', () => resolve({ url: `http://127.0.0.1:${(server.address() as { port: number }).port}`, close: () => new Promise((done) => server.close(() => done())) })));
+  }
+
+  it('a gzip bomb as a page is cut at 2 MB after decompression and left out; as robots.txt it is read to 512 KB only', async () => {
+    const site = await bombSite();
+    try {
+      const started = Date.now();
+      const listing = await crawlConnector({ startUrl: `${site.url}/`, maxDepth: 1, maxPages: 5 }, { spacingMs: 0 }).list(signal, new Map());
+      expect(Date.now() - started).toBeLessThan(10_000);
+      expect(listing.items).toEqual([]);
+      expect(listing.complete).toBe(false);
+      expect(listing.problems?.[0].reason).toMatch(/Too large \(the limit for a page is 2 MB\)/);
+    } finally {
+      await site.close();
+    }
+  }, 30_000);
+
+  it('the pages one crawl keeps for fetch have a budget: past it the page waits for the next sync and the listing is not whole', async () => {
+    const site = fakeSite();
+    await site.start();
+    try {
+      const listing = await crawlConnector({ startUrl: `${site.url}/`, maxDepth: 2, maxPages: 50 }, { spacingMs: 0, keptBudgetBytes: 1200 }).list(signal, new Map());
+      expect(listing.complete).toBe(false);
+      expect(listing.note).toMatch(/memory/);
+      expect(listing.items.length).toBeGreaterThan(0);
+      expect(listing.items.length).toBeLessThan(10);
+      expect(listing.problems?.some((p) => /next sync/.test(p.reason))).toBe(true);
+      const all = await crawlConnector({ startUrl: `${site.url}/`, maxDepth: 2, maxPages: 50 }, { spacingMs: 0 }).list(signal, new Map());
+      expect(all.items.length).toBeGreaterThanOrEqual(10);
+    } finally {
+      await site.stop();
+    }
+  });
+
+  it('an S3 object over the limit is refused by its size, before its body is read', async () => {
+    const s3 = fakeS3();
+    await s3.start();
+    try {
+      await putObject(s3, 'docs', 'guides/huge.md', 'x'.repeat(26 * 1024 * 1024));
+      const connector = s3Connector({ bucket: 'docs', prefix: 'guides/huge' }, { endpoint: s3.url, region: 'us-east-1', accessKeyId: s3.token, secretAccessKey: S3_SECRET_KEY, forcePathStyle: true });
+      const listing = await connector.list(signal, new Map());
+      await expect(connector.fetch({ ...listing.items[0], size: 10 }, signal)).rejects.toThrow(/Too large/); // the listing's size was a lie: the object's own length is checked
+    } finally {
+      await s3.stop();
+    }
+  }, 30_000);
+
+  it('a Drive download over the limit is cut at the limit', async () => {
+    const drive = fakeDrive();
+    await drive.start();
+    process.env.LANDFLOW_KNOWLEDGE_DRIVE_URL = drive.url;
+    try {
+      await putFile(drive, { id: 'big', name: 'big.txt', mimeType: 'text/plain', parents: ['folder-top'], content: 'x'.repeat(26 * 1024 * 1024) } as never);
+      const connector = driveConnector({ folderId: 'folder-top', includeSubfolders: false }, { token: async () => drive.token, renew: async () => drive.token });
+      await expect(connector.fetch({ key: 'big', name: 'big.txt', version: 'v', mimeType: 'text/plain' }, signal)).rejects.toThrow(/Too large/);
+    } finally {
+      delete process.env.LANDFLOW_KNOWLEDGE_DRIVE_URL;
+      await drive.stop();
+    }
+  }, 30_000);
+});
+
+describe('robots.txt matching is linear (review)', () => {
+  it('a pathological pattern finishes at once and still matches as it should', () => {
+    const pattern = `${'*a'.repeat(300)}*b$`;
+    const path = `/${'a'.repeat(4000)}`;
+    const started = Date.now();
+    for (let i = 0; i < 50; i++) expect(patternMatches(pattern, path)).toBe(false);
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(patternMatches('/a*b*c$', '/a-x-b-y-c')).toBe(true);
+    expect(patternMatches('/a*b*c$', '/a-x-b-y-c-d')).toBe(false);
+    expect(patternMatches('/private', '/private/notes')).toBe(true);
+    expect(patternMatches('/*.pdf$', '/files/x.pdf')).toBe(true);
+    expect(patternMatches('/*.pdf$', '/files/x.pdf?y=1')).toBe(false);
+    expect(patternMatches('/a$', '/a')).toBe(true);
+    expect(patternMatches('/a*$', '/abc')).toBe(true);
+  });
+
+  it('caps pattern and path lengths: a huge rule is ignored, a huge path is cut', () => {
+    expect(patternMatches(`/${'a'.repeat(2000)}`, `/${'a'.repeat(2000)}`)).toBe(false);
+    expect(robotsAllow(parseRobots(`User-agent: *\nDisallow: /${'a'.repeat(5000)}`), `/${'a'.repeat(5000)}`)).toBe(true);
+    expect(patternMatches('/x', `/x${'y'.repeat(100_000)}`)).toBe(true);
+  });
+});
+
+describe('S3 and the outbound policy (review)', () => {
+  const policy = async (flags: Record<string, string | undefined>, work: () => Promise<void>) => {
+    const before = { ...process.env };
+    for (const [key, value] of Object.entries(flags)) value === undefined ? delete process.env[key] : (process.env[key] = value);
+    try {
+      await work();
+    } finally {
+      for (const key of Object.keys(flags)) before[key] === undefined ? delete process.env[key] : (process.env[key] = before[key]);
+    }
+  };
+  const keys = { accessKeyId: 'AKIADUMMYKEYFORTESTS', secretAccessKey: 'dummy-secret-for-tests-only', region: 'us-east-1' };
+
+  it('an endpoint that is private, or whose name resolves to a private address, is refused; a name that does not resolve is refused too', async () => {
+    await policy({ LANDFLOW_OUTBOUND_BLOCK_PRIVATE: 'true' }, async () => {
+      await expect(assertOutboundTarget(new URL('http://127.0.0.1:9000'))).rejects.toThrow(/Blocked/);
+      await expect(assertOutboundTarget(new URL('http://localhost:9000'))).rejects.toThrow(/Blocked/);
+      await expect(assertOutboundTarget(new URL('http://no-such-host.invalid'))).rejects.toThrow(/could not be resolved/);
+      await expect(s3Connector({ bucket: 'docs', prefix: '' }, { ...keys, endpoint: 'http://localhost:9000' }).list(signal, new Map())).rejects.toThrow(/Blocked/);
+    });
+    await policy({ LANDFLOW_OUTBOUND_BLOCK_PRIVATE: 'false' }, async () => {
+      await expect(assertOutboundTarget(new URL('http://no-such-host.invalid'))).resolves.toBeUndefined();
+    });
+  });
+
+  it('every connection the SDK makes is checked at the socket: a bucket host the SDK derives that resolves to loopback never connects (path and virtual-hosted)', async () => {
+    const s3 = fakeS3();
+    await s3.start();
+    try {
+      const port = new URL(s3.url).port;
+      await policy({ LANDFLOW_OUTBOUND_BLOCK_PRIVATE: 'true' }, async () => {
+        // s3ClientOf is used directly, past the up-front check: only the socket's guarded lookup is left to refuse the name `localhost`.
+        for (const forcePathStyle of [true, false]) {
+          const client = await s3ClientOf({ ...keys, endpoint: `http://localhost:${port}`, forcePathStyle });
+          try {
+            await expect(client.send(new ListObjectsV2Command({ Bucket: 'docs' }))).rejects.toThrow();
+            expect(s3.requests()).toEqual([]); // nothing reached the fake
+          } finally {
+            client.destroy();
+          }
+        }
+      });
+    } finally {
+      await s3.stop();
+    }
   });
 });
