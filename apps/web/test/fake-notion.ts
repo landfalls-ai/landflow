@@ -18,11 +18,13 @@
  * 429 (with `Retry-After`), 529, 500, 503, 504, 401, 403, 404 and 409.
  *
  * Written by the plan for the Notion brain program, wave nb1: NB02 owns it (backbone/contracts/nb/fake-notion.ts) as
- * apps/web/test/fake-notion.ts; NB03–NB08 and the join tests copy it byte for byte. Self-contained: node built-ins only.
+ * apps/web/test/fake-notion.ts; NB03–NB08 and the join tests copy it byte for byte. Self-contained: node built-ins only (plus a type-only
+ * import of the @landflow/test-fakes contract for `asFake()`).
  */
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import type { Fake, FakeScript } from '@landflow/test-fakes';
 
 export const FAKE_NOTION_VERSION = '2026-03-11';
 export const FAKE_NOTION_TOKEN = 'ntn_fake_test_key_0000000000000000000000000000';
@@ -138,10 +140,23 @@ export interface PersonEdit {
   by?: string;
 }
 
+/** The JSON a test reads through the contract's `state()` (the live `state` holds Maps). */
+export interface FakeNotionSnapshot {
+  pages: FakePage[];
+  databases: FakeDatabase[];
+  people: Array<{ id: string; name: string; email: string }>;
+}
+
 export interface FakeNotion {
   url: string;
   token: string;
   state: FakeNotionState;
+  /** The @landflow/test-fakes contract over this fake (start, reset, state, script, requests, stop); its behaviour is unchanged. */
+  asFake(): Fake<FakeNotionSnapshot>;
+  /** Forget pages, databases, people, the request log and every scripted failure (the bot and the server stay). */
+  reset(): void;
+  /** The contract's `script()`: `failNext` for a status, with `Retry-After`; `delayMs` is not supported. */
+  script(script: FakeScript): void;
   /** Make a page as a person: under `parentId` (a page) or at the workspace's top level; `shared` makes it a root the bot can see. */
   addPage(input: { parentId?: string; title: string; markdown?: string; shared?: boolean; by?: string }): string;
   /** A row a person adds to a database (API-form properties by name). */
@@ -832,11 +847,68 @@ export async function startFakeNotion(options: FakeNotionOptions = {}): Promise<
     writes: () => state.requests.filter((r) => (r.method === 'POST' || r.method === 'PATCH') && !r.template.endsWith('/query') && r.template !== '/v1/search'),
     body: (id) => findPage(id)?.markdown,
     value: (id, property) => plainValue(findPage(id)?.properties[property]),
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.closeAllConnections?.();
-        server.close((err) => (err ? reject(err) : resolve()));
-      }),
+    reset() {
+      state.pages.clear();
+      state.databases.clear();
+      state.dataSources.clear();
+      state.people.clear();
+      state.requests.length = 0;
+      rateLimited = { count: 0, retryAfter: 1 };
+      failures.length = 0;
+    },
+    script(script) {
+      if (script.delayMs) throw new Error('fake-notion: script({ delayMs }) is not supported');
+      const { match } = script;
+      this.failNext(
+        {
+          status: script.status,
+          ...(script.retryAfter !== undefined && { retryAfter: script.retryAfter }),
+          ...(match && { match: (method: string, template: string) => match({ method, path: template, query: new URLSearchParams(), headers: {}, body: undefined, raw: Buffer.alloc(0) }) }),
+        },
+        script.times ?? 1,
+      );
+    },
+    asFake: () => asFake(fake, () => stopServer()),
+    close: () => stopServer(),
   };
+  let stopped = false;
+  const stopServer = () =>
+    stopped
+      ? Promise.resolve()
+      : new Promise<void>((resolve, reject) => {
+          stopped = true;
+          server.closeAllConnections?.();
+          server.close((err) => (err ? reject(err) : resolve()));
+        });
   return fake;
+}
+
+/** The contract's view of a running fake: it listens from the start, so `start()` only reports the URL. */
+function asFake(notion: FakeNotion, stop: () => Promise<void>): Fake<FakeNotionSnapshot> {
+  return {
+    name: 'notion',
+    token: notion.token,
+    url: notion.url,
+    start: async () => notion.url,
+    reset: () => notion.reset(),
+    state: () => ({
+      pages: structuredClone([...notion.state.pages.values()]),
+      databases: structuredClone([...notion.state.databases.values()]),
+      people: [...notion.state.people].map(([id, person]) => ({ id, ...person })),
+    }),
+    script: (script) => notion.script(script),
+    requests: () =>
+      notion.state.requests.map((r) => ({
+        method: r.method,
+        path: r.path,
+        query: new URLSearchParams(r.query),
+        headers: {},
+        body: r.body,
+        raw: Buffer.from(r.body ? JSON.stringify(r.body) : ''),
+        status: r.status,
+        refused: r.status === 401,
+        scripted: false,
+      })),
+    stop,
+  };
 }

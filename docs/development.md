@@ -193,7 +193,7 @@ Every suite, from the repository root. All of them run offline.
 (cd apps/web && npx vitest run)                    # the host: routes, store, runner, auth, AI, queue mode on fakes…
                                                    # (a test file that needs a DOM starts with `// @vitest-environment happy-dom`: node-credentials-effect.test.ts)
 pnpm typecheck                                     # every TypeScript package
-for p in protocol transports engine sdk cli; do (cd packages/$p && npx vitest run); done
+for p in protocol transports engine sdk cli test-fakes; do (cd packages/$p && npx vitest run); done
 (cd services/code-runner && npx vitest run)
 for p in messaging text-toolkit github landfall triage browser; do (cd plugins/$p && npx vitest run); done
 (cd sdks/go && go test ./...)
@@ -312,6 +312,7 @@ Start the matching infra services first ([deployment.md](deployment.md)), then r
 |---|---|---|
 | `postgres` | the infra Postgres, database `landflow_test` (or `LANDFLOW_PG_URL`, `LANDFLOW_TEST_DATABASE_URL`) | `pgvector.test.ts`, `postgres.test.ts` (the store, schema `landflow_runtime_test`), `postgres-hot-mirror.test.ts` (the hot mirror: eviction, cold reads through the async seam, promotion, schema `landflow_hot_test`; run it in its own vitest call, as the two share `landflow_test`), `projects-migration.test.ts`, `project-folders-variables.test.ts` |
 | `queue` | the infra Valkey (`LANDFLOW_TEST_VALKEY_URL`, under a throwaway key prefix) and Postgres | `cluster-coordinator.test.ts` (coordinator, leader election, stalled-job takeover, relay), `cluster-postgres.test.ts` (processes following each other's writes, schema `landflow_queue_test`), `config-store-postgres.test.ts` (credentials and settings shared by two processes, in a database it creates and drops), `rotate-key-postgres.test.ts` (the `rotate-key` script re-sealing a credential and a settings row in Postgres, in a database it creates and drops), `audit-chain.postgres.test.ts` (the hash chain sealed by two processes at once, SAML state shared by mains), `transports.postgres.test.ts`, `approval-inbox-cluster-ap1.test.ts` (two processes claim one approval-inbox row in Postgres, exactly one wins; wave ap1), `harness-hooks-cluster.test.ts` (two processes apply hook events to one harness session; a late event never clears Error; also runs under `postgres`; C04) |
+| `browser` | Chrome on this machine (never downloaded) and a free port; nothing else, the host and the fakes are the tier's own | the Playwright specs in `apps/web/e2e` (`pnpm test:browser`; see [Browser tests](#browser-tests)). Not run by `pnpm test` or the host's vitest |
 | `sentinel` | `deploy/compose.sentinel.yml` | `valkey-sentinel.integration.test.ts` (the primary is killed; a run in flight and new runs finish on the promoted replica) |
 | `valkey-cluster` | the infra `valkey-cluster` profile | `valkey-cluster.integration.test.ts` |
 | `oidc` | Keycloak (`auth` profile) | `oidc.integration.test.ts` (fills in its login form as alice and bob) |
@@ -401,10 +402,94 @@ The databases plugin has its own: `cd plugins/databases && LANDFLOW_INTEGRATION=
 Integration -v .` (`all` adds MySQL); see
 [deployment.md, "Integration tests (databases plugin)"](deployment.md#integration-tests-databases-plugin).
 
+### Fakes (`@landflow/test-fakes`)
+
+A node that writes to an outside service is tested against a fake of it that keeps what it was sent, so the test asserts
+on the outcome (`slack.state().channels['#ops'].messages[0].text`) and not on the request's shape. `packages/test-fakes`
+(private, node built-ins only, TypeScript source like the other packages) holds the contract and the fakes; every fake
+binds `127.0.0.1` on a free port, and no vendor token is real.
+
+```ts
+import { fakeSlack } from '@landflow/test-fakes/slack';
+const slack = fakeSlack();                        // fakeGitHub() from '@landflow/test-fakes/github', or defineFake(…)
+beforeAll(() => slack.start());                   // one instance per test file: a free port each, so files never share state
+afterAll(() => slack.stop());
+beforeEach(() => slack.reset());                  // the seed again, an empty log, no scripts
+// a credential whose base URL is slack.url and whose token is slack.token; run the node; then:
+expect(slack.state().channels['#ops'].messages.map((m) => m.text)).toEqual(['hello']);
+```
+
+The contract (`Fake<S>`): `start()` binds and returns the base URL, `url` and `token`, `state()` is a deep copy of what
+the fake holds (change it and nothing changes), `requests()` is the log (method, path, query, parsed body, `status`,
+`refused` for a missing or wrong token, `scripted`), `script({ status, retryAfter?, delayMs?, body?, times = 1, match? })`
+answers the next `times` matching calls with a failure (`retryAfter` is sent as `Retry-After`; `match` limits it to
+calls it accepts), `reset()` and `stop()`. A request without the fake's token is refused and logged, so a credential
+wiring bug is a 401 the test sees (Slack answers its own way: HTTP 200 `{ ok: false, error: 'invalid_auth' }`). A script
+is answered before the token is checked, like a rate limiter in front of the service.
+
+Write a new fake with `defineFake<State>({ name, token, initial, routes, auth?, refusal? })`: `initial()` is the seed
+(called again by `reset()`), `routes(state, request)` edits the live state and answers `{ status?, body?, headers? }`
+(a thrown error is a 500), `auth(request, token)` replaces the default `Authorization: Bearer <token>` check (a header
+key, say) and `refusal(request)` the default 401. Put the new fake in `packages/test-fakes/src/<name>.ts`, export it as a
+subpath in the package's `exports`, test it in `packages/test-fakes/test/<name>.test.ts` (start, one route that changes
+state, the 401, a bad input), and add `@landflow/test-fakes: workspace:*` to the package that uses it. The package may
+import `node:*` and nothing else (a test checks).
+
+What exists: **Slack** (`chat.postMessage` with `thread_ts`, `chat.update`, `chat.delete`, `conversations.list`, `info`,
+`history` (newest first, paged) and `replies`, `users.list`; state: messages per `#channel`, with threads), **GitHub**
+(repositories with blobs, trees, commits and refs, `contents` GET and PUT, branches, pull requests, issues and
+comments, also under `/api/v3`; state: the files each branch holds, pulls, comments) and the **Notion** fake, which
+stays `apps/web/test/fake-notion.ts` and is on the contract through `startFakeNotion().asFake()` (its other methods and
+its twelve users are unchanged; `fake-notion-contract.test.ts` runs the generic checks; `script({ delayMs })` is the one
+thing it does not do). Node-state tests that use them: `plugins/messaging/test/slack-state.test.ts`,
+`plugins/github/test/github-state.test.ts`. The plugins' older `fake-slack.ts` and `fake-github.ts` serve their
+existing request-shape tests and move to the package when they are next touched. A retry ("Retry on fail") belongs to
+the host's engine, so a plugin-level test that wants one runs the node again after the scripted failure.
+
+### Browser tests
+
+`apps/web/e2e` is a small Playwright suite that drives the real UI on a scratch host, in Chrome, at two sizes. It is a
+tier of its own: opt-in, never part of `pnpm test`, the host's vitest run or `pnpm check`.
+
+```bash
+LANDFLOW_INTEGRATION=browser pnpm test:browser                       # headless; about 1.5 to 2 minutes
+LANDFLOW_INTEGRATION=browser LANDFLOW_E2E_HEADED=1 pnpm test:browser # a visible Chrome, for a person's check
+LANDFLOW_INTEGRATION=browser pnpm test:browser -- --project=phone api-keys   # one spec at one size
+```
+
+- **The flag.** `playwright.config.ts` throws "set LANDFLOW_INTEGRATION=browser" without it (`test/e2e-gate.test.ts`).
+- **The host.** `global-setup.ts` starts `next dev` from `apps/web` on a free port with a new data directory under the
+  system temp directory, the development profile, no owner (the first flow is the setup page), the registry, the startup
+  scan, the gateway and plugins off, `NO_PROXY=*`, only a handful of variables from your shell and the Content Security
+  Policy enforced. Teardown stops it, deletes the directory and fails when `apps/web/.data` changed meanwhile. It cannot
+  run beside `pnpm dev` in the same checkout (`next dev` allows one server per directory): stop that one first. Never
+  point it at `apps/web/.data` (`scratch-host.ts` refuses).
+- **Chrome.** The tier uses this machine's Chrome (`channel: 'chrome'`) and never downloads a browser. Without Chrome set
+  `LANDFLOW_E2E_CHANNEL=chromium` after `npx playwright install chromium` (the one command that downloads).
+- **Two sizes.** 1440 × 900 (`desktop`) and 390 × 844 with touch (`phone`). The owner-setup flow runs first at each
+  (projects `desktop-setup`, `desktop`, `phone-setup`, `phone`, in that order): the desktop run creates the owner, the
+  phone run finds it and checks that `/setup` now sends a visitor to sign in.
+- **The flows.** `owner-setup` (the setup page, sign out, sign in), `workflow-run` (New workflow, Manual Trigger and Edit
+  Fields from the node creator, Execute workflow, the output), `run-trace` (a seeded run, its Run Trace page and Trace
+  tab), `api-keys` (create a key, shown once, revoke), `csp-smoke` (the workflow list and an editor with the policy
+  enforced and no `securitypolicyviolation`; with `LANDFLOW_E2E_PROD=1` after `pnpm --filter @landflow/web build` it also
+  runs on `next start` in the production profile, in a context of its own). A `credential-picker` flow (an HTTP Request node's header-auth credential created from the node
+  panel and picked, then run against the `upstream` fake) follows when the credential combobox has merged.
+- **Loopback only.** The `fixtures.ts` guard aborts any request to a host but `localhost` / `127.0.0.1` and fails the test
+  that made it. A test's outside service is a fake from `@landflow/test-fakes`, started per worker (`upstream`).
+- **Writing a spec.** `import { test, expect, open } from './fixtures'`; take `signedIn` for a page signed in as the
+  owner; `open(page, path)` waits until the page hydrated (a form filled before the scripts run is reset by React and
+  submits empty). Name controls by role or label and keep a flow the same at both sizes; where the phone differs
+  (`isMobile`), say why in a comment. A spec makes what it needs through the API (`seedWorkflow`) unless the flow is the
+  thing under test.
+- **When one fails.** A screenshot and a trace are kept in `apps/web/e2e/test-results/` (ignored by git); open a trace
+  with `npx playwright show-trace <trace.zip>`, the HTML report is in `apps/web/e2e/report/`.
+- **No baselines, no CI.** There are no visual-diff baselines and nothing runs the tier on its own; a person runs it.
+
 ### The Notion fake
 
 Every test of the Notion brain talks to `apps/web/test/fake-notion.ts`, an in-memory Notion on a local port (its header lists
-every endpoint and behaviour; no test calls `api.notion.com` or holds a real key). Start it with `startFakeNotion()` and register
+every endpoint and behaviour; no test calls `api.notion.com` or holds a real key). Start it with `startFakeNotion()` (`.asFake()` gives the [`@landflow/test-fakes`](#fakes-landflowtest-fakes) contract over it) and register
 a stand-in credential type before creating a credential that points at it. The push and the first copy have their own package tests, `notion-push-nb04.test.ts` and `notion-copy-nb04.test.ts`:
 
 ```ts
