@@ -21,6 +21,7 @@ import {
 } from '@landflow/sdk';
 import { isBrainCollection } from '../../shared/brain';
 import { toToolName, type AgentTool, type AiDocument, type DocumentLoader, type Embeddings, type Reranker, type Retriever } from '@landflow/engine';
+import { syncDocument } from '../rag/chunk-diff';
 import {
   insertDocuments,
   MemoryVectorStore,
@@ -67,6 +68,16 @@ const COMMON_PROPERTIES: PropertyDescriptor[] = [
     type: 'boolean',
     default: false,
     description: 'Delete what the collection holds before inserting',
+    displayOptions: { show: { mode: ['insert'] } },
+  },
+  {
+    // C20: with a key, an item's chunks replace what the collection holds under that key and only new text is embedded.
+    name: 'upsertKey',
+    displayName: 'Upsert by Key',
+    type: 'string',
+    default: '',
+    placeholder: '{{ $json.id }}',
+    description: 'Leave empty to insert as before. With a key per item (a page id, a URL), inserting again replaces that item’s chunks and embeds only the text that changed. Not with “Clear Collection”.',
     displayOptions: { show: { mode: ['insert'] } },
   },
   { name: 'prompt', displayName: 'Prompt', type: 'string', default: '{{ $json.chatInput }}', required: true, description: 'What to search for, per input item', displayOptions: { show: { mode: ['load'] } } },
@@ -226,6 +237,32 @@ async function connected<T>(ctx: Pick<IBaseContext, 'getNode'> & { getInputConne
   return value;
 }
 
+/**
+ * C20: insert with "Upsert by Key". The loader's documents are grouped by their item's key; each key is one document
+ * whose chunks replace the collection's chunks of that key (`syncDocument`), so only text the collection has not
+ * embedded under this model goes to the embeddings model. Items that share a key are one document.
+ */
+async function upsertDocuments(ctx: IBaseContext, store: VectorStore, embeddings: Embeddings, collection: string, documents: AiDocument[], keys: string[], signal?: AbortSignal): Promise<NodeItem[]> {
+  const byKey = new Map<string, AiDocument[]>();
+  for (const doc of documents) {
+    const key = keys[Math.min(keys.length - 1, Math.max(0, Number(doc.metadata.itemIndex) || 0))];
+    byKey.set(key, [...(byKey.get(key) ?? []), doc]);
+  }
+  // A key whose items loaded no text is a document with no chunks: what the collection held under it goes.
+  for (const key of keys) if (!byKey.has(key)) byKey.set(key, []);
+  const out: NodeItem[] = [];
+  const total = { reused: 0, embedded: 0, removed: 0 };
+  for (const [key, docs] of byKey) {
+    const result = await syncDocument(store, embeddings, { collection, match: { upsertKey: key }, documentKey: key, chunks: docs.map((doc) => ({ text: doc.pageContent, metadata: { ...doc.metadata, upsertKey: key } })) }, signal);
+    total.reused += result.reused;
+    total.embedded += result.embedded;
+    total.removed += result.removed;
+    docs.forEach((doc, i) => out.push({ json: { id: result.ids[i], pageContent: doc.pageContent, metadata: { ...doc.metadata, upsertKey: key } }, pairedItem: { item: Math.min(keys.length - 1, Math.max(0, Number(doc.metadata.itemIndex) || 0)) } }));
+  }
+  ctx.logger.info(`Upserted ${byKey.size} document(s) into “${collection}” (${store.kind}): ${total.embedded} chunk(s) embedded, ${total.reused} reused, ${total.removed} removed`);
+  return out;
+}
+
 function vectorStoreNode(spec: StoreSpec) {
   const collectionOf = (ctx: IBaseContext) => {
     const collection = String(ctx.getNodeParameter('collection', 0, '') ?? '').trim();
@@ -278,12 +315,26 @@ function vectorStoreNode(spec: StoreSpec) {
 
       if (mode === 'insert') {
         const loader = await connected<DocumentLoader>(ctx, 'ai_document', 'No document loader connected', 'Attach a Default Data Loader to the “Document” slot.');
-        if (ctx.getNodeParameter<boolean>('clearStore', 0)) await store.clear(collection);
+        const clearStore = ctx.getNodeParameter<boolean>('clearStore', 0);
+        // C20: the key of each item; all empty is today's insert, some empty is a mistake that would silently skip items.
+        const keys = items.map((_, i) => String(ctx.getNodeParameter('upsertKey', i, '') ?? '').trim());
+        const upsert = keys.some(Boolean);
+        if (upsert && clearStore) {
+          throw new NodeOperationError('“Upsert by Key” and “Clear Collection” can’t be used together', {
+            description: 'Clear Collection empties the collection first, so nothing could be reused. Turn one of them off.',
+          });
+        }
+        const missing = keys.findIndex((key) => !key);
+        if (upsert && missing >= 0) {
+          throw new NodeOperationError(`“Upsert by Key” is empty for item ${missing + 1}`, { itemIndex: missing, description: 'Every item needs a key (for example {{ $json.id }}), or leave “Upsert by Key” empty to insert without one.' });
+        }
+        if (clearStore) await store.clear(collection);
         const documents = await loader.load(items);
         if (!documents.length) {
           ctx.logger.warn('The document loader produced no documents: nothing to insert');
           return [[]];
         }
+        if (upsert) return [await upsertDocuments(ctx, store, embeddings, collection, documents, keys, ctx.signal)];
         const vectors = await embeddings.embedDocuments(documents.map((doc) => doc.pageContent), ctx.signal);
         const ids = await insertDocuments(
           store,

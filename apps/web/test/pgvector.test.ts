@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { defineNode, type JsonObject } from '@landflow/sdk';
 import type { Embeddings } from '@landflow/engine';
 import { pgConfig, postgresCredential } from '@/lib/server/nodes/vector-stores';
+import { syncDocument } from '@/lib/server/rag/chunk-diff';
 import { closePgPools, insertDocuments, PgVectorStore, pgTableName, searchStore } from '@/lib/server/rag/stores';
 import { searchTerms } from '@/lib/server/rag/search';
 import { outputsOf, runFlow } from './helpers';
@@ -113,5 +114,86 @@ describe.skipIf(!enabled)('PGVector store (Postgres)', () => {
   it('refuses table names that are not plain identifiers', () => {
     expect(() => new PgVectorStore(pgConfig(credential), 'bad; DROP TABLE x')).toThrow(/Invalid table name/);
     expect(pgTableName('public.vectors')).toBe('"public"."vectors"');
+  });
+
+  // C20: the one-transaction replace and the hash lookup.
+  const doc = (id: string, source: string, text: string, extra: JsonObject = {}) => ({ id, pageContent: text, metadata: { source, ...extra }, embedding: embed(text) });
+  const ids = async (collection: string, source: string) => (await store.metadataWhere(collection, { source })).map((row) => row.id).sort();
+
+  it('metadataWhere, vectorsByHash and replace (the new set in, the old set out, one step)', async () => {
+    const c = 'c20_basic';
+    await store.clear(c);
+    await store.add(c, [doc('1', 'a.md', 'one', { chunkHash: 'h1', embedKey: 'k' }), doc('2', 'a.md', 'two'), doc('3', 'b.md', 'three')]);
+    expect(await ids(c, 'a.md')).toEqual(['1', '2']);
+    const found = await store.vectorsByHash(c, ['h1', 'nope'], 'k');
+    expect([...found.keys()]).toEqual(['h1']);
+    expect(found.get('h1')!.map((v) => Math.round(v))).toEqual(embed('one'));
+    expect((await store.vectorsByHash(c, ['h1'], 'other')).size).toBe(0);
+    expect(await store.replace(c, { remove: { source: 'a.md' }, add: [doc('4', 'a.md', 'four')] })).toEqual({ removed: 2, added: 1 });
+    expect(await ids(c, 'a.md')).toEqual(['4']);
+    expect(await store.count(c)).toBe(2);
+    await expect(store.replace(c, { remove: {}, add: [] })).rejects.toThrow(/filter/);
+  });
+
+  it('a search from another connection sees the old set or the new set, never a mix (AS-3, AS-8)', async () => {
+    const c = 'c20_swap';
+    await store.clear(c);
+    const old = Array.from({ length: 12 }, (_, i) => doc(`old-${i}`, 'a.md', `old text ${i}`));
+    await store.add(c, old);
+    const other = new PgVectorStore(pgConfig(credential), TABLE); // its own object over the same pool: another connection serves it
+    const fresh = Array.from({ length: 12 }, (_, i) => doc(`new-${i}`, 'a.md', `new text ${i}`));
+    let done = false;
+    const swap = store.replace(c, { remove: { source: 'a.md' }, add: fresh }).finally(() => (done = true));
+    const seen = new Set<string>();
+    while (!done) {
+      const rows = await other.metadataWhere(c, { source: 'a.md' });
+      expect(rows).toHaveLength(12);
+      const kinds = new Set(rows.map((r) => r.id.split('-')[0]));
+      expect(kinds.size).toBe(1);
+      seen.add([...kinds][0]);
+    }
+    await swap;
+    expect(await ids(c, 'a.md')).toEqual(fresh.map((d) => d.id).sort());
+  });
+
+  it('a failure inside the step leaves the old chunks (AS-4, AS-8)', async () => {
+    const c = 'c20_fail';
+    await store.clear(c);
+    await store.add(c, [doc('1', 'a.md', 'one'), doc('2', 'a.md', 'two'), doc('3', 'b.md', 'three')]);
+    // Two chunks with one id: the insert fails after the delete ran, inside the transaction.
+    await expect(store.replace(c, { remove: { source: 'a.md' }, add: [doc('9', 'a.md', 'nine'), doc('9', 'a.md', 'nine again')] })).rejects.toThrow();
+    expect(await ids(c, 'a.md')).toEqual(['1', '2']);
+    // A size the collection does not hold is refused before the delete.
+    await expect(store.replace(c, { remove: { source: 'a.md' }, add: [{ id: '8', pageContent: 'x', metadata: { source: 'a.md' }, embedding: [1, 2, 3] }] })).rejects.toThrow(/dimensional/);
+    expect(await ids(c, 'a.md')).toEqual(['1', '2']);
+  });
+
+  it('syncDocument: the second pass embeds nothing, an edit embeds one chunk, a failing model changes nothing', async () => {
+    const c = 'c20_sync';
+    await store.clear(c);
+    let embedded = 0;
+    let down = false;
+    const embeddings: Embeddings = {
+      provider: 'test',
+      model: 'hash-32',
+      embedDocuments: async (texts) => {
+        if (down) throw new Error('the embeddings model is down');
+        embedded += texts.length;
+        return texts.map(embed);
+      },
+      embedQuery: async (text) => embed(text),
+    };
+    const chunks = (edit = false) => Array.from({ length: 10 }, (_, i) => ({ text: `chunk number ${i} ${edit && i === 4 ? 'edited' : 'same'} words`, metadata: { source: 'a.md', chunk: i } }));
+    const input = (edit = false) => ({ collection: c, match: { source: 'a.md' }, documentKey: 'doc_a', chunks: chunks(edit) });
+    expect(await syncDocument(store, embeddings, input())).toMatchObject({ reused: 0, embedded: 10, removed: 0 });
+    embedded = 0;
+    expect(await syncDocument(store, embeddings, input())).toMatchObject({ reused: 10, embedded: 0, removed: 0 });
+    expect(embedded).toBe(0);
+    expect(await syncDocument(store, embeddings, input(true))).toMatchObject({ reused: 9, embedded: 1, removed: 1 });
+    expect(embedded).toBe(1);
+    const before = await store.metadataOf(c);
+    down = true;
+    await expect(syncDocument(store, embeddings, { ...input(), chunks: chunks().map((chunk) => ({ ...chunk, text: `${chunk.text} again` })) })).rejects.toThrow(/down/);
+    expect(await store.metadataOf(c)).toEqual(before);
   });
 });

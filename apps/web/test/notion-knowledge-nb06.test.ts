@@ -6,6 +6,8 @@
  * is BM25; the models are scripted.
  */
 import { readFileSync, mkdtempSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -368,6 +370,59 @@ describe('the brain’s embeddings are on but the model does not answer', () => 
       else process.env.OLLAMA_URL = saved.ollama;
       await pass(); // back to off: the collection is cleared and indexed again
       expect((JSON.parse(link().cursors!) as { knowledge: { embeddings: string } }).knowledge.embeddings).toBe('bm25');
+    }
+  });
+});
+
+describe('chunk-level reuse (C20)', () => {
+  it('an edited page embeds only its changed chunks, ids come from the chunk hash, and a moved page reuses every vector', async () => {
+    const embedded: string[] = [];
+    const server = createServer(async (req, res) => {
+      const parts: Buffer[] = [];
+      for await (const part of req) parts.push(part as Buffer);
+      const body = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}') as { input?: string | string[] };
+      const inputs = Array.isArray(body.input) ? body.input : [body.input ?? ''];
+      if (inputs[0] !== 'ping') embedded.push(...inputs);
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ embeddings: inputs.map((t) => [t.length % 11, 1, 2]), model: 'm' }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const saved = { embeddings: process.env.LANDFLOW_BRAIN_EMBEDDINGS, ollama: process.env.OLLAMA_URL };
+    process.env.LANDFLOW_BRAIN_EMBEDDINGS = 'nomic-embed-text';
+    process.env.OLLAMA_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const collection = notionKnowledgeCollection(A);
+    const long = Array.from({ length: 40 }, (_, i) => `Section ${i}: ${Array.from({ length: 30 }, (_, w) => `guide${i}x${w}`).join(' ')}.`).join('\n\n');
+    const guide = fake.addPage({ parentId: brain, title: 'Long guide', markdown: long });
+    try {
+      await new SqliteVectorStore().clear(collection);
+      setCursors(linkId, {});
+      await pass();
+      const rows = async () => (await new SqliteVectorStore().metadataOf(collection)).filter((m) => m.metadata.title === 'Long guide');
+      const first = await rows();
+      expect(first.length).toBeGreaterThan(12);
+      // Ids come from the chunk's hash, not its position.
+      for (const row of first) expect(row.id).toMatch(new RegExp(`^${linkId}:[0-9a-f-]+:[0-9a-f]{16}:\\d+$`));
+      embedded.length = 0;
+      fake.editAsPerson(guide, { markdown: long.replace('Section 20:', 'Section 20 (edited):') });
+      await pass();
+      const after = await rows();
+      console.log(`C20 notion: edit in a ${first.length}-chunk page: ${embedded.filter((t) => t.includes('Long guide\n')).length} chunk(s) embedded`);
+      expect(embedded.filter((t) => t.includes('Long guide\n')).length).toBeGreaterThanOrEqual(1);
+      expect(embedded.filter((t) => t.includes('Long guide\n')).length).toBeLessThanOrEqual(4);
+      expect(after.length).toBeGreaterThan(12);
+      // A page whose path changed keeps every vector: nothing is embedded.
+      embedded.length = 0;
+      database().upsert('notion_knowledge_docs', { ...docs().find((d) => d.title === 'Long guide')!, link_id: linkId, path: 'Moved here' } as never);
+      await pass();
+      expect(embedded.filter((t) => t.includes('Long guide\n'))).toEqual([]);
+    } finally {
+      fake.trash(guide);
+      if (saved.embeddings === undefined) delete process.env.LANDFLOW_BRAIN_EMBEDDINGS;
+      else process.env.LANDFLOW_BRAIN_EMBEDDINGS = saved.embeddings;
+      if (saved.ollama === undefined) delete process.env.OLLAMA_URL;
+      else process.env.OLLAMA_URL = saved.ollama;
+      process.env.LANDFLOW_BRAIN_EMBEDDINGS = 'off';
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await pass();
     }
   });
 });

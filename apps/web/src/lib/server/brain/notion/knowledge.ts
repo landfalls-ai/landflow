@@ -20,8 +20,9 @@ import { envString, ollamaUrl } from '../../config';
 import { database } from '../../db';
 import { notionId, sameId, type NotionClient, type NotionPage } from '../../notion/port';
 import { ollamaEmbeddings } from '../../rag/embeddings';
-import { recursiveCharacterSplit } from '../../rag/splitters';
-import { insertDocuments, searchStore, SqliteVectorStore, type SearchMode } from '../../rag/stores';
+import { syncDocument } from '../../rag/chunk-diff';
+import { stableChunks } from '../../rag/sections';
+import { searchStore, SqliteVectorStore, type SearchMode } from '../../rag/stores';
 import { logger } from '../../telemetry/logger';
 import { getProject } from '../../projects/store';
 import { getLink, linkById, listActiveLinks, notionBrainEnabled, setCursors, type LinkRow } from './links';
@@ -305,21 +306,16 @@ async function indexDocs(link: LinkRow, vectors: SqliteVectorStore, model: strin
       continue;
     }
     const title = doc.title ?? 'Untitled';
-    const chunks = recursiveCharacterSplit(doc.markdown ?? '', CHUNK).filter((chunk) => chunk.trim());
+    // C20: sections first, so a page with one edited paragraph keeps the vectors of its other chunks; the page's chunks are compared with the stored ones, only new text is embedded, and one step swaps them in.
+    const chunks = stableChunks(doc.markdown ?? '', CHUNK).filter((chunk) => chunk.trim());
     try {
       const texts = (chunks.length ? chunks : [title]).map((chunk) => `${title}\n${chunk}`);
-      const vectorsOf = await embeddings.embedDocuments(texts);
-      await vectors.deleteWhere(collection, { linkId: link.id, pageId: id });
-      await insertDocuments(
-        vectors,
+      await syncDocument(vectors, embeddings, {
         collection,
-        texts.map((text, i) => ({
-          id: `${link.id}:${id}:${i}`,
-          pageContent: text,
-          metadata: { linkId: link.id, pageId: id, title, url: doc.url ?? '', path: doc.path ?? '', hash: doc.hash ?? '', editedAt: doc.edited_at ?? '', chunk: i } satisfies JsonObject,
-          embedding: vectorsOf[i],
-        })),
-      );
+        match: { linkId: link.id, pageId: id },
+        documentKey: `${link.id}:${id}`,
+        chunks: texts.map((text, i) => ({ text, metadata: { linkId: link.id, pageId: id, title, url: doc.url ?? '', path: doc.path ?? '', hash: doc.hash ?? '', editedAt: doc.edited_at ?? '', chunk: i } satisfies JsonObject })),
+      });
       done++;
     } catch (error) {
       // Embeddings down (or a dimension clash): keep what is indexed, retry at the next pass.
