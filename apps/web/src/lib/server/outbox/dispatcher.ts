@@ -11,6 +11,7 @@
  * the save path) and the pruning of dead rows after 30 days. A leader that dies mid-delivery leaves leases that run out
  * after a minute, then the next leader delivers.
  */
+import { nanoid } from 'nanoid';
 import { DEAD_AFTER_MS, MAX_BACKLOG_PER_SUBSCRIPTION } from '../../shared/event-subscriptions';
 import { database } from '../db';
 import { singleton } from '../singleton';
@@ -19,7 +20,7 @@ import { claimDue, pruneDead, settleRows, SUBSCRIPTION_OUTBOX, SUBSCRIPTION_TOPI
 import { deliverEvent } from './deliver';
 import { setEventKick } from './events';
 import { ensureOutboxMetrics, recordDelivery } from './metrics';
-import { allSubscriptions, noteDelivery, openSecret, type EventSubscription } from './subscriptions';
+import { allSubscriptions, getSubscription, noteDelivery, openSecret, type EventSubscription } from './subscriptions';
 
 const TICK_MS = 2_000;
 const KICK_DELAY_MS = 100;
@@ -182,3 +183,18 @@ export const eventOutbox = {
     await s.current?.catch(() => 0);
   },
 };
+
+/**
+ * "Send test" on the card: one `test` event straight to the subscription's URL (not through the outbox, so the answer is
+ * immediate), signed like any event. The attempt shows as the subscription's last delivery.
+ */
+export async function sendTestEvent(subscriptionId: string): Promise<{ ok: boolean; status?: number; message: string }> {
+  const subscription = getSubscription(subscriptionId);
+  if (!subscription) return { ok: false, message: 'Event subscription not found' };
+  const at = new Date().toISOString();
+  const id = `evt_test_${nanoid(10)}`;
+  const body = JSON.stringify({ id, type: 'test', createdAt: at, projectId: subscription.projectId, test: true, message: `A test event from Landflow to “${subscription.name}”` });
+  const result = await deliverEvent({ url: subscription.url, secret: openSecret(subscription) }, { id, type: 'test' }, body);
+  noteDelivery(subscription.id, result.delivery);
+  return { ok: result.ok, ...(result.delivery.status && { status: result.delivery.status }), message: result.ok ? `The receiver answered HTTP ${result.delivery.status}` : (result.delivery.error ?? 'Delivery failed') };
+}
