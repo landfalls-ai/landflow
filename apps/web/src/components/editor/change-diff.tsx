@@ -2,13 +2,15 @@
 /**
  * What Apply would change, per step and value (docs/assistant.md#fold-apply-and-errors): the old value struck through
  * and the new one plain, a long text folded to two lines with "Show all", and how many steps stay as they are. Read from
- * the proposal's ops and the canvas they apply to (`diffOps`), not from the model's words.
+ * the proposal's ops and the canvas they apply to (`diffOps`), not from the model's words. Each value's line is the kit's
+ * `FieldRow` (components/ui/field-diff.tsx).
  */
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { diffOps, type AssistantOp, type ChangeDiff as Diff, type FieldDiff, type StepDiff } from '@/lib/shared/assistant-ops';
+import { diffOps, type AssistantOp, type ChangeDiff as Diff, type StepDiff } from '@/lib/shared/assistant-ops';
 import type { Workflow } from '@/lib/shared/types';
+import { FieldRow } from '../ui/field-diff';
 import { editorLookup } from './assistant';
 import { useBubbleData } from '@/lib/client/agent-bubble-data';
 import { useEditor } from './store';
@@ -32,47 +34,6 @@ export function useCanvas(): Workflow {
   return useMemo(() => useEditor.getState().toWorkflow(), [nodes, edges]);
 }
 
-/** One changed value: "label: old → new", a long one folded to two lines until "Show all". */
-function FieldRow({ field }: { field: FieldDiff }) {
-  const [all, setAll] = useState(false);
-  const { before, after } = field;
-  if (field.long && all) {
-    return (
-      <div className="min-w-0 space-y-1">
-        <div className="flex items-center gap-1.5 text-t2">
-          <span className="font-semibold text-t1">{field.label}</span>
-          <button type="button" aria-expanded onClick={() => setAll(false)} className="text-ac hover:underline max-md:min-h-11">
-            Show less
-          </button>
-        </div>
-        {before !== undefined && <Block label="Was" text={before} />}
-        {after !== undefined && <Block label="Now" text={after} fresh />}
-      </div>
-    );
-  }
-  return (
-    <div className="min-w-0 text-t2">
-      <span className="font-semibold text-t1">{field.label}</span>: {before !== undefined && <span className={cn('text-t3 line-through decoration-t3/60', field.long && 'line-clamp-2 whitespace-pre-wrap')}>{before}</span>}
-      {before !== undefined && after !== undefined && <span className="text-t3"> → </span>}
-      {after !== undefined && <span className={cn('text-t1', field.long && 'line-clamp-2 whitespace-pre-wrap')}>{after}</span>}
-      {field.long && (
-        <button type="button" aria-expanded={false} onClick={() => setAll(true)} className="ml-1.5 text-ac hover:underline max-md:min-h-11">
-          Show all
-        </button>
-      )}
-    </div>
-  );
-}
-
-function Block({ label, text, fresh }: { label: string; text: string; fresh?: boolean }) {
-  return (
-    <div>
-      <div className="text-[10px] uppercase tracking-wide text-t3">{label}</div>
-      <pre className={cn('max-h-[240px] overflow-auto whitespace-pre-wrap rounded-md border border-hair bg-wl px-1.5 py-1 font-mono text-[11px] leading-snug [overflow-wrap:anywhere]', fresh ? 'text-t1' : 'text-t3')}>{text}</pre>
-    </div>
-  );
-}
-
 function StepBlock({ step }: { step: StepDiff }) {
   const { sign, tone } = SIGN[step.kind];
   return (
@@ -91,7 +52,7 @@ function StepBlock({ step }: { step: StepDiff }) {
           {step.kind === 'removed' && <span className="text-t3"> removed</span>}
         </div>
         {step.fields.map((f) => (
-          <FieldRow key={f.key} field={f} />
+          <FieldRow key={f.key} label={f.label} before={f.before} after={f.after} long={f.long} />
         ))}
         {step.wires.map((w) => (
           <div key={w} className="text-t2">
@@ -163,7 +124,7 @@ export function ChangeDiff({ before, ops, open = true, id, settled }: { before?:
               <div className="min-w-0 flex-1 space-y-0.5 [overflow-wrap:anywhere]">
                 <div className="text-t1">Workflow settings</div>
                 {workflow.map((f) => (
-                  <FieldRow key={f.key} field={f} />
+                  <FieldRow key={f.key} label={f.label} before={f.before} after={f.after} long={f.long} />
                 ))}
               </div>
             </div>

@@ -20,6 +20,7 @@ import { ExecutionCanvas } from '../executions/execution-canvas';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
+import { FieldDiff, type FieldChange } from '../ui/field-diff';
 import { SectionLabel } from '../ui/inputs';
 import { publishVersion, toastApprovalRequested } from './publish-control';
 import { ScheduleForm, ScheduleRows, useSchedules } from './publish-schedules';
@@ -32,13 +33,17 @@ export const useVersionHistory = create<{ open: boolean; setOpen: (open: boolean
 
 const NO_RUN_DATA = {};
 
+/** What a version changed against the one before, as the kit's field lines: Added, Removed, Changed and Moved steps by name. */
 function DiffDetail({ diff }: { diff: VersionDiff }) {
-  const rows: Array<[string, string[], string]> = [
-    ['Added', diff.nodesAdded, 'text-gn'],
-    ['Removed', diff.nodesRemoved, 'text-rd'],
-    ['Changed', diff.nodesChanged, 'text-t1'],
-    ['Moved', diff.nodesMoved, 'text-t3'],
+  const rows: Array<[string, string[]]> = [
+    ['Added', diff.nodesAdded],
+    ['Removed', diff.nodesRemoved],
+    ['Changed', diff.nodesChanged],
+    ['Moved', diff.nodesMoved],
   ];
+  const changes: FieldChange[] = rows
+    .filter(([, names]) => names.length)
+    .map(([label, names]) => ({ field: label, label, kind: 'changed', after: `${names.slice(0, 4).join(', ')}${names.length > 4 ? ` +${names.length - 4}` : ''}`, long: false }));
   const other = [
     diff.connectionsAdded && `${diff.connectionsAdded} connection${diff.connectionsAdded === 1 ? '' : 's'} added`,
     diff.connectionsRemoved && `${diff.connectionsRemoved} connection${diff.connectionsRemoved === 1 ? '' : 's'} removed`,
@@ -48,13 +53,7 @@ function DiffDetail({ diff }: { diff: VersionDiff }) {
   ].filter(Boolean);
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px]">
-      {rows
-        .filter(([, names]) => names.length)
-        .map(([label, names, tone]) => (
-          <span key={label} className="min-w-0 truncate" title={names.join(', ')}>
-            <span className="text-t3">{label}:</span> <span className={tone}>{names.slice(0, 4).join(', ')}{names.length > 4 ? ` +${names.length - 4}` : ''}</span>
-          </span>
-        ))}
+      {changes.length > 0 && <FieldDiff changes={changes} unchanged={0} className="flex flex-wrap items-center gap-x-4 gap-y-1 space-y-0" />}
       {other.length > 0 && <span className="text-t3">{other.join(' · ')}</span>}
     </div>
   );

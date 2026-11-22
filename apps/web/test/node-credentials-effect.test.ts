@@ -144,7 +144,7 @@ describe('the warning when the project’s credentials could not be checked', ()
     scopeState = scopeOf('h1');
     await act(async () => finish(true));
     render(base());
-    expect(document.activeElement?.tagName).toBe('SELECT');
+    expect(document.activeElement?.getAttribute('role')).toBe('combobox');
     expect(container.querySelector('[role="status"]')?.textContent).toBe('');
   });
 });

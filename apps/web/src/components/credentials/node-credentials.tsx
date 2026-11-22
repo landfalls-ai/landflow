@@ -1,21 +1,20 @@
 'use client';
 /**
- * The node panel's credential pickers: one per credential type the node declares, with create and edit inline. With
+ * The node panel's credential pickers: one per credential type the node declares (a searchable combobox that can create a
+ * credential from the text typed), with create and edit inline. With
  * `workflowId`, only the credentials that workflow's project may use are offered (lib/shared/projects.ts), and new
  * ones are created in that project.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pencil, TriangleAlert } from 'lucide-react';
+import { Pencil, Plus, TriangleAlert } from 'lucide-react';
 import type { NodeCredentialRequirement } from '@landflow/protocol';
 import type { CredentialRefs } from '../editor/param-form';
 import { Button } from '../ui/button';
-import { Select } from '../ui/inputs';
 import { useCredentialScope } from '../projects/use-projects';
 import { useAgentScope } from './agent-scope';
+import { CredentialCombobox } from './credential-combobox';
 import { CredentialDialog, CredentialTypeIcon } from './credential-dialog';
 import { autoPickStep, credentialInputs, qualifiedCredentialType, useCredentials } from './use-credentials';
-
-const CREATE = '__create__';
 
 export function NodeCredentials({
   nodeType,
@@ -45,7 +44,7 @@ export function NodeCredentials({
   const { candidates: credentials, scoped, scopeKnown } = useMemo(() => credentialInputs({ all, scope, workflowId: workflowId ?? agentId }), [all, scope, workflowId, agentId]);
   const root = useRef<HTMLDivElement>(null);
   const [retrying, setRetrying] = useState(false);
-  const [dialog, setDialog] = useState<{ requirement: string; type: string; id?: string } | null>(null);
+  const [dialog, setDialog] = useState<{ requirement: string; type: string; id?: string; name?: string } | null>(null);
 
   const set = (requirement: string, ref?: { id: string; name: string }) => {
     const next = { ...value };
@@ -86,26 +85,18 @@ export function NodeCredentials({
             </div>
             <div className="flex gap-1.5">
               <div className="flex-1">
-                <Select
-                  aria-label={`Credential for ${info?.descriptor.displayName ?? requirement.name}`}
-                  value={missing ? '' : (ref?.id ?? '')}
-                  onChange={(e) => {
-                    if (e.target.value === CREATE) setDialog({ requirement: requirement.name, type });
-                    else {
-                      const picked = options.find((c) => c.id === e.target.value);
-                      set(requirement.name, picked && { id: picked.id, name: picked.name });
-                    }
-                  }}
-                >
-                  <option value="">{options.length ? 'Select a credential…' : 'No credential yet'}</option>
-                  {options.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                  <option value={CREATE}>+ Create new credential</option>
-                </Select>
+                <CredentialCombobox
+                  id={`${nodeType}-${requirement.name}-credential`}
+                  label={`Credential for ${info?.descriptor.displayName ?? requirement.name}`}
+                  credentials={options}
+                  value={missing ? undefined : ref?.id}
+                  onPick={(picked) => set(requirement.name, { id: picked.id, name: picked.name })}
+                  onCreate={(name) => setDialog({ requirement: requirement.name, type, ...(name && { name }) })}
+                />
               </div>
+              <Button size="icon" variant="ghost" onClick={() => setDialog({ requirement: requirement.name, type })} title="Create a credential" aria-label="Create a credential" className="max-md:size-11">
+                <Plus className="size-3.5" />
+              </Button>
               {ref && !missing && (
                 <Button size="icon" variant="ghost" onClick={() => setDialog({ requirement: requirement.name, type, id: ref.id })} title="Edit this credential" aria-label="Edit credential">
                   <Pencil className="size-3.5" />
@@ -147,7 +138,7 @@ export function NodeCredentials({
                 const ok = await reload();
                 setRetrying(false);
                 // The warning is gone: put focus on the first picker instead of on a button that vanished.
-                if (ok) root.current?.querySelector('select')?.focus();
+                if (ok) root.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
               }}
             >
               {retrying ? 'Retrying…' : 'Retry'}
@@ -159,6 +150,7 @@ export function NodeCredentials({
         <CredentialDialog
           credentialId={dialog.id}
           allowedTypes={[dialog.type]}
+          {...(dialog.name && { initialName: dialog.name })}
           {...(scope?.projectId && { projectId: scope.projectId })}
           onClose={() => setDialog(null)}
           onSaved={(credential) => {
