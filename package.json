@@ -1,7 +1,7 @@
 {
   "name": "landflow",
   "private": true,
-  "description": "Landflow \u2014 a low-code workflow platform with autodiscovered, polyglot node plugins.",
+  "description": "Landflow — a low-code workflow platform with autodiscovered, polyglot node plugins.",
   "packageManager": "pnpm@10.28.2",
   "engines": {
     "node": ">=22"
@@ -49,7 +49,8 @@
     "dev:all": "concurrently -k -n web,ts,py,go,msg,prod,google,db,linear,attio,fathom -c magenta,blue,yellow,cyan,green,red,white,gray,blue,green,yellow \"pnpm dev\" \"pnpm plugin:ts\" \"pnpm plugin:py\" \"pnpm plugin:go\" \"pnpm plugin:messaging\" \"pnpm plugin:productivity\" \"pnpm plugin:google\" \"pnpm plugin:databases\" \"pnpm plugin:linear\" \"pnpm plugin:attio\" \"pnpm plugin:fathom\"",
     "dev:all:browser": "concurrently -k -n web,ts,py,go,msg,prod,google,db,browser -c magenta,blue,yellow,cyan,green,red,white,gray,black \"pnpm dev\" \"pnpm plugin:ts\" \"pnpm plugin:py\" \"pnpm plugin:go\" \"pnpm plugin:messaging\" \"pnpm plugin:productivity\" \"pnpm plugin:google\" \"pnpm plugin:databases\" \"pnpm plugin:browser\"",
     "dev:all:agent-shell": "concurrently -k -n web,ts,py,go,msg,prod,google,db,shell -c magenta,blue,yellow,cyan,green,red,white,gray,black \"pnpm dev\" \"pnpm plugin:ts\" \"pnpm plugin:py\" \"pnpm plugin:go\" \"pnpm plugin:messaging\" \"pnpm plugin:productivity\" \"pnpm plugin:google\" \"pnpm plugin:databases\" \"pnpm plugin:agent-shell\"",
-    "dev:all:web-search": "concurrently -k -n web,ts,py,go,msg,prod,google,db,search -c magenta,blue,yellow,cyan,green,red,white,gray,black \"pnpm dev\" \"pnpm plugin:ts\" \"pnpm plugin:py\" \"pnpm plugin:go\" \"pnpm plugin:messaging\" \"pnpm plugin:productivity\" \"pnpm plugin:google\" \"pnpm plugin:databases\" \"pnpm plugin:web-search\""
+    "dev:all:web-search": "concurrently -k -n web,ts,py,go,msg,prod,google,db,search -c magenta,blue,yellow,cyan,green,red,white,gray,black \"pnpm dev\" \"pnpm plugin:ts\" \"pnpm plugin:py\" \"pnpm plugin:go\" \"pnpm plugin:messaging\" \"pnpm plugin:productivity\" \"pnpm plugin:google\" \"pnpm plugin:databases\" \"pnpm plugin:web-search\"",
+    "test:browser": "pnpm --filter @landflow/web test:browser"
   },
   "devDependencies": {
     "concurrently": "^10.0.6",

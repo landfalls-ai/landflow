@@ -22,3 +22,6 @@ MEMORY.md
 # The browser tier's screenshots, traces and report (apps/web/e2e)
 apps/web/e2e/test-results/
 apps/web/e2e/report/
+
+# Built by scripts/llms.mjs (C25); not committed
+docs/llms-full.txt
