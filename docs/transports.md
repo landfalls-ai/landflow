@@ -330,6 +330,15 @@ Writing every driver three times would not scale. So:
   through every transport, whatever it was written in. It answers `GetManifest` itself and reads the manifest again when
   its hash changes or a call answers `manifest_mismatch`.
 
+## A plugin inside a private network, or a network runner
+
+A node that has to reach a private network (an office, a VPC) has two ways in without opening an inbound port. A plugin
+built with an SDK can run inside the network and serve its nodes over a message broker both sides dial out to (the
+databases plugin, for the database nodes): that is the supported path for any plugin node. For the HTTP Request node
+alone there is a lighter one that needs no broker: a **network runner** (`services/network-runner`), a process with a
+token of its own that long-polls the host over HTTPS and makes the node's calls from inside the network. See
+[network-runners.md](network-runners.md).
+
 ## Guarding a plugin's HTTP face
 
 A plugin that can start real work on the machine it runs on (the deck plugin) opts in with `serve(plugin, { guardHttp: true })`

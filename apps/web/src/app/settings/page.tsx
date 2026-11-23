@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { BellRing, Braces, Building2, ChevronLeft, ChevronRight, CircleDollarSign, Cpu, Gauge, GitBranch, KeyRound, Landmark, Layers, Network, Plug, Route, ScrollText, Sparkles, ShieldCheck, SlidersHorizontal, Users, Vault } from 'lucide-react';
+import { BellRing, Braces, Building2, ChevronLeft, ChevronRight, CircleDollarSign, Cpu, Gauge, GitBranch, KeyRound, Landmark, Layers, Network, Plug, Route, ScrollText, Sparkles, ShieldCheck, SlidersHorizontal, Users, Vault, Waypoints } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { can, isBuiltInAdmin, type Action } from '@/lib/shared/auth';
 import { useViewer } from '@/components/auth/viewer';
@@ -18,6 +18,7 @@ import { SETTINGS_GROUPS, resolveSection, sectionFromLocation } from '@/componen
 import { GeneralSettings } from '@/components/settings/general-settings';
 import { GovernanceSettings } from '@/components/settings/governance-settings';
 import { LlmGatewayCard } from '@/components/settings/llm-gateway-settings';
+import { NetworksSettings } from '@/components/settings/networks-settings';
 import { McpSettings } from '@/components/settings/mcp-settings';
 import { SpotlightSettings } from '@/components/settings/spotlight-settings';
 import { SecuritySettings } from '@/components/settings/security-settings';
@@ -48,6 +49,7 @@ const SECTIONS: readonly { id: string; label: string; icon: typeof Braces; hint:
   { id: 'external-secrets', label: 'External secrets', icon: Vault, hint: 'Vault, 1Password, cloud secret stores', role: 'settings:manage', admin: true },
   { id: 'workers', label: 'Workers', icon: Cpu, hint: 'Queue mode, workers and the leader' },
   { id: 'transports', label: 'Transports', icon: Network, hint: 'HTTP, gRPC and broker connections', role: 'settings:manage', admin: true },
+  { id: 'networks', label: 'Networks', icon: Waypoints, hint: 'Run HTTP calls inside a private network', role: 'settings:manage', admin: true },
 ];
 type Section = string;
 
@@ -71,9 +73,10 @@ const BODIES: Record<string, () => React.ReactNode> = {
   'external-secrets': () => <ExternalSecretsSettings />,
   workers: () => <WorkersSettings />,
   transports: () => <TransportsSettings />,
+  networks: () => <NetworksSettings />,
 };
 
-/** /settings (#general, #company, #variables, #alerts, #environments, #source-control, #users, #api-keys, #security, #audit, #governance, #external-secrets, #ai-prices, #ai-caps, #llm-gateway, #spotlight, #mcp, #workers, #transports; the old #api and ?section=api open the API reference on Developers, in five groups): instance settings. */
+/** /settings (#general, #company, #variables, #alerts, #environments, #source-control, #users, #api-keys, #security, #audit, #governance, #external-secrets, #ai-prices, #ai-caps, #llm-gateway, #spotlight, #mcp, #workers, #transports, #networks; the old #api and ?section=api open the API reference on Developers, in five groups): instance settings. */
 export default function SettingsPage() {
   const viewer = useViewer();
   const router = useRouter();

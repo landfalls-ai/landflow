@@ -16,7 +16,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
   { id: 'people', label: 'People & access', sections: ['users', 'api-keys', 'security', 'audit'] },
   { id: 'governance', label: 'Governance', sections: ['governance', 'external-secrets'] },
   { id: 'ai', label: 'AI', sections: ['ai-prices', 'ai-caps', 'llm-gateway', 'spotlight', 'mcp'] },
-  { id: 'infrastructure', label: 'Infrastructure', sections: ['workers', 'transports'] },
+  { id: 'infrastructure', label: 'Infrastructure', sections: ['workers', 'transports', 'networks'] },
 ];
 
 /** Where the API reference lives now. */

@@ -88,6 +88,8 @@ const SKIP: RegExp[] = [
   /^\/api\/agent-trace\//,
   HARNESS_HOOK,
   /^\/api\/auth\/saml\/acs$/,
+  // C29: a network runner's polls and answers (its connect, disconnect and revoke are domain events; a call is one event per run, node and network).
+  /^\/api\/runner\//,
 ];
 
 export const auditSkipped = (path: string) => SKIP.some((pattern) => pattern.test(path));
