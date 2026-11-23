@@ -17,7 +17,7 @@ import { languageMeta, TRANSPORT_META } from '@/lib/client/format';
 import { CATEGORY_COLOR, nodeColor, tint } from '@/lib/client/node-style';
 import type { NodeTypeInfo } from '@/lib/shared/types';
 import { nodeActions, type NodeAction } from '@/lib/shared/node-subtitle';
-import { defaultParameters, withPropertyDefaults } from '@landflow/protocol';
+import { defaultParameters, expandPorts, withPropertyDefaults } from '@landflow/protocol';
 import { DevOnly } from '@/lib/client/developer-details';
 import { describeMatcher, nodeMatches, type CompositeTypeInfo } from '@/lib/shared/composites';
 import { NodeIcon } from '../ui/icon';
@@ -316,7 +316,8 @@ export function NodeCreator({ initialQuery = '' }: { initialQuery?: string } = {
     if (mode === 'next' && !request.from && !request.slot) {
       // Plain "add": chain onto the selected node, or the one added last (n8n does the same).
       const anchor = state.nodes.find((n) => n.selected) ?? state.nodes.find((n) => n.id === state.lastAddedId);
-      const outputs = anchor ? (state.nodeTypes[anchor.data.wf.type]?.descriptor.outputs.filter((p) => p.type === 'main').length ?? 0) : 0;
+      const anchorType = anchor && state.nodeTypes[anchor.data.wf.type];
+      const outputs = anchor && anchorType ? expandPorts(anchorType.descriptor.outputs, anchor.data.wf.parameters).filter((p) => p.type === 'main').length : 0;
       if (anchor && outputs) {
         const used = new Set(state.edges.filter((e) => e.source === anchor.id && e.data?.connectionType === 'main').map((e) => e.sourceHandle));
         const free = Array.from({ length: outputs }, (_, i) => `main:${i}`).find((h) => !used.has(h)) ?? 'main:0';

@@ -8,7 +8,7 @@
  * the registry; the editor applies them with it against its own node types.
  */
 import { nanoid } from 'nanoid';
-import { changeParameter, defaultParameters, defaultVersionOf, indexedPorts } from '@landflow/protocol';
+import { changeParameter, defaultParameters, defaultVersionOf, expandPorts, indexedPorts, remapExpandedConnections } from '@landflow/protocol';
 import { ASSUMED_BUBBLES, BUBBLE, bubbleFootprint } from './agent-bubbles'; // AG16
 import { delegatesOf, replaceWithTeam, turnIntoTeamBlocker } from './turn-into-team';
 import type { ConnectionType, NodeDescriptor, NodeRun, PropertyDescriptor, Workflow, WorkflowConnection, WorkflowNode } from './types';
@@ -403,7 +403,7 @@ function planConnection(
   const type = wanted.type ?? (sd.kind === 'subnode' ? sd.supplies : td.kind === 'subnode' ? td.supplies : undefined) ?? 'main';
 
   if (type === 'main') {
-    const outputs = sd.outputs.filter((p) => p.type === 'main');
+    const outputs = expandPorts(sd.outputs, source.parameters).filter((p) => p.type === 'main');
     const inputs = td.inputs.filter((p) => p.type === 'main');
     const output = wanted.output ?? 0;
     if (!outputs.length) return `“${source.name}” has no output to connect from`;
@@ -511,7 +511,7 @@ function placeAdded(workflow: Workflow, lookup: DescriptorLookup, id: string): [
   if (incoming && byId(incoming.source)) {
     const parent = byId(incoming.source)!;
     const parentDescriptor = lookup(parent.type);
-    const branchOffset = parentDescriptor && parentDescriptor.outputs.filter((p) => p.type === 'main').length > 1 ? incoming.sourceIndex * ROW : 0;
+    const branchOffset = parentDescriptor && expandPorts(parentDescriptor.outputs, parent.parameters).filter((p) => p.type === 'main').length > 1 ? incoming.sourceIndex * ROW : 0;
     return freeSpot(workflow, parent.position[0] + COLUMN, parent.position[1] + branchOffset, id);
   }
   const others = workflow.nodes.filter((n) => n.id !== id);
@@ -701,6 +701,13 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
           break;
         }
         wf = { ...wf, nodes: wf.nodes.map((n) => (n.id === node.id ? { ...n, parameters: merged.parameters } : n)) };
+        // A node whose outputs follow its parameters (Decide): each connection stays on the output of the same name.
+        if (descriptor.outputs?.some((p) => p.expand)) {
+          const mine = (c: WorkflowConnection) => c.source === node.id && c.type === 'main';
+          const moved = remapExpandedConnections(node.parameters, merged.parameters, wf.connections.filter(mine));
+          for (const gone of wf.connections.filter((c) => mine(c) && !moved.some((m) => m.id === c.id))) dropped.push(`connection “${node.name}” → “${wf.nodes.find((n) => n.id === gone.target)?.name ?? gone.target}” (its output no longer exists)`);
+          wf = { ...wf, connections: [...wf.connections.filter((c) => !mine(c)), ...moved] };
+        }
         applied.push({ op: 'setParameters', node: handle(node), parameters: Object.fromEntries(merged.applied.map((key) => [key, ranged.patch[key]])) });
         break;
       }
@@ -928,6 +935,9 @@ export function structuralWarnings(before: Workflow, after: Workflow, lookup: De
     if (!descriptor || descriptor.kind === 'trigger') continue;
     if (existed.has(node.id)) {
       if (fed(before, node.id) && !fed(after, node.id) && !attached(node.id)) warnings.push(`“${node.name}” no longer receives any input`);
+      // An output that is gone (the options of a Decide were edited) with a connection still on it.
+      const count = expandPorts(descriptor.outputs, node.parameters).filter((p) => p.type === 'main').length;
+      for (const c of after.connections.filter((x) => x.source === node.id && x.type === 'main' && (x.sourceIndex ?? 0) >= count)) warnings.push(`“${node.name}” is connected from output ${c.sourceIndex ?? 0} to “${name(c.target)}”, but it only has ${count} outputs`);
       const now = inputs(after, node.id);
       // An edge back from something downstream closes a loop (docs/assistant.md): a second input by design.
       const closesLoop = now.filter((c) => !before.connections.some((b) => b.id === c.id)).every((c) => downstream(after, node.id).has(c.source));
@@ -982,7 +992,7 @@ export function wiringWarnings(before: Workflow, after: Workflow, lookup: Descri
   for (const source of after.nodes) {
     const descriptor = lookup(source.type);
     const outs = new Set(after.connections.filter((c) => c.source === source.id && c.type === 'main').map((c) => c.sourceIndex ?? 0));
-    const branches = BRANCH_TYPES.has(source.type) || (descriptor?.outputs.filter((p) => p.type === 'main').length ?? 0) > 1;
+    const branches = BRANCH_TYPES.has(source.type) || (descriptor ? expandPorts(descriptor.outputs, source.parameters).filter((p) => p.type === 'main').length : 0) > 1;
     if (!branches || outs.size < 2) continue;
     for (const c of after.connections.filter((x) => x.source === source.id && x.type === 'main' && isNew(x))) {
       // A Merge joins branches on purpose.

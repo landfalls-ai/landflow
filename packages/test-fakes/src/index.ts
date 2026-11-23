@@ -7,3 +7,5 @@ export { fakeGitHub, GITHUB_TOKEN } from './github';
 export type { GitHubSeed, GitHubState } from './github';
 export { fakeUpstream } from './upstream';
 export type { UpstreamState } from './upstream';
+export { fakeSystemOne } from './systemone';
+export type { SystemOneSeed, SystemOneState } from './systemone';
