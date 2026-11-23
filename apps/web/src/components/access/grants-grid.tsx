@@ -98,10 +98,10 @@ export function GrantCards({ grants, onAct }: { grants: AccessGrantView[]; onAct
   );
 }
 
-export function GrantsView({ admin, manages }: { admin: boolean; manages: boolean }) {
+export function GrantsView({ admin, manages, tick }: { admin: boolean; manages: boolean; tick?: number }) {
   const phone = usePhone();
   const [scope, setScope] = useState<'mine' | 'all'>(admin || manages ? 'all' : 'mine');
-  const { data, error, reload } = useLoaded(() => accessApi.grants(scope), [scope]);
+  const { data, error, reload } = useLoaded(() => accessApi.grants(scope), [scope, tick]);
   const [busy, setBusy] = useState(false);
   const act: GrantAct = async (grant, action) => {
     if (busy) return;

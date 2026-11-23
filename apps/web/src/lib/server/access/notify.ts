@@ -32,7 +32,7 @@ export interface Subject {
   duration: string;
 }
 
-const what = (s: Subject) => `${s.entryName} (${s.targetLabel}) for ${s.duration}`;
+const what = (s: Subject) => `${s.entryName} (${s.targetLabel}) ${s.duration === 'unlimited' ? 'with no end' : `for ${s.duration}`}`;
 
 export const mailRequester = {
   granted: (s: Subject, until: string | null) => send([s.requesterId], `Access granted: ${s.entryName}`, [`You have ${what(s)}.`, until ? `It ends ${until}.` : 'It has no end date.']),

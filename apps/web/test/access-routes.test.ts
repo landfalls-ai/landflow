@@ -118,6 +118,12 @@ describe('requests, decisions and grants', () => {
     expect((await list(ola, '?scope=mine')).body.items).toEqual([]);
     expect((await list(ann, '?scope=decide')).body.items.map((r: { id: string }) => r.id)).toEqual([made.body.id]);
     expect((await list(mia, '?scope=decide')).body.items).toEqual([]);
+    // The approver gets the server-built question (the target and the unverified account) and the choices; the requester never does.
+    const waiting = (await list(ann, '?scope=decide')).body.items[0];
+    expect(waiting.question.text).toMatch(/What: GitHub team/);
+    expect(waiting.question.text).toMatch(/\(unverified: typed by the requester\)/);
+    expect(waiting.choices.map((c: { value: string }) => c.value)[0]).toBe('60');
+    expect((await list(mia, '?scope=mine')).body.items.find((r: { id: string }) => r.id === made.body.id).question).toBeUndefined();
     expect((await list(admin, '?scope=all')).body.items.length).toBeGreaterThanOrEqual(1);
     expect((await list(ola, '?scope=all')).body.items).toEqual([]);
     expect((await list(mia, '?scope=bogus')).status).toBe(400);
@@ -183,5 +189,13 @@ describe('accounts and chat', () => {
     const answer = await call(mia, () => chatRoute.POST(new Request('http://x', body('POST', { message: 'hello', sessionId: 's1' }))));
     expect([409, 200, 502]).toContain(answer.status);
     void owner;
+  });
+  it('limits the chat to 20 messages a minute a person (a message can start a model call)', async () => {
+    const send = () => call(ola, () => chatRoute.POST(new Request('http://x', body('POST', { message: 'hello', sessionId: 's2' }))));
+    const statuses: number[] = [];
+    for (let i = 0; i < 22; i++) statuses.push((await send()).status);
+    expect(statuses.filter((s) => s === 429).length).toBeGreaterThanOrEqual(1);
+    expect(statuses.slice(0, 20)).not.toContain(429);
+    expect((await call(mia, () => chatRoute.POST(new Request('http://x', body('POST', { message: 'hi', sessionId: 's3' }))))).status).not.toBe(429);
   });
 });

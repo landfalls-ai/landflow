@@ -5,7 +5,7 @@
  * user, never anything in a body.
  */
 import { nanoid } from 'nanoid';
-import { ACCESS_LIMITS, durationText, shorterDurations, type AccessRequestView, type RequestStatus } from '../../shared/access';
+import { ACCESS_LIMITS, durationText, forDuration, shorterDurations, type AccessRequestView, type RequestStatus } from '../../shared/access';
 import { recordAudit } from '../audit';
 import { getUser } from '../auth/users';
 import { database } from '../db';
@@ -70,7 +70,7 @@ export function summaryText(entry: EntryData, requesterName: string, minutes: nu
 
 /** The question Ask a Person puts to the approvers, built here and nowhere else: Apply Access Decision compares the recorded one with it. */
 export const questionFor = (entry: EntryData, requesterName: string, minutes: number | null, reason: string, account: string | undefined) => ({
-  title: `Give ${plain(requesterName)} ${plain(entry.name)} for ${durationText(minutes)}?`.trim(),
+  title: `Give ${plain(requesterName)} ${plain(entry.name)} ${forDuration(minutes)}?`.trim(),
   text: summaryText(entry, requesterName, minutes, reason, account),
 });
 
@@ -136,7 +136,7 @@ export async function createRequest(actor: Actor, input: RequestInput): Promise<
     if (existing) throw new AccessError('You already asked for this; wait for the answer or cancel it', 409, { existingId: existing.id });
     throw error;
   }
-  recordAudit({ action: 'access.request.create', actor: auditActorOf(actor), target: { type: 'access_request', id, name: entry.name }, project: null, summary: `Asked for ${entry.name} for ${durationText(minutes)}`, details: { from: null, to: JSON.stringify({ entry: entry.name, duration: durationText(minutes), channel: row.channel }) } });
+  recordAudit({ action: 'access.request.create', actor: auditActorOf(actor), target: { type: 'access_request', id, name: entry.name }, project: null, summary: `Asked for ${entry.name} ${forDuration(minutes)}`, details: { from: null, to: JSON.stringify({ entry: entry.name, duration: durationText(minutes), channel: row.channel }) } });
 
   const item: AccessRequestItem = {
     requestId: id,

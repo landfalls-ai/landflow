@@ -31,7 +31,9 @@ export function CatalogGrid({ entries, isAdmin, onOpen, onNew, phone }: { entrie
           <Button variant="primary" size="sm" onClick={onNew} data-testid="access-new-entry" className="max-md:h-11"><Plus className="size-3.5" /> New entry</Button>
         </div>
       )}
-      {phone ? (
+      {phone && entries.length === 0 ? (
+        <Card><EmptyState icon={<Library />} title="Nothing in the catalog" hint="Add what people may ask for." /></Card>
+      ) : phone ? (
         <ul className="flex flex-col gap-2">
           {entries.map((e) => (
             <li key={e.id}>

@@ -7,8 +7,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Viewer } from '@/lib/shared/auth';
 import {
-  durationText,
-  shorterDurations,
   type AccessEntryView,
   type AccessGrantView,
   type AccessRequestView,
@@ -157,13 +155,14 @@ export function requestProblem(error: unknown): { message: string; existingId?: 
 /** The value Answer Choices carry for a duration (as the trigger writes them: minutes, or `unlimited`). */
 export const choiceValue = (minutes: number | null): string => (minutes === null ? 'unlimited' : String(minutes));
 
-/** What an approver may allow: the asked duration first, then the shorter ones the entry offers (the server checks again). */
-export function choicesFor(request: Pick<AccessRequestView, 'durationMinutes'>, entry: AccessEntryView | undefined): Array<{ value: string; label: string }> {
-  const asked = request.durationMinutes;
-  const allowed = shorterDurations(entry?.durations ?? [asked], asked);
-  const list = allowed.includes(asked) ? allowed : [asked, ...allowed];
-  return list.map((minutes) => ({ value: choiceValue(minutes), label: durationText(minutes) }));
+/**
+ * The longest time an entry sheet offers to add: an admin any, an owner who isn't one no more than the entry's current longest (and
+ * no end only if it already has one), as the server's check on save. The server still refuses the rest.
+ */
+export function durationCeiling(isAdmin: boolean, saved: Array<number | null>): number {
+  return isAdmin ? Infinity : Math.max(0, ...saved.map((m) => (m === null ? Infinity : m)));
 }
+export const withinCeiling = (minutes: number | null, ceiling: number): boolean => (minutes === null ? Infinity : minutes) <= ceiling;
 
 /** Grants whose removal failed and is still pending more than a day after it was due: the red banner on Grants. */
 export function overdueGrants(grants: AccessGrantView[], now: number = Date.now()): AccessGrantView[] {
@@ -171,6 +170,8 @@ export function overdueGrants(grants: AccessGrantView[], now: number = Date.now(
 }
 
 export const ACCESS_PATH = '/access';
+/** Fired on the window when access requests were just set up, so the sidebar fetches the setup again. */
+export const ACCESS_SETUP_EVENT = 'landflow:access-setup';
 
 /** A link to a tab of the page, optionally to one request. */
 export const accessHref = (tab: AccessTabId, requestId?: string) => `${ACCESS_PATH}?tab=${tab}${requestId ? `&request=${requestId}` : ''}`;

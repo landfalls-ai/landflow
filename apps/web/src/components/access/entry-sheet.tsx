@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
-import { accessApi, draftOf, SYSTEM_FORM, type EntryDraft, type Person2 } from '@/lib/client/access';
+import { accessApi, draftOf, durationCeiling, withinCeiling, SYSTEM_FORM, type EntryDraft, type Person2 } from '@/lib/client/access';
 import { ACCESS_LIMITS, durationText, type AccessEntryView, type AccessSystem } from '@/lib/shared/access';
 import { ACCESS_SYSTEMS } from '@/lib/shared/access';
 import type { CredentialSummary } from '@/lib/shared/types';
@@ -56,7 +56,7 @@ function PeoplePicker({ label, people, value, onChange, disabled, hint }: { labe
 
 const lengthOf = (m: number | null) => (m === null ? Infinity : m);
 
-export function EntryFields({ draft, people, credentials, isAdmin, canEdit, onChange, onCreateCredential }: { draft: EntryDraft; people: Person2[]; credentials: CredentialSummary[]; isAdmin: boolean; canEdit: boolean; onChange: (draft: EntryDraft) => void; onCreateCredential: () => void }) {
+export function EntryFields({ draft, people, credentials, isAdmin, canEdit, saved, onChange, onCreateCredential }: { saved?: Array<number | null>; draft: EntryDraft; people: Person2[]; credentials: CredentialSummary[]; isAdmin: boolean; canEdit: boolean; onChange: (draft: EntryDraft) => void; onCreateCredential: () => void }) {
   const form = SYSTEM_FORM[draft.system];
   const set = (patch: Partial<EntryDraft>) => onChange({ ...draft, ...patch });
   const reach = canEdit && isAdmin;
@@ -67,8 +67,9 @@ export function EntryFields({ draft, people, credentials, isAdmin, canEdit, onCh
     set({ durations: [...draft.durations, minutes].sort((a, b) => lengthOf(a) - lengthOf(b)) });
   };
   const customMinutes = Number(custom);
-  const customOk = Number.isInteger(customMinutes) && customMinutes >= 1 && customMinutes <= ACCESS_LIMITS.maxMinutes;
-  const suggestions = ACCESS_LIMITS.suggestedDurations.filter((m) => !draft.durations.includes(m));
+  const ceiling = durationCeiling(isAdmin, saved ?? draft.durations);
+  const customOk = Number.isInteger(customMinutes) && customMinutes >= 1 && customMinutes <= ACCESS_LIMITS.maxMinutes && withinCeiling(customMinutes, ceiling);
+  const suggestions = ACCESS_LIMITS.suggestedDurations.filter((m) => !draft.durations.includes(m) && withinCeiling(m, ceiling));
   return (
     <div className="flex flex-col gap-4">
       <div>
@@ -131,7 +132,7 @@ export function EntryFields({ draft, people, credentials, isAdmin, canEdit, onCh
             <Button size="sm" variant="outline" disabled={!customOk} onClick={() => { addDuration(customMinutes); setCustom(''); }} className="max-md:h-11">Add</Button>
           </div>
         )}
-        <p className="mt-1 text-[12px] text-t3">Up to {ACCESS_LIMITS.durationsPerEntry}, from 1 minute to 90 days, or unlimited.</p>
+        <p className="mt-1 text-[12px] text-t3">Up to {ACCESS_LIMITS.durationsPerEntry}, from 1 minute to 90 days, or unlimited.{!isAdmin && ' Only an admin offers a longer time or no end.'}</p>
       </div>
       <PeoplePicker label="Approvers" people={people} value={draft.approverIds} disabled={!canEdit} onChange={(approverIds) => set({ approverIds })} hint="Nobody approves their own request." />
       <PeoplePicker label="Owners" people={people} value={draft.owners} disabled={!canEdit} onChange={(owners) => set({ owners })} hint="Owners change this entry. At least one stays." />
@@ -206,7 +207,7 @@ export function EntrySheet({ entry, open, isAdmin, people, projectId, onClose, o
         </div>
       }
     >
-      <EntryFields draft={draft} people={people} credentials={credentials} isAdmin={isAdmin} canEdit={canEdit} onChange={setDraft} onCreateCredential={() => toast.message('Add the key on the Credentials page, then pick it here')} />
+      <EntryFields draft={draft} people={people} credentials={credentials} isAdmin={isAdmin} canEdit={canEdit} saved={entry?.durations} onChange={setDraft} onCreateCredential={() => toast.message('Add the key on the Credentials page, then pick it here')} />
     </Sheet>
   );
 }

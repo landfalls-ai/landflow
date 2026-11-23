@@ -94,7 +94,7 @@ The chat flow's agent has one tool, **File Access Request** (`core.fileAccessReq
 - the requester is the chat run's `startedBy`; a run nobody signed in for (hosted chat) answers `Sign in on the Access page to ask for access.`;
 - it can't approve, grant or name who is asking.
 
-`POST /api/access/chat { message, sessionId }` runs the chat flow as the session user and answers `{ reply, requestId? }`.
+`POST /api/access/chat { message, sessionId }` runs the chat flow as the session user and answers `{ reply, requestId? }`. Each message can start a model call, so a person gets 20 a minute (429 with `Retry-After`).
 
 ## The Access page
 
@@ -103,9 +103,11 @@ The chat flow's agent has one tool, **File Access Request** (`core.fileAccessReq
 - **Setup** (admins, first visit): pick the project and, optionally, an Anthropic key for the chat, then one button (`access-setup-go`) installs the request flow and the chat flow. Admins then see links to both flows and, when the flows are admin-only, the sentence saying so.
 - **Ask**: the Form (entry, GitHub username when the system needs one, remembered for next time, duration chips from the entry's list, reason) and the Chat. The chat says "It can only file a request; an approver decides." and links the request it filed under My requests.
 - **My requests**: state word, what was asked, the reason of a denial or failure, the note of a give-back, Cancel while waiting, Give it back when granted, Retry when a grant failed (a failed grant counts as live, so it can't be asked again).
-- **To decide** (approvers): the same confirm card as Needs you, with an *Allow* select of the entry's durations (never longer than asked) and a comment. A GitHub username is marked "unverified: they typed it".
-- **Grants**: Everyone or Mine; Revoke now, Done (by-hand entries) and Retry; an overdue banner when a by-hand grant should have ended.
-- **Catalog** (admins and owners): entries in a grid; the sheet is full height on a phone. GitHub Projects can't be added. Owners can't add unlimited or longer durations; the server refuses too.
+- **To decide** (approvers): the same confirm card as Needs you, with an *Allow* select of the entry's durations (never longer than asked) and a comment. The question and the durations come from the server (`question` and `choices` on each `?scope=decide` item): the target, the permission or role, and the GitHub username marked "unverified: typed by the requester" are the text the flow asked, never rebuilt in the browser.
+- **Grants**: *Everyone* (admins) or *What I manage* (approvers and owners) or *Mine*; Revoke now, Done (by-hand entries) and Retry; a red overdue banner when removing an automatic grant has kept failing for more than a day after it was due.
+- **Catalog** (admins and owners): entries in a grid; the sheet is full height on a phone. GitHub Projects can't be added. An owner who isn't an admin is only offered times up to the entry's current longest (and no end only if it already has one); the server refuses the rest too.
+
+Sentences say "with no end" for an unlimited grant; a grant whose time ran out is *Expired* (*Ended* in Grants), and *Removed* is for one taken back or removed outside Landflow. The tab strip scrolls the chosen tab into view on a phone, with a fade at the edge. The Access page loads the visible tab again every 15 s and counts To decide only for approvers; the rail asks for the setup once when the app opens (and when an admin sets it up), not on every page.
 
 The Run Trace's Ask a Person card also shows the *Allow for* select when the request carries Answer Choices.
 

@@ -83,6 +83,9 @@ export interface AccessRequestView {
   approverNames: string[];
   /** The viewer is one of the approvers (and not the requester). */
   canDecide: boolean;
+  /** For an approver only: the question the server built (target, permission, account marked unverified) and the durations they may allow, so the browser computes neither. */
+  question?: { title: string; text: string };
+  choices?: Array<{ value: string; label: string }>;
   canCancel: boolean;
   createdAt: string;
   executionId?: string;
@@ -151,11 +154,15 @@ export function requestState(request: { status: RequestStatus; grant?: { status:
       const grant = request.grant?.status;
       if (!grant || grant === 'pending') return 'approved';
       if (grant === 'failed') return 'failed';
-      if (grant === 'expired' || grant === 'revoked' || grant === 'drift') return 'removed';
+      if (grant === 'expired') return 'expired';
+      if (grant === 'revoked' || grant === 'drift') return 'removed';
       return 'granted';
     }
   }
 }
+
+/** For a sentence: "for 1 h", or "with no end" (never "for unlimited"). */
+export const forDuration = (minutes: number | null): string => (minutes === null ? 'with no end' : `for ${durationText(minutes)}`);
 
 /** "15 min", "1 h", "1 h 30 min", "2 days", "unlimited". */
 export function durationText(minutes: number | null): string {

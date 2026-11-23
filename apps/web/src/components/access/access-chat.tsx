@@ -7,6 +7,7 @@ import { useRef, useState } from 'react';
 import { ArrowUp } from 'lucide-react';
 import { accessApi, requestProblem } from '@/lib/client/access';
 import { AssistantRow, ChatError, UserBubble, Working } from '../ui/chat';
+import { AskProblem } from './ask-form';
 import { Card } from '../shell/page-header';
 import { EmptyState } from '../ui/empty-state';
 import { Textarea } from '../ui/inputs';
@@ -24,7 +25,7 @@ export function AccessChat({ available, onFiled, onOpen }: { available: boolean;
   const [lines, setLines] = useState<Line[]>([]);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<{ message: string; existingId?: string }>();
   const session = useRef<string>('');
   if (!session.current) session.current = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `s-${Date.now()}`;
 
@@ -48,7 +49,7 @@ export function AccessChat({ available, onFiled, onOpen }: { available: boolean;
       setLines((l) => [...l, { who: 'bot', text: reply.reply, requestId: reply.requestId }]);
       if (reply.requestId) onFiled?.(reply.requestId);
     } catch (e) {
-      setError(requestProblem(e).message);
+      setError(requestProblem(e));
     } finally {
       setBusy(false);
     }
@@ -74,7 +75,7 @@ export function AccessChat({ available, onFiled, onOpen }: { available: boolean;
           ),
         )}
         {busy && <Working />}
-        {error && <ChatError message={error} />}
+        {error && (error.existingId ? <AskProblem problem={error} /> : <ChatError message={error.message} />)}
       </div>
       <form
         className="flex items-end gap-2"

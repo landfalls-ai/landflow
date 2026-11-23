@@ -7,7 +7,7 @@
  * and grants nothing. Removal is a conditional claim (store.ts `claimGrant`) so two processes never both remove one grant.
  */
 import { nanoid } from 'nanoid';
-import { durationText, type AccessDecision, type AccessGrantView } from '../../shared/access';
+import { durationText, forDuration, type AccessDecision, type AccessGrantView } from '../../shared/access';
 import { recordAudit } from '../audit';
 import { findUserByEmail, getUser, normalizeEmail, type UserRecord } from '../auth/users';
 import { database } from '../db';
@@ -146,7 +146,7 @@ export async function applyDecision(requestId: string, executionId: string, outc
   }
   const claim = await claimRequest(requestId, 'pending', { status: 'approved', decisions: JSON.stringify(decisions), approved_minutes: minutes });
   if (!claim.won) throw new AccessError('This request was settled by someone else', 409);
-  recordAudit({ action: 'access.request.approve', actor: { id: approver.by }, target: { type: 'access_request', id: requestId, name: entry.name }, project: null, summary: `Approved ${entry.name} for ${durationText(minutes)}`, details: { from: 'pending', to: 'approved', duration: durationText(minutes), asked: durationText(asked) } });
+  recordAudit({ action: 'access.request.approve', actor: { id: approver.by }, target: { type: 'access_request', id: requestId, name: entry.name }, project: null, summary: `Approved ${entry.name} ${forDuration(minutes)}`, details: { from: 'pending', to: 'approved', duration: durationText(minutes), asked: durationText(asked) } });
   let grant: GrantRow;
   try {
     grant = await createGrant(claim.row!, entry, minutes, decisions.map((d) => d.byName).join(', '));
@@ -237,7 +237,7 @@ async function activateGrant(id: string, minutes: number | null, from: 'pending'
     if (first && result.alreadyHad) alreadyHad = true;
     const until = minutes === null ? null : iso(now + minutes * 60_000);
     const done = await claimGrant(id, 'pending', { status: 'active', since: iso(now), until, already_had: alreadyHad ? 1 : 0, lease_until: null, last_error: null, end_reason: null });
-    recordAudit({ action: 'access.grant.activate', target: { type: 'access_grant', id, name: entry?.name }, project: null, summary: `Granted ${entry?.name ?? 'access'} for ${durationText(minutes)}${alreadyHad ? ' (the person already had it)' : ''}`, details: { from: 'pending', to: 'active', until: until ?? 'unlimited' } });
+    recordAudit({ action: 'access.grant.activate', target: { type: 'access_grant', id, name: entry?.name }, project: null, summary: `Granted ${entry?.name ?? 'access'} ${forDuration(minutes)}${alreadyHad ? ' (the person already had it)' : ''}`, details: { from: 'pending', to: 'active', until: until ?? 'unlimited' } });
     const active = done.row!;
     if (active.remove_reason) {
       // Taken back while it was being put in place: now it is in place, so it can be taken back.

@@ -1,5 +1,5 @@
 /** Rows as the page and the routes see them (the viewer's own `canDecide`, `canRevoke`, …). Plain server module. */
-import { requestState, type AccessDecision, type AccessGrantView, type AccessRequestView } from '../../shared/access';
+import { durationText, requestState, shorterDurations, type AccessDecision, type AccessGrantView, type AccessRequestView } from '../../shared/access';
 import { getUser } from '../auth/users';
 import type { Actor } from '../projects/access';
 import { entryData } from './catalog';
@@ -50,6 +50,12 @@ export function requestView(actor: Actor, row: RequestRow): AccessRequestView {
   const grantRow = grantOfRequest(row.id);
   const grant = grantRow && grantView(actor, grantRow);
   const decisions = parseJson<AccessDecision[]>(row.decisions, []);
+  const canDecide = row.status === 'pending' && row.requester_id !== actor.id && approverIds.includes(actor.id);
+  const stored = canDecide ? parseJson<{ title?: string; text?: string } | undefined>(row.question, undefined) : undefined;
+  const asked = row.duration_minutes === null ? null : Number(row.duration_minutes);
+  // What the approver may allow: the asked time first, then the shorter ones the entry offered when it was asked (the server checks the answer again).
+  const allowed = shorterDurations(snapshot?.durations ?? [asked], asked);
+  const choices = canDecide ? (allowed.includes(asked) ? allowed : [asked, ...allowed]).map((m) => ({ value: m === null ? 'unlimited' : String(m), label: durationText(m) })) : undefined;
   return {
     id: row.id,
     entryId: row.entry_id,
@@ -67,7 +73,9 @@ export function requestView(actor: Actor, row: RequestRow): AccessRequestView {
     ...(row.note && { note: row.note }),
     ...(grant && { grant }),
     approverNames: approverIds.map(nameOf),
-    canDecide: row.status === 'pending' && row.requester_id !== actor.id && approverIds.includes(actor.id),
+    canDecide,
+    ...(stored?.title && stored.text && { question: { title: stored.title, text: stored.text } }),
+    ...(choices && { choices }),
     canCancel: row.status === 'pending' && canCancelRequest(actor, { requesterId: row.requester_id }),
     createdAt: row.created_at,
     ...(row.execution_id && { executionId: row.execution_id }),

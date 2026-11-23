@@ -640,4 +640,4 @@ needs; `propose_agent_update` offers test-then-publish of a newer agent version.
 
 ## Access nodes in Spotlight
 
-Spotlight knows the access nodes' parameters: Ask a Person's *Answer Choices* (`value: label` per line) and *People Only*, Access Request, Apply Access Decision (it needs a request id from the trigger, else it applies nothing) and File Access Request. The installed access flows are admin-only; Spotlight changes a copy, not them.
+Spotlight knows the access nodes' parameters: Ask a Person's *Answer Choices* (`value: label` per line) and *People Only*, Access Request, Apply Access Decision (it needs a request id from the trigger, else it applies nothing) and File Access Request. The installed access flows are admin-only, and Spotlight is read-only on them for everyone: its chat and suggestions answer 403 (*This is the installed access flow … make a copy to change it*), so make a copy to change one.

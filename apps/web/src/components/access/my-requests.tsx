@@ -27,7 +27,11 @@ function detail(request: AccessRequestView, state: ReturnType<typeof requestStat
   if (state === 'failed') return request.grant?.lastError || request.note;
   if (state === 'waiting') return `Waiting for ${request.approverNames.length ? request.approverNames.join(', ') : 'an approver'}`;
   if (state === 'approved') return request.grant?.system === 'manual' ? 'Approved. Someone will set it up by hand.' : 'Approved.';
-  if (state === 'granted') return `${durationText(request.approvedMinutes === undefined ? request.durationMinutes : request.approvedMinutes)}, ${untilText(request.grant?.until)}`;
+  if (state === 'granted') {
+    const minutes = request.approvedMinutes === undefined ? request.durationMinutes : request.approvedMinutes;
+    return minutes === null ? 'With no end' : `${durationText(minutes)}, ${untilText(request.grant?.until)}`;
+  }
+  if (state === 'expired' && request.grant) return 'Ended: the time was up';
   if (state === 'removed') return [request.grant?.endReason ? `Ended: ${request.grant.endReason.replace(/_/g, ' ')}` : '', request.note].filter(Boolean).join('. ') || undefined;
   return request.note;
 }
@@ -70,8 +74,8 @@ export function RequestRows({ requests, viewerId, highlight, onCancel, onGiveBac
   );
 }
 
-export function RequestsView({ viewerId, highlight }: { viewerId: string; highlight?: string }) {
-  const { data, error, reload } = useLoaded(() => accessApi.requests('mine'));
+export function RequestsView({ viewerId, highlight, tick }: { viewerId: string; highlight?: string; tick?: number }) {
+  const { data, error, reload } = useLoaded(() => accessApi.requests('mine'), [tick]);
   const [busy, setBusy] = useState(false);
   const run = async (work: () => Promise<unknown>, done: string) => {
     if (busy) return;

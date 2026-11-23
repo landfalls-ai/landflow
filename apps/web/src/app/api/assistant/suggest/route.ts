@@ -9,6 +9,7 @@ import { currentPrincipal } from '@/lib/server/auth/guard'; // SB19:
 import { meteredWorkflowId } from '@/lib/server/assistant/scope'; // SB19:
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { runDigestSchema, workflowSchema } from '@/lib/server/schemas';
+import { LOCKED_FLOW_MESSAGE, lockedAccessFlows } from '@/lib/server/access/locked';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +27,7 @@ export const POST = handler(async (request: Request) => {
   const parsed = await parseBody(request, Body);
   if (!parsed.ok) return parsed.response;
   const { workflow, nodeId, run, workflowId } = parsed.data;
+  if (workflowId && lockedAccessFlows().includes(workflowId)) return error(LOCKED_FLOW_MESSAGE, 403); // C35: read-only for Spotlight, for everyone
   if (!workflow.nodes.some((n) => n.id === nodeId)) return error(`No node ${nodeId} in the workflow`, 404);
   const picked = await resolveSpotlightModel(parsed.data.model); // SB19:
   if ('error' in picked) return error(picked.error, 400); // SB19:

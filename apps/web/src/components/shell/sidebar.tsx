@@ -6,7 +6,7 @@ import { Activity, Bot, Brain, Ellipsis, House, KeyRound, ShieldCheck, PanelLeft
 import { useNeedsYou } from '@/lib/client/run-trace';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
-import { accessApi, showAccessInRail } from '@/lib/client/access';
+import { ACCESS_SETUP_EVENT, accessApi, showAccessInRail } from '@/lib/client/access';
 import type { AccessSetup } from '@/lib/shared/access';
 import { useLiveConnected, useLiveEvents } from '@/lib/client/live';
 import { isChromelessPage } from '@/lib/shared/auth-paths';
@@ -156,9 +156,13 @@ function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; on
   const offline = offlineDot(plugins);
   const viewer = useViewer();
   const [accessSetup, setAccessSetup] = useState<AccessSetup>();
+  // Once on mount, and again when the Access page sets access requests up (a window event): not on every navigation.
   useEffect(() => {
-    accessApi.setup().then(setAccessSetup).catch(() => setAccessSetup(undefined));
-  }, [pathname]);
+    const load = () => void accessApi.setup().then(setAccessSetup).catch(() => setAccessSetup(undefined));
+    load();
+    window.addEventListener(ACCESS_SETUP_EVENT, load);
+    return () => window.removeEventListener(ACCESS_SETUP_EVENT, load);
+  }, []);
   const items = showAccessInRail(viewer, accessSetup) ? [...NAV, ACCESS_ITEM] : NAV;
 
   return (

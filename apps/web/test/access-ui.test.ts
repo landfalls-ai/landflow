@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AccessEntryView, AccessGrantView, AccessRequestView, AccessSetup, AccessState } from '../src/lib/shared/access';
 import { ApiError } from '../src/lib/client/api';
 import { SYSTEMS } from '../src/lib/server/access/systems';
-import { accessTabs, canAsk, choicesFor, overdueGrants, requestProblem, showAccessInRail, STATE_WORDS, SYSTEM_FORM } from '../src/lib/client/access';
+import { accessTabs, canAsk, overdueGrants, requestProblem, showAccessInRail, STATE_WORDS, SYSTEM_FORM } from '../src/lib/client/access';
 import { RAIL_ITEMS } from '../src/components/shell/section-nav';
 import { AccessFrame } from '../src/components/access/access-page';
 import { StateBadge } from '../src/components/access/state-badge';
@@ -44,6 +44,7 @@ const entry = (over: Partial<AccessEntryView> = {}): AccessEntryView => ({
 });
 const google = entry({ id: 'e2', name: 'Eng group', system: 'google-group', target: { key: 'eng@x.io', type: 'google-group', label: 'eng@x.io', config: { groupKey: 'eng@x.io' } } });
 
+const Q = { title: 'Give Mia Member Platform team for 1 h?', text: 'Mia Member asks for Platform team\nWhat: GitHub team acme/platform (member)\nFor: 1 h\nAccount: mia-gh (unverified: typed by the requester)\n--- the requester wrote:\n“On call this week”' };
 const request = (over: Partial<AccessRequestView> = {}): AccessRequestView => ({
   id: 'r1',
   entryId: 'e1',
@@ -254,6 +255,16 @@ describe('the catalog (U-4)', () => {
     expect(g).toContain('Group email');
     expect(g).not.toContain('Team slug');
   });
+  it('an owner who isn’t an admin is offered nothing longer than the entry already has, and no end only if it has one', () => {
+    const draft = { name: 'Platform team', description: '', system: 'github-team', target: { org: 'acme', team: 'platform' }, credentialId: '', durations: [60], approverIds: ['u1'], owners: ['u1'], eligibleUserIds: [], enabled: true };
+    const owner = fields({ draft, isAdmin: false, canEdit: true, saved: [60] });
+    expect(owner).toContain('Add duration');
+    expect(owner).not.toMatch(/<option[^>]*value="unlimited"/);
+    expect(owner).not.toMatch(/<option[^>]*value="240"/);
+    expect(owner).toMatch(/<option[^>]*value="15"/);
+    expect(fields({ draft, isAdmin: true, canEdit: true, saved: [60] })).toMatch(/<option[^>]*value="unlimited"/);
+    expect(fields({ draft: { ...draft, durations: [60, null] }, isAdmin: false, canEdit: true, saved: [60, null] })).toMatch(/<option[^>]*value="240"/);
+  });
   it('a viewer who can’t edit sees read-only fields', () => {
     const out = fields({ canEdit: false, isAdmin: false });
     expect(out).toContain('disabled');
@@ -280,23 +291,19 @@ describe('the client’s system table follows the server’s (U-4)', () => {
 });
 
 describe('To decide (U-3)', () => {
-  it('asks the asked duration first, then the shorter ones the entry offers', () => {
-    expect(choicesFor(request({ durationMinutes: 240 }), entry()).map((c) => c.value)).toEqual(['240', '60', '1']);
-    expect(choicesFor(request({ durationMinutes: null }), entry()).map((c) => [c.value, c.label])).toEqual([['unlimited', 'unlimited'], ['240', '4 h'], ['60', '1 h'], ['1', '1 min']]);
-    expect(choicesFor(request({ durationMinutes: 60 }), undefined).map((c) => c.value)).toEqual(['60']);
-  });
   it('lists only what the viewer may decide, as the confirm card', () => {
-    const out = html(createElement(DecideList, { requests: [request({ canDecide: true }), request({ id: 'r2', canDecide: false })], entries: [entry()], onDecided: () => {} }));
+    const out = html(createElement(DecideList, { requests: [request({ canDecide: true, question: Q, choices: [{ value: '60', label: '1 h' }, { value: '1', label: '1 min' }] }), request({ id: 'r2', canDecide: false })], onDecided: () => {} }));
     expect(out.match(/data-testid="confirm-card"/g)).toHaveLength(1);
     expect(out).toContain('Mia Member');
     expect(out).toContain('On call this week');
     expect(out).toContain('mia-gh');
-    expect(html(createElement(DecideList, { requests: [], entries: [], onDecided: () => {} }))).toContain('Nothing waits for you');
+    expect(html(createElement(DecideList, { requests: [], onDecided: () => {} }))).toContain('Nothing waits for you');
   });
-  it('marks a GitHub username nobody verified as unverified, beside the name', () => {
-    const text = (over: Partial<AccessRequestView>) => html(createElement(DecideList, { requests: [request({ canDecide: true, ...over })], entries: [entry()], onDecided: () => {} }));
-    expect(text({ accountVerified: false })).toContain('mia-gh (unverified');
-    expect(text({ accountVerified: true })).not.toContain('unverified');
+  it('shows the server-built question (the target and the unverified account) and the server choices', () => {
+    const out = html(createElement(DecideList, { requests: [request({ canDecide: true, question: Q, choices: [{ value: '60', label: '1 h' }, { value: '1', label: '1 min' }] })], onDecided: () => {} }));
+    expect(out).toContain('What: GitHub team acme/platform (member)');
+    expect(out).toContain('mia-gh (unverified: typed by the requester)');
+    expect(out).toContain('1 min');
   });
   it('a failed grant shows Retry on My requests', () => {
     const out = html(createElement(RequestRows, { requests: [request({ status: 'approved', canCancel: false, grant: grant({ status: 'failed', canRetry: true }) })], viewerId: 'u2', onCancel: () => {}, onGiveBack: () => {}, onRetry: () => {} }));
@@ -312,5 +319,16 @@ describe('the chat panel (U-5)', () => {
   it('without a chat flow it says to ask an admin to connect a model', () => {
     const out = html(createElement(AccessChat, { available: false }));
     expect(out).toContain('Ask an admin to connect a model for the chat');
+  });
+});
+
+describe('words (review fixes)', () => {
+  it('says "with no end" in a sentence, and an expired grant is Expired, not Removed', async () => {
+    const { forDuration, requestState } = await import('../src/lib/shared/access');
+    expect(forDuration(null)).toBe('with no end');
+    expect(forDuration(60)).toBe('for 1 h');
+    expect(requestState({ status: 'approved', grant: { status: 'expired' } })).toBe('expired');
+    expect(requestState({ status: 'approved', grant: { status: 'revoked' } })).toBe('removed');
+    expect(STATE_WORDS.expired).toBe('Expired');
   });
 });

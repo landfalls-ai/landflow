@@ -3,11 +3,11 @@
  * /access (docs/access-requests.md#the-access-page): the tabs a person gets (Ask, My requests, To decide, Grants, Catalog), or before
  * set-up the card that says so. `AccessFrame` is the shell (header, tabs, the gate); `AccessPage` loads the data and picks the tab's body.
  */
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import type { Viewer } from '@/lib/shared/auth';
 import type { AccessSetup } from '@/lib/shared/access';
-import { accessApi, accessTabs, type AccessAccounts, isAdminViewer, isApprover, useLoaded, type AccessTab, type AccessTabId } from '@/lib/client/access';
+import { ACCESS_SETUP_EVENT, accessApi, accessTabs, type AccessAccounts, isAdminViewer, isApprover, useLoaded, type AccessTab, type AccessTabId } from '@/lib/client/access';
 import { useViewer } from '../auth/viewer';
 import { Card, PageBody, PageHeader } from '../shell/page-header';
 import { EmptyState } from '../ui/empty-state';
@@ -23,6 +23,11 @@ import { DecideView } from './to-decide';
 /** The page's frame: the title, the tabs (a phone scrolls them), and the gate before set-up. */
 export function AccessFrame({ viewer, setup, tabs, tab, onTab, children, onSetup }: { viewer: Pick<Viewer, 'role'>; setup: AccessSetup | undefined; tabs: AccessTab[]; tab: AccessTabId; onTab: (tab: AccessTabId) => void; children: ReactNode; onSetup?: (setup: AccessSetup) => void }) {
   const ready = Boolean(setup?.installed);
+  const strip = useRef<HTMLDivElement>(null);
+  // A phone scrolls the tabs: the chosen one comes into view, and a fade at the right edge says there are more.
+  useEffect(() => {
+    strip.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.scrollIntoView?.({ inline: 'center', block: 'nearest' });
+  }, [tab, ready]);
   return (
     <>
       <PageHeader title="Access" meta={ready && !setup?.active ? 'The request flow is switched off: new requests wait for an admin to publish it.' : undefined} />
@@ -35,12 +40,15 @@ export function AccessFrame({ viewer, setup, tabs, tab, onTab, children, onSetup
         ))}
         {ready && (
           <div className="flex flex-col gap-4">
+            <div ref={strip} className="relative max-md:-mr-4">
             <Segmented
               label="Access"
               value={tab}
               onChange={onTab}
               options={tabs.map((t) => ({ value: t.id, label: t.count !== undefined ? <>{t.label} {t.count > 0 && <SegmentedCount>{t.count}</SegmentedCount>}</> : t.label }))}
             />
+            <span aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-[var(--bg)] to-transparent md:hidden" />
+            </div>
             {children}
           </div>
         )}
@@ -56,10 +64,14 @@ export function AccessPage() {
   const setupState = useLoaded(accessApi.setup);
   const entriesState = useLoaded(accessApi.entries);
   const ready = Boolean(setupState.data?.installed);
-  const decideState = useLoaded(() => (ready ? accessApi.requests('decide').then((r) => r.items.filter((i) => i.canDecide).length) : Promise.resolve(0)), [ready]);
+  const approver = Boolean(viewer) && isApprover(viewer!, entriesState.data?.items ?? []);
+  // The To decide count is asked for only by someone who approves (no poll for everyone else).
+  const decideState = useLoaded(() => (ready && approver ? accessApi.requests('decide').then((r) => r.items.filter((i) => i.canDecide).length) : Promise.resolve(0)), [ready, approver]);
   const [tab, setTabState] = useState<AccessTabId>('ask');
   const [highlight, setHighlight] = useState<string>();
   const [mode, setMode] = useState<'form' | 'chat'>('form');
+  // Counts up every 15 s while the page is visible: the visible tab's list loads again on it.
+  const [tick, setTick] = useState(0);
 
   // The address names the tab (and a request to point at): /access?tab=mine&request=<id>.
   useEffect(() => {
@@ -81,11 +93,12 @@ export function AccessPage() {
   useEffect(() => {
     const id = setInterval(() => {
       if (document.visibilityState !== 'visible') return;
-      void reloadDecide();
+      setTick((n) => n + 1);
       void reloadEntries();
+      if (approver) void reloadDecide();
     }, 15_000);
     return () => clearInterval(id);
-  }, [reloadDecide, reloadEntries]);
+  }, [reloadDecide, reloadEntries, approver]);
 
   const accounts = useLoaded(() => (ready ? accessApi.accounts() : Promise.resolve<AccessAccounts>({})), [ready]);
   const entries = useMemo(() => entriesState.data?.items ?? [], [entriesState.data]);
@@ -100,6 +113,7 @@ export function AccessPage() {
     void reloadSetup();
     void reloadEntries();
     void reloadDecide();
+    window.dispatchEvent(new Event(ACCESS_SETUP_EVENT));
   };
 
   return (
@@ -125,9 +139,9 @@ export function AccessPage() {
           )}
         </div>
       )}
-      {current === 'mine' && <RequestsView viewerId={viewer.id} highlight={highlight} />}
-      {current === 'decide' && <DecideView entries={entries} onDecided={refreshAll} />}
-      {current === 'grants' && <GrantsView admin={isAdminViewer(viewer)} manages={isApprover(viewer, entries) || entries.some((e) => e.canEdit)} />}
+      {current === 'mine' && <RequestsView viewerId={viewer.id} highlight={highlight} tick={tick} />}
+      {current === 'decide' && <DecideView tick={tick} onDecided={refreshAll} />}
+      {current === 'grants' && <GrantsView tick={tick} admin={isAdminViewer(viewer)} manages={isApprover(viewer, entries) || entries.some((e) => e.canEdit)} />}
       {current === 'catalog' && <CatalogView viewer={viewer} entries={entries} people={people} setup={setup} onChanged={() => void reloadEntries()} />}
     </AccessFrame>
   );
