@@ -254,10 +254,18 @@ export interface OutsideRequestView {
   updatedAt: string;
 }
 
+/** What an outside requester is told when a request or grant failed, whatever the cause: the cause (an approver's name, GitHub's or Google's own message) stays in the audit log and the approvers' and admins' views. */
+export const OUTSIDE_FAILED_NOTE = 'Nothing was granted; an admin has the details.';
+
 /** Limits for outside requesters' chat (C36 D-12); the instance-wide hourly cap is LANDFLOW_ACCESS_OUTSIDE_CHAT_PER_HOUR (default below, 0 = chat off). */
 export const OUTSIDE_LIMITS = {
   chatChars: 2_000,
   chatPerMinute: 10,
   chatPerDay: 100,
   chatPerHourAll: 600,
+  /** Filing a request: each opens an approval run and may send mail, so a person's own cap (shared by every main). */
+  filePerHour: 10,
+  filePerDay: 30,
+  /** Changing the saved GitHub username (it is one person's, so guessing names would be a way to take them). */
+  accountPerDay: 5,
 };

@@ -32,6 +32,7 @@ export function OutsideSettingsForm({
   onSave,
   onBlock,
   onUnblock,
+  onClearGithub,
 }: {
   settings: OutsideSettingsView;
   requesters: OutsideRequesterRow[];
@@ -45,6 +46,7 @@ export function OutsideSettingsForm({
   onSave: () => void;
   onBlock: (requester: OutsideRequesterRow) => void;
   onUnblock: (requester: OutsideRequesterRow) => void;
+  onClearGithub?: (requester: OutsideRequesterRow) => void;
 }) {
   const [domain, setDomain] = useState('');
   const [domainProblem, setDomainProblem] = useState<string>();
@@ -109,6 +111,12 @@ export function OutsideSettingsForm({
           <p className="mt-1 text-[12px] text-t3">Send this link to the people who should ask. It shows nothing until they sign in.</p>
         </div>
 
+        {settings.proxiesConfigured === false && (
+          <p role="alert" className="rounded-xl border border-warnbd bg-warndim px-3 py-2 text-[13px] text-warn" data-testid="outside-proxies-warning">
+            LANDFLOW_TRUSTED_PROXIES is not set, so everyone who visits the page counts as one network address for the sign-in limits. Set it (0 when people connect directly, else the number of proxies in front of Landflow) before you share the link.
+          </p>
+        )}
+
         {!mail && (
           <p role="alert" className="rounded-xl border border-warnbd bg-warndim px-3 py-2 text-[13px] text-warn">
             This host can't send email, so the email link can't work. People can sign in with Google only (switch it on below), or set up the mail settings first.
@@ -158,6 +166,12 @@ export function OutsideSettingsForm({
                   <p className="text-[12px] text-t3">
                     Verified by {r.verifiedBy === 'google' ? 'Google sign-in' : 'email link'} · first seen {when(r.createdAt)} · last seen {when(r.lastSeenAt)}
                   </p>
+                  {r.github && (
+                    <p className="flex flex-wrap items-center gap-2 text-[12px] text-t3">
+                      GitHub username (typed, unverified): <code>{r.github}</code>
+                      {onClearGithub && <Button size="sm" variant="ghost" onClick={() => onClearGithub(r)} className="max-md:h-11">Clear</Button>}
+                    </p>
+                  )}
                   <p className="text-[12px] text-t3">{r.openRequests} open {r.openRequests === 1 ? 'request' : 'requests'} · {r.liveGrants} live {r.liveGrants === 1 ? 'grant' : 'grants'}</p>
                 </div>
                 {r.blocked ? (
@@ -233,6 +247,7 @@ export function OutsideSettings({ mail }: { mail: boolean }) {
       onChange={setDraft}
       onSave={() => void save()}
       onBlock={(r) => void act(() => outsideAdminApi.block(r.id), `${r.email} is blocked`)}
+      onClearGithub={(r) => void act(() => outsideAdminApi.clearGithub(r.id), `${r.email}’s GitHub username is cleared`)}
       onUnblock={(r) => void act(() => outsideAdminApi.unblock(r.id), `${r.email} can sign in again`)}
     />
   );

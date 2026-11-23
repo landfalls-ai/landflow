@@ -5,15 +5,14 @@
  */
 import { NextResponse } from 'next/server';
 import { beginGoogle, OutsideAuthError } from '@/lib/server/access/outside/identity';
-import { outsidePublic, setGoogleStateCookie } from '@/lib/server/access/outside/http';
+import { outsidePublic, setGoogleStateCookie, outsideClientIp } from '@/lib/server/access/outside/http';
 import { publicOrigin } from '@/lib/server/auth/cookies';
-import { clientIp } from '@/lib/server/auth/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
 export const GET = outsidePublic(async ({ req }) => {
   try {
-    const { url, state } = await beginGoogle(publicOrigin(req), { ip: clientIp(req) });
+    const { url, state } = await beginGoogle(publicOrigin(req), { ip: outsideClientIp(req) });
     const response = new NextResponse(null, { status: 302, headers: { location: url } });
     setGoogleStateCookie(response, req, state);
     return response;

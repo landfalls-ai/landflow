@@ -94,6 +94,11 @@ export async function windowHit(key: string, max: number, windowMs: number, now 
   return { allowed: false, retryAfter: Math.max(1, Math.ceil((windowMs - (now % windowMs)) / 1000)) };
 }
 
+/** Forget this process's `windowHit` counters whose key starts with `prefix` (tests). */
+export function forgetWindows(prefix: string): void {
+  for (const key of [...local().windows.keys()]) if (key.startsWith(`window:${prefix}`)) local().windows.delete(key);
+}
+
 /** How many keys this process counts now (tests). */
 export const localKeyCount = (): number => local().windows.size;
 

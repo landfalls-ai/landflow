@@ -7,9 +7,8 @@
  */
 import { NextResponse } from 'next/server';
 import { completeGoogle, OutsideAuthError } from '@/lib/server/access/outside/identity';
-import { clearGoogleStateCookie, outsidePublic, setRequesterCookie } from '@/lib/server/access/outside/http';
+import { clearGoogleStateCookie, outsidePublic, setRequesterCookie, outsideClientIp } from '@/lib/server/access/outside/http';
 import { readCookie } from '@/lib/server/auth/cookies';
-import { clientIp } from '@/lib/server/auth/rate-limit';
 import { REQUESTER_COOKIE, REQUESTER_OIDC_COOKIE } from '@/lib/shared/auth-paths';
 
 export const dynamic = 'force-dynamic';
@@ -21,7 +20,7 @@ export const GET = outsidePublic(async ({ req }) => {
   try {
     const { session } = await completeGoogle(
       { code: query.get('code'), state: query.get('state'), cookieState: readCookie(req, REQUESTER_OIDC_COOKIE), error: query.get('error') },
-      { ip: clientIp(req), userAgent: req.headers.get('user-agent') ?? undefined, replacing: readCookie(req, REQUESTER_COOKIE) },
+      { ip: outsideClientIp(req), userAgent: req.headers.get('user-agent') ?? undefined, replacing: readCookie(req, REQUESTER_COOKIE) },
     );
     const response = back('/request-access');
     setRequesterCookie(response, req, session.token, session.expiresAt);

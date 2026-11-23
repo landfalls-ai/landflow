@@ -7,8 +7,8 @@
  */
 import { z } from 'zod';
 import { outsideChatPerHour, runAccessChat } from '@/lib/server/access/chat';
-import { takeOutside } from '@/lib/server/access/outside/limits';
-import { outsideRoute } from '@/lib/server/access/outside/http';
+import { takeOutsideShared } from '@/lib/server/access/outside/limits';
+import { outsideRoute, tooMany } from '@/lib/server/access/outside/http';
 import { json, parseBody } from '@/lib/server/http';
 import { OUTSIDE_LIMITS } from '@/lib/shared/access';
 
@@ -19,7 +19,7 @@ const bodySchema = z.object({ message: z.string().min(1).max(OUTSIDE_LIMITS.chat
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
-const busy = (error: string, seconds: number) => Response.json({ error, code: 'rate_limited', retryAfter: seconds }, { status: 429, headers: { 'Retry-After': String(seconds) } });
+const busy = tooMany;
 
 export const POST = outsideRoute(
   async ({ req, requester }) => {
@@ -28,9 +28,9 @@ export const POST = outsideRoute(
     const cap = outsideChatPerHour();
     if (cap <= 0) return Response.json({ error: 'The chat is not available here; use the form' }, { status: 409 });
     // The requester's own limits first, so a person over theirs never uses up the instance's.
-    if (!takeOutside('access-chat-minute', requester.id, OUTSIDE_LIMITS.chatPerMinute, MINUTE)) return busy('Too many messages: wait a moment', 60);
-    if (!takeOutside('access-chat-day', requester.id, OUTSIDE_LIMITS.chatPerDay, DAY)) return busy('You have used today’s messages; use the form or come back tomorrow', 3_600);
-    if (!takeOutside('access-chat-all', 'instance', cap, HOUR)) return busy('The chat is busy; use the form', 300);
+    if (!(await takeOutsideShared('access-chat-minute', requester.id, OUTSIDE_LIMITS.chatPerMinute, MINUTE))) return busy('Too many messages: wait a moment', 60);
+    if (!(await takeOutsideShared('access-chat-day', requester.id, OUTSIDE_LIMITS.chatPerDay, DAY))) return busy('You have used today’s messages; use the form or come back tomorrow', 3_600);
+    if (!(await takeOutsideShared('access-chat-all', 'instance', cap, HOUR))) return busy('The chat is busy; use the form', 300);
     return json(await runAccessChat(requester, body.data));
   },
   { write: true },

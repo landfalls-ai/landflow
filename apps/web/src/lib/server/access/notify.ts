@@ -5,7 +5,8 @@
  */
 import { mailConfigured, sendMail } from '../auth/mail';
 import { logger } from '../telemetry/logger';
-import { pageLink, requesterOf } from './principal';
+import { OUTSIDE_FAILED_NOTE } from '../../shared/access';
+import { isOutsideId, pageLink, requesterOf } from './principal';
 
 /**
  * Each person gets the mail at their own address with the link to their page: a Landflow user to /access, an outside requester (the
@@ -42,7 +43,9 @@ export const mailRequester = {
   waiting: (s: Subject) => send([s.requesterId], `Access approved: ${s.entryName}`, [`Your request for ${what(s)} was approved. Someone has to grant it by hand; you will be told when it is done.`]),
   denied: (s: Subject, comment?: string) => send([s.requesterId], `Access denied: ${s.entryName}`, [`Your request for ${what(s)} was denied.`, ...(comment ? [`Reason: ${comment}`] : [])]),
   expired: (s: Subject) => send([s.requesterId], `Access request expired: ${s.entryName}`, [`Nobody answered your request for ${what(s)} in time, so nothing was granted. You can ask again.`]),
-  failed: (s: Subject, reason: string) => send([s.requesterId], `Access could not be granted: ${s.entryName}`, [`Your request for ${what(s)} could not be completed: ${reason}`, 'Nothing was granted. An admin can retry it.']),
+  // An outside requester gets the fixed sentence: the reason may name an approver or quote the system's own message.
+  failed: (s: Subject, reason: string) =>
+    send([s.requesterId], `Access could not be granted: ${s.entryName}`, isOutsideId(s.requesterId) ? [`Your request for ${what(s)} could not be completed.`, OUTSIDE_FAILED_NOTE] : [`Your request for ${what(s)} could not be completed: ${reason}`, 'Nothing was granted. An admin can retry it.']),
   removed: (s: Subject, reason: string) => send([s.requesterId], `Access ended: ${s.entryName}`, [`Your access to ${s.entryName} (${s.targetLabel}) has ended (${reason}).`]),
 };
 

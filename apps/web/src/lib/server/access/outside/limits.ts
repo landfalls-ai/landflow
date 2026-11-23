@@ -5,7 +5,7 @@
  * can be switched off is a limit an abuser asks an admin to switch off.
  */
 import { AttemptLimiter } from '../../auth/rate-limit';
-import { windowHit } from '../../rate-limit/api-limiter';
+import { forgetWindows, windowHit } from '../../rate-limit/api-limiter';
 import { singleton } from '../../singleton';
 
 const MINUTE = 60_000;
@@ -74,5 +74,6 @@ export async function takeOutsideShared(bucket: string, key: string, limit: numb
 /** Tests: forget every count (in this process; Valkey keys expire on their own). */
 export function resetOutsideLimits(): void {
   local().clear();
+  forgetWindows('outside:');
   held().limiters = makeLimiters();
 }

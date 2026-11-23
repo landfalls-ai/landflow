@@ -326,6 +326,8 @@ export interface OutsideSettingsView {
   redirectUrl?: string;
   /** The host can send the sign-in link. */
   mail?: boolean;
+  /** LANDFLOW_TRUSTED_PROXIES is set; without it all visitors share one sign-in limit. */
+  proxiesConfigured?: boolean;
 }
 export interface OutsideRequesterRow {
   id: string;
@@ -337,6 +339,8 @@ export interface OutsideRequesterRow {
   openRequests: number;
   liveGrants: number;
   blocked: boolean;
+  /** The GitHub username they typed (unverified); an admin can clear it. */
+  github?: string | null;
 }
 
 /** An organization's own domains only: no wildcards, no public mail domains (the server refuses them too). */
@@ -366,5 +370,6 @@ export const outsideAdminApi = {
   /** The server answers `{ requesters }`. */
   requesters: async (): Promise<{ items: OutsideRequesterRow[] }> => ({ items: (await api<{ requesters: OutsideRequesterRow[] }>('/api/access/outside/requesters', { background: true })).requesters }),
   block: (id: string) => api<unknown>(`/api/access/outside/requesters/${id}/block`, { method: 'POST' }),
+  clearGithub: (id: string) => api<unknown>(`/api/access/outside/requesters/${id}/github`, { method: 'DELETE' }),
   unblock: (id: string) => api<unknown>(`/api/access/outside/requesters/${id}/unblock`, { method: 'POST' }),
 };

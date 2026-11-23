@@ -39,7 +39,8 @@ vi.mock('@/lib/server/access/outside/settings', () => ({
 }));
 // A counting stand-in for the limiter: the route's numbers are recorded, a bucket can be told to refuse, and the counts are real.
 vi.mock('@/lib/server/access/outside/limits', () => ({
-  takeOutside: (bucket: string, key: string, limit: number, windowMs: number) => {
+  // Shared (the API limiter's store), so every main counts together; the route must use this one.
+  takeOutsideShared: async (bucket: string, key: string, limit: number, windowMs: number) => {
     h.takes.push({ bucket, key, limit, windowMs });
     if (h.deny.has(bucket)) return false;
     const id = `${bucket}:${key}`;
@@ -69,6 +70,7 @@ const models = await startFakeModels({
       return { text: token ? 'Shall I file this? Say yes.' : `Done: ${text.slice(0, 300)}` };
     }
     const said = String(parts.find((p: { type: string }) => p.type === 'text')?.text ?? '');
+    if (/boom/.test(said)) return { error: { status: 500, body: JSON.stringify({ error: { message: 'upstream said: key sk-live-SECRET123 is over quota' } }) } };
     const args = { entry: 'Platform team', duration: '1 h', reason: 'Fixing the build', account: 'erin-chat' };
     if (/yes/i.test(said) && script.token) return { toolCalls: [{ id: 'call_2', name: toolName!, arguments: { ...args, confirmToken: script.token } }] };
     return { toolCalls: [{ id: 'call_1', name: toolName!, arguments: args }] };
@@ -272,6 +274,12 @@ describe('the chat flow with a model, for an outside requester', () => {
     for (const run of runs) expect(JSON.parse(run.data).startedBy).toBe(erin.id);
     await cancelRequest(admin, second.requestId!);
     void fake;
+  });
+
+  it('answers a failed run with a plain sentence for an outsider, never the model provider’s message', async () => {
+    const outsideFailure = await runAccessChat(requesterOfOutside(erin), { message: 'boom please', sessionId: 'tab9' }).catch((e: Error & { status?: number }) => e);
+    expect(outsideFailure).toMatchObject({ status: 502, message: 'The chat could not answer. Use the form instead.' });
+    expect(String((outsideFailure as Error).message)).not.toMatch(/SECRET|quota|upstream/);
   });
 
   it('refuses a blocked requester’s next turn before any model call, and one over a switched-off feature', async () => {

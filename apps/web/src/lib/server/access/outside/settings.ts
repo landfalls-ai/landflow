@@ -6,10 +6,11 @@
  */
 import { auditedTransaction, recordAudit } from '../../audit';
 import { mailConfigured } from '../../auth/mail';
-import { publicUrl } from '../../config';
+import { envFlag, publicUrl } from '../../config';
 import { credentials } from '../../credentials/vault';
 import { database } from '../../db';
-import { OIDC_CLIENT_TYPE } from '../../nodes/oidc-client-credential';
+import { trustedProxiesConfigured } from '../../net/client-address';
+import { GOOGLE_ISSUER, OIDC_CLIENT_TYPE } from '../../nodes/oidc-client-credential';
 import { canResource, isInstanceAdmin, type Actor } from '../../projects/access';
 import { AccessError } from '../errors';
 import { auditActorOf } from '../rules';
@@ -25,7 +26,8 @@ export const GOOGLE_CALLBACK_PATH = '/request-access/api/sign-in/google/callback
 export interface OutsideSettings {
   enabled: boolean;
   domains: string[];
-  google: { enabled: boolean; credentialId?: string };
+  /** `credentialStamp`: the chosen credential's `updatedAt` when an admin saved it; a credential edited since is not trusted until the admin saves again. */
+  google: { enabled: boolean; credentialId?: string; credentialStamp?: string };
 }
 
 /** Free mail providers: a domain anyone can register an address on proves nothing about who is asking. */
@@ -41,10 +43,11 @@ export function outsideSettings(): OutsideSettings {
   const raw = parseJson<Record<string, unknown>>(database().get<{ value: string }>('SELECT value FROM settings WHERE key = ?', OUTSIDE_SETTINGS_KEY)?.value, {});
   const google = (raw.google && typeof raw.google === 'object' ? raw.google : {}) as Record<string, unknown>;
   const credentialId = typeof google.credentialId === 'string' && google.credentialId ? google.credentialId : undefined;
+  const credentialStamp = typeof google.credentialStamp === 'string' && google.credentialStamp ? google.credentialStamp : undefined;
   return {
     enabled: raw.enabled === true,
     domains: Array.isArray(raw.domains) ? raw.domains.filter((d): d is string => typeof d === 'string') : [],
-    google: { enabled: google.enabled === true, ...(credentialId && { credentialId }) },
+    google: { enabled: google.enabled === true, ...(credentialId && { credentialId }), ...(credentialStamp && { credentialStamp }) },
   };
 }
 
@@ -57,9 +60,30 @@ export function domainAllowed(email: string, settings: OutsideSettings = outside
   return Boolean(domain) && settings.domains.includes(domain);
 }
 
-/** Whether Google sign-in can start: switched on, and its credential is still there and still an OpenID Connect client. */
+/**
+ * Dev and test only (LANDFLOW_ACCESS_OUTSIDE_DEV_OIDC): lets the Google sign-in credential name another issuer or a discovery URL (the fake
+ * provider of the tests and the live check). Without it the issuer is Google's own, so an admin (or whoever can edit a credential) can't
+ * point "Google" at a provider they run and mint any address at an allowed domain.
+ */
+export const devOidcAllowed = (): boolean => envFlag('LANDFLOW_ACCESS_OUTSIDE_DEV_OIDC', false);
+
+/** A sentence when the credential points anywhere but Google's own issuer (and the dev flag is off); undefined when it is fine. */
+export function googleEndpointProblem(credentialId: string): string | undefined {
+  if (devOidcAllowed()) return undefined;
+  const data = credentials.definition(credentialId)?.data ?? {};
+  const issuer = String(data.issuer || GOOGLE_ISSUER).trim().replace(/\/+$/, '');
+  const discovery = typeof data.discoveryUrl === 'string' ? data.discoveryUrl.trim() : '';
+  return issuer !== GOOGLE_ISSUER || discovery ? `Sign in with Google uses Google’s own issuer (${GOOGLE_ISSUER}) and no discovery URL: change the credential` : undefined;
+}
+
+/** Whether Google sign-in can start: switched on, its credential is still there, an OpenID Connect client, Google's own issuer, and unchanged since an admin chose it. */
 export function googleReady(settings: OutsideSettings = outsideSettings()): boolean {
-  return settings.google.enabled && Boolean(settings.google.credentialId) && credentials.get(settings.google.credentialId!)?.type === OIDC_CLIENT_TYPE;
+  const id = settings.google.credentialId;
+  if (!settings.google.enabled || !id) return false;
+  const credential = credentials.get(id);
+  if (credential?.type !== OIDC_CLIENT_TYPE) return false;
+  if (settings.google.credentialStamp && settings.google.credentialStamp !== credential.updatedAt) return false;
+  return googleEndpointProblem(id) === undefined;
 }
 
 const adminOnly = (actor: Actor) => {
@@ -71,6 +95,8 @@ export interface OutsideSettingsView extends OutsideSettings {
   pageUrl: string;
   redirectUrl: string;
   mail: boolean;
+  /** LANDFLOW_TRUSTED_PROXIES is set: without it every visitor counts as one address for the sign-in limits. */
+  proxiesConfigured: boolean;
   google: OutsideSettings['google'] & { credentialName?: string };
 }
 
@@ -84,6 +110,7 @@ export function outsideSettingsView(actor: Actor): OutsideSettingsView {
     pageUrl: `${publicUrl()}${OUTSIDE_PAGE_PATH}`,
     redirectUrl: `${publicUrl()}${GOOGLE_CALLBACK_PATH}`,
     mail: mailConfigured(),
+    proxiesConfigured: trustedProxiesConfigured(),
   };
 }
 
@@ -119,8 +146,12 @@ export function saveOutsideSettings(actor: Actor, patch: OutsideSettingsPatch): 
     if (credential?.type !== OIDC_CLIENT_TYPE || !canResource(actor, 'credential', credentialId, 'use')) {
       throw new AccessError('Choose an OpenID Connect client credential you can use', 400, { field: 'google' });
     }
+    const problem = googleEndpointProblem(credentialId);
+    if (problem) throw new AccessError(problem, 400, { field: 'google' });
   }
-  const after: OutsideSettings = { enabled, domains, google: { enabled: googleOn, ...(credentialId && { credentialId }) } };
+  // Saving accepts the credential as it is now: its edit stamp is kept, and a later edit stops Google sign-in until an admin saves again.
+  const stamp = googleOn && credentialId ? credentials.get(credentialId)?.updatedAt : undefined;
+  const after: OutsideSettings = { enabled, domains, google: { enabled: googleOn, ...(credentialId && { credentialId }), ...(stamp && { credentialStamp: stamp }) } };
   auditedTransaction(() => {
     database().upsert('settings', { key: OUTSIDE_SETTINGS_KEY, value: JSON.stringify(after) });
     recordAudit({

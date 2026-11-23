@@ -218,6 +218,7 @@ export async function runAccessChat(actor: { id: string }, input: { message: str
   const record = await runWorkflow({ workflow, mode: 'chat', startNodeId: trigger.id, triggerItems: [item], executionId, streaming: true, startedBy: actor.id });
   const done = liveExecution(record.executionId) ?? record;
   const filed = database().get<{ id: string }>(`SELECT id FROM access_requests WHERE requester_id = ? AND channel = 'chat' AND created_at >= ? ORDER BY created_at DESC LIMIT 1`, actor.id, started);
-  if (record.status === 'error') throw new AccessError(record.error?.message ?? 'The access chat failed', 502);
+  // An outside requester gets a plain sentence: the run's error may quote a model provider's or a node's message.
+  if (record.status === 'error') throw new AccessError(isOutsideId(actor.id) ? 'The chat could not answer. Use the form instead.' : (record.error?.message ?? 'The access chat failed'), 502);
   return { reply: replyText(done) || 'I have nothing to add.', ...(filed && requestRow(filed.id) && { requestId: filed.id }) };
 }

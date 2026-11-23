@@ -4,7 +4,7 @@
  * the Access page's views can never reach an outsider by accident: no approver or their names, owners, credential, steps, decisions' `by`,
  * execution ids, the approvers' question, or other people's rows. Plain server module; imports no catalog or rules, only the rows.
  */
-import { requestState, type OutsideEntryView, type OutsideGrantView, type OutsideRequestView } from '../../../shared/access';
+import { OUTSIDE_FAILED_NOTE, requestState, type OutsideEntryView, type OutsideGrantView, type OutsideRequestView } from '../../../shared/access';
 import { grantOfRequest, parseJson, type GrantRow, type RequestRow } from '../store';
 import { isSystem, targetLabel } from '../systems';
 import type { EntryData } from '../rules';
@@ -65,7 +65,8 @@ export function outsideRequestView(row: RequestRow, entryName?: string): Outside
     reason: row.reason,
     channel: row.channel === 'chat' ? 'chat' : 'form',
     ...(row.account && { account: row.account }),
-    ...(row.note && { note: row.note }),
+    // A denial's comment is for them; a failure's reason is not (it may name an approver or quote GitHub's or Google's message).
+    ...(row.status === 'failed' ? { note: OUTSIDE_FAILED_NOTE } : row.note && { note: row.note }),
     ...(grant && { grant }),
     canCancel: row.status === 'pending',
     createdAt: row.created_at,

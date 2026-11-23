@@ -18,6 +18,8 @@ const ENV = {
   LANDFLOW_PLUGINS: '',
   LANDFLOW_PUBLIC_URL: 'http://landflow.test',
   LANDFLOW_TRUSTED_PROXIES: '1',
+  // The fake provider is not accounts.google.com: outside sign-in refuses any other issuer unless this dev flag is set.
+  LANDFLOW_ACCESS_OUTSIDE_DEV_OIDC: 'true',
 };
 const previousEnv = { ...process.env };
 Object.assign(process.env, ENV);
@@ -340,5 +342,43 @@ describe('the issuer spellings Google uses', () => {
     } finally {
       server.close();
     }
+  });
+});
+
+describe('which provider the credential may point at', () => {
+  const asOwner = <T>(fn: () => T): T => {
+    auth.enableTestAuth();
+    try {
+      return fn();
+    } finally {
+      auth.disableTestAuth();
+    }
+  };
+
+  it('pins Google’s issuer: another issuer or a discovery URL is refused (at save, at sign-in and in the config) unless the dev flag is set', async () => {
+    delete process.env.LANDFLOW_ACCESS_OUTSIDE_DEV_OIDC;
+    try {
+      expect(settings.googleReady()).toBe(false);
+      expect((await start()).response.status).not.toBe(302);
+      expect(() => asOwner(() => configure({ google: { enabled: true, credentialId } }))).toThrow(/Google’s own issuer|accounts\.google\.com/);
+      // The real issuer is fine, but a discovery URL on it is not.
+      const real = credentials.create({ name: 'Real Google', type: 'core.oidcClient', data: { issuer: 'https://accounts.google.com', clientId: 'c', clientSecret: 's' } });
+      expect(asOwner(() => configure({ google: { enabled: true, credentialId: real.id } })).google.credentialId).toBe(real.id);
+      const sneaky = credentials.create({ name: 'Sneaky', type: 'core.oidcClient', data: { issuer: 'https://accounts.google.com', discoveryUrl: `${fake.url}/.well-known/openid-configuration`, clientId: 'c', clientSecret: 's' } });
+      expect(() => asOwner(() => configure({ google: { enabled: true, credentialId: sneaky.id } }))).toThrow(/Google’s own issuer|accounts\.google\.com/);
+    } finally {
+      process.env.LANDFLOW_ACCESS_OUTSIDE_DEV_OIDC = 'true';
+      asOwner(() => configure({ google: { enabled: true, credentialId } }));
+    }
+  });
+
+  it('refuses sign-in once the chosen credential changed, until an admin saves the settings again', async () => {
+    expect(settings.googleReady()).toBe(true);
+    credentials.update(credentialId, { data: { issuer: fake.url, clientId: fake.clientId, clientSecret: fake.clientSecret, hostedDomain: 'changed' } });
+    expect(settings.googleReady()).toBe(false);
+    expect((await start()).response.status).not.toBe(302);
+    asOwner(() => configure({ google: { enabled: true, credentialId } }));
+    expect(settings.googleReady()).toBe(true);
+    expect((await start()).response.status).toBe(302);
   });
 });

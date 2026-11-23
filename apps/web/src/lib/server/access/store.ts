@@ -130,10 +130,15 @@ export const insertGrant = (row: GrantRow) => database().insertNew('access_grant
 
 export const accountOf = (userId: string, system: string): string | undefined => database().get<{ handle: string }>('SELECT handle FROM access_accounts WHERE user_id = ? AND system = ?', userId, system)?.handle;
 /** One login belongs to one person (whatever its case): the table says so too (`access_accounts_handle`). */
-export function saveAccount(userId: string, system: string, handle: string): void {
+export function saveAccount(userId: string, system: string, handle: string): { displaced?: string } {
   const other = database().get<{ user_id: string }>('SELECT user_id FROM access_accounts WHERE system = ? AND lower(handle) = lower(?) AND user_id <> ?', system, handle, userId);
-  if (other) throw new AccessError('That username is already linked to someone else', 409, { field: 'account' });
+  // A login held only by someone who asked without a Landflow account (typed, never verified) is not a reason to refuse a Landflow user:
+  // the user takes it, the outsider's copy is cleared (the caller audits who). Nobody else can take a Landflow user's.
+  const displaces = Boolean(other?.user_id.startsWith('ext_')) && !userId.startsWith('ext_');
+  if (other && !displaces) throw new AccessError('That username is already linked to someone else', 409, { field: 'account' });
+  if (other) database().delete('access_accounts', { user_id: other.user_id, system });
   database().upsert('access_accounts', { user_id: userId, system, handle, updated_at: new Date().toISOString() });
+  return other ? { displaced: other.user_id } : {};
 }
 
 // ---- claims -----------------------------------------------------------------------------------------------

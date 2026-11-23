@@ -7,9 +7,8 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { OutsideAuthError, verifyLink } from '@/lib/server/access/outside/identity';
-import { outsidePublic, setRequesterCookie } from '@/lib/server/access/outside/http';
+import { outsidePublic, setRequesterCookie, outsideClientIp } from '@/lib/server/access/outside/http';
 import { readCookie } from '@/lib/server/auth/cookies';
-import { clientIp } from '@/lib/server/auth/rate-limit';
 import { parseBody } from '@/lib/server/http';
 import { REQUESTER_COOKIE } from '@/lib/shared/auth-paths';
 
@@ -23,7 +22,7 @@ export const POST = outsidePublic(
     if (!body.ok) return body.response;
     let signedIn;
     try {
-      signedIn = await verifyLink(body.data.token, { ip: clientIp(req), userAgent: req.headers.get('user-agent') ?? undefined, replacing: readCookie(req, REQUESTER_COOKIE) });
+      signedIn = await verifyLink(body.data.token, { ip: outsideClientIp(req), userAgent: req.headers.get('user-agent') ?? undefined, replacing: readCookie(req, REQUESTER_COOKIE) });
     } catch (error) {
       if (error instanceof OutsideAuthError && error.reason === 'limited') {
         const retryAfter = Number(error.details?.retryAfter) || 60;

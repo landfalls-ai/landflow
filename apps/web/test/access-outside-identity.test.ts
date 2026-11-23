@@ -585,6 +585,33 @@ describe('settings and Block (instance admins)', () => {
     expect((await call(member, entriesRoute.POST as Handler, '/api/access/entries', body('Not yours', { outsideMayAsk: true }))).status).toBe(403);
   });
 
+  it('lets an admin clear an outside requester’s typed GitHub username (audited, admins only)', async () => {
+    const githubRoute = await import('@/app/api/access/outside/requesters/[id]/github/route');
+    await signIn('erin@partner.test');
+    const requester = store.requesterRowByKey('erin@partner.test')!;
+    database().upsert('access_accounts', { user_id: requester.id, system: 'github', handle: 'erin-squat', updated_at: new Date().toISOString() });
+    const path = `/api/access/outside/requesters/${requester.id}/github`;
+    const listed = await call(admin, adminRequestersRoute.GET as Handler, '/api/access/outside/requesters');
+    expect(listed.body.requesters[0]).toMatchObject({ github: 'erin-squat' });
+    expect((await call(member, githubRoute.DELETE as Handler, path, { method: 'DELETE', params: { id: requester.id } })).status).toBe(403);
+    const cleared = await call(admin, githubRoute.DELETE as Handler, path, { method: 'DELETE', params: { id: requester.id } });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.github).toBeNull();
+    expect(audited('access.account.set').some((e) => e.target?.id === requester.id && (e.details as { clearedBy?: string }).clearedBy === 'admin')).toBe(true);
+  });
+
+  it('Block cancels the open requests first and then writes the block (a request cancelled before the block event)', async () => {
+    await signIn('erin@partner.test');
+    const requester = store.requesterRowByKey('erin@partner.test')!;
+    const stamp = new Date().toISOString();
+    database().upsert('access_requests', { id: 'areq_order', entry_id: 'ae_x', entry_version: 1, entry_snapshot: '{}', requester_id: requester.id, account: null, duration_minutes: 60, reason: 'Needs it', channel: 'form', status: 'pending', approvers: '[]', workflow_id: null, execution_id: null, decisions: null, approved_minutes: null, note: null, question: null, created_at: stamp, updated_at: stamp });
+    await call(admin, blockRoute.POST as Handler, `/api/access/outside/requesters/${requester.id}/block`, { method: 'POST', params: { id: requester.id } });
+    // Events are newest first: the block was written after the cancel.
+    const events = queryEvents({ action: ['access.outside.block', 'access.request.cancel'] }, { limit: 50 }).events.filter((e) => e.target?.id === requester.id || e.target?.id === 'areq_order');
+    const order = events.map((e) => e.action);
+    expect(order.indexOf('access.outside.block')).toBeLessThan(order.indexOf('access.request.cancel'));
+  });
+
   it('lists requesters for admins, and Block ends sessions, cancels open requests, stops links, and Unblock lets them back', async () => {
     const { cookie } = await signIn('erin@partner.test');
     const requester = store.requesterRowByKey('erin@partner.test')!;
@@ -693,6 +720,54 @@ describe('seams with the request library (C36 integration)', () => {
     const chat = await send(chatRoute.POST as Handler, '/request-access/api/chat', { body: { message: 'hi', sessionId: 's1' }, cookie });
     expect(chat.status).toBe(409);
     expect(await jsonOf(chat)).toMatchObject({ error: expect.stringContaining('not set up') });
+  });
+
+  it('does the same limiter work for an address of a domain nobody allowed as for an allowed one, so the answer’s timing tells nothing', async () => {
+    for (const address of ['mallory@other.test', 'erin+tag@partner.test', 'erin@partner.test']) {
+      limits.resetOutsideLimits();
+      for (let i = 0; i < 3; i++) await askLink(address);
+      expect((await limits.outsideLimiters().address.check(address.replace(/\+tag/, ''))).ok, address).toBe(false);
+      expect((await limits.outsideLimiters().domain.check(address.slice(address.indexOf('@') + 1))).ok, address).toBe(true);
+    }
+    // And the domain counter moved as well (200 an hour: one hit each here).
+    limits.resetOutsideLimits();
+    await askLink('mallory@other.test');
+    const probe = limits.outsideLimiters().domain;
+    let left = 0;
+    while ((await probe.check('other.test')).ok && left < 400) { await probe.hit('other.test'); left++; }
+    expect(left).toBe(199);
+  });
+
+  it('shows the masked address of a link before it is used, without using it, and answers a bad link as verify does', async () => {
+    const peekRoute = await import('@/app/request-access/api/sign-in/peek/route');
+    await askLink('erin@partner.test');
+    const token = tokenOf(mails.at(-1)!);
+    const peeked = await send(peekRoute.POST as Handler, '/request-access/api/sign-in/peek', { body: { token } });
+    expect(peeked.status).toBe(200);
+    expect(await jsonOf(peeked)).toEqual({ email: 'e•••@partner.test' });
+    const verified = await send(verifyRoute.POST as Handler, '/request-access/api/sign-in/verify', { body: { token } });
+    expect(verified.status).toBe(200);
+    // Used: peek says what verify says, and counts as a failure from that address.
+    const used = await send(peekRoute.POST as Handler, '/request-access/api/sign-in/peek', { body: { token }, ip: '10.9.9.9' });
+    const bad = await send(verifyRoute.POST as Handler, '/request-access/api/sign-in/verify', { body: { token: 'nope' }, ip: '10.9.9.8' });
+    expect(used.status).toBe(400);
+    expect((await jsonOf(used)).error).toBe((await jsonOf(bad)).error);
+    for (let i = 0; i < 25; i++) await send(peekRoute.POST as Handler, '/request-access/api/sign-in/peek', { body: { token: `x${i}` }, ip: '10.9.9.7' });
+    expect((await send(peekRoute.POST as Handler, '/request-access/api/sign-in/peek', { body: { token: 'again' }, ip: '10.9.9.7' })).status).toBe(429);
+  });
+
+  it('counts every caller as one address while LANDFLOW_TRUSTED_PROXIES is unset (a forged X-Forwarded-For buys nothing), and by the header once it is set', async () => {
+    const { outsideClientIp } = await import('@/lib/server/access/outside/http');
+    const forged = new Request('http://landflow.test/request-access/api/sign-in/email', { headers: { 'x-forwarded-for': '203.0.113.9' } });
+    expect(outsideClientIp(forged)).toBe('203.0.113.9'); // set to 1 for this file
+    const proxies = process.env.LANDFLOW_TRUSTED_PROXIES;
+    delete process.env.LANDFLOW_TRUSTED_PROXIES;
+    try {
+      expect(outsideClientIp(forged)).toBe('unconfigured');
+      expect(outsideClientIp(new Request('http://landflow.test/x', { headers: { 'x-forwarded-for': '198.51.100.1' } }))).toBe('unconfigured');
+    } finally {
+      process.env.LANDFLOW_TRUSTED_PROXIES = proxies;
+    }
   });
 
   it('the hourly access reconcile prunes outside links and sessions', async () => {

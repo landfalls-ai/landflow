@@ -16,6 +16,7 @@ import { REQUESTER_COOKIE, REQUESTER_OIDC_COOKIE, REQUESTER_PATH } from '../../.
 import { secureRequest } from '../../auth/cookies';
 import { crossSiteRequest } from '../../auth/guard';
 import { error, handler } from '../../http';
+import { clientAddress, trustedProxiesConfigured } from '../../net/client-address';
 import type { OutsideRequester } from './identity';
 import { requesterFromRequest } from './sessions';
 import { outsideSettings } from './settings';
@@ -74,6 +75,20 @@ export function outsideRoute(fn: (ctx: { req: Request; requester: OutsideRequest
       return fn({ req, requester, params: (await ctx?.params) ?? {} });
     }),
   );
+}
+
+/**
+ * The address the public page's limits count. Behind no declared proxy (LANDFLOW_TRUSTED_PROXIES unset) an `X-Forwarded-For` header is the
+ * client's own word, so every per-network limit would be free to dodge by rotating it: the page then counts all callers as one address (coarse,
+ * and impossible to forge). Set the variable (0 for clients that connect directly, else the number of proxies) before switching the page on.
+ */
+export function outsideClientIp(req: Request): string {
+  return trustedProxiesConfigured() ? clientAddress(req) : 'unconfigured';
+}
+
+/** A 429 in plain words, with Retry-After (the limits of a signed-in requester). */
+export function tooMany(sentence: string, seconds: number): Response {
+  return Response.json({ error: sentence, code: 'rate_limited', retryAfter: seconds }, { status: 429, headers: { 'Retry-After': String(seconds) } });
 }
 
 /** Set the session cookie: HttpOnly, SameSite=Strict, only under `/request-access`, Secure behind https, ending with the session. */

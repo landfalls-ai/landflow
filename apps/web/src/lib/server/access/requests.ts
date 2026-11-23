@@ -51,10 +51,15 @@ function accountFor(requester: Requester, entry: EntryData, given: string | unde
   const login = given?.trim() ? validateGithubLogin(given) : kept;
   if (!login) throw new AccessError('Give your GitHub username', 400, { field: 'account' });
   if (login !== kept) {
-    saveAccount(requester.id, 'github', login);
-    recordAudit({ action: 'access.account.set', actor: auditActorOfRequester(requester), target: { type: 'user', id: requester.id }, project: null, summary: 'Saved a GitHub username for access requests', details: { from: kept ?? null, to: login, requesterKind: requester.kind } });
+    saveGithubAs(requester, kept, login);
   }
   return login;
+}
+
+/** Save a GitHub username and audit it; when a Landflow user takes one an outside requester had typed, that requester's copy is cleared and the audit row says so. */
+function saveGithubAs(requester: Requester, kept: string | undefined, login: string): void {
+  const { displaced } = saveAccount(requester.id, 'github', login);
+  recordAudit({ action: 'access.account.set', actor: auditActorOfRequester(requester), target: { type: 'user', id: requester.id }, project: null, summary: 'Saved a GitHub username for access requests', details: { from: kept ?? null, to: login, requesterKind: requester.kind, ...(displaced && { displacedOutsideRequester: displaced }) } });
 }
 
 /** The live grant (any entry) on this target for this account, if one exists. */
@@ -344,9 +349,7 @@ export function setGithubAccount(who: { id: string }, login: string): { github?:
   const next = validateGithubLogin(login);
   const kept = accountOf(who.id, 'github');
   if (next !== kept) {
-    const requester = requesterOfActor(who);
-    saveAccount(who.id, 'github', next);
-    recordAudit({ action: 'access.account.set', actor: auditActorOfRequester(requester), target: { type: 'user', id: who.id }, project: null, summary: 'Saved a GitHub username for access requests', details: { from: kept ?? null, to: next, requesterKind: requester.kind } });
+    saveGithubAs(requesterOfActor(who), kept, next);
   }
   return accountsOf(who);
 }

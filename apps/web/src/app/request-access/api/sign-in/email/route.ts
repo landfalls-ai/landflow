@@ -6,8 +6,7 @@
  */
 import { z } from 'zod';
 import { requestLink, SIGN_IN_ASKED } from '@/lib/server/access/outside/identity';
-import { outsidePublic } from '@/lib/server/access/outside/http';
-import { clientIp } from '@/lib/server/auth/rate-limit';
+import { outsidePublic, outsideClientIp } from '@/lib/server/access/outside/http';
 import { emailedOrigin } from '@/lib/server/auth/cookies';
 import { json, parseBody } from '@/lib/server/http';
 
@@ -26,7 +25,7 @@ export const POST = outsidePublic(
     } catch {
       origin = undefined;
     }
-    const result = await requestLink(body.data.email, { ip: clientIp(req), ...(origin && { origin }) });
+    const result = await requestLink(body.data.email, { ip: outsideClientIp(req), ...(origin && { origin }) });
     if (result.limited) return Response.json({ error: 'Too many attempts. Try again later.', code: 'rate_limited', retryAfter: result.retryAfter }, { status: 429, headers: { 'Retry-After': String(result.retryAfter) } });
     return json({ ok: true, message: SIGN_IN_ASKED }, 202);
   },

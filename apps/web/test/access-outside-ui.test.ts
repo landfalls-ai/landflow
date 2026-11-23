@@ -207,6 +207,15 @@ describe('the client against the servers as built (C36 integration)', () => {
   });
 });
 
+describe('the sign-in link page names the address (C36 security review)', () => {
+  it('says "Continue as m•••@partner.test" when the link’s address is known, and plain Continue before', () => {
+    const named = html(createElement(VerifyCard, { email: 'm•••@partner.test', onContinue: () => {} }));
+    expect(named).toContain('Continue as m•••@partner.test');
+    expect(named).toContain('This link is for');
+    expect(html(createElement(VerifyCard, { onContinue: () => {} }))).not.toContain('Continue as');
+  });
+});
+
 describe('the public page (U-2)', () => {
   const view = (over: Record<string, unknown> = {}) => html(createElement(OutsideView, { step: 'signed-out', config: { enabled: true, google: false, email: true }, ...over } as never));
   it('off: says asking is switched off and shows no form', () => {

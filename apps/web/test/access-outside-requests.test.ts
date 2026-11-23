@@ -63,7 +63,7 @@ const { approversFor } = await import('@/lib/server/access/rules');
 const { requesterOf, requesterOfOutside, emailKey, auditActorOfRequester } = await import('@/lib/server/access/principal');
 const { applyDecision, giveBack, listGrants, listOwnGrants, revokeNow } = await import('@/lib/server/access/grants');
 const { cancelOpenRequestsOf, cancelRequest, createRequest, decideAccessRequest, fileOutsideRequest, listOwnRequests, listRequests, setGithubAccount } = await import('@/lib/server/access/requests');
-const { accessSettings, grantOfRequest, saveAccount } = await import('@/lib/server/access/store');
+const { accessSettings, accountOf, grantOfRequest, saveAccount } = await import('@/lib/server/access/store');
 const entriesRoute = await import('@/app/request-access/api/entries/route');
 const requestsRoute = await import('@/app/request-access/api/requests/route');
 const cancelRoute = await import('@/app/request-access/api/requests/[id]/cancel/route');
@@ -136,7 +136,9 @@ const noApproverNames = (text: string) => {
   for (const name of ['Ann Approver', 'ann@landflow.test', 'Ada Admin', 'admin@landflow.test', 'Olive Owner', 'owner@landflow.test', 'Lee Lead']) expect(text, name).not.toContain(name);
 };
 
-beforeEach(() => {
+beforeEach(async () => {
+  // The per-person caps on filing and on the GitHub name count across a test file: each test starts them over.
+  (await import('@/lib/server/access/outside/limits')).resetOutsideLimits();
   h.record.next = undefined;
   h.settings.enabled = true;
   h.settings.domains = ['partner.test'];
@@ -275,6 +277,13 @@ describe('who may approve: not the requester, not their email', () => {
     expect(JSON.stringify(fake.members('teams', 'acme/platform'))).toBe(before);
     expect(grantOfRequest(made.body.id)).toBeUndefined();
     erin.email = 'erin@partner.test';
+    // The outsider is told a fixed sentence (page and mail), never the internal reason; the row and the approver's view keep it.
+    const mine = await call(() => requestsRoute.GET(new Request(`${url}/requests`, send(erin, 'GET'))));
+    expect(mine.body.items.find((r: { id: string }) => r.id === made.body.id)).toMatchObject({ state: 'failed', note: 'Nothing was granted; an admin has the details.' });
+    await vi.waitFor(() => expect(mails.find((m) => /could not be granted/i.test(m.subject))).toBeDefined());
+    const failedMail = mails.find((m) => /could not be granted/i.test(m.subject))!.text;
+    expect(failedMail).toContain('Nothing was granted; an admin has the details.');
+    expect(failedMail).not.toMatch(/own request|approve/i);
   });
 
   it('a different approver still grants (the check is the email, not the kind)', async () => {
@@ -286,6 +295,8 @@ describe('who may approve: not the requester, not their email', () => {
     expect(fake.members('teams', 'acme/platform')).not.toHaveProperty('erin-gh');
   });
 });
+
+const erin2 = () => requesterOfOutside(erin);
 
 describe('the account a grant goes to', () => {
   it('Google access goes to the verified email whatever the body says', async () => {
@@ -313,12 +324,36 @@ describe('the account a grant goes to', () => {
     const own = await call(() => accountRoute.PUT(new Request(`${url}/account`, send(erin, 'PUT', { github: 'erin-own' }))));
     expect(own).toMatchObject({ status: 200, body: { github: 'erin-own', google: 'erin@partner.test' } });
     expect((await call(() => accountRoute.GET(new Request(`${url}/account`, send(erin, 'GET'))))).body).toEqual({ github: 'erin-own', google: 'erin@partner.test' });
-    // …and the other way: a user can't take an outsider's.
-    expect(() => setGithubAccount(ola, 'erin-own')).toThrow(/already linked to someone else/);
+    // …and the other way: a Landflow user may take a name only an outsider typed (never verified): the outsider's copy is cleared and the audit row says so.
+    expect(() => setGithubAccount(erin2(), 'mia-taken')).toThrow(/already linked to someone else/);
+    setGithubAccount(ola, 'erin-own');
+    expect(accountOf(ola.id, 'github')).toBe('erin-own');
+    expect(accountOf(erin.id, 'github')).toBeUndefined();
+    expect(audited('access.account.set').some((e) => (e.details as { displacedOutsideRequester?: string }).displacedOutsideRequester === erin.id)).toBe(true);
+    database().delete('access_accounts', { user_id: ola.id, system: 'github' });
     expect(audited('access.account.set').some((e) => e.actor.id === erin.id && (e.details as { requesterKind?: string }).requesterKind === 'outside')).toBe(true);
     database().delete('access_accounts', { user_id: erin.id, system: 'github' });
     database().delete('access_accounts', { user_id: mia.id, system: 'github' });
     void saveAccount;
+  });
+});
+
+describe('limits on filing and on the saved GitHub name', () => {
+  it('answers 429 in plain words after 10 requests an hour and after 5 changes of the GitHub username a day, per person', async () => {
+    const gil = outsider('gil', 'gil@partner.test');
+    const other = outsider('hal', 'hal@partner.test');
+    const statuses: number[] = [];
+    // A request already open for the entry answers 409 (and counts), so the cap is read from the 11th answer.
+    for (let i = 0; i < 11; i++) statuses.push((await ask(gil, team.id, { account: 'gil-gh' })).status);
+    expect(statuses.slice(0, 10)).not.toContain(429);
+    const limited = await ask(gil, team.id, { account: 'gil-gh' });
+    expect(limited.status).toBe(429);
+    expect(limited.body.error).toMatch(/asked a lot/);
+    expect((await ask(other, team.id, { account: 'hal-gh' })).status).not.toBe(429);
+    const puts: number[] = [];
+    for (let i = 0; i < 6; i++) puts.push((await call(() => accountRoute.PUT(new Request(`${url}/account`, send(gil, 'PUT', { github: `gil-name-${i}` }))))).status);
+    expect(puts.slice(0, 5)).not.toContain(429);
+    expect(puts[5]).toBe(429);
   });
 });
 

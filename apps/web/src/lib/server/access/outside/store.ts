@@ -78,6 +78,12 @@ export const insertLink = (row: LinkRow) => database().insertNew('access_outside
 /** An address has at most one live link: a new one replaces the older. */
 export const deleteOpenLinks = (emailKey: string) => database().all<{ id: string }>('SELECT id FROM access_outside_links WHERE email_key = ? AND used_at IS NULL', emailKey).forEach((link) => database().delete('access_outside_links', { id: link.id }));
 
+/** The link of `tokenHash` if it is still usable (read only: peeking never uses it up). */
+export const usableLink = (tokenHash: string, now: number): LinkRow | undefined => {
+  const row = database().get<LinkRow>('SELECT * FROM access_outside_links WHERE token_hash = ?', tokenHash);
+  return row && !row.used_at && row.expires_at > new Date(now).toISOString() ? row : undefined;
+};
+
 /** Take what Postgres decided into this process's copy. */
 async function adopt(handle: Database, table: 'access_outside_links', id: string, row: Row): Promise<void> {
   if (await handle.refresh(table, { id })) return;

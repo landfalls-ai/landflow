@@ -22,7 +22,7 @@ import { GOOGLE_ISSUER, OIDC_CLIENT_TYPE } from '../../nodes/oidc-client-credent
 import { outsideLimiters } from './limits';
 import { startSession } from './sessions';
 import { domainAllowed, domainOf, GOOGLE_CALLBACK_PATH, googleReady, OUTSIDE_PAGE_PATH, outsideSettings } from './settings';
-import { canonicalEmail, claimLink, deleteOpenLinks, hasSubaddress, insertLink, landflowUserWithEmail, requesterRow, requesterRowByKey, saveRequester, toRequester, type RequesterRow } from './store';
+import { canonicalEmail, claimLink, deleteOpenLinks, hasSubaddress, insertLink, landflowUserWithEmail, requesterRow, requesterRowByKey, saveRequester, toRequester, usableLink, type RequesterRow } from './store';
 
 /** A person without a Landflow account, as the rest of Landflow sees them. `id` starts with `ext_`: never a Landflow user id. */
 export type OutsideRequester = { id: string; email: string; name: string | null; verifiedBy: 'link' | 'google'; blocked: boolean };
@@ -125,13 +125,21 @@ export async function requestLink(email: string, meta: { ip: string; origin?: st
     return { limited: false, denial };
   };
 
+  // The same limiter work for every address, allowed domain or not, before anything is decided: how long the answer takes (and what the
+  // counters hold) tells nothing about which domains an admin listed.
+  const overAddress = !(await limits.address.check(key, now)).ok || !(await limits.addressDay.check(key, now)).ok;
+  const overDomain = !(await limits.domain.check(domain, now)).ok;
+  // A refused use is not counted, as everywhere else.
+  if (!overAddress) {
+    await limits.address.hit(key, now);
+    await limits.addressDay.hit(key, now);
+  }
+  if (!overDomain) await limits.domain.hit(domain, now);
+
   if (!settings.enabled) return deny('off');
   if (hasSubaddress(address)) return deny('subaddress');
   if (!domainAllowed(address, settings)) return deny('domain');
   if (requesterRowByKey(key)?.blocked_at) return deny('blocked');
-
-  const overAddress = !(await limits.address.check(key, now)).ok || !(await limits.addressDay.check(key, now)).ok;
-  const overDomain = !(await limits.domain.check(domain, now)).ok;
   if (overAddress) return deny('limit', { scope: 'address' });
   if (overDomain) {
     // An abuse signal for the admin, once an hour: the audit log is not for a flood to fill.
@@ -141,9 +149,6 @@ export async function requestLink(email: string, meta: { ip: string; origin?: st
     notes.set(domain, hour);
     return deny('limit', { scope: 'domain', domain });
   }
-  await limits.address.hit(key, now);
-  await limits.addressDay.hit(key, now);
-  await limits.domain.hit(domain, now);
 
   if (!meta.origin || !mailConfigured()) return deny('mail');
 
@@ -196,6 +201,26 @@ export interface SignedIn {
   session: { token: string; expiresAt: Date };
 }
 
+/** `m•••@partner.test`: enough for the person to see it is theirs, not enough for whoever holds the link to learn the address. */
+export const maskEmail = (email: string): string => `${email.slice(0, 1)}•••${email.slice(email.lastIndexOf('@'))}`;
+
+/**
+ * Whose link is this? The page asks before it posts "Continue", so a link forwarded or opened on the wrong device is noticed. Read only (the link
+ * is not used up); a link that is unknown, used or expired answers exactly as `verifyLink` does and counts as a failed try from that address.
+ */
+export async function peekLink(token: string, meta: { ip: string; now?: number }): Promise<{ email: string }> {
+  const now = meta.now ?? Date.now();
+  const failures = outsideLimiters().verifyFailures;
+  const checked = await failures.check(meta.ip, now);
+  if (!checked.ok) throw new OutsideAuthError('limited', 'Too many attempts. Try again later.', 429, { retryAfter: checked.retryAfter });
+  const link = token && token.length <= 200 ? usableLink(tokenHash(token), now) : undefined;
+  if (!link) {
+    await failures.hit(meta.ip, now);
+    throw new OutsideAuthError('expired', EXPIRED, 400);
+  }
+  return { email: maskEmail(link.email) };
+}
+
 /** The person opened a sign-in link: use it up (once, whoever is first) and start their session. */
 export async function verifyLink(token: string, meta: { ip: string; userAgent?: string; replacing?: string; now?: number }): Promise<SignedIn> {
   const now = meta.now ?? Date.now();
@@ -227,6 +252,7 @@ async function googleClient(): Promise<OidcClient> {
   const settings = outsideSettings();
   if (!googleReady(settings)) throw new OutsideAuthError('google_off', 'Sign in with Google is not available', 404);
   const id = settings.google.credentialId!;
+  // googleReady already refused a changed credential and (outside dev) any issuer but Google's; the vault is read again for the secret.
   const data = await credentials.dataWithSecrets({ id, name: credentials.get(id)?.name ?? id }, OIDC_CLIENT_TYPE);
   const issuer = String(data.issuer || GOOGLE_ISSUER).trim().replace(/\/+$/, '');
   const clientId = String(data.clientId ?? '').trim();

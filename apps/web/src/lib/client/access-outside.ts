@@ -117,6 +117,8 @@ export const outsideApi = {
   config: () => call<OutsideConfig>('config'),
   session: () => call<OutsideSession>('session'),
   signInEmail: (email: string) => call<unknown>('sign-in/email', { method: 'POST', json: { email } }),
+  /** Whose link is it? The masked address, without using the link up. */
+  peek: (token: string) => call<{ email: string }>('sign-in/peek', { method: 'POST', json: { token } }),
   verify: (token: string) => call<unknown>('sign-in/verify', { method: 'POST', json: { token } }),
   signOut: () => call<unknown>('sign-out', { method: 'POST' }),
   entries: async (): Promise<{ items: AskEntry[] }> => ({ items: itemsOf<OutsideEntryView>(await call('entries')).map(askEntry) }),

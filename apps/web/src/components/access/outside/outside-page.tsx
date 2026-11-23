@@ -62,6 +62,8 @@ export interface OutsideViewProps {
   highlight?: string;
   /** A Landflow user is signed in in this browser. */
   landflowUser?: boolean;
+  /** The masked address a sign-in link is for (`m•••@partner.test`). */
+  linkEmail?: string;
   onSend?: (email: string) => void;
   onAnother?: () => void;
   onContinue?: () => void;
@@ -112,7 +114,7 @@ export function OutsideView(props: OutsideViewProps) {
             <h2 className="text-[17px] font-semibold text-t1">Asking here is switched off. Ask the person who sent you the link.</h2>
           </Card>
         )}
-        {step === 'verify' && <VerifyCard busy={props.busy} error={props.error} onContinue={() => props.onContinue?.()} />}
+        {step === 'verify' && <VerifyCard busy={props.busy} error={props.error} email={props.linkEmail} onContinue={() => props.onContinue?.()} />}
         {step === 'signed-out' && (
           <SignInCard google={Boolean(config?.google)} mail={config?.email !== false} notice={props.notice} noticeLink={props.noticeLink} sent={props.sent} busy={props.busy} error={props.error} onSubmit={(email) => props.onSend?.(email)} onAnother={props.onAnother} />
         )}
@@ -161,6 +163,8 @@ export function OutsidePage() {
     setStep('signed-out');
   }, []);
 
+  const [linkEmail, setLinkEmail] = useState<string>();
+
   const loadSession = useCallback(async () => {
     try {
       setSession(await outsideApi.session());
@@ -193,6 +197,13 @@ export function OutsidePage() {
       setConfig(loaded);
       if (!loaded.enabled) return setStep('off');
       if (fromHash) {
+        // Whose link is it? Asked before "Continue" (read only: it does not use the link). A dead link is told now.
+        try {
+          setLinkEmail((await outsideApi.peek(fromHash)).email);
+        } catch (e) {
+          window.history.replaceState(null, '', OUTSIDE_PATH);
+          return signedOut(message(e));
+        }
         setToken(fromHash);
         return setStep('verify');
       }
@@ -226,6 +237,7 @@ export function OutsidePage() {
       notice={notice}
       noticeLink={noticeLink}
       sent={sent}
+      linkEmail={linkEmail}
       busy={busy}
       error={error}
       tab={tab}
