@@ -5,13 +5,10 @@
  */
 import { getUser } from '../auth/users';
 import { HttpError } from '../errors';
-import { accessSettings } from './store';
+import { registerWorkflowLock } from '../singleton';
+import { lockedAccessFlows } from './locked';
 
-/** The ids of the request flow and the chat flow the setup installed. */
-export function lockedAccessFlows(): string[] {
-  const settings = accessSettings();
-  return [settings.workflowId, settings.chatWorkflowId].filter((id): id is string => Boolean(id));
-}
+export { lockedAccessFlows };
 
 /** Throws 403 unless `workflowId` is not an installed access flow, or `byUserId` is an active owner or admin. */
 export function guardAccessFlow(workflowId: string, byUserId: string | undefined): void {
@@ -20,3 +17,6 @@ export function guardAccessFlow(workflowId: string, byUserId: string | undefined
   if (user && !user.disabledAt && (user.role === 'owner' || user.role === 'admin')) return;
   throw new HttpError('This workflow decides who gets access: only an instance admin changes, publishes, unpublishes or deletes it', 403, { expose: true });
 }
+
+// The workflow store and project access consult the lock through ./locks (no import of this feature), so it registers itself here.
+registerWorkflowLock({ locked: lockedAccessFlows, guard: guardAccessFlow });

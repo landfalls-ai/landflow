@@ -34,3 +34,25 @@ export function resetSingleton(key: string): void {
 
 /** The old name, kept for callers that have not moved. */
 export const forgetSingleton = resetSingleton;
+
+/**
+ * Workflows only instance admins may change (the installed access-request flows, access/guard.ts). The workflow store and project access
+ * ask here and import nothing else of the feature, so their import closure stays small; the feature registers itself at load.
+ */
+interface Locks {
+  /** The ids that are locked right now. */
+  providers: Array<() => string[]>;
+  /** Called with (workflowId, actorId) on every save made by someone; throws to refuse. */
+  saveGuards: Array<(workflowId: string, actorId: string) => void>;
+}
+
+const locks = () => singleton<Locks>('workflow-locks', () => ({ providers: [], saveGuards: [] }));
+
+export const registerWorkflowLock = (lock: { locked: () => string[]; guard: (workflowId: string, actorId: string) => void }): void => {
+  const state = locks();
+  if (!state.providers.includes(lock.locked)) state.providers.push(lock.locked);
+  if (!state.saveGuards.includes(lock.guard)) state.saveGuards.push(lock.guard);
+};
+
+export const isLockedWorkflow = (workflowId: string): boolean => locks().providers.some((provider) => provider().includes(workflowId));
+export const guardWorkflowSave = (workflowId: string, actorId: string): void => locks().saveGuards.forEach((guard) => guard(workflowId, actorId));

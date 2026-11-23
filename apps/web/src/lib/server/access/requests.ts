@@ -58,15 +58,19 @@ export function liveGrantOnTarget(system: EntryData['system'], config: Record<st
   return database().get<{ id: string }>(`SELECT id FROM access_grants WHERE target_key = ? AND lower(account) = lower(?) AND status IN (${LIVE_GRANT.map(() => '?').join(', ')})`, targetKeyOf(system, config), account, ...LIVE_GRANT)?.id;
 }
 
+/** What a person typed, on one line: control characters and line breaks become a space, so it can't add a line (or a heading) to a question. */
+export const plain = (text: string): string => String(text ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+
 export function summaryText(entry: EntryData, requesterName: string, minutes: number | null, reason: string, account: string | undefined): string {
   // A GitHub username is typed by the requester; Google access always goes to their own Landflow email.
-  const accountLine = account ? [`Account: ${account}${entry.system === 'google-group' ? '' : ' (unverified: typed by the requester)'}`] : [];
-  return [`${requesterName} asks for ${entry.name}`, `What: ${entry.target.label}`, `For: ${durationText(minutes)}`, ...accountLine, `Why: ${reason}`].join('\n');
+  const accountLine = account ? [`Account: ${plain(account)}${entry.system === 'google-group' ? '' : ' (unverified: typed by the requester)'}`] : [];
+  // The requester's own words come last, quoted, behind a separator: nothing they type can look like one of the lines above.
+  return [`${plain(requesterName)} asks for ${plain(entry.name)}`, `What: ${plain(entry.target.label)}`, `For: ${durationText(minutes)}`, ...accountLine, '--- the requester wrote:', `“${plain(reason)}”`].join('\n');
 }
 
 /** The question Ask a Person puts to the approvers, built here and nowhere else: Apply Access Decision compares the recorded one with it. */
 export const questionFor = (entry: EntryData, requesterName: string, minutes: number | null, reason: string, account: string | undefined) => ({
-  title: `Give ${requesterName} ${entry.name} for ${durationText(minutes)}?`.trim(),
+  title: `Give ${plain(requesterName)} ${plain(entry.name)} for ${durationText(minutes)}?`.trim(),
   text: summaryText(entry, requesterName, minutes, reason, account),
 });
 

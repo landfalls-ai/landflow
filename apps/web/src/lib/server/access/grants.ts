@@ -147,7 +147,18 @@ export async function applyDecision(requestId: string, executionId: string, outc
   const claim = await claimRequest(requestId, 'pending', { status: 'approved', decisions: JSON.stringify(decisions), approved_minutes: minutes });
   if (!claim.won) throw new AccessError('This request was settled by someone else', 409);
   recordAudit({ action: 'access.request.approve', actor: { id: approver.by }, target: { type: 'access_request', id: requestId, name: entry.name }, project: null, summary: `Approved ${entry.name} for ${durationText(minutes)}`, details: { from: 'pending', to: 'approved', duration: durationText(minutes), asked: durationText(asked) } });
-  const grant = await createGrant(claim.row!, entry, minutes, decisions.map((d) => d.byName).join(', '));
+  let grant: GrantRow;
+  try {
+    grant = await createGrant(claim.row!, entry, minutes, decisions.map((d) => d.byName).join(', '));
+  } catch (error) {
+    // The table has the last word on one live grant per target and account (`access_grants_live_target`): a second one, however it got here, is refused.
+    if (!/unique/i.test((error as Error).message)) throw error;
+    const note = 'That account already has this access, through another entry, so nothing was granted';
+    await claimRequest(requestId, 'approved', { status: 'failed', note });
+    recordAudit({ action: 'access.request.fail', target: { type: 'access_request', id: requestId, name: entry.name }, project: null, summary: `An access request failed: ${note}`, details: { from: 'approved', to: 'failed' } });
+    void mailRequester.failed(subject, note);
+    return { requestId, status: 'failed', note };
+  }
   return { requestId, status: 'approved', grantId: grant.id, until: grant.until, ...(grant.status === 'failed' && { note: grant.last_error ?? 'The grant failed' }) };
 }
 
@@ -240,6 +251,12 @@ async function activateGrant(id: string, minutes: number | null, from: 'pending'
     if (!(error instanceof AccessActionError) && !(error instanceof AccessError)) logger.warn('an access grant failed', { error: (error as Error).message });
     const failed = await claimGrant(id, 'pending', { status: 'failed', last_error: message, lease_until: null, end_reason: minutes === null ? null : String(minutes) });
     recordAudit({ action: 'access.grant.fail', target: { type: 'access_grant', id, name: entry?.name }, project: null, summary: `Could not grant ${entry?.name ?? 'access'}: ${message}`, details: { from: 'pending', to: 'failed', error: message } });
+    // A revoke came while the add was in flight: the add may have worked at the system before it failed, so take it back now
+    // (removeGrant leaves a person who had it before, and what the check never covered, alone).
+    if (failed.row?.remove_reason) {
+      const removed = await removeGrant(id, failed.row.remove_reason === 'given_back' ? 'given_back' : 'revoked', failed.row.remove_by ?? undefined, Date.now(), ['failed']);
+      return removed ?? failed.row;
+    }
     if (subject) void mailRequester.failed(subject, message);
     return failed.row!;
   }
@@ -280,14 +297,13 @@ export async function removeGrant(id: string, reason: EndReason, by: string | un
     if (subject && snapshot) void mailApprovers.removeByHand(entry ? approversFor(entry, grant.holder_id) : [], subject, snapshot.target.config.instructions ?? '');
     return grant;
   }
-  // A grant that drifted (the person left outside Landflow) is looked at again at its end: removed if they are back, else just ended.
-  if (current.status === 'drift' && SYSTEMS[grant.system as keyof typeof SYSTEMS]?.checks) {
-    try {
-      const state = await runAction({ system: grant.system as never, config: target.config, credentialId: grant.credential_id, account: grant.account ?? '' }, 'check');
-      if (state.state === 'none') return finishRemoval(grant, reason, by, 'The person was already gone (removed outside Landflow)', subject, label);
-    } catch {
-      // Cannot tell: take it back as usual.
-    }
+  // A grant that drifted (the person left outside Landflow) ends without a removal: whoever is in the group again now put them there.
+  if (current.status === 'drift') return finishRemoval(grant, reason, by, 'The person had left outside Landflow before this ended, so nothing was removed', subject, label);
+  // A grant that failed: with no check made (`checked_at` empty) the add never ran, so there is nothing of ours to take back; and where
+  // Landflow can't check a member it can't tell the person's own access from what its failed add did, so it removes nothing.
+  if (current.status === 'failed') {
+    if (current.checked_at === null) return finishRemoval(grant, reason, by, 'It was never added (the check before it did not finish), so nothing was removed', subject, label);
+    if (!SYSTEMS[grant.system as keyof typeof SYSTEMS]?.checks) return finishRemoval(grant, reason, by, 'Landflow could not tell what its failed add did here, so nothing was removed: check the system by hand', subject, label);
   }
   if (Number(grant.already_had) === 1) return finishRemoval(grant, reason, by, 'The person had this access before Landflow granted it, so it was not taken back', subject, label);
   try {
@@ -306,7 +322,7 @@ export async function removeGrant(id: string, reason: EndReason, by: string | un
 async function finishRemoval(grant: GrantRow, reason: EndReason, by: string | undefined, note: string | undefined, subject: Subject | undefined, label: string, now = Date.now()): Promise<GrantRow | undefined> {
   const status = reason === 'expired' ? 'expired' : 'revoked';
   const done = await claimGrant(grant.id, 'removing', { status, ended_at: iso(now), ended_by: by ?? null, end_reason: reason, lease_until: null, last_error: note ?? null, attempts: 0, next_attempt_at: null });
-  recordAudit({ action: 'access.grant.revoke', actor: by ? { id: by } : undefined, target: { type: 'access_grant', id: grant.id }, project: null, summary: `Removed access (${reason})`, details: { from: 'removing', to: status, reason } });
+  recordAudit({ action: 'access.grant.revoke', actor: by ? { id: by } : undefined, target: { type: 'access_grant', id: grant.id }, project: null, summary: `Removed access (${reason})${note ? `: ${note}` : ''}`, details: { from: 'removing', to: status, reason, ...(note && { note }) } });
   if (subject) void mailRequester.removed(subject, label);
   return done.row;
 }
@@ -389,6 +405,7 @@ export async function retryGrant(actor: Actor, id: string): Promise<AccessGrantV
     if (grant.holder_id === actor.id) throw new AccessError('Someone else has to retry it', 403);
     throw new AccessError(['failed', 'revoke_failed'].includes(grant.status) ? 'Access grant not found' : `This grant is ${grant.status}, so there is nothing to retry`, ['failed', 'revoke_failed'].includes(grant.status) ? 404 : 409);
   }
+  if (grant.remove_reason) throw new AccessError('This grant was asked to be taken back, so it is not tried again', 409);
   if (grant.status === 'revoke_failed') {
     const reason = (grant.end_reason as EndReason) ?? 'revoked';
     const after = await removeGrant(id, ['expired', 'given_back', 'revoked'].includes(reason) ? reason : 'revoked', actor.id);

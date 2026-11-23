@@ -177,6 +177,7 @@ function row(entry: EntryData): EntryRow {
 export function createEntry(actor: Actor, input: EntryInput): AccessEntryView {
   if (!canCreateEntry(actor)) throw new AccessError('Only an admin adds an entry to the catalog', 403);
   if (!isSystem(input.system)) throw new AccessError('Pick a system the catalog knows', 400, { field: 'system' });
+  if (SYSTEMS[input.system].notOffered) throw new AccessError(SYSTEMS[input.system].notOffered!, 400, { field: 'system' });
   const now = new Date().toISOString();
   const system = input.system;
   const description = checkDescription(input.description);
@@ -220,6 +221,7 @@ export function updateEntry(actor: Actor, id: string, patch: EntryPatch, version
   if (reach) {
     const system = patch.system !== undefined ? patch.system : current.system;
     if (!isSystem(system)) throw new AccessError('Pick a system the catalog knows', 400, { field: 'system' });
+    if (system !== current.system && SYSTEMS[system].notOffered) throw new AccessError(SYSTEMS[system].notOffered!, 400, { field: 'system' });
     const target = targetOf(system, validateTarget(system, patch.target ?? (system === current.system ? current.target.config : undefined)));
     const credentialId = patch.credentialId !== undefined ? patch.credentialId : current.credentialId;
     const changed = system !== current.system || JSON.stringify(target) !== JSON.stringify(current.target) || (credentialId ?? undefined) !== current.credentialId;
