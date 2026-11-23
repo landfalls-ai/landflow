@@ -255,3 +255,7 @@ Home's **Waiting for your approval · n** panel and the Runs list's **Needs you*
 ## Access on a phone
 
 `/access` keeps its tabs in a row that scrolls sideways; My requests, To decide and Grants are cards with 44 px buttons, the entry sheet opens full height with the save bar pinned, and the chat input sits above the bottom bar. Desktop keeps the grids. Checked at 390 x 844 for sideways overflow on every tab.
+
+## Request access on a phone
+
+`/request-access` (people without a Landflow account) is phone-first: one full-width card per step (sign in, check your email, Continue, the Ask form), a 44 px email field and buttons, the tabs (Ask, My requests, Grants) and the Form/Chat switch scrolling inside their pill, My requests and Grants as cards with full-width 44 px buttons, and the chat taking the screen under the header. The header carries the mark and Sign out, with the signed-in address on its own line under 640 px. Desktop keeps the same column, 860 px wide. Checked at 390 x 844 and 1440 x 900 for sideways overflow on every state; the admin Settings tab (`/access?tab=settings`) stacks its requester rows and makes Block / Unblock full width.

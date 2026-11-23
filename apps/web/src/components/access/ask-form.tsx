@@ -6,8 +6,8 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { KeyRound } from 'lucide-react';
-import { accessApi, accessHref, canAsk, requestProblem, SYSTEM_FORM } from '@/lib/client/access';
-import { durationText, ACCESS_LIMITS, type AccessEntryView } from '@/lib/shared/access';
+import { canAsk, requestProblem, SYSTEM_FORM, useAccessClient, type AskEntry } from '@/lib/client/access';
+import { durationText, ACCESS_LIMITS } from '@/lib/shared/access';
 import { cn } from '@/lib/utils';
 import { Card } from '../shell/page-header';
 import { Button } from '../ui/button';
@@ -16,20 +16,24 @@ import { FieldLabel, Input, Select, Textarea } from '../ui/inputs';
 
 /** A refused request in a sentence; a 409 links the request that is already open. */
 export function AskProblem({ problem }: { problem: { message: string; existingId?: string } }) {
+  const client = useAccessClient();
   return (
     <p role="alert" className="rounded-xl border border-rdbd bg-rddim px-3 py-2 text-[13px] text-rd">
       {problem.message}
       {problem.existingId && (
         <>
           {' '}
-          <Link href={accessHref('mine', problem.existingId)} className="font-semibold underline">See it</Link>
+          <Link href={client.hrefFor('mine', problem.existingId)} className="font-semibold underline">See it</Link>
         </>
       )}
     </p>
   );
 }
 
-export function AskForm({ entries, savedGithub, email, onAsked, onAccountSaved, initialEntryId }: { entries: AccessEntryView[]; savedGithub?: string; email?: string; onAsked: () => void; onAccountSaved?: () => void; initialEntryId?: string }) {
+/** The form reads its client from context: the Access page's, or the public request page's (an outsider's entries carry no approvers, so that line hides). */
+export function AskForm({ entries, savedGithub, email, onAsked, onAccountSaved, initialEntryId }: { entries: AskEntry[]; savedGithub?: string; email?: string; onAsked: () => void; onAccountSaved?: () => void; initialEntryId?: string }) {
+  const client = useAccessClient();
+  const outside = client.kind === 'outside';
   const [entryId, setEntryId] = useState(initialEntryId ?? '');
   const [duration, setDuration] = useState<number | null | undefined>();
   const [reason, setReason] = useState('');
@@ -58,7 +62,7 @@ export function AskForm({ entries, savedGithub, email, onAsked, onAccountSaved, 
     setProblem(undefined);
     try {
       const github = form?.account === 'github' ? account.trim() : undefined;
-      await accessApi.ask({ entryId: entry.id, durationMinutes: picked, reason: reason.trim(), ...(github && { account: github }) });
+      await client.ask({ entryId: entry.id, durationMinutes: picked, reason: reason.trim(), ...(github && { account: github }) });
       setReason('');
       onAccountSaved?.();
       onAsked();
@@ -72,7 +76,7 @@ export function AskForm({ entries, savedGithub, email, onAsked, onAccountSaved, 
   if (entries.length === 0) {
     return (
       <Card>
-        <EmptyState icon={<KeyRound />} title="Nothing to ask for yet" hint="An admin adds what can be requested in the Catalog. Check back once they have." />
+        <EmptyState icon={<KeyRound />} title="Nothing to ask for yet" hint={outside ? 'Nothing is open to ask for here yet. Check back later, or ask the person who sent you the link.' : 'An admin adds what can be requested in the Catalog. Check back once they have.'} />
       </Card>
     );
   }
@@ -99,7 +103,7 @@ export function AskForm({ entries, savedGithub, email, onAsked, onAccountSaved, 
             <div className="mt-2 text-[13px] leading-snug text-t2">
               {entry.description && <p className="text-t1">{entry.description}</p>}
               <p>{entry.target.label} · {SYSTEM_FORM[entry.system].label}</p>
-              <p>Approved by {entry.approverNames.length ? entry.approverNames.join(', ') : 'an admin'}.</p>
+              {entry.approverNames && <p>Approved by {entry.approverNames.length ? entry.approverNames.join(', ') : 'an admin'}.</p>}
             </div>
           )}
         </div>
@@ -133,7 +137,7 @@ export function AskForm({ entries, savedGithub, email, onAsked, onAccountSaved, 
                 <p className="mt-1 text-[12px] text-t3">We keep it for next time. The approver sees it beside your name.</p>
               </div>
             )}
-            {form?.account === 'google' && <p className="text-[13px] text-t2">Goes to your Landflow email{email ? `, ${email}` : ''}.</p>}
+            {form?.account === 'google' && <p className="text-[13px] text-t2">{outside ? 'Goes to the email you signed in with' : 'Goes to your Landflow email'}{email ? `, ${email}` : ''}.</p>}
             <div>
               <FieldLabel>Why do you need it?</FieldLabel>
               <Textarea aria-label="Why do you need it?" data-testid="access-reason" rows={3} maxLength={ACCESS_LIMITS.reasonChars[1]} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="On call for the platform team this week" />

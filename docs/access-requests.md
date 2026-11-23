@@ -111,6 +111,28 @@ Sentences say "with no end" for an unlimited grant; a grant whose time ran out i
 
 The Run Trace's Ask a Person card also shows the *Allow for* select when the request carries Answer Choices.
 
+## The request page
+
+`/request-access` is where people without a Landflow account ask (C36). It sits outside the app shell: no sidebar, no Spotlight, nothing of Landflow's data, `noindex`, and it shows nothing before sign-in. It is the same Ask, My requests and Grants as the Access page, through one client interface (`AccessClient` in `lib/client/access.ts`; the page passes `outsideApi` on `/request-access/api`), so a fix to one shows in both. A test walks the page's import graph and fails if it reaches the catalog, the entry sheet, To decide, the setup or settings cards, the shell or Spotlight, or any server module.
+
+- **Off**: "Asking here is switched off. Ask the person who sent you the link." (nothing else, no form).
+- **Sign in**: the work email field and *Email me a link*, and *Sign in with Google* when an admin switched it on. Without mail only Google shows; without either the page says asking by email isn't available. After sending it always says "Check your email ... it works once, for 15 minutes", whether or not the address may ask.
+- **The link** is `/request-access#t=<token>`: the token sits after the `#`, so a server, a log or a mail scanner never sees it. The page shows "Confirm that you want to sign in" and waits for **Continue**; only then does it post the token, and the address bar drops the fragment. A spent or expired link says so and asks for a new one.
+- **Google** returns to the page, or to `?error=domain|not_verified|landflow_user|expired`, each a plain sentence ("Use your work email or your work Google account", "You have a Landflow account: ask on the Access page" with a link).
+- **Signed in** (8 hours; two hours of silence ends it earlier): the address and *Sign out* in the header; tabs **Ask** (Form, and Chat when the session has it), **My requests** and **Grants**. A request shows its state, the approved time and the denial reason; never who approved. Grants have *Give it back*. Any call that answers 401 returns the page to sign-in with "Your session ended. Sign in again."
+- A Landflow user who opens the page in a browser where they are signed in to Landflow sees "You have a Landflow account: use Access".
+
+### Outside requesters (admins)
+
+Access → **Settings** (admins only; a tab beside Catalog):
+
+- the switch *People without a Landflow account can ask* (it can't go on without a domain);
+- *Email domains allowed* (organization domains only: no wildcards, no public mail domains), the page's link with *Copy*, and a warning when the host can't send email ("the email link can't work");
+- *Sign in with Google* with its OpenID Connect client credential (the picker lists `oidcClient` credentials only; the secret stays in the vault);
+- the **Outside requesters** list: email, how they verified, first and last seen, open requests and live grants, with **Block** and **Unblock**.
+
+In the entry sheet, *Outside requesters may ask* is an admin switch (owners see it read-only); the catalog marks such entries **Open outside**. On the approver side an outsider's request shows the **Outside** badge, their address and "verified by email link" or "verified by Google sign-in" (To decide, My requests, Grants for admins).
+
 ## The nodes
 
 - **Access Request** (`core.accessRequestTrigger`) starts the flow once per request; a manual run emits an example item.

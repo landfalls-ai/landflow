@@ -5,7 +5,7 @@
  */
 import { useRef, useState } from 'react';
 import { ArrowUp } from 'lucide-react';
-import { accessApi, requestProblem } from '@/lib/client/access';
+import { requestProblem, useAccessClient } from '@/lib/client/access';
 import { AssistantRow, ChatError, UserBubble, Working } from '../ui/chat';
 import { AskProblem } from './ask-form';
 import { Card } from '../shell/page-header';
@@ -22,6 +22,7 @@ interface Line {
 
 /** `onFiled`: a request was filed (the page says so); `onOpen`: the person asked to see it under My requests. */
 export function AccessChat({ available, onFiled, onOpen }: { available: boolean; onFiled?: (requestId: string) => void; onOpen?: (requestId: string) => void }) {
+  const client = useAccessClient();
   const [lines, setLines] = useState<Line[]>([]);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -45,7 +46,7 @@ export function AccessChat({ available, onFiled, onOpen }: { available: boolean;
     setLines((l) => [...l, { who: 'me', text: message }]);
     setBusy(true);
     try {
-      const reply = await accessApi.chat(message, session.current);
+      const reply = await client.chat(message, session.current);
       setLines((l) => [...l, { who: 'bot', text: reply.reply, requestId: reply.requestId }]);
       if (reply.requestId) onFiled?.(reply.requestId);
     } catch (e) {
