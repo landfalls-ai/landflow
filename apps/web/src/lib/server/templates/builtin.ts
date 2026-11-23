@@ -17,6 +17,7 @@ import { workGithubTemplates } from './builtin-work-github'; // B31:
 import { velocityTemplates } from './builtin-velocity';
 // LL05:
 import { aiTemplates } from './builtin-ai';
+import { accessTemplates } from './builtin-access'; // C35:
 import { practicesTemplates } from './builtin-practices'; // PR03:
 import type { AgentTeamConfig } from '../../shared/agent-teams';
 import type { AgentConfig } from '../../shared/agents';
@@ -1145,6 +1146,8 @@ export const BUILTIN_TEMPLATES: TemplateDetail[] = [
   ...velocityTemplates({ template, node, main, daily, SLOT }),
   // LL05:
   ...aiTemplates({ template, node, main, daily, SLOT }),
+  // C35:
+  ...accessTemplates({ template, node, main, model, memory, tool, SLOT }),
   // PR03:
   ...practicesTemplates({ template, node, main }),
 ];

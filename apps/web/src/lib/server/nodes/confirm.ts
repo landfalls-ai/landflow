@@ -8,7 +8,9 @@
  * survives a restart like any waiting one, and a timeout settles it with the node's default outcome.
  *
  * It asks once per run, not once per item: the draft is read from the first item. The output is one item,
- * `{ approved, edited, text, originalText, comment, by, at, channel }`, on "Approved" or on "Rejected".
+ * `{ approved, edited, text, originalText, comment, by, at, channel, choice }`, on "Approved" or on "Rejected". `choice` is there only
+ * when the node has Answer Choices (C35): the value the approver picked, the first one when a link or Slack answered. People Only
+ * keeps an API key and an MCP caller from answering (approvals.ts `assertPerson`).
  */
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject } from '@landflow/sdk';
 import { CONFIRM_CALL, type ConfirmRequest } from '../approvals';
@@ -26,6 +28,24 @@ type Channel = 'chat' | 'slack' | 'email';
 interface ConfirmState {
   slack?: { channel: string; ts: string };
   $resume?: { kind: string; data?: JsonObject; error?: string };
+}
+
+/** Answer Choices: one `value: label` per line (`value` alone is its own label); empty lines go; at most 20, a value up to 200 characters. */
+export function parseChoices(raw: unknown): Array<{ value: string; label: string }> {
+  const seen = new Set<string>();
+  const choices: Array<{ value: string; label: string }> = [];
+  for (const line of String(raw ?? '').split(/\r?\n/)) {
+    const text = line.trim();
+    if (!text) continue;
+    const at = text.indexOf(':');
+    const value = (at < 0 ? text : text.slice(0, at)).trim().slice(0, 200);
+    const label = (at < 0 ? text : text.slice(at + 1)).trim().slice(0, 200) || value;
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    choices.push({ value, label });
+    if (choices.length === 20) break;
+  }
+  return choices;
 }
 
 const list = (value: unknown) =>
@@ -95,6 +115,22 @@ export const confirmDraftNode = defineNode({
         description: 'Emails of signed-in people and Slack member IDs, comma-separated. Empty: anyone who can see the request.',
       },
       { name: 'allowEdit', displayName: 'Allow Editing', type: 'boolean', default: true, description: 'The person may change the text before approving; the output has the edited text' },
+      {
+        name: 'choices',
+        displayName: 'Answer Choices',
+        type: 'string',
+        default: '',
+        typeOptions: { rows: 3 },
+        placeholder: '60: 1 hour\n15: 15 minutes',
+        description: 'One choice per line, “value: label”. The approver picks one with Approve and the output has it as `choice`; Slack and email links approve with the first. Empty: no choice.',
+      },
+      {
+        name: 'peopleOnly',
+        displayName: 'People Only',
+        type: 'boolean',
+        default: false,
+        description: 'Only a person answers: an API key or an MCP caller is refused, a signed email link counts only for a listed address and a Slack answer only for a listed Slack ID',
+      },
       { name: 'timeoutMinutes', displayName: 'Timeout (Minutes)', type: 'number', default: 0, typeOptions: { minValue: 0 }, description: '0: wait until someone answers' },
       {
         name: 'onTimeout',
@@ -132,7 +168,9 @@ export const confirmDraftNode = defineNode({
     const timeoutMinutes = Math.max(0, Number(ctx.getNodeParameter('timeoutMinutes', 0, 0)) || 0);
     const approvers = list(ctx.getNodeParameter('approvers', 0, ''));
     const node = ctx.getNode();
-    const confirm: ConfirmRequest = { title, text, allowEdit, ...(approvers.length && { approvers }), ...(timeoutMinutes > 0 && { onTimeout }) };
+    const choices = parseChoices(ctx.getNodeParameter('choices', 0, ''));
+    const peopleOnly = Boolean(ctx.getNodeParameter('peopleOnly', 0, false));
+    const confirm: ConfirmRequest = { title, text, allowEdit, ...(approvers.length && { approvers }), ...(timeoutMinutes > 0 && { onTimeout }), ...(choices.length && { choices }), ...(peopleOnly && { peopleOnly }) };
     const approval: JsonObject = {
       nodeName: node.name,
       nodeId: node.id,
@@ -182,23 +220,28 @@ async function settle(
   input: { resume: NonNullable<ConfirmState['$resume']>; saved: ConfirmState | undefined; text: string; title: string; channel: Channel; onTimeout: 'approve' | 'reject' | 'fail' },
 ) {
   const { resume, saved, text: original, title, channel, onTimeout } = input;
+  const choices = parseChoices(ctx.getNodeParameter('choices', 0, ''));
   const decision = decisionsOf(resume)[CONFIRM_CALL];
   const at = decision?.at ?? new Date().toISOString();
   let approved: boolean;
   let text = original;
   let comment: string | undefined;
   let by: string | undefined = decision?.by;
+  let choice: string | undefined;
   let via: Channel = by?.startsWith('slack:') ? 'slack' : by?.startsWith('email:') ? 'email' : 'chat';
   if (decision) {
     approved = decision.approved;
     if (approved && typeof decision.text === 'string') text = decision.text;
     comment = decision.comment;
+    // Slack, a link and the chat panel name none: the first one.
+    if (approved && choices.length) choice = choices.some((c) => c.value === decision.choice) ? decision.choice : choices[0]!.value;
   } else if (resume.kind === 'timeout') {
     if (onTimeout === 'fail') {
       await tellSlack(ctx, saved, { title, text, approved: false, note: 'No answer in time: the run failed' });
       throw new NodeOperationError(`Nobody answered “${title}” in time`);
     }
     approved = onTimeout === 'approve';
+    if (approved && choices.length) choice = choices[0]!.value;
     by = 'timeout';
     via = channel;
     await tellSlack(ctx, saved, { title, text, approved, note: `No answer in time: ${approved ? 'approved' : 'rejected'} automatically` });
@@ -214,7 +257,9 @@ async function settle(
       edited: approved && text !== original,
       text,
       originalText: original,
+      title,
       ...(comment && { comment }),
+      ...(choice !== undefined && { choice }),
       ...(by && { by }),
       at,
       channel: via,

@@ -251,3 +251,7 @@ Home's **Waiting for your approval · n** panel and the Runs list's **Needs you*
 15. ~~An accessibility pass~~ (above).
 16. The Execute/Debug pill sits over a failed step's card in the Steps view (seen in the Spotlight sb2 live pass, the same
     on main; left by the sb3 carryover, since no sb3 package touched the Steps view).
+
+## Access on a phone
+
+`/access` keeps its tabs in a row that scrolls sideways; My requests, To decide and Grants are cards with 44 px buttons, the entry sheet opens full height with the save bar pinned, and the chat input sits above the bottom bar. Desktop keeps the grids. Checked at 390 x 844 for sideways overflow on every tab.

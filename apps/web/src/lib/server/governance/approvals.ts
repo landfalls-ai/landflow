@@ -15,6 +15,7 @@
  * (or the requester, for decisions) are notified (./notify). Plain server module (no Next.js imports): workers can
  * load it.
  */
+import { guardAccessFlow } from '../access/guard';
 import { isInstanceAdmin } from '../projects/access';
 import { nanoid } from 'nanoid';
 import type { Workflow } from '@landflow/engine';
@@ -407,6 +408,7 @@ export type PublishOutcome = ({ approvalRequired?: false } & PublishResult) | Pu
  * approvals and boot-time repairs call lib/server/publish.ts directly. PublishError and ApprovalError carry a status.
  */
 export async function publishOrRequest(ask: PublishAsk): Promise<PublishOutcome> {
+  guardAccessFlow(ask.workflowId, ask.by);
   const kind: PublishRequestKind = ask.action === 'unpublish' ? 'unpublish' : 'publish';
   if (!fourEyesApplies(kind, ask.workflowId)) {
     if (ask.action === 'unpublish') return unpublishWorkflow(ask.workflowId, ask.by, ask.note);

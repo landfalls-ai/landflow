@@ -50,6 +50,8 @@ const OLD_MAIN = [
   'event outbox',
   // C22: the scheduled syncs of knowledge sources, a leader service right after the outbox.
   'knowledge sources',
+  // C35: the access grants' timed removal and hourly reconcile, a leader service before the kagent route refresh.
+  'access grants',
   // C26: the secret routes' Secret follows a changed credential, a leader service.
   'kagent route refresh',
   'registry gRPC server', 'static plugin seeds', 'kubernetes discovery', 'startup scan', 'node plugins', 'app webhooks', 'agent flow moves', 'IMAP IDLE',
