@@ -2191,6 +2191,19 @@ export const MIGRATIONS: Migration[] = [
       `CREATE UNIQUE INDEX IF NOT EXISTS access_accounts_handle ON access_accounts (system, lower(handle))`,
     ],
   },
+  // C36-B: requests from people without a Landflow account (docs/access-requests.md#outside-requesters-what-they-can-ask-and-see). An outside requester's
+  // id (`ext_…`) sits in `requester_id` / `holder_id` / `access_accounts.user_id`; the kind says which table names them. `outside` on an
+  // entry: open to outside requesters (0 = closed, the default). 2936 (the requester, link and session tables) is C36-A's.
+  {
+    version: 2937,
+    name: 'access_outside_requests',
+    statements: [],
+    addColumns: [
+      { table: 'access_entries', column: 'outside', definition: 'BIGINT NOT NULL DEFAULT 0' },
+      { table: 'access_requests', column: 'requester_kind', definition: `TEXT NOT NULL DEFAULT 'user'` },
+      { table: 'access_grants', column: 'holder_kind', definition: `TEXT NOT NULL DEFAULT 'user'` },
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */

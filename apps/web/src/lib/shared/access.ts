@@ -43,10 +43,25 @@ export interface AccessEntryView {
   /** Empty: everyone signed in may ask. */
   eligibleUserIds: string[];
   enabled: boolean;
+  /** Open to people without a Landflow account (instance admins set it; C36). */
+  outsideMayAsk: boolean;
   /** Owners and admins only; never a value. */
   credentialId?: string;
   canEdit: boolean;
   version: number;
+}
+
+/** Who asks or holds: a Landflow user, or a person without an account (C36: `ext_…` ids, verified by an email link or Google sign-in). */
+export type RequesterKind = 'user' | 'outside';
+export type VerifiedBy = 'link' | 'google';
+
+/** A person named on a request or a grant. `email` and `verifiedBy` are set for an outside requester (the viewer is an approver, an owner or an admin). */
+export interface AccessPerson {
+  id: string;
+  name: string;
+  kind: RequesterKind;
+  email?: string;
+  verifiedBy?: VerifiedBy;
 }
 
 /** A person's answer on one step (Landbright's Vote). */
@@ -66,7 +81,7 @@ export interface AccessRequestView {
   entryId: string;
   entryName: string;
   system: AccessSystem;
-  requester: { id: string; name: string };
+  requester: AccessPerson;
   account?: string;
   /** A GitHub username is typed by the requester and not checked against their GitHub sign-in; a Google account is the requester's own Landflow email. */
   accountVerified?: boolean;
@@ -96,7 +111,7 @@ export interface AccessGrantView {
   requestId?: string;
   entryId: string;
   entryName: string;
-  holder: { id: string; name: string };
+  holder: AccessPerson;
   account?: string;
   system: AccessSystem;
   targetLabel: string;
@@ -183,3 +198,66 @@ const length = (minutes: number | null) => (minutes === null ? Infinity : minute
 export function shorterDurations(allowed: Array<number | null>, asked: number | null): Array<number | null> {
   return [...new Set(allowed)].filter((minutes) => length(minutes) <= length(asked)).sort((a, b) => length(b) - length(a));
 }
+
+/**
+ * What an outside requester may know (C36 D-13), as allow-lists: an entry open to them, their own requests and grants. Never approvers
+ * or their names, owners, the credential, execution ids, a decision's `by`, or anyone else's rows. The server builds each key by hand
+ * (lib/server/access/outside/views.ts), so a field added to the full views can't reach an outsider by accident.
+ */
+export interface OutsideEntryView {
+  id: string;
+  name: string;
+  description?: string;
+  system: AccessSystem;
+  targetLabel: string;
+  durations: Array<number | null>;
+  /** A GitHub username is needed (kept per requester); Google access always goes to the verified email. */
+  needsGithub: boolean;
+}
+
+export interface OutsideGrantView {
+  id: string;
+  requestId?: string;
+  entryId: string;
+  entryName: string;
+  account?: string;
+  system: AccessSystem;
+  targetLabel: string;
+  status: GrantStatus;
+  since?: string;
+  until?: string | null;
+  endedAt?: string;
+  endReason?: string;
+  /** The requester may give it back now. */
+  canGiveBack: boolean;
+}
+
+export interface OutsideRequestView {
+  id: string;
+  entryId: string;
+  entryName: string;
+  system: AccessSystem;
+  targetLabel: string;
+  state: AccessState;
+  status: RequestStatus;
+  durationMinutes: number | null;
+  /** What was approved (never more than asked); set once decided. */
+  approvedMinutes?: number | null;
+  reason: string;
+  channel: 'form' | 'chat';
+  account?: string;
+  /** The approver's comment on a denial, or why it failed: plain text, never a name. */
+  note?: string;
+  grant?: OutsideGrantView;
+  canCancel: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Limits for outside requesters' chat (C36 D-12); the instance-wide hourly cap is LANDFLOW_ACCESS_OUTSIDE_CHAT_PER_HOUR (default below, 0 = chat off). */
+export const OUTSIDE_LIMITS = {
+  chatChars: 2_000,
+  chatPerMinute: 10,
+  chatPerDay: 100,
+  chatPerHourAll: 600,
+};

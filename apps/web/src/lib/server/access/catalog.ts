@@ -8,14 +8,15 @@
  * Plain server module (no Next.js import).
  */
 import { nanoid } from 'nanoid';
-import { ACCESS_LIMITS, durationText, type AccessEntryView, type ApprovalStep } from '../../shared/access';
+import { ACCESS_LIMITS, durationText, type AccessEntryView, type ApprovalStep, type OutsideEntryView } from '../../shared/access';
 import { getUser, listUsers } from '../auth/users';
 import { recordAudit, auditedTransaction } from '../audit';
 import { credentials } from '../credentials/vault';
 import { database } from '../db';
-import { canResource, credentialUsableBy, type Actor } from '../projects/access';
+import { canResource, credentialUsableBy, isInstanceAdmin, type Actor } from '../projects/access';
 import { AccessError } from './errors';
-import { auditActorOf, canCreateEntry, canDeleteEntry, canEditEntry, canEditReach, canSeeEntry, stepApproverIds, type EntryData } from './rules';
+import { outsideEntryView } from './outside/views';
+import { auditActorOf, canCreateEntry, canDeleteEntry, canEditEntry, canEditReach, canOutsiderAsk, canSeeEntry, stepApproverIds, type EntryData } from './rules';
 import { accessSettings, deleteEntry as deleteEntryRow, entryRow, entryRows, parseJson, saveEntry, type EntryRow } from './store';
 import { isSystem, SYSTEMS, targetOf, validateTarget } from './systems';
 
@@ -35,6 +36,7 @@ export function parseEntry(row: EntryRow): EntryData {
     owners: parseJson<string[]>(row.owners, []),
     eligible: parseJson<string[]>(row.eligible, []),
     enabled: Number(row.enabled) === 1,
+    outside: Number(row.outside ?? 0) === 1,
     version: Number(row.version),
     ...(row.created_by && { createdBy: row.created_by }),
     createdAt: row.created_at,
@@ -64,6 +66,7 @@ export function entryView(actor: Actor, entry: EntryData): AccessEntryView {
     owners: entry.owners,
     eligibleUserIds: canEdit ? entry.eligible : [],
     enabled: entry.enabled,
+    outsideMayAsk: entry.outside,
     ...(canEdit && entry.credentialId && { credentialId: entry.credentialId }),
     canEdit,
     version: entry.version,
@@ -93,6 +96,8 @@ export interface EntryInput {
   owners: string[];
   eligibleUserIds?: string[];
   enabled?: boolean;
+  /** Open to people without a Landflow account: instance admins only (it widens who can ask). */
+  outsideMayAsk?: boolean;
 }
 
 // ---- validation -------------------------------------------------------------------------------------------
@@ -150,7 +155,7 @@ function checkCredential(actor: Actor, system: EntryData['system'], credentialId
 
 const stepOf = (approverIds: string[]): ApprovalStep[] => [{ name: 'Approval', approvers: { userIds: approverIds }, approvalsRequired: 1 }];
 
-const summary = (entry: EntryData) => ({ name: entry.name, system: entry.system, target: entry.target.label, durations: entry.durations.map(durationText).join(', '), approvers: stepApproverIds(entry).length, owners: entry.owners.length, enabled: entry.enabled });
+const summary = (entry: EntryData) => ({ name: entry.name, system: entry.system, target: entry.target.label, durations: entry.durations.map(durationText).join(', '), approvers: stepApproverIds(entry).length, owners: entry.owners.length, enabled: entry.enabled, outside: entry.outside });
 
 function row(entry: EntryData): EntryRow {
   return {
@@ -165,6 +170,7 @@ function row(entry: EntryData): EntryRow {
     owners: JSON.stringify(entry.owners),
     eligible: JSON.stringify(entry.eligible),
     enabled: entry.enabled ? 1 : 0,
+    outside: entry.outside ? 1 : 0,
     version: entry.version,
     created_by: entry.createdBy ?? null,
     created_at: entry.createdAt,
@@ -177,6 +183,7 @@ function row(entry: EntryData): EntryRow {
 export function createEntry(actor: Actor, input: EntryInput): AccessEntryView {
   if (!canCreateEntry(actor)) throw new AccessError('Only an admin adds an entry to the catalog', 403);
   if (!isSystem(input.system)) throw new AccessError('Pick a system the catalog knows', 400, { field: 'system' });
+  if (input.outsideMayAsk !== undefined && !isInstanceAdmin(actor)) throw new AccessError('Only an instance admin opens an entry to people without a Landflow account', 403, { field: 'outsideMayAsk' });
   if (SYSTEMS[input.system].notOffered) throw new AccessError(SYSTEMS[input.system].notOffered!, 400, { field: 'system' });
   const now = new Date().toISOString();
   const system = input.system;
@@ -194,6 +201,7 @@ export function createEntry(actor: Actor, input: EntryInput): AccessEntryView {
     owners: checkPeople(input.owners, 'owners', 'Owners', { min: 1, max: 20 }),
     eligible: checkPeople(input.eligibleUserIds ?? [], 'eligibleUserIds', 'Who may ask', { min: 0, max: 500 }),
     enabled: input.enabled ?? true,
+    outside: input.outsideMayAsk === true,
     version: 1,
     createdBy: actor.id,
     createdAt: now,
@@ -250,6 +258,11 @@ export function updateEntry(actor: Actor, id: string, patch: EntryPatch, version
   if (patch.owners !== undefined) next.owners = checkPeople(patch.owners, 'owners', 'Owners', { min: 1, max: 20 });
   if (patch.eligibleUserIds !== undefined) next.eligible = checkPeople(patch.eligibleUserIds, 'eligibleUserIds', 'Who may ask', { min: 0, max: 500 });
   if (patch.enabled !== undefined) next.enabled = Boolean(patch.enabled);
+  if (patch.outsideMayAsk !== undefined && patch.outsideMayAsk !== current.outside) {
+    // It widens who can ask (to people nobody at Landflow has vouched for), so it is not an owner's to give: only an instance admin.
+    if (!isInstanceAdmin(actor)) throw new AccessError('Only an instance admin opens an entry to people without a Landflow account', 403, { field: 'outsideMayAsk' });
+    next.outside = Boolean(patch.outsideMayAsk);
+  }
   next.version = current.version + 1;
   next.updatedAt = new Date().toISOString();
   auditedTransaction(() => {
@@ -273,6 +286,17 @@ export function deleteEntry(actor: Actor, id: string): void {
     deleteEntryRow(id);
     recordAudit({ action: 'access.entry.delete', actor: auditActorOf(actor), target: { type: 'access_entry', id, name: entry.name }, project: null, summary: `Deleted the access entry ${entry.name}`, details: { from: JSON.stringify(summary(entry)), to: null } });
   });
+}
+
+/** The entries open to people without a Landflow account, as they may see them (D-13): no approvers, owners, credential or steps. */
+export function listOpenToOutside(): OutsideEntryView[] {
+  return entryRows().map(parseEntry).filter(canOutsiderAsk).map(outsideEntryView);
+}
+
+/** One open entry for an outside requester; undefined when it is not open to them (or does not exist). */
+export function openEntryFor(id: string): EntryData | undefined {
+  const entry = entryData(id);
+  return entry && canOutsiderAsk(entry) ? entry : undefined;
 }
 
 /** Every active person, for the catalog editor's pickers (name and id only). */

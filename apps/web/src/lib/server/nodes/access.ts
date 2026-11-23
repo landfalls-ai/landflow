@@ -143,8 +143,9 @@ export const fileAccessRequestNode = defineNode({
     const { liveExecution } = await import('../runner');
     const { store } = await import('../store');
     const record = liveExecution(ctx.getExecutionId()) ?? (await store.loadExecution(ctx.getExecutionId()));
-    // Only a person's chat message names who is asking, and only in the installed chat flow's run that the Access page's chat started:
-    // any other run (a copy, another flow, the hosted chat, a trigger) files nothing.
+    // Only a person's chat message names who is asking (`startedBy`: a Landflow user, or an outside requester's `ext_…` id, which
+    // fileAccessFromChat resolves through access/principal.ts), and only in the installed chat flow's run that the Access page's or the
+    // public request page's chat started: any other run (a copy, another flow, the hosted chat, a trigger) files nothing.
     const fromAccessChat = record?.mode === 'chat' && record.workflowId === accessSettings().chatWorkflowId && isAccessChatRun(ctx.getExecutionId());
     const userId = fromAccessChat ? record?.startedBy : undefined;
     const items = ctx.getInputData();

@@ -3,19 +3,22 @@
  * only notice, a failed send is logged. A message holds names, the entry, the duration and a link to /access; never a credential,
  * a token or anything the requester typed beyond the reason they gave.
  */
-import { getUser } from '../auth/users';
 import { mailConfigured, sendMail } from '../auth/mail';
-import { publicUrl } from '../config';
 import { logger } from '../telemetry/logger';
+import { pageLink, requesterOf } from './principal';
 
-const link = () => `${publicUrl()}/access`;
-
-async function send(userIds: string[], subject: string, lines: string[]): Promise<void> {
+/**
+ * Each person gets the mail at their own address with the link to their page: a Landflow user to /access, an outside requester (the
+ * verified address, C36 D-16) to /request-access, which asks them to sign in again when their session ended. No token is ever in a mail
+ * about a request, and none names an approver to an outside requester.
+ */
+async function send(personIds: string[], subject: string, lines: string[]): Promise<void> {
   if (!mailConfigured()) return;
-  const text = `${lines.join('\n')}\n\n${link()}\n`;
-  for (const id of new Set(userIds)) {
-    const to = getUser(id)?.email;
-    if (!to) continue;
+  for (const id of new Set(personIds)) {
+    const person = requesterOf(id);
+    const to = person?.email;
+    if (!person || !to) continue;
+    const text = `${lines.join('\n')}\n\n${pageLink(person)}\n`;
     try {
       await sendMail({ to, subject, text });
     } catch (error) {

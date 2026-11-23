@@ -2,10 +2,10 @@
  * Access requests (docs/access-requests.md#asking): a person asks for an entry for a duration with a reason; the installed
  * flow (templates/builtin-access.ts) asks the entry's approvers in Ask a Person; Apply Access Decision (grants.ts) grants only after
  * the server's own record of that run shows an approver other than the requester approved. The requester is always the session's
- * user, never anything in a body.
+ * user (or, for a person without a Landflow account, their verified outside requester), never anything in a body.
  */
 import { nanoid } from 'nanoid';
-import { ACCESS_LIMITS, durationText, forDuration, shorterDurations, type AccessRequestView, type RequestStatus } from '../../shared/access';
+import { ACCESS_LIMITS, durationText, forDuration, shorterDurations, type AccessRequestView, type OutsideRequestView, type RequestStatus } from '../../shared/access';
 import { recordAudit } from '../audit';
 import { getUser } from '../auth/users';
 import { database } from '../db';
@@ -16,7 +16,9 @@ import { logger } from '../telemetry/logger';
 import { entryData } from './catalog';
 import { AccessError } from './errors';
 import { mailRequester } from './notify';
-import { approversFor, auditActorOf, canAskFor, canCancelRequest, canSeeEntry, canSeeRequest, type EntryData } from './rules';
+import { outsideRequestView } from './outside/views';
+import { auditActorOfRequester, displayName, outsideStanding, requesterOf, requesterOfActor, whoLine, type Requester } from './principal';
+import { approversFor, auditActorOf, canAskFor, canCancelRequest, canOutsiderAsk, canSeeEntry, canSeeRequest, isRequesterUser, type EntryData } from './rules';
 import { accessSettings, accountOf, claimRequest, insertRequest, parseJson, patchRequest, requestRow, saveAccount, type RequestRow } from './store';
 import { targetKeyOf, validateGithubLogin } from './systems';
 import { accessFlow, fireAccessRequest, stepNodesOf, type AccessRequestItem } from './trigger';
@@ -35,20 +37,22 @@ export interface RequestInput {
 
 const lengthOf = (minutes: number | null) => (minutes === null ? Infinity : minutes);
 
-/** The account a request is for: Google the person's own email, GitHub their login (given, or kept), manual none. */
-function accountFor(actor: Actor, entry: EntryData, given: string | undefined): string | undefined {
+/**
+ * The account a request is for: Google the person's own email (a Landflow user's, or an outside requester's verified one), GitHub their
+ * login (given, or kept; unique across users and outside requesters), manual none.
+ */
+function accountFor(requester: Requester, entry: EntryData, given: string | undefined): string | undefined {
   if (entry.system === 'google-group') {
-    const email = getUser(actor.id)?.email;
-    if (!email) throw new AccessError('Your account has no email address, so Google access cannot be granted to it', 400);
-    return email;
+    if (!requester.email) throw new AccessError('Your account has no email address, so Google access cannot be granted to it', 400);
+    return requester.email;
   }
   if (entry.system === 'manual') return undefined;
-  const kept = accountOf(actor.id, 'github');
+  const kept = accountOf(requester.id, 'github');
   const login = given?.trim() ? validateGithubLogin(given) : kept;
   if (!login) throw new AccessError('Give your GitHub username', 400, { field: 'account' });
   if (login !== kept) {
-    saveAccount(actor.id, 'github', login);
-    recordAudit({ action: 'access.account.set', actor: auditActorOf(actor), target: { type: 'user', id: actor.id }, project: null, summary: 'Saved a GitHub username for access requests', details: { from: kept ?? null, to: login } });
+    saveAccount(requester.id, 'github', login);
+    recordAudit({ action: 'access.account.set', actor: auditActorOfRequester(requester), target: { type: 'user', id: requester.id }, project: null, summary: 'Saved a GitHub username for access requests', details: { from: kept ?? null, to: login, requesterKind: requester.kind } });
   }
   return login;
 }
@@ -61,48 +65,65 @@ export function liveGrantOnTarget(system: EntryData['system'], config: Record<st
 /** What a person typed, on one line: control characters and line breaks become a space, so it can't add a line (or a heading) to a question. */
 export const plain = (text: string): string => String(text ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
 
-export function summaryText(entry: EntryData, requesterName: string, minutes: number | null, reason: string, account: string | undefined): string {
-  // A GitHub username is typed by the requester; Google access always goes to their own Landflow email.
+/**
+ * What the approver reads. `who` is the "Who:" line an outside requester's question adds (outside requester, the verified address and how it
+ * was proven), so an approver can't mistake a person without an account for a colleague of the same name; a Landflow user has none.
+ */
+export function summaryText(entry: EntryData, requesterName: string, minutes: number | null, reason: string, account: string | undefined, who?: string): string {
+  // A GitHub username is typed by the requester; Google access always goes to their own verified email.
   const accountLine = account ? [`Account: ${plain(account)}${entry.system === 'google-group' ? '' : ' (unverified: typed by the requester)'}`] : [];
   // The requester's own words come last, quoted, behind a separator: nothing they type can look like one of the lines above.
-  return [`${plain(requesterName)} asks for ${plain(entry.name)}`, `What: ${plain(entry.target.label)}`, `For: ${durationText(minutes)}`, ...accountLine, '--- the requester wrote:', `“${plain(reason)}”`].join('\n');
+  return [`${plain(requesterName)} asks for ${plain(entry.name)}`, `What: ${plain(entry.target.label)}`, `For: ${durationText(minutes)}`, ...(who ? [`Who: ${plain(who)}`] : []), ...accountLine, '--- the requester wrote:', `“${plain(reason)}”`].join('\n');
 }
 
 /** The question Ask a Person puts to the approvers, built here and nowhere else: Apply Access Decision compares the recorded one with it. */
-export const questionFor = (entry: EntryData, requesterName: string, minutes: number | null, reason: string, account: string | undefined) => ({
+export const questionFor = (entry: EntryData, requesterName: string, minutes: number | null, reason: string, account: string | undefined, who?: string) => ({
   title: `Give ${plain(requesterName)} ${plain(entry.name)} ${forDuration(minutes)}?`.trim(),
-  text: summaryText(entry, requesterName, minutes, reason, account),
+  text: summaryText(entry, requesterName, minutes, reason, account, who),
 });
 
-export async function createRequest(actor: Actor, input: RequestInput): Promise<AccessRequestView> {
+/** The name and the "Who:" line of a requester's question: an outside requester is their verified address, marked, with how it was proven. */
+export const questionWho = (requester: Requester): { name: string; who?: string } => (requester.kind === 'outside' ? { name: displayName(requester), who: whoLine(requester) } : { name: requester.name });
+
+/** A signed-in Landflow user files a request (the Access page, its chat). */
+export const createRequest = (actor: Actor, input: RequestInput): Promise<AccessRequestView> => fileRequest(requesterOfActor(actor), input, actor) as Promise<AccessRequestView>;
+
+/**
+ * File a request for `requester`: a Landflow user (`actor` given: what they may see and ask for follows the C35 rules) or an outside
+ * requester (an entry an admin opened to them, and only while they still stand: the feature on, domain allowed, not blocked, no Landflow
+ * account on their address). Answers the full view for a user; use `fileOutsideRequest` for an outsider's own view.
+ */
+export async function fileRequest(requester: Requester, input: RequestInput, actor?: Actor): Promise<AccessRequestView | OutsideRequestView> {
   const settings = accessSettings();
   const flow = accessFlow(settings.workflowId);
   if (!flow) throw new AccessError('An admin must set up access requests first', 409);
+  const outside = requester.kind === 'outside';
+  if (outside && !outsideStanding(requester)) throw new AccessError('Sign in again to ask for access', 401);
   const entry = entryData(input.entryId);
-  if (!entry || !canSeeEntry(actor, entry)) throw new AccessError('Access entry not found', 404);
-  if (!canAskFor(actor, entry)) throw new AccessError('This entry is switched off', 400);
+  if (!entry || (outside ? !canOutsiderAsk(entry) : !canSeeEntry(actor!, entry))) throw new AccessError('Access entry not found', 404);
+  if (!outside && !canAskFor(actor!, entry)) throw new AccessError('This entry is switched off', 400);
   const minutes = input.durationMinutes === undefined ? undefined : input.durationMinutes;
   if (minutes === undefined || !entry.durations.includes(minutes)) throw new AccessError('Pick one of the durations this entry offers', 400, { field: 'durationMinutes' });
   const reason = String(input.reason ?? '').trim();
   const [min, max] = ACCESS_LIMITS.reasonChars;
   if (reason.length < min || reason.length > max) throw new AccessError(`Say why, in ${min} to ${max} characters`, 400, { field: 'reason' });
 
-  const open = database().get<{ id: string }>(`SELECT id FROM access_requests WHERE entry_id = ? AND requester_id = ? AND status = 'pending'`, entry.id, actor.id);
+  const open = database().get<{ id: string }>(`SELECT id FROM access_requests WHERE entry_id = ? AND requester_id = ? AND status = 'pending'`, entry.id, requester.id);
   if (open) throw new AccessError('You already asked for this; wait for the answer or cancel it', 409, { existingId: open.id });
-  const live = database().get<{ id: string }>(`SELECT id FROM access_grants WHERE entry_id = ? AND holder_id = ? AND status IN (${LIVE_GRANT.map(() => '?').join(', ')})`, entry.id, actor.id, ...LIVE_GRANT);
+  const live = database().get<{ id: string }>(`SELECT id FROM access_grants WHERE entry_id = ? AND holder_id = ? AND status IN (${LIVE_GRANT.map(() => '?').join(', ')})`, entry.id, requester.id, ...LIVE_GRANT);
   if (live) throw new AccessError('You already have this access', 409, { existingId: live.id });
 
-  const approverIds = approversFor(entry, actor.id);
+  // Nobody whose id or email is the requester's decides it (an outside requester's address may be an approver's).
+  const approverIds = approversFor(entry, requester.id);
   if (!approverIds.length) throw new AccessError('Nobody but you can approve this. Ask an admin to add an approver.', 409);
   const stepNodes = stepNodesOf(flow.workflow);
   if (!stepNodes || stepNodes.length !== entry.steps.length) throw new AccessError('The installed access flow is not the one set-up made: an admin must set access requests up again', 409);
-  const account = accountFor(actor, entry, input.account);
+  const account = accountFor(requester, entry, input.account);
   if (account && entry.system !== 'manual') {
     const taken = liveGrantOnTarget(entry.system, entry.target.config, account);
     if (taken) throw new AccessError('That account already has this access, through another entry', 409, { existingId: taken });
   }
-  const requester = getUser(actor.id);
-  const requesterName = requester?.name || requester?.email || actor.id;
+  const { name: requesterName, who } = questionWho(requester);
   const now = new Date().toISOString();
   const id = `areq_${nanoid(10)}`;
   const executionId = newExecutionId();
@@ -112,7 +133,8 @@ export async function createRequest(actor: Actor, input: RequestInput): Promise<
     entry_id: entry.id,
     entry_version: entry.version,
     entry_snapshot: JSON.stringify(snapshot),
-    requester_id: actor.id,
+    requester_id: requester.id,
+    requester_kind: requester.kind,
     account: account ?? null,
     duration_minutes: minutes,
     reason,
@@ -124,7 +146,7 @@ export async function createRequest(actor: Actor, input: RequestInput): Promise<
     decisions: null,
     approved_minutes: null,
     note: null,
-    question: JSON.stringify({ ...questionFor(entry, requesterName, minutes, reason, account), nodes: stepNodes }),
+    question: JSON.stringify({ ...questionFor(entry, requesterName, minutes, reason, account, who), nodes: stepNodes }),
     created_at: now,
     updated_at: now,
   };
@@ -132,16 +154,16 @@ export async function createRequest(actor: Actor, input: RequestInput): Promise<
     insertRequest(row);
   } catch (error) {
     // Two asks at once: the table lets one pending request through (`access_requests_open`).
-    const existing = database().get<{ id: string }>(`SELECT id FROM access_requests WHERE entry_id = ? AND requester_id = ? AND status = 'pending'`, entry.id, actor.id);
+    const existing = database().get<{ id: string }>(`SELECT id FROM access_requests WHERE entry_id = ? AND requester_id = ? AND status = 'pending'`, entry.id, requester.id);
     if (existing) throw new AccessError('You already asked for this; wait for the answer or cancel it', 409, { existingId: existing.id });
     throw error;
   }
-  recordAudit({ action: 'access.request.create', actor: auditActorOf(actor), target: { type: 'access_request', id, name: entry.name }, project: null, summary: `Asked for ${entry.name} ${forDuration(minutes)}`, details: { from: null, to: JSON.stringify({ entry: entry.name, duration: durationText(minutes), channel: row.channel }) } });
+  recordAudit({ action: 'access.request.create', actor: auditActorOfRequester(requester), target: { type: 'access_request', id, name: entry.name }, project: null, summary: `Asked for ${entry.name} ${forDuration(minutes)}`, details: { from: null, to: JSON.stringify({ entry: entry.name, duration: durationText(minutes), channel: row.channel }), requesterKind: requester.kind, ...(outside && { verifiedBy: requester.verifiedBy ?? null }) } });
 
   const item: AccessRequestItem = {
     requestId: id,
     entry: { id: entry.id, name: entry.name, system: entry.system, targetLabel: entry.target.label },
-    requester: { id: actor.id, name: requesterName, email: requester?.email ?? '' },
+    requester: { id: requester.id, name: requesterName, email: requester.email ?? '' },
     ...(account && { account }),
     durationMinutes: minutes,
     durationText: durationText(minutes),
@@ -149,9 +171,9 @@ export async function createRequest(actor: Actor, input: RequestInput): Promise<
     channel: row.channel as 'form' | 'chat',
     approvers: approverIds.map((approver) => getUser(approver)?.email).filter(Boolean).join(','),
     durationChoices: shorterDurations(entry.durations, minutes).map((m) => `${m === null ? 'unlimited' : m}: ${durationText(m)}`).join('\n'),
-    summary: summaryText(entry, requesterName, minutes, reason, account),
+    summary: summaryText(entry, requesterName, minutes, reason, account, who),
     ...(() => {
-      const question = questionFor(entry, requesterName, minutes, reason, account);
+      const question = questionFor(entry, requesterName, minutes, reason, account, who);
       return { askTitle: question.title, askText: question.text };
     })(),
   };
@@ -163,8 +185,11 @@ export async function createRequest(actor: Actor, input: RequestInput): Promise<
     logger.warn('the access flow could not start', { error: (error as Error).message });
     await failRequest(id, 'The access flow could not start');
   }
-  return requestView(actor, requestRow(id)!);
+  return outside ? outsideRequestView(requestRow(id)!) : requestView(actor!, requestRow(id)!);
 }
+
+/** An outside requester files a request (the public page, its chat): their own view of it. */
+export const fileOutsideRequest = (requester: Requester, input: RequestInput): Promise<OutsideRequestView> => fileRequest(requester, input) as Promise<OutsideRequestView>;
 
 /** Settle a pending request as failed, with the reason; audited, and the person told. */
 export async function failRequest(id: string, note: string): Promise<void> {
@@ -236,11 +261,48 @@ export function listRequests(actor: Actor, options: { scope: RequestScope; statu
 export async function cancelRequest(actor: Actor, id: string): Promise<AccessRequestView> {
   const row = requestRow(id);
   if (!row || !canCancelRequest(actor, { requesterId: row.requester_id })) throw new AccessError('Access request not found', 404);
-  const { won, row: now } = await claimRequest(id, 'pending', { status: 'cancelled' });
-  if (!won) throw new AccessError(`This request is already ${now?.status ?? 'settled'}`, 409);
-  recordAudit({ action: 'access.request.cancel', actor: auditActorOf(actor), target: { type: 'access_request', id }, project: null, summary: 'Cancelled an access request', details: { from: 'pending', to: 'cancelled' } });
-  if (row.execution_id) cancelWaitingExecution(row.execution_id);
+  await cancelPending(row, auditActorOf(actor));
   return requestView(actor, requestRow(id)!);
+}
+
+/** Move a pending request to cancelled once, audited as `by`, and stop its waiting run. */
+async function cancelPending(row: RequestRow, by: ReturnType<typeof auditActorOf>, extra: Record<string, unknown> = {}): Promise<void> {
+  const { won, row: now } = await claimRequest(row.id, 'pending', { status: 'cancelled' });
+  if (!won) throw new AccessError(`This request is already ${now?.status ?? 'settled'}`, 409);
+  recordAudit({ action: 'access.request.cancel', actor: by, target: { type: 'access_request', id: row.id }, project: null, summary: 'Cancelled an access request', details: { from: 'pending', to: 'cancelled', requesterKind: row.requester_kind ?? 'user', ...extra } });
+  if (row.execution_id) cancelWaitingExecution(row.execution_id);
+}
+
+/** An outside requester withdraws their own waiting request; anyone else's is a 404. */
+export async function cancelOwnRequest(requester: Requester, id: string): Promise<OutsideRequestView> {
+  const row = requestRow(id);
+  if (!row || row.requester_id !== requester.id) throw new AccessError('Access request not found', 404);
+  await cancelPending(row, auditActorOfRequester(requester));
+  return outsideRequestView(requestRow(id)!, entryData(row.entry_id)?.name);
+}
+
+/** The requester's own requests, newest first (an outside requester's view: no approvers, ids of runs or decisions). */
+export function listOwnRequests(requester: Requester, limit = 100): OutsideRequestView[] {
+  const rows = database().all<RequestRow>('SELECT * FROM access_requests WHERE requester_id = ? ORDER BY created_at DESC, id DESC LIMIT ?', requester.id, limit);
+  return rows.map((row) => outsideRequestView(row, entryData(row.entry_id)?.name));
+}
+
+/**
+ * Blocking an outside requester cancels what they are waiting on (C36 D-15: their grants stay until they end or are revoked on the Grants
+ * tab). Returns how many were cancelled; each is audited as `by`.
+ */
+export async function cancelOpenRequestsOf(requesterId: string, by: ReturnType<typeof auditActorOf>): Promise<number> {
+  const rows = database().all<RequestRow>(`SELECT * FROM access_requests WHERE requester_id = ? AND status = 'pending'`, requesterId);
+  let cancelled = 0;
+  for (const row of rows) {
+    try {
+      await cancelPending(row, by, { reason: 'blocked' });
+      cancelled++;
+    } catch (error) {
+      if (!(error instanceof AccessError)) throw error; // settled by someone else meanwhile: nothing left to cancel
+    }
+  }
+  return cancelled;
 }
 
 /**
@@ -252,11 +314,12 @@ export async function decideAccessRequest(actor: Actor, id: string, input: { app
   const row = requestRow(id);
   const approvers = row ? parseJson<string[]>(row.approvers, []) : [];
   if (!row || !canSeeRequest(actor, { requesterId: row.requester_id, approvers }, entryData(row.entry_id))) throw new AccessError('Access request not found', 404);
-  if (row.requester_id === actor.id) throw new AccessError('You can’t decide your own request', 403);
+  const user = getUser(actor.id);
+  // Not the requester: not by id, and not by email either (an outside requester's address may be an approver's).
+  if (row.requester_id === actor.id || (user && isRequesterUser(user, row.requester_id))) throw new AccessError('You can’t decide your own request', 403);
   if (!approvers.includes(actor.id)) throw new AccessError('Only the approvers of this request decide it', 403);
   if (row.status !== 'pending') throw new AccessError(`This request is already ${row.status}`, 409);
   if (!row.execution_id) throw new AccessError('This request has no waiting question', 409);
-  const user = getUser(actor.id);
   const by = user?.email || user?.name;
   if (!by) throw new AccessError('Your account has no email address to decide with', 400);
   const { decideApproval, ApprovalError } = await import('../approvals');
@@ -269,19 +332,21 @@ export async function decideAccessRequest(actor: Actor, id: string, input: { app
   return requestView(actor, requestRow(id)!);
 }
 
-export function accountsOf(actor: Actor): { github?: string; google?: string } {
-  const github = accountOf(actor.id, 'github');
-  const google = getUser(actor.id)?.email;
+/** The accounts access goes to: the kept GitHub username, and the Google account (a user's Landflow email, an outside requester's verified one). */
+export function accountsOf(who: { id: string }): { github?: string; google?: string } {
+  const github = accountOf(who.id, 'github');
+  const google = requesterOf(who.id)?.email;
   return { ...(github && { github }), ...(google && { google }) };
 }
 
-/** The caller's own GitHub username for access requests; a change is audited. */
-export function setGithubAccount(actor: Actor, login: string): { github?: string; google?: string } {
+/** The caller's own GitHub username for access requests (unique across users and outside requesters); a change is audited. */
+export function setGithubAccount(who: { id: string }, login: string): { github?: string; google?: string } {
   const next = validateGithubLogin(login);
-  const kept = accountOf(actor.id, 'github');
+  const kept = accountOf(who.id, 'github');
   if (next !== kept) {
-    saveAccount(actor.id, 'github', next);
-    recordAudit({ action: 'access.account.set', actor: auditActorOf(actor), target: { type: 'user', id: actor.id }, project: null, summary: 'Saved a GitHub username for access requests', details: { from: kept ?? null, to: next } });
+    const requester = requesterOfActor(who);
+    saveAccount(who.id, 'github', next);
+    recordAudit({ action: 'access.account.set', actor: auditActorOfRequester(requester), target: { type: 'user', id: who.id }, project: null, summary: 'Saved a GitHub username for access requests', details: { from: kept ?? null, to: next, requesterKind: requester.kind } });
   }
-  return accountsOf(actor);
+  return accountsOf(who);
 }
