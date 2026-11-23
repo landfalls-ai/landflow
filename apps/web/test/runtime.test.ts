@@ -54,6 +54,8 @@ const OLD_MAIN = [
   'access grants',
   // C26: the secret routes' Secret follows a changed credential, a leader service.
   'kagent route refresh',
+  // C30: the leader revokes, renews and retries leased secrets, right after the route refresh.
+  'secret lease sweeper',
   'registry gRPC server', 'static plugin seeds', 'kubernetes discovery', 'startup scan', 'node plugins', 'app webhooks', 'agent flow moves', 'IMAP IDLE',
 ];
 

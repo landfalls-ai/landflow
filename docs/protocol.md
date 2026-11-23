@@ -1295,7 +1295,7 @@ the project chose; it reads the first output item.
 |---|---|---|
 | `search` | `{ container, query, mode: keyword\|meaning\|hybrid, limit, threshold }` | `{ items }` |
 | `profile` | `{ container }` | `{ static: [...], recent: [...] }` |
-| `add` | `{ container, text, kind?, static?, forgetAfter?, replaces? }` | `{ item }` |
+| `add` | `{ container, text, kind?, static?, forgetAfter?, replaces?, confidence?, evidence? }` | `{ item }` |
 | `forget` | `{ container, id, reason }` | `{ item }` |
 | `list` | `{ container, cursor?, limit }` | `{ items, nextCursor? }` |
 
@@ -1304,7 +1304,7 @@ A provider's answers are untrusted: the host refuses an item whose `id` is not 1
 `container` is `project:<id>`. An item is `{ id, text, kind?, score?, version?, static?, createdAt?, updatedAt? }` with `score` 0..1.
 A provider that errors, does not answer in 10 s or answers an item without `id` and `text` fails the call; Landflow never falls back to
 another memory. Its own HTTP goes through `ctx.http`. The Go SDK has `NodeDescriptor.MemoryProvider`; the Python SDK passes the
-descriptor as a dict.
+descriptor as a dict. The `add` request may carry `confidence` (0..1) and `evidence` (at most 6 rows of `label`, `value`, `href`) when Memory Extract writes a fact; a provider may ignore them. Neither SDK types the request body yet.
 
 ## 16. Activity items
 

@@ -245,6 +245,14 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'role.created': 'Created a custom role',
   'role.updated': 'Changed a custom role’s rules',
   'role.deleted': 'Deleted a custom role',
+  'network.created': 'Created a network',
+  'network.updated': 'Changed a network',
+  'network.deleted': 'Deleted a network',
+  'network.runner.registered': 'Registered a network runner',
+  'network.runner.revoked': 'Revoked a network runner',
+  'network.runner.connected': 'A network runner connected',
+  'network.runner.disconnected': 'A network runner disconnected',
+  'network.call': 'Sent an HTTP request through a network runner',
   'user.custom_role': 'Gave a person a custom role, or took it away',
   // C35: access requests (docs/access-requests.md)
   'access.entry.create': 'Added an access catalog entry',
@@ -267,6 +275,12 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'access.setup': 'Set up access requests',
   'api.denied': 'Request refused (401/403)',
   'api.request': 'API request',
+  // C30: leased dynamic secrets (docs/features/secrets-and-environments.md#dynamic-secrets)
+  'secrets.lease.issued': 'Issued a leased secret to a run',
+  'secrets.lease.revoked': 'Revoked a leased secret',
+  'secrets.lease.expired': 'A leased secret ran out',
+  'secrets.lease.revoke_failed': 'Gave up revoking a leased secret',
+  'secrets.lease.dismissed': 'Set aside a leased secret that could not be revoked',
 };
 
 /** Filters of GET /api/audit and /api/audit/export (query parameters of the same names). */

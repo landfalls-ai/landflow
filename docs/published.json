@@ -232,6 +232,12 @@
           "full": false
         },
         {
+          "path": "network-runners.md",
+          "title": "Network runners",
+          "description": "Network runners: run the HTTP Request node inside a private network with tokens, allow-lists and Run In.",
+          "full": false
+        },
+        {
           "path": "mcp-gateway.md",
           "title": "agentgateway in Landflow: what we verified",
           "description": "agentgateway in Landflow: sync, identity and tokens, as verified.",

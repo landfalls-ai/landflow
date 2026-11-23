@@ -1,0 +1,19 @@
+{
+  "name": "@landflow/network-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A Landflow network runner: runs the HTTP Request node's calls inside a private network. Dials the host over HTTPS only; node built-ins, no dependencies.",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "build": "esbuild src/main.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/main.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "vitest": "^5.0.5"
+  }
+}

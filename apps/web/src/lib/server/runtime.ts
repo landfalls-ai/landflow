@@ -45,6 +45,7 @@ import './brain/store';
 import { notionBrain } from './brain/notion/service';
 import { eventOutbox } from './outbox/dispatcher';
 import { kagentRouteRefresh } from './kagent/route-refresh';
+import { leaseSweeper } from './secrets/lease-sweeper';
 // NB05: registers the Notion pull (setPullStep), the region conflict and the problem actions (docs/features/notion-brain.md#what-comes-back-from-notion).
 import './brain/notion/pull';
 // NB06: registers the knowledge walk (the company's Notion pages as knowledge) with the Notion sync (docs/features/notion-brain.md).
@@ -240,6 +241,8 @@ export const SERVICES: ServiceSpec[] = [
   { name: 'access grants', roles: MAIN, leader: true, start: async () => (await import('./access/sweeper')).accessGrants.start(), stop: async () => (await import('./access/sweeper')).accessGrants.stop() },
   // C26: a secret route's cluster Secret follows its credential: a minute tick on the leader rewrites only the Secret when a value changed (lib/server/kagent/route-refresh.ts).
   { name: 'kagent route refresh', roles: MAIN, leader: true, start: () => kagentRouteRefresh.start(), stop: () => kagentRouteRefresh.stop() },
+  // C30: leased dynamic secrets (lib/server/secrets/lease-sweeper.ts): the leader revokes the leases of runs that are over, renews a running run's, retries revokes that failed; a minute tick.
+  { name: 'secret lease sweeper', roles: MAIN, leader: true, start: () => leaseSweeper.start(), stop: () => leaseSweeper.stop() },
   {
     name: 'registry gRPC server',
     roles: MAIN,

@@ -43,7 +43,7 @@ export const memory = {
     run('profile', container, 'read', caller, (b) => b.profile(container, caller), (r) => r.static.length + r.recent.length),
   add: (container: MemoryContainer, input: MemoryAddInput, caller: MemoryCaller): Promise<MemoryItem> => run('add', container, 'write', caller, (b) => b.add(container, input, caller), () => 1),
   forget: (container: MemoryContainer, id: string, reason: string, caller: MemoryCaller): Promise<MemoryItem> => run('forget', container, 'write', caller, (b) => b.forget(container, id, reason, caller), () => 1),
-  list: (container: MemoryContainer, page: { limit?: number; cursor?: string }, caller: MemoryCaller): Promise<MemoryPage> =>
+  list: (container: MemoryContainer, page: { limit?: number; cursor?: string; static?: boolean }, caller: MemoryCaller): Promise<MemoryPage> =>
     run('list', container, 'read', caller, (b) => b.list(container, page, caller), (r) => r.items.length),
 };
 

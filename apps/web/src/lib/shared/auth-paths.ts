@@ -55,6 +55,8 @@ export const PUBLIC_ROUTES = [
   '/llms-full.txt',
   // OAuth2 credential callback (the provider redirects the browser here).
   '/api/oauth2/callback',
+  // C29: a network runner polls for HTTP Request calls and answers them here, with its own token (lib/server/networks/store.ts authenticateRunner); the admin routes are /api/settings/networks.
+  '/api/runner',
   // Plugins announce themselves and heartbeat here (optionally with LANDFLOW_REGISTRY_SECRET).
   '/api/plugins/announce',
   // Slack Events API and Interactivity (agent channels, approval buttons): verified with the app's signing secret.

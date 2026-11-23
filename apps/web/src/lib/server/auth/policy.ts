@@ -60,6 +60,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/sync') || under('/api/source-control')) return { scope: 'admin', action: 'settings:manage', instanceAdmin: true };
 
   // External secrets providers and environments (promotion, pull, settings): changes are admin; anyone sees the environment.
+  // C30: the leases reach every project's runs: the built-in owner and admin only, for reads too.
+  if (under('/api/external-secrets/leases')) return { scope: 'admin', action: 'settings:manage', instanceAdmin: true };
   if (under('/api/external-secrets')) return read ? { scope: 'admin' } : { scope: 'admin', action: 'settings:manage', instanceAdmin: true };
   if (under('/api/environment')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'settings:manage', instanceAdmin: true };
   // C16: resetting a person's second factors is a session's act, never an API key's (like /api/api-keys): a stolen admin key can't strip a factor.

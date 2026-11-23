@@ -129,7 +129,7 @@ export function providerBackend(setting: Extract<ProjectMemory, { backend: 'prov
     },
     async add(c, input: MemoryAddInput, caller): Promise<MemoryItem> {
       const out = await call(
-        { operation: 'add', container: containerKey(c), text: input.text, ...(input.kind && { kind: input.kind }), ...(input.static && { static: true }), ...(input.forgetAfter && { forgetAfter: input.forgetAfter }), ...(input.replaces && { replaces: input.replaces }) },
+        { operation: 'add', container: containerKey(c), text: input.text, ...(input.kind && { kind: input.kind }), ...(input.static && { static: true }), ...(input.forgetAfter && { forgetAfter: input.forgetAfter }), ...(input.replaces && { replaces: input.replaces }), ...(input.confidence !== undefined && { confidence: input.confidence }), ...(input.evidence?.length && { evidence: input.evidence }) },
         caller,
       );
       return toItem(required(out, 'add', 'item'), now());

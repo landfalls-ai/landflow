@@ -370,6 +370,35 @@ const schemas: Record<string, Json> = {
     },
     ['id', 'name', 'rules', 'holders', 'createdAt', 'updatedAt'],
   ),
+  // C29: networks and runners (docs/network-runners.md; lib/shared/networks.ts).
+  NetworkRunner: object(
+    {
+      id: { type: 'string' },
+      name: { type: 'string' },
+      hint: { type: 'string', description: 'The last four characters of the token; the token is never shown again' },
+      status: { type: 'string', enum: ['online', 'offline', 'revoked'], description: 'Online: seen in the last 30 seconds' },
+      allowedIps: { ...array({ type: 'string' }), description: 'Addresses and CIDR ranges the runner may connect from; empty: any' },
+      version: { type: 'string' },
+      address: { type: 'string', description: 'Where its last poll came from' },
+      lastSeenAt: { type: 'string' },
+      createdAt: { type: 'string' },
+      revokedAt: { type: 'string' },
+    },
+    ['id', 'name', 'hint', 'status', 'allowedIps', 'createdAt'],
+  ),
+  Network: object(
+    {
+      id: { type: 'string' },
+      name: { type: 'string' },
+      description: { type: 'string' },
+      projectId: { type: 'string', description: 'Set: only this project’s workflows may run in the network' },
+      projectName: { type: 'string' },
+      runners: array(ref('NetworkRunner')),
+      workflows: { ...array(object({ id: { type: 'string' }, name: { type: 'string' } }, ['id', 'name'])), description: 'The workflows with an HTTP Request node that runs in it (only the ones the caller may see)' },
+      createdAt: { type: 'string' },
+    },
+    ['id', 'name', 'runners', 'workflows', 'createdAt'],
+  ),
   ApiKey: object(
     {
       id: { type: 'string' },
@@ -1482,6 +1511,34 @@ function paths(): Record<string, Record<string, Json>> {
     failureMode: { type: 'string', enum: ['closed', 'open'], description: 'Default `closed` in the production profile, `open` otherwise' },
     match: hookMatch,
   };
+  // C30: leased dynamic secrets (docs/features/secrets-and-environments.md#dynamic-secrets)
+  const leaseDoc = {
+    type: 'object',
+    description: 'A `SecretLeaseView` (lib/shared/secrets.ts): id, executionId, workflowId, provider, path (`database/creds/report-reader`), state (`active`, `revoked`, `expired` or `revoke_failed`), issuedAt, expiresAt, renewedUntil, attempts, lastError, endedAt, endedBy (`finish`, `sweeper` or `admin`) and dismissed. Never the lease id or the issued values.',
+    additionalProperties: true,
+  };
+  add('get', '/api/external-secrets/leases', {
+    tag: 'Settings',
+    id: 'listSecretLeases',
+    summary: 'List leased dynamic secrets',
+    description: 'Credentials an OpenBao / Vault provider issued to runs from its Dynamic mounts, newest first, with `counts` (open leases, and failed revokes nobody set aside). Admins.',
+    query: [
+      { name: 'state', description: '`active`, `ended` (revoked or expired) or `revoke_failed`; default all', schema: { type: 'string', enum: ['active', 'ended', 'revoke_failed'] } },
+      { name: 'executionId', description: 'Only the leases of this run', schema: { type: 'string' } },
+      { name: 'limit', description: '1 to 500, default 100', schema: { type: 'integer', minimum: 1, maximum: 500 } },
+      { name: 'cursor', description: '`nextCursor` of the previous page', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The leases', object({ leases: array(leaseDoc), nextCursor: { type: 'string' }, counts: object({ active: { type: 'integer' }, revokeFailed: { type: 'integer' } }, ['active', 'revokeFailed']) }, ['leases', 'counts'])), 400: invalid },
+  });
+  add('post', '/api/external-secrets/leases/revoke', {
+    tag: 'Settings',
+    id: 'revokeSecretLeases',
+    summary: 'Revoke leased dynamic secrets now',
+    description:
+      'Admins. `{ id }` revokes one lease, `{ executionId }` every open lease of a run, `{ id, dismiss: true }` sets a lease whose revoke was given up aside (409 when it is not one). A store that refuses leaves the lease active with the reason in `lastError` and counts it in `failed`; the host tries again by itself. Audited with the person who asked.',
+    body: jsonBody({ oneOf: [object({ id: { type: 'string' }, dismiss: { type: 'boolean' } }, ['id'], { additionalProperties: false }), object({ executionId: { type: 'string' } }, ['executionId'], { additionalProperties: false })] }),
+    responses: { 200: reply('What was revoked', object({ revoked: { type: 'integer' }, failed: { type: 'integer' }, leases: array(leaseDoc) }, ['revoked', 'failed', 'leases'])), 400: invalid, 404: notFound, 409: errorRef('Not a lease that could not be revoked') },
+  });
   add('get', '/api/settings/mcp/policy-hooks', {
     tag: 'Settings',
     id: 'listMcpPolicyHooks',
@@ -2555,6 +2612,55 @@ function paths(): Record<string, Record<string, Json>> {
   });
   add('get', '/api/mcp/registry/v0.1/servers/{name}/versions', { tag: 'MCP', id: 'listMcpServerVersions', summary: 'Every version of one server', public: true, pathParams: { name: 'URL-encoded, e.g. `local.landflow%2Ftwilio`' }, responses: { 200: reply('The versions, newest first', ref('McpServerList')), 404: notFound } });
   add('get', '/api/mcp/registry/v0.1/servers/{name}/versions/{version}', { tag: 'MCP', id: 'getMcpServerVersion', summary: 'One version of a server', public: true, pathParams: { name: 'URL-encoded', version: 'A version, or `latest`' }, responses: { 200: reply('The server', ref('McpServerResponse')), 404: notFound } });
+
+  // ---- C29: network runners for the HTTP Request node (docs/network-runners.md) ----
+  // The admin routes sit under /api/settings, so the policy table needs no entry: reads `workflows:read` (the list is filtered by project), writes the built-in admin's.
+  add('get', '/api/settings/networks', { tag: 'Plugins', id: 'listNetworks', summary: 'List networks and their runners', description: 'The instance-wide networks and those of the caller’s projects, each with its runners’ status, version and last seen and the workflows that run in it. A token is never in a read.', responses: { 200: reply('The networks', object({ networks: array(ref('Network')) }, ['networks'])) } });
+  add('post', '/api/settings/networks', {
+    tag: 'Plugins',
+    id: 'createNetwork',
+    summary: 'Create a network',
+    description: 'A place the host can’t reach by itself. With `projectId`, only that project’s workflows may run in it. Owner or admin. Recorded as `network.created`.',
+    body: jsonBody(object({ name: { type: 'string', minLength: 1, maxLength: 60 }, description: { type: 'string', maxLength: 300 }, projectId: { type: 'string' } }, ['name'])),
+    responses: { 201: reply('The network', object({ network: ref('Network') }, ['network'])), 400: invalid, 403: errorRef('Not an owner or admin'), 409: errorRef('The name is taken') },
+  });
+  add('put', '/api/settings/networks/{id}', {
+    tag: 'Plugins',
+    id: 'updateNetwork',
+    summary: 'Rename or describe a network',
+    body: jsonBody(object({ name: { type: 'string', minLength: 1, maxLength: 60 }, description: { type: ['string', 'null'], maxLength: 300 } })),
+    responses: { 200: reply('The network', object({ network: ref('Network') }, ['network'])), 400: invalid, 403: errorRef('Not an owner or admin'), 404: notFound, 409: errorRef('The name is taken') },
+  });
+  add('delete', '/api/settings/networks/{id}', { tag: 'Plugins', id: 'deleteNetwork', summary: 'Delete a network', description: 'Its runners are revoked first; a node that runs in it then fails “Network not found”. Recorded as `network.deleted`.', responses: { 200: reply('Deleted', ok), 403: errorRef('Not an owner or admin'), 404: notFound } });
+  add('post', '/api/settings/networks/{id}/runners', {
+    tag: 'Plugins',
+    id: 'registerNetworkRunner',
+    summary: 'Register a runner',
+    description: 'The answer holds the runner’s token (`lf_run_…`): this is the only time it is returned; Landflow keeps its SHA-256. `allowedIps` limits where the runner may connect from. Recorded as `network.runner.registered`.',
+    body: jsonBody(object({ name: { type: 'string', minLength: 1, maxLength: 60 }, allowedIps: { ...array({ type: 'string' }), maxItems: 50 } }, ['name'])),
+    responses: { 201: reply('The runner and its token', object({ runner: ref('NetworkRunner'), token: { type: 'string' } }, ['runner', 'token'])), 400: invalid, 403: errorRef('Not an owner or admin'), 404: notFound },
+  });
+  add('delete', '/api/settings/networks/{id}/runners/{runnerId}', { tag: 'Plugins', id: 'revokeNetworkRunner', summary: 'Revoke a runner', description: 'Its token is refused from its next check (a runner waiting on a poll is cut off within a second); a call it holds fails as lost. Recorded as `network.runner.revoked`.', responses: { 200: reply('The runner', object({ runner: ref('NetworkRunner') }, ['runner'])), 403: errorRef('Not an owner or admin'), 404: notFound } });
+  add('post', '/api/runner/v1/poll', {
+    tag: 'Plugins',
+    id: 'pollNetworkRunner',
+    summary: 'A network runner’s long poll',
+    description: 'Used by `services/network-runner`. Holds the request up to 25 seconds and answers `200 { id, request: { method, url, headers: [[name, value]], body?: base64, timeoutMs } }` with the next call for the runner’s network, or `204`. `max: 0` only reports that the runner is here. 401 for no token, a wrong or revoked one, or an address the runner’s list refuses.',
+    public: true,
+    publicNote: 'Public: no API key or session; the runner’s own token (`Authorization: Bearer lf_run_…`) is the credential.',
+    body: jsonBody(object({ name: { type: 'string' }, version: { type: 'string' }, max: { type: 'integer', minimum: 0, maximum: 1 } })),
+    responses: { 200: reply('A call to make', object({ id: { type: 'string' }, request: { type: 'object', additionalProperties: true } }, ['id', 'request'])), 204: { description: 'No call within the wait' }, 401: errorRef('Not a valid runner token') },
+  });
+  add('post', '/api/runner/v1/calls/{id}', {
+    tag: 'Plugins',
+    id: 'answerNetworkCall',
+    summary: 'A network runner’s answer to one call',
+    description: 'The claiming runner’s answer: `{ status, headers: [[name, value]], body?: base64 }`, or `{ error: { code: "refused" | "timeout" | "network", message } }`. Bodies up to 10 MiB. 404 for a call the runner did not claim or that was answered already.',
+    public: true,
+    publicNote: 'Public: no API key or session; the runner’s own token is the credential.',
+    body: jsonBody({ oneOf: [object({ status: { type: 'integer' }, headers: array(array({ type: 'string' })), body: { type: 'string' } }, ['status', 'headers']), object({ error: object({ code: { type: 'string', enum: ['refused', 'timeout', 'network'] }, message: { type: 'string' } }, ['code', 'message']) }, ['error'])] }),
+    responses: { 204: { description: 'Taken' }, 400: invalid, 401: errorRef('Not a valid runner token'), 404: notFound },
+  });
 
   add('get', '/api/transports', {
     tag: 'Plugins',

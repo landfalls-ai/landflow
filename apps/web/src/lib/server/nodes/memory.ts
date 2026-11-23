@@ -9,6 +9,8 @@
  */
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem, type PropertyDescriptor } from '@landflow/sdk';
 import { MEMORY_LIMITS, type MemoryContainer, type MemoryItem } from '../../shared/memory';
+import { wrapMemory } from '../../shared/memory-fence';
+import { clampNumber, DEFAULT_SAMPLE_SIZE, DEFAULT_TOKEN_BUDGET, DEFAULT_WEIGHTS, profileMarkdown, SAMPLE_SIZE_RANGE, sampleProfile } from '../memory/sample';
 import { HttpError } from '../errors';
 import { homeProjectId } from '../projects/store';
 import { store } from '../store';
@@ -17,7 +19,7 @@ const main = [{ type: 'main' as const }];
 const asJson = (value: unknown) => JSON.parse(JSON.stringify(value)) as JsonObject;
 
 /** The container parameters every node has: Project (default: this flow's or agent's project) or Team. */
-const containerProperties = (operations: string[]): PropertyDescriptor[] => [
+export const containerProperties = (operations: string[]): PropertyDescriptor[] => [
   {
     name: 'container',
     displayName: 'Memory Of',
@@ -49,10 +51,10 @@ const containerProperties = (operations: string[]): PropertyDescriptor[] => [
   },
 ];
 
-type Who = { caller: import('../memory').MemoryCaller; home?: string };
+export type Who = { caller: import('../memory').MemoryCaller; home?: string };
 
 /** The caller of this run: the workflow's creator, or the instance inside the home project (an agent's tool, a seeded flow). */
-async function whoIs(workflowId: string | undefined, executionId: string): Promise<Who> {
+export async function whoIs(workflowId: string | undefined, executionId: string): Promise<Who> {
   const { getUser } = await import('../auth/users');
   if (workflowId?.startsWith('agent:')) {
     const agentId = workflowId.slice('agent:'.length);
@@ -70,7 +72,7 @@ async function whoIs(workflowId: string | undefined, executionId: string): Promi
  * The container a step names. A read may reach any project or team the flow's creator may; a write only the flow's own project,
  * or a team homed there: a flow is a deputy of its creator, and must not write into other projects the creator happens to edit.
  */
-function containerOf(read: (name: string, fallback?: unknown) => unknown, who: Who, access: 'read' | 'write' = 'read'): MemoryContainer {
+export function containerOf(read: (name: string, fallback?: unknown) => unknown, who: Who, access: 'read' | 'write' = 'read'): MemoryContainer {
   const kind = String(read('container', 'project'));
   if (kind === 'team') {
     const id = String(read('teamId', '') ?? '').trim();
@@ -87,7 +89,7 @@ function containerOf(read: (name: string, fallback?: unknown) => unknown, who: W
 const itemJson = (item: MemoryItem) => asJson(item);
 
 /** Run `fn`; a memory error becomes the node's error with the same words (a refused container reads "Memory not found"). */
-async function guarded<T>(index: number, fn: () => Promise<T>): Promise<T> {
+export async function guarded<T>(index: number, fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (error) {
@@ -96,7 +98,7 @@ async function guarded<T>(index: number, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-const loadOptions = {
+export const loadOptions = {
   async projects() {
     const { listProjects } = await import('../projects/store');
     const { currentPrincipal } = await import('../auth/guard');
@@ -294,7 +296,7 @@ export const memoryProfileNode = defineNode({
   description: {
     name: 'memoryProfile',
     displayName: 'Memory Profile',
-    description: 'What a project always has in mind: its static facts, then the newest memories',
+    description: 'What a project always has in mind: its static facts, then the newest memories, or a weighted sample as Markdown',
     version: 1,
     kind: 'action',
     categories: ['AI', 'Core'],
@@ -315,6 +317,26 @@ export const memoryProfileNode = defineNode({
         options: [{ name: 'Get Profile', value: 'profile', description: 'Static facts and the newest memories', idempotent: true }],
       },
       ...containerProperties(['profile']),
+      // C28 FR-7, FR-8: all static facts plus a weighted sample of the rest, as Markdown inside a token budget.
+      { name: 'sampled', displayName: 'Sampled', type: 'boolean', default: false, description: 'Every static fact, then a weighted sample of the others (recent, confident, often revised, old, inferred), as Markdown that fits a token budget', displayOptions: { show: { operation: ['profile'] } } },
+      { name: 'sampleSize', displayName: 'Sample Size', type: 'number', default: DEFAULT_SAMPLE_SIZE, typeOptions: { minValue: 1, maxValue: 500 }, description: 'The most other facts to include', displayOptions: { show: { operation: ['profile'], sampled: [true] } } },
+      { name: 'tokenBudget', displayName: 'Token Budget', type: 'number', default: DEFAULT_TOKEN_BUDGET, typeOptions: { minValue: 100, maxValue: 20_000 }, description: 'The Markdown is cut to fit, about four characters a token, and says how many were left out', displayOptions: { show: { operation: ['profile'], sampled: [true] } } },
+      {
+        name: 'weights',
+        displayName: 'Weights',
+        type: 'collection',
+        default: {},
+        placeholder: 'Change a weight',
+        description: 'Each is the share of the sample drawn that way; what the weights leave unused goes to the newest facts',
+        displayOptions: { show: { operation: ['profile'], sampled: [true] } },
+        values: (['recent', 'confident', 'revised', 'old', 'inferred'] as const).map((name) => ({
+          name,
+          displayName: { recent: 'Recent', confident: 'High Confidence', revised: 'Often Revised', old: 'Old', inferred: 'Inferred' }[name],
+          type: 'number' as const,
+          default: DEFAULT_WEIGHTS[name],
+          typeOptions: { minValue: 0, maxValue: 1, numberPrecision: 2 },
+        })),
+      },
     ],
   },
   async execute(ctx) {
@@ -324,6 +346,10 @@ export const memoryProfileNode = defineNode({
     const out: NodeItem[] = [];
     for (let i = 0; i < Math.max(inputs.length, 1); i++) {
       const read = (name: string, fallback?: unknown) => ctx.getNodeParameter(name, i, fallback);
+      if (read('sampled', false) === true) {
+        out.push({ json: await sampledProfile(ctx.getMode() === 'tool', i, read, who), pairedItem: { item: i } });
+        continue;
+      }
       const profile = await guarded(i, () => memory.profile(containerOf(read, who), who.caller));
       out.push({
         json: ctx.getMode() === 'tool' ? { memory: memoryToolText([...profile.static, ...profile.recent]) || 'Nothing is remembered yet.' } : { static: profile.static.map(itemJson), recent: profile.recent.map(itemJson) },
@@ -334,3 +360,36 @@ export const memoryProfileNode = defineNode({
   },
   methods: { loadOptions },
 });
+
+/** The most items a sampled profile reads (20 pages of 100): the sample is computed in memory, with no model call. */
+const SAMPLE_READ_CAP = 2_000;
+
+async function sampledProfile(tool: boolean, i: number, read: (name: string, fallback?: unknown) => unknown, who: Who): Promise<JsonObject> {
+  const { memory } = await import('../memory');
+  const container = containerOf(read, who);
+  // Every static fact first, on their own pages, so "every static fact" holds past the cap on the rest; then the newest others.
+  // A backend that cannot filter returns everything, so the static ones are kept by their flag.
+  const byId = new Map<string, MemoryItem>();
+  const pages = async (options: { static?: boolean }, keep: (item: MemoryItem) => boolean) => {
+    let cursor: string | undefined;
+    let seen = 0;
+    do {
+      const page = await guarded(i, () => memory.list(container, { limit: MEMORY_LIMITS.list.max, ...options, ...(cursor && { cursor }) }, who.caller));
+      seen += page.items.length;
+      for (const item of page.items) if (keep(item)) byId.set(item.id, item);
+      cursor = page.nextCursor;
+    } while (cursor && seen < SAMPLE_READ_CAP);
+  };
+  await pages({ static: true }, (item) => item.static === true);
+  await pages({}, () => true);
+  const all = [...byId.values()];
+  const given = (read('weights', {}) ?? {}) as Record<string, unknown>;
+  const weights = Object.fromEntries(Object.keys(DEFAULT_WEIGHTS).filter((k) => typeof given[k] === 'number').map((k) => [k, given[k]]));
+  const sampled = sampleProfile(all, { size: clampNumber(read('sampleSize', DEFAULT_SAMPLE_SIZE), DEFAULT_SAMPLE_SIZE, ...SAMPLE_SIZE_RANGE), weights });
+  const { markdown, left } = profileMarkdown(sampled, read('tokenBudget', DEFAULT_TOKEN_BUDGET));
+  // What a model reads is quoted memory (C03): the Markdown goes inside the fence, as every memory tool's answer does.
+  const fence = (text: string) => wrapMemory(all.every((m) => m.source === 'note') ? 'team-notebook' : all.every((m) => m.source === 'provider') ? 'memory' : 'brain-facts', [text]);
+  if (tool) return { memory: markdown ? fence(markdown) : 'Nothing is remembered yet.' };
+  // `markdown` is stored text to show a person; `fenced` is the same inside the quoted-memory fence, for a model's prompt.
+  return { static: sampled.static.map(itemJson), dynamic: sampled.dynamic.map(itemJson), left, markdown, fenced: markdown ? fence(markdown) : '' };
+}
