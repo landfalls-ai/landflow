@@ -62,7 +62,7 @@ export interface MemoryBackend {
   add(container: MemoryContainer, input: MemoryAddInput, caller: MemoryCaller): Promise<MemoryItem>;
   /** Forgets softly with a reason; the item leaves every read. The container says where to look and who may. */
   forget(container: MemoryContainer, id: string, reason: string, caller: MemoryCaller): Promise<MemoryItem>;
-  list(container: MemoryContainer, page: { limit?: number; cursor?: string }, caller: MemoryCaller): Promise<MemoryPage>;
+  list(container: MemoryContainer, page: { limit?: number; cursor?: string; static?: boolean }, caller: MemoryCaller): Promise<MemoryPage>;
 }
 
 export type { MemoryContainer };

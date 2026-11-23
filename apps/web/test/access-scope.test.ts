@@ -119,7 +119,7 @@ describe('stop-all', () => {
   });
 
   it('keeps the executions:write key scope (the CLI) and leaves the decision to the role', () => {
-    expect(routePolicy('POST', '/api/executions/stop-all')).toEqual({ scope: 'executions:write', action: 'settings:manage' });
+    expect(routePolicy('POST', '/api/executions/stop-all')).toEqual({ scope: 'executions:write', action: 'settings:manage', instanceAdmin: true });
   });
 });
 

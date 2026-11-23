@@ -2130,6 +2130,21 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS knowledge_sync_runs_source ON knowledge_sync_runs (source_id, started_at)`,
     ],
   },
+  // C32: custom instance roles (docs/features/authentication.md#custom-roles): `rules` is JSON `[{ action, effect: 'allow' }]`, `name_key` the lower-cased name (unique); a member holds at most one, on `users.custom_role_id`, read with the user on every request so an edit or a delete shows at the holder's next one
+  {
+    version: 2931,
+    name: 'custom_roles',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS custom_roles (id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE, description TEXT, rules TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+    ],
+    addColumns: [{ table: 'users', column: 'custom_role_id', definition: 'TEXT' }],
+  },
+  // C31: a data key per project for its credentials, wrapped by the key ring (docs/features/secrets-and-environments.md#project-keys); `state` is active (at most one per project) or retired, `wrapped` a v2 sealed string
+  {
+    version: 2932,
+    name: 'project_keys',
+    statements: [`CREATE TABLE IF NOT EXISTS project_keys (project_id TEXT NOT NULL, version BIGINT NOT NULL, wrapped TEXT NOT NULL, state TEXT NOT NULL, created_at TEXT NOT NULL, retired_at TEXT, PRIMARY KEY (project_id, version))`],
+  },
   // C30: a leased credential issued to a run by OpenBao / Vault's database engine (docs/features/secrets-and-environments.md#dynamic-secrets): one row per (run, provider, path), the lease id and the issued values sealed and dropped when the lease ends; `failing_since` times the 24 h after which a revoke that keeps failing is given up, `dismissed_at` hides that failure's banner
   {
     version: 2933,
@@ -2300,6 +2315,8 @@ export const TABLES = {
   knowledge_source_state: ['source_id'], // C22:
   knowledge_source_items: ['source_id', 'item_key'], // C22:
   knowledge_sync_runs: ['id'], // C22:
+  custom_roles: ['id'], // C32:
+  project_keys: ['project_id', 'version'], // C31:
   secret_leases: ['id'], // C30:
 } as const satisfies Record<string, readonly string[]>;
 
