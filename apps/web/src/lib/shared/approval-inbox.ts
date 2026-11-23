@@ -1,23 +1,31 @@
 /**
  * The approval inbox: production approvals wait for a person in Needs you (wave ap1; docs/approval-inbox.md).
  *
- * Contract file: backbone/contracts/ap1/approval-inbox.ts, copied byte for byte to apps/web/src/lib/shared/approval-inbox.ts by
- * AP01 (owner), AP02 and AP03. Change it in the contracts folder first; the integrator `cmp`s every copy.
+ * This file is the one copy of the contract (the old `backbone/contracts/ap1` folder is gone): edit it here.
  *
  * The person's decision of 2026-11-18 (accepted from the planner's suggestion, ag5 README option a): when a trigger, webhook
  * or schedule run (nobody watching) reaches an agent tool that asks first, the run pauses instead of refusing; the question
  * goes to Home's Needs you with a mail or Slack nudge; the run resumes on Approve and refuses that call on Deny; a pause
  * expires after a set time (expiry refuses the call, never approves it).
  *
- * One record per waiting tool call (table `approval_inbox`, migration 2907, AP01). The record is the truth: whoever moves it
+ * One record per waiting tool call (table `approval_inbox`, migration 2907, AP01), or per AI Judge that could not decide (kind
+ * `judge`, migration 2920, C13). The record is the truth: whoever moves it
  * from `waiting` first wins (a conditional update), every door (Needs you, the Run Trace card, the execution approvals route,
  * the emailed link, the expiry timer, a cancel) goes through that one claim, and the run reads the record on every resume.
  *
  * Browser-safe: no zod object, no server import.
  */
 
+import type { FallbackReason, JudgeEvidence } from './judge';
+
 /** A request's state. Only `waiting` moves, and only once. */
 export type InboxStatus = 'waiting' | 'approved' | 'denied' | 'expired' | 'cancelled';
+
+/**
+ * What a request asks about: a tool call of Run an Agent (`tool`, every request before C13) or an AI Judge that could not decide
+ * (`judge`, C13: the person decides the request itself). A row with no kind is a tool request.
+ */
+export type InboxKind = 'tool' | 'judge';
 
 /** Where the settling word came from. */
 export type InboxVia = 'inbox' | 'run-trace' | 'email' | 'expiry' | 'cancel';
@@ -119,6 +127,10 @@ export interface InboxOpen {
   destination?: string;
   trigger: string;
   projectId?: string;
+  /** C13: `judge` for an AI Judge's request; absent for a tool call (a row with no kind reads `tool`). */
+  kind?: InboxKind;
+  /** C13: with `judge`, what the judge saw and did (masked and capped again when the row is written). */
+  evidence?: JudgeEvidence;
 }
 
 /** A request as the inbox routes, Needs you and the Run Trace show it. */
@@ -135,6 +147,26 @@ export interface InboxRequestView extends Omit<InboxOpen, 'sessionId' | 'project
   nudged?: { email: number; channels: number };
   /** Whether the caller may Approve or Deny (run access on the workflow, a signed-in person). */
   canDecide: boolean;
+  /** C12: the tickets a ticket channel opened for it; absent when no rule sends it to one. A ticket only notifies and links: it never decides. */
+  tickets?: InboxTicket[];
+}
+
+/** One ticket of a request. `opening` has no id yet (the system was not reached, retrying); a ticket whose close failed still shows as `open`. */
+export interface InboxTicket {
+  system: 'servicenow' | 'webhook';
+  /** The alert channel's id. */
+  channel: string;
+  id?: string;
+  /** An http(s) link, when the system gave one. */
+  url?: string;
+  state: 'opening' | 'open' | 'closed' | 'failed';
+}
+
+/** What a ticket says next to Approve and Deny: "Ticket CHG0031", "Ticket opening…", "Ticket not opened". */
+export function ticketLabel(ticket: Pick<InboxTicket, 'id' | 'state'>): string {
+  if (ticket.state === 'opening') return 'Ticket opening…';
+  if (ticket.state === 'failed' || !ticket.id) return 'Ticket not opened';
+  return `Ticket ${ticket.id}`;
 }
 
 /** The fields a Needs you `approval` item carries when its wait is an inbox request (AP01 adds them, AP03 reads them). */
@@ -148,6 +180,11 @@ export interface InboxItemFields {
   destination?: string;
   expiresAt?: string;
   canDecide?: boolean;
+  /** C13: `judge` when the request is an AI Judge's; `judgeWhy` is the fixed fallback reason. */
+  inboxKind?: InboxKind;
+  judgeWhy?: FallbackReason;
+  /** C12: the request's tickets (see InboxRequestView.tickets). */
+  tickets?: InboxTicket[];
 }
 
 /** What a waiting execution's `wait.data.inbox` holds (AP02 writes it, AP01 reads it in decideApproval and Needs you). */
@@ -184,7 +221,7 @@ export function waitingLine(requestedAt: string, expiresAt: string, clock: (iso:
 const VIA_WORDS: Record<InboxVia, string> = { inbox: 'in Needs you', 'run-trace': 'in the Run Trace', email: 'by email', expiry: '', cancel: '' };
 
 /** The settled line (Run Trace, the tool call's `decidedLine`, the journal's decision row, Needs you's last word). */
-export function settledLine(view: Pick<InboxRequestView, 'status' | 'tool' | 'decidedByName' | 'decidedBy' | 'decidedVia' | 'decidedAt'>, clock: (iso: string) => string): string {
+export function settledLine(view: Pick<InboxRequestView, 'status' | 'tool' | 'decidedByName' | 'decidedBy' | 'decidedVia' | 'decidedAt' | 'kind'>, clock: (iso: string) => string): string {
   const who = view.decidedByName || view.decidedBy || 'someone';
   const at = view.decidedAt ? ` · ${clock(view.decidedAt)}` : '';
   const via = view.decidedVia ? VIA_WORDS[view.decidedVia] : '';
@@ -194,11 +231,13 @@ export function settledLine(view: Pick<InboxRequestView, 'status' | 'tool' | 'de
     case 'denied':
       return `Denied by ${who}${via ? ` ${via}` : ''}${at}`;
     case 'expired':
+      if (view.kind === 'judge') return `Expired${view.decidedAt ? ` at ${clock(view.decidedAt)}` : ''}: nobody decided “${view.tool}” in time, so it was denied`;
       return `Expired${view.decidedAt ? ` at ${clock(view.decidedAt)}` : ''}: nobody approved “${view.tool}” in time, so it did not run`;
     case 'cancelled':
+      if (view.kind === 'judge') return `Cancelled with the run: “${view.tool}” was not decided`;
       return `Cancelled with the run: “${view.tool}” did not run`;
     default:
-      return `Waiting for approval of “${view.tool}”`;
+      return view.kind === 'judge' ? `Waiting for a decision on “${view.tool}”` : `Waiting for approval of “${view.tool}”`;
   }
 }
 
@@ -210,11 +249,12 @@ export function refusedResult(status: 'denied' | 'expired' | 'cancelled', tool: 
 }
 
 /** The answer to a decision on a request that is no longer waiting: who won, and the HTTP status the routes answer. */
-export function closedAnswer(view: Pick<InboxRequestView, 'status' | 'tool' | 'decidedByName' | 'decidedBy' | 'decidedAt' | 'expiresAt'>, clock: (iso: string) => string): { status: 409 | 410; message: string } {
+export function closedAnswer(view: Pick<InboxRequestView, 'status' | 'tool' | 'decidedByName' | 'decidedBy' | 'decidedAt' | 'expiresAt' | 'kind'>, clock: (iso: string) => string): { status: 409 | 410; message: string } {
   const who = view.decidedByName || view.decidedBy || 'someone';
   const at = view.decidedAt ? ` at ${clock(view.decidedAt)}` : '';
-  if (view.status === 'expired') return { status: 410, message: `This approval expired${view.decidedAt ? ` at ${clock(view.decidedAt)}` : ` at ${clock(view.expiresAt)}`}: “${view.tool}” did not run.` };
-  if (view.status === 'cancelled') return { status: 409, message: `The run was cancelled: “${view.tool}” did not run.` };
+  const ended = view.kind === 'judge' ? 'was denied' : 'did not run';
+  if (view.status === 'expired') return { status: 410, message: `This approval expired${view.decidedAt ? ` at ${clock(view.decidedAt)}` : ` at ${clock(view.expiresAt)}`}: “${view.tool}” ${ended}.` };
+  if (view.status === 'cancelled') return { status: 409, message: `The run was cancelled: “${view.tool}” ${view.kind === 'judge' ? 'was not decided' : 'did not run'}.` };
   return { status: 409, message: `Already ${view.status === 'approved' ? 'approved' : 'denied'} by ${who}${at}.` };
 }
 

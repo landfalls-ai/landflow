@@ -8,7 +8,8 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { api, ApiError } from './api';
 import { refreshNeedsYou } from './run-trace';
-import { settledLine, waitingLine, type InboxItemFields, type InboxRequestView } from '@/lib/shared/approval-inbox';
+import { settledLine, waitingLine, type InboxItemFields, type InboxKind, type InboxTicket, type InboxRequestView } from '@/lib/shared/approval-inbox';
+import { isFallbackReason, judgeTitle, type FallbackReason } from '@/lib/shared/judge';
 import type { NeedsYouRow } from './run-trace';
 
 /** "14:05" in the viewer's zone, the `clock` every inbox line takes. */
@@ -141,9 +142,19 @@ export interface InboxRowData {
   expiresAt?: string;
   canDecide: boolean;
   executionId: string;
+  /** C13: `judge` for an AI Judge's request (its row names the judge, not an agent and a tool). */
+  kind?: InboxKind;
+  /** C13: the fixed reason code and the judge's confidence, for the row's title. */
+  judgeWhy?: FallbackReason;
+  judgeConfidence?: number;
+  /** C12: the request's tickets. */
+  tickets?: InboxTicket[];
   /** The whole request, when the row came from one (its Details need no second GET). */
   view?: InboxRequestView;
 }
+
+/** The row's title for a judge request: “Refund check” could not decide: it was not sure enough (0.52). */
+export const judgeRowTitle = (row: Pick<InboxRowData, 'tool' | 'judgeWhy' | 'judgeConfidence'>): string => judgeTitle(row.tool, row.judgeWhy ?? 'no decision', row.judgeConfidence);
 
 export const rowOfView = (view: InboxRequestView): InboxRowData => ({
   id: view.id,
@@ -157,6 +168,8 @@ export const rowOfView = (view: InboxRequestView): InboxRowData => ({
   expiresAt: view.expiresAt,
   canDecide: view.canDecide,
   executionId: view.executionId,
+  ...(view.tickets && { tickets: view.tickets }),
+  ...(view.kind === 'judge' && { kind: 'judge' as const, ...(isFallbackReason(view.evidence?.fallbackReason) && { judgeWhy: view.evidence!.fallbackReason }), ...(typeof view.evidence?.confidence === 'number' && { judgeConfidence: view.evidence.confidence }) }),
   view,
 });
 
@@ -175,6 +188,8 @@ export const rowOfItem = (item: NeedsYouRow & { requestId: string }): InboxRowDa
   expiresAt: item.expiresAt,
   canDecide: item.canDecide === true,
   executionId: item.executionId,
+  ...(item.tickets && { tickets: item.tickets }),
+  ...(item.inboxKind === 'judge' && { kind: 'judge' as const, ...(item.judgeWhy && { judgeWhy: item.judgeWhy }) }),
 });
 
 /** "Alert mailer v2", "Alert mailer (draft)". */

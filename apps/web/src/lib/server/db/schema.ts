@@ -2038,6 +2038,25 @@ export const MIGRATIONS: Migration[] = [
     name: 'brain_facts_project',
     statements: [`CREATE INDEX IF NOT EXISTS brain_facts_project ON brain_facts (project_id, is_latest, last_seen)`],
   },
+  // C13: an approval-inbox request may be an AI Judge's (`kind` 'judge') with the judge's evidence; NULL (every older row) is a tool request
+  {
+    version: 2920,
+    name: 'approval_inbox_kind',
+    statements: [],
+    addColumns: [
+      { table: 'approval_inbox', column: 'kind', definition: 'TEXT' },
+      { table: 'approval_inbox', column: 'evidence', definition: 'TEXT' },
+    ],
+  },
+  // C12: the tickets a ticket channel (ServiceNow, a webhook that opens tickets) opened for an approval request: one row per (request, channel), kept for the audit of where a ticket went (docs/approval-inbox.md#tickets)
+  {
+    version: 2922,
+    name: 'approval_tickets',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS approval_tickets (request_id TEXT NOT NULL, channel_id TEXT NOT NULL, rule_id TEXT NOT NULL, system TEXT NOT NULL, state TEXT NOT NULL, external_id TEXT, external_key TEXT, external_url TEXT, attempts BIGINT NOT NULL, next_at TEXT, last_error TEXT, opened_at TEXT, closed_at TEXT, created_at TEXT NOT NULL, PRIMARY KEY (request_id, channel_id))`,
+      `CREATE INDEX IF NOT EXISTS approval_tickets_state ON approval_tickets (state, next_at)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -2126,6 +2145,7 @@ export const TABLES = {
   scheduled_publishes: ['id'],
   approval_email_used: ['group_id'],
   approval_inbox: ['id'], // AP01:
+  approval_tickets: ['request_id', 'channel_id'], // C12:
   harness_sessions: ['id'], // C04:
   harness_events: ['id'], // C04:
   notion_brain_links: ['id'], // NB03:

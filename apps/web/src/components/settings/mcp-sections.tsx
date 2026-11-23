@@ -6,7 +6,7 @@
  */
 import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ChevronRight, KeyRound, Laptop, Network, Plug, Wrench } from 'lucide-react';
+import { ChevronRight, KeyRound, Laptop, Network, Plug, ShieldCheck, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -15,6 +15,7 @@ import { TOOL_SCOPES } from '@/lib/shared/mcp';
 import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/inputs';
+import { PolicyHooks } from './mcp-policy-hooks';
 
 const DOCS = 'https://github.com/landfalls-ai/landflow/blob/main/docs';
 
@@ -146,6 +147,11 @@ export function McpSections({ canManage, gatewayMode, pendingApprovals = 0, acce
         <ToolScopeList />
         {tools}
       </McpSection>
+      {canManage && (
+        <McpSection id="mcp-policy-hooks" icon={<ShieldCheck className="size-4" strokeWidth={1.8} />} title="Policy hooks" sentence="A service of yours that says allow or deny before an agent’s MCP call leaves, with the server, the tool and the arguments." learnMore={`${DOCS}/features/audit-and-governance.md`}>
+          <PolicyHooks />
+        </McpSection>
+      )}
       <McpSection id="mcp-gateway" icon={<Network className="size-4" strokeWidth={1.8} />} title="Gateway" sentence="The bundled gateway puts every plugin behind one URL." learnMore={`${DOCS}/transports.md`} badge={<Badge tone={gatewayMode === 'off' ? 'muted' : 'accent'} className="font-mono">{gatewayMode}</Badge>}>
         {gateway}
       </McpSection>

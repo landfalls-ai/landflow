@@ -310,12 +310,15 @@ In queue mode each process also reports how far its copy trails the others:
 | `landflow.agent.run.duration` | histogram (ms) | `gen_ai.agent.id`, `gen_ai.agent.name`, `landflow.agent.source` |
 | `landflow.agent.tool.calls` | counter | agent attributes, `gen_ai.tool.name`, `landflow.agent.tool.kind`, `landflow.outcome` |
 | `landflow.agent.tool.duration` | histogram (ms) | agent attributes, `gen_ai.tool.name`, `landflow.agent.tool.kind` |
+| `landflow.approval.tickets` | counter | `system` (`servicenow`/`webhook`), `outcome` (`opened`, `open_failed`, `closed`, `close_failed`, `skipped`): tickets of approval requests ([approval-inbox.md](approval-inbox.md#tickets)); no alert rule pages on it |
 | `landflow.agent.approvals` | counter | agent attributes, `gen_ai.tool.name`, `landflow.agent.approval.decision` (`approved`/`denied`) |
 | `landflow.agent.tokens` | counter | agent attributes, `gen_ai.token.type` (`input`/`output`) |
 | `landflow.a2a.calls` | counter | `gen_ai.agent.name` (the card's name), `rpc.method`, `landflow.a2a.caller` (`agent`/`node`), `a2a.task.state`, `landflow.outcome` |
 | `landflow.a2a.call.duration` | histogram (ms) | `gen_ai.agent.name`, `rpc.method`, `landflow.a2a.caller`: until the task settles or pauses |
 | `landflow.a2a.tokens` | counter | `gen_ai.agent.name`, `gen_ai.token.type`: what the remote agent reports using (kagent's usage extension) |
 | `landflow.a2a.tool.calls` | counter | `gen_ai.agent.name`, `gen_ai.tool.name`, `landflow.a2a.tool.status` (`success`/`error`/`awaiting_approval`): the remote agent's own tool calls |
+| `landflow.mcp.policy.decisions` | counter | `decision` (`allow`, `deny`, `failed_open`, `failed_closed`), `hook` (the hook's name): the outbound MCP calls an admin's [policy hook](features/audit-and-governance.md#mcp-policy-hooks) looked at |
+| `landflow.mcp.policy.store_errors` | counter | reads of the stored policy hooks that were unreadable or invalid (calls are blocked in production) |
 | `landflow.assistant.requests` | counter | `landflow.assistant.request` (`suggest`/`chat`/`architect`), `landflow.outcome` (`ok`/`error`/`timeout`/`skipped`) |
 | `landflow.assistant.duration` | histogram (ms) | `landflow.assistant.request` |
 | `landflow.assistant.suggestions` | counter | `landflow.assistant.kind` (`fix`/`param`/`data`/`next`, or `proposal` for a chat proposal): what the editor was shown |

@@ -9,41 +9,22 @@
  * secret may read `{{ $secrets.<provider>.<name> }}`, resolved right before sending (same cache and redaction as
  * credential fields in nodes); a reason that would quote a resolved value is redacted.
  */
-import { createHmac } from 'node:crypto';
-import type { AlertChannel, AlertChannelConfig } from '../../shared/alerts';
+import { opensTickets, type AlertChannel, type AlertChannelConfig } from '../../shared/alerts';
 import { mailConfigured, sendMail } from '../auth/mail';
 import { credentials } from '../credentials/vault';
-import { safeFetch } from '../net/safe-fetch';
 import { redactText } from '../secrets/redact';
-import { resolveSecretFields } from '../secrets/resolve';
 import { emailAddresses } from './store';
+import { channelConfigWithSecrets, refusal, request, signature, type SendableChannel } from './http';
+import { testTicketChannel } from './tickets';
 import { discordPayload, htmlOf, slackPayload, subjectOf, teamsPayload, telegramText, textOf, webhookPayload, type AlertNotice } from './message';
 
-const TIMEOUT_MS = 10_000;
+// Re-exported for the tests and the hooks (./http.ts holds them so ./tickets.ts can use them without a cycle).
+export { channelConfigWithSecrets, signature, type SendableChannel };
+
+const post = (url: string, body: string, headers: Record<string, string>, what: string) => request('POST', url, body, headers, what);
+
 const TELEGRAM_CREDENTIAL = 'messaging.telegramApi';
 const TELEGRAM_API = 'https://api.telegram.org';
-
-export type SendableChannel = Pick<AlertChannel, 'id' | 'name' | 'kind'> & { config: AlertChannelConfig };
-
-/** The signature header value of a webhook body. */
-export function signature(secret: string, timestamp: string, body: string): string {
-  return `sha256=${createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex')}`;
-}
-
-/** A short reason from a refused HTTP call: the status and the start of the body. */
-async function refusal(response: Response, what: string): Promise<Error> {
-  const body = (await response.text().catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 200);
-  return new Error(`${what} answered HTTP ${response.status}${body ? `: ${body}` : ''}`);
-}
-
-async function post(url: string, body: string, headers: Record<string, string>, what: string): Promise<Response> {
-  try {
-    return await safeFetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'user-agent': 'Landflow-Alerts/1', ...headers }, body, signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'manual' });
-  } catch (error) {
-    const reason = (error as Error).name === 'TimeoutError' ? `no answer within ${TIMEOUT_MS / 1000} s` : ((error as Error & { cause?: Error }).cause?.message ?? (error as Error).message);
-    throw new Error(`${what} could not be reached: ${reason}`);
-  }
-}
 
 async function sendEmail(config: AlertChannelConfig, notice: AlertNotice): Promise<string> {
   const addresses = emailAddresses(config.to);
@@ -109,11 +90,6 @@ async function sendTelegram(channel: SendableChannel, notice: AlertNotice): Prom
   return 'Telegram accepted it';
 }
 
-/** A channel's settings with `$secrets` resolved in what Landflow sends with: the webhook URLs and the signing secret. */
-export function channelConfigWithSecrets(channel: SendableChannel): Promise<AlertChannelConfig> {
-  return resolveSecretFields(channel.config, `Alert channel “${channel.name}”`, ['webhookUrl', 'url', 'secret']);
-}
-
 /** The data of a Telegram channel's credential, `$secrets` resolved. */
 export function telegramCredential(channel: SendableChannel) {
   return credentials.dataWithSecrets({ id: channel.config.credentialId ?? '', name: `of channel "${channel.name}"` }, TELEGRAM_CREDENTIAL);
@@ -123,6 +99,8 @@ export function telegramCredential(channel: SendableChannel) {
 export async function sendThrough(channel: SendableChannel, notice: AlertNotice): Promise<string> {
   try {
     const resolved = { ...channel, config: await channelConfigWithSecrets(channel) };
+    // C12: a channel that opens tickets answers its Test by opening one; a plain alert still goes to a ticket webhook as before.
+    if (notice.test && opensTickets(resolved)) return await testTicketChannel(channel);
     switch (resolved.kind) {
       case 'email':
         return await sendEmail(resolved.config, notice);
@@ -136,6 +114,8 @@ export async function sendThrough(channel: SendableChannel, notice: AlertNotice)
         return await sendTeams(resolved.config, notice);
       case 'discord':
         return await sendDiscord(resolved.config, notice);
+      case 'servicenow':
+        throw new Error('A ServiceNow channel only opens tickets for approval requests');
     }
   } catch (error) {
     throw new Error(redactText((error as Error).message));

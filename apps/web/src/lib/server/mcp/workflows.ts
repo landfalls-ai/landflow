@@ -12,6 +12,7 @@ import { rosterSessionKeyProblems, unguardedRosterTargets } from '../chat';
 import { workflowSchema } from '../schemas';
 import { store } from '../store';
 import type { ExecutionRecord } from '../../shared/types';
+import { admitTool, mcpServerTrusted, MCP_CLIENT_TOOL, TRUSTED_MCP_VARIABLE } from '../nodes/judge-tools'; // C13:
 import { checkExpressionFields, describeIssue, fieldsOfItems, outputSchemaOf, schemaFields, type KnownFields } from './expression-fields';
 
 export interface WorkflowValidation {
@@ -166,6 +167,23 @@ export function validateWorkflow(input: unknown): WorkflowValidation {
     if (input.port.maxConnections && counts.get(key)! > input.port.maxConnections) {
       errors.push(`"${target.name}": at most ${input.port.maxConnections} ${input.port.displayName ?? connection.type} connection${input.port.maxConnections > 1 ? 's' : ''}`);
     }
+  }
+
+  // C13: an AI Judge only uses read-only tools (judge-tools.ts); an MCP server's own word is not enough.
+  for (const connection of workflow.connections) {
+    const root = byId.get(connection.target);
+    const tool = byId.get(connection.source);
+    if (connection.type !== 'ai_tool' || root?.type !== 'core.aiJudge' || !tool) continue;
+    const toolDescriptor = descriptors.get(tool.id);
+    const source = { type: tool.type, parameters: parametersOf.get(tool.id) ?? tool.parameters, ...(toolDescriptor && { descriptor: toolDescriptor }) };
+    if (tool.type === MCP_CLIENT_TOOL) {
+      // Its tools are only known when the judge runs, where each also needs the server's read-only mark.
+      if (!mcpServerTrusted(source.parameters.endpointUrl)) errors.push(`AI Judge "${root.name}" only uses read-only tools: "${tool.name}" is an MCP server that is not trusted for the judge (an admin lists it in ${TRUSTED_MCP_VARIABLE})`);
+      else warnings.push(`AI Judge "${root.name}": the tools of "${tool.name}" are checked when the judge runs (each must be marked read-only by the server)`);
+      continue;
+    }
+    const admission = admitTool(source, undefined);
+    if (!admission.ok) errors.push(`AI Judge "${root.name}" only uses read-only tools: "${tool.name}" is not (${admission.why})`);
   }
 
   for (const node of workflow.nodes) {

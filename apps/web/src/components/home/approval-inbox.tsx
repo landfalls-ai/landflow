@@ -6,6 +6,7 @@
  * here), the run and the agent. A decision goes through the one claim on the server, so a second approver or the expiry timer
  * is answered with who won. There is no bulk approve, no select-many and no shortcut that approves: one request, one click.
  */
+import { TicketLinks } from './ticket-links'; // C12:
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Ban, Check, Clock, ExternalLink } from 'lucide-react';
@@ -15,6 +16,7 @@ import {
   decideRow,
   getRequest,
   inboxClock,
+  judgeRowTitle,
   rowOfView,
   useApprovalInbox,
   useRowStates,
@@ -28,6 +30,7 @@ import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Sheet } from '../ui/sheet';
 import { SectionTitle } from '../run-trace/parts';
+import { JudgedItem, JudgeEvidenceView } from './judge-evidence';
 
 /** A parameter's value as one readable string: text as is, anything else as compact JSON; secrets never get here unmasked. */
 export function paramText(value: unknown): string {
@@ -79,18 +82,34 @@ export function InboxDetails({ row, index, onClose }: { row: InboxRowData; index
       live = false;
     };
   }, [row.id, row.view]);
-  const shown = view ?? row;
+  const judge = row.kind === 'judge';
   const params = Object.entries(maskParams(view?.params ?? {}));
   const minutes = row.expiresAt ? Math.max(1, Math.round((Date.parse(row.expiresAt) - Date.parse(row.requestedAt)) / 60_000)) : undefined;
   return (
     <Sheet
       open
       onClose={onClose}
-      title={row.tool}
+      title={judge ? 'AI Judge: ' + row.tool : row.tool}
       className="md:max-w-[520px]"
       footer={<DecideButtons row={row} index={index} />}
     >
       <div data-testid="inbox-details">
+        {judge ? (
+          <>
+            <p className="mb-3 text-[12.5px] text-t2">
+              The AI Judge <b>{row.tool}</b> could not decide. Approve lets the item continue as approved; Deny, or no answer, denies it.
+            </p>
+            {view ? (
+              <>
+                <JudgedItem params={view.params} />
+                {view.evidence && <JudgeEvidenceView evidence={view.evidence} />}
+              </>
+            ) : (
+              <p className="mb-4 text-[12.5px] text-t2">{missing ? 'The request could not be loaded.' : 'Loading…'}</p>
+            )}
+          </>
+        ) : (
+          <>
         <p className="mb-3 text-[12.5px] text-t2">
           {versionName(row.agentName ?? 'The agent', row.agentVersion)} wants to run <b>{row.tool}</b> with these parameters.
         </p>
@@ -106,10 +125,12 @@ export function InboxDetails({ row, index, onClose }: { row: InboxRowData; index
             <p className="col-span-2 text-[12.5px] text-t2">{missing ? 'The parameters could not be loaded.' : view ? 'It runs with no parameters.' : 'Loading the parameters…'}</p>
           )}
         </dl>
+          </>
+        )}
         <dl className="grid grid-cols-[minmax(0,96px)_minmax(0,1fr)] gap-x-3 gap-y-1.5">
           {row.destination && <Fact label="Goes to">{row.destination}</Fact>}
           {view?.trigger && <Fact label="Started by">a {view.trigger} run</Fact>}
-          <Fact label="Agent">{view?.agentId ? <Link href={`/agents/${view.agentId}`} className="text-ac hover:underline">{versionName(row.agentName ?? 'Agent', row.agentVersion)}</Link> : versionName(row.agentName ?? 'Agent', row.agentVersion)}</Fact>
+          {!judge && <Fact label="Agent">{view?.agentId ? <Link href={`/agents/${view.agentId}`} className="text-ac hover:underline">{versionName(row.agentName ?? 'Agent', row.agentVersion)}</Link> : versionName(row.agentName ?? 'Agent', row.agentVersion)}</Fact>}
           <Fact label="Workflow">{view?.workflowId ? <Link href={`/workflows/${view.workflowId}`} className="text-ac hover:underline">{versionName(row.workflowName, row.workflowVersion)}</Link> : versionName(row.workflowName, row.workflowVersion)}</Fact>
           <Fact label="The run">
             <Link href={`/runs/${row.executionId}`} className="inline-flex items-center gap-1 text-ac hover:underline">
@@ -120,7 +141,7 @@ export function InboxDetails({ row, index, onClose }: { row: InboxRowData; index
           {row.expiresAt && (
             <Fact label="Expires">
               {inboxClock(row.expiresAt)}
-              {minutes !== undefined && <span className="text-t3"> · {expiryText(minutes)} after it opened; then the call does not run</span>}
+              {minutes !== undefined && <span className="text-t3"> · {expiryText(minutes)} after it opened; then {judge ? 'it is denied' : 'the call does not run'}</span>}
             </Fact>
           )}
         </dl>
@@ -139,15 +160,19 @@ export function InboxRow({ row, index = 0, autoOpen, className }: { row: InboxRo
   return (
     <li id={`approval-${row.id}`} data-testid="inbox-row" data-request={row.id} className={cn('px-4 py-3', className)}>
       <div className="flex items-center gap-2">
-        <Badge tone="warning">Approval</Badge>
+        <Badge tone="warning">{row.kind === 'judge' ? 'Decision' : 'Approval'}</Badge>
         <span className="min-w-0 truncate text-[12px] text-t3">{versionName(row.workflowName, row.workflowVersion)}</span>
       </div>
       <p className="mt-1 text-[14px] font-medium text-t1 [overflow-wrap:anywhere]" data-testid="inbox-tool">
-        {row.tool}
+        {row.kind === 'judge' ? judgeRowTitle(row) : row.tool}
       </p>
       <p className="text-[12.5px] text-t2 [overflow-wrap:anywhere]" data-testid="inbox-versions">
-        {versionName(row.agentName ?? 'Agent', row.agentVersion)}
-        <span className="text-t3"> · </span>
+        {row.kind !== 'judge' && (
+          <>
+            {versionName(row.agentName ?? 'Agent', row.agentVersion)}
+            <span className="text-t3"> · </span>
+          </>
+        )}
         {versionName(row.workflowName, row.workflowVersion)}
       </p>
       {row.destination && (
@@ -168,6 +193,7 @@ export function InboxRow({ row, index = 0, autoOpen, className }: { row: InboxRo
           <Clock className="mt-px size-3 shrink-0" aria-hidden /> <span>{waitText(row)}</span>
         </p>
       )}
+      <TicketLinks tickets={row.tickets} />
       <div className="mt-2.5 flex flex-wrap items-center gap-2">
         <DecideButtons row={row} index={index} />
         <Button size="sm" variant="ghost" className="max-md:min-h-11" onClick={() => setOpen(true)} data-testid="inbox-details-open">

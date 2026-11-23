@@ -5,14 +5,14 @@
  */
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Mail, MessageCircle, MessageSquare, Send, Users, Webhook } from 'lucide-react';
+import { Mail, MessageCircle, MessageSquare, Send, Ticket, Users, Webhook } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { DEFAULT_THROTTLE_MINUTES, type AlertChannelKind, type WorkflowAlertView } from '@/lib/shared/alerts';
 import { Select, Switch } from '../ui/inputs';
 
-const KIND_ICON: Record<AlertChannelKind, typeof Mail> = { email: Mail, slack: MessageSquare, webhook: Webhook, telegram: Send, teams: Users, discord: MessageCircle };
+const KIND_ICON: Record<AlertChannelKind, typeof Mail> = { email: Mail, slack: MessageSquare, webhook: Webhook, telegram: Send, teams: Users, discord: MessageCircle, servicenow: Ticket };
 
 export function NotifyOnFailure({ workflowId }: { workflowId?: string }) {
   const [view, setView] = useState<WorkflowAlertView>();
@@ -22,7 +22,9 @@ export function NotifyOnFailure({ workflowId }: { workflowId?: string }) {
   useEffect(() => {
     if (!workflowId) return;
     api<WorkflowAlertView>(`/api/workflows/${workflowId}/alert`)
-      .then((next) => {
+      .then((raw) => {
+        // A ServiceNow channel only opens tickets for approval requests: it is no place for failure alerts.
+        const next = { ...raw, channels: raw.channels.filter((channel) => channel.kind !== 'servicenow') };
         setView(next);
         setPicked(next.rule?.channelIds ?? (next.channels.length === 1 ? [next.channels[0].id] : []));
       })
