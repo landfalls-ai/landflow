@@ -207,6 +207,10 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'collection.transferred': 'Moved a vector collection to another project',
   'collection.adopted': 'Gave vector collections their owners',
   'collection.access_lost': 'A project lost access to a vector collection in the upgrade',
+  // C22:
+  'knowledge_source.created': 'Added a knowledge source',
+  'knowledge_source.updated': 'Changed a knowledge source',
+  'knowledge_source.removed': 'Removed a knowledge source',
   'resource.share': 'Shared a workflow or credential',
   'resource.unshare': 'Stopped sharing a workflow or credential',
   'resource.transfer': 'Moved a workflow, credential, data table, agent or agent team to another project',

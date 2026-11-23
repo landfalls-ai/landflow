@@ -20,7 +20,9 @@
  *   LANDFLOW_CODE_RUNNER_URL, OPENAI_BASE_URL and LANDFLOW_MCP_GATEWAY_PUBLIC_URL always are.
  * With blocking off, redirects are still followed here (platform fetch, redirect: 'manual'), so `response.redirected`
  * is false and `response.url` is the last hop's URL. With blocking on the Response is undici's, not the global class.
- * Remote plugins, databases, brokers, S3 and the marketplace's git are configured infrastructure and not covered.
+ * Knowledge sources (C22) also use it: a site is fetched through safeFetch, and the S3 client of a source gets `guardedLookup` on its
+ * agents, so every host the AWS SDK derives (a virtual-hosted bucket name too) is checked at the socket. Remote plugins, databases,
+ * brokers, the secrets manager's S3 and the marketplace's git are configured infrastructure and not covered.
  */
 import { lookup as dnsLookup, type LookupAddress } from 'node:dns';
 import { isIP } from 'node:net';
