@@ -29,6 +29,8 @@ const PUBLIC_GROUPS: Array<[group: string, prefix: string]> = [
   ['webhook', '/api/webhook'],
   ['form', '/form'],
   ['chat', '/chat'],
+  // C36: people without a Landflow account asking for access (sign-in, the form, the chat); the sign-in limits of lib/server/access/outside/limits.ts come on top.
+  ['request-access', '/request-access'],
   ['mcp', '/mcp'],
   ['waiting', '/api/waiting'],
   // Unauthenticated (signed by the gateway's secret): each request still costs a body read and an HMAC.

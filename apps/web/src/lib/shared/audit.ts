@@ -273,6 +273,13 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'access.grant.drift': 'A grant is no longer in place in the system',
   'access.account.set': 'Saved a person’s account name for access requests',
   'access.setup': 'Set up access requests',
+  // C36: people without a Landflow account asking for access (docs/access-requests.md#signing-in-without-an-account)
+  'access.outside.settings': 'Changed who without a Landflow account can ask for access',
+  'access.outside.link': 'A sign-in link was asked for by someone without a Landflow account',
+  'access.outside.sign_in': 'Someone without a Landflow account signed in to ask for access',
+  'access.outside.sign_out': 'Someone without a Landflow account signed out',
+  'access.outside.block': 'Blocked someone without a Landflow account from asking',
+  'access.outside.unblock': 'Let someone without a Landflow account ask again',
   'api.denied': 'Request refused (401/403)',
   'api.request': 'API request',
   // C30: leased dynamic secrets (docs/features/secrets-and-environments.md#dynamic-secrets)

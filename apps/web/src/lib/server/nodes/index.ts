@@ -26,6 +26,7 @@ import { decideNode } from './decide'; // C34:
 import { chainLlmNode, informationExtractorNode, textClassifierNode } from './chains';
 import { aiStep } from './composites';
 import { anthropicApiCredential, cohereApiCredential, httpBasicAuthCredential, httpBearerAuthCredential, httpHeaderAuthCredential, jwtAuthCredential, openAiApiCredential, s3ApiCredential, strandsDeciderApiCredential, typesafeApiCredential } from './credentials';
+import { oidcClientCredential } from './oidc-client-credential';
 import { oAuth2ApiCredential } from './oauth2-credential';
 import { mcpOAuth2ApiCredential } from './mcp-oauth-credential';
 import { sshPrivateKeyCredential } from './ssh-credential';
@@ -172,5 +173,5 @@ export const corePlugin = definePlugin({
     proposeFlowsNode,
   ],
   composites: [aiStep],
-  credentialTypes: [openAiApiCredential, anthropicApiCredential, typesafeApiCredential, strandsDeciderApiCredential, cohereApiCredential, httpBearerAuthCredential, httpHeaderAuthCredential, postgresCredential, oAuth2ApiCredential, mcpOAuth2ApiCredential, httpBasicAuthCredential, jwtAuthCredential, imapCredential, microsoftBotCredential, sshPrivateKeyCredential, kagentCredential, s3ApiCredential],
+  credentialTypes: [openAiApiCredential, anthropicApiCredential, typesafeApiCredential, strandsDeciderApiCredential, cohereApiCredential, httpBearerAuthCredential, httpHeaderAuthCredential, postgresCredential, oAuth2ApiCredential, mcpOAuth2ApiCredential, httpBasicAuthCredential, jwtAuthCredential, imapCredential, microsoftBotCredential, sshPrivateKeyCredential, kagentCredential, s3ApiCredential, oidcClientCredential],
 });

@@ -91,13 +91,23 @@ const caches = () =>
     states: new Map<string, PendingSignIn>(),
   }));
 
+/** What a pending sign-in is for: Landflow's own SSO (the default of one stored before purposes existed), or a person without an account asking for access (C36). */
+export type FlowPurpose = 'sso' | 'outside';
+
 interface PendingSignIn {
   verifier: string;
   nonce: string;
   next: string;
   redirectUri: string;
   at: number;
+  purpose?: FlowPurpose;
 }
+
+/** The part of a provider's settings the code flow needs: the instance's SSO config, or a credential (C36). */
+export type OidcClient = Pick<OidcConfig, 'issuer' | 'clientId' | 'clientSecret' | 'discoveryUrl'> & {
+  /** Other spellings of the issuer an ID token may carry (Google sends `accounts.google.com` too). */
+  issuerAliases?: string[];
+};
 
 /** Queue mode: the Valkey key of a pending sign-in (the state itself isn't stored, only its hash). */
 const pendingKey = (state: string) => `oidc:state:${createHash('sha256').update(state).digest('hex')}`;
@@ -114,8 +124,12 @@ async function putPending(state: string, entry: PendingSignIn): Promise<void> {
   states.set(state, entry);
 }
 
-/** The pending sign-in of `state`, at most once (a second callback with the same state finds nothing). */
-async function takePending(state: string): Promise<PendingSignIn | undefined> {
+/**
+ * The pending sign-in of `state`, at most once (a second callback with the same state finds nothing). One of another purpose is taken
+ * too and refused: the SSO callback can't finish an outside sign-in, nor the reverse.
+ */
+async function takePending(state: string, purpose: FlowPurpose): Promise<PendingSignIn | undefined> {
+  let entry: PendingSignIn | undefined;
   if (clusterActive()) {
     const key = pendingKey(state);
     const sealed = await coordinator().get(key);
@@ -123,15 +137,16 @@ async function takePending(state: string): Promise<PendingSignIn | undefined> {
     if (!sealed || !(await coordinator().deleteIfValue(key, sealed))) return undefined;
     try {
       const { credentials } = await import('../credentials/vault');
-      return JSON.parse(credentials.openSecret(sealed)) as PendingSignIn;
+      entry = JSON.parse(credentials.openSecret(sealed)) as PendingSignIn;
     } catch {
       return undefined;
     }
+  } else {
+    const states = caches().states;
+    entry = states.get(state);
+    states.delete(state);
   }
-  const states = caches().states;
-  const entry = states.get(state);
-  states.delete(state);
-  return entry;
+  return entry && (entry.purpose ?? 'sso') === purpose ? entry : undefined;
 }
 
 async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -150,7 +165,7 @@ async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export async function discover(config: OidcConfig, force = false): Promise<Discovery> {
+export async function discover(config: Pick<OidcClient, 'issuer' | 'discoveryUrl'>, force = false): Promise<Discovery> {
   const cache = caches().discovery;
   const hit = cache.get(config.issuer);
   if (hit && !force && Date.now() - hit.at < DISCOVERY_TTL_MS) return hit.doc;
@@ -191,7 +206,7 @@ export type Claims = Record<string, unknown> & { iss?: string; sub?: string; aud
 const base64urlJson = (part: string) => JSON.parse(Buffer.from(part, 'base64url').toString('utf8')) as Record<string, unknown>;
 
 /** Verify an ID token's signature and claims; returns its claims. */
-export async function verifyIdToken(token: string, config: OidcConfig, discovery: Pick<Discovery, 'jwks_uri'>, nonce: string, now = Date.now()): Promise<Claims> {
+export async function verifyIdToken(token: string, config: Pick<OidcClient, 'issuer' | 'clientId' | 'clientSecret' | 'issuerAliases'>, discovery: Pick<Discovery, 'jwks_uri'>, nonce: string, now = Date.now()): Promise<Claims> {
   const [headerPart, payloadPart, signaturePart] = token.split('.');
   if (!headerPart || !payloadPart || !signaturePart) throw new OidcError('The ID token is not a JWT');
   const header = base64urlJson(headerPart) as { alg?: string; kid?: string };
@@ -219,7 +234,8 @@ export async function verifyIdToken(token: string, config: OidcConfig, discovery
   if (!valid) throw new OidcError('The ID token’s signature is invalid');
 
   const seconds = Math.floor(now / 1000);
-  if (String(claims.iss ?? '').replace(/\/+$/, '') !== config.issuer) throw new OidcError('The ID token is from another issuer');
+  const issuers = [config.issuer, ...(config.issuerAliases ?? [])];
+  if (!issuers.includes(String(claims.iss ?? '').replace(/\/+$/, ''))) throw new OidcError('The ID token is from another issuer');
   const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
   if (!audiences.includes(config.clientId)) throw new OidcError('The ID token is for another client');
   if (audiences.length > 1 && claims.azp && claims.azp !== config.clientId) throw new OidcError('The ID token was issued to another party');
@@ -237,24 +253,41 @@ export function redirectUri(config: OidcConfig, origin: string): string {
   return config.redirectUrl ?? `${origin}/api/auth/oidc/callback`;
 }
 
-/** Step 1: the provider's authorization URL, and the state to bind to the browser (cookie). */
-export async function beginLogin(config: OidcConfig, origin: string, next: string): Promise<{ url: string; state: string }> {
-  const discovery = await discover(config);
+/** Where the code flow sends the browser, and the state to bind to it (a cookie). */
+export interface CodeFlowStart {
+  url: string;
+  state: string;
+}
+
+/**
+ * Step 1 of any code flow (SSO, or an outside requester's Google sign-in): the provider's authorization URL with PKCE S256, a state
+ * and a nonce, and the pending sign-in kept for the callback. `extra` adds query parameters (`hd`, `login_hint`).
+ */
+export async function beginCodeFlow(
+  client: OidcClient,
+  options: { redirectUri: string; scopes: string; purpose: FlowPurpose; next?: string; extra?: Record<string, string> },
+): Promise<CodeFlowStart> {
+  const discovery = await discover(client);
   const state = randomToken(24);
   const verifier = randomToken(48);
   const nonce = randomToken(24);
-  const callback = redirectUri(config, origin);
-  await putPending(state, { verifier, nonce, next, redirectUri: callback, at: Date.now() });
+  await putPending(state, { verifier, nonce, next: options.next ?? '/', redirectUri: options.redirectUri, at: Date.now(), purpose: options.purpose });
   const url = new URL(discovery.authorization_endpoint);
   url.searchParams.set('response_type', 'code');
-  url.searchParams.set('client_id', config.clientId);
-  url.searchParams.set('redirect_uri', callback);
-  url.searchParams.set('scope', config.scopes);
+  url.searchParams.set('client_id', client.clientId);
+  url.searchParams.set('redirect_uri', options.redirectUri);
+  url.searchParams.set('scope', options.scopes);
   url.searchParams.set('state', state);
   url.searchParams.set('nonce', nonce);
   url.searchParams.set('code_challenge', createHash('sha256').update(verifier).digest('base64url'));
   url.searchParams.set('code_challenge_method', 'S256');
+  for (const [key, value] of Object.entries(options.extra ?? {})) url.searchParams.set(key, value);
   return { url: url.toString(), state };
+}
+
+/** Step 1: the provider's authorization URL, and the state to bind to the browser (cookie). */
+export async function beginLogin(config: OidcConfig, origin: string, next: string): Promise<{ url: string; state: string }> {
+  return beginCodeFlow(config, { redirectUri: redirectUri(config, origin), scopes: config.scopes, purpose: 'sso', next });
 }
 
 /** The value at a dotted path of the claims (`realm_access.roles`). */
@@ -271,32 +304,52 @@ export function mappedRole(claims: Claims, config: Pick<OidcConfig, 'roleClaim' 
   return roles.includes('admin') ? 'admin' : roles.includes('member') ? 'member' : undefined;
 }
 
-/** Step 2: exchange the code, verify the ID token and find or create the user. */
-export async function completeLogin(config: OidcConfig, params: { code?: string | null; state?: string | null; cookieState?: string }): Promise<{ user: UserRecord; next: string }> {
+/**
+ * Step 2 of any code flow: the state must be the browser's own (`cookieState`) and a pending sign-in of this `purpose`, taken once;
+ * then the code is exchanged (with the PKCE verifier) and the ID token verified. Returns the claims, with the userinfo's email when the
+ * token has none. `beforeExchange` runs once the sign-in is known to be genuine (SSO refuses before the owner exists).
+ */
+export async function finishCodeFlow(
+  client: OidcClient,
+  params: { code?: string | null; state?: string | null; cookieState?: string; purpose: FlowPurpose; beforeExchange?: () => void; wantsRoles?: string },
+): Promise<{ claims: Claims; next: string; discovery: Discovery }> {
   const { code, state } = params;
   if (!code || !state) throw new OidcError('The provider sent no authorization code');
   // Started in another browser: the pending sign-in stays for the browser that started it.
   if (!params.cookieState || params.cookieState !== state) throw new OidcError('This sign-in expired or was started in another browser. Try again.');
-  const entry = await takePending(state);
+  const entry = await takePending(state, params.purpose);
   if (!entry || Date.now() - entry.at > STATE_TTL_MS) throw new OidcError('This sign-in expired or was started in another browser. Try again.');
-  if (setupRequired()) throw new OidcError('Finish the owner setup before signing in with SSO');
+  params.beforeExchange?.();
 
-  const discovery = await discover(config);
-  const body = new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: entry.redirectUri, code_verifier: entry.verifier, client_id: config.clientId });
+  const discovery = await discover(client);
+  const body = new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: entry.redirectUri, code_verifier: entry.verifier, client_id: client.clientId });
   const headers: Record<string, string> = { 'content-type': 'application/x-www-form-urlencoded' };
-  if (config.clientSecret) {
+  if (client.clientSecret) {
     const methods = discovery.token_endpoint_auth_methods_supported;
-    if (methods && !methods.includes('client_secret_basic') && methods.includes('client_secret_post')) body.set('client_secret', config.clientSecret);
-    else headers.authorization = `Basic ${Buffer.from(`${encodeURIComponent(config.clientId)}:${encodeURIComponent(config.clientSecret)}`).toString('base64')}`;
+    if (methods && !methods.includes('client_secret_basic') && methods.includes('client_secret_post')) body.set('client_secret', client.clientSecret);
+    else headers.authorization = `Basic ${Buffer.from(`${encodeURIComponent(client.clientId)}:${encodeURIComponent(client.clientSecret)}`).toString('base64')}`;
   }
   const tokens = await getJson<{ id_token?: string; access_token?: string }>(discovery.token_endpoint, { method: 'POST', headers, body });
   if (!tokens.id_token) throw new OidcError('The provider returned no ID token (is the `openid` scope allowed?)');
-  let claims = await verifyIdToken(tokens.id_token, config, discovery, entry.nonce);
-  if ((!claims.email || claimAt(claims, config.roleClaim) === undefined) && discovery.userinfo_endpoint && tokens.access_token) {
+  let claims = await verifyIdToken(tokens.id_token, client, discovery, entry.nonce);
+  if ((!claims.email || (params.wantsRoles !== undefined && claimAt(claims, params.wantsRoles) === undefined)) && discovery.userinfo_endpoint && tokens.access_token) {
     const info = await getJson<Claims>(discovery.userinfo_endpoint, { headers: { authorization: `Bearer ${tokens.access_token}` } }).catch(() => undefined);
     if (info && info.sub === claims.sub) claims = { ...info, ...claims, ...(claims.email ? {} : { email: info.email, email_verified: info.email_verified }) };
   }
-  return { user: await signInUser(config, claims), next: entry.next };
+  return { claims, next: entry.next, discovery };
+}
+
+/** Step 2: exchange the code, verify the ID token and find or create the user. */
+export async function completeLogin(config: OidcConfig, params: { code?: string | null; state?: string | null; cookieState?: string }): Promise<{ user: UserRecord; next: string }> {
+  const { claims, next } = await finishCodeFlow(config, {
+    ...params,
+    purpose: 'sso',
+    wantsRoles: config.roleClaim,
+    beforeExchange: () => {
+      if (setupRequired()) throw new OidcError('Finish the owner setup before signing in with SSO');
+    },
+  });
+  return { user: await signInUser(config, claims), next };
 }
 
 /** Find (by SSO identity, then verified email) or create the user of these claims, with their mapped role. */

@@ -19,8 +19,19 @@ export const PATH_HEADER = 'x-landflow-path';
 /** Sign-in pages: no session needed, and no sidebar. */
 export const AUTH_PAGES = ['/login', '/setup', '/invite', '/forgot-password', '/reset-password'] as const;
 
-/** Public pages besides the sign-in pages (hosted chat), shown without the sidebar too. */
-export const PUBLIC_PAGES = ['/chat'] as const;
+/**
+ * Public pages besides the sign-in pages (hosted chat), shown without the sidebar too. `/request-access` (C36) is the page where
+ * people without a Landflow account ask for access, and its routes below `/request-access/api`: they authenticate with the requester
+ * session (`REQUESTER_COOKIE`), never with Landflow's, and answer 404 while an admin has not switched the feature on.
+ */
+export const PUBLIC_PAGES = ['/chat', '/request-access'] as const;
+
+/** C36: the requester session of a person without a Landflow account (HttpOnly, SameSite=Strict, Path=/request-access). Landflow's guard never reads it. */
+export const REQUESTER_COOKIE = 'landflow_requester';
+/** C36: the state of a Google sign-in in progress for such a person (SameSite=Lax, only on the callback's path). */
+export const REQUESTER_OIDC_COOKIE = 'landflow_requester_oidc';
+/** C36: where the page and its routes live: one prefix, so one cookie path covers both. */
+export const REQUESTER_PATH = '/request-access';
 
 /** Public API routes and route-handler paths (a prefix matches itself and everything below it). */
 export const PUBLIC_ROUTES = [
