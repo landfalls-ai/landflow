@@ -1355,7 +1355,7 @@ function paths(): Record<string, Record<string, Json>> {
   });
 
   // C31: project keys (docs/features/secrets-and-environments.md#project-keys). Owner only, session only.
-  const reseal = { resealed: { type: 'integer' }, current: { type: 'integer' }, failed: array({ type: 'string' }), skipped: { type: 'integer' } };
+  const reseal = { resealed: { type: 'integer' }, current: { type: 'integer' }, failed: array({ type: 'string' }), skipped: { type: 'integer' }, pending: array({ type: 'string' }) };
   add('get', '/api/settings/encryption/project-keys', {
     tag: 'Settings',
     id: 'getProjectKeys',
@@ -1374,7 +1374,7 @@ function paths(): Record<string, Record<string, Json>> {
     id: 'moveCredentialsBetweenKeys',
     summary: 'Migrate credentials onto project keys, or revert them to the ring',
     description:
-      'Owner only, session only. `migrate` seals every credential with its project’s active key, one at a time, and deletes retired keys nothing names and keys of projects that are gone; `revert` seals every credential with the ring’s primary key as a version 2 value (run it before a downgrade to a build without project keys, and check `onProjectKeys` is 0). Both are idempotent: run again while `done` is false. Audited fail-closed as `encryption.project_key.migrated` / `.reverted`: 503 when the event can’t be stored under `LANDFLOW_AUDIT_FAIL_CLOSED`.',
+      'Owner only, session only. `migrate` seals every credential with its project’s active key, one at a time, and sweeps: keys retired for 15 minutes that no credential names are deleted (keys of projects that are gone are retired first); `revert` seals every credential with the ring’s primary key as a version 2 value (run it before a downgrade to a build without project keys, and check `onProjectKeys` is 0). Both are idempotent: run again while `done` is false. Audited fail-closed as `encryption.project_key.migrated` / `.reverted`: 503 when the event can’t be stored under `LANDFLOW_AUDIT_FAIL_CLOSED`.',
     body: jsonBody(object({ action: { type: 'string', enum: ['migrate', 'revert'] } }, ['action'])),
     responses: {
       200: reply('What moved', object({ ...reseal, destroyed: array({ type: 'string' }), onProjectKeys: { type: 'integer' }, done: { type: 'boolean' } }, ['resealed', 'current', 'failed', 'done'])),
@@ -1387,10 +1387,10 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Settings',
     id: 'rotateProjectKey',
     summary: 'Rotate one project’s key',
-    description: 'Owner only, session only. A new key version for the project: its credentials are re-sealed with it one at a time (no other project is touched) and the old version is deleted once no credential names it. `failed` lists credentials that stayed on the old version. Audited fail-closed as `encryption.project_key.rotated`.',
+    description: 'Owner only, session only. A new key version for the project: its credentials are re-sealed with it one at a time (no other project is touched) and the old version is retired (a later sweep deletes it). `failed` lists credentials that stayed on the old version. Audited fail-closed as `encryption.project_key.rotated`.',
     pathParams: { projectId: 'The project id' },
     responses: {
-      200: reply('The new version', object({ version: { type: 'integer' }, resealed: { type: 'integer' }, failed: array({ type: 'string' }), destroyed: array({ type: 'integer' }), done: { type: 'boolean' } }, ['version', 'resealed', 'failed', 'destroyed', 'done'])),
+      200: reply('The new version', object({ version: { type: 'integer' }, resealed: { type: 'integer' }, failed: array({ type: 'string' }), done: { type: 'boolean' } }, ['version', 'resealed', 'failed', 'done'])),
       403: errorRef('Not the owner'),
       404: notFound,
       503: errorRef('The audit log is unavailable'),

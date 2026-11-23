@@ -9,6 +9,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
+const LATER = Date.now() + 60 * 60_000; // past the grace period a retired key waits before a sweep may delete it
 
 const dataDir = mkdtempSync(join(tmpdir(), 'landflow-project-keys-move-'));
 const previousEnv = { ...process.env };
@@ -76,8 +77,23 @@ describe('a credential and its project', () => {
   });
 });
 
+describe('LANDFLOW_PROJECT_KEYS=off', () => {
+  it('seals new credentials on the ring, as before project keys; turning it on again seals them with the project key', () => {
+    const team = projects.createTeamProject({ name: 'Switch' });
+    process.env.LANDFLOW_PROJECT_KEYS = 'off';
+    try {
+      const id = create(team.id, 'switch-secret-123456');
+      expect(credentials.sealedWith(id)).toBe('ring:k1');
+      expect(valueOf(id)).toBe('switch-secret-123456');
+    } finally {
+      delete process.env.LANDFLOW_PROJECT_KEYS;
+    }
+    expect(credentials.sealedWith(create(team.id, 'switch-secret-654321'))).toBe(`dek:${team.id}.1`);
+  });
+});
+
 describe('deleting a project', () => {
-  it('with a transfer: the credentials are re-sealed with the target’s key and the project’s keys are destroyed', () => {
+  it('with a transfer: the credentials are re-sealed with the target’s key and the project’s keys are retired, then deleted by a sweep after the grace period', async () => {
     const from = projects.createTeamProject({ name: 'Going' });
     const to = projects.createTeamProject({ name: 'Staying' });
     const id = create(from.id, 'going-secret-12345');
@@ -85,11 +101,17 @@ describe('deleting a project', () => {
     deleteProjectWithTransfer(from.id, to.id);
     expect(credentials.sealedWith(id)).toBe(`dek:${to.id}.1`);
     expect(valueOf(id)).toBe('going-secret-12345');
+    expect(keyRowsOf(from.id)).toEqual([{ version: 1, state: 'retired' }]);
+    // Not within the grace period (another process may still be sealing with it)...
+    expect(await projectKeys.sweep(undefined, Date.now())).toEqual([]);
+    expect(keyRowsOf(from.id)).toHaveLength(1);
+    // ...and after it, once nothing names it.
+    expect(await projectKeys.sweep(undefined, LATER)).toContain(`${from.id}:1`);
     expect(keyRowsOf(from.id)).toEqual([]);
     expect(database().all("SELECT 1 FROM audit_events WHERE action = 'encryption.project_key.destroyed'").length).toBeGreaterThanOrEqual(1);
   });
 
-  it('after its credentials were deleted: no key is left, and a copy of the database and credentials.json cannot open the old ciphertext (AS-6)', () => {
+  it('after its credentials were deleted: once swept no key is left, and a copy of the database and credentials.json cannot open the old ciphertext (AS-6)', async () => {
     const doomed = projects.createTeamProject({ name: 'Doomed' });
     const id = create(doomed.id, 'doomed-secret-12345');
     const stolen = structuredClone(JSON.parse(readFileSync(join(dataDir, 'credentials.json'), 'utf8')).credentials.find((c: { id: string }) => c.id === id)) as { data: import('@/lib/server/credentials/key-ring').SealedValue };
@@ -98,6 +120,10 @@ describe('deleting a project', () => {
     credentials.delete(id);
     projects.forgetResource('credential', id);
     deleteProjectWithTransfer(doomed.id);
+    expect(keyRowsOf(doomed.id)).toEqual([{ version: 1, state: 'retired' }]);
+    // The delayed crypto-shred: a sweep before the grace period keeps it, one after deletes it.
+    expect(await projectKeys.sweep(undefined, Date.now())).toEqual([]);
+    expect(await projectKeys.sweep(undefined, LATER)).toContain(`${doomed.id}:1`);
     expect(keyRowsOf(doomed.id)).toEqual([]);
     // The thief has the ciphertext and the ring (the env key) but the project's key is nowhere: not in the table, not in the file.
     expect(stolen.data).toMatchObject({ v: 3, dek: `${doomed.id}.1` });
@@ -106,7 +132,7 @@ describe('deleting a project', () => {
     expect(readFileSync(join(dataDir, 'credentials.json'), 'utf8')).not.toContain('doomed-secret-12345');
   });
 
-  it('when re-sealing fails the credential stays readable on the old key and that key is kept, retired; migrate finishes it', () => {
+  it('when re-sealing fails the credential stays readable on the old key and that key is kept, retired; migrate finishes it', async () => {
     const from = projects.createTeamProject({ name: 'Failing' });
     const to = projects.createTeamProject({ name: 'Receiving' });
     const id = create(from.id, 'failing-secret-12345');
@@ -123,7 +149,7 @@ describe('deleting a project', () => {
     expect(keyRowsOf(from.id)).toEqual([{ version: 1, state: 'retired' }]);
     const status = projectKeys.status();
     expect(status.projects.find((p) => p.projectId === from.id)).toMatchObject({ retired: [1], credentials: 1 });
-    const result = projectKeys.migrate((projectId) => Boolean(projects.getProject(projectId)));
+    const result = await projectKeys.migrate((projectId) => Boolean(projects.getProject(projectId)), LATER);
     expect(result.done).toBe(true);
     expect(credentials.sealedWith(id)).toBe(`dek:${to.id}.1`);
     expect(valueOf(id)).toBe('failing-secret-12345');
@@ -132,7 +158,7 @@ describe('deleting a project', () => {
 });
 
 describe('removing a user', () => {
-  it('re-seals what their personal project owned with the target’s key and destroys the personal project’s key', () => {
+  it('re-seals what their personal project owned with the target’s key and retires the personal project’s key, which a sweep deletes later', async () => {
     const personal = projects.ensurePersonalProject(alice.id)!;
     const target = projects.createTeamProject({ name: 'Inheritor' });
     const id = create(personal, 'alice-secret-123456');
@@ -140,6 +166,8 @@ describe('removing a user', () => {
     deleteUserWithTransfer(alice.id, { projectId: target.id });
     expect(credentials.sealedWith(id)).toBe(`dek:${target.id}.1`);
     expect(valueOf(id)).toBe('alice-secret-123456');
+    expect(keyRowsOf(personal)).toEqual([{ version: 1, state: 'retired' }]);
+    await projectKeys.sweep(undefined, LATER);
     expect(keyRowsOf(personal)).toEqual([]);
   });
 });

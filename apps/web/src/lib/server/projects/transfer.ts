@@ -8,6 +8,7 @@
  */
 import { recordAudit } from '../audit';
 import { projectKeys } from '../credentials/project-keys'; // C31:
+import { logger } from '../telemetry/logger';
 import { personalProjectId, type ResourceKind, type ShareRole, type TransferTarget } from '../../shared/projects';
 import { authDb } from '../auth/db';
 import { deleteUser, getUser } from '../auth/users';
@@ -80,6 +81,11 @@ export function moveResource(kind: ResourceKind, id: string, projectId: string, 
     if (kind === 'credential') projectKeys.resealCredentials([id]);
   }
   return { from: result.from, to: result.to };
+}
+
+/** C31: a project is gone: its keys are retired now and deleted by a later sweep (not here: another process may still be sealing with them). A failure is logged; `migrate` retries. */
+function removed(projectId: string) {
+  projectKeys.projectRemoved(projectId).catch((error) => logger.warn('a removed project’s keys could not be retired', { 'landflow.project_key.project': projectId, error: error instanceof Error ? error.name : 'error' }));
 }
 
 /** Data table names are unique per project: a table moving in with a name the project already has becomes `name 2`, `name 3`… */
@@ -188,9 +194,9 @@ export function deleteUserWithTransfer(userId: string, target?: TransferTarget, 
     return { moved, retired, credentialIds, ...(to && { to }) };
   });
   for (const practiceId of retired) settleRetired(practiceId, actorId);
-  // C31: what moved is sealed with the new project's key, then the personal project's keys go (when nothing names them).
+  // C31: what moved is sealed with the new project's key, then the personal project's keys are retired.
   projectKeys.resealCredentials(credentialIds);
-  projectKeys.destroyIfUnused(personal);
+  removed(personal);
   return result;
 }
 
@@ -220,9 +226,9 @@ export function deleteProjectWithTransfer(projectId: string, transferTo?: string
   });
   // The project's practices are retired: their open inbox suggestions are dismissed, so none waits on a project that is gone.
   for (const practiceId of result.retired) settleRetired(practiceId, actorId);
-  // C31: what moved is sealed with the target's key, then this project's keys are destroyed (kept, retired, while a credential still names them).
+  // C31: what moved is sealed with the target's key, then this project's keys are retired.
   projectKeys.resealCredentials(result.credentialIds);
-  projectKeys.destroyIfUnused(projectId);
+  removed(projectId);
   recordAudit({
     action: 'project.delete',
     target: { type: 'project', id: projectId, name: project.name },

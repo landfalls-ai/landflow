@@ -17,6 +17,7 @@ import { configStoreKind, writeJsonFile } from '../config-store';
 import { database } from '../db';
 import { store } from '../store';
 import { projectKeys } from './project-keys';
+import type { RewrapResult } from './project-key-store';
 import { credentials, parseSealedString } from './vault';
 
 export interface RotationResult {
@@ -85,8 +86,19 @@ function resealText(text: string, tally: { resealed: number; current: number; fa
   return tally.resealed === before ? undefined : JSON.stringify(walked);
 }
 
-/** Re-seal every stored sealed value with the primary key. Idempotent; call it with the new ring on every process. */
-export function rotateEncryption(): RotationResult {
+/**
+ * Root rotation as the route and the script run it: the project keys are re-wrapped first (in Postgres mode that waits for the
+ * database), then everything else is re-sealed.
+ */
+export async function rotateEncryptionAll(): Promise<RotationResult> {
+  return rotateEncryption({ projectKeys: await projectKeys.rewrapAll() });
+}
+
+/**
+ * Re-seal every stored sealed value with the primary key. Idempotent; call it with the new ring on every process. Project keys are
+ * re-wrapped here only without Postgres (`rotateEncryptionAll` does it where that has to wait): pass their result when the caller did.
+ */
+export function rotateEncryption(options: { projectKeys?: RewrapResult } = {}): RotationResult {
   const result: RotationResult = { primary: credentials.primaryKid, resealed: 0, current: 0, failed: [], stores: {}, projectKeys: { rewrapped: 0, current: 0, failed: [] } };
   const count = (name: string, tally: { resealed: number; current: number; failed: number }, ids: string[] = []) => {
     result.resealed += tally.resealed;
@@ -96,7 +108,7 @@ export function rotateEncryption(): RotationResult {
   };
 
   // C31: project keys first: they are re-wrapped, and the credentials sealed with them are left as they are.
-  result.projectKeys = projectKeys.rewrapAll();
+  result.projectKeys = options.projectKeys ?? (database().kind === 'postgres' ? { rewrapped: 0, current: 0, failed: [] } : projectKeys.rewrapAllNow());
   result.failed.push(...result.projectKeys.failed.map((id) => `project_keys:${id}`));
 
   const creds = credentials.rotateCredentials();

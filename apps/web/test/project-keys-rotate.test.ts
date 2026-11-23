@@ -31,6 +31,7 @@ afterAll(() => {
   Object.assign(process.env, previousEnv);
 });
 
+const LATER = Date.now() + 60 * 60_000; // past the grace period before a retired key may be deleted
 const PROJECTS = 20;
 const COUNT = 10_000;
 const projectOf = (i: number) => `prj_rot_${i % PROJECTS}`;
@@ -105,10 +106,10 @@ describe('root rotation with project keys (AS-4)', () => {
 });
 
 describe('rotating one project’s key (AS-7)', () => {
-  it('moves that project’s credentials to the new version and leaves every other project alone', () => {
+  it('moves that project’s credentials to the new version and leaves every other project alone; the old version is retired, and a sweep after the grace period deletes it', async () => {
     const before = credentialRows();
-    const result = projectKeys.rotate('prj_rot_3');
-    expect(result).toMatchObject({ version: 2, resealed: COUNT / PROJECTS, failed: [], destroyed: [1] });
+    const result = await projectKeys.rotate('prj_rot_3');
+    expect(result).toMatchObject({ version: 2, resealed: COUNT / PROJECTS, failed: [] });
     const after = credentialRows();
     let changed = 0;
     for (const [id, data] of after) {
@@ -120,22 +121,26 @@ describe('rotating one project’s key (AS-7)', () => {
     }
     expect(changed).toBe(COUNT / PROJECTS);
     expect(credentials.dataFor({ id: 'cred_rot_3', name: 'x' }, 'core.httpHeaderAuth')).toMatchObject({ value: 'secret-value-3-padding' });
-    // Version 1 is gone (nothing names it); the other projects still have only version 1.
+    // Version 1 is only retired (another process may still be sealing with it): a sweep inside the grace period keeps it, one after deletes it. The other projects still have only version 1.
+    expect(keyRows().has('prj_rot_3:1')).toBe(true);
+    expect(await projectKeys.sweep(undefined, Date.now())).toEqual([]);
+    expect(await projectKeys.sweep(undefined, Date.now() + 60 * 60_000)).toEqual(['prj_rot_3:1']);
     expect(keyRows().has('prj_rot_3:1')).toBe(false);
     expect(keyRows().has('prj_rot_4:1')).toBe(true);
     expect(database().all("SELECT 1 FROM audit_events WHERE action = 'encryption.project_key.rotated'")).toHaveLength(1);
   });
 
-  it('keeps the old version while a credential that failed to move still names it', () => {
+  it('keeps the old version while a credential that failed to move still names it, even to a sweep long after', async () => {
     const real = CredentialTable.prototype.save;
     const spy = vi.spyOn(CredentialTable.prototype, 'save').mockImplementation(function (this: unknown, change: { saved: { id: string } } | { removed: string }) {
       if ('saved' in change && change.saved.id === 'cred_rot_5') throw new Error('write failed');
       return (real as (c: unknown) => void).call(this, change);
     } as never);
     try {
-      const result = projectKeys.rotate('prj_rot_5');
+      const result = await projectKeys.rotate('prj_rot_5');
       expect(result.failed).toEqual(['cred_rot_5']);
-      expect(result.destroyed).toEqual([]);
+      expect(keyRows().has('prj_rot_5:1')).toBe(true);
+      expect(await projectKeys.sweep(undefined, Date.now() + 60 * 60_000)).toEqual([]);
       expect(keyRows().has('prj_rot_5:1')).toBe(true);
     } finally {
       spy.mockRestore();
@@ -159,7 +164,7 @@ describe('migrate and revert', () => {
     credentials.setProjectResolver((id) => home.get(id));
   });
 
-  it('is resumable: writes that stop after 250 leave the rest on the ring, and a rerun finishes with no failures (AS-3)', () => {
+  it('is resumable: writes that stop after 250 leave the rest on the ring, and a rerun finishes with no failures (AS-3)', async () => {
     expect(credentials.sealedWithAll().filter((c) => c.sealedWith === 'ring:k2')).toHaveLength(OLD);
     const real = CredentialTable.prototype.save;
     let writes = 0;
@@ -167,9 +172,9 @@ describe('migrate and revert', () => {
       if (++writes > 250) throw new Error('killed');
       return (real as (c: unknown) => void).call(this, change);
     } as never);
-    let first: ReturnType<typeof projectKeys.migrate>;
+    let first: Awaited<ReturnType<typeof projectKeys.migrate>>;
     try {
-      first = projectKeys.migrate();
+      first = await projectKeys.migrate(undefined, LATER);
     } finally {
       spy.mockRestore();
     }
@@ -180,13 +185,13 @@ describe('migrate and revert', () => {
     // Everything is still readable, whichever way it is sealed.
     for (const i of [0, 249, 250, 499]) expect(credentials.dataFor({ id: `cred_old_${i}`, name: 'x' }, 'core.httpHeaderAuth')).toMatchObject({ value: `old-secret-${i}-padding` });
 
-    const second = projectKeys.migrate();
+    const second = await projectKeys.migrate(undefined, LATER);
     expect(second).toMatchObject({ resealed: OLD + 1 - 250, failed: [], done: true });
     // cred_rot_5 is on version 2 now, and version 1, which nothing names, is gone.
     expect(credentials.sealedWith('cred_rot_5')).toBe('dek:prj_rot_5.2');
     expect([...first.destroyed, ...second.destroyed]).toContain('prj_rot_5:1');
     expect(credentials.sealedWithAll().filter((c) => c.sealedWith.startsWith('ring:'))).toHaveLength(0);
-    expect(projectKeys.migrate()).toMatchObject({ resealed: 0, failed: [], done: true });
+    expect(await projectKeys.migrate(undefined, LATER)).toMatchObject({ resealed: 0, failed: [], done: true });
     expect(database().all("SELECT 1 FROM audit_events WHERE action = 'encryption.project_key.migrated'")).toHaveLength(3);
   });
 

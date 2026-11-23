@@ -6,11 +6,11 @@
  */
 import { recordAudit } from '../src/lib/server/audit';
 import { closeDatabase, database, openDatabase } from '../src/lib/server/db';
-import { rotateEncryption } from '../src/lib/server/credentials/rotate';
+import { rotateEncryptionAll } from '../src/lib/server/credentials/rotate';
 
 async function main(): Promise<number> {
   await openDatabase();
-  const result = rotateEncryption();
+  const result = await rotateEncryptionAll();
   recordAudit({ action: 'encryption.rotate', target: { type: 'settings', id: 'encryption', name: 'Encryption key' }, details: { primary: result.primary, resealed: result.resealed, current: result.current, failed: result.failed.length, stores: result.stores, projectKeysRewrapped: result.projectKeys.rewrapped, via: 'script' } });
   console.log(`Primary key ${result.primary}: re-sealed ${result.resealed}, already current ${result.current}, failed ${result.failed.length}.`);
   for (const [name, count] of Object.entries(result.stores)) console.log(`  ${name}: ${count}`);

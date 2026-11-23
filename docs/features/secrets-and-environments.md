@@ -89,9 +89,12 @@ project's key seals its credentials (`lib/server/credentials/project-key-store.t
   A version 1 or 2 credential is re-sealed on the ring as before (never onto a project key); a version 3 one is left alone.
 - **Moving and deleting.** Moving a credential to another project re-seals it with the target's key, right after the move
   commits. Deleting a project (with a transfer) or removing a user does the same for what moved and then deletes the project's
-  keys, once no credential names them; a credential whose re-seal failed stays readable on the old key, the key is kept
-  (retired) and `migrate` finishes it. A project deleted after its credentials were deleted leaves no key behind: a copy of the
-  database and `credentials.json` can't open their old ciphertext.
+  keys, which are **retired**, not deleted: a key is destroyed by a later sweep (run by `migrate`) once it has been retired for
+  15 minutes (longer than a process caches it, so none is still sealing with it) and no stored credential names it (Postgres is
+  asked, not only this process's copy). A credential whose re-seal failed stays readable on the old key, and the key stays
+  until `migrate` has moved it. So crypto-shredding a project is **delayed**: after the project is deleted and its
+  credentials are gone, run `migrate` once more than 15 minutes later; from then on a copy of the database and
+  `credentials.json` can't open their old ciphertext (a backup taken earlier still holds the wrapped key).
 - **Owner routes** (owner only, session only, no API key):
 
   ```bash
@@ -106,17 +109,26 @@ project's key seals its credentials (`lib/server/credentials/project-key-store.t
   *Status* lists per project its active and retired versions and the credentials sealed with it, the credentials still on the
   ring (`onRing`) and keys this process can't unwrap (`unreadable`: the ring lacks the key that wrapped them). *Migrate* seals
   every credential with its project's active key, one at a time: run it again after an interruption or while `done` is false;
-  it also deletes retired keys nothing names and keys of projects that no longer exist. *Rotate* makes a new version, re-seals
-  that project's credentials only and deletes the old version once nothing names it.
+  it also sweeps (above): keys retired for 15 minutes that no credential names are deleted; keys of projects that no longer
+  exist are retired first. *Rotate* makes a new version, re-seals that project's credentials only and retires the old
+  version (the sweep deletes it later).
 - **Audit.** Creating a key and the root re-wrap are fail-open (as root rotation is: a save never waits on them). Rotating a
   project's key, destroying one, migrate and revert are fail-closed: with `LANDFLOW_AUDIT_FAIL_CLOSED=true` and no audit
   storage they answer 503 and change nothing (a destroy keeps the key, retired). Events: `encryption.project_key.created`,
   `.rewrapped`, `.rotated`, `.destroyed`, `.migrated`, `.reverted`; they carry ids, versions and counts, never key material.
-- **Before a downgrade** to a build without project keys, run **revert** and check that `onProjectKeys` is 0: that build
-  can't open version 3 values. Revert puts every credential back on the ring's primary key as version 2 (the keys stay in
-  `project_keys`; a save after it seals with them again, so revert right before the downgrade and rerun it if the count isn't 0).
+- **Before a downgrade** to a build without project keys: set `LANDFLOW_PROJECT_KEYS=off` on every process (new saves then
+  seal on the ring), then run **revert** and check that `onProjectKeys` is 0: that build can't open version 3 values. Revert
+  puts every credential back on the ring's primary key as version 2 (the keys stay in `project_keys`).
+- **Other ways a credential is created.** A credential made by Git sync or a promotion is sealed with the key of its project
+  (the default one until it is moved) only if the project's key exists; otherwise it stays on the ring until its next save or
+  `migrate`. The same holds in queue mode for the first credential of a project: the key is made in Postgres, and a save that
+  gets there first is sealed on the ring and moved by the next save or `migrate`.
+- **Outside the shred.** Plaintext copies of a credential that left the vault are not covered by destroying a key: the
+  secrets kagent holds for a deployed agent (Kubernetes Secrets) and the keys LiteLLM was given.
 - **Back up together.** Credentials (`credentials.json` or the `credentials` table), the `project_keys` table and the ring are
   one unit: a restore of the credentials without their keys loses them (that is also how a project is shredded).
-- **Queue mode.** The key rows and the credentials replicate like any table; a process reads a project's active version from
-  its copy of the table on each save and caches an unwrapped key for ten minutes, so a rotation in one process is used by the
-  others as soon as the row reaches them (old versions stay readable until nothing names them).
+- **Queue mode.** A key exists once Postgres has it: it is created, and a version is added, in Postgres in one transaction under
+  a lock per project, so two processes never make different keys. Changes to a key row are conditional updates that name only
+  the column they change, and tell the other processes, which drop what they cached for the project (an unwrapped key is also
+  zeroed and dropped after ten minutes). A process that has not yet heard of a rotation may seal one more value with the old
+  version; that is why a rotation only retires it.

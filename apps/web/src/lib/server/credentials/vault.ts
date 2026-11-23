@@ -401,10 +401,12 @@ export class CredentialVault {
     return sealWith(this.ring, JSON.stringify(data), credentialAad(id));
   }
 
-  private sealProjectKey(data: JsonObject, id: string, projectId: string): Sealed {
+  /** Sealed with the project's active key, or undefined when this process has none yet (Postgres mode: the key is being made, see `ProjectKeyStore.activeFor`). */
+  private sealProjectKey(data: JsonObject, id: string, projectId: string): Sealed | undefined {
     try {
-      const { version, key } = this.projectKeys.activeFor(projectId);
-      return sealWithDek(key, `${projectId}.${version}`, JSON.stringify(data), credentialAad(id));
+      const active = this.projectKeys.activeFor(projectId);
+      if (!active) return undefined;
+      return sealWithDek(active.key, `${projectId}.${active.version}`, JSON.stringify(data), credentialAad(id));
     } catch (error) {
       if (error instanceof ProjectKeyError) throw new CredentialError(`The encryption key of this credential's project can't be used: ${error.message}`, 500);
       throw error;
@@ -418,7 +420,22 @@ export class CredentialVault {
 
   private seal(data: JsonObject, id: string): Sealed {
     const project = this.sealProject(id);
-    return project ? this.sealProjectKey(data, id, project) : this.sealRing(data, id);
+    if (!project) return this.sealRing(data, id);
+    const sealed = this.sealProjectKey(data, id, project);
+    if (sealed) return sealed;
+    // No key for this project reached this process yet (queue mode): readable on the ring now, a key is made in Postgres in the background, and the next save or `migrate` moves it.
+    this.projectKeys.ensureInBackground(project);
+    return this.sealRing(data, id);
+  }
+
+  /** Make sure a credential's project has a key this process can use, before sealing (routes, migrate and moves wait for it). */
+  async ensureProjectKey(projectId: string): Promise<void> {
+    await this.projectKeys.ensure(projectId);
+  }
+
+  /** The project whose key would seal this credential (undefined: the ring). */
+  projectFor(id: string): string | undefined {
+    return this.sealProject(id);
   }
 
   /** Which key a credential is sealed with (undefined: no such credential). */
@@ -446,9 +463,10 @@ export class CredentialVault {
 
   /**
    * Re-seal one credential, written on its own: `project` onto its project's active key, `ring` onto the ring's primary.
-   * `current` when it is there already; `skipped` when `project` has no project to seal with. Throws when it can't be opened or written.
+   * `current` when it is there already; `skipped` when `project` has no project to seal with; `pending` when its project's key
+   * has not reached this process (queue mode; `ensureProjectKey` first). Throws when it can't be opened or written.
    */
-  resealOne(id: string, target: 'project' | 'ring'): 'resealed' | 'current' | 'skipped' {
+  resealOne(id: string, target: 'project' | 'ring'): 'resealed' | 'current' | 'skipped' | 'pending' {
     const credential = this.credentials.get(id);
     if (!credential) return 'skipped';
     let next: Sealed | undefined;
@@ -461,6 +479,7 @@ export class CredentialVault {
       const have = dekOf(credential.data);
       if (have && have[0] === project && have[1] === this.projectKeys.activeVersion(project)) return 'current';
       next = this.sealProjectKey(this.open(credential), id, project);
+      if (!next) return 'pending';
     }
     // A new object, put back only if the write fails: the copy in memory never runs ahead of what is stored.
     const resealed: StoredCredential = { ...credential, data: next };

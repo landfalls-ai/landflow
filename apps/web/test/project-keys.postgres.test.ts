@@ -79,6 +79,7 @@ describe.skipIf(!enabled)('project keys in Postgres, two processes', async () =>
     const mainVault = vaultOn(main);
     const workerVault = vaultOn(worker);
     home.set('cred_pg_1', 'prj_pg');
+    await mainVault.ensureProjectKey('prj_pg');
     mainVault.create({ name: 'Sealed on main', type: 'core.httpHeaderAuth', data: header('main-secret-1234567') }, { id: 'cred_pg_1' });
     await main.flush();
     await until(() => expect(workerVault.sealedWith('cred_pg_1')).toBe('dek:prj_pg.1'));
@@ -96,10 +97,11 @@ describe.skipIf(!enabled)('project keys in Postgres, two processes', async () =>
     await until(() => expect(workerVault.sealedWith('cred_pg_1')).toBe('dek:prj_pg.1'));
     // The worker has used version 1 (and has it cached); the main rotates.
     expect(workerVault.dataFor({ id: 'cred_pg_1', name: 'x' }, 'core.httpHeaderAuth')).toMatchObject({ value: 'main-secret-1234567' });
-    const result = projectKeysOf(mainVault).rotate('prj_pg');
+    const result = await projectKeysOf(mainVault).rotate('prj_pg');
     expect(result).toMatchObject({ version: 2, resealed: 1, failed: [] });
     await main.flush();
     await until(() => expect(workerVault.sealedWith('cred_pg_1')).toBe('dek:prj_pg.2'));
+    await until(() => expect(workerVault.projectKeys.activeVersion('prj_pg')).toBe(2));
     expect(workerVault.dataFor({ id: 'cred_pg_1', name: 'x' }, 'core.httpHeaderAuth')).toMatchObject({ value: 'main-secret-1234567' });
     home.set('cred_pg_2', 'prj_pg');
     workerVault.create({ name: 'Sealed on worker', type: 'core.httpHeaderAuth', data: header('worker-secret-12345') }, { id: 'cred_pg_2' });
@@ -113,8 +115,8 @@ describe.skipIf(!enabled)('project keys in Postgres, two processes', async () =>
     const before = new Map((await direct.query<{ id: string; data: string }>('SELECT id, data FROM credentials')).rows.map((r) => [r.id, r.data]));
     // The ring after the rotation: new first, old still listed, in a vault of its own on the main's database.
     const rotated = vaultOn(main, `${K2},${K1}`);
-    const result = projectKeysOf(rotated).rewrapAll();
-    expect(result).toMatchObject({ rewrapped: 1, failed: [] });
+    const result = await projectKeysOf(rotated).rewrapAll();
+    expect(result).toMatchObject({ rewrapped: 2, failed: [] }); // prj_pg: version 2 and the retired version 1
     await main.flush();
     const wrapped = (await direct.query<{ wrapped: string }>('SELECT wrapped FROM project_keys')).rows.map((r) => r.wrapped);
     expect(wrapped.every((w) => w.startsWith('v2.k2.'))).toBe(true);
@@ -123,6 +125,63 @@ describe.skipIf(!enabled)('project keys in Postgres, two processes', async () =>
     // The worker restarts with the new key only.
     const fresh = vaultOn(worker, K2);
     await until(() => expect(fresh.dataFor({ id: 'cred_pg_1', name: 'x' }, 'core.httpHeaderAuth')).toMatchObject({ value: 'main-secret-1234567' }));
+  });
+
+  it('two processes saving the first credential of a project at once end up with one durable key: nothing is sealed with a key that exists nowhere else', async () => {
+    const a = vaultOn(main);
+    const b = vaultOn(worker);
+    home.set('cred_ra', 'prj_race');
+    home.set('cred_rb', 'prj_race');
+    a.create({ name: 'A', type: 'core.httpHeaderAuth', data: header('secret-of-a-123456') }, { id: 'cred_ra' });
+    b.create({ name: 'B', type: 'core.httpHeaderAuth', data: header('secret-of-b-123456') }, { id: 'cred_rb' });
+    await main.flush();
+    await worker.flush();
+    // Both made their key at once: Postgres holds exactly one, and it is the one both use from here on.
+    await Promise.all([a.ensureProjectKey('prj_race'), b.ensureProjectKey('prj_race')]);
+    await vi.waitFor(async () => expect((await direct.query('SELECT 1 FROM project_keys WHERE project_id = $1', ['prj_race'])).rowCount).toBe(1), { timeout: 10_000 });
+    await until(() => expect(a.projectKeys.activeVersion('prj_race')).toBe(1));
+    await until(() => expect(b.projectKeys.activeVersion('prj_race')).toBe(1));
+    expect(a.projectKeys.keyFor('prj_race', 1).equals(b.projectKeys.keyFor('prj_race', 1))).toBe(true);
+    home.set('cred_rc', 'prj_race');
+    a.create({ name: 'A2', type: 'core.httpHeaderAuth', data: header('secret-of-a2-12345') }, { id: 'cred_rc' });
+    b.create({ name: 'B2', type: 'core.httpHeaderAuth', data: header('secret-of-b2-12345') }, { id: 'cred_rd' });
+    home.set('cred_rd', 'prj_race');
+    await main.flush();
+    await worker.flush();
+    // A process that has only what Postgres holds opens every one of them.
+    const third = await openPostgres(url.toString(), mkdtempSync(join(tmpdir(), 'landflow-project-keys-pg-third-')), { instanceId: 'pk-third' });
+    opened.push(third);
+    const fresh = vaultOn(third);
+    for (const [id, value] of [['cred_ra', 'secret-of-a-123456'], ['cred_rb', 'secret-of-b-123456'], ['cred_rc', 'secret-of-a2-12345']] as const) {
+      await until(() => expect(fresh.dataFor({ id, name: 'x' }, 'core.httpHeaderAuth')).toMatchObject({ value }));
+    }
+  });
+
+  it('a rotation does not destroy the old key under a process still sealing with it: the key is only retired, and a sweep waits out the grace period and checks Postgres', async () => {
+    const a = vaultOn(main);
+    const b = vaultOn(worker);
+    const keysA = projectKeysOf(a);
+    home.set('cred_s1', 'prj_sweep');
+    await a.ensureProjectKey('prj_sweep');
+    a.create({ name: 'S1', type: 'core.httpHeaderAuth', data: header('sweep-secret-1234567') }, { id: 'cred_s1' });
+    await main.flush();
+    await until(() => expect(b.sealedWith('cred_s1')).toBe('dek:prj_sweep.1'));
+    // The worker has version 1 cached when the main rotates; its copy of the key rows is behind for a moment.
+    b.projectKeys.keyFor('prj_sweep', 1);
+    await keysA.rotate('prj_sweep');
+    expect((await direct.query<{ state: string }>('SELECT state FROM project_keys WHERE project_id = $1 AND version = 1', ['prj_sweep'])).rows).toEqual([{ state: 'retired' }]);
+    // The worker saves with what it had; a sweep right away, and one after the grace period, must not take its key.
+    home.set('cred_s2', 'prj_sweep');
+    b.create({ name: 'S2', type: 'core.httpHeaderAuth', data: header('sweep-secret-2234567') }, { id: 'cred_s2' });
+    await worker.flush();
+    expect(await keysA.sweep(undefined, Date.now())).toEqual([]);
+    const later = Date.now() + 60 * 60_000;
+    await keysA.sweep(undefined, later);
+    const third = await openPostgres(url.toString(), mkdtempSync(join(tmpdir(), 'landflow-project-keys-pg-fourth-')), { instanceId: 'pk-fourth' });
+    opened.push(third);
+    const fresh = vaultOn(third);
+    await until(() => expect(fresh.dataFor({ id: 'cred_s2', name: 'x' }, 'core.httpHeaderAuth')).toMatchObject({ value: 'sweep-secret-2234567' }));
+    expect(fresh.dataFor({ id: 'cred_s1', name: 'x' }, 'core.httpHeaderAuth')).toMatchObject({ value: 'sweep-secret-1234567' });
   });
 
   it('revert in one process reaches Postgres as plain version 2 values the ring alone opens; migrate puts them back', async () => {
@@ -138,7 +197,7 @@ describe.skipIf(!enabled)('project keys in Postgres, two processes', async () =>
       expect(sealed).toMatchObject({ v: 2, kid: 'k2' });
       expect(JSON.parse(ring.openWith(ringOnly, sealed, `landflow:credential:${id}`))).toHaveProperty('value');
     }
-    expect(keys.migrate()).toMatchObject({ failed: [], done: true });
+    expect(await keys.migrate()).toMatchObject({ failed: [], done: true });
     await main.flush();
     expect(JSON.parse((await direct.query<{ data: string }>('SELECT data FROM credentials WHERE id = $1', ['cred_pg_1'])).rows[0]!.data)).toMatchObject({ v: 3, dek: 'prj_pg.2' });
   });

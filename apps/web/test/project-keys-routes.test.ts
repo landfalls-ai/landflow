@@ -135,6 +135,6 @@ describe('audit posture (C31-D5)', () => {
     expect((await post({ action: 'revert' })).status).toBe(503);
     expect(credentials.sealedWith(id)).toBe(before);
     expect(projects.getProject(team.id)).toBeTruthy();
-    expect(database().all<{ version: number }>('SELECT version FROM project_keys WHERE project_id = ?', team.id).map((r) => Number(r.version))).toEqual([2]);
+    expect(database().all<{ version: number }>('SELECT version FROM project_keys WHERE project_id = ?', team.id).map((r) => Number(r.version))).toEqual([1, 2]); // a refused rotation added no version (1 is retired from the test above, not destroyed)
   });
 });

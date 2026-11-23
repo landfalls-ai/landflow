@@ -9,7 +9,7 @@
 import { recordAudit } from '@/lib/server/audit';
 import { requireUser } from '@/lib/server/auth';
 import { credentials } from '@/lib/server/credentials/vault';
-import { rotateEncryption } from '@/lib/server/credentials/rotate';
+import { rotateEncryptionAll } from '@/lib/server/credentials/rotate';
 import { error, handler, json } from '@/lib/server/http';
 
 export const dynamic = 'force-dynamic';
@@ -18,7 +18,7 @@ export const POST = handler(async () => {
   const user = await requireUser();
   if (user.role !== 'owner') return error('Only the owner can rotate the encryption key', 403);
   if (!credentials.ringConfigured) return error('Set LANDFLOW_ENCRYPTION_KEYS (kid:key, the new key first) on every process before rotating', 409);
-  const result = rotateEncryption();
+  const result = await rotateEncryptionAll();
   recordAudit({
     action: 'encryption.rotate',
     target: { type: 'settings', id: 'encryption', name: 'Encryption key' },

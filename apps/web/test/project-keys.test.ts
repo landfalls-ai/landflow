@@ -115,13 +115,13 @@ describe('the project key store', () => {
     expect(() => other.keyFor('prj_foreign', 1)).toThrow(expect.objectContaining({ reason: 'unwrap' }));
   });
 
-  it('never puts key bytes in a log line, an audit event or an error (AS-8)', () => {
+  it('never puts key bytes in a log line, an audit event or an error (AS-8)', async () => {
     const lines: string[] = [];
     const spies = (['debug', 'info', 'warn', 'error'] as const).map((level) => vi.spyOn(logger, level).mockImplementation(((...args: unknown[]) => void lines.push(JSON.stringify(args))) as never));
     try {
       const store = new ProjectKeyStore({ ring: keyRing });
       const { key } = store.activeFor('prj_logs');
-      store.addVersion('prj_logs');
+      await store.addVersion('prj_logs');
       const other = new ProjectKeyStore({ ring: ring.buildKeyRing(K2, undefined) });
       let message = '';
       try {
@@ -129,7 +129,7 @@ describe('the project key store', () => {
       } catch (error) {
         message = String((error as Error).message);
       }
-      other.rewrapAll();
+      await other.rewrapAll();
       const everything = [...lines, message, JSON.stringify(database().all('SELECT * FROM audit_events'))].join('\n');
       for (const form of [key.toString('hex'), key.toString('base64')]) expect(everything).not.toContain(form);
     } finally {
@@ -137,10 +137,48 @@ describe('the project key store', () => {
     }
   });
 
-  it('adding a version retires the active one and keeps it readable', () => {
+  it('zeroes a key when it is dropped, hears of another process’s change and forgets, and a status look does not keep a key', async () => {
+    const { emitTablesChanged } = await import('@/lib/server/db/replication');
+    const store = new ProjectKeyStore({ ring: keyRing });
+    const { key } = store.activeFor('prj_forget')!;
+    const copy = Buffer.from(key);
+    expect(key.equals(Buffer.alloc(32))).toBe(false);
+    // Another process changed this project's key row: this one drops what it cached, and zeroes it.
+    emitTablesChanged({ tables: new Set(['project_keys']), keys: new Map([['project_keys', [['prj_forget', 1]]]]) });
+    expect(key.equals(Buffer.alloc(32))).toBe(true);
+    const unwrapsBefore = store.unwraps;
+    expect(store.keyFor('prj_forget', 1).equals(copy)).toBe(true);
+    expect(store.unwraps).toBe(unwrapsBefore + 1);
+    // Looking at a key (status) unwraps it but keeps nothing: the next use unwraps again.
+    store.forget();
+    const row = store.rows('prj_forget')[0]!;
+    expect(store.canUnwrap(row)).toBe(true);
+    const before = store.unwraps;
+    store.keyFor('prj_forget', 1);
+    expect(store.unwraps).toBe(before + 1);
+    store.close();
+  });
+
+  it('changes only the named column of a row that is there, and never brings back one that is gone', async () => {
+    const store = new ProjectKeyStore({ ring: keyRing });
+    store.activeFor('prj_resurrect');
+    await store.destroy('prj_resurrect', [1], true);
+    await store.retire('prj_resurrect', 1);
+    expect(store.rows('prj_resurrect')).toEqual([]);
+    const other = new ProjectKeyStore({ ring: ring.buildKeyRing(K2, undefined) });
+    expect((await other.rewrapAll()).failed.length).toBeGreaterThanOrEqual(0);
+    expect(store.rows('prj_resurrect')).toEqual([]);
+  });
+
+  it('wraps with an AAD no sealSecret purpose can produce', () => {
+    expect(wrapAad('prj_a', 1).startsWith('landflow:')).toBe(false);
+    expect(wrapAad('prj_a', 1)).not.toBe(wrapAad('prj_a', 2));
+  });
+
+  it('adding a version retires the active one and keeps it readable', async () => {
     const store = new ProjectKeyStore({ ring: keyRing });
     const v1 = store.activeFor('prj_versions');
-    const { version, previous } = store.addVersion('prj_versions');
+    const { version, previous } = await store.addVersion('prj_versions');
     expect([version, previous]).toEqual([2, 1]);
     expect(store.rows('prj_versions').map((r) => [r.version, r.state])).toEqual([[1, 'retired'], [2, 'active']]);
     expect(store.activeFor('prj_versions').version).toBe(2);
@@ -221,11 +259,11 @@ describe('the vault with a project resolver', () => {
     expect(vault.sealedWith('cred_ring')).toBe('ring:k1');
   });
 
-  it('a credential whose project key is gone says so', () => {
+  it('a credential whose project key is gone says so', async () => {
     const home = new Map<string, string>([['cred_gone', 'prj_gone']]);
     const { vault } = vaultWith(home);
     vault.create({ name: 'Gone', type: 'core.httpHeaderAuth', data: header() }, { id: 'cred_gone' });
-    vault.projectKeys.destroy('prj_gone');
+    await vault.projectKeys.destroy('prj_gone', [1], true);
     const reopened = new CredentialVault({ dir: dataDir, backend: (vault as unknown as { backend: never }).backend });
     expect(() => reopened.dataFor({ id: 'cred_gone', name: 'Gone' }, 'core.httpHeaderAuth')).toThrow(/its project's key is gone/);
   });
