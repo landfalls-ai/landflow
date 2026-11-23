@@ -848,6 +848,7 @@ recommended; [deployment.md](deployment.md#message-brokers-and-the-mcp-gateway) 
   host and to every plugin; a plugin without it cannot start a messaging binding, a host without it never uses a
   brokered endpoint. Rotation: `LANDFLOW_TRANSPORT_SECRET_PREVIOUS` (comma-separated) lists secrets that still verify
   and decrypt but no longer sign.
+- **HTTP guard (opt-in).** A plugin may require `x-landflow-plugin-token = hex(HMAC-SHA256(secret, "landflow.plugin.http/v1|" + pluginId))` on its POST routes and refuse `Origin` and cross-site requests; see [transports.md](transports.md#guarding-a-plugins-http-face).
 - **Keys.** Per plugin, two 32-byte keys by HKDF-SHA256 over the secret (no salt):
   `encKey = HKDF(secret, info = "landflow transport v1\n" + pluginId + "\nenc")` and
   `sigKey = HKDF(secret, info = "landflow transport v1\n" + pluginId + "\nsig")`. Every replica of a plugin derives the
