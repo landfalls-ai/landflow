@@ -36,7 +36,7 @@ what changed.
 | An environment variable | an entry in `apps/web/src/lib/server/config/catalog.ts` (name, default, description, group); `docs/reference/configuration.md` is generated from it with `pnpm --filter @landflow/web gen:config-docs`, never edited by hand (`config-catalog.test.ts` fails a stale page) |
 | A limit added or lifted | `docs/limitations.md` |
 | An item closed or opened | `docs/roadmap.md` (the wave's section; `## Planned next` for what is next) |
-| Every commit | one row in `docs/history.md`: `\| (this change) \| <what changed, in plain words> \| [page](link) \|` |
+| Every change | history rows in a fragment `docs/history.d/<yyyy-mm-dd>-<slug>.md` (format in `docs/development.md#history-fragments`), never in `docs/history.md` on a package branch: `\| (this change) \| <what changed, in plain words> \| [page](link) \|` |
 | A new page | a row or line in `docs/README.md` |
 | Spans, metrics, log fields | `docs/observability.md` |
 | Commands and test flags | `docs/development.md` |

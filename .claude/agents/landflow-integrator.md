@@ -25,7 +25,7 @@ package's report (deviations, risks, live checks).
 2. **Merge** each package branch with `git merge --no-ff <branch>`, smallest and most foundational first (the plan's
    dependency order).
 3. **Resolve conflicts** by kind:
-   - `docs/history.md`: keep every package's rows, in merge order, each once.
+   - `docs/history.md`: run `pnpm history:assemble` after the last merge of the wave, then `pnpm check:history`; resolve no history conflicts by hand (packages write fragments in `docs/history.d/`, never `docs/history.md`).
    - `docs/limitations.md`, `docs/roadmap.md`: append-only; keep both sides; one bullet per package under the
      section the plan names (for the backend refactor: `## Backend hardening (2026-11)`, above `## Planned next`).
    - Reference pages (`docs/reference/api.md`, `configuration.md`, `docs/development.md`, `architecture.md`,

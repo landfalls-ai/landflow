@@ -967,6 +967,7 @@ async function pullFact(ctx: Context, db: LinkDatabase, row: NotionPage, item: I
             new Date().toISOString(),
             'notion',
             editor.userId,
+            { replaceStatic: true }, // C01: a person made this edit, so a static fact takes it too
           );
           // NB08: only a Notion value that was applied counts as applied from Notion (a Landflow edit that won does not).
           applied = getFact(fact.id)?.lastSeen ?? applied;

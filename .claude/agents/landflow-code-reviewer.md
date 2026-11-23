@@ -55,7 +55,7 @@ function, its callers (`grep -rn`).
 
 **Docs**
 - Feature page, `docs/reference/api.md` / `configuration.md`, `docs/limitations.md`, `docs/roadmap.md` as needed, and a
-  `docs/history.md` row in the existing format; plain, exact sentences that match the code.
+  history fragment in `docs/history.d/` in the existing row format (none edited into `docs/history.md`); plain, exact sentences that match the code.
 
 ## Output
 

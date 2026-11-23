@@ -56,6 +56,7 @@ Every event is private by default, and not even an admin reads a private one.
 | `/brain pause`, `/brain resume` | pause closes the running session's entry (held as it stands) and stops recording and sending; resume records the session again, as a new entry |
 | `/brain practices` | the approved practices that apply here (the same text the session section holds), or "No approved practices apply here."; works in any mode |
 | `/brain learn [paths…]` | only in a listed repository: asks Claude to read the paths (default `CLAUDE.md`, `deploy/` and the config loaders it finds) and draft practices with `practice_draft`; see [Practices](#practices) |
+| `/brain status-sharing [on\|off]` | whether this machine tells Landflow your session's status; off until you turn it on, see [Status sharing](#status-sharing) |
 | `/brain forget <id>` | drops the entry here; if it was sent, deletes it with `DELETE /api/brain/work/:sourceId`. If Landflow cannot be reached the entry stays (as waiting to be deleted) and the delete is retried every minute (it is kept past the 14-day journal horizon until the brain answers). Forgetting the running session's entry does not stop recording: your next prompt opens a new entry, so use `/brain pause` to stop. A request that gets no answer in 10 seconds counts as unreachable |
 
 If the server says the brain is off, the mod pauses for that session.
@@ -126,6 +127,18 @@ A [project](projects-and-goals.md) lists the repositories its work happens in. A
 - **The session section.** `GET /api/projects/context?repo=owner/name&size=compact`, in the same 2 seconds as git, the briefing and the practices (one deadline for all four, never longer). It is sent only when this repository is in your `repos` option, and only with a URL and key: reading records nothing, so it works in every mode. The answer's block (mission, goal chain and project brief, with its own footer saying it is background, not instructions) is added as `landflow-brain:project`, before the practices and yesterday, cut to 1,500 characters. If more than one project lists the repository, the first one's block comes with a line "Also listed in: <names>". The mod adds nothing else. No project, a slow or unreachable host, a refused key or an answer it cannot read leaves the session as it was, with no error.
 - **`/brain project`.** Says which project this repository maps to, with its compact block, or "No project lists <owner/name>." It asks again, so it is right after the project changes. Outside a listed repository it says why nothing is looked up.
 - The shell does the same without Claude Code: [`landflow work context`](features/cli.md#recording-your-day-landflow-work).
+
+## Status sharing
+
+Off by default, and yours to turn on: `/brain status-sharing on` (stored in the mod's own store; `off` stops it; no
+argument shows the state). While it is on, a session in a listed repository sends the status of each step to
+`POST /api/harness/claude-code/hooks` as the Claude Code hook it stands for (`SessionStart`, `UserPromptSubmit`,
+`PreToolUse`, `PostToolUse`, `Stop`, `SessionEnd`), so `/connect` → **Your sessions** shows Thinking, Working and Idle live.
+The body holds the hook name, a random session id the mod made, the repository name and a tool's name (never an `agent_type`, so the session is always your own): never prompt text, tool
+input or output, a path or the working directory. Each request carries an order number, is fire and forget and bounded at
+2 seconds, so it never slows a prompt. Outside a listed repository nothing is sent, and `/brain pause` stops it too. The key needs the `harness:write` scope:
+without it the mod says so once ("Your key needs the harness:write scope to share status") and goes on. It is separate from
+the journal: sharing status does not send the journal, and the journal's review does not send status.
 
 ## Offline queue
 

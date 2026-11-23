@@ -11,6 +11,7 @@
  * than resolving them again.
  */
 import { createHash, randomBytes } from 'node:crypto';
+import { KAGENT_RUNTIME_LABELS } from '@landflow/protocol/harnesses';
 import type { Agent, AgentConfig, CredentialRef, KagentDeployment, KagentDrift, KagentGuard, KagentHarness, KagentPlugin, KagentRuntime, KagentStatus } from '../../shared/agents';
 import { ollamaUrl } from '../config';
 import { agentStore } from '../agents/store';
@@ -56,7 +57,8 @@ const keyOf = (kind: string, name: string) => `${kind}/${name}`;
 
 /** The runtimes Landflow writes agents for. */
 const SUPPORTED: KagentRuntime[] = ['kagent', 'claude'];
-const RUNTIME_LABEL: Record<KagentRuntime, string> = { kagent: 'kagent’s own runtime', claude: 'Claude Code', codex: 'Codex', byo: 'an image of its own' };
+/** One wording for the runtimes, shared with the kagent card (the registry: packages/protocol/src/harnesses.ts). */
+const RUNTIME_LABEL = KAGENT_RUNTIME_LABELS;
 
 /** A Harness's runtime: the one key of its spec that names one. */
 function runtimeOf(object: KubeObject): KagentRuntime {
@@ -93,7 +95,7 @@ async function harnessOf(cluster: KagentCluster, name: string): Promise<KagentHa
   const object = await getObject(cluster.connection, KAGENT_API, 'Harness', cluster.namespace, name);
   if (!object) throw new KagentError(`kagent has no Harness “${name}” in ${cluster.namespace}`);
   const harness = { name, runtime: runtimeOf(object) };
-  if (!SUPPORTED.includes(harness.runtime)) throw new KagentError(`The Harness “${name}” runs ${RUNTIME_LABEL[harness.runtime]}, which Landflow doesn’t write agents for: choose one that runs kagent’s own runtime or Claude Code`);
+  if (!SUPPORTED.includes(harness.runtime)) throw new KagentError(`The Harness “${name}” runs ${RUNTIME_LABEL[harness.runtime]}, which Landflow doesn’t write agents for: choose one that runs ${RUNTIME_LABEL.kagent} or ${RUNTIME_LABEL.claude}`);
   return harness;
 }
 

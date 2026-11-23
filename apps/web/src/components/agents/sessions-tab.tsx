@@ -11,6 +11,8 @@ import type { Agent, AgentSession, SessionSource, SessionStatus, SessionSummary 
 import type { ChatFeedback, FeedbackRating } from '@/lib/shared/chat-feedback';
 import { Badge, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
+import { BrandGlyph } from '../ui/icon';
+import type { Brand } from '@/lib/shared/brand-icons';
 import { EmptyState } from '../ui/empty-state';
 import { Segmented } from '../ui/segmented';
 import { cleanPersona } from '@/lib/shared/persona';
@@ -20,7 +22,7 @@ import { TimelineView, TraceChip, type ToolEntry } from './timeline';
 import { REASON_LABEL, useAgentRun } from './use-agent-run';
 import { useExecutionRequests } from '@/lib/client/approval-inbox'; // AP03:
 
-const SOURCE: Record<SessionSource, { label: string; icon: typeof Bot; tone: Tone }> = {
+const SOURCE: Record<SessionSource, { label: string; icon: typeof Bot; tone: Tone; brand?: Brand }> = {
   test: { label: 'Test', icon: FlaskConical, tone: 'accent' },
   schedule: { label: 'Schedule', icon: Clock, tone: 'neutral' },
   telegram: { label: 'Telegram', icon: Send, tone: 'neutral' },
@@ -30,6 +32,7 @@ const SOURCE: Record<SessionSource, { label: string; icon: typeof Bot; tone: Ton
   agent: { label: 'Agent', icon: Bot, tone: 'neutral' },
   api: { label: 'API', icon: Code, tone: 'neutral' },
   task: { label: 'Task', icon: ListTodo, tone: 'neutral' },
+  harness: { label: 'Claude Code', icon: Bot, tone: 'neutral', brand: 'claude' },
 };
 
 const STATUS: Record<SessionStatus, { label: string; tone: Tone }> = {
@@ -43,7 +46,7 @@ export function SourceBadge({ source }: { source: SessionSource }) {
   const meta = SOURCE[source] ?? SOURCE.api;
   return (
     <Badge tone={meta.tone}>
-      <meta.icon className="size-3" /> {meta.label}
+      {meta.brand ? <BrandGlyph brand={meta.brand} size={12} /> : <meta.icon className="size-3" />} {meta.label}
     </Badge>
   );
 }

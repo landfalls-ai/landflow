@@ -644,7 +644,7 @@ describe('on Claude Code', () => {
   it('refuses a Harness it can’t write to, a model Claude Code can’t run, and a plugin it can’t resolve', async () => {
     const agent = publishedAgent();
     const codex = await call<{ error: string }>(kagentRoute.PUT, agent.id, 'PUT', { credentialId: cluster.id, harness: 'codex' });
-    expect(codex).toMatchObject({ status: 400, data: { error: expect.stringContaining('The Harness “codex” runs Codex, which Landflow doesn’t write agents for') } });
+    expect(codex).toMatchObject({ status: 400, data: { error: expect.stringContaining('The Harness “codex” runs Codex, which Landflow doesn’t write agents for: choose one that runs kagent (ADK) or Claude Code') } });
     const missing = await call<{ error: string }>(kagentRoute.PUT, agent.id, 'PUT', { credentialId: cluster.id, harness: 'nope' });
     expect(missing.data.error).toBe('kagent has no Harness “nope” in kagent');
 

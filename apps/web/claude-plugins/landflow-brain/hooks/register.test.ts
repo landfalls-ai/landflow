@@ -16,7 +16,9 @@ const SPEND = { cost: 1.234, inputTokens: 1000, outputTokens: 500, calls: 4, unp
 const BRIEFING = { yesterday: [{ title: 'Ship the billing page', repo: 'acme/widgets' }], autoSend: 'allowed', brain: 'on' }
 
 /** The engine beneath the mod: git answers, a fake Landflow, a clock and a store in memory. */
-function world(on: On, init: { remote?: string; briefing?: unknown; briefingDelayMs?: number; postStatus?: number; postDelayMs?: number; deleteStatuses?: number[]; answers?: string[]; seed?: Record<string, unknown>; onAsk?: () => Promise<void>; briefingStatus?: number; askStatus?: number; askBody?: unknown; practicesText?: string; practicesDelayMs?: number; practicesDown?: boolean; project?: unknown; projectDelayMs?: number; projectStatus?: number; approved?: unknown[]; draftStatus?: number; spend?: unknown; spendStatus?: number; spendBody?: string; spendDelayMs?: number } = {}) {
+function world(on: On, init: { remote?: string; briefing?: unknown; briefingDelayMs?: number; postStatus?: number; postDelayMs?: number; deleteStatuses?: number[]; answers?: string[]; seed?: Record<string, unknown>; onAsk?: () => Promise<void>; briefingStatus?: number; askStatus?: number; askBody?: unknown; practicesText?: string; practicesDelayMs?: number; practicesDown?: boolean; project?: unknown; projectDelayMs?: number; projectStatus?: number; approved?: unknown[]; draftStatus?: number; spend?: unknown; spendStatus?: number; spendBody?: string; spendDelayMs?: number; hookStatus?: number } = {}) {
+  const hooks: Array<{ auth: unknown; seq: unknown; body: Record<string, unknown> }> = []
+  const toasts: string[] = []
   const spendUrls: string[] = []
   const practiceUrls: string[] = []
   const projectUrls: string[] = []
@@ -38,6 +40,10 @@ function world(on: On, init: { remote?: string; briefing?: unknown; briefingDela
     tools.push((e as unknown as { name: string }).name)
     return { value: { tool: `mcp__landflow-brain__${(e as unknown as { name: string }).name}` } } as never
   })
+  on('ui.toast', (_, e) => {
+    toasts.push((e as unknown as { text?: string; message?: string }).text ?? (e as unknown as { message?: string }).message ?? '')
+    return { value: undefined }
+  })
   on('ui.status', (_, e) => {
     statuses.push((e as unknown as { text?: string }).text)
     return { value: undefined }
@@ -49,6 +55,12 @@ function world(on: On, init: { remote?: string; briefing?: unknown; briefingDela
   })
   on('http.fetch', async (_, e) => {
     const request = e as unknown as { url: string; init?: { method?: string; body?: string } }
+    if (request.url.endsWith('/api/harness/claude-code/hooks')) {
+      const sent = request.init as unknown as { headers?: Record<string, string>; body?: string }
+      hooks.push({ auth: sent.headers?.authorization, seq: sent.headers?.['x-landflow-hook-seq'], body: JSON.parse(sent.body ?? '{}') })
+      const status = init.hookStatus ?? 204
+      return { value: { status, ok: status < 300, headers: {}, text: '' } }
+    }
     if (request.url.includes('/api/projects/context')) {
       projectUrls.push(request.url)
       if (init.projectDelayMs) await clock.sleep(init.projectDelayMs)
@@ -128,7 +140,7 @@ function world(on: On, init: { remote?: string; briefing?: unknown; briefingDela
   })
   on('turn.complete', (_, e) => ({ text: e.answer }))
   on('session.end', (_, e) => ({ sessionId: e.sessionId }))
-  return { spendUrls, projectUrls, posts, deleted, statuses, ran, clock, shares, patches, asks, tools, practiceUrls, drafts, submitted }
+  return { hooks, toasts, spendUrls, projectUrls, posts, deleted, statuses, ran, clock, shares, patches, asks, tools, practiceUrls, drafts, submitted }
 }
 
 async function work($: Engine) {
@@ -955,4 +967,60 @@ test('a spend body without today shows no spend', { options: OPTIONS }, async ($
   const { statuses } = world(on, { spendBody: JSON.stringify({ month: SPEND }) })
   await startSession($)
   expect(statuses.at(-1)).toBe('brain: on · 0 held')
+})
+
+test('status sharing is off by default: no hook request leaves', { options: OPTIONS }, async ($, on) => {
+  const { hooks } = world(on)
+  await work($)
+  expect(hooks).toEqual([])
+})
+
+test('after /brain status-sharing on, each event reports its hook name with an order number, never text', { options: OPTIONS }, async ($, on) => {
+  const { hooks } = world(on)
+  expect(((await command($, 'status-sharing on')) as { text: string }).text).toContain('Status sharing is on')
+  await work($)
+  await new Promise(resolve => setTimeout(resolve, 50))
+  expect(hooks.map(h => h.body.hook_event_name)).toEqual(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PreToolUse', 'PostToolUse', 'PreToolUse', 'PostToolUse', 'Stop', 'SessionEnd'])
+  expect(hooks.map(h => h.seq)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'])
+  expect(new Set(hooks.map(h => h.body.session_id)).size).toBe(1)
+  expect(hooks[0]?.auth).toBe(`Bearer ${OPTIONS.key}`)
+  expect(hooks.every(h => h.body.repository === 'acme/widgets')).toBe(true)
+  expect(JSON.stringify(hooks)).not.toMatch(/login|commit|redirect|\/work\/widgets|gh pr/i)
+})
+
+test('status sharing off again stops it; outside a listed repository nothing is sent even when on', { options: OPTIONS }, async ($, on) => {
+  const { hooks } = world(on, { remote: 'git@github.com:acme/other.git' })
+  await command($, 'status-sharing on')
+  await work($)
+  await new Promise(resolve => setTimeout(resolve, 50))
+  expect(hooks).toEqual([])
+  expect(((await command($, 'status-sharing off')) as { text: string }).text).toContain('Status sharing is off')
+})
+
+test('a 403 from the hook route says once that the key needs harness:write', { options: OPTIONS }, async ($, on) => {
+  const { toasts } = world(on, { hookStatus: 403 })
+  await command($, 'status-sharing on')
+  await work($)
+  await new Promise(resolve => setTimeout(resolve, 50))
+  expect(toasts.filter(t => t.includes('harness:write'))).toHaveLength(1)
+})
+
+test('/brain pause stops status sharing too', { options: OPTIONS }, async ($, on) => {
+  const { hooks } = world(on)
+  await command($, 'status-sharing on')
+  await $.session.start({ cwd: '/work/widgets', surface: 'terminal', isInteractive: true })
+  await command($, 'pause')
+  await $.prompt.submit({ text: 'Do a thing' } as never)
+  await $.turn.complete({ answer: 'done', durationMs: 1000, isAborted: false, turnId: 't1', reason: 'answer' })
+  await new Promise(resolve => setTimeout(resolve, 50))
+  expect(hooks.map(h => h.body.hook_event_name)).not.toContain('UserPromptSubmit')
+  expect(hooks.map(h => h.body.hook_event_name)).not.toContain('Stop')
+})
+
+test('the status session id is random, not guessable from the clock', { options: OPTIONS }, async ($, on) => {
+  const { hooks } = world(on)
+  await command($, 'status-sharing on')
+  await work($)
+  await new Promise(resolve => setTimeout(resolve, 50))
+  expect(String(hooks[0]?.body.session_id)).toMatch(/^st-[0-9a-f]{8}-[0-9a-f]{4}-/)
 })

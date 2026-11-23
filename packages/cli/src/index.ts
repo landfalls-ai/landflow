@@ -16,6 +16,7 @@ import { dataCommands } from './commands/data';
 import { debugCommands } from './commands/debug';
 import { debugTokenCommands } from './commands/debug-token';
 import { envCommands } from './commands/env';
+import { harnessCommands } from './commands/harness';
 import { practicesCommands } from './commands/practices';
 import { runCommands } from './commands/runs';
 import { spendCommands } from './commands/spend';
@@ -31,7 +32,7 @@ export type { Io } from './command';
 export { EXIT } from './errors';
 export { VERSION } from './version';
 
-export const COMMANDS: Command[] = [...authCommands, ...workflowCommands, ...runCommands, ...transferCommands, ...dataCommands, ...syncCommands, ...envCommands, ...auditCommands, ...debugCommands, ...debugTokenCommands, ...workCommands, ...practicesCommands, ...spendCommands];
+export const COMMANDS: Command[] = [...authCommands, ...workflowCommands, ...runCommands, ...transferCommands, ...dataCommands, ...syncCommands, ...envCommands, ...auditCommands, ...debugCommands, ...debugTokenCommands, ...workCommands, ...practicesCommands, ...spendCommands, ...harnessCommands];
 
 const GLOBAL_FLAGS: FlagSpecs = {
   json: { type: 'boolean', description: 'Print one JSON document (stable shapes; errors too)' },
@@ -52,6 +53,7 @@ const GROUPS: Record<string, string> = {
   claude: 'Set up a local Claude Code for this host (.mcp.json and a skill)',
   work: 'Record your day’s work in the company brain',
   practices: 'The practices your admins approved: list, show, check a change, learn from a checkout',
+  harness: 'The coding harnesses on this machine: which are installed',
   spend: 'Your own AI spend: today, this month, by model, your caps',
   audit: 'The audit log: verify its hash chain and signed heads, with or without the host',
 };

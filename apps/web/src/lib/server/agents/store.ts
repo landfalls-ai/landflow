@@ -44,6 +44,9 @@ import { recordAgentVersion } from './version-rows'; // AG21:
 const STALE_RUNNING_MS = 30 * 60_000;
 const MAX_HISTORY = 20;
 const MAX_SESSIONS_PER_AGENT = 200;
+/** Mirrored harness sessions (ids `hs_…`, lib/server/harness) have a cap of their own, so 200 Claude Code sessions never evict a Slack, Telegram or test one (and the other way round). */
+const MAX_HARNESS_SESSIONS_PER_AGENT = 200;
+const isHarnessId = (id: string) => id.startsWith('hs_');
 const MAX_MEMORIES = 50;
 
 export interface MemoryNote {
@@ -131,7 +134,7 @@ function summarizeSession(session: AgentSession): SessionSummary {
 }
 
 /** Sources a person talks through (the Sessions tab's People) and those that run without one (Automations). */
-export const PEOPLE_SOURCES: readonly SessionSource[] = ['test', 'telegram', 'slack', 'teams'];
+export const PEOPLE_SOURCES: readonly SessionSource[] = ['test', 'telegram', 'slack', 'teams', 'harness'];
 export const AUTOMATION_SOURCES: readonly SessionSource[] = ['schedule', 'workflow', 'agent', 'api'];
 export type SessionAudience = 'people' | 'automations';
 export const audienceSources = (audience?: SessionAudience): readonly SessionSource[] | undefined => (audience === 'people' ? PEOPLE_SOURCES : audience === 'automations' ? AUTOMATION_SOURCES : undefined);
@@ -258,11 +261,21 @@ class FileAgents implements AgentBackend {
     atomicWrite(join(this.sessionsDir, `${saved.id}.json`), saved);
     const list = (this.sessions.get(saved.agentId) ?? []).filter((s) => s.id !== saved.id);
     list.unshift(summarizeSession(saved));
-    for (const stale of list.splice(MAX_SESSIONS_PER_AGENT)) {
-      rmSync(join(this.sessionsDir, `${stale.id}.json`), { force: true });
-      releaseSessionImages(stale.id);
+    // Newest first: keep the first N of each class, drop the rest.
+    const seen = { harness: 0, other: 0 };
+    const stale: SessionSummary[] = [];
+    const kept = list.filter((s) => {
+      const harness = isHarnessId(s.id);
+      const n = ++seen[harness ? 'harness' : 'other'];
+      if (n <= (harness ? MAX_HARNESS_SESSIONS_PER_AGENT : MAX_SESSIONS_PER_AGENT)) return true;
+      stale.push(s);
+      return false;
+    });
+    for (const s of stale) {
+      rmSync(join(this.sessionsDir, `${s.id}.json`), { force: true });
+      releaseSessionImages(s.id);
     }
-    this.sessions.set(saved.agentId, list);
+    this.sessions.set(saved.agentId, kept);
   }
 
   deleteSession(agentId: string, id: string): boolean {
@@ -405,7 +418,10 @@ class DatabaseAgents implements AgentBackend {
     const db = this.sql;
     db.transaction(() => {
       db.upsert('agent_sessions', sessionRow(saved));
-      const stale = db.all<{ id: string }>('SELECT id FROM agent_sessions WHERE agent_id = ? ORDER BY updated_at DESC LIMIT -1 OFFSET ?', saved.agentId, MAX_SESSIONS_PER_AGENT);
+      const stale = [
+        ...db.all<{ id: string }>("SELECT id FROM agent_sessions WHERE agent_id = ? AND substr(id, 1, 3) <> 'hs_' ORDER BY updated_at DESC LIMIT -1 OFFSET ?", saved.agentId, MAX_SESSIONS_PER_AGENT),
+        ...db.all<{ id: string }>("SELECT id FROM agent_sessions WHERE agent_id = ? AND substr(id, 1, 3) = 'hs_' ORDER BY updated_at DESC LIMIT -1 OFFSET ?", saved.agentId, MAX_HARNESS_SESSIONS_PER_AGENT),
+      ];
       for (const { id } of stale) {
         db.delete('agent_sessions', { id });
         releaseSessionImages(id);

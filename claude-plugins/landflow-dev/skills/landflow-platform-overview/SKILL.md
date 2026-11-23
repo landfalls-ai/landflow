@@ -86,7 +86,7 @@ import rules. Run the Go (`go test ./...`) and Python (`.venv/bin/python -m unit
   the `landflow-dev` namespace, and never prune. Build with `COMPOSE_BAKE=false`.
 - **A person in the loop.** AI changes are proposals a person applies; nothing merges, deletes or sends for them.
 - **Docs move with code.** Every change updates its feature page, `docs/reference/` for routes and variables,
-  `docs/limitations.md` and `docs/roadmap.md` when it adds or closes something, and adds a row to `docs/history.md`.
+  `docs/limitations.md` and `docs/roadmap.md` when it adds or closes something, and adds its history rows as a fragment in `docs/history.d/` (never edits `docs/history.md` on a package branch; the integrator runs `pnpm history:assemble`).
 - **Commit, push and merge only when the person asks.** Work on a branch.
 
 ## 6. Out of scope

@@ -491,7 +491,10 @@ absent from an agent without any). Publishing needs a model, and a persona part 
   ([a2a.md](a2a.md#on-claude-code)).
 - **Memory** (Abilities). Session memory is always on: the session keeps the transcript, and the model
   sees its last 30 user turns. **Cross-session memory** adds a `remember` tool. The saved facts
-  (at most 50 per agent and user) are put into the system prompt of that user's later sessions.
+  (at most 50 per agent and user) are put into the system prompt of that user's later sessions, quoted as data inside one
+  `<landflow-memory source="agent-memory">` block: anything in a note that looks like a fence (the block's own tags, `<<<`/`>>>`)
+  is escaped (`lib/shared/memory-fence.ts`), so a remembered sentence cannot close the block and write instructions after it.
+  An agent with no notes gets no block. The team notebook and the brain's facts are fenced the same way.
   A user is "you" in the test chat, `telegram:<id>` in Telegram, `slack:<member id>` in Slack, `teams:<Entra object id>` in Teams, `workflow:<id>` from a workflow,
   and `schedule:<id>` for a schedule.
 - **Triggers** (Deploy; published version only):

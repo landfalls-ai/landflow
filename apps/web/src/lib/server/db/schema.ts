@@ -1986,6 +1986,52 @@ export const MIGRATIONS: Migration[] = [
       `CREATE TABLE IF NOT EXISTS notion_knowledge_docs (link_id TEXT NOT NULL, page_id TEXT NOT NULL, title TEXT, url TEXT, path TEXT, edited_at TEXT, hash TEXT, markdown TEXT, truncated BIGINT NOT NULL DEFAULT 0, PRIMARY KEY (link_id, page_id))`,
     ],
   },
+  // C01: a brain fact is a chain of versions (docs/second-brain.md#fact-versions). The chain id keeps naming the latest row.
+  {
+    version: 2912,
+    name: 'brain_fact_versions',
+    addColumns: [
+      { table: 'brain_facts', column: 'version', definition: 'BIGINT NOT NULL DEFAULT 1' },
+      { table: 'brain_facts', column: 'is_latest', definition: 'BIGINT NOT NULL DEFAULT 1' },
+      { table: 'brain_facts', column: 'parent_id', definition: 'TEXT' },
+      { table: 'brain_facts', column: 'root_id', definition: 'TEXT' },
+      { table: 'brain_facts', column: 'is_static', definition: 'BIGINT NOT NULL DEFAULT 0' },
+      { table: 'brain_facts', column: 'relation', definition: 'TEXT' },
+    ],
+    statements: [
+      // Every fact written before this is version 1 of a chain of its own.
+      `UPDATE brain_facts SET root_id = id WHERE root_id IS NULL`,
+      `CREATE INDEX IF NOT EXISTS brain_facts_chain ON brain_facts (root_id, version)`,
+      `CREATE INDEX IF NOT EXISTS brain_facts_latest ON brain_facts (is_latest, status)`,
+    ],
+  },
+  // C02: forgetting facts and notes softly (docs/second-brain.md#forgetting-a-fact, docs/team-notebook.md#forgetting-a-note)
+  {
+    version: 2913,
+    name: 'brain_forget',
+    addColumns: [
+      ...['forgotten_at', 'forget_reason', 'forgotten_by', 'forget_after'].map((column) => ({ table: 'brain_facts', column, definition: 'TEXT' })),
+      ...['forgotten_at', 'forget_reason', 'forgotten_by'].map((column) => ({ table: 'team_notes', column, definition: 'TEXT' })),
+    ],
+    statements: [
+      `CREATE INDEX IF NOT EXISTS brain_facts_forget_after ON brain_facts (forget_after)`,
+      `CREATE INDEX IF NOT EXISTS team_notes_forgotten ON team_notes (forgotten_at)`,
+    ],
+  },
+  // C04: Claude Code hook ingest (docs/harnesses.md#live-status)
+  {
+    version: 2914,
+    name: 'harness_sessions',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS harness_sessions (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, harness TEXT NOT NULL, session_key TEXT NOT NULL, agent_id TEXT, project_id TEXT, status TEXT NOT NULL, order_kind TEXT, last_order TEXT, last_event_at TEXT NOT NULL, opened_at TEXT NOT NULL, closed_at TEXT, data TEXT NOT NULL)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS harness_sessions_key ON harness_sessions (owner_id, harness, session_key)`,
+      `CREATE INDEX IF NOT EXISTS harness_sessions_open ON harness_sessions (owner_id, closed_at)`,
+      `CREATE INDEX IF NOT EXISTS harness_sessions_agent ON harness_sessions (agent_id, last_event_at)`,
+      `CREATE TABLE IF NOT EXISTS harness_events (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, order_key TEXT NOT NULL, name TEXT NOT NULL, received_at TEXT NOT NULL, data TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS harness_events_session ON harness_events (session_id, order_key)`,
+      `CREATE INDEX IF NOT EXISTS harness_events_received ON harness_events (received_at)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -2074,6 +2120,8 @@ export const TABLES = {
   scheduled_publishes: ['id'],
   approval_email_used: ['group_id'],
   approval_inbox: ['id'], // AP01:
+  harness_sessions: ['id'], // C04:
+  harness_events: ['id'], // C04:
   notion_brain_links: ['id'], // NB03:
   notion_brain_items: ['link_id', 'kind', 'local_key'], // NB03:
   notion_brain_outbox: ['link_id', 'kind', 'local_key'], // NB03:

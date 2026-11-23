@@ -64,7 +64,7 @@ describe('listSessions by audience', () => {
   }
 
   it('names the sources of each audience', () => {
-    expect(audienceSources('people')).toEqual(['test', 'telegram', 'slack', 'teams']);
+    expect(audienceSources('people')).toEqual(['test', 'telegram', 'slack', 'teams', 'harness']);
     expect(audienceSources('automations')).toEqual(['schedule', 'workflow', 'agent', 'api']);
     expect(audienceSources(undefined)).toBeUndefined();
   });

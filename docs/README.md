@@ -148,7 +148,7 @@ marketplace.
   repository's own agents (`.claude/agents/`) and the feature skill (`.claude/skills/landflow-feature/`).
 - [limitations.md](limitations.md): what Landflow does not do yet.
 - [roadmap.md](roadmap.md): the waves, what each built, and what remains.
-- [history.md](history.md): every change in order, the decisions along the way, and where each is documented.
+- [history.md](history.md) (rows come from fragments in `docs/history.d/`, see [development.md](development.md#history-fragments)): every change in order, the decisions along the way, and where each is documented.
 
 **Reviews, plans and research**
 
@@ -194,4 +194,4 @@ marketplace.
 
 [constitution.md](constitution.md) has every rule in one place. A change updates the page for its feature,
 [reference/](reference/api.md) for new routes or variables, [limitations.md](limitations.md) when it adds or lifts a
-limit, and [roadmap.md](roadmap.md) when it closes or opens an item. Each commit gets a row in [history.md](history.md). New pages go in this index. [development.md](development.md#conventions) has the rest of the conventions.
+limit, and [roadmap.md](roadmap.md) when it closes or opens an item. Each change records its history rows as a fragment in `docs/history.d/`, which `pnpm history:assemble` moves into [history.md](history.md) ([development.md](development.md#history-fragments)). New pages go in this index. [development.md](development.md#conventions) has the rest of the conventions.

@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { validateWorkEvent } from '../../../packages/protocol/src/work-events';
 import { BACKOFF_MAX_MS, QUEUE_MAX, backoffMs, cleanItem, cleanRelated, confirmAndPost, shareRequest, visibilityRequest, due, emptyQueue, enqueue, keyFingerprint, liftStop, serverUrl, settle } from '../claude-plugins/landflow-brain/hooks/client';
+import { STATUS_HOOKS, parseSharing, sharingOn, statusBody, statusRequest } from '../claude-plugins/landflow-brain/hooks/status';
 import { addArea, addPrs, areaOf, bandLine, bashFacts, clip, cleanText, effectiveMode, paneModel, safeLink, statusLine, syncText, isAllowed, newEntry, parseRepos, repoSlug } from '../claude-plugins/landflow-brain/hooks/journal';
 import { redact as harnessRedact } from '../claude-plugins/landflow-harness/hooks/rules';
 import { redact, summaryOf, titleFrom, toEvent } from '../claude-plugins/landflow-brain/hooks/summary';
@@ -341,5 +342,43 @@ describe('the mod\'s version', () => {
     const market = JSON.parse(readFileSync(join(__dirname, '../../../.claude-plugin/marketplace.json'), 'utf8')) as { plugins: Array<{ name: string; version: string }> };
     expect(plugin.version).toBe('0.5.0');
     expect(market.plugins.find((p) => p.name === 'landflow-brain')?.version).toBe(plugin.version);
+  });
+});
+
+describe('status sharing (C04: own sessions report status only when the person opts in)', () => {
+  it('is off until /brain status-sharing on stored true; anything else stays off', () => {
+    expect(sharingOn(undefined)).toBe(false);
+    expect(sharingOn('on')).toBe(false);
+    expect(sharingOn(true)).toBe(true);
+    expect(parseSharing('on')).toBe('on');
+    expect(parseSharing(' OFF ')).toBe('off');
+    expect(parseSharing('')).toBeUndefined();
+    expect(parseSharing('maybe')).toBeUndefined();
+  });
+
+  it('maps the mod events to Claude Code hook names', () => {
+    expect(STATUS_HOOKS).toEqual({
+      'session.start': 'SessionStart',
+      'prompt.submit': 'UserPromptSubmit',
+      'tool.before': 'PreToolUse',
+      'tool.after': 'PostToolUse',
+      'turn.complete': 'Stop',
+      'session.end': 'SessionEnd',
+    });
+  });
+
+  it('a body has the hook name, the session and, for a tool, its name: never text, tool input, output or a path', () => {
+    const body = statusBody('tool.before', { sessionId: 'st-1', repository: 'acme/widgets', tool: 'Bash', text: 'my secret prompt', input: { command: 'cat /etc/passwd' } } as never);
+    expect(body).toEqual({ hook_event_name: 'PreToolUse', session_id: 'st-1', repository: 'acme/widgets', tool_name: 'Bash' });
+    expect(JSON.stringify(body)).not.toMatch(/secret|passwd|cwd|transcript/);
+    expect(Object.keys(statusBody('session.start', { sessionId: 's', agent_type: 'a:b', agentType: 'a:b' } as never))).toEqual(['hook_event_name', 'session_id']);
+    expect(statusBody('prompt.submit', { sessionId: 'st-1', tool: 'Bash' })).toEqual({ hook_event_name: 'UserPromptSubmit', session_id: 'st-1' });
+  });
+
+  it('the request goes to the hook route with the key, the order number and no repository unless given', () => {
+    const request = statusRequest({ url: 'https://landflow.example.test', key: 'lf_made-up-test-key' }, statusBody('turn.complete', { sessionId: 's' }), 7);
+    expect(request.url).toBe('https://landflow.example.test/api/harness/claude-code/hooks');
+    expect(request.init.headers).toMatchObject({ authorization: 'Bearer lf_made-up-test-key', 'x-landflow-hook-seq': '7' });
+    expect(JSON.parse(request.init.body)).toEqual({ hook_event_name: 'Stop', session_id: 's' });
   });
 });

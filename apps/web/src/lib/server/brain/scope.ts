@@ -13,7 +13,7 @@ import { homeProjectId, resourceIdsIn } from '../projects/store';
 import type { Actor } from '../projects/access';
 import { store } from '../store';
 import type { UsageScope } from '../usage/query';
-import { parseEntityRef, type Proposal } from '../../shared/brain';
+import { parseEntityRef, type BrainFact, type Proposal } from '../../shared/brain';
 
 /**
  * What `actor` sees (undefined: no restriction on workflows and agents, for owners and admins). A member's scope names
@@ -96,6 +96,21 @@ export function canProposal(actor: Actor, proposal: Pick<Proposal, 'target'>, ac
   if (type === 'team' && id) return canResource(actor, 'agentTeam', id, action);
   if (type === 'entity') {
     const ref = parseEntityRef(id);
+    const entity = ref && getEntity(ref.type, ref.id);
+    return entity ? canEntity(actor, entity, action) : isInstanceAdmin(actor);
+  }
+  return isInstanceAdmin(actor);
+}
+
+/**
+ * Whether `actor` may see a fact (`read`) or forget, restore and rewrite it (`update`): the subject's own access (a
+ * workflow, an agent or an entity's project); node types, credentials and the instance are for owners and admins.
+ */
+export function canFact(actor: Actor, fact: Pick<BrainFact, 'subjectType' | 'subjectId'>, action: 'read' | 'update'): boolean {
+  if (fact.subjectType === 'workflow') return canResource(actor, 'workflow', fact.subjectId, action);
+  if (fact.subjectType === 'agent') return canResource(actor, 'agent', fact.subjectId, action);
+  if (fact.subjectType === 'entity') {
+    const ref = parseEntityRef(fact.subjectId);
     const entity = ref && getEntity(ref.type, ref.id);
     return entity ? canEntity(actor, entity, action) : isInstanceAdmin(actor);
   }

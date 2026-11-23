@@ -914,7 +914,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Agent teams',
     id: 'listTeamNotes',
     summary: 'The team’s notebook: notes, counts and search by meaning',
-    description: 'Notes the team’s members wrote while working (docs/team-notebook.md). Query: `scope` (run, team, project), `kind`, `status`, `run` (an execution id), `expired=1` to include expired notes, `q` to rank by meaning (`via` says whether embeddings or keywords did it). Returns `notes`, `counts` and `via`.',
+    description: 'Notes the team’s members wrote while working (docs/team-notebook.md). Query: `scope` (run, team, project), `kind`, `status`, `run` (an execution id), `expired=1` to include expired notes (a note past its expiry is otherwise out at once, with no sweep), `forgotten=1` to list the forgotten notes with their reason, `q` to rank by meaning (`via` says whether embeddings or keywords did it). Returns `notes`, `counts` and `via`.',
     responses: { 200: reply('The notes'), 404: notFound },
   });
   add('post', '/api/agent-teams/{id}/notes', {
@@ -927,8 +927,8 @@ function paths(): Record<string, Record<string, Json>> {
   add('post', '/api/agent-teams/{id}/notes/{noteId}', {
     tag: 'Agent teams',
     id: 'actOnTeamNote',
-    summary: 'Verify, answer, reopen, dispute, resolve, promote or edit a note',
-    description: 'Body `{ action }` with `verify`; `answer` and `dispute` and `edit` (`text`); `reopen`; `resolve` (`keep`: the id of the note that holds); `promote` (`to`: team or project; a project note becomes a suggestion in the second brain’s inbox).',
+    summary: 'Verify, answer, reopen, dispute, resolve, promote, edit, forget or restore a note',
+    description: 'Body `{ action }` with `verify`; `answer` and `dispute` and `edit` (`text`); `reopen`; `resolve` (`keep`: the id of the note that holds); `promote` (`to`: team or project; a project note becomes a suggestion in the second brain’s inbox); `forget` (`reason` 1 to 500 characters, `forgetAfter` an optional ISO time a minute to five years ahead that only sets when the note expires: the note leaves every read and the prompt, stays with the reason and is never swept; audited as notebook.note_forgotten); `restore` (audited as notebook.note_restored).',
     responses: { 200: reply('The note, or the pair, or the promotion'), 201: reply('The disputing note'), 400: invalid, 404: notFound },
   });
   add('delete', '/api/agent-teams/{id}/notes/{noteId}', { tag: 'Agent teams', id: 'deleteTeamNote', summary: 'Forget a note', responses: { 200: reply('Deleted'), 404: notFound } });
@@ -2143,6 +2143,29 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(object({ events: array({ type: 'object', additionalProperties: true }) }, ['events'])),
     responses: { 202: { description: 'Passed on to the queue-mode process that holds the trace' }, 204: { description: 'Taken' }, 400: invalid, 404: notFound, 410: errorRef('The call has ended: stop posting here'), 413: errorRef('The trace holds all it may') },
   });
+  add('post', '/api/harness/{harness}/hooks', {
+    tag: 'Agents',
+    id: 'postHarnessHook',
+    summary: 'Send one hook event of a coding harness',
+    description: 'Claude Code’s hook JSON as sent, one event per request (at most 64 KB), with an API key that has the `harness:write` scope (a cookie session is refused). The event joins a session of the key’s owner: a Landflow agent’s when `agent_type` names one they may run, else their own, which keeps status and counts only (docs/harnesses.md#live-status). `X-Landflow-Hook-Seq` (a per-session counter) orders events; else `X-Landflow-Hook-Time` (ISO or epoch milliseconds; ignored when more than 5 minutes ahead of the server) does; else the server’s receive time. A session belongs to an agent only when its first event is a `SessionStart` naming one. At most 20 events a second per key (100 for all of one person’s keys) and 2,000 open sessions per key owner. Not in the audit log per call.',
+    pathParams: { harness: 'A registry id whose strategy sends events: `claude-code`' },
+    body: jsonBody(object({ hook_event_name: { type: 'string' }, session_id: { type: 'string' } }, ['hook_event_name', 'session_id'])),
+    responses: { 204: { description: 'Taken' }, 400: invalid, 401: errorRef('No or an invalid API key'), 403: errorRef('The key lacks `harness:write`, or this is not an API key'), 404: errorRef('A harness that sends no events'), 413: errorRef('Over 64 KB'), 429: errorRef('Over the per-key limits (`retryAfter` seconds)') },
+  });
+  add('get', '/api/harness/sessions', {
+    tag: 'Agents',
+    id: 'listHarnessSessions',
+    summary: 'Harness sessions you may see',
+    description: 'Your own sessions (nobody else sees them, an admin included) and the sessions of Landflow agents you may read, newest first by last event. Needs `executions:read` for a key.',
+    query: [
+      { name: 'agentId', description: 'Only this agent’s sessions', schema: { type: 'string' } },
+      { name: 'open', description: '`1`: leave out closed sessions', schema: { type: 'string', enum: ['1', 'true', '0', 'false'] } },
+      { name: 'kind', description: '`own`: only your own sessions; `agent`: only sessions of Landflow agents you may read', schema: { type: 'string', enum: ['own', 'agent'] } },
+      { name: 'limit', description: 'At most this many per page (default 100, at most 500)', schema: { type: 'integer', minimum: 1, maximum: 500, default: 100 } },
+      { name: 'cursor', description: 'Opaque; the previous page’s nextCursor', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The sessions', object({ sessions: array({ type: 'object', additionalProperties: true }), nextCursor: { type: 'string' } }, ['sessions'])), 400: invalid },
+  });
   add('get', '/api/agent-trace/{id}/asks/{askId}', {
     tag: 'Agents',
     id: 'getAgentTraceAsk',
@@ -2323,9 +2346,32 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Second brain',
     id: 'listBrainFacts',
     summary: 'What the second brain learned',
-    description: '`q` searches (keywords fused with the vector index); otherwise lists by subjectType, subjectId, kind and status.',
-    query: [text('q', 'Search'), text('subjectType', 'workflow, agent, nodeType, credential, instance or entity (subjectId is then <type>/<id>)'), text('subjectId', 'One subject'), text('kind', 'purpose, health, cost, failure, slow, change, dependency, usage, quality or intended'), text('status', 'active (default), stale or all'), text('limit', 'At most this many (100)')],
-    responses: { 200: reply('The facts', object({ facts: array({ type: 'object' }) }, ['facts'])) },
+    description: '`q` searches (keywords fused with the vector index); otherwise lists by subjectType, subjectId, kind and status. Only the latest version of a fact comes back, never a forgotten one or one past its forget-after. `history=1` adds earlier versions; `forgotten=1` lists the forgotten facts the caller may change, with the reason. A bad `limit` answers 400.',
+    query: [text('q', 'Search'), text('subjectType', 'workflow, agent, nodeType, credential, instance or entity (subjectId is then <type>/<id>)'), text('subjectId', 'One subject'), text('kind', 'purpose, health, cost, failure, slow, change, dependency, usage, quality or intended'), text('status', 'active (default), stale or all'), text('limit', 'At most this many (1 to 500, default 100)'), text('history', '1 to include earlier versions'), text('forgotten', '1 to list forgotten facts')],
+    responses: { 200: reply('The facts', object({ facts: array({ type: 'object' }) }, ['facts'])), 400: invalid },
+  });
+  add('get', '/api/brain/facts/{id}/versions', {
+    tag: 'Second brain',
+    id: 'listFactVersions',
+    summary: 'A fact’s versions, oldest first',
+    description: 'The chain of a fact (`id` is the chain id, URL-encoded: entity fact ids hold `/`, or one version’s `<chain id>#v<n>`): version, relation, statement (empty and `trimmed` for a version dropped to keep the chain at 50), evidence, confidence, first and last seen and who or what wrote it. At most 100 a page; `nextCursor` goes in `cursor`. Visible to whoever may read the fact; 404 otherwise.',
+    query: [text('limit', '1 to 100 (default 100)'), text('cursor', 'The last version of the page before')],
+    responses: { 200: reply('The versions', object({ versions: array({ type: 'object' }), nextCursor: { type: 'string' } }, ['versions'])), 400: invalid, 404: notFound },
+  });
+  add('post', '/api/brain/facts/{id}/forget', {
+    tag: 'Second brain',
+    id: 'forgetFact',
+    summary: 'Forget a fact softly',
+    description: 'The fact leaves every list, search, prompt and MCP tool; the row stays with the reason and who, and can be restored. `forgetAfter` (an ISO time, a minute to five years ahead) only sets when it goes. Audited as brain.fact_forgotten. Editors of the fact’s subject (a workflow, an agent or an entity’s project; owners and admins for node types, credentials and the instance); 404 for someone who may not see it, 403 for a reader.',
+    body: jsonBody(object({ reason: { type: 'string', minLength: 1, maxLength: 500 }, forgetAfter: { type: 'string', format: 'date-time' } }, ['reason'])),
+    responses: { 200: reply('The forgotten fact', object({ fact: { type: 'object' } }, ['fact'])), 400: invalid, 403: errorRef('Not an editor of the fact’s subject'), 404: notFound },
+  });
+  add('post', '/api/brain/facts/{id}/restore', {
+    tag: 'Second brain',
+    id: 'restoreFact',
+    summary: 'Restore a forgotten fact',
+    description: 'Audited as brain.fact_restored. Same access as forgetting it.',
+    responses: { 200: reply('The fact', object({ fact: { type: 'object' } }, ['fact'])), 403: errorRef('Not an editor of the fact’s subject'), 404: notFound },
   });
   const entity = { type: 'object', description: 'A BrainEntity (lib/shared/brain.ts): type (initiative, person, customer, system), id, name, description, owner, ownerName, projectId, attrs, source, createdAt, updatedAt' };
   const entityBody = (required: string[]) =>
@@ -2353,8 +2399,8 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Second brain',
     id: 'addEntityFact',
     summary: 'Add a fact about an entity',
-    description: 'A statement the brain keeps and searches. `kind` is purpose, health, cost, failure, slow, change, dependency, usage, quality or intended.',
-    body: jsonBody(object({ kind: { type: 'string' }, statement: { type: 'string' }, confidence: { type: 'number' } }, ['kind', 'statement'])),
+    description: 'A statement the brain keeps and searches. `kind` is purpose, health, cost, failure, slow, change, dependency, usage, quality or intended. `isStatic` marks a fact that never changes (the study never stales or rewrites it). `parentId` with `relation` (`extends` or `derives`) starts a new chain that follows a fact the caller can read (404 otherwise). `forgetAfter` is when it leaves recall.',
+    body: jsonBody(object({ kind: { type: 'string' }, statement: { type: 'string' }, confidence: { type: 'number' }, isStatic: { type: 'boolean' }, parentId: { type: 'string' }, relation: { type: 'string', enum: ['extends', 'derives'] }, forgetAfter: { type: 'string', format: 'date-time' } }, ['kind', 'statement'])),
     responses: { 201: reply('The fact', object({ fact: { type: 'object' } }, ['fact'])), 400: invalid, 403: errorRef('Not an editor of the project'), 404: notFound },
   });
   add('post', '/api/brain/backtest', {
