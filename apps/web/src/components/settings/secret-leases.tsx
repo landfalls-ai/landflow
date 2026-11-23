@@ -82,20 +82,20 @@ export function SecretLeases() {
       key: 'executionId',
       label: 'Run',
       type: 'text',
-      width: 150,
+      width: 110,
       render: (lease) => (
         <Link href={`/runs/${lease.executionId}`} className="font-mono text-[12px] text-ac hover:underline" title="Open the Run trace">
-          {lease.executionId.slice(0, 14)}
+          {lease.executionId.slice(0, 11)}
         </Link>
       ),
     },
-    { key: 'path', label: 'Secret', type: 'text', width: 300, render: (lease) => <span className="font-mono text-[12px] text-t1">{secretOf(lease)}</span> },
-    { key: 'issuedAt', label: 'Issued', type: 'text', width: 110, render: (lease) => <span title={dayTime(lease.issuedAt)}>{timeAgo(lease.issuedAt)}</span> },
+    { key: 'path', label: 'Secret', type: 'text', width: 200, render: (lease) => <span className="font-mono text-[12px] text-t1" title={secretOf(lease)}>{secretOf(lease)}</span> },
+    { key: 'issuedAt', label: 'Issued', type: 'text', width: 80, render: (lease) => <span title={dayTime(lease.issuedAt)}>{timeAgo(lease.issuedAt)}</span> },
     {
       key: 'expiresAt',
       label: 'Ends',
       type: 'text',
-      width: 170,
+      width: 135,
       render: (lease) => (
         <span title={lease.renewedUntil ? 'Renewed while the run went' : undefined}>
           {stamp(lease.expiresAt)}
@@ -107,7 +107,7 @@ export function SecretLeases() {
       key: 'state',
       label: 'State',
       type: 'text',
-      width: 120,
+      width: 100,
       render: (lease) => (
         <Badge tone={STATE[lease.state].tone} title={lease.lastError}>
           {STATE[lease.state].label}
@@ -179,7 +179,7 @@ export function SecretLeases() {
             columns={columns}
             rows={leases}
             readOnly
-            minWidth={900}
+            minWidth={680}
             label="Leased secrets"
             className="max-h-[60dvh]"
             trailingHeader={<span className="sr-only">Actions</span>}

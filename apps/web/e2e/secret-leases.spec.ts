@@ -77,7 +77,7 @@ test('a waiting run holds a leased secret that the Leases section lists and Revo
     expect(bao.state().active).toEqual({});
     expect(bao.state().revoked).toEqual([issued.leaseId]);
     await section.getByRole('tab', { name: 'Ended' }).click();
-    await expect(section.getByText('Revoked', { exact: true })).toBeVisible();
+    await expect(section.getByText('Revoked', { exact: true }).first()).toBeVisible(); // the other viewport's lease is listed too
   } finally {
     await bao.stop();
     await upstream.stop();
