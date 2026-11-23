@@ -155,13 +155,13 @@ function RunnerRow({ runner, onRevoke }: { runner: RunnerView; onRevoke?: () => 
         <div className="flex flex-wrap items-center gap-x-2 text-[13px] font-semibold text-t1">
           {runner.name}
           <span className="text-[12px] font-normal text-t3">{STATUS_WORDS[runner.status]}</span>
-          <span className="font-mono text-[11px] font-normal text-t3">…{runner.hint}</span>
+          <span className="font-mono text-[11px] font-normal text-t3">{runner.hint ? `…${runner.hint}` : ''}</span>
         </div>
         <div className="text-[12px] text-t3">
           {runner.version ? `Version ${runner.version} · ` : ''}
           {runner.status === 'revoked' ? `revoked ${timeAgo(runner.revokedAt)}` : runner.lastSeenAt ? `seen ${timeAgo(runner.lastSeenAt)}` : 'not seen yet'}
           {runner.address ? ` · from ${runner.address}` : ''}
-          {runner.allowedIps.length ? ` · only from ${runner.allowedIps.join(', ')}` : ''}
+          {runner.allowedIps?.length ? ` · only from ${runner.allowedIps.join(', ')}` : ''}
         </div>
       </div>
       {onRevoke && runner.status !== 'revoked' && (
@@ -208,7 +208,8 @@ export function NetworksSettings({ networks: given }: { networks?: NetworkView[]
     }
   };
   const remove = async (network: NetworkView) => {
-    const used = network.workflows.length ? ` ${plural(network.workflows.length, 'workflow')} run${network.workflows.length === 1 ? 's' : ''} in it and will fail.` : '';
+    const using = network.workflows ?? [];
+    const used = using.length ? ` ${plural(using.length, 'workflow')} run${using.length === 1 ? 's' : ''} in it and will fail.` : '';
     if (!(await confirmAction(`Delete ${network.name}? Its ${plural(network.runners.length, 'runner')} will be revoked.${used}`, { action: 'Delete', danger: true }))) return;
     try {
       await api(`/api/settings/networks/${network.id}`, { method: 'DELETE' });
@@ -297,12 +298,12 @@ export function NetworksSettings({ networks: given }: { networks?: NetworkView[]
               </ul>
             )}
             <div className="text-[12px] text-t3">
-              {network.workflows.length === 0 ? (
+              {(network.workflows ?? []).length === 0 ? (
                 'No workflow runs in it yet.'
               ) : (
                 <>
                   Used by{' '}
-                  {network.workflows.map((workflow, i) => (
+                  {(network.workflows ?? []).map((workflow, i) => (
                     <span key={workflow.id}>
                       {i > 0 && ', '}
                       <Link href={`/workflows/${workflow.id}`} className="text-t2 underline">

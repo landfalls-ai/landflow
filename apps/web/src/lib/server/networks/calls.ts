@@ -16,6 +16,7 @@ import { EventEmitter } from 'node:events';
 import { nanoid } from 'nanoid';
 import { credentials } from '../credentials/vault';
 import { database, type Database } from '../db';
+import { onNotification, publishNotification } from '../db/replication';
 import { HttpError } from '../errors';
 import { singleton } from '../singleton';
 import { lastSeenMs, networkRow, onlineRunnerCount, runnerActive, type RunnerRecord } from './store';
@@ -35,7 +36,7 @@ export type RunnerAnswer =
   | { error: { code: 'refused' | 'timeout' | 'network'; message: string } };
 
 /** The numbers; a test shortens them. */
-export const limits = { claimWithinMs: 30_000, lostAfterMs: 30_000, keepEndedMs: 120_000, queueCap: 1_000, pollMs: 100, seenEveryMs: 5_000, pollWaitMs: 25_000 };
+export const limits = { claimWithinMs: 30_000, lostAfterMs: 30_000, keepEndedMs: 120_000, keepClaimedMs: 3_600_000, queueCap: 1_000, pollMs: 750, maxOpenPolls: 2, seenEveryMs: 5_000, pollWaitMs: 25_000 };
 
 const PURPOSE = 'network.call';
 
@@ -54,6 +55,23 @@ export class RunnerRevokedError extends HttpError {
 }
 
 const events = () => singleton('network-calls-events', () => new EventEmitter().setMaxListeners(0));
+
+/**
+ * Wake-ups between processes (queue mode on Postgres): a call queued or answered in another process is announced with
+ * `pg_notify` on the replication's LISTEN connection and turned into the same in-process events. Without it (SQLite, one
+ * process, a lost connection) the waits look every `limits.pollMs`, which is the fallback and stays correct.
+ */
+const CHANNEL = 'landflow_network_calls';
+const hear = singleton('network-calls-listening', () => ({ on: false }));
+function listenForPeers() {
+  if (hear.on) return;
+  hear.on = true;
+  onNotification(CHANNEL, (payload) => {
+    if (payload === 'queued') events().emit('queued');
+    else if (payload.startsWith('done:')) events().emit(payload);
+  });
+}
+const announce = (payload: string) => publishNotification(CHANNEL, payload);
 
 /** SQLite binds `?`; Postgres wants `$1…`. The statements below hold no literal question marks. */
 const toPg = (text: string) => {
@@ -100,8 +118,19 @@ interface CallRow {
 
 /** Queue a call for `networkId`'s runners; returns its id. Fails "network busy" when the queue is full. */
 export async function enqueueCall(networkId: string, call: CallRequest, meta: { executionId?: string; workflowId?: string; node?: string }, now = Date.now()): Promise<string> {
-  await run('DELETE FROM network_calls WHERE state = ? AND done_at < ? RETURNING id', 'done', iso(now - limits.keepEndedMs));
-  const [queued] = await run<{ n: number | string }>('SELECT COUNT(*) AS n FROM network_calls WHERE network_id = ? AND state = ?', networkId, 'queued');
+  // Rows nothing will read again go: ended ones, queued ones past their claim window (a node that died before it could
+  // drop its own) and claimed ones long past any node timeout.
+  await run(
+    'DELETE FROM network_calls WHERE (state = ? AND done_at < ?) OR (state = ? AND queued_at < ?) OR (state = ? AND claimed_at < ?) RETURNING id',
+    'done',
+    iso(now - limits.keepEndedMs),
+    'queued',
+    iso(now - limits.claimWithinMs),
+    'claimed',
+    iso(now - limits.keepClaimedMs),
+  );
+  // Only calls a runner could still claim count towards the cap.
+  const [queued] = await run<{ n: number | string }>('SELECT COUNT(*) AS n FROM network_calls WHERE network_id = ? AND state = ? AND queued_at >= ?', networkId, 'queued', iso(now - limits.claimWithinMs));
   if (Number(queued?.n ?? 0) >= limits.queueCap) throw new RunnerCallError('This network is busy: too many calls are waiting', 'network_busy', 503);
   const id = `call_${nanoid(16)}`;
   await run(
@@ -116,6 +145,7 @@ export async function enqueueCall(networkId: string, call: CallRequest, meta: { 
     iso(now),
   );
   events().emit('queued');
+  announce('queued');
   return id;
 }
 
@@ -135,6 +165,22 @@ export async function claimOnce(runner: RunnerRecord, now: number, db: Database 
  * here. An in-process queue wakes it at once; otherwise it looks every 100 ms (the table is the only shared state).
  */
 export async function claimCall(runner: RunnerRecord, options: { waitMs: number; signal?: AbortSignal; onSeen?: () => void }): Promise<{ id: string; request: CallRequest } | undefined> {
+  listenForPeers();
+  // A runner holds one poll (two during a reconnect); more than that is a misbehaving client holding connections.
+  if ((openPolls().get(runner.id) ?? 0) >= limits.maxOpenPolls) throw new RunnerCallError('Too many open polls for this runner', 'too_many_polls', 429);
+  openPolls().set(runner.id, (openPolls().get(runner.id) ?? 0) + 1);
+  try {
+    return await pollLoop(runner, options);
+  } finally {
+    const left = (openPolls().get(runner.id) ?? 1) - 1;
+    if (left <= 0) openPolls().delete(runner.id);
+    else openPolls().set(runner.id, left);
+  }
+}
+
+const openPolls = () => singleton('network-open-polls', () => new Map<string, number>());
+
+async function pollLoop(runner: RunnerRecord, options: { waitMs: number; signal?: AbortSignal; onSeen?: () => void }): Promise<{ id: string; request: CallRequest } | undefined> {
   const until = Date.now() + options.waitMs;
   let seenAt = 0;
   for (;;) {
@@ -157,6 +203,7 @@ export async function completeCall(runner: RunnerRecord, callId: string, answer:
   const rows = await run<{ id: string }>(`UPDATE network_calls SET state = 'done', response = ?, done_at = ? WHERE id = ? AND runner_id = ? AND state = 'claimed' RETURNING id`, seal(answer), iso(now), callId, runner.id);
   if (!rows.length) throw new HttpError('Call not found', 404, { expose: true });
   events().emit(`done:${callId}`);
+  announce(`done:${callId}`);
 }
 
 async function drop(callId: string) {
@@ -168,7 +215,8 @@ async function drop(callId: string) {
  * (FR-6); after 30 s when nobody claimed it; as "lost" when its runner goes quiet for 30 s; when the caller aborts; or
  * after `timeoutMs` (the node's own timeout, plus a few seconds for the runner to report its own).
  */
-export async function awaitAnswer(callId: string, options: { timeoutMs: number; signal?: AbortSignal }): Promise<RunnerAnswer & { runnerId?: string }> {
+export async function awaitAnswer(callId: string, options: { timeoutMs: number; signal?: AbortSignal }): Promise<{ status: number; headers: Array<[string, string]>; body?: string; runnerId?: string }> {
+  listenForPeers();
   const started = Date.now();
   const [first] = await run<CallRow>('SELECT * FROM network_calls WHERE id = ?', callId);
   if (!first) throw new RunnerCallError('The call was lost', 'lost');

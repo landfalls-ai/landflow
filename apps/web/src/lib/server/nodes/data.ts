@@ -1,4 +1,5 @@
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '@landflow/sdk';
+import { tableScope } from '../datatables/projects';
 import { networkChoices } from '../networks/store';
 import { BODY_METHODS, executeHttpRequest, httpAuthCredentials, httpAuthProperties } from './http-request';
 
@@ -283,7 +284,7 @@ export const httpRequestNode = defineNode({
     ],
   },
   // Run In: the networks an admin registered (Settings → Networks); who may use which is checked when the node runs (networks/fetch.ts).
-  methods: { loadOptions: { networks: () => [{ name: 'Host (this Landflow)', value: '' }, ...networkChoices().map((network) => ({ name: network.name, value: network.id, ...(network.projectId && { description: 'Only this project’s workflows' }) }))] } },
+  methods: { loadOptions: { networks: () => [{ name: 'Host (this Landflow)', value: '' }, ...networkChoices(tableScope()?.actor).map((network) => ({ name: network.name, value: network.id, ...(network.projectId && { description: 'Only this project’s workflows' }) }))] } },
   // Bodies with files and file responses: ./http-request.ts.
   execute: (ctx) => executeHttpRequest(ctx),
 });

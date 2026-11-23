@@ -18,15 +18,16 @@ export type RunnerStatus = 'online' | 'offline' | 'revoked';
 export interface RunnerView {
   id: string;
   name: string;
-  /** The last four characters of the token, to tell tokens apart; the token itself is never shown again. */
-  hint: string;
+  /** The last four characters of the token, to tell tokens apart; the token itself is never shown again. Instance admins only. */
+  hint?: string;
   status: RunnerStatus;
-  allowedIps: string[];
+  /** Instance admins only (as are the version, address and dates below). */
+  allowedIps?: string[];
   version?: string;
   /** Where its last poll came from. */
   address?: string;
   lastSeenAt?: string;
-  createdAt: string;
+  createdAt?: string;
   revokedAt?: string;
 }
 
@@ -39,8 +40,8 @@ export interface NetworkView {
   projectName?: string;
   runners: RunnerView[];
   /** The workflows with an HTTP Request node that runs in this network (only the ones the viewer may see). */
-  workflows: Array<{ id: string; name: string }>;
-  createdAt: string;
+  workflows?: Array<{ id: string; name: string }>;
+  createdAt?: string;
 }
 
 /** GET /api/settings/networks. */

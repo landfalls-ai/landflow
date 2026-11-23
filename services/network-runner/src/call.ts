@@ -82,8 +82,9 @@ function once(url: URL, request: { method: string; headers: Array<[string, strin
         res.on('end', () => {
           try {
             resolve(decode(res, Buffer.concat(chunks)));
-          } catch {
-            reject(new Failed('The response could not be decoded'));
+          } catch (error) {
+            // maxOutputLength stops a decompression bomb at the cap instead of inflating it.
+            reject(new Failed((error as { code?: string }).code === 'ERR_BUFFER_TOO_LARGE' ? 'The response is larger than 10 MiB' : 'The response could not be decoded'));
           }
         });
         res.on('error', (error) => reject(new Failed(error.message)));
@@ -102,10 +103,10 @@ function once(url: URL, request: { method: string; headers: Array<[string, strin
 function decode(res: IncomingMessage, raw: Buffer): Hop {
   const encoding = String(res.headers['content-encoding'] ?? '').toLowerCase();
   let body = raw;
-  if (encoding === 'gzip' || encoding === 'x-gzip') body = gunzipSync(raw);
-  else if (encoding === 'deflate') body = inflateSync(raw);
-  else if (encoding === 'br') body = brotliDecompressSync(raw);
-  if (body.length > MAX_BYTES) throw new Error('large');
+  if (encoding === 'gzip' || encoding === 'x-gzip') body = gunzipSync(raw, { maxOutputLength: MAX_BYTES });
+  else if (encoding === 'deflate') body = inflateSync(raw, { maxOutputLength: MAX_BYTES });
+  else if (encoding === 'br') body = brotliDecompressSync(raw, { maxOutputLength: MAX_BYTES });
+  if (body.length > MAX_BYTES) throw Object.assign(new Error('large'), { code: 'ERR_BUFFER_TOO_LARGE' });
   const headers: Array<[string, string]> = [];
   for (let i = 0; i < res.rawHeaders.length; i += 2) {
     const name = res.rawHeaders[i].toLowerCase();

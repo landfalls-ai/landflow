@@ -20,6 +20,7 @@ import { clientAddress } from '../net/client-address';
 import { sameSecret, tokenHash } from '../auth/passwords';
 import type { UserRecord } from '../auth/users';
 import { getProject, isInstanceAdmin, visibleProjectIds } from '../projects';
+import type { Actor } from '../projects/access';
 import { store as workflows } from '../store';
 import { filterVisible } from '../projects/access';
 
@@ -165,7 +166,12 @@ export function listNetworks(actor: UserRecord, now = Date.now()): NetworkView[]
   return db()
     .all<NetworkRow>('SELECT * FROM networks ORDER BY name')
     .filter((row) => visibleTo(actor, row))
-    .map((row) => view(row, actor, now));
+    .map((row) => (isInstanceAdmin(actor) ? view(row, actor, now) : summary(view(row, actor, now))));
+}
+
+/** What anyone but an instance admin may read: which networks exist, their project and whether each runner is up. No address, connect-from list, token hint, version, dates, description or workflows. */
+function summary(full: NetworkView): NetworkView {
+  return { id: full.id, name: full.name, ...(full.projectId && { projectId: full.projectId }), runners: full.runners.map((runner) => ({ id: runner.id, name: runner.name, status: runner.status })) };
 }
 
 export function getNetwork(id: string): NetworkView | undefined {
@@ -179,10 +185,12 @@ export function networkRow(id: string): { id: string; name: string; projectId?: 
   return row && { id: row.id, name: row.name, ...(row.project_id && { projectId: row.project_id }) };
 }
 
-/** The networks a run-in menu offers (names only; the project rule is checked when the node runs). */
-export function networkChoices(): Array<{ id: string; name: string; projectId?: string }> {
+/** The networks a run-in menu offers: those the caller sees (instance-wide ones and their projects'; no actor, all). The project rule is still checked when the node runs. */
+export function networkChoices(actor?: Actor): Array<{ id: string; name: string; projectId?: string }> {
+  const visible = actor ? visibleProjectIds(actor) : undefined;
   return db()
     .all<NetworkRow>('SELECT id, name, project_id FROM networks ORDER BY name')
+    .filter((row) => !row.project_id || !visible || visible.has(row.project_id))
     .map((row) => ({ id: row.id, name: row.name, ...(row.project_id && { projectId: row.project_id }) }));
 }
 

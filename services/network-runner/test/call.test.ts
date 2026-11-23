@@ -5,7 +5,7 @@
  */
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { gzipSync } from 'node:zlib';
+import { brotliCompressSync, deflateSync, gzipSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parseAllow } from '../src/allow';
 import { performCall } from '../src/call';
@@ -29,6 +29,12 @@ beforeAll(async () => {
         setTimeout(() => res.end('late'), 2_000);
       } else if (req.url?.startsWith('/big')) {
         res.writeHead(200).end(Buffer.alloc(11 * 1024 * 1024));
+      } else if (req.url?.startsWith('/bomb-')) {
+        // ~64 KiB on the wire, 200 MiB once decoded.
+        const zeros = Buffer.alloc(200 * 1024 * 1024);
+        const kind = req.url.slice(6);
+        const packed = kind === 'gzip' ? gzipSync(zeros) : kind === 'deflate' ? deflateSync(zeros) : brotliCompressSync(zeros);
+        res.writeHead(200, { 'content-encoding': kind === 'brotli' ? 'br' : kind }).end(packed);
       } else if (req.url?.startsWith('/gz')) {
         res.writeHead(200, { 'content-encoding': 'gzip', 'content-type': 'text/plain' }).end(gzipSync('zipped words'));
       } else if (req.url?.startsWith('/cookies')) {
@@ -49,6 +55,11 @@ const call = (path: string, extra: Record<string, unknown> = {}, allow = '127.0.
 const text = (body: string | undefined) => Buffer.from(body ?? '', 'base64').toString();
 
 describe('performCall', () => {
+  it.each(['gzip', 'deflate', 'brotli'])('a %s bomb is refused as larger than 10 MiB, not inflated in memory', async (kind) => {
+    const answer = await call(`/bomb-${kind}`);
+    expect(answer).toMatchObject({ error: { message: 'The response is larger than 10 MiB' } });
+  });
+
   it('fetches an allowed target and returns status, headers and body', async () => {
     const answer = await call('/hello');
     expect(answer).toMatchObject({ status: 200 });

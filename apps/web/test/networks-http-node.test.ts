@@ -202,6 +202,21 @@ describe('Run In', () => {
     expect(insideHits).toEqual(['/p']);
   });
 
+  it('D13: an agent run (`agent:<id>`) is judged by the agent’s project, and a run with no stored home is refused', async () => {
+    const a = projects.createTeamProject({ name: 'Agent A', createdBy: owner.id });
+    const b = projects.createTeamProject({ name: 'Agent B', createdBy: owner.id });
+    const net = store.createNetwork({ name: 'Agents of A', projectId: a.id }, owner);
+    await startRunner(net.id, 'agents-1');
+    projects.setHomeProject('agent', 'ag_in_a', a.id);
+    projects.setHomeProject('agent', 'ag_in_b', b.id);
+    const parameters = { method: 'GET', url: `${insideUrl}/agents`, authentication: 'none', runIn: net.id };
+    expect(items(await exec(parameters, { workflowId: 'agent:ag_in_a' }))[0].json).toEqual({ inside: true });
+    expect((await exec(parameters, { workflowId: 'agent:ag_in_b' })).error?.message).toBe('This network belongs to another project');
+    // No stored home (the default project is not assumed): refused, also for a workflow with no row and a run with no workflow.
+    expect((await exec(parameters, { workflowId: 'agent:ag_unplaced' })).error?.message).toBe('This network belongs to another project');
+    expect((await exec(parameters, { workflowId: 'wf_unplaced' })).error?.message).toBe('This network belongs to another project');
+  });
+
   it('a network that was deleted fails the node', async () => {
     const response = await exec({ method: 'GET', url: `${insideUrl}/x`, authentication: 'none', runIn: 'net_gone' });
     expect(response.error?.message).toBe('Network not found');
@@ -257,5 +272,24 @@ describe('Run In', () => {
     expect(events.length - before).toBe(2);
     expect(JSON.stringify(events[0])).not.toContain('/a0');
     expect(events[0].details).toMatchObject({ node: 'HTTP Request', workflowId: 'wf_net' });
+  });
+
+  it('audits a call with no runner online and one refused by the project rule, with the outcome, once each', async () => {
+    const { queryEvents } = await import('@/lib/server/audit/store');
+    const calls = (name: string) => queryEvents({}, { limit: 500 }).events.filter((e) => e.action === 'network.call' && e.target?.name === name);
+    const asleep = store.createNetwork({ name: 'Audit asleep' }, owner);
+    store.registerRunner(asleep.id, { name: 'stopped' }, owner);
+    for (let i = 0; i < 2; i++) expect((await exec({ method: 'GET', url: `${insideUrl}/z${i}`, authentication: 'none', runIn: asleep.id }, { executionId: 'ex_asleep' })).error?.message).toBe('No runner online for network Audit asleep');
+    expect(calls('Audit asleep')).toHaveLength(1);
+    expect(calls('Audit asleep')[0].details).toMatchObject({ outcome: 'no_runner', node: 'HTTP Request' });
+    const p = projects.createTeamProject({ name: 'Audit P', createdBy: owner.id });
+    const bound = store.createNetwork({ name: 'Audit bound', projectId: p.id }, owner);
+    await exec({ method: 'GET', url: `${insideUrl}/y`, authentication: 'none', runIn: bound.id }, { workflowId: 'wf_elsewhere', executionId: 'ex_bound' });
+    expect(calls('Audit bound')[0].details).toMatchObject({ outcome: 'project_refused' });
+    // A good call records ok.
+    const ok = store.createNetwork({ name: 'Audit ok' }, owner);
+    await startRunner(ok.id, 'ok-1');
+    items(await exec({ method: 'GET', url: `${insideUrl}/ok`, authentication: 'none', runIn: ok.id }, { executionId: 'ex_ok' }));
+    expect(calls('Audit ok')[0].details).toMatchObject({ outcome: 'ok' });
   });
 });

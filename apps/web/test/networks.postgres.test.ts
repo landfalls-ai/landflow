@@ -82,4 +82,16 @@ describe.skipIf(!enabled)('network calls on Postgres', async () => {
     const states = await admin.query(`SELECT state, COUNT(*) AS n FROM network_calls GROUP BY state`);
     expect(states.rows).toEqual([{ state: 'claimed', n: '50' }]);
   });
+
+  it('a notice published in one process reaches the listener of another within a second (pg_notify on the replication LISTEN connection)', async () => {
+    const { onNotification, publishNotification } = await import('@/lib/server/db/replication');
+    const heard: string[] = [];
+    const off = onNotification('landflow_network_calls', (payload) => heard.push(payload));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    publishNotification('landflow_network_calls', 'queued');
+    const until = Date.now() + 1_000;
+    while (!heard.length && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 20));
+    off();
+    expect(heard).toContain('queued');
+  });
 });

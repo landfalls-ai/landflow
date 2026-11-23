@@ -26,6 +26,8 @@ runner  ── POST /api/runner/v1/calls/:id { status, headers, body } ──▶
 - The call waits in the shared database table `network_calls` with its request and its answer sealed (they hold the
   credential header and the response). Any main and any worker can queue, claim or read a call, so queue mode needs
   nothing special. A row is deleted when the node has read its answer, and an ended one is purged after two minutes.
+- A call queued or answered in another process wakes the waiting side at once through `pg_notify` on the replication
+  connection (queue mode on Postgres); everywhere else a wait looks every 750 ms.
 - Several runners of one network share the work: one call goes to one runner. A runner that dies after claiming a call
   makes that call fail (**The runner was lost during the call**): it is never retried, because the request may have
   reached the service.
@@ -62,7 +64,8 @@ runner  ── POST /api/runner/v1/calls/:id { status, headers, body } ──▶
 ## Two fences
 
 - **In the host: who may use a network.** A network bound to a project is for that project's workflows; the check is made
-  when the node runs, from the run's workflow (**This network belongs to another project**). **Run In** is not an
+  when the node runs, from the run's workflow, or for an agent run (`agent:<id>`) from the agent's, by the stored home
+  project (a run with none is refused: **This network belongs to another project**). **Run In** is not an
   expression, so data cannot pick a network.
 - **On the runner: what the network may reach.** The runner's own allow-list decides. The host cannot widen it. A name
   entry allows that name; an address or range entry is checked against the address the name resolves to, when the
@@ -88,7 +91,8 @@ runners.
 `network.created`, `network.updated`, `network.deleted`, `network.runner.registered`, `network.runner.revoked`,
 `network.runner.connected` (the first poll after a gap of more than a minute), `network.runner.disconnected` (the first
 read that finds a connected runner gone for a minute) and `network.call`: one per run, node and network, on its first call,
-with the runner, the node and the workflow, never a URL or data. A runner's polls and answers leave no event.
+with the runner, the node and the workflow, never a URL or data. The event carries an `outcome` (`ok`, `no_runner`, `project_refused`, a runner's error code), so an attempt that found no
+runner or was refused is on the log too. A runner's polls and answers leave no event.
 
 ## When it fails
 
@@ -101,7 +105,11 @@ with the runner, the node and the workflow, never a URL or data. A runner's poll
 | **Network not found** | the node's Run In names a deleted network |
 | **This network is busy** | 1,000 calls are already waiting for it |
 
-Limits: a request or a response up to 10 MiB each (multipart and file bodies are buffered); at most 1,000 queued calls per
+Who sees what: an instance admin reads each runner's address, connect-from list, token hint, version and dates, and the
+workflows using a network. Everyone else gets the names, the project and each runner's status only, and the node's Run In
+menu offers only the networks of the caller's projects and the instance-wide ones.
+
+Limits: a runner may hold two open polls (a third gets 429); a request or a response up to 10 MiB each (multipart and file bodies are buffered); at most 1,000 queued calls per
 network. A production server's request timeout must be above 25 s (the poll answers `204` at 25 s either way). When you
 rotate the encryption key, let in-flight calls end first (a call row lives seconds).
 

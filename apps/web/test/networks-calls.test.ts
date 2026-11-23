@@ -19,6 +19,7 @@ const auth = await import('@/lib/server/auth');
 const { database } = await import('@/lib/server/db');
 const store = await import('@/lib/server/networks/store');
 const calls = await import('@/lib/server/networks/calls');
+const { credentials } = await import('@/lib/server/credentials/vault');
 
 afterAll(() => {
   for (const key of Object.keys(ENV)) {
@@ -160,6 +161,54 @@ describe('calls', () => {
     await calls.claimCall(r1, { waitMs: 50 });
     await calls.completeCall(r1, next, { status: 200, headers: [] });
     await calls.awaitAnswer(next, { timeoutMs: 1_000 });
+  });
+
+  it('purges queued rows nobody can claim any more and claimed rows long abandoned, on the next enqueue', async () => {
+    const net = store.createNetwork({ name: 'Stale net' }, admin);
+    const record = { id: r1.id, networkId: net.id, name: 'one', allowedIps: [] };
+    const tenMinutes = Date.now() - 10 * 60_000;
+    const staleQueued = await calls.enqueueCall(net.id, request(), meta, tenMinutes);
+    const staleClaimed = await calls.enqueueCall(net.id, request(), meta, Date.now() - 2 * 3_600_000);
+    // Claimed two hours ago (the oldest queued row goes first); the ten-minute-old one stays queued.
+    expect(await calls.claimOnce(record, Date.now() - 2 * 3_600_000)).toMatchObject({ id: staleClaimed });
+    const queuedOld = await calls.enqueueCall(net.id, request(), meta, tenMinutes);
+    const fresh = await calls.enqueueCall(net.id, request(), meta);
+    expect(rowOf(queuedOld)).toBeUndefined();
+    expect(rowOf(staleQueued)).toBeUndefined();
+    expect(rowOf(staleClaimed)).toBeUndefined();
+    expect(rowOf(fresh)?.state).toBe('queued');
+  });
+
+  it('the queue cap counts only calls that can still be claimed', async () => {
+    const net = store.createNetwork({ name: 'Cap net' }, admin);
+    for (let i = 0; i < 5; i++) await calls.enqueueCall(net.id, request(), meta, Date.now() - 10 * 60_000);
+    calls.limits.queueCap = 2;
+    // Five ten-minute-old queued rows are dead weight, not a full queue.
+    await expect(calls.enqueueCall(net.id, request(), meta)).resolves.toMatch(/^call_/);
+  });
+
+  it('holds at most two open polls per runner: a third is refused with 429 until one ends', async () => {
+    const first = calls.claimCall(r1, { waitMs: 400 });
+    const second = calls.claimCall(r1, { waitMs: 400 });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await expect(calls.claimCall(r1, { waitMs: 400 })).rejects.toMatchObject({ status: 429 });
+    // Another runner is not affected.
+    await expect(calls.claimCall(r2, { waitMs: 20 })).resolves.toBeUndefined();
+    await Promise.all([first, second]);
+    await expect(calls.claimCall(r1, { waitMs: 20 })).resolves.toBeUndefined();
+  });
+
+  it('finds a call queued by another process (no in-process wake-up) within a second', async () => {
+    const net = store.createNetwork({ name: 'Other process net' }, admin);
+    const { runner } = store.registerRunner(net.id, { name: 'op' }, admin);
+    const record = { id: runner.id, networkId: net.id, name: 'op', allowedIps: [] };
+    const waiting = calls.claimCall(record, { waitMs: 3_000 });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const started = Date.now();
+    const now = new Date().toISOString();
+    database().sqlite.prepare(`INSERT INTO network_calls (id, network_id, state, request, queued_at) VALUES (?, ?, 'queued', ?, ?)`).run('call_other_proc', net.id, credentials.sealSecret(JSON.stringify({ method: 'GET', url: 'http://10.0.0.1/', headers: [], timeoutMs: 1_000 }), 'network.call'), now);
+    expect((await waiting)?.id).toBe('call_other_proc');
+    expect(Date.now() - started).toBeLessThan(1_000);
   });
 
   it('caps the queue: the call past the limit fails as busy', async () => {

@@ -11,7 +11,7 @@
 import { NodeOperationError } from '@landflow/sdk';
 import { recordAudit } from '../audit';
 import { singleton } from '../singleton';
-import { homeProjectId } from '../projects';
+import { storedHomeProject } from '../projects';
 import { awaitAnswer, enqueueCall, type CallRequest } from './calls';
 import { networkRow } from './store';
 
@@ -41,34 +41,54 @@ async function prepare(url: URL, init: RequestInit): Promise<{ headers: Array<[s
   return { headers, ...(bytes?.length && { body: bytes }) };
 }
 
+/** The stored home project of the run's workflow (`agent:<id>`: the agent's), as governance's policyScope reads it; none when it has no row (the default project is never assumed: refuse). */
+function runHome(workflowId: string | undefined): string | undefined {
+  if (!workflowId) return undefined;
+  return workflowId.startsWith('agent:') ? storedHomeProject('agent', workflowId.slice('agent:'.length)) : storedHomeProject('workflow', workflowId);
+}
+
 export function networkFetch(networkId: string, meta: NetworkCallMeta, timeoutMs: number): (url: URL, init: RequestInit) => Promise<Response> {
   return async (url, init) => {
     const network = networkRow(networkId);
     if (!network) throw new NodeOperationError('Network not found', { description: 'The node’s Run In names a network that was deleted. Pick another in the node, or Host.' });
-    if (network.projectId && (!meta.workflowId || homeProjectId('workflow', meta.workflowId) !== network.projectId)) {
-      throw new NodeOperationError('This network belongs to another project', { description: 'A network bound to a project is for that project’s workflows. Ask an admin for an instance-wide network, or pick another.' });
-    }
-    const { headers, body } = await prepare(url, init);
-    const call: CallRequest = { method: (init.method ?? 'GET').toUpperCase(), url: url.toString(), headers, ...(body && { body: body.toString('base64') }), timeoutMs };
-    const id = await enqueueCall(networkId, call, { executionId: meta.executionId, workflowId: meta.workflowId, node: meta.node });
-    const answer = await awaitAnswer(id, { timeoutMs: timeoutMs + GRACE_MS, signal: init.signal ?? undefined });
+    // The first call of each (run, node, network) is the event, whatever came of it (C29-D3): an admin sees refused and unanswered attempts too.
     const key = `${meta.executionId}:${meta.node}:${networkId}`;
-    if (!audited().has(key)) {
-      if (audited().size > 5_000) audited().clear();
-      audited().add(key);
-      recordAudit({
-        action: 'network.call',
-        actor: 'system',
-        target: { type: 'network', id: networkId, name: network.name },
-        project: network.projectId ?? null,
-        summary: `Sent an HTTP request through the network ${network.name}`,
-        details: { executionId: meta.executionId, workflowId: meta.workflowId, node: meta.node, runnerId: 'runnerId' in answer ? answer.runnerId : undefined },
-      });
+    let outcome = 'ok';
+    let runnerId: string | undefined;
+    try {
+      if (network.projectId && runHome(meta.workflowId) !== network.projectId) {
+        outcome = 'project_refused';
+        throw new NodeOperationError('This network belongs to another project', { description: 'A network bound to a project is for that project’s workflows. Ask an admin for an instance-wide network, or pick another.' });
+      }
+      const { headers, body } = await prepare(url, init);
+      const call: CallRequest = { method: (init.method ?? 'GET').toUpperCase(), url: url.toString(), headers, ...(body && { body: body.toString('base64') }), timeoutMs };
+      const id = await enqueueCall(networkId, call, { executionId: meta.executionId, workflowId: meta.workflowId, node: meta.node });
+      const answer = await awaitAnswer(id, { timeoutMs: timeoutMs + GRACE_MS, signal: init.signal ?? undefined });
+      runnerId = answer.runnerId;
+      // An error answer from the runner is thrown by awaitAnswer (RunnerCallError), so `answer` here is a response.
+      const headersOut = new Headers();
+      for (const [name, value] of answer.headers) headersOut.append(name, value);
+      const bytes = answer.body ? Buffer.from(answer.body, 'base64') : undefined;
+      return new Response(NO_BODY.has(answer.status) ? null : bytes ? new Uint8Array(bytes) : null, { status: answer.status, headers: headersOut });
+    } catch (error) {
+      if (outcome === 'ok') outcome = (error as { code?: string }).code ?? 'error';
+      throw error;
+    } finally {
+      audit(key, network, meta, outcome, runnerId);
     }
-    if ('error' in answer) throw new NodeOperationError(answer.error.message);
-    const headersOut = new Headers();
-    for (const [name, value] of answer.headers) headersOut.append(name, value);
-    const bytes = answer.body ? Buffer.from(answer.body, 'base64') : undefined;
-    return new Response(NO_BODY.has(answer.status) ? null : bytes ? new Uint8Array(bytes) : null, { status: answer.status, headers: headersOut });
   };
+}
+
+function audit(key: string, network: { id: string; name: string; projectId?: string }, meta: NetworkCallMeta, outcome: string, runnerId: string | undefined) {
+  if (audited().has(key)) return;
+  if (audited().size > 5_000) audited().clear();
+  audited().add(key);
+  recordAudit({
+    action: 'network.call',
+    actor: 'system',
+    target: { type: 'network', id: network.id, name: network.name },
+    project: network.projectId ?? null,
+    summary: `Sent an HTTP request through the network ${network.name}${outcome === 'ok' ? '' : ` (${outcome})`}`,
+    details: { executionId: meta.executionId, workflowId: meta.workflowId, node: meta.node, outcome, ...(runnerId && { runnerId }) },
+  });
 }

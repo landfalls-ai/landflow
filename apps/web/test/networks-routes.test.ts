@@ -21,6 +21,7 @@ for (const key of UNSET) delete process.env[key];
 const auth = await import('@/lib/server/auth');
 const projects = await import('@/lib/server/projects');
 const calls = await import('@/lib/server/networks/calls');
+const store = await import('@/lib/server/networks/store');
 const { isPublicPath } = await import('@/lib/shared/auth-paths');
 const networksRoute = await import('@/app/api/settings/networks/route');
 const networkRoute = await import('@/app/api/settings/networks/[id]/route');
@@ -28,6 +29,7 @@ const runnersRoute = await import('@/app/api/settings/networks/[id]/runners/rout
 const runnerRoute = await import('@/app/api/settings/networks/[id]/runners/[runnerId]/route');
 const pollRoute = await import('@/app/api/runner/v1/poll/route');
 const answerRoute = await import('@/app/api/runner/v1/calls/[id]/route');
+const loadOptionsRoute = await import('@/app/api/node-types/load-options/route');
 const { queryEvents } = await import('@/lib/server/audit/store');
 
 beforeAll(() => auth.disableTestAuth());
@@ -153,8 +155,17 @@ describe('the admin routes', () => {
     const other = projects.createTeamProject({ name: 'Routes other', createdBy: owner.user.id });
     const mine = await call(networksRoute.POST, '/api/settings/networks', { session: owner.session, body: { name: 'Mine route net', projectId: project.id } });
     await call(networksRoute.POST, '/api/settings/networks', { session: owner.session, body: { name: 'Theirs route net', projectId: other.id } });
+    const mineId = mine.body.network.id as string;
+    const registered = await call(runnersRoute.POST, `/api/settings/networks/${mineId}/runners`, { session: owner.session, body: { name: 'member-visible', allowedIps: ['203.0.113.0/24'] } }, { id: mineId });
+    store.markSeen(registered.body.runner.id, { version: '9.9.9', address: '203.0.113.5' });
     const read = await call(networksRoute.GET, '/api/settings/networks', { session: member.session });
     const names = read.body.networks.map((x: { name: string }) => x.name);
+    // A member gets names and status only: no address, connect-from list, token hint, version, description or workflows.
+    const seenByMember = read.body.networks.find((x: { id: string }) => x.id === mineId);
+    expect(seenByMember).toEqual({ id: mineId, name: 'Mine route net', projectId: project.id, runners: [{ id: registered.body.runner.id, name: 'member-visible', status: 'online' }] });
+    expect(JSON.stringify(read.body)).not.toMatch(/203\.0\.113|9\.9\.9/);
+    const adminRead = await call(networksRoute.GET, '/api/settings/networks', { session: owner.session });
+    expect(adminRead.body.networks.find((x: { id: string }) => x.id === mineId).runners[0]).toMatchObject({ address: '203.0.113.5', allowedIps: ['203.0.113.0/24'], version: '9.9.9' });
     expect(names).toContain('Mine route net');
     expect(names).not.toContain('Theirs route net');
     const id = mine.body.network.id as string;
@@ -189,5 +200,20 @@ describe('the admin routes', () => {
     expect((await runnerCall(pollRoute.POST, '/api/runner/v1/poll', token, {})).status).toBe(401);
     const read = await call(networksRoute.GET, '/api/settings/networks', { session: owner.session });
     expect(read.body.networks.some((x: { id: string }) => x.id === networkId)).toBe(false);
+  });
+
+  it('the Run In menu lists only the networks the caller can see', async () => {
+    const member = await make('member');
+    const mine = projects.createTeamProject({ name: 'Menu mine', createdBy: owner.user.id });
+    projects.setMember(mine.id, member.user.id, 'builder');
+    const other = projects.createTeamProject({ name: 'Menu other', createdBy: owner.user.id });
+    for (const [name, projectId] of [['Menu open', undefined], ['Menu mine net', mine.id], ['Menu other net', other.id]] as const) {
+      await call(networksRoute.POST, '/api/settings/networks', { session: owner.session, body: { name, ...(projectId && { projectId }) } });
+    }
+    const names = async (session: string) => ((await call(loadOptionsRoute.POST, '/api/node-types/load-options', { session, body: { type: 'core.httpRequest', method: 'networks' } })).body.options as Array<{ name: string }>).map((o) => o.name);
+    const forMember = await names(member.session);
+    expect(forMember).toEqual(expect.arrayContaining(['Host (this Landflow)', 'Menu open', 'Menu mine net']));
+    expect(forMember).not.toContain('Menu other net');
+    expect(await names(owner.session)).toContain('Menu other net');
   });
 });
