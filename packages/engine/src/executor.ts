@@ -1205,6 +1205,12 @@ class WorkflowRun {
     return view;
   }
 
+  /** The run's name for the host's dynamic secrets, when the host said this is a real run (`options.secretRun`). */
+  private secretRunExtras(): Pick<ContextExtras, 'secretRun'> {
+    const run = this.options.secretRun;
+    return run ? { secretRun: { executionId: this.options.executionId, ...(run.workflowId && { workflowId: run.workflowId }) } } : {};
+  }
+
   private async callExecute(
     node: WorkflowNode,
     resolved: ResolvedNodeType,
@@ -1228,6 +1234,7 @@ class WorkflowRun {
         else this.nodeState[node.id] = structuredClone(state);
       },
       getNodeOutputs: () => this.expressionOutputs(node),
+      ...this.secretRunExtras(),
       sendProgress: progress.send,
       onRecord: (record) => this.emitRecord(node, record),
       ...(this.options.streaming && {
@@ -1322,6 +1329,7 @@ class WorkflowRun {
       if (resolved.supplyData) {
         const request = this.buildRequest(subNode, resolved, [rootItems], rootItems, undefined, undefined, await this.parameterSecrets(subNode, resolved));
         const extras: ContextExtras = {
+          ...this.secretRunExtras(),
           ...(this.signal && { signal: this.signal }),
           getInputConnectionData: <T>(subType: SubNodeType, subIndex?: number) =>
             this.supplySubNodes(subNode, subType, rootItems, subIndex, [...chain, subNode.id]) as Promise<T[]>,

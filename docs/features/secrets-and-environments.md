@@ -50,8 +50,8 @@ a run needs it, hands it to the run's nodes, and revokes it when the run ends.
   OAuth2 Connect, app webhook registration, the editor's option lists and node parameters refuse a dynamic path with "a dynamic
   secret is issued per run: use it in a node credential".
 - **The lease** (`secret_leases`, migration 2933): one row per (run, provider, path) with when it was issued and when it ends,
-  its state, and the lease id and the issued values **sealed** (`secrets.lease.id`, `secrets.lease`: the vault's key ring, re-sealed
-  by key rotation) so a resumed run reuses its user; both are dropped when the lease ends. The values never enter the value
+  its state, and the lease id and the issued values **sealed** under purposes that name the row (`secrets.lease.id:<row id>`,
+  `secrets.lease:<row id>`: the vault's key ring, re-sealed by key rotation) so a resumed run reuses its user; both are dropped when the lease ends. The values never enter the value
   cache, and are redacted like every `$secrets` value (node outputs, errors, stored run rows, logs, live events).
 - **It ends** (any status of the run, cancel and timeout included, in the process that saved the run's end; a run that only waits
   keeps it): the host asks the store to revoke it (`sys/leases/revoke`) at once, and the user is gone in the database. The
@@ -63,6 +63,16 @@ a run needs it, hands it to the run's nodes, and revokes it when the run ends.
   every 30 minutes; after 24 hours it becomes `revoke_failed` with an audit event and a red banner on the Leases section until an
   admin revokes it or sets it aside. At most 10,000 leases are open; the next node fails with "too many open leases". Ended rows are
   deleted after 30 days.
+- **What "revoked" means**: Vault and OpenBao answer 204 for a lease they don't know, so a lease the store already dropped (a restarted
+  dev OpenBao, a lease that ran out) also reads as revoked; it means the store accepted the call, not that a user was found. A store
+  that answers 400 "lease not found" is read as gone. A lease id that can't be unsealed (the key changed) is a failed revoke, not a
+  revoked one. **Give every role `VALID UNTIL`** (`creation_statements` with `VALID UNTIL '{{expiration}}'`): the database then ends the
+  login by itself if Landflow never gets to revoke it, and a dev OpenBao that restarts (it keeps leases in memory) leaves its roles
+  behind until that time.
+- **Which run**: the engine names the run (`secretRun` in its options, set by the runner for a saved run); a call that only has an
+  execution id of its own making (an agent's channel, an MCP tool list, a run's change summary) gets the refusal above, never a lease.
+- **Who**: Settings → Leases and both lease routes are for the built-in owner and admin (`instanceAdmin`), also for reading: a lease names
+  runs of every project.
 - **Leases** (Settings → External secrets, shown once a provider has Dynamic mounts; `GET /api/external-secrets/leases`): one row
   per lease with its run (a link to the Run trace), the secret, when it was issued and ends, and its state (Active, Revoked,
   Expired, Not revoked). **Revoke now** removes one credential at the store; **Revoke run** every open lease of a run

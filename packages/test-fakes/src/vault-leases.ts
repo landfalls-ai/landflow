@@ -45,12 +45,15 @@ export interface VaultLeasesOptions {
   /** The lease length a role gives (seconds, default 900) and the longest a renewal can reach (default 3600). */
   defaultTtl?: number;
   maxTtl?: number;
+  /** Whether leases say `renewable: true` (default true); a non-renewable lease is refused a renewal. */
+  renewable?: boolean;
 }
 
 export function fakeVaultLeases(options: VaultLeasesOptions = {}) {
   const mounts = options.mounts ?? ['database/'];
   const defaultTtl = options.defaultTtl ?? 900;
   const maxTtl = options.maxTtl ?? 3600;
+  const renewable = options.renewable ?? true;
   let live: VaultLeasesState;
   let counter = 0;
   const fresh = (): VaultLeasesState => {
@@ -93,7 +96,7 @@ export function fakeVaultLeases(options: VaultLeasesOptions = {}) {
         };
         state.active[leaseId] = issued;
         state.issued.push(issued);
-        return { body: { lease_id: leaseId, lease_duration: defaultTtl, renewable: true, data: { username: issued.username, password: issued.password } } };
+        return { body: { lease_id: leaseId, lease_duration: defaultTtl, renewable, data: { username: issued.username, password: issued.password } } };
       }
       if (request.method === 'PUT' && path === 'sys/leases/renew') {
         const { lease_id: leaseId, increment } = (request.body ?? {}) as { lease_id?: string; increment?: number };
@@ -103,7 +106,7 @@ export function fakeVaultLeases(options: VaultLeasesOptions = {}) {
         lease.renewals += 1;
         lease.increments.push(Number(increment) || 0);
         lease.leaseSeconds = seconds;
-        return { body: { lease_id: leaseId, lease_duration: seconds, renewable: true } };
+        return { body: { lease_id: leaseId, lease_duration: seconds, renewable } };
       }
       if (request.method === 'PUT' && path === 'sys/leases/revoke') {
         if (state.failRevokes > 0) {

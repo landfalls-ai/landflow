@@ -200,7 +200,7 @@ describe('leases that run out and are renewed', () => {
     age('run_renew_fail', { expires_at: iso(start + 60_000) });
     bao.down();
     await leaseSweeper.tick(start);
-    expect(row('run_renew_fail')).toMatchObject({ state: 'active', attempts: 1, last_error: expect.stringContaining('503') });
+    expect(row('run_renew_fail')).toMatchObject({ state: 'active', attempts: 0, renew_failures: 1, last_error: expect.stringContaining('503') });
     expect(Date.parse(String(row('run_renew_fail').next_attempt_at)) - start).toBe(30_000);
     bao.up();
     await leaseSweeper.tick(start + 31_000);

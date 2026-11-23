@@ -74,15 +74,15 @@ describe('the secret_leases table (migration 2933)', () => {
       return `v2.${sealed.kid}.${sealed.iv}.${sealed.tag}.${sealed.value}`;
     };
     const db = database();
-    db.upsert('secret_leases', rowOf('lease_rot', { execution_id: 'run_rot', lease_id: seal('database/creds/report-reader/abc123', 'secrets.lease.id'), lease_values: seal(values, 'secrets.lease') }));
+    db.upsert('secret_leases', rowOf('lease_rot', { execution_id: 'run_rot', lease_id: seal('database/creds/report-reader/abc123', 'secrets.lease.id:lease_rot'), lease_values: seal(values, 'secrets.lease:lease_rot') }));
     const result = rotateEncryption();
     expect(result.failed).toEqual([]);
     expect(result.stores.secret_leases).toBe(2);
     const after = db.get<{ lease_id: string; lease_values: string }>('SELECT lease_id, lease_values FROM secret_leases WHERE id = ?', 'lease_rot')!;
     expect(after.lease_id.startsWith('v2.n1.')).toBe(true);
     expect(after.lease_values.startsWith('v2.n1.')).toBe(true);
-    expect(credentials.openSecret(after.lease_id, 'secrets.lease.id')).toBe('database/creds/report-reader/abc123');
-    expect(credentials.openSecret(after.lease_values, 'secrets.lease')).toBe(values);
+    expect(credentials.openSecret(after.lease_id, 'secrets.lease.id:lease_rot')).toBe('database/creds/report-reader/abc123');
+    expect(credentials.openSecret(after.lease_values, 'secrets.lease:lease_rot')).toBe(values);
     db.delete('secret_leases', { id: 'lease_rot' });
   });
 });
@@ -176,7 +176,7 @@ describe('leased secrets', () => {
     expect(row.lease_values).toMatch(/^v2\./);
     expect(JSON.stringify(row)).not.toContain(bao.state().issued[0].password);
     expect(JSON.stringify(row)).not.toContain(bao.state().issued[0].leaseId);
-    expect(credentials.openSecret(row.lease_id!, 'secrets.lease.id')).toBe(bao.state().issued[0].leaseId);
+    expect(credentials.openSecret(row.lease_id!, `secrets.lease.id:${row.id}`)).toBe(bao.state().issued[0].leaseId);
     const expiresIn = Date.parse(row.expires_at!) - Date.parse(row.issued_at!);
     expect(expiresIn).toBe(900_000);
     // A later call (the run resumed in another process) reads the row, not the store.

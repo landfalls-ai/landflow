@@ -2150,7 +2150,7 @@ export const MIGRATIONS: Migration[] = [
     version: 2933,
     name: 'secret_leases',
     statements: [
-      `CREATE TABLE IF NOT EXISTS secret_leases (id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, workflow_id TEXT, provider TEXT NOT NULL, path TEXT NOT NULL, lease_id TEXT, lease_values TEXT, state TEXT NOT NULL, issued_at TEXT NOT NULL, expires_at TEXT NOT NULL, renewed_until TEXT, attempts BIGINT NOT NULL DEFAULT 0, next_attempt_at TEXT, last_error TEXT, failing_since TEXT, dismissed_at TEXT, ended_at TEXT, ended_by TEXT)`,
+      `CREATE TABLE IF NOT EXISTS secret_leases (id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, workflow_id TEXT, provider TEXT NOT NULL, path TEXT NOT NULL, lease_id TEXT, lease_values TEXT, state TEXT NOT NULL, issued_at TEXT NOT NULL, expires_at TEXT NOT NULL, renewed_until TEXT, attempts BIGINT NOT NULL DEFAULT 0, next_attempt_at TEXT, last_error TEXT, failing_since TEXT, dismissed_at TEXT, ended_at TEXT, ended_by TEXT, renew_failures BIGINT NOT NULL DEFAULT 0, renewable BIGINT NOT NULL DEFAULT 1)`,
       `CREATE UNIQUE INDEX IF NOT EXISTS secret_leases_run_path ON secret_leases (execution_id, provider, path)`,
       `CREATE INDEX IF NOT EXISTS secret_leases_state ON secret_leases (state, next_attempt_at)`,
     ],

@@ -333,7 +333,7 @@ export const externalSecrets = {
       await live.revokeLease(leaseId);
       return 'revoked';
     } catch (error) {
-      // The store has no such lease any more: it ran out and was removed there.
+      // A store that answers 400 "lease not found" (Vault and OpenBao themselves answer 204 for an unknown lease, which reads as revoked): it was removed there.
       if (error instanceof SecretProviderError && error.status !== undefined && error.status >= 400 && error.status < 500 && /lease not found|invalid lease|no such lease/i.test(error.message)) return 'gone';
       throw new SecretsError(`Revoking a lease of ${provider} failed: ${redactText((error as Error).message)}`, 502);
     } finally {

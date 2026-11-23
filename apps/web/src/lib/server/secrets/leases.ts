@@ -24,13 +24,12 @@ import { decodeCursor, encodeCursor } from '../pagination';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
 import type { SecretValue } from './providers';
+import { leaseIdPurpose, leaseValuesPurpose } from './lease-purpose';
 import { redactText, rememberSecretValues } from './redact';
 import { registerDynamicIssuer } from './resolve';
 import { externalSecrets, SecretsError } from './service';
 
 /** What a lease row binds its sealed columns to (and key rotation re-seals them under: credentials/rotate.ts). */
-const VALUES_PURPOSE = 'secrets.lease';
-const ID_PURPOSE = 'secrets.lease.id';
 
 /** At most this many leases are open at once; the next node that needs one fails. */
 export const MAX_ACTIVE_LEASES = 10_000;
@@ -62,13 +61,17 @@ export interface LeaseRow {
   dismissed_at: string | null;
   ended_at: string | null;
   ended_by: string | null;
+  /** Failed renewals in a row (apart from `attempts`, which counts failed revokes). */
+  renew_failures: number;
+  /** 0 when the store said the lease can't be renewed. */
+  renewable: number;
 }
 
 export type LeaseEnder = 'finish' | 'sweeper' | 'admin';
 
 const COLUMNS: Array<keyof LeaseRow> = [
   'id', 'execution_id', 'workflow_id', 'provider', 'path', 'lease_id', 'lease_values', 'state', 'issued_at', 'expires_at', 'renewed_until', 'attempts',
-  'next_attempt_at', 'last_error', 'failing_since', 'dismissed_at', 'ended_at', 'ended_by',
+  'next_attempt_at', 'last_error', 'failing_since', 'dismissed_at', 'ended_at', 'ended_by', 'renew_failures', 'renewable',
 ];
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -109,30 +112,72 @@ export async function claim(row: LeaseRow, db: Database = database()): Promise<{
   const values = COLUMNS.map((column) => row[column] ?? null);
   const outcome = await db.direct(async (client) => {
     const inserted = await client.query(`INSERT INTO secret_leases (${COLUMNS.join(', ')}) VALUES (${COLUMNS.map((_c, i) => `$${i + 1}`).join(', ')}) ON CONFLICT (id) DO NOTHING`, values);
+    // The other processes (the leader's sweeper, a main's lists and counts, key rotation) hear of the row at once.
+    if (inserted.rowCount) await tell(db, client, row.id);
     if (inserted.rowCount) return undefined;
     return (await client.query<LeaseRow>('SELECT * FROM secret_leases WHERE id = $1', [row.id])).rows[0];
   });
   const winner = outcome ?? undefined;
-  db.upsertLocal('secret_leases', (winner ?? row) as unknown as Record<string, never>);
+  await adopt(db, winner ?? row);
   return winner ? { won: false, row: winner } : { won: true, row };
 }
 
-const save = (row: LeaseRow) => database().upsert('secret_leases', row as unknown as Record<string, never>);
+/** Take what Postgres decided into this process's copy (read back with replication, else a copy-only write, never a queued stale row). */
+async function adopt(db: Database, row: LeaseRow): Promise<void> {
+  if (await db.refresh('secret_leases', { id: row.id })) return;
+  db.upsertLocal('secret_leases', row as unknown as Record<string, never>);
+}
+
+/** Tell the other processes a row changed through `direct` (a no-op without replication). */
+async function tell(db: Database, client: { query(text: string, values?: unknown[]): Promise<unknown> }, id: string): Promise<void> {
+  const payload = db.keyNotice('secret_leases', [id]);
+  if (payload) await client.query('SELECT pg_notify($1, $2)', ['landflow_changes', payload]);
+}
+
+/**
+ * Write `next` only while the row is still in one of the `expected` states, so a slow renewal, expiry or failed revoke
+ * can't bring an ended row back to life. Resolves to whether it was written. SQLite: one IMMEDIATE transaction decides.
+ * Postgres mode: a conditional UPDATE straight on Postgres (then a notice and the copy follows).
+ */
+export async function writeIf(next: LeaseRow, expected: SecretLeaseState[], db: Database = database()): Promise<boolean> {
+  if (db.kind !== 'postgres') {
+    return db.transaction(() => {
+      const current = db.get<LeaseRow>('SELECT state FROM secret_leases WHERE id = ?', next.id);
+      if (!current || !expected.includes(current.state)) return false;
+      db.upsert('secret_leases', next as unknown as Record<string, never>);
+      return true;
+    });
+  }
+  await db.flush();
+  const columns = COLUMNS.filter((column) => column !== 'id');
+  const result = await db.direct(async (client) => {
+    const updated = await client.query<LeaseRow>(
+      `UPDATE secret_leases SET ${columns.map((column, i) => `${column} = $${i + 2}`).join(', ')} WHERE id = $1 AND state = ANY($${columns.length + 2}) RETURNING *`,
+      [next.id, ...columns.map((column) => next[column] ?? null), expected],
+    );
+    if (updated.rows[0]) await tell(db, client, next.id);
+    return updated;
+  });
+  const won = result?.rows[0];
+  if (won) await adopt(db, won);
+  return Boolean(won);
+}
 
 const sealedValues = (row: LeaseRow): SecretValue => {
   try {
-    return JSON.parse(credentials.openSecret(row.lease_values!, VALUES_PURPOSE)) as SecretValue;
+    return JSON.parse(credentials.openSecret(row.lease_values!, leaseValuesPurpose(row.id))) as SecretValue;
   } catch {
     throw new SecretsError(`The run’s lease for ${reference(row)} can’t be read (its key changed?)`, 500);
   }
 };
 
+/** The lease id of a row, or undefined when there is none (nothing to revoke). Throws when it can't be unsealed: that is a failure, not "nothing to revoke". */
 const openLeaseId = (row: LeaseRow): string | undefined => {
   if (!row.lease_id) return undefined;
   try {
-    return credentials.openSecret(row.lease_id, ID_PURPOSE);
+    return credentials.openSecret(row.lease_id, leaseIdPurpose(row.id));
   } catch {
-    return undefined;
+    throw new SecretsError(`The lease id of ${reference(row)} can’t be unsealed (its key changed?): revoke it at the store`, 500);
   }
 };
 
@@ -199,8 +244,8 @@ async function obtain(id: string, ref: { provider: string; name: string }, run: 
     workflow_id: run.workflowId ?? null,
     provider: ref.provider,
     path: ref.name,
-    lease_id: credentials.sealSecret(issued.leaseId, ID_PURPOSE),
-    lease_values: credentials.sealSecret(JSON.stringify(issued.values), VALUES_PURPOSE),
+    lease_id: credentials.sealSecret(issued.leaseId, leaseIdPurpose(id)),
+    lease_values: credentials.sealSecret(JSON.stringify(issued.values), leaseValuesPurpose(id)),
     state: 'active',
     issued_at: iso(now),
     expires_at: iso(now + (issued.leaseSeconds > 0 ? issued.leaseSeconds : FALLBACK_LEASE_SECONDS) * 1000),
@@ -212,6 +257,8 @@ async function obtain(id: string, ref: { provider: string; name: string }, run: 
     dismissed_at: null,
     ended_at: null,
     ended_by: null,
+    renew_failures: 0,
+    renewable: issued.renewable ? 1 : 0,
   };
   // Remembered before anything can fail or return, so no value the store made can leave through a message.
   rememberSecretValues(issued.values);
@@ -246,10 +293,10 @@ const revoking = singleton('secret-leases-revoking', () => new Map<string, Promi
 export type RevokeOutcome = 'revoked' | 'expired' | 'failed' | 'skipped';
 
 /** End one lease at the store. Concurrent calls for a row (the run's end, the sweeper, an admin) share one attempt. */
-export function revokeRow(row: LeaseRow, by: LeaseEnder, now = Date.now()): Promise<RevokeOutcome> {
+export function revokeRow(row: LeaseRow, by: LeaseEnder, now = Date.now(), db: Database = database()): Promise<RevokeOutcome> {
   let pending = revoking.get(row.id);
   if (!pending) {
-    pending = attemptRevoke(row.id, by, now).finally(() => revoking.delete(row.id));
+    pending = attemptRevoke(row.id, by, now, db).finally(() => revoking.delete(row.id));
     revoking.set(row.id, pending);
   }
   return pending;
@@ -267,13 +314,14 @@ const audit = (action: string, row: LeaseRow, by: LeaseEnder, outcome: 'success'
     details: { executionId: row.execution_id, workflowId: row.workflow_id, provider: row.provider, path: row.path, by, ...details },
   });
 
-async function attemptRevoke(id: string, by: LeaseEnder, now: number): Promise<RevokeOutcome> {
-  const row = await readRow(id);
+async function attemptRevoke(id: string, by: LeaseEnder, now: number, db: Database): Promise<RevokeOutcome> {
+  const row = await readRow(id, db);
   // A lease given up on is tried again only when an admin asks.
   if (!row || (row.state !== 'active' && !(row.state === 'revoke_failed' && by === 'admin'))) return 'skipped';
-  const leaseId = openLeaseId(row);
   let result: 'revoked' | 'gone';
   try {
+    // No lease id at all: nothing to revoke. One that can't be unsealed throws: that is a failed revoke.
+    const leaseId = openLeaseId(row);
     result = leaseId ? await externalSecrets.revokeLease(row.provider, leaseId) : 'gone';
   } catch (error) {
     const attempts = (Number(row.attempts) || 0) + 1;
@@ -284,12 +332,15 @@ async function attemptRevoke(id: string, by: LeaseEnder, now: number): Promise<R
       ? // Values are dropped; the lease id stays, so an admin can still try again once the store is back.
         { ...row, state: 'revoke_failed', lease_values: null, attempts, last_error: message, failing_since: failingSince, next_attempt_at: null, ended_at: iso(now), ended_by: by }
       : { ...row, attempts, last_error: message, failing_since: failingSince, next_attempt_at: row.state === 'active' ? iso(now + backoffMs(attempts)) : row.next_attempt_at };
-    save(next);
-    if (giveUp) audit('secrets.lease.revoke_failed', next, by, 'failure', { attempts, lastError: message });
-    logger.warn('a leased secret could not be revoked', { 'landflow.secrets.provider': row.provider, 'landflow.execution.id': row.execution_id, attempts, give_up: giveUp });
+    // Only while the row is still as it was read: an ended row is not brought back.
+    if (await writeIf(next, [row.state], db)) {
+      if (giveUp) audit('secrets.lease.revoke_failed', next, by, 'failure', { attempts, lastError: message });
+      logger.warn('a leased secret could not be revoked', { 'landflow.secrets.provider': row.provider, 'landflow.execution.id': row.execution_id, attempts, give_up: giveUp });
+    }
     return 'failed';
   }
-  // "No such lease" after its time ran out means the store removed it itself.
+  // Vault and OpenBao answer 204 for a lease they don't know, so "revoked" means the store accepted the call; "gone" is for a
+  // store that answers 400 "lease not found". After its time ran out either means the store removed it itself.
   const expired = result === 'gone' && Date.parse(row.expires_at) <= now;
   const next: LeaseRow = {
     ...row,
@@ -301,7 +352,7 @@ async function attemptRevoke(id: string, by: LeaseEnder, now: number): Promise<R
     ended_at: iso(now),
     ended_by: by,
   };
-  save(next);
+  if (!(await writeIf(next, ['active', 'revoke_failed'], db))) return 'skipped';
   audit(expired ? 'secrets.lease.expired' : 'secrets.lease.revoked', next, by, 'success', { attempts: next.attempts });
   return expired ? 'expired' : 'revoked';
 }
@@ -314,10 +365,10 @@ export interface RevokeTally {
 const tally = (outcomes: RevokeOutcome[]): RevokeTally => ({ revoked: outcomes.filter((o) => o === 'revoked' || o === 'expired').length, failed: outcomes.filter((o) => o === 'failed').length });
 
 /** End every open lease of a run (its end, an admin's "Revoke all"). An admin's call tries the given-up ones again too. */
-export async function revokeRun(executionId: string, by: LeaseEnder, now = Date.now()): Promise<RevokeTally> {
+export async function revokeRun(executionId: string, by: LeaseEnder, now = Date.now(), db: Database = database()): Promise<RevokeTally> {
   const states = by === 'admin' ? ['active', 'revoke_failed'] : ['active'];
-  const rows = database().all<LeaseRow>(`SELECT * FROM secret_leases WHERE execution_id = ? AND state IN (${states.map(() => '?').join(', ')})`, executionId, ...states);
-  return tally(await Promise.all(rows.map((row) => revokeRow(row, by, now))));
+  const rows = db.all<LeaseRow>(`SELECT * FROM secret_leases WHERE execution_id = ? AND state IN (${states.map(() => '?').join(', ')})`, executionId, ...states);
+  return tally(await Promise.all(rows.map((row) => revokeRow(row, by, now, db))));
 }
 
 /** One lease, by an admin ("Revoke now"): the row as it stands after, and what the attempt did. A refusing store leaves it `active` with the reason. */
@@ -338,7 +389,7 @@ export async function dismissLease(id: string): Promise<SecretLeaseView> {
   if (!row) throw new SecretsError('Lease not found', 404);
   if (row.state !== 'revoke_failed') throw new SecretsError('Only a lease that could not be revoked can be set aside', 409);
   const next = { ...row, dismissed_at: row.dismissed_at ?? new Date().toISOString() };
-  save(next);
+  if (!(await writeIf(next, ['revoke_failed']))) throw new SecretsError('Only a lease that could not be revoked can be set aside', 409);
   recordAudit({
     action: 'secrets.lease.dismissed',
     target: { type: 'secret_lease', id: row.id, name: `${row.provider} ${row.path}` },
@@ -354,29 +405,29 @@ export async function dismissLease(id: string): Promise<SecretLeaseView> {
 // ---------------------------------------------------------------------------
 
 /** A running run's lease about to end: extended by the provider's Lease TTL, never past an hour after it was issued. Resolves to whether it was. */
-export async function renewRow(row: LeaseRow, now = Date.now()): Promise<boolean> {
-  const leaseId = openLeaseId(row);
+export async function renewRow(row: LeaseRow, now = Date.now(), db: Database = database()): Promise<boolean> {
   const room = Math.floor((Date.parse(row.issued_at) + MAX_LEASE_MS - now) / 1000);
-  if (!leaseId || row.state !== 'active' || room < 60) return false;
+  // A lease the store said can't be renewed is left to run out (the sweeper ends it at its time).
+  if (!row.lease_id || row.state !== 'active' || Number(row.renewable) === 0 || room < 60) return false;
   try {
-    const seconds = await externalSecrets.renewLease(row.provider, leaseId, room);
+    const seconds = await externalSecrets.renewLease(row.provider, openLeaseId(row)!, room);
     if (seconds <= 0) return false;
     const until = iso(now + seconds * 1000);
-    save({ ...row, expires_at: until, renewed_until: until, next_attempt_at: null });
-    return true;
+    return await writeIf({ ...row, expires_at: until, renewed_until: until, next_attempt_at: null, renew_failures: 0, last_error: null }, ['active'], db);
   } catch (error) {
-    // Tried again on a backoff; the lease ends at its own time if the store never answers.
-    const attempts = (Number(row.attempts) || 0) + 1;
-    save({ ...row, attempts, last_error: redactText((error as Error).message).slice(0, 300), next_attempt_at: iso(now + backoffMs(attempts)) });
+    // Tried again on a backoff of its own; the lease ends at its own time if the store never answers.
+    const renewFailures = (Number(row.renew_failures) || 0) + 1;
+    await writeIf({ ...row, renew_failures: renewFailures, last_error: redactText((error as Error).message).slice(0, 300), next_attempt_at: iso(now + backoffMs(renewFailures)) }, ['active'], db);
     return false;
   }
 }
 
-/** A lease whose time passed while its run still went (or waited): the store removed it itself. */
-export function expireRow(row: LeaseRow, now = Date.now()): void {
+/** A lease whose time passed while its run still went (or waited): the store removed it itself. Resolves to whether this call ended it. */
+export async function expireRow(row: LeaseRow, now = Date.now(), db: Database = database()): Promise<boolean> {
   const next: LeaseRow = { ...row, state: 'expired', lease_id: null, lease_values: null, next_attempt_at: null, ended_at: iso(now), ended_by: 'sweeper' };
-  save(next);
+  if (!(await writeIf(next, ['active'], db))) return false;
   audit('secrets.lease.expired', next, 'sweeper', 'success');
+  return true;
 }
 
 // ---------------------------------------------------------------------------

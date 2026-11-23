@@ -12,6 +12,12 @@
 - The sweeper looks at 200 leases per step a minute; an instance with more than 10,000 open leases refuses new ones.
 - A `revoke_failed` lease keeps its sealed lease id (so an admin can retry) but drops its values; it is never deleted by retention.
 
+- A dynamic path ignores the provider's `pathPrefix` (and `{environment}`): the path is the mount's, as written.
+- Any workflow's builder can ask for any role the provider's token can read under a dynamic mount; the provider's token should reach only the roles runs may use (a project cannot yet limit roles per provider).
+- A lease's end is judged with each process's own clock (a skewed clock expires or sweeps early or late by that much).
+- Vault and OpenBao answer 204 for an unknown lease, so `revoked` means the store accepted the call. Roles must carry `VALID UNTIL`; a restarted dev OpenBao (in memory) forgets its leases and leaves their roles behind until then.
+- A non-renewable lease (the store says `renewable: false`) is not renewed: it runs out at its first length (the role's default TTL).
+
 ## docs/roadmap.md
 
 - C30 slice 1 built: leased reads from OpenBao/Vault's database engine in node credentials during a run, one lease per run and path, revoked at the run's end, swept, renewed and listed (Settings → External secrets → Leases). Open: Landflow-native issuers, other providers' dynamic engines, dynamic secrets outside node credentials, a new lease for a run after a long wait.
@@ -31,4 +37,5 @@ No new page.
 - P29 owns `openapi.ts` and `docs/reference/api.md` in step 2: the two leases operations (`listSecretLeases`, `revokeSecretLeases`) and one `api.md` row are in (after the external secrets row); P28 adds its networks lines after them.
 - `credentials/rotate.ts`: `TABLES` entries may now name a `purpose` (the sealed strings of `secret_leases.lease_values` and `.lease_id` are bound to their own).
 - `runtime.ts`: one `SERVICES` entry, `secret lease sweeper` (leader, main only), right after `kagent route refresh`; `test/runtime.test.ts` lists it.
-- Migration 2933 adds two columns to the plan's SQL: `failing_since` (when a revoke first failed: the 24 hours count from it) and `dismissed_at` (a failed lease set aside: the banner counts only the others).
+- Migration 2933 adds four columns to the plan's SQL: `failing_since` (when a revoke first failed: the 24 hours count from it), `dismissed_at` (a failed lease set aside: the banner counts only the others), `renew_failures` (failed renewals, apart from `attempts`, the failed revokes) and `renewable` (0 when the store said so).
+- Review fixes: `ExecuteWorkflowOptions.secretRun` and `ContextExtras.secretRun` (engine and sdk) name the run a lease goes to; the runner sets it for a saved run. `policy.ts` has one line for `/api/external-secrets/leases` (instanceAdmin, reads too). Sealed values use per-row purposes (`secrets/lease-purpose.ts`, used by `rotate.ts`). `claim()` sends a key notice like `knowledge-sources/claim.ts`, and every later write is conditional on the row's state (`writeIf`).

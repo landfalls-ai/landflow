@@ -16,6 +16,7 @@ import { agentStore } from '../agents/store';
 import { configStoreKind, writeJsonFile } from '../config-store';
 import { database } from '../db';
 import { store } from '../store';
+import { leaseIdPurpose, leaseValuesPurpose } from '../secrets/lease-purpose';
 import { projectKeys } from './project-keys';
 import type { RewrapResult } from './project-key-store';
 import { credentials, parseSealedString } from './vault';
@@ -40,7 +41,7 @@ const TABLES: Array<{
   key: string;
   column: string;
   /** What the column's sealed strings are bound to, when it isn't the default (`sealSecret(value, purpose)`). */
-  purpose?: string;
+  purpose?: string | ((key: string) => string);
 }> = [
   { table: 'settings', key: 'key', column: 'value' },
   { table: 'config_files', key: 'name', column: 'data' },
@@ -52,9 +53,9 @@ const TABLES: Array<{
   { table: 'user_mfa_factors', key: 'id', column: 'secret' }, // C16: TOTP secrets
   // C19: the signing secret of an event subscription.
   { table: 'event_subscriptions', key: 'id', column: 'secret' },
-  // C30: a leased dynamic secret's issued values and lease id, each bound to its own purpose.
-  { table: 'secret_leases', key: 'id', column: 'lease_values', purpose: 'secrets.lease' },
-  { table: 'secret_leases', key: 'id', column: 'lease_id', purpose: 'secrets.lease.id' },
+  // C30: a leased dynamic secret's issued values and lease id, each bound to its own row (`secrets.lease:<id>`).
+  { table: 'secret_leases', key: 'id', column: 'lease_values', purpose: (id) => leaseValuesPurpose(id) },
+  { table: 'secret_leases', key: 'id', column: 'lease_id', purpose: (id) => leaseIdPurpose(id) },
 ];
 
 /** A sealed string's shape: v1 is `v1.iv.tag.value`, v2 is `v2.kid.iv.tag.value`; the iv is 12 bytes (16 base64 characters) and the tag 16 bytes (24), so a version such as `v1.2.3.4` is not one. */
@@ -138,7 +139,7 @@ export function rotateEncryption(options: { projectKeys?: RewrapResult } = {}): 
       const text = row[column];
       if (!text) continue;
       const tally = { resealed: 0, current: 0, failed: 0 };
-      const next = resealText(text, tally, purpose);
+      const next = resealText(text, tally, typeof purpose === 'function' ? purpose(String(row[key])) : purpose);
       // A new `updated_at` on a config file, so every process's cached copy (stamped by it) is dropped.
       if (next !== undefined) db.upsert(table, { ...row, [column]: next, ...(table === 'config_files' && { updated_at: new Date().toISOString() }) });
       count(table, tally, [String(row[key])]);
