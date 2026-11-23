@@ -91,6 +91,9 @@ const SECOND = 'rotating-token-second';
 
 beforeAll(async () => {
   registry.registerBuiltin(corePlugin);
+  // The data directory is shared by every test file a worker runs: routed deployments another file left would sit in the
+  // tick's window of 50 and push this file's own agents out of it.
+  for (const listed of agentStore.list()) if (agentStore.get(listed.id)?.kagent?.routes?.length) agentStore.setKagent(listed.id, undefined);
   kube = await startFakeKube();
   cluster = credentials.create({ name: 'kind kagent', type: 'core.kagentApi', data: { server: kube.url, token: 'kube-token', namespace: 'kagent', harness: 'landflow-claude', controllerUrl: 'http://kagent.test:8083', landflowUrl: 'http://landflow.test:3000' } });
 });
