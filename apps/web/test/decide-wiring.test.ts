@@ -140,3 +140,62 @@ describe('the editor store moves the edges with the options', () => {
     expect(handles()).toEqual(['main:1>s2', 'main:3>s4']);
   });
 });
+
+describe('the editor store while the options are being typed', () => {
+  const keystrokes = async () => {
+    const { useEditor } = await import('@/components/editor/store');
+    const wf = workflow();
+    wf.connections.push(
+      { id: 'e1', type: 'main', source: 'd', sourceIndex: 0, target: 's1', targetIndex: 0 },
+      { id: 'e2', type: 'main', source: 'd', sourceIndex: 1, target: 's2', targetIndex: 0 },
+      { id: 'e3', type: 'main', source: 'd', sourceIndex: 3, target: 's4', targetIndex: 0 },
+    );
+    useEditor.getState().load(wf, types);
+    const set = (parameters: Record<string, unknown>) => useEditor.getState().updateNode('d', { parameters });
+    const handles = () => useEditor.getState().edges.filter((e) => e.source === 'd').map((e) => `${e.sourceHandle}>${e.target}`).sort();
+    const current = () => useEditor.getState().nodes.find((n) => n.id === 'd')!.data.wf.parameters;
+    return { set, handles, current };
+  };
+  const full = ['main:0>s1', 'main:1>s2', 'main:3>s4'];
+
+  it('keeps the edges while the options box is cleared and typed again', async () => {
+    const { set, handles } = await keystrokes();
+    set(decideParams(''));
+    set(decideParams('b'));
+    set(decideParams('bi'));
+    expect(handles()).toEqual(full);
+    set(decideParams('billing\ntechnical\nother'));
+    expect(handles()).toEqual(full);
+  });
+
+  it('keeps the edges while an option is retyped one letter at a time (a rename in place)', async () => {
+    const { set, handles } = await keystrokes();
+    for (const name of ['technica', 'technic', 'tech', 'technical']) set(decideParams(`billing\n${name}\nother`));
+    expect(handles()).toEqual(full);
+    set(decideParams('billing\ntech\nother'));
+    expect(handles()).toEqual(full);
+  });
+
+  it('keeps the edges while the routed question is renamed, and renames Route By with it', async () => {
+    const { set, handles, current } = await keystrokes();
+    const renamed = (name: string) => ({ ...decideParams(), questions: { question: [{ ...decideParams().questions.question[0], name }] }, routeBy: current().routeBy });
+    for (const name of ['topi', 'top', 'topic2']) set(renamed(name));
+    expect(handles()).toEqual(full);
+    expect(current().routeBy).toBe('topic2');
+  });
+
+  it('keeps the edges while Route By names a question that does not exist yet', async () => {
+    const { set, handles } = await keystrokes();
+    set(decideParams(undefined, 'zzz'));
+    expect(handles()).toEqual(full);
+    set(decideParams());
+    expect(handles()).toEqual(full);
+  });
+
+  it('still drops the edge of an option that really was removed once the options are finished', async () => {
+    const { set, handles } = await keystrokes();
+    set(decideParams(''));
+    set(decideParams('technical\nother'));
+    expect(handles()).toEqual(['main:0>s2', 'main:2>s4']);
+  });
+});

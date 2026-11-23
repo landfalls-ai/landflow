@@ -19,7 +19,7 @@ import { plainDraft } from './ai-usage/drafts'; // SB19:
 import type { BuildPlan, BuildStage } from '@/lib/shared/build-plan'; // SB13:
 // SB01: the draft's reply held to a schema, checked for empty parts and sent back once.
 import { z } from 'zod';
-import { expandPorts, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
+import { DECIDE_OUTPUTS_NOTE, expandPorts, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import type { Workflow } from '@landflow/engine';
 import { collectionWarnings, structuralWarnings } from '@/lib/shared/assistant-ops';
 import { hollowSteps } from '@/lib/shared/run-check';
@@ -146,7 +146,7 @@ function catalog(types: NodeTypeInfo[]): string {
       const d = t.descriptor;
       const outputs = d.outputs.filter((o) => o.type === 'main');
       // A port that follows the node's parameters (Decide) is explained: the catalog has no parameters to expand it with.
-      const follows = outputs.some((o) => o.expand) ? ' Outputs: one per option of the Choice question named in Route By, in order, then Unsure (output 0 is the first option, the last is Unsure); Yes then No for a Yes/No question; a single output when Route By is blank.' : '';
+      const follows = outputs.some((o) => o.expand) ? ` ${DECIDE_OUTPUTS_NOTE}` : '';
       const params = d.properties
         .filter((p) => p.type !== 'notice')
         .map(describeProperty)

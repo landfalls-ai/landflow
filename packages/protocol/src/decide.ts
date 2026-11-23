@@ -83,12 +83,15 @@ export function decideRouting(parameters: Record<string, unknown>): DecideRoutin
 /**
  * Connections of a Decide node's main outputs, after its parameters changed from `oldParams` to `newParams`: each
  * connection stays on the output of the same name (an option, Unsure, Yes, No), moves with it when the numbering
- * changes, and is removed when that name is gone. A Choice with the same number of options as before and one new
+ * changes, and is removed when that name is gone. A different routed question (or kind) drops them all. A Choice with the same number of options as before and one new
  * name is a rename: the connection stays on its place. `connections` are this node's outgoing main connections.
  */
 export function remapExpandedConnections<C extends { sourceIndex?: number }>(oldParams: Record<string, unknown>, newParams: Record<string, unknown>, connections: C[]): C[] {
   const before = decideRouting(oldParams);
   const after = decideRouting(newParams);
+  // Another question, or the same one of another kind, is not these outputs: a pure rename (the same labels) is the only exception.
+  const sameLabels = before.labels.length === after.labels.length && before.labels.every((label, i) => label === after.labels[i]);
+  if ((before.question !== after.question && !sameLabels) || before.kind !== after.kind) return [];
   const target = new Map<number, number>();
   before.labels.forEach((label, index) => {
     const found = after.labels.indexOf(label);
@@ -108,3 +111,17 @@ export function remapExpandedConnections<C extends { sourceIndex?: number }>(old
 
 /** How many main outputs a Decide node shows for `parameters`. */
 export const decideOutputCount = (parameters: Record<string, unknown>) => decideRouting(parameters).labels.length;
+
+/**
+ * Whether the routing is complete enough to move connections by: a node that routes by nothing, or by a Choice with two
+ * or more options or a Yes/No question that exists. While someone types (the question's name half written, the options
+ * box cleared) it is not, and the connections wait.
+ */
+export function decideRoutingFinished(parameters: Record<string, unknown>): boolean {
+  const route = typeof parameters.routeBy === 'string' ? parameters.routeBy.trim() : '';
+  return !route || decideRouting(parameters).kind !== 'none';
+}
+
+/** The text every Decide output description starts with, for the catalog and `get_node_type`. */
+export const DECIDE_OUTPUTS_NOTE =
+  'Outputs: one per option of the Choice question named in Route By, in order, then Unsure (output 0 is the first option, the last is Unsure); Yes then No for a Yes/No question; a single output when Route By is blank.';
