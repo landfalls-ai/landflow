@@ -21,7 +21,13 @@ not `application/json`, and a call without the token the host derives from `LAND
 plugin **refuses to start without one**, so start the host and the plugin with the same value. The token is bound to the plugin's id
 (`HMAC(secret, "landflow.plugin.http/v1|deck")`), so another plugin cannot replay it here. **The plugin serves HTTP only**: no MCP
 face and no gRPC face (that one has no guard and would listen beyond loopback when `LANDFLOW_ADVERTISE_HOST` is set; `LANDFLOW_GRPC_PORT`
-is ignored), and the host calls it over HTTP. Any other process of the same user on this machine that knows the secret could still
+is ignored), and the host calls it over HTTP. **Residual.** The host derives a plugin's token from the id the plugin itself reports (its well-known document), so a plugin that
+registers under the deck's id would be sent the deck's token. The guard against that is the registry's duplicate-id handling: a
+second registration under an existing id is **not** refused or replaced; it **joins** the plugin as one more endpoint (a replica;
+the latest manifest wins), except that a built-in id is refused, and an announce without a registry proof from another host is
+refused unless `LANDFLOW_REGISTRY_ALLOW_JOIN=true` (`registry-policy.ts`). With `LANDFLOW_REGISTRY_SECRET` set (as this plugin needs)
+announces carry a proof, and a proven announce from the same secret holder may join, so keep that secret to trusted processes.
+Any other process of the same user on this machine that knows the secret could still
 call it, as it could run the deck itself.
 
 ## The flow pattern
@@ -121,7 +127,7 @@ Can a plain deck pane read its inbox? **Yes, with a caveat that only a live run 
 
 ## Live check (exact steps; run with a real deck, no model tokens)
 
-Verified 2026-11-23 against the deck at `720a5f05` inside Docker (OrbStack), host on the Mac. The unit is a shell command.
+Verified 2026-11-23 (HTTP-only, per-plugin-token build) against the deck at `720a5f05` inside Docker (OrbStack), host on the Mac. The unit is a shell command.
 
 1. Host: `LANDFLOW_REGISTRY_SECRET=s LANDFLOW_TRANSPORT_SECRET=t LANDFLOW_REGISTRY_GRPC_PORT=off pnpm --filter web exec next start -H 0.0.0.0 -p 3190`
    (`-H 0.0.0.0` only so a container can reach it; own port only). Sign in as the owner.

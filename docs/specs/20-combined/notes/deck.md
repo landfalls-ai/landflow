@@ -26,3 +26,13 @@
 ## docs/limitations.md (additions to the deck lines above)
 
 - Add: the deck plugin's report is untrusted text from the unit (`trust: "untrusted"`, the deck's wrapper kept); `status` is `completed`, `failed`, `timed_out` or `inbox_unreadable`. One item per run when Report To is set; unit names must be unique across flows; the 50-watch cap is shared by every flow that uses the plugin. The gRPC face of the plugin is not guarded (a browser cannot reach it).
+
+## Residual: the token follows the id the plugin reports
+
+The host takes the plugin id for the HTTP guard token from the plugin's own well-known document. A plugin registering under another
+plugin's id would therefore be sent that plugin's token. The registry does not refuse or replace a second registration under an
+existing id: it adds the endpoint to the plugin (replica join) and the newest manifest wins. Refused: a built-in id, and (for an
+announce without a proof) a join from another host unless `LANDFLOW_REGISTRY_ALLOW_JOIN=true` (`lib/server/plugins/registry.ts`
+`connectEndpoint`, `registry-policy.ts`). A proven announce (same `LANDFLOW_REGISTRY_SECRET`) is not host-checked. So the guard is
+the secret itself: whoever holds it can join as any plugin, and a joined endpoint receives that plugin's calls anyway.
+Possible hardening, not done: the host pins each plugin's endpoints to the first registrant unless a person approves the join.
