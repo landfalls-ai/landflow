@@ -74,9 +74,68 @@ const ALLOWED: Record<Action, readonly Role[]> = {
   'audit:read': ADMINS,
 };
 
-/** The role check: whether `user` may do `action`. */
-export function can(user: { role: Role } | null | undefined, action: Action): boolean {
-  return Boolean(user && ALLOWED[action].includes(user.role));
+/** Every action, for the role editor and for validating a custom role's rules (C32). */
+export const ACTIONS = Object.keys(ALLOWED) as readonly Action[];
+
+/**
+ * What a custom role may grant: every action but `projects:manage`, which also means "admin of every project" and so
+ * would make its holder an instance admin for project access (C32-D2).
+ */
+export const GRANTABLE_ACTIONS: readonly Action[] = ACTIONS.filter((action) => action !== 'projects:manage');
+
+/** Granted through a custom role only by the owner: they let their holder change who may do what. */
+export const OWNER_ONLY_GRANTS: readonly Action[] = ['users:manage', 'apiKeys:admin'];
+
+/**
+ * The actions of a stored role's `rules` text (JSON `[{ action, effect: 'allow' }]`): unknown actions (a role saved by an
+ * older or newer build) and `projects:manage` are dropped and repeats merged, so a bad row can only ever grant less;
+ * anything that isn't JSON grants nothing.
+ */
+export function parseStoredActions(text: string | null | undefined): Action[] {
+  let parsed: unknown;
+  try {
+    parsed = text ? JSON.parse(text) : [];
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const seen = new Set<Action>();
+  for (const entry of parsed as Array<{ action?: unknown; effect?: unknown }>) {
+    const action = entry?.action as Action;
+    if (entry?.effect === 'allow' && GRANTABLE_ACTIONS.includes(action)) seen.add(action);
+  }
+  return [...seen];
+}
+
+/**
+ * The part of a user the role check reads: the built-in role, plus what a custom role grants, as the server's user
+ * record carries it (`customRole.actions`) or the client's `Viewer` (`grants`).
+ */
+export interface RoleHolder {
+  role: Role;
+  grants?: readonly Action[];
+  customRole?: { id?: string; name?: string; actions?: readonly Action[] };
+}
+
+/** The role check: whether `user` may do `action` (the built-in role allows it, or a custom role grants it). */
+export function can(user: RoleHolder | null | undefined, action: Action): boolean {
+  if (!user) return false;
+  if (ALLOWED[action].includes(user.role)) return true;
+  return Boolean(user.grants?.includes(action) || user.customRole?.actions?.includes(action));
+}
+
+/**
+ * The escalation check (C32 FR-3): the actions in `wanted` that `actor` may not put in a custom role. Nobody grants
+ * `projects:manage`; only the owner grants `users:manage` and `apiKeys:admin`; anyone else grants only what they hold.
+ * An empty answer means the role is fine.
+ */
+export function ungrantable(actor: RoleHolder, wanted: readonly Action[]): Action[] {
+  return wanted.filter((action) => {
+    if (!GRANTABLE_ACTIONS.includes(action)) return true;
+    if (actor.role === 'owner') return false;
+    if (OWNER_ONLY_GRANTS.includes(action)) return true;
+    return !can(actor, action);
+  });
 }
 
 /** A change one user makes to another in Settings → Users. */
@@ -157,6 +216,9 @@ export interface Viewer {
   disabled?: boolean;
   /** Created by provisioning: `scim` or `saml`. */
   provisionedBy?: string;
+  /** The custom role the user holds besides `member` (C32), and what it grants (`can` reads `grants`). */
+  customRole?: { id: string; name: string };
+  grants?: Action[];
 }
 
 /** A user in Settings → Users (GET /api/users). */

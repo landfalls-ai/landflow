@@ -60,7 +60,7 @@ interface Operation {
 function scopeText(scope: string, sessionOnly?: boolean, action?: string): string {
   if (sessionOnly) return 'Needs a session: API keys are refused.';
   const key = scope === 'any' ? 'Any API key (or a session).' : `API keys need the \`${scope}\` scope.`;
-  return action ? `${key} Owners and admins only (\`${action}\`).` : key;
+  return action ? `${key} Owners and admins only (\`${action}\`), or a member whose custom role grants it.` : key;
 }
 
 const PUBLIC_TEXT = 'Public: no API key or session. The trigger’s own authentication (and IP allow-list) applies.';
@@ -358,6 +358,18 @@ const schemas: Record<string, Json> = {
     ['server', '_meta'],
   ),
   McpServerList: object({ servers: array(ref('McpServerResponse')), metadata: object({ count: { type: 'integer' }, nextCursor: { type: 'string' } }, ['count']) }, ['servers', 'metadata']),
+  CustomRole: object(
+    {
+      id: { type: 'string' },
+      name: { type: 'string', maxLength: 40 },
+      description: { type: 'string', maxLength: 200 },
+      rules: array(object({ action: { type: 'string', description: 'One of the role-gated actions, such as `plugins:manage`; never `projects:manage`' }, effect: { type: 'string', const: 'allow' } }, ['action', 'effect'])),
+      holders: { type: 'integer', description: 'Members who hold it' },
+      createdAt: { type: 'string' },
+      updatedAt: { type: 'string' },
+    },
+    ['id', 'name', 'rules', 'holders', 'createdAt', 'updatedAt'],
+  ),
   ApiKey: object(
     {
       id: { type: 'string' },
@@ -2154,6 +2166,41 @@ function paths(): Record<string, Record<string, Json>> {
     summary: 'Reset a person’s second factors',
     description: 'For someone locked out. The owner resets anyone’s but their own; an admin resets members’ and other admins’, never the owner’s; nobody their own. Ends the person’s sessions and records `auth.mfa_reset` in the same transaction (503 and no change when audit is fail-closed and down).',
     responses: { 200: reply('Reset', object({ ok: { type: 'boolean' }, removed: { type: 'integer' } }, ['ok', 'removed'])), 400: errorRef('Use Sign-in & security for yourself'), 403: errorRef('Not allowed for that role'), 404: notFound, 503: errorRef('The audit log is unavailable') },
+  });
+  // C32: custom roles. Under /api/users, so the policy table needs no entry: reads for any signed-in user, writes `users:manage`.
+  add('get', '/api/users/roles', { tag: 'Account', id: 'listCustomRoles', summary: 'List the custom roles', description: 'Each with its rules and how many members hold it. A custom role grants a subset of the role-gated actions to a member (one per member); `projects:manage` is never grantable.', responses: { 200: reply('The roles', object({ roles: array(ref('CustomRole')) }, ['roles'])) } });
+  add('post', '/api/users/roles', {
+    tag: 'Account',
+    id: 'createCustomRole',
+    summary: 'Create a custom role',
+    description: 'You may grant only the actions you hold, only the owner grants `users:manage` or `apiKeys:admin`, and nobody grants `projects:manage` (403 naming the action). A name is 1 to 40 characters, unique in any case, and not `owner`, `admin` or `member` (409 for a taken one). Recorded as `role.created` in one transaction with the change (503 and no change when audit is fail-closed and down).',
+    body: jsonBody(object({ name: { type: 'string', minLength: 1, maxLength: 40 }, description: { type: 'string', maxLength: 200 }, rules: { ...array(object({ action: { type: 'string' }, effect: { type: 'string', const: 'allow' } }, ['action', 'effect'])), minItems: 1, maxItems: 20 } }, ['name', 'rules'])),
+    responses: { 201: reply('The role', object({ role: ref('CustomRole') }, ['role'])), 400: invalid, 403: errorRef('A rule grants more than you may'), 409: errorRef('The name is taken'), 503: errorRef('The audit log is unavailable') },
+  });
+  add('get', '/api/users/roles/{id}', { tag: 'Account', id: 'getCustomRole', summary: 'Read a custom role', responses: { 200: reply('The role', object({ role: ref('CustomRole') }, ['role'])), 404: notFound } });
+  add('put', '/api/users/roles/{id}', {
+    tag: 'Account',
+    id: 'updateCustomRole',
+    summary: 'Change a custom role',
+    description: 'Any of `name`, `description` (null clears it) and `rules`; the escalation check runs on the whole new rule set. The holders see the change on their next request. Recorded as `role.updated` with the old and new rules.',
+    body: jsonBody(object({ name: { type: 'string', minLength: 1, maxLength: 40 }, description: { type: ['string', 'null'], maxLength: 200 }, rules: { ...array(object({ action: { type: 'string' }, effect: { type: 'string', const: 'allow' } }, ['action', 'effect'])), minItems: 1, maxItems: 20 } })),
+    responses: { 200: reply('The role', object({ role: ref('CustomRole') }, ['role'])), 400: invalid, 403: errorRef('A rule grants more than you may'), 404: notFound, 409: errorRef('The name is taken'), 503: errorRef('The audit log is unavailable') },
+  });
+  add('delete', '/api/users/roles/{id}', {
+    tag: 'Account',
+    id: 'deleteCustomRole',
+    summary: 'Delete a custom role',
+    description: 'A role someone holds answers 409 with `holders` until `?confirm=true`; its holders then become plain members, one `user.custom_role` event each, and the role is gone (`role.deleted`).',
+    query: [{ name: 'confirm', description: '`true` to delete a role that has holders', schema: { type: 'string', enum: ['true', 'false'] } }],
+    responses: { 200: reply('Deleted', ok), 404: notFound, 409: errorRef('Someone holds it: confirm to delete'), 503: errorRef('The audit log is unavailable') },
+  });
+  add('patch', '/api/users/{id}', {
+    tag: 'Account',
+    id: 'updateUser',
+    summary: 'Change a person’s role, or give a member a custom role',
+    description: 'Either `{ role: "admin" | "member" }` or `{ customRoleId: "<id>" | null }`, not both. A custom role is held by members only (400 for an admin; making a holder an admin clears it), and you must hold every action it grants. Recorded as `user.role_change` or `user.custom_role` with from and to.',
+    body: jsonBody({ oneOf: [object({ role: { type: 'string', enum: ['admin', 'member'] } }, ['role']), object({ customRoleId: { type: ['string', 'null'] } }, ['customRoleId'])] }),
+    responses: { 200: reply('The user', object({ user: { type: 'object', additionalProperties: true } }, ['user'])), 400: invalid, 403: errorRef('Not allowed'), 404: notFound, 503: errorRef('The audit log is unavailable') },
   });
   add('get', '/api/api-keys', { tag: 'Account', id: 'listApiKeys', summary: 'List your API keys', responses: { 200: reply('Your keys (never the keys themselves)', object({ keys: array(ref('ApiKey')) }, ['keys'])) } });
   add('post', '/api/api-keys', {

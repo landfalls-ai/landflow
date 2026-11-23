@@ -1,7 +1,8 @@
 /**
- * PATCH /api/users/<id> { role } and DELETE /api/users/<id> (owners and admins, by `canManageUser`): change a
- * user's role, or remove them with their sessions and API keys. Nobody changes or removes the owner or themselves,
- * and only the owner manages admins.
+ * PATCH /api/users/<id> { role } or { customRoleId } and DELETE /api/users/<id> (owners and admins, by `canManageUser`):
+ * change a user's role, give a member a custom role (or take it away with `null`; lib/server/auth/roles.ts checks that
+ * the actor holds every action it grants), or remove them with their sessions and API keys. Nobody changes or removes
+ * the owner or themselves, and only the owner manages admins.
  *
  * Removing someone who owns workflows, credentials, data tables or agents (their personal project) needs a transfer
  * target, in the body `{ transferTo: { userId } | { projectId } }` or as `?transferToUser=` / `?transferToProject=`:
@@ -11,6 +12,7 @@ import { z } from 'zod';
 import { ASSIGNABLE_ROLES, canManageUser } from '@/lib/shared/auth';
 import type { TransferTarget } from '@/lib/shared/projects';
 import { getUser, requireUser, updateUser, userView } from '@/lib/server/auth';
+import { assignRole } from '@/lib/server/auth/roles';
 import { editLocks } from '@/lib/server/auth/edit-locks';
 import { error, json, parseBody } from '@/lib/server/http';
 import { deleteUserWithTransfer } from '@/lib/server/projects';
@@ -20,7 +22,8 @@ import { auditedTransaction, recordAudit } from '@/lib/server/audit';
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
 
-const schema = z.strictObject({ role: z.enum(ASSIGNABLE_ROLES) });
+// One change at a time: a built-in role, or a custom role (C32; null clears it).
+const schema = z.union([z.strictObject({ role: z.enum(ASSIGNABLE_ROLES) }), z.strictObject({ customRoleId: z.string().min(1).max(60).nullable() })]);
 
 export const PATCH = projectRoute(async (request: Request, { params }: Ctx) => {
   const me = await requireUser('users:manage');
@@ -28,10 +31,12 @@ export const PATCH = projectRoute(async (request: Request, { params }: Ctx) => {
   if (!target) return error('User not found', 404);
   const body = await parseBody(request, schema);
   if (!body.ok) return body.response;
-  if (!canManageUser(me, target, { kind: 'role', role: body.data.role })) return error('You can’t change this user’s role', 403);
+  if ('customRoleId' in body.data) return json({ user: userView(assignRole(target.id, body.data.customRoleId, me)) });
+  const wanted = body.data.role;
+  if (!canManageUser(me, target, { kind: 'role', role: wanted })) return error('You can’t change this user’s role', 403);
   // Fail-closed audit (LANDFLOW_AUDIT_FAIL_CLOSED): the role changes only if its event is stored, in one transaction.
   const updated = auditedTransaction(() => {
-    const next = updateUser(target.id, { role: body.data.role });
+    const next = updateUser(target.id, { role: wanted });
     recordAudit({ action: 'user.role_change', target: { type: 'user', id: target.id, name: target.email }, summary: `Changed ${target.email}’s role from ${target.role} to ${next.role}`, details: { from: target.role, to: next.role } });
     return next;
   });
