@@ -5,7 +5,7 @@
  * very same fields. So the model can't ask and file in one turn, and a request never goes in that the person did not read back.
  * The requester is the run's `startedBy`, never a parameter.
  */
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { durationText } from '../../shared/access';
 import { getUser } from '../auth/users';
 import { credentials } from '../credentials/vault';
@@ -14,6 +14,7 @@ import { workflowForCall } from '../publish';
 import { chatItem } from '../chat';
 import { liveExecution, newExecutionId, runWorkflow } from '../runner';
 import { replyText } from '../streaming';
+import { singleton } from '../singleton';
 import { store } from '../store';
 import type { Actor } from '../projects/access';
 import { AccessError } from './errors';
@@ -24,6 +25,23 @@ import { accessSettings, accountOf, requestRow } from './store';
 import { validateGithubLogin } from './systems';
 
 export const TOKEN_MINUTES = 15;
+
+/**
+ * The runs `runAccessChat` started for the installed chat flow (execution id -> when to forget it). File Access Request files only from
+ * one of these: a chat run any other way (another flow, a copy of the template, the hosted chat page) has no one signed in to name.
+ */
+const chatRuns = () => singleton('access-chat-runs', () => new Map<string, number>());
+export function markChatRun(executionId: string, now = Date.now()): void {
+  const runs = chatRuns();
+  for (const [id, expires] of runs) if (expires <= now) runs.delete(id);
+  runs.set(executionId, now + 60 * 60_000);
+}
+export const isAccessChatRun = (executionId: string, now = Date.now()): boolean => (chatRuns().get(executionId) ?? 0) > now;
+
+/** A confirmation token is spent the moment it files: the table refuses the same one a second time. */
+function spendToken(token: string, executionId: string): boolean {
+  return database().insertNew('idempotency_keys', { workflow_id: 'access.chat.token', key: createHash('sha256').update(token).digest('hex'), execution_id: executionId, created_at: new Date().toISOString() });
+}
 const key = () => credentials.deriveKey('access.chat');
 
 interface TokenPayload {
@@ -148,6 +166,7 @@ export async function fileAccessFromChat(call: ChatCall): Promise<ChatAnswer> {
   if (payload.u !== actor.id) return { status: 'refused', message: 'That confirmation was made for someone else.' };
   if (payload.x === call.executionId) return { status: 'refused', message: 'Ask the person to confirm in their next message, then file it.' };
   if (payload.e !== entry.id || payload.d !== minutes || payload.r !== reason || payload.a !== account) return { status: 'refused', message: 'The request changed since it was read back. Read it back again.' };
+  if (!spendToken(token, call.executionId)) return { status: 'refused', message: 'That confirmation was already used. Read the request back again.' };
   try {
     const request = await createRequest(actor, { entryId: entry.id, durationMinutes: minutes, reason, ...(entry.system.startsWith('github') && { account }), channel: 'chat' });
     return { status: 'filed', message: `Your request was filed. ${request.approverNames.join(', ')} will decide it.`, requestId: request.id, state: request.status };
@@ -170,6 +189,7 @@ export async function runAccessChat(actor: Actor, input: { message: string; sess
   if (!workflow || !trigger) throw new AccessError('The access chat is not set up. Ask an admin, or use the form.', 409);
   const executionId = newExecutionId();
   const started = new Date().toISOString();
+  markChatRun(executionId);
   const item = await chatItem({ chatInput: input.message, sessionId: `access:${actor.id}:${input.sessionId}`, files: [] }, executionId);
   const record = await runWorkflow({ workflow, mode: 'chat', startNodeId: trigger.id, triggerItems: [item], executionId, streaming: true, startedBy: actor.id });
   const done = liveExecution(record.executionId) ?? record;

@@ -238,7 +238,12 @@ export function updateEntry(actor: Actor, id: string, patch: EntryPatch, version
     if (description) next.description = description;
     else delete next.description;
   }
-  if (patch.durations !== undefined) next.durations = checkDurations(patch.durations);
+  if (patch.durations !== undefined) {
+    next.durations = checkDurations(patch.durations);
+    // An owner may shorten or remove durations; offering unlimited or something longer than the entry ever did is an admin's to give.
+    const longest = (list: Array<number | null>) => Math.max(...list.map((m) => (m === null ? Infinity : m)));
+    if (!canEditReach(actor) && longest(next.durations) > longest(current.durations)) throw new AccessError('Only an admin offers a longer time or no end: an owner can shorten or remove durations', 403, { field: 'durations' });
+  }
   if (patch.approverIds !== undefined) next.steps = stepOf(checkPeople(patch.approverIds, 'approverIds', 'Approvers', { min: 1, max: 20 }));
   if (patch.owners !== undefined) next.owners = checkPeople(patch.owners, 'owners', 'Owners', { min: 1, max: 20 });
   if (patch.eligibleUserIds !== undefined) next.eligible = checkPeople(patch.eligibleUserIds, 'eligibleUserIds', 'Who may ask', { min: 0, max: 500 });

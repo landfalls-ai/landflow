@@ -172,6 +172,12 @@ async function teamOperation(ctx: IExecuteContext, a: Access, operation: string,
       const now = await current();
       // Never a downgrade: a maintainer (or an organization owner, who is one everywhere) asked to be a member stays one.
       if (now && rank(TEAM_ROLES, now.role) >= rank(TEAM_ROLES, role)) return result(username, target, 'role', now.role, now.state, false, had(now.state));
+      // And never a raise either: a member of the team asked to be a maintainer is for someone to do in GitHub.
+      if (now) {
+        throw new NodeOperationError(`${username} is already ${now.state === 'active' ? 'a member of' : 'invited to'} the team "${target}" with the role ${now.role}, not ${role}`, {
+          description: 'GitHub Access does not change roles of existing team members: change the role in GitHub first.',
+        });
+      }
       const put = await send(a, 'PUT', membershipPath, { role });
       return result(username, target, 'role', role, String(body(put).state ?? 'active'), true);
     }
@@ -347,6 +353,15 @@ async function collaboratorOperation(ctx: IExecuteContext, a: Access, operation:
       const permission = ctx.getNodeParameter<string>('permission', i, 'pull');
       if (!PERMISSIONS.includes(permission)) throw new NodeOperationError(`Permission must be one of ${PERMISSIONS.join(', ')}, got "${permission}"`, { itemIndex: i });
       const now = await current();
+      // Never a raise: a direct collaborator (or an open invitation) below the request is for someone to change in GitHub.
+      const direct = (await collect(a, `${repo}/collaborators?affiliation=direct`, MAX_LIST, missingRepo)).some((u) => lower(u.login) === lower(username));
+      const open = now.invitation ? fromGitHub(now.invitation.permissions) : undefined;
+      const held = direct ? now.permission : open;
+      if (held && rank(PERMISSIONS, held) < rank(PERMISSIONS, permission)) {
+        throw new NodeOperationError(`${username} is already ${direct ? 'a collaborator on' : 'invited to'} ${target} with the permission ${held}, not ${permission}`, {
+          description: 'GitHub Access does not change the permission of existing collaborators or open invitations: change the permission in GitHub first.',
+        });
+      }
       // Never a downgrade: an effective permission (direct, a team's or the organization's base) at or above the request stays as it is.
       if (now.permission && rank(PERMISSIONS, now.permission) >= rank(PERMISSIONS, permission)) return result(username, target, 'permission', now.permission, 'active', false, had('active'));
       if (now.invitation && rank(PERMISSIONS, fromGitHub(now.invitation.permissions)) >= rank(PERMISSIONS, permission)) {

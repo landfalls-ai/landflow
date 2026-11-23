@@ -152,10 +152,11 @@ describe('the hourly reconcile', () => {
     const a = await granted(ola, 60);
     const t = Date.now();
     fake.calls.length = 0;
-    await reconcileGrants(t);
+    // (The grant was checked once before it was added, so the first hourly check is an hour on.)
+    await reconcileGrants(t + 61 * MIN);
     const first = fake.calls.filter((c) => c.operation === 'get').length;
     expect(first).toBeGreaterThanOrEqual(1);
-    await reconcileGrants(t + 30 * MIN);
+    await reconcileGrants(t + 91 * MIN);
     expect(fake.calls.filter((c) => c.operation === 'get').length).toBe(first);
     await revokeNow(admin, a.grant.id);
   });

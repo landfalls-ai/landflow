@@ -8,6 +8,7 @@ import { ownershipOf } from '@/lib/server/projects';
 import { forgetDeleted, routeActor } from '@/lib/server/projects/http';
 import { deletePublications, publishedVersionId } from '@/lib/server/publications';
 import { forgetWorkflow } from '@/lib/server/publish';
+import { guardAccessFlow } from '@/lib/server/access/guard';
 import { recordAudit } from '@/lib/server/audit';
 import { publishOrRequest } from '@/lib/server/governance/approvals';
 import { governedSave } from '@/lib/server/governance/saves';
@@ -84,6 +85,7 @@ export const PUT = handler(async (request: Request, { params }: Ctx) => {
 
 export const DELETE = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
+  guardAccessFlow(id, currentActorId());
   const existing = store.getWorkflow(id);
   // The row, its versions, publications, project rows and policy go in one transaction: all or nothing. Publication
   // listeners hear of it only after the commit.

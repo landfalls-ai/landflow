@@ -48,7 +48,9 @@ export const accessRequestTriggerNode = defineNode({
             channel: 'form',
             approvers: 'admin@example.com',
             durationChoices: '60: 1 h\n15: 15 min',
-            summary: 'Example asks for Platform team\nWhat: GitHub team acme/platform (member)\nFor: 1 h\nAccount: example-user\nWhy: Fixing the build',
+            summary: 'Example asks for Platform team\nWhat: GitHub team acme/platform (member)\nFor: 1 h\nAccount: example-user (unverified: typed by the requester)\nWhy: Fixing the build',
+            askTitle: 'Give Example Platform team for 1 h?',
+            askText: 'Example asks for Platform team\nWhat: GitHub team acme/platform (member)\nFor: 1 h\nAccount: example-user (unverified: typed by the requester)\nWhy: Fixing the build',
           },
         },
       ],
@@ -136,12 +138,15 @@ export const fileAccessRequestNode = defineNode({
     ],
   },
   async execute(ctx) {
-    const { fileAccessFromChat } = await import('../access/chat');
+    const { fileAccessFromChat, isAccessChatRun } = await import('../access/chat');
+    const { accessSettings } = await import('../access/store');
     const { liveExecution } = await import('../runner');
     const { store } = await import('../store');
     const record = liveExecution(ctx.getExecutionId()) ?? (await store.loadExecution(ctx.getExecutionId()));
-    // Only a person's chat message names who is asking: a run nobody signed in for (hosted chat, a trigger) files nothing.
-    const userId = record?.mode === 'chat' ? record.startedBy : undefined;
+    // Only a person's chat message names who is asking, and only in the installed chat flow's run that the Access page's chat started:
+    // any other run (a copy, another flow, the hosted chat, a trigger) files nothing.
+    const fromAccessChat = record?.mode === 'chat' && record.workflowId === accessSettings().chatWorkflowId && isAccessChatRun(ctx.getExecutionId());
+    const userId = fromAccessChat ? record?.startedBy : undefined;
     const items = ctx.getInputData();
     const out: Array<{ json: JsonObject; pairedItem: { item: number } }> = [];
     for (let i = 0; i < Math.max(items.length, 1); i++) {

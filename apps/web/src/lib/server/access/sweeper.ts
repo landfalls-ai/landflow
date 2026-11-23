@@ -13,7 +13,7 @@ import { database } from '../db';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
 import { runAction } from './actions';
-import { removeGrant, OVERDUE_MS, type EndReason } from './grants';
+import { removeGrant, resumeGrant, OVERDUE_MS, type EndReason } from './grants';
 import { claimGrant, grantRow, parseJson, type GrantRow } from './store';
 import { SYSTEMS } from './systems';
 
@@ -30,7 +30,7 @@ export interface SweepResult {
 /** The minute pass. `now` is passed in by tests. */
 export async function sweepGrants(now = Date.now()): Promise<SweepResult> {
   const result: SweepResult = { removed: 0, retried: 0 };
-  const due = database().all<GrantRow>(`SELECT * FROM access_grants WHERE status = 'active' AND until IS NOT NULL AND until <= ? ORDER BY until LIMIT ?`, iso(now), PASS_LIMIT);
+  const due = database().all<GrantRow>(`SELECT * FROM access_grants WHERE status IN ('active', 'drift') AND until IS NOT NULL AND until <= ? ORDER BY until LIMIT ?`, iso(now), PASS_LIMIT);
   for (const grant of due) {
     await removeGrant(grant.id, 'expired', undefined, now);
     result.removed++;
@@ -46,19 +46,27 @@ export async function sweepGrants(now = Date.now()): Promise<SweepResult> {
 
 export interface ReconcileResult {
   retaken: number;
+  activated: number;
   drift: number;
   overdue: number;
 }
 
 /** The hourly pass. */
 export async function reconcileGrants(now = Date.now()): Promise<ReconcileResult> {
-  const result: ReconcileResult = { retaken: 0, drift: 0, overdue: 0 };
+  const result: ReconcileResult = { retaken: 0, activated: 0, drift: 0, overdue: 0 };
   // A process that stopped mid-removal left `removing` with a lease that ran out.
   const stale = database().all<GrantRow>(`SELECT * FROM access_grants WHERE status = 'removing' AND system <> 'manual' AND lease_until IS NOT NULL AND lease_until <= ? LIMIT ?`, iso(now), PASS_LIMIT);
   for (const grant of stale) {
     const reason = (['expired', 'given_back', 'revoked'].includes(grant.end_reason ?? '') ? grant.end_reason : 'expired') as EndReason;
     await removeGrant(grant.id, reason, undefined, now);
     result.retaken++;
+  }
+  // A process that stopped mid-grant left `pending` with a lease that ran out: the add is idempotent and the "had it before" answer is
+  // already recorded, so it is taken up again, never worked out again.
+  const unfinished = database().all<GrantRow>(`SELECT * FROM access_grants WHERE status = 'pending' AND system <> 'manual' AND lease_until IS NOT NULL AND lease_until <= ? LIMIT ?`, iso(now), PASS_LIMIT);
+  for (const grant of unfinished) {
+    await resumeGrant(grant, now);
+    result.activated++;
   }
   // Still there long after it should be gone: said once, loudly.
   const late = database().all<GrantRow>(`SELECT * FROM access_grants WHERE overdue_noted = 0 AND (status IN ('removing', 'revoke_failed') OR (status = 'active' AND until IS NOT NULL)) LIMIT ?`, PASS_LIMIT * 5);
@@ -68,7 +76,8 @@ export async function reconcileGrants(now = Date.now()): Promise<ReconcileResult
     // A grant that is `removing` or `revoke_failed` keeps its original end in `until` when it has one.
     const end = grant.until ? Date.parse(grant.until) : ended;
     if (now - end < OVERDUE_MS) continue;
-    database().upsert('access_grants', { ...grant, overdue_noted: 1 } as never);
+    // Only this column, only while the grant is still as it was read: a stale row is never written back over a newer one.
+    if (!(await claimGrant(grant.id, grant.status, { status: grant.status, overdue_noted: 1 })).won) continue;
     recordAudit({ action: 'access.grant.revoke_overdue', target: { type: 'access_grant', id: grant.id }, project: null, summary: 'Access is still in place more than a day after it should have ended', details: { from: grant.status, to: grant.status, until: grant.until ?? null } });
     result.overdue++;
   }
@@ -87,7 +96,7 @@ export async function reconcileGrants(now = Date.now()): Promise<ReconcileResult
           recordAudit({ action: 'access.grant.drift', target: { type: 'access_grant', id: grant.id }, project: null, summary: 'Access was removed outside Landflow', details: { from: 'active', to: 'drift' } });
           result.drift++;
         }
-      } else database().upsert('access_grants', { ...current, checked_at: iso(now) } as never);
+      } else await claimGrant(grant.id, 'active', { status: 'active', checked_at: iso(now) });
     } catch (error) {
       logger.warn('an access check failed', { error: (error as Error).message });
     }
