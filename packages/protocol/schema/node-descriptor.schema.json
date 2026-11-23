@@ -137,6 +137,10 @@
               }
             },
             "additionalProperties": false
+          },
+          "expand": {
+            "type": "string",
+            "const": "decide"
           }
         },
         "required": [
@@ -212,6 +216,10 @@
               }
             },
             "additionalProperties": false
+          },
+          "expand": {
+            "type": "string",
+            "const": "decide"
           }
         },
         "required": [

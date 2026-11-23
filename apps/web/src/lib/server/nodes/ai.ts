@@ -579,6 +579,20 @@ export const anthropicChatModelNode = defineNode({
   },
 });
 
+/** The models an Ollama server holds, as picker options (the Ollama Chat Model and Decide nodes both list them). */
+export async function ollamaModelOptions(baseUrl: string, withTools = true): Promise<Array<{ name: string; value: string; description: string }>> {
+  const base = (baseUrl || defaultOllamaUrl()).replace(/\/+$/, '');
+  const response = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(3_000) });
+  const data = (await response.json()) as { models: Array<{ name: string; details?: { parameter_size?: string }; capabilities?: string[] }> };
+  return data.models
+    .filter((m) => !m.capabilities || m.capabilities.includes('completion'))
+    .map((m) => ({
+      name: m.name,
+      value: m.name,
+      description: [m.details?.parameter_size, withTools ? (m.capabilities?.includes('tools') ? 'tools ✓' : 'no tool support') : undefined].filter(Boolean).join(' · '),
+    }));
+}
+
 export const ollamaChatModelNode = defineNode({
   description: {
     name: 'ollamaChatModel',
@@ -615,16 +629,7 @@ export const ollamaChatModelNode = defineNode({
   methods: {
     loadOptions: {
       async models(ctx) {
-        const base = String(ctx.getCurrentParameters().baseUrl || defaultOllamaUrl()).replace(/\/+$/, '');
-        const response = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(3_000) });
-        const data = (await response.json()) as { models: Array<{ name: string; details?: { parameter_size?: string }; capabilities?: string[] }> };
-        return data.models
-          .filter((m) => !m.capabilities || m.capabilities.includes('completion'))
-          .map((m) => ({
-            name: m.name,
-            value: m.name,
-            description: [m.details?.parameter_size, m.capabilities?.includes('tools') ? 'tools ✓' : 'no tool support'].filter(Boolean).join(' · '),
-          }));
+        return ollamaModelOptions(String(ctx.getCurrentParameters().baseUrl || ''));
       },
     },
   },
