@@ -62,6 +62,9 @@ type Server struct {
 	// only subjects a service account may impersonate to read them.
 	Users           []DirectoryUser
 	DirectoryAdmins []string
+	// Groups and their Members (by group id) are the Directory's groups.
+	Groups  []DirectoryGroup
+	Members map[string][]DirectoryMember
 
 	tokens   map[string]tokenInfo
 	sessions map[string]*File // open resumable Drive uploads
@@ -88,6 +91,7 @@ type Request struct {
 type tokenInfo struct {
 	serviceAccount bool
 	subject        string
+	scope          string // the scopes the service-account assertion asked for
 	expires        time.Time
 }
 
@@ -215,6 +219,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.drives(w, segs[3:])
 	case hasPrefix(segs, "admin", "directory", "v1", "users"):
 		s.directory(w, r, segs[4:], info)
+	case hasPrefix(segs, "admin", "directory", "v1", "groups"):
+		s.groups(w, r, segs[4:], body, info)
 	case hasPrefix(segs, "upload", "gmail", "v1", "users", "me", "messages", "send"):
 		if info.serviceAccount && info.subject == "" {
 			writeError(w, http.StatusBadRequest, "Precondition check failed.")
@@ -271,6 +277,7 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request, body []byte) {
 		ex.Claims = claims
 		info.serviceAccount = true
 		info.subject, _ = claims["sub"].(string)
+		info.scope, _ = claims["scope"].(string)
 	case "refresh_token":
 		if s.RefreshToken == "" || form.Get("client_id") != s.ClientID || form.Get("client_secret") != s.ClientSecret {
 			reject(http.StatusUnauthorized, "invalid_client", "The OAuth client was not found.")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -12,22 +13,31 @@ import (
 
 // DirectoryNode reads the Workspace user directory (Admin SDK Directory API):
 // every person's email, org unit, title, department and manager, the identity
-// key that joins activity from other tools. Read-only.
+// key that joins activity from other tools. It also reads Google groups and
+// manages their members (groups.go), which is how an access request is granted.
 //
 // A service account must impersonate an admin (domain-wide delegation for the
-// directory scope below); the node asks for that scope alone, so the scopes
-// already delegated for the other Google nodes need not change.
+// directory scope of the resource used: users, groups or group members); the
+// node asks for those scopes alone, so the scopes already delegated for the
+// other Google nodes need not change.
 type DirectoryNode struct{}
 
-const directoryScope = "https://www.googleapis.com/auth/admin.directory.user.readonly"
+const (
+	directoryScope       = "https://www.googleapis.com/auth/admin.directory.user.readonly"
+	directoryGroupScope  = "https://www.googleapis.com/auth/admin.directory.group"
+	directoryMemberScope = "https://www.googleapis.com/auth/admin.directory.group.member"
+	// Reads ask for the read-only scopes, so a flow that only looks needs no write delegation.
+	directoryGroupReadScope  = "https://www.googleapis.com/auth/admin.directory.group.readonly"
+	directoryMemberReadScope = "https://www.googleapis.com/auth/admin.directory.group.member.readonly"
+)
 
 func (DirectoryNode) Description() landflow.NodeDescriptor {
 	getAll := show("user", "getAll")
 	paging := returnAllLimit(getAll, 100, 500)
-	return landflow.NodeDescriptor{
+	d := landflow.NodeDescriptor{
 		Name:             "googleDirectory",
 		DisplayName:      "Google Directory",
-		Description:      "List and look up the people in your Google Workspace: email, org unit, title, department and manager",
+		Description:      "List and look up the people and groups in your Google Workspace, and add, remove or list the members of a group",
 		Version:          landflow.V(1),
 		Kind:             landflow.KindAction,
 		Categories:       []string{"Productivity"},
@@ -37,14 +47,21 @@ func (DirectoryNode) Description() landflow.NodeDescriptor {
 		Inputs:           []landflow.PortDescriptor{landflow.MainPort()},
 		Outputs:          []landflow.PortDescriptor{landflow.MainPort()},
 		DocumentationURL: "https://developers.google.com/workspace/admin/directory/reference/rest/v1/users/list",
-		Keywords:         []string{"directory", "users", "people", "employees", "org chart", "manager", "admin"},
+		Keywords:         []string{"directory", "users", "people", "employees", "org chart", "manager", "admin", "groups", "group members", "access", "grant"},
 		Credentials:      credentialRequirements(),
 		UsableAsTool:     true,
 		ToolDescription: "Read the Google Workspace directory. resource=user: getAll lists people (filters.orgUnitPath, filters.query, " +
-			"filters.domain) with email, name, orgUnitPath, title, department and managerEmail; get returns one by userKey (email or id).",
+			"filters.domain) with email, name, orgUnitPath, title, department and managerEmail; get returns one by userKey (email or id). " +
+			"resource=group: get returns a group by groupKey (email or id), getAll lists groups (filters.domain, filters.query). " +
+			"resource=member: getAll lists a group's members with role, hasMember says whether memberKey is in groupKey. " +
+			"Adding, removing and changing members is not offered as a tool.",
 		Properties: []landflow.PropertyDescriptor{
 			authProperty(),
-			resourceProperty("user", landflow.PropertyOption{Name: "User", Value: "user"}),
+			resourceProperty("user",
+				landflow.PropertyOption{Name: "Group", Value: "group"},
+				landflow.PropertyOption{Name: "Group Member", Value: "member"},
+				landflow.PropertyOption{Name: "User", Value: "user"},
+			),
 			operationProperty("user", "getAll",
 				landflow.PropertyOption{Name: "Get", Value: "get", Description: "Get one person by email or id", Action: "Get a user", Idempotent: true},
 				landflow.PropertyOption{Name: "Get Many", Value: "getAll", Description: "List the people in the directory", Action: "Get many users", Idempotent: true},
@@ -70,6 +87,8 @@ func (DirectoryNode) Description() landflow.NodeDescriptor {
 			simplifyProperty(show("user")),
 		},
 	}
+	d.Properties = append(d.Properties, groupProperties()...)
+	return d
 }
 
 func (DirectoryNode) Execute(ctx *landflow.ExecuteContext) ([][]landflow.Item, error) {
@@ -82,32 +101,28 @@ func (DirectoryNode) Execute(ctx *landflow.ExecuteContext) ([][]landflow.Item, e
 	if err != nil {
 		return nil, err
 	}
-	c.ts.narrow([]string{directoryScope}, ctx.ParamString("adminEmail", 0, ""))
+	scopes, err := directoryScopes(ctx, len(items))
+	if err != nil {
+		return nil, err
+	}
+	c.ts.narrow(scopes, ctx.ParamString("adminEmail", 0, ""))
 	if c.ts.kind == authServiceAccount && c.ts.subject == "" {
-		return nil, userError("Reading the directory needs an admin: set Admin to Impersonate, or the credential's Delegated Email, and authorize "+
-			directoryScope+" for the service account's client ID under domain-wide delegation.", "No admin to impersonate")
+		return nil, userError("Using the directory needs an admin: set Admin to Impersonate, or the credential's Delegated Email, and authorize "+
+			strings.Join(scopes, ", ")+" for the service account's client ID under domain-wide delegation.", "No admin to impersonate")
 	}
 	var out []landflow.Item
 	for i := range items {
+		resource := ctx.ParamString("resource", i, "user")
 		var results []map[string]any
-		switch op := ctx.ParamString("operation", i, "getAll"); op {
-		case "getAll":
-			results, err = listDirectoryUsers(ctx, c, asMap(ctx.Param("filters", i)), limitFor(ctx, i, 100))
-		case "get":
-			var key string
-			if key, err = requireParam(ctx, "userKey", "User", i); err == nil {
-				var u map[string]any
-				err = c.do(ctx, apiDirectory, http.MethodGet, "/admin/directory/v1/users/"+url.PathEscape(strings.TrimSpace(key)),
-					url.Values{"projection": {"full"}, "viewType": {"admin_view"}}, nil, &u)
-				results = []map[string]any{u}
-			}
+		switch resource {
+		case "user":
+			results, err = executeUser(ctx, c, i)
+		case "group":
+			results, err = executeGroup(ctx, c, i)
+		case "member":
+			results, err = executeMember(ctx, c, i)
 		default:
-			err = userError("Pick an operation listed for the user resource.", "Unsupported operation %q", op)
-		}
-		if err == nil && ctx.ParamBool("simple", i, true) {
-			for k, u := range results {
-				results[k] = directoryPerson(u)
-			}
+			err = userError("Pick a resource: user, group or group member.", "Unsupported resource %q", resource)
 		}
 		if err != nil {
 			if ctx.ContinueOnFail() {
@@ -119,6 +134,51 @@ func (DirectoryNode) Execute(ctx *landflow.ExecuteContext) ([][]landflow.Item, e
 		out = emit(out, i, results...)
 	}
 	return [][]landflow.Item{out}, nil
+}
+
+// directoryScopes are the scopes the items need: the narrowest one per resource and
+// operation, so a flow that only reads users, or only looks at groups, keeps working
+// with read-only delegation.
+func directoryScopes(ctx *landflow.ExecuteContext, n int) ([]string, error) {
+	var scopes []string
+	for i := 0; i < n; i++ {
+		scope := directoryScope
+		switch ctx.ParamString("resource", i, "user") {
+		case "group":
+			scope = directoryGroupReadScope
+		case "member":
+			scope = memberScope(ctx.ParamString("operation", i, "getAll"))
+		}
+		if !slices.Contains(scopes, scope) {
+			scopes = append(scopes, scope)
+		}
+	}
+	return scopes, nil
+}
+
+func executeUser(ctx *landflow.ExecuteContext, c *client, i int) ([]map[string]any, error) {
+	var results []map[string]any
+	var err error
+	switch op := ctx.ParamString("operation", i, "getAll"); op {
+	case "getAll":
+		results, err = listDirectoryUsers(ctx, c, asMap(ctx.Param("filters", i)), limitFor(ctx, i, 100))
+	case "get":
+		var key string
+		if key, err = requireParam(ctx, "userKey", "User", i); err == nil {
+			var u map[string]any
+			err = c.do(ctx, apiDirectory, http.MethodGet, "/admin/directory/v1/users/"+url.PathEscape(strings.TrimSpace(key)),
+				url.Values{"projection": {"full"}, "viewType": {"admin_view"}}, nil, &u)
+			results = []map[string]any{u}
+		}
+	default:
+		err = userError("Pick an operation listed for the user resource.", "Unsupported operation %q", op)
+	}
+	if err == nil && ctx.ParamBool("simple", i, true) {
+		for k, u := range results {
+			results[k] = directoryPerson(u)
+		}
+	}
+	return results, err
 }
 
 // listDirectoryUsers pages users.list (500 a page at most).
