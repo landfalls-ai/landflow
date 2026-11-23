@@ -3,6 +3,7 @@
  * pulls and issues, enough for the node's calls. `requests` of the FakeApi record every call. Fake token only.
  */
 import { createHash } from 'node:crypto';
+import { FakeAccess } from './fake-github-access';
 import type { FakeReply, FakeRequest } from './helpers';
 
 export const TOKEN = 'ghp_test-token-123';
@@ -28,6 +29,8 @@ export class FakeGitHub {
   failNext: { status: number; body: unknown; headers?: Record<string, string> } | undefined;
   /** Make the next ref update fail the way GitHub does when the branch moved. */
   refConflictOnce = false;
+  /** Teams, organization and repository access, collaborators and projects (fake-github-access.ts). */
+  access = new FakeAccess(`${OWNER}/${REPO}`);
 
   constructor() {
     this.reset();
@@ -43,6 +46,7 @@ export class FakeGitHub {
     this.comments = [];
     this.failNext = undefined;
     this.refConflictOnce = false;
+    this.access.reset();
     const readme = this.addBlob('# Widgets\n');
     const tree = this.addTree({ 'README.md': readme, 'docs/guide.md': this.addBlob('Guide v1\n'), 'docs/notes.txt': this.addBlob('notes\n') });
     const commit = this.addCommit('Initial commit', tree, []);
@@ -85,6 +89,8 @@ export class FakeGitHub {
     if (!req.headers['user-agent'] || req.headers.accept !== 'application/vnd.github+json') return { status: 403, body: { message: 'Request forbidden by administrative rules.' } };
     const path = req.path.replace(/^\/api\/v3/, '');
     if (path === '/user') return { body: { login: 'octo-bot' } };
+    const access = this.access.handle(req, req.path === '/api/graphql' ? '/graphql' : path);
+    if (access) return access;
     const match = /^\/repos\/([^/]+)\/([^/]+)(\/.*)?$/.exec(path);
     if (!match) return notFound();
     if (match[1] !== OWNER || match[2] !== REPO) return notFound();

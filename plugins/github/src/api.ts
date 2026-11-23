@@ -65,7 +65,7 @@ function detail(body: ErrorBody | undefined, text: string, status: number): stri
 }
 
 /** Hints for the errors people actually hit. */
-function hint(status: number, headers: Headers, message: string): string | undefined {
+export function hint(status: number, headers: Headers, message: string): string | undefined {
   if (status === 401) return 'GitHub rejected the token. Check that it is correct, has not expired or been revoked, and (for Enterprise) that the API base URL is right.';
   if (status === 403) {
     if (headers.get('x-ratelimit-remaining') === '0') {
@@ -83,10 +83,13 @@ function hint(status: number, headers: Headers, message: string): string | undef
   return undefined;
 }
 
-export function apiError(api: ApiContext, response: GitHubResponse<ErrorBody | undefined> & { text?: string }): NodeOperationError {
+/** Replaces the hint for a family of calls (the access operations explain scopes for membership, not for files). */
+export type HintFor = (status: number, headers: Headers, message: string) => string | undefined;
+
+export function apiError(api: ApiContext, response: GitHubResponse<ErrorBody | undefined> & { text?: string }, hintFor: HintFor = hint): NodeOperationError {
   const message = detail(response.body, response.text ?? '', response.status);
   countApiError(api, statusClass(response.status));
-  const description = hint(response.status, response.headers, message);
+  const description = hintFor(response.status, response.headers, message);
   return new NodeOperationError(`GitHub API error ${response.status}: ${message}`, description ? { description } : {});
 }
 

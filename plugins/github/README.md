@@ -1,6 +1,6 @@
 # GitHub plugin (`github`)
 
-Deterministic GitHub steps for flows, written with the TypeScript SDK: read and write files, **commit several files in one
+Deterministic GitHub steps for flows, written with the TypeScript SDK (plus a second node, **GitHub Access**, for teams, organization and repository access): read and write files, **commit several files in one
 commit**, create branches, open draft pull requests, comment. It talks to the GitHub REST API (v3, `X-GitHub-Api-Version: 2022-11-28`)
 with `fetch` through the SDK's traced `ctx.http`. Agents get GitHub through GitHub's own MCP server; this node is for the fixed
 steps a flow does itself (and an agent may still call it as a tool). Like every plugin it answers over HTTP, gRPC, any installed
@@ -87,6 +87,52 @@ A typical flow: **Files → Commit** (Create Branch If Missing, base `main`) →
 One that merges by itself: ... → **Run Report** (Passed) → **Pull Request → Create** (Draft off) → **Pull Request → Merge**
 (Only If the Head Is `{{ $json.headSha }}`).
 
+## Node: GitHub Access (`github.githubAccess`)
+
+Who may do what, as flow steps: the grant actions behind an access request (add a person to a team, invite them to the
+organization, make them a repository collaborator) and the way back. A second node of this plugin, with the same
+credential. It takes an **Organization** (or **Owner** and **Repository**), not a repository, so it is its own node.
+Every result is one object `{ user, target, role | permission, state, changed }`: `state` is `active`, `pending` (an
+invitation is open) or `none`, and `changed` says whether this call changed anything. The writes read the state first and
+are idempotent: adding someone who already has it succeeds with `changed: false`, removing someone who has nothing
+succeeds with `changed: false`. A 404 is checked, so "no such team", "no such organization", "no such repository" and "no
+such GitHub user" each get their own error instead of GitHub's bare Not Found.
+
+| Resource | Operation | Parameters | Result |
+|---|---|---|---|
+| Team Membership | Add Member | Organization, Team Slug, Username, Team Role (member, maintainer) | `PUT /orgs/{org}/teams/{slug}/memberships/{user}`. `role`, `state` (`pending` for a person outside the organization) |
+| Team Membership | Remove Member | Organization, Team Slug, Username | `state: none` |
+| Team Membership | Get Members | Organization, Team Slug, Role (all, members, maintainers), Return All / Limit | one item per person, with `role` |
+| Team Membership | Get Membership | Organization, Team Slug, Username | `role`, `state` (`none` when not on the team) |
+| Organization Membership | Invite | Organization, Username **or** Email, Organization Role (member, owner) | `POST /orgs/{org}/invitations` (a login becomes `invitee_id`). `state: pending`, `invitationId`. A member or an open invitation: `changed: false` |
+| Organization Membership | Get Membership | Organization, Username | `role` (member, admin), `state` |
+| Organization Membership | Remove Member | Organization, Username | removes the member from the organization and its teams, or withdraws their invitation |
+| Organization Membership | Cancel Invitation | Organization, Username, Email or Invitation ID | withdraws an open invitation; none open: `changed: false` |
+| Repository Collaborator | Add Collaborator | Owner, Repository, Username, Permission (pull, triage, push, maintain, admin) | `PUT /repos/{owner}/{repo}/collaborators/{user}`. A person outside the organization gets an **invitation** (`state: pending`, `invitationId`, `note`) and has the permission once they accept it |
+| Repository Collaborator | Remove Collaborator | Owner, Repository, Username | removes the collaborator, or withdraws the open invitation |
+| Repository Collaborator | Get Collaborators | Owner, Repository, Affiliation (all, direct, outside), Include Open Invitations, Return All / Limit | one item per person, `permission` and `state` (`pending` for an invitation) |
+| Repository Collaborator | Get Permission | Owner, Repository, Username | `permission` (`null` when none), `state` |
+| Project (v2) Collaborator | Add Collaborator | Organization, Project Number, Username, Project Role (READER, WRITER, ADMIN) | `role`, `changed: null` |
+| Project (v2) Collaborator | Remove Collaborator | Organization, Project Number, Username | `state: none`, `changed: null` |
+
+`permission` uses the words of the collaborator call (`pull`, `push`) wherever GitHub says `read` or `write`. Lists come
+100 to a page up to 5000 people.
+
+**Projects (v2)** has no REST API, so these two operations use GraphQL (`updateProjectV2Collaborators`): the node looks
+up the project (`organization.projectV2(number)`) and the user's node id, then sets the role (`NONE` removes it). The
+endpoint follows the credential's API base URL: `https://api.github.com/graphql`, or `https://<host>/api/graphql` for
+Enterprise Server. GitHub sets the role without saying whether it was already so, so `changed` is `null` for a project;
+there is no list, because GitHub's schema has no collaborators field to read it back. Only organization projects are
+covered (a user's own project is not). The token needs the `project` scope (classic) or Projects read and write.
+
+**Scopes.** Team and organization membership need an organization owner (a team maintainer can manage that team) with
+the `admin:org` scope (classic) or Members read and write (fine-grained); collaborators need admin on the repository.
+A 403 says so.
+
+**Agent tools.** The node is `usableAsTool`, but only the read operations (Get Members, Get Membership, Get
+Collaborators, Get Permission) are offered as tools and through MCP; every write is marked `mcp: false`, so an agent can
+see who has access and never grants it. A flow's own node can still do all of it.
+
 ## Errors
 
 A failure stops the node with the item index and GitHub's own message (`GitHub API error 422: Validation Failed: PullRequest head invalid`),
@@ -101,4 +147,8 @@ Metric: `landflow.github.api_errors` (by `status_class`, or `network` / `timeout
 
 `test/fake-github.ts` is an in-memory GitHub (one repository with a git object store, contents, pulls, issues) behind a local HTTP server;
 `test/github.test.ts` covers every operation, the Files: Commit calls (blobs, tree, commit, ref; branch creation; the fast-forward refusal;
-validation) and the error mapping; `test/plugin.test.ts` checks the manifest and an Execute over HTTP.
+validation) and the error mapping; `test/plugin.test.ts` checks the manifest and an Execute over HTTP. `test/fake-github-access.ts` adds the access half to the
+fake, stateful: organization and team memberships (a user outside the organization is `pending`), organization and
+repository invitations, collaborators, and a Projects (v2) GraphQL endpoint. `test/github-access.test.ts` covers every
+GitHub Access operation, its idempotence (the second call changes nothing), the 404, 403 and 422 answers, paging, items
+with their own parameters, and that only the reads are tools.
