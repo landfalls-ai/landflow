@@ -28,6 +28,24 @@ export interface SecretsProvider {
   getSecret(name: string): Promise<SecretValue | undefined>;
   /** Stop background work (token renewal). */
   close?(): void;
+
+  // Dynamic secrets (C30): only providers whose store issues credentials per request (the Vault client's database engine) implement these.
+  /** Whether a name is under a mount that issues credentials instead of holding values: it is issued, never read. */
+  isDynamic?(name: string): boolean;
+  /** Ask the store for a new credential: its values and the lease that ends them. */
+  issue?(name: string): Promise<IssuedSecret>;
+  /** Extend a lease by the provider's Lease TTL, or by `atMostSeconds` when that is shorter; resolves to the seconds the lease has now. */
+  renewLease?(leaseId: string, atMostSeconds?: number): Promise<number>;
+  /** End a lease now: the store removes what it issued. */
+  revokeLease?(leaseId: string): Promise<void>;
+}
+
+/** What a store issued: the values (`{ username, password }`), the lease that ends them and how long it lasts. */
+export interface IssuedSecret {
+  values: SecretValue;
+  leaseId: string;
+  leaseSeconds: number;
+  renewable: boolean;
 }
 
 export interface ProviderDefinition extends SecretProviderKindInfo {

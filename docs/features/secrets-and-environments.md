@@ -6,7 +6,7 @@ Part of the [Landflow docs](../README.md); the [feature map](../README.md#featur
 
 | Provider | Kind | Authentication | Secret names |
 |---|---|---|---|
-| OpenBao / HashiCorp Vault | `vault` | token, AppRole or Kubernetes (the service account token; more methods plug in through `registerVaultAuthMethod`); a namespace goes in `X-Vault-Namespace` | KV v2 paths under the mount and an optional prefix (`dev/hello`), keys from the entry. A login's token is renewed at two thirds of its lease and the provider logs in again when renewal fails |
+| OpenBao / HashiCorp Vault | `vault` | token, AppRole or Kubernetes (the service account token; more methods plug in through `registerVaultAuthMethod`); a namespace goes in `X-Vault-Namespace` | KV v2 paths under the mount and an optional prefix (`dev/hello`), keys from the entry; paths under a **Dynamic mount** are issued per run ([dynamic secrets](#dynamic-secrets)). A login's token is renewed at two thirds of its lease and the provider logs in again when renewal fails |
 | 1Password | `onePassword` | a Connect server's URL and token, optionally limited to some vaults | item titles; keys are field labels (`password`, `username` and `credential` by purpose too) |
 | AWS Secrets Manager | `awsSecretsManager` | access keys in the settings, or "environment" (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`; never `~/.aws` or instance metadata); SigV4 signing without an SDK; an endpoint setting for LocalStack | secret names (`prod/db`); a JSON secret string reads as its keys |
 | GCP Secret Manager | `gcpSecretManager` | a service account key (JSON) | the project's secrets, latest version |
@@ -30,10 +30,57 @@ Part of the [Landflow docs](../README.md); the [feature map](../README.md#featur
 - **Data table rows**: tables opted in (Settings → Environments **Promote rows of**, `rowTables`; `landflow env promote --rows <table>` for one promotion, `--no-rows` for none) travel as `data-tables/<slug>.rows.json` next to their schema, for lookup and reference data. The target's pull replaces the table's rows with the file's (in one transaction, when they differ); cells of columns the table lacks are dropped with a warning. Rows come from the promoting instance, never from another environment's branch. **Merging rows**: with *Merge by* key columns set for a table (Settings → Environments, `rowMerge`: `{ "Countries": { "keys": ["code"], "deleteMissing": false } }`, key columns must exist), the file carries `merge` and the target's pull merges instead of replacing: it inserts rows whose key is new, updates rows whose key matches and whose values differ, leaves the target's other rows alone, and with *Delete missing* removes rows the file lacks; a duplicate or empty key in the file or the table refuses the merge with an error, and the preview reads `merge by code · +2 new · ~1 changed`.
 - **Approval**: with four-eyes on (Settings → Governance), a promotion is a request (202 `{ approvalRequired, request }`; the CLI exits 8) that another owner or admin approves or rejects in Settings → Environments → Promotion requests, with the rules of publish approvals (not the requester; the approver passes the approver checks of each changed workflow). **Per project**: a project can ask for four-eyes itself (the project page → Governance → *Require four-eyes on publishing*, `fourEyes` in the project's settings), and a promotion that changes a workflow of such a project becomes a request even when the instance's setting is off (the dry-run preview decides; the project's approver rules apply to approving it). Approving promotes exactly what was previewed: if a branch, a promoted credential, table rows or a setting changed since, the request is stale (409) and has to be asked again. A newer request for the same target replaces a pending one; the requester can withdraw it. Approvers are emailed and the governance channels notified; requests are kept in `promotion_requests` (migration 1650) and audited (`promotion_request.*`).
 
+## Dynamic secrets
+
+A credential a database node reads is the same for every run until a person changes it, and a leaked run log exposes it for as
+long as it lives. An OpenBao or HashiCorp Vault provider can instead **issue a credential per run**: its database secrets
+engine makes a user with a password and a lease for each request and removes it when the lease ends. Landflow asks for one when
+a run needs it, hands it to the run's nodes, and revokes it when the run ends.
+
+- **Turn it on**: in the provider's settings (Settings → External secrets → the Vault provider) set **Dynamic mounts**
+  (`database/`, comma separated for more) and **Lease TTL** (seconds, 60 to 3600, default 900). A path under a dynamic mount is
+  issued, never read as a KV entry: `{{ $secrets.bao['database/creds/report-reader'].username }}` and `….password` in a
+  credential's fields (a Postgres credential's user and password, for example). The engines that answer `GET <mount>/creds/<role>`
+  work (database, RabbitMQ, Consul); others are not recognised as dynamic.
+- **One user per run**: the first node of a run whose credential reads the path asks the store for a credential; every later
+  node, and every item, of that run gets the same one (a run that waits and resumes, in the same process or another, keeps
+  its user too). Two runs get two users. A run that fails before it reaches the node issues nothing. The lease is asked for
+  at the node, not at the start of the run.
+- **Where it works**: only in a node's credential during a run. Test connection, agents' models and channels, alert channels,
+  OAuth2 Connect, app webhook registration, the editor's option lists and node parameters refuse a dynamic path with "a dynamic
+  secret is issued per run: use it in a node credential".
+- **The lease** (`secret_leases`, migration 2933): one row per (run, provider, path) with when it was issued and when it ends,
+  its state, and the lease id and the issued values **sealed** (`secrets.lease.id`, `secrets.lease`: the vault's key ring, re-sealed
+  by key rotation) so a resumed run reuses its user; both are dropped when the lease ends. The values never enter the value
+  cache, and are redacted like every `$secrets` value (node outputs, errors, stored run rows, logs, live events).
+- **It ends** (any status of the run, cancel and timeout included, in the process that saved the run's end; a run that only waits
+  keeps it): the host asks the store to revoke it (`sys/leases/revoke`) at once, and the user is gone in the database. The
+  **lease sweeper** (a leader service, every minute) revokes the leases of runs that are over or gone (a host killed mid-run,
+  a worker that died between save and revoke), ends leases whose time passed while their run waited (`expired`: the store
+  removed them itself, and a node after the wait fails with "the run’s lease … ended" rather than getting a second user), and
+  **renews** a running run's lease with under two minutes left by the provider's Lease TTL (`sys/leases/renew`), up to an hour
+  after it was issued. A revoke the store refuses (down, sealed) stays `active` and is retried at 30 s, 60 s, 2 min … at most
+  every 30 minutes; after 24 hours it becomes `revoke_failed` with an audit event and a red banner on the Leases section until an
+  admin revokes it or sets it aside. At most 10,000 leases are open; the next node fails with "too many open leases". Ended rows are
+  deleted after 30 days.
+- **Leases** (Settings → External secrets, shown once a provider has Dynamic mounts; `GET /api/external-secrets/leases`): one row
+  per lease with its run (a link to the Run trace), the secret, when it was issued and ends, and its state (Active, Revoked,
+  Expired, Not revoked). **Revoke now** removes one credential at the store; **Revoke run** every open lease of a run
+  (`POST /api/external-secrets/leases/revoke`). The list never shows a lease id or a value. Audit events: `secrets.lease.issued`,
+  `.revoked`, `.expired`, `.revoke_failed`, `.dismissed`.
+- **The local engine**: `deploy/scripts/openbao-db-engine.sh` mounts the `database/` engine in the development OpenBao
+  (`landflow-infra`, in memory), configures a connection to the infra Postgres' `landflow_test` database and the role
+  `report-reader` (15-minute lease, 1 hour at most; it creates a short-lived login that can read `public`). It is idempotent
+  and changes only that OpenBao and adds short-lived roles to `landflow_test`. Tests use the fake Vault of
+  `@landflow/test-fakes/vault-leases`; the real engine is `test/secret-leases-openbao.integration.test.ts`
+  (`LANDFLOW_INTEGRATION=secrets,postgres`).
+- **Not built**: Landflow-native issuers (creating Postgres roles itself, AWS STS, cloud IAM users), other providers' dynamic engines,
+  dynamic values outside a node credential, and a new lease for a run that waits past its lease. See [limitations.md](../limitations.md).
+
 ## Encryption keys and rotation
 
 Credentials and every other value the host seals (alert channel and SIEM secrets, kagent tokens, signing keys, SAML keys,
-external secrets providers, transport connections) use AES-256-GCM with a key ring (`lib/server/credentials/key-ring.ts`).
+external secrets providers, transport connections, the ids and values of leased dynamic secrets) use AES-256-GCM with a key ring (`lib/server/credentials/key-ring.ts`).
 
 - **The ring.** `LANDFLOW_ENCRYPTION_KEYS=kid:key,kid:key`: the first key seals everything new, the others only open older
   data. `LANDFLOW_ENCRYPTION_KEY` (or the generated `encryption.key`) stays and is kid `k0`. A key of 64 hex characters is used as

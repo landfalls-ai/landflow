@@ -12,7 +12,8 @@
 import type { JsonObject } from '@landflow/protocol';
 import { collectSecretReferences, ExpressionError, ExpressionResolver, formatSecretReference, hasSecretReference, secretParameterPaths, secretReferences, type SecretReference, type SecretValues } from '@landflow/engine';
 import { rememberSecretValues } from './redact';
-import { externalSecrets, SecretsError } from './service';
+import type { SecretValue } from './providers';
+import { DYNAMIC_OUTSIDE_RUN, externalSecrets, SecretsError } from './service';
 import { PARAMETERS_NOT_ALLOWED, secretsAllowedInParameters } from './settings';
 
 /** Every string in `value` (deeply) that references `$secrets`, with its path. */
@@ -36,14 +37,38 @@ export function referencedSecrets(data: unknown): SecretReference[] {
   });
 }
 
-/** Read the referenced secrets (one read per secret, whatever keys are used) and remember the values used. */
-export async function fetchSecrets(references: SecretReference[]): Promise<SecretValues> {
+/** The run a node call belongs to: where a dynamic path is issued to (./leases.ts). Absent outside a node call. */
+export interface SecretRun {
+  executionId: string;
+  workflowId?: string;
+}
+
+/**
+ * Issues a dynamic path to a run. ./leases.ts registers itself here (it imports the credentials vault, which imports this
+ * file, so this file can't import it); ./runtime.ts loads it in every process that runs nodes.
+ */
+type DynamicIssuer = (reference: { provider: string; name: string }, run: SecretRun) => Promise<SecretValue>;
+let issueDynamic: DynamicIssuer | undefined;
+export const registerDynamicIssuer = (issuer: DynamicIssuer) => {
+  issueDynamic = issuer;
+};
+
+/**
+ * Read the referenced secrets (one read per secret, whatever keys are used) and remember the values used. A path under
+ * a dynamic mount is issued to `run` instead (one lease per run and path); without a run it is refused (C30-D4).
+ */
+export async function fetchSecrets(references: SecretReference[], run?: SecretRun): Promise<SecretValues> {
   const values: SecretValues = {};
   const unique = new Map<string, SecretReference>();
   for (const reference of references) unique.set(`${reference.provider}\u0000${reference.name}`, reference);
   await Promise.all(
     [...unique.values()].map(async ({ provider, name }) => {
-      const value = await externalSecrets.read(provider, name);
+      let value;
+      if (externalSecrets.isDynamic(provider, name)) {
+        if (!run?.executionId) throw new SecretsError(`External secret ${formatSecretReference({ provider, name })}: ${DYNAMIC_OUTSIDE_RUN}`);
+        if (!issueDynamic) throw new SecretsError(`External secret ${formatSecretReference({ provider, name })}: dynamic secrets are not loaded in this process`);
+        value = await issueDynamic({ provider, name }, run);
+      } else value = await externalSecrets.read(provider, name);
       (values[provider] ??= {})[name] = value;
     }),
   );
@@ -69,10 +94,13 @@ const setAt = (target: Record<string, unknown> | unknown[], path: string[], valu
  * The data with every `$secrets` field resolved, or the same object when no field uses them. Throws a SecretsError
  * that names the field and the reference when a secret can't be read or the expression fails.
  */
-export async function resolveSecretsIn<T extends JsonObject>(data: T, label = 'Credential'): Promise<T> {
+export async function resolveSecretsIn<T extends JsonObject>(data: T, label = 'Credential', run?: SecretRun): Promise<T> {
   const fields = referencing(data);
   if (!fields.length) return data;
-  const values = await fetchSecrets(fields.flatMap(({ text }) => secretReferences(text)));
+  const values = await fetchSecrets(
+    fields.flatMap(({ text }) => secretReferences(text)),
+    run,
+  );
   const resolver = new ExpressionResolver({
     items: [],
     nodeOutputs: {},
@@ -97,11 +125,11 @@ export async function resolveSecretsIn<T extends JsonObject>(data: T, label = 'C
   return out;
 }
 
-/** A node call's credentials (by requirement name) with secrets resolved; undefined when none used them. */
-export async function resolveSecretsInRecord(record: Record<string, JsonObject> | undefined): Promise<Record<string, JsonObject> | undefined> {
+/** A node call's credentials (by requirement name) with secrets resolved; undefined when none used them. `run` is the node call's run: dynamic paths are issued to it. */
+export async function resolveSecretsInRecord(record: Record<string, JsonObject> | undefined, run?: SecretRun): Promise<Record<string, JsonObject> | undefined> {
   if (!record || !usesSecrets(record)) return undefined;
   const out: Record<string, JsonObject> = {};
-  for (const [name, data] of Object.entries(record)) out[name] = await resolveSecretsIn(data);
+  for (const [name, data] of Object.entries(record)) out[name] = await resolveSecretsIn(data, 'Credential', run);
   return out;
 }
 

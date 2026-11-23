@@ -14,12 +14,14 @@ import type { ExecuteRequest, JsonObject } from '@landflow/protocol';
 import type { ExecuteWorkflowOptions, ResolvedNodeType } from '@landflow/engine';
 import type { ContextExtras } from '@landflow/sdk';
 import { installRedaction } from './install';
+import './leases'; // registers the dynamic-secret issuer (C30) with ./resolve
 import { hasSecretValues, redactValue, rememberSecretValues } from './redact';
 import { loadParameterSecrets, resolveSecretsIn, resolveSecretsInRecord } from './resolve';
 
 const withCredentials = async (request: ExecuteRequest): Promise<ExecuteRequest> => {
   installRedaction();
-  const credentials = await resolveSecretsInRecord(request.credentials);
+  // A dynamic path (C30) is issued to this node call's run, at the first node that needs it.
+  const credentials = await resolveSecretsInRecord(request.credentials, request.executionId ? { executionId: request.executionId, workflowId: request.workflowId } : undefined);
   return credentials ? { ...request, credentials } : request;
 };
 

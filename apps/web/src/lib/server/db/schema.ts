@@ -2130,6 +2130,16 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS knowledge_sync_runs_source ON knowledge_sync_runs (source_id, started_at)`,
     ],
   },
+  // C30: a leased credential issued to a run by OpenBao / Vault's database engine (docs/features/secrets-and-environments.md#dynamic-secrets): one row per (run, provider, path), the lease id and the issued values sealed and dropped when the lease ends; `failing_since` times the 24 h after which a revoke that keeps failing is given up, `dismissed_at` hides that failure's banner
+  {
+    version: 2933,
+    name: 'secret_leases',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS secret_leases (id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, workflow_id TEXT, provider TEXT NOT NULL, path TEXT NOT NULL, lease_id TEXT, lease_values TEXT, state TEXT NOT NULL, issued_at TEXT NOT NULL, expires_at TEXT NOT NULL, renewed_until TEXT, attempts BIGINT NOT NULL DEFAULT 0, next_attempt_at TEXT, last_error TEXT, failing_since TEXT, dismissed_at TEXT, ended_at TEXT, ended_by TEXT)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS secret_leases_run_path ON secret_leases (execution_id, provider, path)`,
+      `CREATE INDEX IF NOT EXISTS secret_leases_state ON secret_leases (state, next_attempt_at)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -2290,6 +2300,7 @@ export const TABLES = {
   knowledge_source_state: ['source_id'], // C22:
   knowledge_source_items: ['source_id', 'item_key'], // C22:
   knowledge_sync_runs: ['id'], // C22:
+  secret_leases: ['id'], // C30:
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

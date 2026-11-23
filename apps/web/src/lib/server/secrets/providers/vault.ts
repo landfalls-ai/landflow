@@ -6,11 +6,15 @@
  * token is renewed in the background at two thirds of its lease while it stays renewable; when renewal fails or the
  * lease runs out, the next request logs in again (a pasted token can't log in again: it is renewed while it can be).
  * Vault Enterprise and OpenBao namespaces go in `X-Vault-Namespace`.
+ *
+ * Dynamic mounts (`dynamicMounts`, e.g. `database/`): a name under one is issued rather than read. `issue` reads
+ * `<mount>creds/<role>` (the database, RabbitMQ and Consul engines answer that way) and returns the values with the
+ * lease; `renewLease` and `revokeLease` call `sys/leases/renew` and `sys/leases/revoke` (secrets/leases.ts keeps the leases).
  */
 import { readFileSync } from 'node:fs';
 import { singleton } from '../../singleton';
 import { checkUrl, requestJson } from './http';
-import { SecretProviderError, str, withEnvironment, type ProviderConfig, type ProviderContext, type ProviderDefinition, type SecretsProvider, type SecretValue } from './types';
+import { SecretProviderError, str, withEnvironment, type IssuedSecret, type ProviderConfig, type ProviderContext, type ProviderDefinition, type SecretsProvider, type SecretValue } from './types';
 import type { SecretProviderField } from '../../../shared/secrets';
 
 export interface VaultLogin {
@@ -206,10 +210,17 @@ class VaultClient implements SecretsProvider {
   }
 
   private async read<T>(path: string, allow404 = false): Promise<T | undefined> {
+    return this.request<T>('GET', path, { allow404 });
+  }
+
+  /** One authenticated call; a token revoked or expired early is replaced by a fresh login, once. */
+  private async request<T>(method: string, path: string, options: { body?: unknown; allow404?: boolean } = {}): Promise<T | undefined> {
     const attempt = async () =>
       requestJson<T>(this.context.fetch, `${this.url}/v1/${path}`, 'Vault', {
+        method,
         headers: { 'x-vault-token': await this.token(), ...(this.namespace && { 'x-vault-namespace': this.namespace }) },
-        ...(allow404 && { allow: [404] }),
+        ...(options.body !== undefined && { body: options.body }),
+        ...(options.allow404 && { allow: [404] }),
       });
     try {
       return await attempt();
@@ -244,10 +255,50 @@ class VaultClient implements SecretsProvider {
   }
 
   async getSecret(name: string): Promise<SecretValue | undefined> {
+    // A dynamic path is issued per run (secrets/leases.ts), never read as a KV entry.
+    if (this.isDynamic(name)) throw new SecretProviderError(`${JSON.stringify(name)} is under a dynamic mount: it is issued per run`);
     const response = await this.read<{ data?: { data?: Record<string, unknown> | null } }>(this.dataPath(name), true);
     const data = response?.data?.data;
     // A deleted (soft-deleted) version reads as null data.
     return data && typeof data === 'object' ? data : undefined;
+  }
+
+  /** The mounts that issue credentials (`dynamicMounts`, comma separated), each with a trailing slash. */
+  private dynamicMounts(): string[] {
+    return str(this.config, 'dynamicMounts')
+      .split(',')
+      .map((mount) => mount.trim().replace(/^\/+|\/+$/g, ''))
+      .filter(Boolean)
+      .map((mount) => `${mount}/`);
+  }
+
+  isDynamic(name: string): boolean {
+    return this.dynamicMounts().some((mount) => name.startsWith(mount));
+  }
+
+  /** How far each renewal extends a lease: Lease TTL, 60 s to 1 h (default 15 min). */
+  private leaseTtl(): number {
+    const seconds = Number(this.config.leaseTtl);
+    return Number.isFinite(seconds) && seconds > 0 ? Math.min(3600, Math.max(60, Math.floor(seconds))) : 900;
+  }
+
+  async issue(name: string): Promise<IssuedSecret> {
+    if (!this.isDynamic(name)) throw new SecretProviderError(`${JSON.stringify(name)} is not a dynamic path: add its mount to Dynamic mounts`);
+    if (name.startsWith('/') || name.split('/').some((part) => part === '..' || part === '.' || part === '')) throw new SecretProviderError(`Not a secret path: ${JSON.stringify(name)}`);
+    const response = await this.request<{ lease_id?: string; lease_duration?: number; renewable?: boolean; data?: Record<string, unknown> | null }>('GET', name.split('/').map(encodeURIComponent).join('/'));
+    const values = response?.data;
+    if (!values || typeof values !== 'object' || !response?.lease_id) throw new SecretProviderError('Vault answered without a lease');
+    return { values, leaseId: response.lease_id, leaseSeconds: Number(response.lease_duration) || 0, renewable: Boolean(response.renewable) };
+  }
+
+  async renewLease(leaseId: string, atMostSeconds = Infinity): Promise<number> {
+    const increment = Math.max(1, Math.min(this.leaseTtl(), Math.floor(atMostSeconds)));
+    const response = await this.request<{ lease_duration?: number }>('PUT', 'sys/leases/renew', { body: { lease_id: leaseId, increment } });
+    return Number(response?.lease_duration) || 0;
+  }
+
+  async revokeLease(leaseId: string): Promise<void> {
+    await this.request('PUT', 'sys/leases/revoke', { body: { lease_id: leaseId } });
   }
 
   async test(): Promise<string> {
@@ -279,6 +330,14 @@ export const vaultProvider: ProviderDefinition = {
       { name: 'namespace', label: 'Namespace', type: 'string', hint: 'Vault Enterprise or OpenBao namespace (optional)' },
       { name: 'mount', label: 'KV v2 mount', type: 'string', default: 'secret', placeholder: 'secret' },
       { name: 'pathPrefix', label: 'Path prefix', type: 'string', placeholder: 'apps/{environment}', hint: 'Only secrets under this path; {environment} is the instance’s environment' },
+      {
+        name: 'dynamicMounts',
+        label: 'Dynamic mounts',
+        type: 'string',
+        placeholder: 'database/',
+        hint: 'Mounts that issue a credential per run (the database engine), comma separated. A path under one, `$secrets.<name>[\'database/creds/<role>\']`, gets its own lease in a node credential and ends with the run',
+      },
+      { name: 'leaseTtl', label: 'Lease TTL (seconds)', type: 'number', default: 900, placeholder: '900', hint: 'How far each renewal extends a leased credential while its run goes (60 to 3600); the role sets the first lease' },
       { name: 'auth', label: 'Auth method', type: 'options', default: 'token', options: auth.map(([value, method]) => ({ value, label: method.label })) },
       ...auth.flatMap(([, method]) => method.fields).filter((field, index, all) => all.findIndex((f) => f.name === field.name) === index),
     ];

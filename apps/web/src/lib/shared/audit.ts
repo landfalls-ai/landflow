@@ -237,6 +237,12 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'kagent.route.refreshed': 'Rewrote the secret of an agent’s routes after a credential changed',
   'api.denied': 'Request refused (401/403)',
   'api.request': 'API request',
+  // C30: leased dynamic secrets (docs/features/secrets-and-environments.md#dynamic-secrets)
+  'secrets.lease.issued': 'Issued a leased secret to a run',
+  'secrets.lease.revoked': 'Revoked a leased secret',
+  'secrets.lease.expired': 'A leased secret ran out',
+  'secrets.lease.revoke_failed': 'Gave up revoking a leased secret',
+  'secrets.lease.dismissed': 'Set aside a leased secret that could not be revoked',
 };
 
 /** Filters of GET /api/audit and /api/audit/export (query parameters of the same names). */

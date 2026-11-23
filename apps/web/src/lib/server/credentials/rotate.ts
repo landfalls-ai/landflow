@@ -28,7 +28,13 @@ export interface RotationResult {
 }
 
 /** Tables with sealed values: the key columns (as the database's upsert knows them) and the column to scan (a sealed string or JSON holding some). */
-const TABLES: Array<{ table: 'settings' | 'config_files' | 'alert_channels' | 'audit_destinations' | 'audit_signing_keys' | 'external_secret_providers' | 'transport_connections' | 'user_mfa_factors' | 'event_subscriptions'; key: string; column: string }> = [
+const TABLES: Array<{
+  table: 'settings' | 'config_files' | 'alert_channels' | 'audit_destinations' | 'audit_signing_keys' | 'external_secret_providers' | 'transport_connections' | 'user_mfa_factors' | 'event_subscriptions' | 'secret_leases';
+  key: string;
+  column: string;
+  /** What the column's sealed strings are bound to, when it isn't the default (`sealSecret(value, purpose)`). */
+  purpose?: string;
+}> = [
   { table: 'settings', key: 'key', column: 'value' },
   { table: 'config_files', key: 'name', column: 'data' },
   { table: 'alert_channels', key: 'id', column: 'data' },
@@ -39,17 +45,20 @@ const TABLES: Array<{ table: 'settings' | 'config_files' | 'alert_channels' | 'a
   { table: 'user_mfa_factors', key: 'id', column: 'secret' }, // C16: TOTP secrets
   // C19: the signing secret of an event subscription.
   { table: 'event_subscriptions', key: 'id', column: 'secret' },
+  // C30: a leased dynamic secret's issued values and lease id, each bound to its own purpose.
+  { table: 'secret_leases', key: 'id', column: 'lease_values', purpose: 'secrets.lease' },
+  { table: 'secret_leases', key: 'id', column: 'lease_id', purpose: 'secrets.lease.id' },
 ];
 
 /** A sealed string's shape: v1 is `v1.iv.tag.value`, v2 is `v2.kid.iv.tag.value`; the iv is 12 bytes (16 base64 characters) and the tag 16 bytes (24), so a version such as `v1.2.3.4` is not one. */
 const SEALED = /^(?:v1|v2\.[A-Za-z0-9_-]{1,32})\.[A-Za-z0-9+/]{16}\.[A-Za-z0-9+/]{22}==\.[A-Za-z0-9+/=]*$/;
 
 /** `text` with every sealed string in it re-sealed (text itself, or JSON holding some); undefined when nothing changed. */
-function resealText(text: string, tally: { resealed: number; current: number; failed: number }): string | undefined {
+function resealText(text: string, tally: { resealed: number; current: number; failed: number }, purpose?: string): string | undefined {
   const seal = (value: string): string => {
     if (!SEALED.test(value) || !parseSealedString(value)) return value;
     try {
-      const next = credentials.resealSecret(value);
+      const next = credentials.resealSecret(value, purpose);
       if (next === undefined) tally.current += 1;
       else tally.resealed += 1;
       return next ?? value;
@@ -96,12 +105,12 @@ export function rotateEncryption(): RotationResult {
   result.failed.push(...creds.failed.map((id) => `credentials:${id}`));
 
   const db = database();
-  for (const { table, key, column } of TABLES) {
+  for (const { table, key, column, purpose } of TABLES) {
     for (const row of db.all<Record<string, string | null>>(`SELECT * FROM ${table}`)) {
       const text = row[column];
       if (!text) continue;
       const tally = { resealed: 0, current: 0, failed: 0 };
-      const next = resealText(text, tally);
+      const next = resealText(text, tally, purpose);
       // A new `updated_at` on a config file, so every process's cached copy (stamped by it) is dropped.
       if (next !== undefined) db.upsert(table, { ...row, [column]: next, ...(table === 'config_files' && { updated_at: new Date().toISOString() }) });
       count(table, tally, [String(row[key])]);
