@@ -9,6 +9,7 @@
  * `x-landflow-deadline` (epoch ms); a closed connection cancels the call.
  * `GET /metrics` serves Prometheus text when the telemetry has a Prometheus reader.
  */
+import { checkGuard, type HttpGuard } from './guard';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import {
   executeRequestSchema,
@@ -41,6 +42,8 @@ export interface FetchHandlerOptions {
   dispatcher?: Dispatcher;
   /** The MCP face mounted on this handler (docs/protocol.md §15.2): its path (default `/mcp`) and the request handler; listed as `endpoints.mcp` in `/.well-known/landflow`. */
   mcp?: { path?: string; fetch(request: Request): Promise<Response> };
+  /** Opt-in: refuse browsers and callers without the shared token on every POST route and the MCP mount (see ./guard). */
+  guard?: HttpGuard;
 }
 
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
@@ -99,6 +102,11 @@ export function createFetchHandler(plugin: IPlugin, options: FetchHandlerOptions
   return async function handle(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname.slice(base.length) || '/';
     const telemetry = options.telemetry ?? (options.dispatcher ? dispatcher.telemetry : getTelemetry());
+
+    if (options.guard && (request.method !== 'GET' || path === mcpPath) && request.method !== 'OPTIONS') {
+      const refused = checkGuard(request, options.guard, request.method === 'POST');
+      if (refused) return refused;
+    }
 
     // The MCP face owns its path whole (POST for requests, GET/DELETE for the 2025 session methods it answers 405 to).
     if (options.mcp && path === mcpPath) return options.mcp.fetch(request);
@@ -239,10 +247,11 @@ export interface ServeHttpOptions {
   basePath?: string;
   /** Mount the MCP face (`createMcpFace()` from `./mcp`) at `mcp.path` (default `/mcp`). */
   mcp?: FetchHandlerOptions['mcp'];
+  guard?: HttpGuard;
 }
 
 export function serveHttp(plugin: IPlugin, options: ServeHttpOptions): Promise<Server> {
-  const handle = createFetchHandler(plugin, { telemetry: options.telemetry, dispatcher: options.dispatcher, basePath: options.basePath, mcp: options.mcp });
+  const handle = createFetchHandler(plugin, { telemetry: options.telemetry, dispatcher: options.dispatcher, basePath: options.basePath, mcp: options.mcp, guard: options.guard });
   const host = options.host ?? '0.0.0.0';
   const server = createServer(async (req, res) => {
     try {
@@ -266,6 +275,8 @@ export interface HttpBindingOptions {
   /** Default 0.0.0.0. */
   host?: string;
   basePath?: string;
+  /** Opt-in guard for the POST routes and the MCP mount (see ./guard). */
+  guard?: HttpGuard;
   /**
    * Also serve the MCP face at `path` (default `/mcp`) on this port (docs/protocol.md §15.2). `token` is what callers
    * must send as `Authorization: Bearer …` (env LANDFLOW_MCP_TOKEN); it is required unless `host` is loopback only, and
@@ -300,7 +311,7 @@ export function httpBinding(options: HttpBindingOptions): TransportBinding & { r
         face = createMcpFace({ dispatcher, manifest: context.manifest, telemetry: context.telemetry, logger: context.logger.child({ 'landflow.transport': 'mcp' }), token, loopback, credentials: options.mcp.credentials });
         mcp = { path: options.mcp.path ?? DEFAULT_MCP_PATH, fetch: (request) => face!.fetch(request) };
       }
-      server = await serveHttp(context.plugin, { port: options.port, host, basePath: options.basePath, dispatcher, telemetry: context.telemetry, mcp });
+      server = await serveHttp(context.plugin, { port: options.port, host, basePath: options.basePath, guard: options.guard, dispatcher, telemetry: context.telemetry, mcp });
       const description = `HTTP listening on :${options.port}${mcp ? ` (MCP at ${mcp.path}${face && !options.mcp?.token ? ', loopback, no token' : ''})` : ''}`;
       return { endpoints: [`http://${context.advertiseHost}:${options.port}`], description };
     },

@@ -330,6 +330,19 @@ Writing every driver three times would not scale. So:
   through every transport, whatever it was written in. It answers `GetManifest` itself and reads the manifest again when
   its hash changes or a call answers `manifest_mismatch`.
 
+## Guarding a plugin's HTTP face
+
+A plugin that can start real work on the machine it runs on (the deck plugin) opts in with `serve(plugin, { guardHttp: true })`
+(`@landflow/sdk/guard`). Its POST routes and `/mcp` then refuse a request that carries an `Origin` header or a
+`Sec-Fetch-Site` other than `none` (403: a browser or a rebinding page), a body that is not `application/json` (415), and a
+call without the header `x-landflow-plugin-token` (401). The token is
+`HMAC-SHA256(secret, "landflow.plugin.http/v1|<pluginId>")` in hex, with the secret from `LANDFLOW_TRANSPORT_SECRET` (falling
+back to `LANDFLOW_REGISTRY_SECRET`): it is bound to the plugin id, so a plugin that receives its token cannot replay it to
+another, and the raw secret never travels. `serve()` refuses to start a guarded plugin without a secret. GET discovery and
+health stay open. The host (`HttpPluginClient`) learns the plugin's id from its well-known document and sends the token on
+execute, load options, credential test and webhook calls whenever it holds a secret; plugins that do not opt in ignore it. The
+guard covers the HTTP face only, so a guarded plugin should serve HTTP alone (no gRPC face, which has no guard).
+
 ## MCP: every plugin is also an MCP server
 
 The MCP face and the gateway target the current MCP revision (2026-07-28): stateless requests (no `initialize`, no

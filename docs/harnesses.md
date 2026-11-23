@@ -362,6 +362,16 @@ in the agent's Sessions and, for your own sessions, on `/connect`.
 | **3. Run on Claude Code** | L | `claude-code` adapter on the Agent SDK, workspaces and worktrees, `canUseTool` approval bridge, timeline and diff entries, Harness card | from the test chat the agent fixes a failing test in a sample repo on its own branch, with a Landflow approval before `Bash`, all in one trace |
 | **4. More harnesses** | S–M each | exporters and adapters for Codex CLI, Gemini CLI and OpenCode, chosen by demand | per harness, the same checks as phases 1 and 3 |
 
+## dot-agent-deck from a flow
+
+A flow can start a unit of work in the person's [dot-agent-deck](https://github.com/dot-agent-deck) and wait for it: the opt-in
+`plugins/deck` plugin has a **dot-agent-deck** node with a **Dispatch** operation, and a core Wait ("On Webhook Call") after it
+resumes the run when the unit reports. The plugin runs inside a deck pane (the deck's CLI refuses anywhere else), calls the deck's
+CLI with argument arrays and the task on stdin, and never changes or trusts anything in the deck. Delegate (orchestrator only), a
+deck view in Landflow (Landlens's, later) and trace parenting (needs a deck change) are not built. See
+[plugins/deck](../plugins/deck/README.md) for the flow pattern, what the deck lets a pane read, the safety rules and the two asks for
+the deck project.
+
 ## Other harnesses
 
 The MCP server (block 1) gives every MCP-capable client the agent's Landflow tools on day one.
