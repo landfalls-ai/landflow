@@ -16,6 +16,12 @@ export interface MemoryItem {
   score?: number;
   version?: number;
   static?: boolean;
+  /** 0..1: how sure the writer was (a fact the study or Memory Extract wrote; a person's memory is 1). */
+  confidence?: number;
+  /** Who wrote it: a person, or Landflow (the study, a flow). Set by the built-in backend; a provider's items leave it out. */
+  origin?: 'person' | 'landflow';
+  /** How many places the fact is backed by (its evidence rows): what ranks static facts in a sampled profile (C28). */
+  evidenceCount?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -55,7 +61,13 @@ export interface MemoryAddInput {
   forgetAfter?: string;
   /** The id of the memory this one replaces: a new version of it (C01). */
   replaces?: string;
+  /** 0..1, how sure the writer is (C28: Memory Extract writes the model's confidence). Default 1. */
+  confidence?: number;
+  /** Where the memory came from: at most 6 rows (an execution, a node, a document), each `href` a path inside Landflow. */
+  evidence?: { label: string; value?: string | number; href?: string }[];
 }
+
+export const MEMORY_EVIDENCE_MAX = 6;
 
 export const MEMORY_LIMITS = { search: { min: 1, max: 50, default: 10 }, list: { min: 1, max: 100, default: 20 } } as const;
 

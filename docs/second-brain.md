@@ -176,6 +176,51 @@ answers a short JSON, and Search and Profile put the text inside the memory fenc
 destructive change (its operation is `delete`), so an agent's Tool Approvals apply as for any other change. A flow cannot add to an
 agent's own memory: only that agent's run writes it. A flow reads any project or team its creator can, but Add and Forget write only into the flow's home project or a team homed there (the flow is its creator's deputy, so it never writes into another project the creator happens to edit). Replacing or forgetting works only on a project's or an agent's own memory, never on a fact the study wrote, and the study's stale sweep never stales a memory.
 
+#### Memory Extract
+
+**Memory Extract** (`core.memoryExtract`, category AI, `apps/web/src/lib/server/nodes/memory-extract.ts`) turns text into facts with the
+chat model on its **Chat Model** input (any model the host offers; the call goes through the model seam, so usage is metered and the
+caps apply). It is not an agent tool: a model call per part that can write memory belongs in a flow a person built.
+
+- **In.** **Text** (default `{{ $json.text }}`, at most 50,000 characters; every 8,000 is one model call and facts repeated across
+  parts come out once), **Reference Date** (default `{{ $json.date }}`; empty is now; one that is not a date fails the item naming it),
+  **Memory Of** (a project, empty meaning the flow's own, or a team's notebook), an optional **Document ID**, **Compare With
+  Memory** (on) and **Write to Memory** (off). Option **Max Facts** keeps at most 200 per item.
+- **Out.** One item per fact: `statement` (one claim, naming its subject: a statement that opens with a pronoun or holds two claims
+  makes the model try again once), `subject`, `kind` (`static` for what stays true a long time, `dynamic`), `confidence`,
+  `sourceSpan` (the words it came from), `label` and `matchId`, and for a fact with a time `timeText` (the words as written) and
+  either `validAt` (an ISO date, or `from/to` for a period) or `unresolved: true`.
+- **Dates.** A fixed list of English phrases is worked out by Landflow against the reference date in UTC days and overrides the
+  model: today, yesterday, tomorrow, last or next a weekday (never the reference day itself), N days, weeks or months ago, in N
+  days, weeks or months, and last, this or next week, month, quarter or year (a week runs Monday to Sunday). Any other phrase is
+  left to the model, whose date is kept only when it is real and within ten years of the reference; otherwise the words stay and
+  `unresolved` is set. Other languages are left to the model.
+- **Labels.** With Compare on, each fact is searched against the memory's five nearest items (a person's memories and a
+  provider's items; never a fact the study wrote). The same words as a stored item are a `duplicate` without a model call; the rest
+  are labelled `new`, `updates` (it replaces or corrects an item) or `duplicate` by the model in one call per 20 facts. A `matchId`
+  must be one of the five the host listed: a wrong one makes the model try again, and after the second miss the fact is `new`.
+- **Write.** Off, the node only labels. On, a `new` fact is added (a `static` one as static) and an `updates` fact is written as the
+  next version of the item it replaces (`memory.add` with `replaces`: the old version stays in its history, so it is superseded,
+  not deleted); a `duplicate` writes nothing. Each written item says `written`, `memoryId` and `version`. An update of a static
+  memory is not written (only a person changes one): the fact says `written: false` and why, and the others carry on. A write goes
+  to the flow's own project only; a team's notebook can be compared with but is never written (notes are written by a team run).
+- **Provenance.** A written fact keeps its model confidence and up to five evidence rows: the run (with a link), the node, the
+  Document ID if given, `validAt`, and the first 200 characters of its `sourceSpan`; never the whole text. The memory shows them as
+  `confidence`, `origin` and `evidenceCount`.
+- **Prompt and privacy.** The prompts are Landflow's own text (`memory/extract.ts`). The text and the stored memories reach the model
+  inside the memory fence; the model's reply is schema-checked; facts are personal data and follow the memory's access rules, are
+  never logged and never leave their project.
+- **Fails.** A reply that is still invalid after the one retry fails the item with the model's reason; the calls are metered anyway.
+  A memory provider that is down fails the item with its message and writes nothing for it.
+
+**Memory Profile** gains **Sampled** (off: unchanged). On, it reads up to 2,000 items of the container and answers every static
+fact (ranked by how many sources back it) plus at most **Sample Size** (60) of the others, chosen by weighted buckets filled in
+order: recent 35 %, high confidence 25 %, often revised (more than one version) 15 %, old 5 %, inferred 10 % (written by Landflow
+with confidence under 0.8); what the weights leave goes to the newest. The weights are node options. It answers `static`, `dynamic`,
+`left` and `markdown`: Markdown that fits **Token Budget** (1,500; about four characters a token), standing facts first, ending
+"N more not shown". No model call and no randomness: the same memory gives the same profile. As an agent tool it answers the
+Markdown inside the memory fence. The profile is per container (a project, a team), not per person or subject.
+
 ### 3. The loop
 
 The leader runs the brain (`leaderService('second brain')`). Every `LANDFLOW_BRAIN_INTERVAL_MINUTES` (60) it:

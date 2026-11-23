@@ -4,8 +4,8 @@
  * version (C01), forgotten and expired items left out (C02), notes written by a team run (D9). Access is the façade's.
  */
 import { nanoid } from 'nanoid';
-import { STUDY_FACT_KINDS, type BrainFact, type FactKind } from '../../shared/brain';
-import { MEMORY_LIMITS, type MemoryAddInput, type MemoryContainer, type MemoryItem, type MemoryPage, type MemoryProfile, type MemorySearchOptions, type MemorySearchResult } from '../../shared/memory';
+import { STUDY_FACT_KINDS, type BrainFact, type FactKind, type ProposalEvidence } from '../../shared/brain';
+import { MEMORY_EVIDENCE_MAX, MEMORY_LIMITS, type MemoryAddInput, type MemoryContainer, type MemoryItem, type MemoryPage, type MemoryProfile, type MemorySearchOptions, type MemorySearchResult } from '../../shared/memory';
 import type { NoteHit, TeamNote } from '../../shared/notebook';
 import { recordAudit } from '../audit';
 import { checkForgetAfter, getFact, listFacts, pageFacts, scoredFactSearch, upsertFact, type FactFilter } from '../brain/facts';
@@ -38,9 +38,26 @@ function factItem(fact: BrainFact, score?: number): MemoryItem {
     ...(score !== undefined && { score }),
     version: fact.version ?? 1,
     ...(fact.static && { static: true }),
+    confidence: fact.confidence,
+    origin: fact.writtenBy?.origin === 'landflow' ? 'landflow' : 'person',
+    evidenceCount: fact.evidence.length,
     createdAt: fact.firstSeen,
     updatedAt: fact.lastSeen,
   };
+}
+
+/** The confidence and evidence a writer may attach (C28): 0..1, at most six rows, links only inside Landflow. Throws a 400. */
+function checkProvenance(input: MemoryAddInput): { confidence?: number; evidence?: ProposalEvidence[] } {
+  const { confidence, evidence } = input;
+  if (confidence !== undefined && !(Number.isFinite(confidence) && confidence >= 0 && confidence <= 1)) throw new MemoryWriteRefusedError('"confidence" is a number from 0 to 1');
+  if (evidence !== undefined) {
+    if (!Array.isArray(evidence) || evidence.length > MEMORY_EVIDENCE_MAX) throw new MemoryWriteRefusedError(`Give at most ${MEMORY_EVIDENCE_MAX} evidence rows`);
+    for (const row of evidence) {
+      if (!row || typeof row.label !== 'string' || !row.label.trim()) throw new MemoryWriteRefusedError('An evidence row needs a label');
+      if (row.href !== undefined && !(typeof row.href === 'string' && row.href.startsWith('/') && !row.href.startsWith('//'))) throw new MemoryWriteRefusedError('An evidence link is a path inside Landflow, such as /runs/<id>');
+    }
+  }
+  return { ...(confidence !== undefined && { confidence }), ...(evidence !== undefined && { evidence }) };
 }
 
 function noteItem(note: TeamNote | NoteHit, score?: number): MemoryItem {
@@ -150,6 +167,7 @@ export const builtInBackend: MemoryBackend = {
     if ((STUDY_FACT_KINDS as readonly string[]).includes(kind)) throw new MemoryWriteRefusedError(`the study writes ${kind} facts`);
     if (!WRITABLE_KINDS.includes(kind)) throw new MemoryWriteRefusedError(`Unknown memory kind “${kind}”: use memory or intended`);
     const forgetAfter = checkForgetAfter(input.forgetAfter);
+    const provenance = checkProvenance(input);
     const who = origin(caller);
 
     if (input.replaces) {
@@ -157,7 +175,7 @@ export const builtInBackend: MemoryBackend = {
       const match = /^(.*)#v(\d+)$/.exec(input.replaces);
       const chainId = match ? match[1] : input.replaces;
       writableFact(c, chainId, caller); // not found when it is not this container's, or the study's
-      const written = await supersedeFact(chainId, { statement: text, ...(match && { expectedVersion: Number(match[2]) }), ...(caller.origin === 'person' && caller.actor && isRequestPerson(caller.actor.id) && { replaceStatic: true }) }, who, database());
+      const written = await supersedeFact(chainId, { statement: text, ...provenance, ...(match && { expectedVersion: Number(match[2]) }), ...(caller.origin === 'person' && caller.actor && isRequestPerson(caller.actor.id) && { replaceStatic: true }) }, who, database());
       auditAdded(c, written, caller, true);
       return factItem(written);
     }
@@ -171,8 +189,8 @@ export const builtInBackend: MemoryBackend = {
         ...(c.kind === 'project' && { subjectName: getProject(c.id)?.name, projectId: c.id }),
         kind,
         statement: text,
-        confidence: 1,
-        evidence: [],
+        confidence: provenance.confidence ?? 1,
+        evidence: provenance.evidence ?? [],
       },
       database(),
       new Date().toISOString(),
