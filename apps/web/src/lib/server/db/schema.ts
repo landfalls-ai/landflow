@@ -2155,11 +2155,28 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS secret_leases_state ON secret_leases (state, next_attempt_at)`,
     ],
   },
+  // C29: network runners for the HTTP Request node (docs/network-runners.md): a network (instance-wide, or bound to one project), the runners registered to it (a token each, kept as its SHA-256), what each runner last reported (apart from the runner row, so a poll never rewrites a revoke), and the calls waiting for or answered by a runner (sealed bodies, deleted once read)
+  {
+    version: 2934,
+    name: 'network_runners',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS networks (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT, project_id TEXT, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS network_runners (id TEXT PRIMARY KEY, network_id TEXT NOT NULL, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, token_hint TEXT NOT NULL, allowed_ips TEXT, created_by TEXT, created_at TEXT NOT NULL, revoked_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS network_runners_network ON network_runners (network_id)`,
+      `CREATE TABLE IF NOT EXISTS network_runner_seen (runner_id TEXT PRIMARY KEY, last_seen_at TEXT NOT NULL, connected_since TEXT, version TEXT, address TEXT)`,
+      `CREATE TABLE IF NOT EXISTS network_calls (id TEXT PRIMARY KEY, network_id TEXT NOT NULL, execution_id TEXT, workflow_id TEXT, node TEXT, state TEXT NOT NULL, runner_id TEXT, request TEXT NOT NULL, response TEXT, queued_at TEXT NOT NULL, claimed_at TEXT, done_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS network_calls_queue ON network_calls (network_id, state, queued_at)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
 export const TABLES = {
   meta: ['key'],
+  networks: ['id'], // C29:
+  network_runners: ['id'], // C29:
+  network_runner_seen: ['runner_id'], // C29:
+  network_calls: ['id'], // C29:
   workflows: ['id'],
   executions: ['id'],
   execution_steps: ['execution_id', 'seq'],
