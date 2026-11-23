@@ -39,6 +39,8 @@ export interface ApprovalDecision {
   text?: string;
   /** Ask a Person: a note the person left with the decision. */
   comment?: string;
+  /** Ask a Person with Answer Choices: the value the approver picked (the first one when none was named). */
+  choice?: string;
 }
 
 /** What an Ask a Person node asks (`wait.data.approval.confirm`). */
@@ -51,6 +53,42 @@ export interface ConfirmRequest {
   approvers?: string[];
   /** What the node does when nobody answers in time. */
   onTimeout?: 'approve' | 'reject' | 'fail';
+  /** Answer Choices: what an approver picks one of with Approve (C35: a duration). Empty or absent: no choice. */
+  choices?: Array<{ value: string; label: string }>;
+  /** People Only: an API key or an MCP caller can't answer; a signed-in person, a signed email link or a listed Slack id can. */
+  peopleOnly?: boolean;
+}
+
+/** The refusal for a person-only request answered by something that is not a person. */
+const PEOPLE_ONLY = 'A person answers this request';
+
+/**
+ * What a decision's choice is for `approval`, or a 400: only an approval carries one, only a request with choices takes one, and it is one
+ * of them. No choice named: the first. Undefined for a request without choices.
+ */
+export function choiceFor(approval: Pick<PendingApproval, 'confirm'>, approved: boolean, choice: string | undefined): string | undefined {
+  const choices = approval.confirm?.choices;
+  if (choice !== undefined) {
+    if (!approved) throw new ApprovalError('Only an approval can carry a choice', 400);
+    if (!choices?.length) throw new ApprovalError('This request has no choices', 400);
+    if (!choices.some((c) => c.value === choice)) throw new ApprovalError('That is not one of the choices of this request', 400);
+    return choice;
+  }
+  return approved && choices?.length ? choices[0]!.value : undefined;
+}
+
+/**
+ * People Only: a request that only a person answers refuses an API key, an MCP caller and an answer with no one behind it (403). `by` is the
+ * signed-in person's email, `email:<address>` for a signed link, and `slackUser` a Slack member id (counted only when listed).
+ */
+export function assertPerson(approval: Pick<PendingApproval, 'confirm'>, who: { by?: string; slackUser?: string; principal?: string }): void {
+  const confirm = approval.confirm;
+  if (!confirm?.peopleOnly) return;
+  if (who.principal === 'api-key' || who.principal === 'mcp') throw new ApprovalError(PEOPLE_ONLY, 403);
+  if (!who.by && !who.slackUser) throw new ApprovalError(PEOPLE_ONLY, 403);
+  const allowed = (confirm.approvers ?? []).map((a) => a.trim().toLowerCase()).filter(Boolean);
+  const listed = (who.slackUser ? who.slackUser : who.by?.startsWith('email:') ? who.by.slice(6) : undefined)?.toLowerCase();
+  if (listed !== undefined && !allowed.includes(listed)) throw new ApprovalError('You are not one of the people who may answer this request', 403);
 }
 
 /** The id of the one call an Ask a Person node waits on. */
@@ -122,6 +160,8 @@ export async function decideApproval(
     principal?: 'session' | 'api-key' | 'test' | 'mcp';
     note?: string;
     background?: boolean;
+    // C35: the Answer Choices value the approver picked (an approval of a request that has choices).
+    choice?: string;
   } = {},
 ): Promise<DecisionOutcome> {
   if (options.text !== undefined) {
@@ -162,6 +202,7 @@ export async function decideApproval(
     // The call runs as it was reviewed (masked parameters, fixed destination): an edit the node would drop must not be journaled as applied.
     if (options.input !== undefined) throw new ApprovalError('A request in Needs you runs as reviewed and takes no edited input', 400);
   }
+  let choice: string | undefined;
   const approval = pendingApproval(stored);
   if (!approval) throw new ApprovalError(stored.status === 'waiting' ? 'This execution is not waiting for a tool approval' : `This execution is ${stored.status}, not waiting for an approval`, 409);
   const call = approval.calls.find((c) => c.id === callId);
@@ -172,12 +213,14 @@ export async function decideApproval(
   if (approval.confirm) {
     if (options.input !== undefined) throw new ApprovalError('An Ask a Person request takes edited text, not an input', 400);
     if (options.text !== undefined && !approval.confirm.allowEdit) throw new ApprovalError('This request does not allow editing the text', 403);
+    choice = choiceFor(approval, approved, options.choice);
+    assertPerson(approval, { ...(options.by && { by: options.by }), ...(options.slackUser && { slackUser: options.slackUser }), principal: options.principal ?? requestAuth()?.principal?.via });
     const allowed = (approval.confirm.approvers ?? []).map((a) => a.trim().toLowerCase()).filter(Boolean);
     // A signed link in an email was sent to its recipient, so it needs no further check; a Slack click and a signed-in person do.
     const who = options.slackUser ? options.slackUser.toLowerCase() : options.by && !options.by.startsWith('email:') ? options.by.toLowerCase() : undefined;
     if (allowed.length && who && !allowed.includes(who)) throw new ApprovalError('You are not one of the people who may answer this request', 403);
-  } else if (options.text !== undefined || options.comment !== undefined) {
-    throw new ApprovalError('Only an Ask a Person request takes text or a comment', 400);
+  } else if (options.text !== undefined || options.comment !== undefined || options.choice !== undefined) {
+    throw new ApprovalError('Only an Ask a Person request takes text, a comment or a choice', 400);
   }
   const previous = approval.decisions?.[callId];
   if (previous && !requestRow) throw new ApprovalError(`Already ${previous.approved ? 'approved' : 'rejected'}`, 409);
@@ -201,7 +244,7 @@ export async function decideApproval(
   }
   // Read, change and save in one synchronous step: two clicks can't overwrite each other.
   const by = options.by ?? (options.slackUser ? `slack:${options.slackUser}` : undefined);
-  const decisions = { ...approval.decisions, [callId]: { approved, ...(by && { by }), at: new Date().toISOString(), ...(options.input && { input: options.input }), ...(options.text !== undefined && { text: options.text }), ...((options.comment?.trim() || options.note?.trim()) && { comment: (options.comment ?? options.note)!.trim() }) } };
+  const decisions = { ...approval.decisions, [callId]: { approved, ...(by && { by }), at: new Date().toISOString(), ...(options.input && { input: options.input }), ...(options.text !== undefined && { text: options.text }), ...(choice !== undefined && { choice }), ...((options.comment?.trim() || options.note?.trim()) && { comment: (options.comment ?? options.note)!.trim() }) } };
   const next: PendingApproval = { ...approval, decisions };
   store.saveExecution({ ...stored, wait: { ...stored.wait!, data: { ...stored.wait!.data, approval: next as unknown as JsonObject } } });
   // Said in the run's journal, in the wait it answers (before the resume ends that wait): web, Slack and email alike.

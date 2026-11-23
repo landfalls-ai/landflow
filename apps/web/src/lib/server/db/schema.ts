@@ -2145,6 +2145,24 @@ export const MIGRATIONS: Migration[] = [
     name: 'project_keys',
     statements: [`CREATE TABLE IF NOT EXISTS project_keys (project_id TEXT NOT NULL, version BIGINT NOT NULL, wrapped TEXT NOT NULL, state TEXT NOT NULL, created_at TEXT NOT NULL, retired_at TEXT, PRIMARY KEY (project_id, version))`],
   },
+  // C35: access requests (docs/access-requests.md). `access_entries`: one grantable thing (system, target, durations, steps, owners,
+  // eligible people; JSON in TEXT; `version` for optimistic edits); `access_requests`: a person's ask, with a snapshot of the entry
+  // it asked about; `access_grants`: what was given, its removal state and lease (`already_had`: never removed, the person had it
+  // before); `access_accounts`: a person's handle in a system (their GitHub login). Holds credential ids only, never a value.
+  {
+    version: 2935,
+    name: 'access_requests',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS access_entries (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, system TEXT NOT NULL, target TEXT NOT NULL, credential_id TEXT, durations TEXT NOT NULL, steps TEXT NOT NULL, owners TEXT NOT NULL, eligible TEXT, enabled BIGINT NOT NULL DEFAULT 1, version BIGINT NOT NULL DEFAULT 1, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS access_requests (id TEXT PRIMARY KEY, entry_id TEXT NOT NULL, entry_version BIGINT NOT NULL, entry_snapshot TEXT NOT NULL, requester_id TEXT NOT NULL, account TEXT, duration_minutes BIGINT, reason TEXT NOT NULL, channel TEXT NOT NULL, status TEXT NOT NULL, approvers TEXT NOT NULL, workflow_id TEXT, execution_id TEXT, decisions TEXT, approved_minutes BIGINT, note TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS access_requests_requester ON access_requests (requester_id, created_at)`,
+      `CREATE INDEX IF NOT EXISTS access_requests_entry ON access_requests (entry_id, status)`,
+      `CREATE TABLE IF NOT EXISTS access_grants (id TEXT PRIMARY KEY, request_id TEXT, entry_id TEXT NOT NULL, holder_id TEXT NOT NULL, account TEXT, system TEXT NOT NULL, target TEXT NOT NULL, credential_id TEXT, status TEXT NOT NULL, since TEXT, until TEXT, approved_by TEXT, already_had BIGINT NOT NULL DEFAULT 0, lease_until TEXT, attempts BIGINT NOT NULL DEFAULT 0, next_attempt_at TEXT, ended_at TEXT, ended_by TEXT, end_reason TEXT, last_error TEXT, checked_at TEXT, overdue_noted BIGINT NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS access_grants_due ON access_grants (status, until)`,
+      `CREATE INDEX IF NOT EXISTS access_grants_holder ON access_grants (holder_id, status)`,
+      `CREATE TABLE IF NOT EXISTS access_accounts (user_id TEXT NOT NULL, system TEXT NOT NULL, handle TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (user_id, system))`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -2307,6 +2325,10 @@ export const TABLES = {
   knowledge_sync_runs: ['id'], // C22:
   custom_roles: ['id'], // C32:
   project_keys: ['project_id', 'version'], // C31:
+  access_entries: ['id'], // C35:
+  access_requests: ['id'], // C35:
+  access_grants: ['id'], // C35:
+  access_accounts: ['user_id', 'system'], // C35:
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

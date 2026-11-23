@@ -3078,3 +3078,7 @@ the probabilities in `decision`. It closes "a Decide node" that the Jev judge le
 yes/no to the three question types and an Ollama connection; the node's outputs follow its options (a port rule in the
 protocol, `expand: 'decide'`); calls are metered with the new purpose *Decide*. Tested against a fake System One
 server (`@landflow/test-fakes/systemone`) and, behind `LANDFLOW_INTEGRATION=ollama`, a real `nimble:9b`.
+
+## Access requests (C35, 2026-11-23)
+
+The person asked for access to be requested, approved and taken back inside Landflow. **Built (core):** the catalog of grantable access and its rules, requests, the two installed flows, Apply Access Decision that trusts only the run's record, grants made through the GitHub Access and Google Directory nodes, removal at the end by a leader service with retries and an hourly reconcile, manual entries, emails, a chat that can only file after a later-turn confirmation, session-only routes behind one port ([access-requests.md](access-requests.md)). Ask a Person gained **Answer Choices** and **People Only**, both off by default ([features/engine.md](features/engine.md)). **Next:** the Access page (the form, Needs you for approvers, the catalog editor; C35-C2), several approval steps and an Approval node, an extension request, and a Landbright backend behind `lib/server/access/port.ts`.
