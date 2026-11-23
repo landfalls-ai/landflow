@@ -1,4 +1,5 @@
 export * from './node';
+export { GUARD_HEADER, checkGuard, pluginHttpToken, transportSecretFromEnv, type HttpGuard } from './guard';
 export { parseTransportList, type BindingContext, type BindingInfo, type TransportBinding, type TransportHints } from './binding';
 export {
   createDispatcher,
