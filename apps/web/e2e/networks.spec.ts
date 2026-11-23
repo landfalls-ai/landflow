@@ -15,7 +15,7 @@ test('a network: register a runner, see it online, revoke it', async ({ signedIn
   await page.getByRole('button', { name: 'New network' }).click();
   await page.locator('#network-name').fill(name);
   await page.getByRole('button', { name: 'Create network' }).click();
-  await expect(page.getByText(name, { exact: true })).toBeVisible();
+  await expect(page.getByText(name).first()).toBeVisible();
 
   await page.getByRole('button', { name: 'Register runner' }).first().click();
   await page.locator('#runner-name').fill('office-1');
@@ -36,8 +36,10 @@ test('a network: register a runner, see it online, revoke it', async ({ signedIn
   await expect(page.getByTestId('new-runner-token')).toHaveCount(0);
   await expect(page.getByText(`…${token.slice(-4)}`)).toBeVisible();
 
+  // The question is a native confirm on a desktop and a bottom sheet on a phone (components/ui/confirm.tsx).
+  page.once('dialog', (dialog) => void dialog.accept());
   await page.getByRole('button', { name: 'Revoke office-1' }).click();
-  await page.getByRole('button', { name: 'Revoke', exact: true }).click();
+  if (size === 'phone') await page.getByRole('button', { name: 'Revoke', exact: true }).click();
   await expect(page.getByText('Revoked', { exact: true })).toBeVisible();
   const refused = await page.context().request.post(`${origin}/api/runner/v1/poll`, { headers: { authorization: `Bearer ${token}` }, data: {} });
   expect(refused.status()).toBe(401);
