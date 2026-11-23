@@ -1152,7 +1152,7 @@ agent's knowledge bases returned?) and **stay on topic** in the builder (the eng
 
 Then **Jev and AWS Strands Decider as guardrail judges** ([agents.md](agents.md#building-an-agent)): TypeSafe AI’s Jev and AWS’s open-source Strands Decider are decision models (text and
 yes/no questions in, a probability per question out), so it cannot be a chat provider; it answers the guardrail checks that need a
-model instead, from a *TypeSafe API* credential chosen on the rule. Open: a Decide node, the model router and cost counting.
+model instead, from a *TypeSafe API* credential chosen on the rule. A Decide node was open here; it is built (C34, below: [ai.md](features/ai.md#decide)). Open: the model router and cost counting.
 
 ## Flow detectors (built 2026-11-12)
 
@@ -3069,3 +3069,12 @@ The person decided on 2026-11-18 that production approvals go to an approval inb
 - **C26 built (agent secret proxy, narrow):** secret routes on the kagent card, `<name>-routes` Secret and EgressPolicy, keyed-hash drift, leader rotation timer, audit `kagent.route.*`, Run Trace connection rows. Lifted: "GitHub only, by hand" for the sandbox's credentialed access. Live check on `kind-landflow-kagent` done 2026-11-23 (see a2a.md). Open: C30 dynamic secrets feeding a route with a lease; routes for non-Claude runtimes (their tools go through Landflow's MCP endpoint, so none planned).
 - **C27 built (content-keyed trust):** a `trust_records` table, canonical per-tool fingerprints, MCP tools snapshotted at publish and held when changed, the review banner and sheet, a Needs you item, marketplace node plugin installs asked by the hash. Open: the flows' MCP Client Tool (C27-D6), a descriptor hash for registry-announced plugins, an "approve all" for many agents, a cap on how long a hold may wait.
 
+
+## Decide node (C34, 2026-11-23)
+
+The person asked for decision models in a flow. **Decide** (`core.decide`, [ai.md](features/ai.md#decide)) asks a decision model Choice, Yes/No and Score
+questions about each item (Ollama's `nimble`, TypeSafe's Jev or Strands Decider) and routes the item by the answer, with
+the probabilities in `decision`. It closes "a Decide node" that the Jev judge left open. The System One client grew from
+yes/no to the three question types and an Ollama connection; the node's outputs follow its options (a port rule in the
+protocol, `expand: 'decide'`); calls are metered with the new purpose *Decide*. Tested against a fake System One
+server (`@landflow/test-fakes/systemone`) and, behind `LANDFLOW_INTEGRATION=ollama`, a real `nimble:9b`.

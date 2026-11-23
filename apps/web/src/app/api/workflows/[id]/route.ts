@@ -11,6 +11,7 @@ import { forgetWorkflow } from '@/lib/server/publish';
 import { recordAudit } from '@/lib/server/audit';
 import { publishOrRequest } from '@/lib/server/governance/approvals';
 import { governedSave } from '@/lib/server/governance/saves';
+import { remapOutputConnections } from '@/lib/server/mcp/workflows';
 import { store } from '@/lib/server/store';
 import { deleteVersions, versionFor } from '@/lib/server/versions';
 
@@ -52,6 +53,8 @@ const saveSchema = workflowSchema.and(z.object({ baseUpdatedAt: z.string().optio
 export const PUT = handler(async (request: Request, { params }: Ctx) => {
   const { id } = await params;
   if (!store.getWorkflow(id)) return error('Workflow not found', 404);
+  // The schema fills in `connections: []`; whether the client sent any decides if a Decide's connections must follow its options.
+  const sentConnections = await request.clone().json().then((raw: unknown) => Boolean(raw && typeof raw === 'object' && 'connections' in raw)).catch(() => false);
   const body = await parseBody(request, saveSchema);
   if (!body.ok) return body.response;
   const { baseUpdatedAt, ...fields } = body.data;
@@ -61,7 +64,9 @@ export const PUT = handler(async (request: Request, { params }: Ctx) => {
   const base = baseOf(request, baseUpdatedAt);
   if (base && existing.updatedAt && base !== existing.updatedAt) throw new WorkflowConflictError(existing);
   // Governance (lib/server/governance/saves.ts): an `active` switch may be held for approval or refused; policy warnings.
-  const { workflow, extras } = governedSave({ ...existing, ...fields, id } as Workflow, existing, (w) => store.saveWorkflow(w, { autosave: request.headers.get('x-landflow-autosave') === '1' }), { by: currentActorId() });
+  // Nodes without connections: a Decide whose options changed keeps each connection on its option; what went is reported.
+  const remapped = fields.nodes?.length && !sentConnections ? remapOutputConnections(existing, fields.nodes) : undefined;
+  const { workflow, extras } = governedSave({ ...existing, ...fields, ...(remapped && { connections: remapped.connections }), id } as Workflow, existing, (w) => store.saveWorkflow(w, { autosave: request.headers.get('x-landflow-autosave') === '1' }), { by: currentActorId() });
   // Saves are drafts. A client from before draft and publish sends `active: true` with an active workflow to put the
   // save live (the editor leaves `active` out): publish what it saved, as such a save used to do (or ask, four-eyes on).
   if (fields.active === true && existing.active) {
@@ -74,7 +79,7 @@ export const PUT = handler(async (request: Request, { params }: Ctx) => {
       if (outcome?.approvalRequired) extras.publishRequest = outcome.request;
     }
   }
-  return json({ workflow: store.getWorkflow(id) ?? workflow, ...extras });
+  return json({ workflow: store.getWorkflow(id) ?? workflow, ...(remapped?.dropped.length && { droppedConnections: remapped.dropped }), ...extras });
 });
 
 export const DELETE = handler(async (_request: Request, { params }: Ctx) => {

@@ -59,6 +59,11 @@ export interface PortDescriptor {
    * Fallback Model"). Hidden ports keep their index, so handle ids stay stable.
    */
   displayOptions?: DisplayOptions;
+  /**
+   * An output whose number and names follow the node's parameters: the port stands for the outputs a rule of the
+   * host works out (`decide`: the Decide node's routing). Handle ids count the expanded ports.
+   */
+  expand?: 'decide';
 }
 
 // ---------------------------------------------------------------------------

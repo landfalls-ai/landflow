@@ -5,7 +5,7 @@
  * against the registry (node types, required parameters and sub-nodes, ports, connections).
  */
 import { nanoid } from 'nanoid';
-import { defaultParameters, defaultVersionOf, indexedPorts, isPropertyVisible, withPropertyDefaults, type NodeDescriptor } from '@landflow/protocol';
+import { defaultParameters, defaultVersionOf, indexedPorts, isPropertyVisible, remapExpandedConnections, withPropertyDefaults, type NodeDescriptor } from '@landflow/protocol';
 import type { Workflow } from '@landflow/engine';
 import { registry } from '../plugins/registry';
 import { rosterSessionKeyProblems, unguardedRosterTargets } from '../chat';
@@ -52,6 +52,28 @@ const descriptorOf = (type: string): NodeDescriptor | undefined => {
   const resolved = registry.resolve(type);
   return 'error' in resolved ? undefined : resolved.descriptor;
 };
+
+/**
+ * Nodes saved without their connections (an update that names only `nodes`): each node whose outputs follow its
+ * parameters (Decide) and whose parameters changed keeps its connections on the outputs of the same name; the ones whose
+ * output is gone are removed and named in `dropped`. The rest of the connections are returned as they were.
+ */
+export function remapOutputConnections(existing: Pick<Workflow, 'nodes' | 'connections'>, nodes: ReadonlyArray<{ id?: string; name?: string; type?: string; parameters?: Record<string, unknown> }>): { connections: Workflow['connections']; dropped: string[] } {
+  let connections = existing.connections;
+  const dropped: string[] = [];
+  for (const node of nodes) {
+    const was = existing.nodes.find((n) => n.id === node.id);
+    if (!was || !node.type || JSON.stringify(was.parameters) === JSON.stringify(node.parameters ?? {})) continue;
+    if (!descriptorOf(node.type)?.outputs.some((p) => p.expand)) continue;
+    const mine = (c: Workflow['connections'][number]) => c.source === was.id && c.type === 'main';
+    const moved = remapExpandedConnections(was.parameters, node.parameters ?? {}, connections.filter(mine));
+    for (const gone of connections.filter((c) => mine(c) && !moved.some((m) => m.id === c.id))) {
+      dropped.push(`“${was.name}” → “${existing.nodes.find((n) => n.id === gone.target)?.name ?? gone.target}” (its output ${gone.sourceIndex} is gone)`);
+    }
+    connections = [...connections.filter((c) => !mine(c)), ...moved];
+  }
+  return { connections, dropped };
+}
 
 /**
  * Fill in what an agent may leave out. Node ids, type versions and default parameters; positions
