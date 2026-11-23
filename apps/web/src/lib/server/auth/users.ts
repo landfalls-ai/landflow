@@ -8,7 +8,7 @@
  * sessions, and can't sign in or use their API keys (./sessions, ./api-keys) until reactivated.
  */
 import { nanoid } from 'nanoid';
-import type { Role, UserView, Viewer } from '../../shared/auth';
+import { parseStoredActions, type Action, type Role, type UserView, type Viewer } from '../../shared/auth';
 import { recordAudit } from '../audit';
 import { auditRequestContext } from '../audit/context';
 import { requestAuth } from './context';
@@ -32,6 +32,11 @@ export interface UserRecord {
   provisionedBy?: string;
   /** Deactivated (SCIM `active: false`): no sign-in, no API keys. */
   disabledAt?: string;
+  /**
+   * The custom role a member holds (C32) and what it grants, joined on every read so an edit or a delete shows at the
+   * holder's next request with no cache. Only members hold one (the read ignores it on anyone else).
+   */
+  customRole?: { id: string; name: string; actions: Action[] };
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
@@ -50,6 +55,9 @@ interface UserRow {
   external_id?: string | null;
   provisioned_by?: string | null;
   disabled_at?: string | null;
+  custom_role_id?: string | null;
+  custom_role_name?: string | null;
+  custom_role_rules?: string | null;
   created_at: string;
   updated_at: string;
   last_login_at: string | null;
@@ -67,14 +75,18 @@ export class UserError extends HttpError {
 
 const ROLE_SET = new Set<string>(['owner', 'admin', 'member']);
 
+/** Every whole-user read: the user with the custom role it holds (C32). `u.*` keeps `custom_role_id` for the write path. */
+export const USER_SELECT = 'SELECT u.*, r.name AS custom_role_name, r.rules AS custom_role_rules FROM users u LEFT JOIN custom_roles r ON r.id = u.custom_role_id';
+
 export const normalizeEmail = (email: string) => email.trim().toLowerCase();
 
 function fromRow(row: UserRow): UserRecord {
+  const role = (ROLE_SET.has(row.role) ? row.role : 'member') as Role;
   return {
     id: row.id,
     email: row.email,
     name: row.name,
-    role: (ROLE_SET.has(row.role) ? row.role : 'member') as Role,
+    role,
     ...(row.password_hash && { passwordHash: row.password_hash }),
     ...(row.oidc_issuer && { oidcIssuer: row.oidc_issuer }),
     ...(row.oidc_subject && { oidcSubject: row.oidc_subject }),
@@ -83,13 +95,14 @@ function fromRow(row: UserRow): UserRecord {
     ...(row.external_id && { externalId: row.external_id }),
     ...(row.provisioned_by && { provisionedBy: row.provisioned_by }),
     ...(row.disabled_at && { disabledAt: row.disabled_at }),
+    ...(role === 'member' && row.custom_role_id && row.custom_role_name != null && { customRole: { id: row.custom_role_id, name: row.custom_role_name, actions: parseStoredActions(row.custom_role_rules) } }),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.last_login_at && { lastLoginAt: row.last_login_at }),
   };
 }
 
-function toRow(user: UserRecord) {
+function toRow(user: UserRecord, customRoleId: string | null = user.customRole?.id ?? null) {
   return {
     id: user.id,
     email: user.email,
@@ -103,6 +116,7 @@ function toRow(user: UserRecord) {
     external_id: user.externalId ?? null,
     provisioned_by: user.provisionedBy ?? null,
     disabled_at: user.disabledAt ?? null,
+    custom_role_id: customRoleId,
     created_at: user.createdAt,
     updated_at: user.updatedAt,
     last_login_at: user.lastLoginAt ?? null,
@@ -119,6 +133,8 @@ export function viewerOf(user: UserRecord): Viewer {
     hasPassword: Boolean(user.passwordHash),
     ...(user.disabledAt && { disabled: true }),
     ...(user.provisionedBy && { provisionedBy: user.provisionedBy }),
+    // C32: what the role grants travels with the viewer, so every client gate (`can`) shows the holder's controls.
+    ...(user.customRole && { customRole: { id: user.customRole.id, name: user.customRole.name }, grants: [...user.customRole.actions] }),
   };
 }
 
@@ -138,12 +154,12 @@ export function setupRequired(): boolean {
 
 export function listUsers(): UserRecord[] {
   return authDb()
-    .all<UserRow>('SELECT * FROM users ORDER BY created_at, email')
+    .all<UserRow>(`${USER_SELECT} ORDER BY u.created_at, u.email`)
     .map(fromRow);
 }
 
 export function getUser(id: string): UserRecord | undefined {
-  const row = authDb().get<UserRow>('SELECT * FROM users WHERE id = ?', id);
+  const row = authDb().get<UserRow>(`${USER_SELECT} WHERE u.id = ?`, id);
   return row && fromRow(row);
 }
 
@@ -154,22 +170,22 @@ export function isActiveAdmin(id: string | undefined): boolean {
 }
 
 export function findUserByEmail(email: string): UserRecord | undefined {
-  const row = authDb().get<UserRow>('SELECT * FROM users WHERE email = ?', normalizeEmail(email));
+  const row = authDb().get<UserRow>(`${USER_SELECT} WHERE u.email = ?`, normalizeEmail(email));
   return row && fromRow(row);
 }
 
 export function findUserByOidc(issuer: string, subject: string): UserRecord | undefined {
-  const row = authDb().get<UserRow>('SELECT * FROM users WHERE oidc_subject = ? AND oidc_issuer = ?', subject, issuer);
+  const row = authDb().get<UserRow>(`${USER_SELECT} WHERE u.oidc_subject = ? AND u.oidc_issuer = ?`, subject, issuer);
   return row && fromRow(row);
 }
 
 export function findUserBySaml(issuer: string, subject: string): UserRecord | undefined {
-  const row = authDb().get<UserRow>('SELECT * FROM users WHERE saml_subject = ? AND saml_issuer = ?', subject, issuer);
+  const row = authDb().get<UserRow>(`${USER_SELECT} WHERE u.saml_subject = ? AND u.saml_issuer = ?`, subject, issuer);
   return row && fromRow(row);
 }
 
 export function findUserByExternalId(externalId: string): UserRecord | undefined {
-  const row = authDb().get<UserRow>('SELECT * FROM users WHERE external_id = ?', externalId);
+  const row = authDb().get<UserRow>(`${USER_SELECT} WHERE u.external_id = ?`, externalId);
   return row && fromRow(row);
 }
 
@@ -233,10 +249,16 @@ export async function createOwner(input: { email: string; name: string; password
 
 export type UserPatch = Partial<
   Pick<UserRecord, 'name' | 'email' | 'role' | 'passwordHash' | 'oidcIssuer' | 'oidcSubject' | 'samlIssuer' | 'samlSubject' | 'externalId' | 'provisionedBy' | 'disabledAt' | 'lastLoginAt'>
->;
+> & {
+  /** The custom role id (C32; undefined clears it). Only members keep one: a role change to admin clears it. Assign through lib/server/auth/roles.ts, which checks and audits. */
+  customRoleId?: string;
+};
 
 /** Change a user. A key set to `undefined` clears that field (`disabledAt: undefined` reactivates). */
 export function updateUser(id: string, patch: UserPatch): UserRecord {
+  const { customRoleId, ...rest } = patch;
+  const wantsRole = 'customRoleId' in patch;
+  patch = rest;
   const existing = getUser(id);
   if (!existing) throw new UserError('User not found', 404);
   if (patch.email !== undefined) {
@@ -249,8 +271,14 @@ export function updateUser(id: string, patch: UserPatch): UserRecord {
   const updated: UserRecord = { ...existing, ...patch, updatedAt: new Date().toISOString() };
   for (const [key, value] of Object.entries(patch)) if (value === undefined) delete (updated as unknown as Record<string, unknown>)[key];
   if (patch.name !== undefined) updated.name = patch.name.trim().slice(0, 120) || existing.name;
-  authDb().upsert('users', toRow(updated));
-  return updated;
+  // C32: an admin holds every action, so promoting a holder clears the role (D7); the owner never holds one.
+  const nextRole = wantsRole ? customRoleId : existing.customRole?.id;
+  const keepRole = updated.role === 'member' ? (nextRole ?? null) : null;
+  authDb().upsert('users', toRow(updated, keepRole));
+  if (existing.customRole && keepRole === null && updated.role !== 'member' && !wantsRole) {
+    recordAudit({ action: 'user.custom_role', target: { type: 'user', id, name: existing.email }, summary: `${existing.email} is ${updated.role} now, so the custom role ${existing.customRole.name} was cleared`, details: { from: existing.customRole.name, to: null, reason: 'role_change' } });
+  }
+  return getUser(id) ?? updated;
 }
 
 /**

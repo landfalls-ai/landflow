@@ -235,6 +235,11 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'kagent.route.changed': 'Changed a secret route of an agent on kagent',
   'kagent.route.removed': 'Removed a secret route from an agent on kagent',
   'kagent.route.refreshed': 'Rewrote the secret of an agent’s routes after a credential changed',
+  // C32: custom instance roles (docs/features/authentication.md#custom-roles)
+  'role.created': 'Created a custom role',
+  'role.updated': 'Changed a custom role’s rules',
+  'role.deleted': 'Deleted a custom role',
+  'user.custom_role': 'Gave a person a custom role, or took it away',
   'api.denied': 'Request refused (401/403)',
   'api.request': 'API request',
 };

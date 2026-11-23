@@ -2130,6 +2130,15 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS knowledge_sync_runs_source ON knowledge_sync_runs (source_id, started_at)`,
     ],
   },
+  // C32: custom instance roles (docs/features/authentication.md#custom-roles): `rules` is JSON `[{ action, effect: 'allow' }]`, `name_key` the lower-cased name (unique); a member holds at most one, on `users.custom_role_id`, read with the user on every request so an edit or a delete shows at the holder's next one
+  {
+    version: 2931,
+    name: 'custom_roles',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS custom_roles (id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE, description TEXT, rules TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+    ],
+    addColumns: [{ table: 'users', column: 'custom_role_id', definition: 'TEXT' }],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -2290,6 +2299,7 @@ export const TABLES = {
   knowledge_source_state: ['source_id'], // C22:
   knowledge_source_items: ['source_id', 'item_key'], // C22:
   knowledge_sync_runs: ['id'], // C22:
+  custom_roles: ['id'], // C32:
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

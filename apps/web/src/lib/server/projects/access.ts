@@ -49,8 +49,11 @@ export interface Actor {
   role: Role;
 }
 
-/** Owners and admins: every project, every resource. */
-export const isInstanceAdmin = (actor: Actor | undefined): boolean => can(actor, 'projects:manage');
+/**
+ * Owners and admins: every project, every resource. The built-in role, not `can(…, 'projects:manage')`: a custom role
+ * (C32) never makes its holder an instance admin, whatever else it grants.
+ */
+export const isInstanceAdmin = (actor: Actor | undefined): boolean => actor?.role === 'owner' || actor?.role === 'admin';
 
 /**
  * `actor`'s role in `projectId`: admin for the instance owner and admins, else their membership's role (none when

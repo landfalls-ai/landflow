@@ -12,9 +12,9 @@
  * with SMTP) and the governance alert channels hear about new requests; the requester hears the decision. Every step
  * is audited.
  */
+import { isInstanceAdmin } from '../projects/access';
 import { nanoid } from 'nanoid';
 import type { PromotionRequestStatus, PromotionRequestView, PromotionResult } from '../../shared/secrets';
-import { can } from '../../shared/auth';
 import { publicUrl } from '../alerts/message';
 import { recordAudit } from '../audit';
 import { mailConfigured, sendMail } from '../auth/mail';
@@ -79,7 +79,7 @@ const changedWorkflows = (row: Row) =>
 
 /** Whether `user` may approve or reject `row`: someone else who manages settings and may approve each changed workflow. */
 export function mayApprovePromotion(user: Pick<UserRecord, 'id' | 'role'> & { disabledAt?: string }, row: Pick<Row, 'requested_by'> & Partial<Row>): boolean {
-  if (!user || user.id === row.requested_by || user.disabledAt || !can(user, 'settings:manage')) return false;
+  if (!user || user.id === row.requested_by || user.disabledAt || !isInstanceAdmin(user)) return false;
   const ids = row.data ? changedWorkflows(row as Row) : [];
   return ids.every((id) => mayApprove(user, id, row.requested_by));
 }
@@ -111,7 +111,7 @@ function view(row: Row, viewer?: Pick<UserRecord, 'id' | 'role'>, names = userNa
     ...(data.commit && { commit: data.commit }),
     ...(viewer && {
       canApprove: pending && mayApprovePromotion(getUser(viewer.id) ?? viewer, row),
-      canCancel: pending && (viewer.id === row.requested_by || can(viewer, 'settings:manage')),
+      canCancel: pending && (viewer.id === row.requested_by || isInstanceAdmin(viewer)),
     }),
   };
 }
@@ -319,7 +319,7 @@ export function cancelPromotion(id: string, user: Pick<UserRecord, 'id' | 'role'
   const row = rowOf(id);
   if (!row) throw new ApprovalError('Promotion request not found', 404);
   if (row.status !== 'pending') throw new ApprovalError(`This request is already ${row.status}`, 409);
-  if (user.id !== row.requested_by && !can(user, 'settings:manage')) throw new ApprovalError('Only the requester or an admin can withdraw this request', 403);
+  if (user.id !== row.requested_by && !isInstanceAdmin(user)) throw new ApprovalError('Only the requester or an admin can withdraw this request', 403);
   const next = setStatus(row, 'canceled', { by: user.id });
   audit('promotion_request.cancel', next, { summary: `Withdrew the promotion request ${row.source} → ${row.target}` });
   return view(next, user);

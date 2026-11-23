@@ -16,6 +16,8 @@ import type { CredentialMapping, CredentialSecretMapping, EnvironmentView, Promo
 import type { SourceControlPullResult } from '@/lib/shared/sync';
 import type { DataTableSummary } from '@/lib/shared/data-tables';
 import type { WorkflowSummary } from '@/lib/shared/types';
+import { isBuiltInAdmin } from '@/lib/shared/auth';
+import { useViewer } from '@/components/auth/viewer';
 import { useCredentials } from '@/components/credentials/use-credentials';
 import { Card } from '@/components/shell/page-header';
 import { Badge, type Tone } from '@/components/ui/badge';
@@ -489,6 +491,7 @@ const draftOf = (view: EnvironmentView): Draft => ({
 });
 
 export function EnvironmentsSettings() {
+  const viewer = useViewer();
   const [view, setView] = useState<EnvironmentView>();
   const [draft, setDraft] = useState<Draft>();
   const [error, setError] = useState<string>();
@@ -510,6 +513,8 @@ export function EnvironmentsSettings() {
   /** The secret (password) fields of a credential type, by its descriptor. */
   const secretFieldsOf = (type: string) => credentialTypes?.find((t) => t.type === type)?.descriptor.properties.filter((p) => p.typeOptions?.password).map((p) => p.name) ?? [];
 
+  // Promotion and pull change workflows in every project: the built-in owner or admin role (the routes enforce it; a null viewer is a host without sign-in).
+  if (viewer && !isBuiltInAdmin(viewer)) return <Card className="px-5 py-4 text-[13px] text-t2">Environments reach every project: ask an owner or admin.</Card>;
   if (!view || !draft) {
     return error ? <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div> : <div className="h-56 rounded-2xl border border-hair bg-sf animate-pulse-soft" />;
   }
