@@ -117,9 +117,52 @@ The Run Trace's Ask a Person card also shows the *Allow for* select when the req
 - **Apply Access Decision** (`core.accessDecision`): *Request ID*, *Decision* (Approved or Rejected), *Approval Steps*, *Fail the Run on a Failed Grant* (off: a failed grant is an item with `status: "failed"` and the reason). Outputs `{ requestId, status, grantId?, until?, note?, dryRun? }`.
 - **File Access Request** (`core.fileAccessRequest`, an agent tool).
 
+## Signing in without an account
+
+People who have no Landflow account can ask for access too (C36): an admin opens a page for them, they prove their work email, and they file requests that approvers decide inside Landflow as always. This part is **who they are** (signing in, the session, the limits); what they can ask for and see is described with the page itself. Nothing about approving, granting or expiry changes.
+
+**Setting it up.** Access → Settings (instance admins; `GET/PUT /api/access/outside`): switch **People without a Landflow account can ask** on (off by default), list the **email domains** that may ask (the organization's own, lower case; free mail providers such as gmail.com, wildcards and IP addresses are refused; at most 50) and copy the page link, `<public URL>/request-access` (set `LANDFLOW_PUBLIC_URL`). Optionally switch **Google sign-in** on and choose an **OpenID Connect client** credential (type `oidcClient`: issuer, client ID, client secret, and a discovery URL only where the host reaches the provider at another address). Register the redirect URL the settings show (`<public URL>/request-access/api/sign-in/google/callback`) with the OAuth client. While the switch is off, every route of the page answers 404 and the page says asking is switched off; only `config` answers, and it says nothing but whether asking, Google and the email link are available.
+
+**The email link.** On the page the person types their work email. If its domain is allowed, a link arrives: 32 random bytes of which only the SHA-256 is kept, valid **15 minutes**, usable **once** (one conditional update, so two clicks, even from two Landflow processes, sign in once), one live link per address (a new one replaces the older). The link carries its token in the URL fragment (`/request-access#t=…`), which a browser never sends to a server, a proxy log or a Referer, and the page does not sign in by itself: the person presses Continue, so a mail scanner that opens the link burns nothing. The link is not tied to the browser that asked: asking on a laptop and opening the mail on a phone works. Without SMTP the link can't be sent; the page then offers only Google.
+
+**The same answer every time.** Asking for a link answers 202 with one sentence ("If that address may ask here, a sign-in link is on its way. It works once, for 15 minutes.") whatever happens: a domain no one allowed, an address with a `+tag` (use the plain work address), a blocked person, a limit, a Landflow user's address, a missing mail server. The mail goes out after the answer, so how long the answer takes tells nothing either. The one visible refusal is the limit per network address (429 with `Retry-After`). Every refusal is audited (`access.outside.link`, outcome denied, with the reason `domain`, `subaddress`, `blocked`, `landflow_user`, `limit` or `mail`).
+
+**Google sign-in.** The OpenID Connect code flow with PKCE (S256), a `state` bound to the browser by a cookie (`landflow_requester_oidc`, SameSite=Lax, only on the start and callback paths, 10 minutes, used once) and a `nonce`; the ID token's signature, issuer (Google's `accounts.google.com` spelling too), audience and expiry are checked. Landflow accepts only `email_verified: true`, an **`hd`** (Workspace domain) claim that is one of the allowed domains **and equals the address's own domain**: a personal Gmail account, or a Google account registered on a work address with no Workspace behind it, has no `hd` and is refused ("Use your work Google account"). The `hd` parameter is sent to Google as a hint only when exactly one domain is allowed. Google's `sub` is kept the first time and pinned: a later sign-in for the same address with another `sub` (a mailbox reassigned inside Workspace) is refused until an admin looks. Landflow's own SSO and this flow keep their pending sign-ins apart (`purpose`), so neither state can finish the other's sign-in. A refused sign-in returns to `/request-access?error=<code>`.
+
+**A Landflow user's address.** One address is never two identities. An address that belongs to a Landflow user (active or disabled; compared lower-cased and without any `+tag`) gets no outside identity: asking for a link mails them a pointer to Landflow's own Access page (no token); a sign-in with it, by link or Google, answers 409 `landflow_user` and the page says the same; and an outside person who is invited to Landflow loses their outside session on the next request. Their earlier requests and grants stay with the outside record.
+
+**The requester session.** Cookie `landflow_requester`: a random token of which only the SHA-256 is kept, HttpOnly, **SameSite=Strict**, `Path=/request-access` (Secure behind https), **8 hours at most and 2 hours idle**. It is created only by a verified link or Google sign-in (never taken from a request, so there is no fixation: every sign-in makes a new token and ends the browser's old one), at most 5 are live per person (the oldest ends), and every request checks again that the feature is on, the domain is still allowed, the person is not blocked and the address is not a Landflow user's; if not, the session is deleted. **The cookie opens nothing of Landflow's:** Landflow's guard reads only `landflow_session`, so the requester cookie against `/api/access`, `/api/auth/me` or any other route is a 401, and a Landflow session cookie is none on the page's routes (both are tested).
+
+**CSRF.** Landflow's guard lets the public paths through without a same-origin check, so every write of the page checks it itself: `Origin` (or, without one, `Sec-Fetch-Site`) must be this site, the body must be JSON (a form post is refused with 415) and no CORS header is ever sent. The two Google GETs that change state are protected by the state cookie, PKCE and the nonce. Pages answer `Cache-Control: no-store`.
+
+### Limits
+
+| What | Limit | What the asker sees |
+|---|---|---|
+| Sign-in links for one address | 3 in 15 minutes, 10 a day | the same 202, no mail (audited `limit`) |
+| Sign-in links for one email domain | 200 an hour | the same 202, no mail (audited once an hour with `scope: domain`) |
+| Asks for a link from one network address | 10 in 15 minutes | 429 with `Retry-After` |
+| Wrong or used links from one network address | 20 in 15 minutes | 429 |
+| Starts of Google sign-in from one network address | 20 in 15 minutes | back to the page with `?error=limited` |
+| Every public route of the page, per network address | the public trigger limit (`LANDFLOW_RATE_LIMIT_PUBLIC`, 120 a minute in production) | 429 |
+
+None is a setting. The network address is the one behind `LANDFLOW_TRUSTED_PROXIES` proxies: set it, or the limits are only as good as a header the caller controls. The address limits count in process memory, or in Valkey in queue mode (shared by every main); `takeOutside(bucket, key, limit, windowMs)` (used for the chat) counts in the process, and `takeOutsideShared` through the API limiter's shared store. An abuser who owns a whole allowed domain can still use up that domain's 200 an hour: Block the person, or remove the domain.
+
+### Blocking
+
+Settings lists the people who signed in (email, how verified, first and last seen, open requests, live grants) with **Block** and **Unblock** (instance admins, `access.outside.block` / `.unblock`). A block ends their sessions, cancels their open requests, and stops new links (the answer to the asker stays the same: nothing says they are blocked); grants they already hold stay until they end or an admin revokes them. A blocked person's open link no longer signs them in.
+
+### Audit
+
+`access.outside.settings` (before and after), `access.outside.link` (success, or denied with the reason), `access.outside.sign_in` (method `link` or `google`; denied with the reason), `access.outside.sign_out`, `access.outside.block`, `access.outside.unblock`. An address appears in these events (it is what an admin investigates with); a token, a code or a client secret never does.
+
+### Trying it without Google
+
+`apps/web/scripts/fake-oidc.ts` serves the fake Google OpenID Connect server (`@landflow/test-fakes/google-oidc`) on a free loopback port: `pnpm --filter @landflow/web exec tsx --tsconfig tsconfig.json scripts/fake-oidc.ts http://localhost:3100` prints the issuer, client ID and secret to put in an `oidcClient` credential, and registers the callbacks for that Landflow URL. Its accounts are Workspace accounts of `acme.test`; `POST /_fake/accounts { email, hd?, email_verified? }` adds more (`hd: null` is a personal account) and `POST /_fake/next-error { mode }` scripts a refusal. Mail goes to Mailpit.
+
 ## Routes
 
-All under `/api/access`, session only: an API key never asks, decides or edits the catalog. Listed in [reference/api.md](reference/api.md) and the OpenAPI document. The Ask a Person options are in [features/engine.md](features/engine.md) (Ask a Person).
+All under `/api/access`, session only: an API key never asks, decides or edits the catalog. The page for people without an account has its own public routes under `/request-access/api` and the admin settings under `/api/access/outside` ([signing in without an account](#signing-in-without-an-account)). Listed in [reference/api.md](reference/api.md) and the OpenAPI document. The Ask a Person options are in [features/engine.md](features/engine.md) (Ask a Person).
 
 ## What Landbright will take over
 

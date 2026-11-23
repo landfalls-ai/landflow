@@ -91,6 +91,9 @@ function crossSite(request: Request): boolean {
   return !hosts.includes(originHost);
 }
 
+/** C36: the same check for the public requester routes, which the guard lets through unauthenticated (lib/server/access/outside/http.ts). */
+export const crossSiteRequest = crossSite;
+
 function safeHost(url: string | undefined): string | undefined {
   try {
     return url ? new URL(url).host : undefined;
