@@ -16,6 +16,7 @@ import { z } from 'zod';
 import type { AgentTraceSummary, TokenUsage, TraceGuardDecision } from '../../shared/agents';
 import { agentStore } from '../agents/store';
 import { cancelAsks, openAsk, type AskRun } from './agent-asks';
+import { scrubKeys } from '../kagent/memory-scrub';
 import { estimateCost, findPrice, priceOverrides } from '../ai-usage/prices';
 import { clusterActive, clusterState } from '../cluster/state';
 import { singleton } from '../singleton';
@@ -36,7 +37,7 @@ export type GuardMode = 'strict' | 'enforce' | 'report' | 'off';
 const count = z.number().finite().min(0).max(1e12).catch(0);
 /** The mod's clock, epoch ms (about 1.8e12 now: over the cap of the counts). */
 const clock = z.number().finite().min(0).max(1e14).catch(0);
-const text = (max: number) => z.string().max(4_000).transform((s) => s.slice(0, max));
+const text = (max: number) => z.string().max(4_000).transform((s) => scrubKeys(s).slice(0, max)); // a memory key is taken out before the cut, so a cut cannot leave a part of one
 const eventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('start'), at: clock.optional(), mod: text(40).optional(), guard: z.enum(['strict', 'enforce', 'report', 'off']).optional() }),
   z.object({

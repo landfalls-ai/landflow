@@ -4,7 +4,7 @@
  * share.
  */
 import { describe, expect, it } from 'vitest';
-import { brainTree, byDay, fileNameOf, indexMarkdown, logMarkdown, outlineOf, pageMarkdown, refOfPath, sectionId, urlOf, type TreeFolder } from '@/lib/shared/brain-files';
+import { brainTree, byDay, fileNameOf, GRAPH, graphRef, graphSubject, indexMarkdown, isGraphRef, isPageRef, logMarkdown, outlineOf, pageMarkdown, refOfPath, sectionId, urlOf, type TreeFolder } from '@/lib/shared/brain-files';
 import type { BrainStatus } from '@/lib/shared/brain';
 import type { WikiEntry, WikiHome, WikiPage, WorkItem } from '@/lib/shared/brain-wiki';
 
@@ -112,5 +112,25 @@ describe('addresses', () => {
     expect(refOfPath(['practices', 'prc_x'])).toBe('practices/prc_x');
     expect(urlOf('index')).toBe('/brain');
     expect(urlOf('customer/acme')).toBe('/brain/customer/acme');
+  });
+});
+
+describe('graph refs (C10)', () => {
+  it('names a graph tab by its subject and round-trips it', () => {
+    expect(graphRef('customer/acme')).toBe('graph:customer/acme');
+    expect(graphSubject('graph:customer/acme')).toBe('customer/acme');
+    expect(graphSubject(GRAPH)).toBeUndefined();
+    expect(graphSubject('graph:')).toBeUndefined();
+  });
+  it('tells a graph tab from a page', () => {
+    expect(isGraphRef('graph')).toBe(true);
+    expect(isGraphRef('graph:customer/acme')).toBe(true);
+    expect(isGraphRef('customer/acme')).toBe(false);
+    expect(isPageRef('graph:customer/acme')).toBe(false);
+    expect(isPageRef('customer/acme')).toBe(true);
+  });
+  it('opens at /brain/graph and reads that address back', () => {
+    expect(urlOf('graph:customer/acme')).toBe('/brain/graph');
+    expect(refOfPath(['graph'])).toBe('graph');
   });
 });

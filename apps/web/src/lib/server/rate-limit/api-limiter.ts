@@ -52,8 +52,8 @@ interface Window {
 const local = () => singleton('api-rate-limit-windows', () => ({ windows: new Map<string, Window>(), swept: 0, warned: 0 }));
 
 /** Count one hit on `key` in the current window; the count after it. */
-async function hit(key: string, now: number): Promise<number> {
-  const windowStart = now - (now % WINDOW_MS);
+async function hit(key: string, now: number, windowMs = WINDOW_MS): Promise<number> {
+  const windowStart = now - (now % windowMs);
   const state = local();
   const { windows } = state;
   // Sweep stale windows at most once per window, so a flood of distinct keys can't make every hit scan the map.
@@ -69,7 +69,7 @@ async function hit(key: string, now: number): Promise<number> {
   windows.set(key, mine);
   if (!clusterActive()) return mine.count;
   try {
-    return await coordinator().incr(`rl:${key}:${windowStart}`, WINDOW_MS * 2);
+    return await coordinator().incr(`rl:${key}:${windowStart}`, windowMs * 2);
   } catch (error) {
     if (state.warned !== windowStart) {
       state.warned = windowStart;
@@ -77,6 +77,16 @@ async function hit(key: string, now: number): Promise<number> {
     }
     return mine.count;
   }
+}
+
+/**
+ * One fixed-window counter for a route that limits itself (the memory playground: 20 a minute a person): counts a hit on `key`
+ * and says whether it is within `max` in this window, else after how many seconds the window ends. Shares the store of the
+ * API limit (the coordinator in queue mode, else this process).
+ */
+export async function windowHit(key: string, max: number, windowMs: number, now = Date.now()): Promise<{ allowed: true } | { allowed: false; retryAfter: number }> {
+  if ((await hit(`window:${key}`, now, windowMs)) <= max) return { allowed: true };
+  return { allowed: false, retryAfter: Math.max(1, Math.ceil((windowMs - (now % windowMs)) / 1000)) };
 }
 
 /** How many keys this process counts now (tests). */

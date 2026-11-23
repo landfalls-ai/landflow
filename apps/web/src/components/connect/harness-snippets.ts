@@ -86,10 +86,13 @@ export const WORKFLOW_SCOPES: readonly { scope: ApiKeyScope; label: string }[] =
 /** The scope that lets a key send live status, offered only for a harness that sends events (C04). */
 export const STATUS_SCOPE: { scope: ApiKeyScope; label: string } = { scope: 'harness:write', label: 'Send live status' };
 
-/** Whether `/connect` has a live-status step for the harness: the registry says it sends events. */
+/**
+ * Whether `/connect` has a live-status step (hooks and a hook key) for the harness: the registry says it sends events through native
+ * hooks. Codex sends one event too, but from a wrapper (`landflow harness watch codex`, C08), so it has no hooks block here.
+ */
 export function sendsStatus(harness: HarnessId): boolean {
   const entry = harnessById(harness);
-  return Boolean(entry && sendsEvents(entry));
+  return Boolean(entry && entry.strategy === 'native-hooks' && sendsEvents(entry));
 }
 
 /** The body of the key request: the brain scopes and the chosen workflow ones, 90 days unless told otherwise. The live-status scope is never here: the hooks have a key of their own (`hookKeyBody`). */

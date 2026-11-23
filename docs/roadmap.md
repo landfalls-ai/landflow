@@ -3035,3 +3035,11 @@ The person decided on 2026-11-18 that production approvals go to an approval inb
 - **C18 first slice built:** bound claims, the CI rule (breaking for existing GitHub and GitLab JWT credentials) and the webhook JWKS through `safeFetch`. Open in W4a: single use, presets and claims editor, token payload in run data, workload login.
 - **C04 hook ingest** (routes, status machine, mirror, live event, sweep), the Agents page chip, the `/connect` live-status step, `landflow harness detect` and the brain mod's `/brain status-sharing` (default off): built. **C15** registry, kagent runtime labels, source scan: built. Open: Codex wrapper and OpenCode plugin entries once verified live; a Codex `quota_blocked` event can use the same `harness/ingest.ts` path (W2).
 - **Blocked from `StopFailure`: built** with `classifyText` (over `error_details`, `last_assistant_message`, `error`) and an explicit `quota_blocked: true` field.
+
+## Combined wave 2 (2026-11-21)
+
+- **C07 memory backend and Memory nodes: built** (one interface over a project's facts, a team's notebook and an agent's private memory; a project may choose a plugin as its provider; Memory Search, Add, Forget and Profile nodes; a Memory row in settings).
+- **C10 memory graph: built.** The Brain page's Graph tab (`GET /api/brain/graph`, `components/brain/graph/`). Open: entity-to-entity edges, a server layout for very large brains.
+- **C08 memory over MCP: built** (nine memory tools on the instance server, 45 to 54 tools). **C05 FR-5 to FR-7 built:** the Codex watch (`landflow harness watch codex`), Blocked kind and since when on the chip. C03's "not fenced yet" list is closed for the MCP brain tools, the stored page summaries in the Ask prompt and the Brain nodes; knowledge-base passages and web results stay open.
+- **C09 agent memory: built:** profile, relevant recall, static and replaces, `forget_memory`, the 1,000 bound, the import, the memory card, and kagent memory through the signed key. The W1 follow-up `RemoteRun.blocked` is closed (typed in `lib/shared/agents.ts`).
+- **C11 memory inspector: built:** What it saw, Memory (sources, versions, scores, the exact text by content mode, forgotten since) and the search playground on the knowledge card, the Notebook tab and Brain, What Landflow knows.

@@ -308,6 +308,81 @@ describe('the routes (T-6)', () => {
   });
 });
 
+describe('Codex quota_blocked (C08, C05 FR-5..FR-7)', () => {
+  const codex = (session: string, body: Record<string, unknown>, headers: Record<string, string> = {}) => post('codex', { session_id: session, ...body }, { 'x-landflow-hook-seq': String(++seq), ...headers });
+  const dataOf = (session: string) => JSON.parse(rowOf(session)!.data) as Record<string, unknown>;
+
+  it('204s a quota_blocked event: the session is Blocked with its kind and since when, and the counter moved', async () => {
+    const { blockedCounts } = await import('@/lib/server/a2a/blocked');
+    const before = blockedCounts().find((c) => c.harness === 'codex' && c.kind === 'usage_limit')?.count ?? 0;
+    const response = await codex('cx-1', { hook_event_name: 'quota_blocked', kind: 'usage_limit', message: 'You have hit your usage limit' });
+    expect(response.status).toBe(204);
+    expect(rowOf('cx-1')).toMatchObject({ status: 'blocked', harness: 'codex', agent_id: null });
+    expect(dataOf('cx-1')).toMatchObject({ blockedKind: 'usage_limit' });
+    expect(typeof dataOf('cx-1').blockedSince).toBe('string');
+    expect(blockedCounts().find((c) => c.harness === 'codex' && c.kind === 'usage_limit')?.count).toBe(before + 1);
+    const view = store.viewOf(rowOf('cx-1')!);
+    expect(view).toMatchObject({ status: 'blocked', blockedKind: 'usage_limit', harness: 'codex' });
+    const { harnessChipLabel } = await import('@/lib/shared/harness');
+    expect(harnessChipLabel(view)).toMatch(/^Blocked: Codex usage limit reached · since \d{1,2}:\d{2}/);
+    // Own sessions are status only: the message, the path and the prompt never reach storage.
+    const stored = JSON.stringify(eventsOfSession('cx-1').map((e) => e.data));
+    expect(stored).not.toContain('hit your usage limit');
+  });
+
+  it('keeps the first since when the same limit is reported again, and reads an unknown kind as unknown', async () => {
+    await codex('cx-2', { hook_event_name: 'quota_blocked', kind: 'credits_depleted' });
+    const since = dataOf('cx-2').blockedSince;
+    await new Promise((r) => setTimeout(r, 5));
+    await codex('cx-2', { hook_event_name: 'quota_blocked', kind: 'credits_depleted' });
+    expect(dataOf('cx-2').blockedSince).toBe(since);
+    await codex('cx-3', { hook_event_name: 'quota_blocked', kind: 'mystery' });
+    expect(dataOf('cx-3')).toMatchObject({ blockedKind: 'unknown' });
+  });
+
+  it('counts any other Codex event name as unknown, stores it and never errors or changes the status; nothing binds it to an agent', async () => {
+    const before = harnessTally().unknown.codex ?? 0;
+    expect((await codex('cx-4', { hook_event_name: 'SessionStart' }, { 'x-landflow-agent': 'agent_any' })).status).toBe(204);
+    expect((await codex('cx-4', { hook_event_name: 'UserPromptSubmit', prompt: 'secret prompt' })).status).toBe(204);
+    expect(rowOf('cx-4')).toMatchObject({ status: 'idle', agent_id: null });
+    expect(harnessTally().unknown.codex).toBe(before + 2);
+    expect(JSON.stringify(eventsOfSession('cx-4').map((e) => e.data))).not.toContain('secret prompt');
+  });
+
+  it('a blocked session stays blocked for an older event and for an event Codex does not list', async () => {
+    await codex('cx-5', { hook_event_name: 'quota_blocked', kind: 'usage_limit' });
+    await post('codex', { hook_event_name: 'quota_blocked', session_id: 'cx-5', kind: 'credits_depleted' }, { 'x-landflow-hook-seq': '1' });
+    expect(rowOf('cx-5')!.status).toBe('blocked');
+    expect(dataOf('cx-5')).toMatchObject({ blockedKind: 'usage_limit' });
+    await codex('cx-5', { hook_event_name: 'Stop' });
+    expect(rowOf('cx-5')!.status).toBe('blocked');
+  });
+
+  it('Claude Code: a StopFailure that names a usage limit is Blocked with its kind, and a newer prompt clears kind and since (C04 FR-5)', async () => {
+    await send('cc-block', 'UserPromptSubmit');
+    await send('cc-block', 'StopFailure', { error: 'rate_limit', error_details: 'You have hit your usage limit. Try again later.' });
+    expect(store.viewOf(rowOf('cc-block')!)).toMatchObject({ status: 'blocked', blockedKind: 'usage_limit' });
+    await post('claude-code', { hook_event_name: 'SessionStart', session_id: 'cc-block' }, { 'x-landflow-hook-seq': '1' });
+    expect(rowOf('cc-block')!.status).toBe('blocked');
+    await send('cc-block', 'UserPromptSubmit');
+    const view = store.viewOf(rowOf('cc-block')!);
+    expect(view.status).toBe('thinking');
+    expect(view.blockedKind).toBeUndefined();
+    expect(dataOf('cc-block').blockedSince).toBeUndefined();
+  });
+});
+
+describe('the chip label for Blocked (C08)', () => {
+  it('names the kind, in Codex’s words for Codex only, and says since when; without a kind it is plain', async () => {
+    const { harnessChipLabel } = await import('@/lib/shared/harness');
+    const at = '2026-11-21T14:32:00.000Z';
+    expect(harnessChipLabel({ status: 'blocked', stale: false, harness: 'codex', blockedKind: 'credits_depleted', blockedSince: at })).toMatch(/^Blocked: Codex credits depleted · since \d{1,2}:\d{2}/);
+    expect(harnessChipLabel({ status: 'blocked', stale: false, harness: 'claude-code', blockedKind: 'usage_limit' })).toBe('Blocked: Usage limit reached');
+    expect(harnessChipLabel({ status: 'blocked', stale: false })).toBe('Blocked');
+    expect(harnessChipLabel({ status: 'working', stale: false, harness: 'codex' })).toBe('Working');
+  });
+});
+
 describe('binding to agents and the mirror', () => {
   const team = createTeamProject({ name: 'Harness team' });
   const hidden = agentStore.create({ name: 'Hidden Helper', instructions: 'x', model: { provider: 'ollama', model: 'm' } });

@@ -1,6 +1,6 @@
 /** API rate limits: per principal and per public trigger group and address, 429 + Retry-After, exclusions, off in development. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiLimit, limitRequest, localKeyCount, MAX_LOCAL_KEYS } from '@/lib/server/rate-limit/api-limiter';
+import { apiLimit, limitRequest, localKeyCount, MAX_LOCAL_KEYS, windowHit } from '@/lib/server/rate-limit/api-limiter';
 
 const req = (path: string, ip = '10.0.0.1') => new Request(`http://localhost${path}`, { headers: { 'x-forwarded-for': ip } });
 const saved = { ...process.env };
@@ -109,5 +109,15 @@ describe('API rate limits', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('windowHit (C11: a route that limits itself)', () => {
+  it('allows max in a window, refuses the next with the seconds left, and starts afresh in the next window', async () => {
+    const now = 3_000_000 * 60_000 + 10_000;
+    for (let i = 0; i < 20; i += 1) expect(await windowHit('memory-playground:u1', 20, 60_000, now)).toEqual({ allowed: true });
+    expect(await windowHit('memory-playground:u1', 20, 60_000, now)).toEqual({ allowed: false, retryAfter: 50 });
+    expect(await windowHit('memory-playground:u2', 20, 60_000, now)).toEqual({ allowed: true });
+    expect(await windowHit('memory-playground:u1', 20, 60_000, now + 60_000)).toEqual({ allowed: true });
   });
 });

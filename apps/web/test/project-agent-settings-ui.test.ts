@@ -52,9 +52,9 @@ describe('parseAgentSettings', () => {
 });
 
 describe('patchBody', () => {
-  it('names only the four fields, null to clear', () => {
+  it('names only the five fields, null to clear', () => {
     const form = parseAgentSettings(getExample).form;
-    expect(Object.keys(patchBody(form)).sort()).toEqual(['agentTools', 'agents', 'defaultModel', 'knowledge']);
+    expect(Object.keys(patchBody(form)).sort()).toEqual(['agentTools', 'agents', 'defaultModel', 'knowledge', 'memory']);
     const cleared = patchBody({ ...form, defaultModel: undefined, knowledge: undefined });
     expect(cleared.defaultModel).toBeNull();
     expect(cleared.knowledge).toBeNull();
@@ -139,5 +139,42 @@ describe('the card', () => {
   it('without availableAgents: "No agents to list"', () => {
     const { availableAgents: _drop, ...rest } = getExample;
     expect(render(rest)).toContain('No agents to list');
+  });
+});
+
+describe('C07 the Memory row', () => {
+  const withProvider: ProjectSettingsView = {
+    ...getExample,
+    settings: { ...getExample.settings, memory: { backend: 'provider', nodeType: 'vecmem.store' } },
+    memoryProviders: [{ type: 'vecmem.store', displayName: 'Vec memory', pluginName: 'Vec', credentialTypes: [] }],
+  };
+
+  it('reads the setting and the installed providers', () => {
+    const state = parseAgentSettings(withProvider);
+    expect(state.form.memory).toEqual({ backend: 'provider', nodeType: 'vecmem.store' });
+    expect(state.memoryProviders).toHaveLength(1);
+    expect(parseAgentSettings(getExample).form.memory).toBeUndefined();
+  });
+
+  it('sends memory only when it changed, null to go back to built-in', () => {
+    const saved = parseAgentSettings(getExample).form;
+    const form = { ...saved, memory: { backend: 'provider' as const, nodeType: 'vecmem.store' } };
+    expect(savePatch(form, saved)).toEqual({ memory: { backend: 'provider', nodeType: 'vecmem.store' } });
+    expect(savePatch(saved, form)).toEqual({ memory: null });
+    expect(savePatch(saved, saved)).toEqual({});
+    expect(errorFieldOf({ memory: form.memory })).toBe('memory');
+  });
+
+  it('shows the row with the chosen provider, and the refusal under it', () => {
+    const html = render(withProvider, { error: 'That credential isn’t available in this project', errorField: 'memory' });
+    expect(html).toContain('Memory');
+    expect(html).toContain('Vec memory (Vec)');
+    expect(html).toContain('isn’t available in this project');
+  });
+
+  it('says built-in when nothing is chosen, and no provider installed', () => {
+    const html = render({ ...getExample, canEdit: false });
+    expect(html).toContain('Built-in');
+    expect(render(getExample)).toContain('No installed plugin provides memory yet');
   });
 });

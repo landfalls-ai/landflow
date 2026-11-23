@@ -181,6 +181,19 @@ describe('writing', () => {
     expect(block).toContain('Open questions:\n- Who owns the icons?');
     expect(block).not.toContain('Facts are not');
   });
+
+  it('notebookBlockFor gives the same text, and what What it saw records of it (C11)', async () => {
+    expect(service.notebookBlockFor(manager())).toEqual({ text: '' });
+    const decision = (await service.addNote(bind(), { kind: 'decision', text: 'Target the v2 alerting API only' })).note;
+    const question = (await service.addNote(bind(), { kind: 'open_question', text: 'Who owns the icons?' })).note;
+    await service.addNote(bind(), { kind: 'fact', text: 'Facts are not in the block' });
+    const { text, saw } = service.notebookBlockFor(manager());
+    expect(text).toBe(service.notebookBlock(manager()));
+    expect(saw).toMatchObject({ source: 'team-notebook', count: 2 });
+    expect(saw?.items.map((i) => [i.id, i.kind]).sort()).toEqual([[decision.id, 'decision'], [question.id, 'open_question']].sort());
+    expect(saw?.hash).toMatch(/^[0-9a-f]{16}$/);
+    expect(JSON.stringify(saw)).not.toContain('alerting');
+  });
 });
 
 describe('disputes', () => {

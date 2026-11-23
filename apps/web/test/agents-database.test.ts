@@ -22,6 +22,7 @@ afterAll(() => {
 const { createAgentStore } = await import('@/lib/server/agents/store');
 const { newSession } = await import('@/lib/server/agents/runtime');
 const { database } = await import('@/lib/server/db');
+const { countMemories } = await import('@/lib/server/agents/memory');
 
 describe('agents in files mode and in the database', () => {
   const files = createAgentStore('files');
@@ -31,8 +32,12 @@ describe('agents in files mode and in the database', () => {
     expect(existsSync(join(dataDir, 'agents', `${agent.id}.json`))).toBe(true);
     const session = files.saveSession(newSession(agent, { source: 'test', userId: 'u1', version: 'draft', conversationKey: 'chat-1' }));
     expect(existsSync(join(dataDir, 'agent-sessions', `${session.id}.json`))).toBe(true);
+    // An older version kept memory as this file; C09 imports it into the memory backend once (agents/memory.ts) and never writes it again.
+    mkdirSync(join(dataDir, 'agent-memory'), { recursive: true });
+    writeFileSync(join(dataDir, 'agent-memory', `${agent.id}.json`), JSON.stringify({ u1: [{ text: 'likes tea', at: '2026-01-02T03:04:05.000Z' }] }));
+    expect(files.memories(agent.id, 'u1').map((n) => n.text)).toEqual(['likes tea']);
     files.remember(agent.id, 'u1', 'likes tea');
-    expect(JSON.parse(readFileSync(join(dataDir, 'agent-memory', `${agent.id}.json`), 'utf8')).u1[0].text).toBe('likes tea');
+    expect(files.memories(agent.id, 'u1')).toHaveLength(1);
     expect(files.storeKind).toBe('files');
     // A leftover running session from a crashed process, as a file.
     const stuck = { ...session, id: 'as_stuck', status: 'running' as const };
@@ -79,13 +84,14 @@ describe('agents in files mode and in the database', () => {
     expect(restarted.getSession(running.id)?.status).toBe('running');
     expect(main2.listSessions(agent.id)[0].status).toBe('running');
 
-    // Memory notes from both mains add up (read-modify-write in a transaction), de-duplicated and capped.
+    // Memory from both mains adds up and the same words are one memory. C09: no 50-note cap; the profile shows the 10 newest, 60 are kept.
     main1.remember(agent.id, 'u2', 'a');
     main2.remember(agent.id, 'u2', 'b');
     main1.remember(agent.id, 'u2', 'a');
-    expect(main2.memories(agent.id, 'u2').map((n) => n.text)).toEqual(['b', 'a']);
+    expect(main2.memories(agent.id, 'u2').map((n) => n.text).sort()).toEqual(['a', 'b']);
     for (let i = 0; i < 60; i++) main1.remember(agent.id, 'u3', `note ${i}`);
-    expect(main2.memories(agent.id, 'u3')).toHaveLength(50);
+    expect(main2.memories(agent.id, 'u3')).toHaveLength(10);
+    expect(countMemories(agent.id, 'u3')).toBe(60);
 
     expect(main2.deleteSession(agent.id, running.id)).toBe(true);
     expect(main1.getSession(running.id)).toBeUndefined();

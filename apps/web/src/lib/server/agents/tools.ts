@@ -69,6 +69,9 @@ import { store } from '../store';
 import { variables } from '../variables';
 import { knowledgeTool } from './knowledge';
 import { agentStore } from './store';
+import { MemoryNotFoundError } from '../memory';
+import { memoryKeyLine, withMemoryKey } from '../kagent/memory-line';
+import { forgetAgentMemory, rememberMemory } from './memory';
 import { callDestinations } from './spotlight-approvals'; // AG23:
 
 export const WORKFLOW_TRIGGER = 'core.workflowTrigger';
@@ -86,6 +89,8 @@ export interface ToolCaller {
 export interface ToolContext {
   agent: Agent;
   session: AgentSession;
+  /** Whose memory this run reads and writes (the session's user unless the request names another person). */
+  memoryUser?: string;
   /** 0 for the agent the user talks to; +1 per delegation. */
   depth: number;
   /** How deep delegation may go in this run tree. */
@@ -138,6 +143,8 @@ export interface BuiltTool extends ToolSpec {
   /** AG14: the target when the model gives the place (an HTTP Request's URL): per call, from the call's input. */
   targetOf?(input: Record<string, unknown>): ToolTarget | undefined;
   requireApproval: boolean;
+  /** C09: the call removes something a person can only bring back by hand (a forgotten memory); never a read. */
+  destructive?: boolean;
   /** A knowledge base search: what it returns is what the output guardrail's grounded check judges an answer against. */
   knowledge?: boolean;
   invoke(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome>;
@@ -193,7 +200,7 @@ export function buildTools(agent: Agent, config: AgentConfig, mcp: Toolset = { t
     else tools.push(built);
   }
   if (config.skills.length) tools.push(...skillTools(config));
-  if (config.memory.crossSession) tools.push(rememberTool());
+  if (config.memory.crossSession) tools.push(rememberTool(), forgetMemoryTool());
   return { tools: dedupe(tools), unavailable };
 }
 
@@ -394,7 +401,7 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
       const verdict = blockedOf(task);
       if (verdict.blocked) {
         countBlocked(verdict.kind, 'a2a');
-        const blockedRun: RemoteRun & { blocked: { kind: string; message: string; label: string } } = { ...remote, state: 'blocked', blocked: { kind: verdict.kind, message: verdict.message, label: verdict.label } };
+        const blockedRun: RemoteRun = { ...remote, state: 'blocked', blocked: { kind: verdict.kind, message: verdict.message, label: verdict.label } };
         progress?.(blockedRun);
         throw new ProviderBlockedError(card.name, verdict.kind, verdict.message, verdict.label);
       }
@@ -475,9 +482,11 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
       const brandNew = !known?.contextId && !known?.taskId;
       const index = brandNew ? practicesIndexFor(config.parameters.agentUrl as string, options.practices, text) : undefined;
       const block = currentRunContext()?.compact;
-      const { text: sent, tags } = withProjectContext(withPracticesIndex(text, index?.text ?? '', block), fresh ? currentRunContext() : undefined);
+      // C09: and the signed memory key of this session's person, after the practices index.
+      const keyLine = brandNew ? memoryKeyLine(config.parameters.agentUrl as string, ctx.memoryUser ?? ctx.session.userId) : undefined;
+      const { text: sent, tags } = withProjectContext(withMemoryKey(withPracticesIndex(text, index?.text ?? '', block), keyLine), fresh ? currentRunContext() : undefined);
       if (index) indexed.set(ctx.session.id, index);
-      const outcome = await run({ text: sent, ...(Object.keys(tags).length > 0 && { metadata: tags }), ...(known?.contextId && { contextId: known.contextId }), ...(known?.taskId && { taskId: known.taskId }) }, ctx);
+      const outcome = await run({ text: sent, ...(keyLine && { keyLine }), ...(Object.keys(tags).length > 0 && { metadata: tags }), ...(known?.contextId && { contextId: known.contextId }), ...(known?.taskId && { taskId: known.taskId }) }, ctx);
       return settle(outcome, ctx);
     },
     async resume(state, approved, ctx, answer) {
@@ -832,14 +841,53 @@ function rememberTool(): BuiltTool {
     name: 'remember',
     label: 'Remember',
     description:
-      'Save a durable fact about the user you are talking to (a preference, a decision, ongoing work) so you know it in later sessions. Not for one-off details.',
-    inputSchema: { type: 'object', properties: { fact: { type: 'string', description: 'One short sentence' } }, required: ['fact'] },
+      'Save a durable fact about the user you are talking to (a preference, a decision, ongoing work) so you know it in later sessions. Not for one-off details. Set static for things that stay true (a name, a role). To correct a memory, pass replaces with its id from your memory block instead of adding a second.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fact: { type: 'string', description: 'One short sentence' },
+        static: { type: 'boolean', description: 'A stable fact (name, role, preference) to keep in front of you every session' },
+        replaces: { type: 'string', description: 'The id (m_…) of the memory this corrects' },
+      },
+      required: ['fact'],
+    },
     requireApproval: false,
     async invoke(input, ctx) {
       const fact = String(input.fact ?? '').trim();
       if (!fact) throw new Error('"fact" is empty');
-      const notes = agentStore.remember(ctx.agent.id, ctx.session.userId, fact.slice(0, 500));
-      return { output: `Saved. You now remember ${notes.length} fact(s) about this user.` };
+      const replaces = typeof input.replaces === 'string' && input.replaces.trim() ? input.replaces.trim() : undefined;
+      const { outcome, count, item } = await rememberMemory(ctx.agent.id, ctx.memoryUser ?? ctx.session.userId, { fact, static: input.static === true, ...(replaces && { replaces }) });
+      const said = outcome === 'replaced' ? `Replaced ${replaces} (now version ${item.version ?? 2}).` : outcome === 'refreshed' ? 'Already remembered; refreshed.' : 'Saved.';
+      return { output: `${said} You now remember ${count} fact(s) about this user.` };
+    },
+  };
+}
+
+function forgetMemoryTool(): BuiltTool {
+  return {
+    kind: 'memory',
+    name: 'forget_memory',
+    label: 'Forget',
+    description: 'Forget one memory about the user you are talking to (its id is in your memory block), with the reason. Use it when the user asks you to forget something or it is no longer true. It only forgets this user’s memories.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'The id (m_…) of the memory' }, reason: { type: 'string', description: 'Why it is forgotten' } },
+      required: ['id', 'reason'],
+    },
+    // Destructive (a person can restore it from the agent page); a project's Ask rule for memory tools holds it like any write.
+    destructive: true,
+    requireApproval: false,
+    async invoke(input, ctx) {
+      const id = String(input.id ?? '').trim();
+      const reason = String(input.reason ?? '').trim();
+      if (!id || !reason) throw new Error('"id" and "reason" are both needed');
+      try {
+        await forgetAgentMemory(ctx.agent.id, ctx.memoryUser ?? ctx.session.userId, id, reason, ctx.memoryUser ?? ctx.session.userId);
+      } catch (error) {
+        if (error instanceof MemoryNotFoundError) throw new Error(`Memory ${id} not found`);
+        throw error;
+      }
+      return { output: `Forgot ${id}.` };
     },
   };
 }

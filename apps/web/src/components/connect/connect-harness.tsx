@@ -18,6 +18,7 @@ import { FieldLabel, Select } from '@/components/ui/inputs';
 import { HARNESSES, STATUS_SCOPE, TOOLS_LIST_REQUEST, WORKFLOW_SCOPES, harnessKeyBody, hookKeyBody, hookKeySnippet, hookSnippetFor, sendsStatus, snippetFor, toolNames, type HarnessId, type Snippet } from './harness-snippets';
 import { YourSessions } from './your-sessions';
 import { useAgentData } from '@/components/agents/use-agent-data';
+import { toolsFor } from '@/lib/shared/mcp';
 import { mergeHarnessSession, type HarnessSessionView } from '@/lib/shared/harness';
 import { useLiveEvents } from '@/lib/client/live';
 
@@ -124,6 +125,8 @@ export function ConnectSteps({ harness, onHarness, scopes, onScopes, days, onDay
                 </label>
               ))}
             </div>
+            {/* The count comes off the scope map the server filters tools by (C08 FR-10), so it cannot drift from what Test connection finds. */}
+            <p className="mt-2 text-[12px] text-t3">This key reaches {toolsFor(harnessKeyBody(harness, scopes).scopes).length} tools.</p>
           </div>
           <div className="max-w-[200px]">
             <FieldLabel>Expires</FieldLabel>

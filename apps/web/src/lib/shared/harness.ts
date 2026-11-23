@@ -3,6 +3,7 @@
  * `GET /api/harness/sessions` and carried by the `harness` bus event. Types and constants only (browser-safe).
  */
 import type { HarnessStatus } from '@landflow/protocol/harnesses';
+import { BLOCKED_LABEL, NEUTRAL_LABEL, type BlockedKind } from '@landflow/protocol/quota-block';
 
 export type { HarnessStatus };
 
@@ -22,6 +23,9 @@ export interface HarnessSessionView {
   agentId?: string;
   /** `owner/name`, only when the sender said so (the brain mod sends it for allowed repositories only). */
   repository?: string;
+  /** While Blocked: which provider limit stopped it, and since when (ISO). */
+  blockedKind?: BlockedKind;
+  blockedSince?: string;
   prompts: number;
   toolCalls: number;
 }
@@ -41,9 +45,18 @@ export const HARNESS_STATUS_LABELS: Record<HarnessStatus, string> = {
 /** The bus event's payload channel name (docs/harnesses.md#live-status). */
 export const HARNESS_CHANNEL = 'harness';
 
-/** The chip's words: a stale session (no event for 30 minutes) reads "Idle (stale)", whatever its last status was. */
-export function harnessChipLabel(session: Pick<HarnessSessionView, 'status' | 'stale'>): string {
-  return session.stale && session.status !== 'ended' ? 'Idle (stale)' : HARNESS_STATUS_LABELS[session.status];
+/**
+ * The chip's words: a stale session (no event for 30 minutes) reads "Idle (stale)", whatever its last status was. A Blocked
+ * session says why and since when ("Blocked: Codex usage limit reached · since 14:32"), the kind in Codex's words only for
+ * Codex (the one harness whose own error info the verdict came from).
+ */
+export function harnessChipLabel(session: Pick<HarnessSessionView, 'status' | 'stale'> & Partial<Pick<HarnessSessionView, 'harness' | 'blockedKind' | 'blockedSince'>>): string {
+  if (session.stale && session.status !== 'ended') return 'Idle (stale)';
+  if (session.status !== 'blocked' || !session.blockedKind) return HARNESS_STATUS_LABELS[session.status];
+  const words = (session.harness === 'codex' ? BLOCKED_LABEL : NEUTRAL_LABEL)[session.blockedKind];
+  const at = session.blockedSince ? new Date(session.blockedSince) : undefined;
+  const since = at && !Number.isNaN(at.getTime()) ? ` · since ${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
+  return `Blocked: ${words}${since}`;
 }
 
 export type HarnessChipTone = 'accent' | 'warning' | 'danger' | 'muted';

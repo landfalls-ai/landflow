@@ -11,6 +11,8 @@ import { getProjectSettings, type projectSettingsPatchSchema } from '../governan
 import { agentAvailableIn, availableAgentIds, credentialUsableBy } from '../projects/access';
 import { getProject, homeProjectId } from '../projects/store';
 import { credentials } from '../credentials/vault';
+import { registry } from '../plugins/registry';
+import { checkMemoryProvider } from '@landflow/protocol';
 import { isBrainCollection } from '../../shared/brain'; // NB06:
 import type { z } from 'zod';
 
@@ -87,6 +89,15 @@ export function assertAgentSettingsPatch(projectId: string, patch: Patch): void 
     }
   }
   for (const id of patch.agents?.ids ?? []) if (!agentAvailableIn(id, projectId)) throw bad(`“${id}” isn’t available in this project`);
+  // C07: the memory provider must be an installed node that flags itself (and whose shape the registry already checked).
+  const memory = patch.memory;
+  if (memory?.backend === 'provider') {
+    const resolved = registry.resolve(memory.nodeType);
+    if ('error' in resolved) throw bad(`“${memory.nodeType}” isn’t an installed node`);
+    const problem = resolved.descriptor.memoryProvider ? checkMemoryProvider(resolved.descriptor) : `“${resolved.descriptor.displayName}” isn’t a memory provider`;
+    if (problem) throw bad(problem);
+    checkRef(memory.credentialId ? { id: memory.credentialId } : undefined);
+  }
 }
 
 /** The agents available in a project, sorted by name, for the settings view. */

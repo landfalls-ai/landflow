@@ -51,6 +51,7 @@ import { GithubMcpDialog, GithubTile, isGithubTool } from './github-mcp-dialog';
 import { A2A_AGENT, A2aAgentDialog, A2aTile } from './a2a-agent-dialog';
 import { useAgentList, useNodeTypes } from './use-agent-data';
 import { newId, type UpdateConfig } from './util';
+import { MemoryCard } from './memory-card';
 
 interface WorkflowOption {
   id: string;
@@ -846,6 +847,7 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
           />
         </div>
       </Section>
+      {config.memory.crossSession && <MemoryCard agentId={agentId} />}
 
       <SkillsCard config={config} update={update} adding={side === 'skill'} onAdded={() => setSide(null)} />
       <PluginsCard config={config} update={update} adding={side === 'plugin'} onAdded={() => setSide(null)} />

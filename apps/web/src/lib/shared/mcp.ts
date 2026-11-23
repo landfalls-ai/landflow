@@ -228,6 +228,16 @@ export const TOOL_SCOPES = {
   brain_search_knowledge: 'brain:read', // NB06
   my_briefing: 'brain:read',
   my_ai_spend: 'brain:read', // SP14
+  // C08: memory over MCP, named as Supermemory's tools so prompts that know them work against a local Landflow
+  search_memory: 'brain:read',
+  get_profile: 'brain:read',
+  list_memories: 'brain:read',
+  list_documents: 'brain:read',
+  get_document: 'brain:read',
+  list_spaces: 'brain:read',
+  who_am_i: 'brain:read',
+  add_memory: 'brain:write',
+  forget_memory: 'brain:write',
   brain_suggest: 'brain:write',
   record_work: 'brain:write',
   // PR04: practices (docs/practices.md)
@@ -255,4 +265,11 @@ export function toolAllowed(keyScopes: readonly ApiKeyScope[] | undefined, tool:
   if (!keyScopes) return true;
   const needed = (TOOL_SCOPES as Record<string, ApiKeyScope>)[tool];
   return hasScope(keyScopes, needed ?? 'admin');
+}
+
+/** The names of the tools a key with `scopes` sees (`tools/list` on the instance server), sorted: what /connect says it reaches, derived so a count never drifts. */
+export function toolsFor(scopes: readonly ApiKeyScope[]): string[] {
+  return Object.keys(TOOL_SCOPES)
+    .filter((tool) => toolAllowed(scopes, tool))
+    .sort();
 }

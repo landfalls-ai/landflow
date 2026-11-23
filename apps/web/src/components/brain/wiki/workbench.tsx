@@ -14,16 +14,17 @@
  * bar folds into it.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AlertTriangle, Brain, ChevronRight, Code2, Eye, Files, GitCommitHorizontal, PanelBottom, PanelLeft, ScrollText, Search, Settings2, Sparkles, X } from 'lucide-react';
+import { AlertTriangle, Brain, ChevronRight, Code2, Eye, Files, GitCommitHorizontal, Network, PanelBottom, PanelLeft, ScrollText, Search, Settings2, Sparkles, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { isPhone } from '@/lib/client/use-phone';
 import { cn } from '@/lib/utils';
-import { brainTree, INDEX, indexMarkdown, isPageRef, isPracticeRef, LOG, logMarkdown, outlineOf, pageMarkdown, practiceRef, SETTINGS, urlOf, type BrainTree, type FileRef, type OutlineItem } from '@/lib/shared/brain-files';
+import { brainTree, GRAPH, graphRef, graphSubject, INDEX, indexMarkdown, isGraphRef, isPageRef, isPracticeRef, LOG, logMarkdown, outlineOf, pageMarkdown, practiceRef, SETTINGS, urlOf, type BrainTree, type FileRef, type OutlineItem } from '@/lib/shared/brain-files';
 import type { WikiHome, WikiPage, WikiSummary } from '@/lib/shared/brain-wiki';
 import type { LinkProblemView } from '@/lib/shared/notion-brain'; // NB07:
 import { CopyButton } from '../../ui/copy-button';
 import { BrainPanel } from '../brain-panel';
+import { GraphView } from '../graph/graph-view';
 import { ProposalCard, useProposalActions } from '../proposal-card';
 import { IndexDoc, indexOutline, LogDoc } from './index-doc';
 import { PageDoc } from './page-doc';
@@ -192,7 +193,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
   const mode: Mode = active ? (modes[active] ?? 'preview') : 'preview';
-  const toggleMode = useCallback(() => active && active !== SETTINGS && setModes((m) => ({ ...m, [active]: (m[active] ?? 'preview') === 'preview' ? 'source' : 'preview' })), [active]);
+  const toggleMode = useCallback(() => active && active !== SETTINGS && !isGraphRef(active) && setModes((m) => ({ ...m, [active]: (m[active] ?? 'preview') === 'preview' ? 'source' : 'preview' })), [active]);
 
   const jump = (item: OutlineItem) => {
     document.getElementById(mode === 'source' ? lineId(item.line) : item.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -239,7 +240,11 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
   }, [toggleMode]);
 
   const practiceName = (ref: FileRef) => practiceFileName(practices.data?.practices.find((p) => practiceRef(p.id) === ref)?.handle ?? practices.retired?.find((p) => practiceRef(p.id) === ref)?.handle ?? ref.slice(ref.indexOf('/') + 1));
-  const nameOf = (ref: FileRef) => (ref === SETTINGS ? 'What Landflow knows' : isPracticeRef(ref) ? practiceName(ref) : (tree?.files.get(ref)?.name ?? `${ref.split('/').pop()}.md`));
+  const graphName = (ref: FileRef) => {
+    const subject = graphSubject(ref);
+    return subject ? `Graph: ${tree?.files.get(subject)?.title ?? subject.split('/').pop()}` : 'Graph';
+  };
+  const nameOf = (ref: FileRef) => (ref === SETTINGS ? 'What Landflow knows' : isGraphRef(ref) ? graphName(ref) : isPracticeRef(ref) ? practiceName(ref) : (tree?.files.get(ref)?.name ?? `${ref.split('/').pop()}.md`));
   const problems = tree ? [...tree.files.values()].filter((f) => f.problems.length) : [];
   const status = home && statusItems(home.entries.length, problems.length + notion.problems.length); // NB07: the Notion sync problems count too
   const spotlightFile: SpotlightFile | undefined = active
@@ -335,6 +340,9 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
               </ActivityButton>
             ))}
             <div className="mt-auto" />
+            <ActivityButton label="Graph" active={active === GRAPH} onClick={() => open(GRAPH, { pin: true })}>
+              <Network className="size-[18px]" />
+            </ActivityButton>
             <ActivityButton label="What Landflow knows" active={active === SETTINGS} onClick={() => open(SETTINGS, { pin: true })}>
               <Settings2 className="size-[18px]" />
             </ActivityButton>
@@ -356,6 +364,9 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
                     {v.id === 'practices' && waiting > 0 && <span className="absolute right-0.5 top-0.5 size-2 rounded-full bg-warn" aria-hidden />}
                   </button>
                 ))}
+                <button type="button" onClick={() => open(GRAPH, { pin: true })} className="grid size-7 place-items-center rounded-md text-t3" aria-label="Graph">
+                  <Network className="size-4" />
+                </button>
                 <button type="button" onClick={() => open(SETTINGS, { pin: true })} className="grid size-7 place-items-center rounded-md text-t3" aria-label="What Landflow knows">
                   <Settings2 className="size-4" />
                 </button>
@@ -390,7 +401,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
                     t.ref === active ? 'bg-bg text-t1 shadow-[inset_0_2px_0_var(--color-ac)]' : 'text-t3 hover:text-t2',
                   )}
                 >
-                  {t.ref === SETTINGS ? <Settings2 className="size-3.5 shrink-0 text-t3" /> : isPracticeRef(t.ref) ? <ScrollText className="size-3.5 shrink-0 text-viz-4" aria-hidden /> : <FileIcon file={tree?.files.get(t.ref)} />}
+                  {t.ref === SETTINGS ? <Settings2 className="size-3.5 shrink-0 text-t3" /> : isGraphRef(t.ref) ? <Network className="size-3.5 shrink-0 text-t3" aria-hidden /> : isPracticeRef(t.ref) ? <ScrollText className="size-3.5 shrink-0 text-viz-4" aria-hidden /> : <FileIcon file={tree?.files.get(t.ref)} />}
                   <span className={cn('max-w-[180px] truncate', !t.pinned && 'italic')}>{nameOf(t.ref)}</span>
                   <button
                     type="button"
@@ -411,16 +422,23 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
             {active && !layout.indexOnly && (
               <div className="flex h-7 shrink-0 items-center gap-1 border-b border-hair px-3 text-[12px] text-t3">
                 <div className="flex min-w-0 items-center gap-1 overflow-hidden">
-                  {(active === SETTINGS ? ['What Landflow knows'] : isPracticeRef(active) ? ['brain', 'practices', nameOf(active)] : ['brain', ...(tree?.paths.get(active) ?? [nameOf(active)])]).map((part, i, all) => (
+                  {(active === SETTINGS ? ['What Landflow knows'] : isGraphRef(active) ? ['brain', graphName(active)] : isPracticeRef(active) ? ['brain', 'practices', nameOf(active)] : ['brain', ...(tree?.paths.get(active) ?? [nameOf(active)])]).map((part, i, all) => (
                     <span key={i} className="flex shrink-0 items-center gap-1 last:min-w-0 last:shrink">
                       {i > 0 && <ChevronRight className="size-3 shrink-0" />}
-                      {i === all.length - 1 && active !== SETTINGS && !isPracticeRef(active) && <FileIcon file={tree?.files.get(active)} className="size-3" />}
+                      {i === all.length - 1 && active !== SETTINGS && !isGraphRef(active) && !isPracticeRef(active) && <FileIcon file={tree?.files.get(active)} className="size-3" />}
                       <span className={cn('truncate', i === all.length - 1 && 'text-t2')}>{part}</span>
                     </span>
                   ))}
                 </div>
-                {markdown && (
+                {isPage(active) && (
                   <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                    <ToolbarButton title="Show this page’s graph" onClick={() => open(graphRef(active), { pin: true })}>
+                      <Network className="size-3.5" />
+                    </ToolbarButton>
+                  </div>
+                )}
+                {markdown && (
+                  <div className={cn('flex shrink-0 items-center gap-0.5', !isPage(active) && 'ml-auto')}>
                     <ToolbarButton title={mode === 'preview' ? 'Show the Markdown (⌘⇧V)' : 'Show the preview (⌘⇧V)'} onClick={toggleMode}>
                       {mode === 'preview' ? <Code2 className="size-3.5" /> : <Eye className="size-3.5" />}
                     </ToolbarButton>
@@ -436,6 +454,10 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
                   <Welcome />
                 ) : homeError && !home ? (
                   <p className="p-6 text-[13px] text-rd">{homeError}</p>
+                ) : isGraphRef(active) ? (
+                  <div className="flex h-full min-h-[420px] flex-col px-4 pb-4 pt-4">
+                    <GraphView key={active} about={graphSubject(active)} onOpenPage={(ref) => open(ref, { pin: true })} />
+                  </div>
                 ) : mode === 'source' && markdown ? (
                   <div className="pb-12">
                     <SourceView markdown={markdown} />
@@ -495,6 +517,7 @@ export function BrainWorkbench({ initial }: { initial: FileRef }) {
             commands={[
               { label: 'Open index.md', run: () => open(INDEX, { pin: true }) },
               { label: 'Open log.md', run: () => open(LOG, { pin: true }) },
+              { label: 'Show the graph', run: () => open(GRAPH, { pin: true }) },
               { label: 'What Landflow knows', run: () => open(SETTINGS, { pin: true }) },
               { label: 'Toggle Preview and Source', run: toggleMode },
               ...(layout.explorer ? [{ label: 'Toggle the side bar', run: () => setSidebar((v) => !v) }] : []),

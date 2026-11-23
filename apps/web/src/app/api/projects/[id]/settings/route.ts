@@ -27,6 +27,10 @@ function view(projectId: string, canEdit: boolean): ProjectSettingsView {
     nodeTypes: types.map((t) => ({ type: t.type, displayName: t.descriptor.displayName, pluginId: t.pluginId })),
     // PC13: the agents available in the project, for the allow-list.
     availableAgents: availableAgentsView(projectId, agentStore.list()),
+    // C07: the nodes a project can choose as its memory.
+    memoryProviders: types
+      .filter((t) => t.descriptor.memoryProvider)
+      .map((t) => ({ type: t.type, displayName: t.descriptor.displayName, pluginName: t.pluginName, credentialTypes: (t.descriptor.credentials ?? []).map((c) => (c.name.includes('.') ? c.name : `${t.pluginId}.${c.name}`)) })),
   };
 }
 
@@ -55,6 +59,7 @@ export const PATCH = projectRoute(async (request: Request, { params }: Ctx) => {
       defaultModel: settings.defaultModel ? `${settings.defaultModel.provider}/${settings.defaultModel.model}` : null,
       knowledge: settings.knowledge?.enabled ? 'on' : 'off',
       ...(settings.knowledge && { knowledgeTarget: knowledgeTarget(settings.knowledge.tool) }),
+      memory: settings.memory ? (settings.memory.backend === 'provider' ? settings.memory.nodeType : 'built-in') : 'built-in', // C07
       agentsMode: settings.agents?.mode ?? 'off',
       agentIds: settings.agents?.ids ?? [],
       toolsMode: settings.agentTools?.mode ?? 'off',

@@ -17,9 +17,16 @@ describe('registry', () => {
       else expect(sendsEvents(entry)).toBe(false);
     }
   });
-  it('lets only native-hooks entries carry hookEvents in W1; Claude Code is the only one', () => {
-    expect(HARNESS_REGISTRY.filter(sendsEvents).map((e) => e.id)).toEqual(['claude-code']);
+  it('lets only Claude Code (native hooks) and Codex (a wrapper that watches its rollout files, C08) carry hookEvents', () => {
+    expect(HARNESS_REGISTRY.filter(sendsEvents).map((e) => e.id)).toEqual(['claude-code', 'codex']);
     for (const entry of HARNESS_REGISTRY.filter((e) => e.strategy === 'mcp-only')) expect(entry.hookEvents).toBeUndefined();
+  });
+  it('Codex accepts exactly one event, quota_blocked, as Blocked; every other name is unlisted (counted unknown) and the entry stays unverified', () => {
+    const codex = harnessById('codex')!;
+    expect(codex).toMatchObject({ strategy: 'wrapper', statusSignals: 'rollout-file', verified: false });
+    expect(Object.keys(codex.hookEvents!)).toEqual(['quota_blocked']);
+    expect(statusFor(codex, 'quota_blocked', {})).toBe('blocked');
+    for (const name of ['SessionStart', 'UserPromptSubmit', 'Stop', 'PreToolUse', 'quota_blocked_extra']) expect(statusFor(codex, name, {}), name).toBeUndefined();
   });
   it('lists the six /connect harnesses in order, all registered, and one wording for the kagent runtimes', () => {
     expect([...CONNECT_HARNESS_IDS]).toEqual(['claude-code', 'cursor', 'codex', 'gemini', 'vscode', 'generic']);

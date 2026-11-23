@@ -134,6 +134,48 @@ the instance); a caller who cannot see the fact gets 404.
 - A forgotten fact leaves the Notion copy: the next push trashes its row, and a restore writes it back as a new row. Restoring a fact that is not forgotten answers 409.
 - The reason is a person's words: the audit log keeps it, and it comes back only in the forgotten list and an editor's history, never in a search, an MCP tool, the Usage node or a prompt (a live fact with a forget-after pending does not carry it either).
 
+#### Memory backend
+
+One interface, `MemoryBackend` (`apps/web/src/lib/server/memory/`), is how flows, MCP tools and agents read and write what Landflow
+remembers. It has five operations over a **container**; the built-in backend maps containers onto the stores above, and a project
+can choose a plugin instead.
+
+| Container | Wire key | What it is | Who reaches it |
+|---|---|---|---|
+| Project | `project:<id>` | the brain facts of that project, plus memories added to it (subject `project`, kind `memory` or `intended`) | any member reads; editors write and forget |
+| Team | `team:<id>` | the team's notebook notes (team and project scope; a run's own notes only for that run) | anyone with the team's access; notes are written only by a team run |
+| Agent | `agent:<id>` | what the agent remembers about one user: private `agent-user` facts (`<agentId>/<userId>`), in their own vector collection `landflow-agent-memory` | that user, and the agent's editors (read) |
+
+- **Operations.** `search(query, { mode, limit, threshold })` (modes `keyword`, `meaning`, `hybrid`; `limit` 1 to 50, default
+  10; `threshold` 0 to 1; scores are 0..1 for both facts and notes, one formula, `fuseScores`), `profile` (static items, then the
+  10 newest), `add(item, { replaces })`, `forget(id, reason)` and `list` (keyset pages). `add` with `replaces: <id>` writes the
+  next version of that memory (C01, through `supersedeFact`); `<id>#v<n>` says "I read version n" and answers 409 when the chain has
+  moved. A static memory is rewritten only by a person, not by a flow.
+- **Access first.** Every call checks the container before reading, and a container the caller may not reach answers 404 "Memory
+  not found", the same as one that does not exist. A flow acts as its creator; a seeded flow and an agent's tools act for the
+  instance inside their own project only.
+- **What `add` refuses.** The study's kinds (`health`, `cost`, ...) answer 400 "the study writes health facts"; a note outside a team
+  run answers 400 "notes are written by a team run". `add` audits `brain.memory_added` (ids, container kind, who; never the text).
+- **Private subjects.** An `agent-user` fact is left out of every brain read (the Brain page, Ask, Notion, the brain MCP tools, the
+  study and its vector rebuild) unless the filter names both its type and its id.
+- **No side effects.** A search from a playground or the API does not move a note's expiry; only a run that uses the result does.
+- **Spans.** `memory.search`, `memory.add`, ... carry the backend, the container kind, the count and `landflow.memory.denied`; never text.
+- **Fence.** Text returned to a model (the Memory nodes and the memory MCP tools) is inside the memory fence, so nothing in a memory can open or close a block.
+- **Provider.** **Project → Settings → Agents in this project → Memory** (`memory` in `PATCH /api/projects/:id/settings`) chooses
+  Built-in or a plugin node that declares `memoryProvider` ([protocol](protocol.md#memory-providers)) and the credential it uses. A
+  provider serves the project container only. An error or a 10 s timeout fails the call with the provider's message; nothing falls
+  back to the built-in store.
+- **One index** (migration 2915) makes a project's facts a keyset read; there is no new table.
+
+#### Memory nodes
+
+Four core nodes use the backend, as steps and as agent tools (`apps/web/src/lib/server/nodes/memory.ts`): **Memory Search**,
+**Memory Add**, **Memory Forget** and **Memory Profile**. Each asks for a container (a project, empty meaning the workflow's own,
+or a team). In a step, Search returns one item per hit (`id`, `text`, `kind`, `source`, `score`, `version`); as a tool every node
+answers a short JSON, and Search and Profile put the text inside the memory fence. Search and Profile are read-only; Forget is a
+destructive change (its operation is `delete`), so an agent's Tool Approvals apply as for any other change. A flow cannot add to an
+agent's own memory: only that agent's run writes it. A flow reads any project or team its creator can, but Add and Forget write only into the flow's home project or a team homed there (the flow is its creator's deputy, so it never writes into another project the creator happens to edit). Replacing or forgetting works only on a project's or an agent's own memory, never on a fact the study wrote, and the study's stale sweep never stales a memory.
+
 ### 3. The loop
 
 The leader runs the brain (`leaderService('second brain')`). Every `LANDFLOW_BRAIN_INTERVAL_MINUTES` (60) it:
@@ -237,6 +279,7 @@ The detector `work-overlap` (`lib/server/brain/overlap.ts`) introduces two peopl
 - **Brain → What Landflow knows** (the gear at the foot of the Brain page's activity bar; it was on Insights):
   - the ledger's size, the facts, the model, and when the brain last studied and detected;
   - a search over the facts;
+  - **Try a search**: the memory playground over the facts the caller may read (keywords, meaning or hybrid, threshold, rerank), with scores and what the threshold dropped; it changes nothing ([run-trace.md](run-trace.md#memory-playground));
   - each detector's record (made, applied, dismissed, quieted) with **Run**, which runs that detector alone, and
     **Backtest** ([below](#backtesting-a-detector)), which shows a small card of how it would have fared. Flow
     detectors are listed from the moment they exist, linked to their workflow; one not yet published says so and has
@@ -441,6 +484,27 @@ each problem the link has, in Landflow's words, with a link to its Notion page a
 adds them. A project with no link shows none of it. Setting it up is the project's Brain card
 ([notion-brain.md](features/notion-brain.md#setting-it-up)).
 
+#### The graph
+
+The Brain page's **Graph** tab (the graph button in the activity bar, **Show the graph** in ⌘P, and a button in a page's
+breadcrumb bar for that page's graph) draws what the brain knows as a force graph: subjects (workflows, agents, pages and
+projects) as squares, facts as dots, and a thin **About** line from each fact to its subject. **Show history** adds the earlier
+versions of a fact, faded, joined to the next version by an arrow: **Updates** (a new version of the same fact), **Extends** and
+**Derives** (a fact built on another). **Show forgotten** adds the facts you may restore, dashed and red; stale facts are hollow.
+A page's graph has **This page** and **One link away** (the pages it shares work with, or the agents and workflows it uses, at
+most 50). Hover a node for its words (always as text), kind, version, confidence and dates; click a subject to open its page and
+a fact to see its [versions](#fact-versions). Drag to pan, scroll or **+** and **-** to zoom, **0** or **Fit** to see everything,
+arrows to pan. The layout settles in the browser in about two seconds and then stops, and it pauses while the tab is hidden.
+
+It shows 500 facts at a time (**Load more** adds the next 500; the layout keeps where the first ones settled). Facts about
+workflows, agents and pages you cannot open are left out in the query, and a person's private agent memory is never in it. A
+project's memories appear in that project's own graph (`about=project/<id>`) for its members, and in the whole-brain graph only
+for owners and admins. A phone shows a list grouped by subject instead, each later version indented under the one it
+replaced (a **List** switch gives the same on a desktop, which is also the way to read it with a screen reader).
+`GET /api/brain/graph` ([api.md](reference/api.md)) serves it. The layout code is adapted from Supermemory's MIT-licensed
+`memory-graph`; its notice is in `apps/web/src/components/brain/graph/NOTICE.md` and the repository's `THIRD_PARTY_NOTICES.md`.
+Code: `components/brain/graph/`, `lib/server/brain/graph.ts`; tests `test/brain-graph.test.ts`, `test/brain-graph-view.test.ts`.
+
 #### The vector collections
 
 Workflows and agents can't read or write `landflow-brain` and `landflow-brain-<project>` with a Vector Store node: the
@@ -478,6 +542,39 @@ On a project linked to Notion, each fact `brain_search_facts` and `brain_workflo
 
 Practices: see [practices.md](practices.md#following) (`practices_for`, `practice_get`, `practice_cite`,
 `practice_draft` and the `practices://` resources).
+
+**What these tools return is quoted data.** The JSON of `brain_search_facts`, `brain_workflow_knowledge`, `check_overlap` and
+`brain_ask` keeps its shape (a client parses it), and each `statement`, `summary` (and, in `check_overlap`, `goal`) string in it
+goes through the memory fence's escaper, so a stored `</landflow-memory>` arrives as `&lt;/landflow-memory>` and honest text is
+unchanged. The Brain Usage and Entities nodes do the same in tool mode (a flow's own step still sees the original). The Ask
+prompt puts its pages block, with each stored summary, in one `<landflow-memory source="brain-summaries">` fence.
+
+##### Memory over MCP
+
+The instance server also answers to Supermemory's nine memory tool names, so a harness prompt that already knows them works
+against a local Landflow ([C08](specs/20-combined/C08-memory-mcp/spec.md)). Each is a thin mapping onto the
+[memory backend](#memory-backend): its access checks, its provider choice and its spans. A **space** is a memory container:
+`project:<id>`, `team:<id>` or `agent:<id>` (a bare project id works); on a project server (`/api/mcp/projects/<id>`) every
+tool acts in that project whatever `space` says.
+
+| Tool | Scope | Does |
+|---|---|---|
+| `search_memory { query, space?, mode?, limit?, threshold? }` | `brain:read` | best matches, by keywords and meaning; with no space, every project you can open (the 20 most recently changed) |
+| `get_profile { space? }` | `brain:read` | the standing memories, then the most recent |
+| `list_memories { space?, cursor?, limit? }` | `brain:read` | one space's memories, newest first, `nextCursor` to continue |
+| `list_documents { space?, cursor?, limit? }` | `brain:read` | the Brain pages you can open, as `<type>/<id>` plus `index` and `log` |
+| `get_document { id }` | `brain:read` | one page as Markdown; a page you cannot open is "not found" |
+| `list_spaces {}` | `brain:read` | the projects you can open, their teams' notebooks and your agents with memory across sessions |
+| `who_am_i {}` | `brain:read` | your user, the key's scopes and the project |
+| `add_memory { text, space?, kind?, isStatic?, forgetAfter? }` | `brain:write` | save a memory (kind `memory` or `intended`; default space: your own project) |
+| `forget_memory { id, reason }` | `brain:write`, destructive | stop recalling a memory you may edit, with a reason |
+
+Text a model reads is one `<landflow-memory>` fence; `structuredContent` carries the plain values (the readers declare an
+`outputSchema`). `add_memory` and `forget_memory` need a person's key, not the instance access token, which only reads (as an
+owner). A write is recorded as the key's person with origin `person`; its audit row (`brain.memory_added`, `brain.fact_forgotten`)
+carries the key id, and `brain.memory_added` also `via: mcp`. `forget_memory` is annotated destructive, so an MCP grant set to
+`destructive` waits for a person's approval ([features/ai.md](features/ai.md#mcp)). `/connect` says how many tools the chosen
+scopes reach (a `brain:read` key 19, with `brain:write` 25, plus the workflow scopes).
 
 An API key sees only the tools its scopes cover (`brain:read`, `brain:write`; [features/ai.md](features/ai.md#mcp)). Each tool sees what the token's user sees (an instance access token sees everything), cut down to the project on a
 project server (`/api/mcp/projects/<id>`, a project token), where `brain_suggest` must name a workflow or agent of it.

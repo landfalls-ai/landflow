@@ -70,6 +70,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
   if (under('/api/audit')) return { scope: 'audit:read' };
   if (under('/api/settings/audit')) return { scope: 'admin', action: read ? 'audit:read' : 'settings:manage' };
   // Four-eyes publish requests: builders list, ask and decide (who may approve is checked by lib/server/governance).
+  // C11: the memory playground and the inspector's item states only read; each handler checks its source (404 otherwise).
+  if (under('/api/memory')) return { scope: 'workflows:read' };
   if (under('/api/publish-requests')) return { scope: read ? 'workflows:read' : 'workflows:write' };
   // LL: the LLM gateway (docs/llm-gateway.md). Syncing budgets and minting keys change LiteLLM: admins. The status is for
   // anyone signed in (the route leaves out the admin detail). Cap-raise requests: anyone who reads runs may see theirs,
@@ -190,6 +192,8 @@ function resourceAction(kind: ResourceRule['kind'], rest: string, method: string
   // Debug tokens (docs/specs/19-debug-token.md): minting one needs no more than reading the execution (the token reads less than its minter).
   if (kind === 'execution' && sub('debug-tokens')) return 'read';
   if (kind === 'execution' && (sub('retry') || sub('rerun') || sub('debug') || sub('stop') || sub('approvals') || sub('asks') || sub('agents'))) return READ_METHODS.has(method) ? 'read' : 'run';
+  // C09: forgetting or restoring one's own memory takes no more than running the agent (the handler narrows to the person's own, or an editor).
+  if (kind === 'agent' && sub('memories') && !READ_METHODS.has(method)) return 'run';
   if (kind === 'agent' && (sub('chat') || (sub('sessions') && !READ_METHODS.has(method)))) return 'run';
   if (kind === 'credential' && sub('oauth2')) return 'update';
   if (READ_METHODS.has(method)) return 'read';

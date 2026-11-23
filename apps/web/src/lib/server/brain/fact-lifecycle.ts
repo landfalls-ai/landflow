@@ -7,7 +7,7 @@
  * another SQLite file, so the embedding is made first (a failure writes nothing) and stored once the rows are committed. A
  * failed vector write is logged and the next study re-embeds.
  */
-import type { BrainFact, ProposalEvidence } from '../../shared/brain';
+import { AGENT_MEMORY_COLLECTION, type BrainFact, type ProposalEvidence } from '../../shared/brain';
 import type { BrainChangeOrigin } from '../../shared/brain-store';
 import { recordAudit } from '../audit';
 import { database, type Database } from '../db';
@@ -27,6 +27,17 @@ export { FactInputError, FactNotFoundError, MemoryIndexError, StaleChainError, S
 
 const MAX_REASON = 500;
 
+/** The vector collection of a fact: an agent's memory of a person has its own (C07 D3), everything else is the project's brain collection. */
+export const collectionOf = (fact: Pick<BrainFact, 'subjectType' | 'projectId'>): string => (fact.subjectType === 'agent-user' ? AGENT_MEMORY_COLLECTION : collectionFor(fact.projectId));
+
+/** The vector's metadata: the fact's identity, and for an agent's memory whose it is (the id is `<agentId>/<userId>`). */
+function vectorMetadata(fact: BrainFact): Record<string, string> {
+  const base = { factId: fact.id, subjectType: fact.subjectType, subjectId: fact.subjectId, kind: fact.kind };
+  if (fact.subjectType !== 'agent-user') return base;
+  const [agentId, userId] = fact.subjectId.split('/');
+  return { ...base, agentId, userId };
+}
+
 /** The vector of one fact, ready to store (undefined with embeddings off). Throws `MemoryIndexError` when the model is not reachable. */
 async function embed(fact: BrainFact): Promise<{ collection: string; text: string; embedding: number[] } | undefined> {
   const model = envString('LANDFLOW_BRAIN_EMBEDDINGS');
@@ -37,10 +48,23 @@ async function embed(fact: BrainFact): Promise<{ collection: string; text: strin
     const embeddings = ollamaEmbeddings({ baseUrl: ollamaUrl(), model: model || 'nomic-embed-text', documentPrefix: 'search_document: ', queryPrefix: 'search_query: ' });
     const [embedding] = await embeddings.embedDocuments([text]);
     if (!embedding?.length) throw new Error('empty embedding');
-    return { collection: collectionFor(fact.projectId), text, embedding };
+    return { collection: collectionOf(fact), text, embedding };
   } catch (error) {
     logger.warn('a brain fact could not be embedded; it was not changed', { id: fact.id, error });
     throw new MemoryIndexError();
+  }
+}
+
+/**
+ * Store the vector of a fact just written, so a meaning search finds it before the next study (C07 `add`). A failure is
+ * logged and left to the study: the fact is already stored and found by its words.
+ */
+export async function indexFact(fact: BrainFact): Promise<void> {
+  try {
+    const vector = await embed(fact);
+    if (vector) await new SqliteVectorStore().add(vector.collection, [{ id: fact.id, pageContent: vector.text, metadata: vectorMetadata(fact), embedding: vector.embedding }]);
+  } catch (error) {
+    logger.warn('the vector of a new memory was not stored; the next study embeds it', { id: fact.id, error });
   }
 }
 
@@ -81,7 +105,7 @@ export async function supersedeFact(chainId: string, next: SupersedeInput, who: 
   if (vector) {
     try {
       // `INSERT OR REPLACE` by id: the chain id's vector now says the new statement.
-      await new SqliteVectorStore().add(vector.collection, [{ id: written.id, pageContent: vector.text, metadata: { factId: written.id, subjectType: written.subjectType, subjectId: written.subjectId, kind: written.kind }, embedding: vector.embedding }]);
+      await new SqliteVectorStore().add(vector.collection, [{ id: written.id, pageContent: vector.text, metadata: vectorMetadata(written), embedding: vector.embedding }]);
     } catch (error) {
       logger.warn('the vector of a new fact version was not stored; the next study embeds it', { id: written.id, error });
     }
@@ -182,7 +206,7 @@ export function restoreFact(id: string, by: ForgetBy, db: Database = database())
 /** Drop a forgotten fact's vector (the next study would leave it out anyway); a failure is logged, never raised. */
 async function dropVector(fact: BrainFact): Promise<void> {
   try {
-    await new SqliteVectorStore().deleteWhere(collectionFor(fact.projectId), { factId: fact.id });
+    await new SqliteVectorStore().deleteWhere(collectionOf(fact), { factId: fact.id });
   } catch (error) {
     logger.warn('the vector of a forgotten fact was not removed; the next study drops it', { id: fact.id, error });
   }

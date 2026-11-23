@@ -17,6 +17,7 @@ import { Card } from '../shell/page-header';
 import { FilterChip } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Input, SectionLabel } from '../ui/inputs';
+import { PlaygroundButton } from '../memory/playground';
 import { FactHistory, ForgetDialog } from './fact-history';
 
 export function BrainPanel() {
@@ -156,6 +157,7 @@ export function BrainPanel() {
         <FilterChip size="sm" active={showForgotten} onClick={() => setShowForgotten((v) => !v)} title="Facts you forgot, with why; restore one to bring it back">
           Forgotten
         </FilterChip>
+        <PlaygroundButton source={{ kind: 'facts' }} title="Try a search: what Landflow knows" label="Try a search" />
       </div>
       {facts && facts.length === 0 && <p className="text-[12px] text-t3">{showForgotten ? 'Nothing forgotten.' : query ? 'No facts match.' : 'Nothing learned yet.'}</p>}
       {facts && facts.length > 0 && (

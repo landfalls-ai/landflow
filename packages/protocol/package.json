@@ -10,6 +10,7 @@
     "./sync-format": "./src/sync-format.ts",
     "./practice-checks": "./src/practice-checks.ts",
     "./harnesses": "./src/harnesses.ts",
+    "./quota-block": "./src/quota-block.ts",
     "./proto/plugin.proto": "./proto/landflow/plugin/v1/plugin.proto",
     "./conformance": "./conformance/index.ts"
   },

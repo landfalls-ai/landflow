@@ -106,6 +106,9 @@ export function toolKindAllowedBy(settings: Pick<ProjectSettings, 'agentTools'>,
   return kind === undefined || settings.agentTools?.mode !== 'allow' || settings.agentTools.kinds.includes(kind);
 }
 
+/** The project's memory backend (C07): the built-in stores, or a plugin node that flags `memoryProvider` (and the credential it uses). */
+export type ProjectMemory = { backend: 'built-in' } | { backend: 'provider'; nodeType: string; credentialId?: string };
+
 export interface ProjectSettings {
   nodes: ScopedNodePolicy;
   approvers: ProjectApprovers;
@@ -127,6 +130,8 @@ export interface ProjectSettings {
   agents?: ProjectAgentList;
   /** PC13: absent: mode off. */
   agentTools?: ProjectToolKinds;
+  /** C07: where this project's memory lives. Absent: the built-in backend (facts, notebook, agent memory). */
+  memory?: ProjectMemory;
   updatedAt?: string;
   updatedBy?: string;
 }
@@ -152,6 +157,8 @@ export interface ProjectSettingsView {
   nodeTypes: Array<{ type: string; displayName: string; pluginId: string }>;
   /** PC13: the agents available in the project (its own, shared to it, or to all projects), for the allow-list. Always set from wave 9 on; optional so a client copy compiles against an older route. */
   availableAgents?: Array<{ id: string; name: string; home: boolean }>;
+  /** C07: the installed plugin nodes that flag `memoryProvider`, with the credential types each declares, for the Memory row. */
+  memoryProviders?: Array<{ type: string; displayName: string; pluginName: string; credentialTypes: string[] }>;
 }
 
 /** GET /api/workflows/<id>/policy */

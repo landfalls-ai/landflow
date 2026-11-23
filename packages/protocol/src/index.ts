@@ -8,3 +8,5 @@ export * from './sync-format';
 export * from './work-events';
 export * from './practice-checks'; // PR08:
 export * from './harnesses'; // C15: the harness registry
+export * from './memory-provider'; // C07:
+export * from './quota-block'; // C05, C08: the provider quota classifier

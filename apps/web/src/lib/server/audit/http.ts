@@ -80,6 +80,7 @@ const SKIP: RegExp[] = [
   /^\/api\/node-types\/load-options$/,
   /^\/api\/expressions\/preview$/,
   /^\/api\/assistant\//,
+  /^\/api\/memory\/search$/,
   /^\/api\/ai\//,
   /^\/api\/agents\/[^/]+\/chat$/,
   /^\/api\/agents\/[^/]+\/sessions\//,

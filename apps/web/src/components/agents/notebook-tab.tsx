@@ -17,6 +17,7 @@ import { NOTE_KINDS, NOTE_KIND_LABEL, type NoteCounts, type NoteKind, type NoteS
 import { expiryView, groupNotes, hostOf, sourceParts, statusLabel, type DisputePair } from '@/lib/shared/notebook-view';
 import { cn } from '@/lib/utils';
 import { ForgetDialog } from '../brain/fact-history';
+import { PlaygroundButton } from '../memory/playground';
 import { Badge, Chip, FilterChip, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Input, Select, Textarea } from '../ui/inputs';
@@ -188,6 +189,7 @@ export function NotebookTab({ teamId, faces }: { teamId: string; faces: Face[] }
           <FilterChip size="sm" active={showForgotten} onClick={() => setShowForgotten((v) => !v)} title="Notes you forgot, with why; restore one to bring it back">
             Forgotten
           </FilterChip>
+          <PlaygroundButton source={{ kind: 'notebook', teamId }} title="Try a search: team notebook" label="Try" />
           <Button size="sm" onClick={() => setAdding((a) => !a)} aria-expanded={adding}>
             <Plus className="size-3.5" strokeWidth={2} /> Note
           </Button>

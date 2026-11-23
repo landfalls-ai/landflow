@@ -36,6 +36,8 @@ export const TOKEN_ANNOTATION = 'landflow.dev/token-sha256';
 export const TOOLS_ANNOTATION = 'landflow.dev/tools-sha256';
 const MANAGED_BY = { 'app.kubernetes.io/managed-by': 'landflow' };
 export const MCP_TIMEOUT = '120s';
+/** C09: with cross-session memory on, the persona says to recall first; the memory key is in the conversation's first message. */
+export const MEMORY_PERSONA_LINE = 'At the start of a task, call recall_memory with the memory key from the conversation and the task, and use remember and forget_memory to keep what you know about the person up to date.';
 
 /** A tool as kagent binds it: its MCP name and whether kagent pauses for a person before it runs. */
 export interface ExposedTool {
@@ -228,7 +230,7 @@ export function kagentManifests(input: CompileInput): KubeObject[] {
       spec: {
         description: config.description || config.name,
         ...(model && { modelConfig: { name } }),
-        systemPrompt: personaPrompt(config),
+        systemPrompt: config.memory?.crossSession ? `${personaPrompt(config)}\n\n${MEMORY_PERSONA_LINE}` : personaPrompt(config),
         tools: (claude ? claudeToolBindings : toolBindings)(name, input.tools),
         ...(plugins.length && { plugins: plugins.map(pluginSource) }),
       },

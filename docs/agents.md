@@ -455,6 +455,7 @@ absent from an agent without any). Publishing needs a model, and a persona part 
     session. When the remote agent pauses for a tool approval, the run pauses with an approval card
     ("*landflow_text* wants to run *changeCase*") answered like any other; its questions go to the
     model. See [a2a.md](a2a.md).
+  - **Try a search** (on a saved knowledge base's dialog, C11): the memory playground runs one search over the saved base with mode, limit, threshold and an optional rerank, shows each score before and after rerank and what the threshold dropped, and changes nothing ([run-trace.md](run-trace.md#memory-playground)).
   - **Knowledge bases** (**Add knowledge base**): a vector store collection the agent searches
     with one tool (`search_knowledge_base({ query })` by default, renameable), returning the best
     passages with their metadata and scores. Settings: the store (SQLite in the data folder,
@@ -490,13 +491,44 @@ absent from an agent without any). Publishing needs a model, and a persona part 
   them. Deploying pins each one to a commit and packs it into an image Landflow serves to kagent
   ([a2a.md](a2a.md#on-claude-code)).
 - **Memory** (Abilities). Session memory is always on: the session keeps the transcript, and the model
-  sees its last 30 user turns. **Cross-session memory** adds a `remember` tool. The saved facts
-  (at most 50 per agent and user) are put into the system prompt of that user's later sessions, quoted as data inside one
-  `<landflow-memory source="agent-memory">` block: anything in a note that looks like a fence (the block's own tags, `<<<`/`>>>`)
-  is escaped (`lib/shared/memory-fence.ts`), so a remembered sentence cannot close the block and write instructions after it.
-  An agent with no notes gets no block. The team notebook and the brain's facts are fenced the same way.
-  A user is "you" in the test chat, `telegram:<id>` in Telegram, `slack:<member id>` in Slack, `teams:<Entra object id>` in Teams, `workflow:<id>` from a workflow,
-  and `schedule:<id>` for a schedule.
+  sees its last 30 user turns. **Cross-session memory** adds the `remember` and `forget_memory` tools and puts what the
+  agent knows about the person into the system prompt of that person's later sessions (below). A user is the person chatting (their user id) in the
+  test chat, `telegram:<id>` in Telegram, `slack:<member id>` in Slack, `teams:<Entra object id>` in Teams, `workflow:<id>` from a
+  workflow, and `schedule:<id>` for a schedule.
+
+  What it remembers is stored as private brain facts (subject `agent-user`, `<agent id>/<user id>`, kind `memory`), so
+  versions, static facts and soft forget come from the fact lifecycle ([second-brain.md](second-brain.md#memory-backend)).
+  They never show on the Brain page, in the graph, in a Notion push, in a project's facts or in an MCP brain tool, and one
+  person's memories never reach another person's run.
+
+  - **The block.** At the start of a run (a resume reads it again) the prompt gets one `memory` part after the cache
+    breakpoint: the **profile** (every static memory of that person, then the 10 newest others) and up to 8 memories
+    **relevant** to the run's first message (by meaning and words, score at least 0.3, none already in the profile). Each
+    part is left out when empty; the block is at most 4,000 characters (the lowest-scored relevant lines go first, then the
+    oldest non-static profile lines), quoted as data inside one `<landflow-memory source="agent-memory">` fence
+    (`lib/shared/memory-fence.ts`: anything that looks like a fence is escaped). The lines show a short handle (`m_…`), never
+    the person's id. Without an embedding model, or with Ollama down, the relevant part comes from words and the run does not
+    fail; the memory card says "Recall by words only".
+  - **`remember { fact, static?, replaces? }`.** `static` keeps it in front of the agent every session (a name, a role);
+    `replaces` (a handle from the block) writes a new version of that memory instead of adding a second. An agent's write
+    is Landflow's, never a person's, so it cannot replace a static memory (it forgets it with `forget_memory` and remembers the
+    new one). The same words again, or an embedding at least 0.92 alike, refresh the old memory and keep its words.
+  - **`forget_memory { id, reason }`.** Forgets one of this person's memories (soft: it can be restored). Another person's id
+    is "not found". The tool is marked destructive.
+  - **The bound.** A person has at most 1,000 live memories with one agent: past that the oldest non-static one is forgotten
+    with reason `capacity` (audited as Landflow); static ones are never touched. The old cap of 50 sentences is gone.
+  - **Old notes.** At boot, on the leader (and before the first read or write of memory, so a worker or a test sees it too), every old `agent_memory` row (and, in files mode,
+    every `agent-memory/<agent>.json`) is imported as a non-static memory with its date; the ids are derived from the note,
+    so a second run or a second process writes nothing. The old table stays, read-only, for one release.
+  - **Whose memory.** The person the run is for: a Landflow user in the test chat (their own id, not one shared pool), `slack:<member>`, `teams:<id>` and `telegram:<id>` in a channel (the author of the current message, so a shared thread or group recalls and writes for whoever is speaking), `workflow:<id>` and `schedule:<id>`. A sub-agent call (`agent:…`), a team run (`team:…`), an evaluation, a smoke test and kagent's own session user have none. The test chat's memory is the person chatting even in a session someone else opened (the session stays theirs). A shared thread's transcript is shared: everyone in a Slack thread, Teams conversation or Telegram group reads what was said there, so what the agent says it remembered (and the recalled block it quotes) is visible to them; the agent is told that memories belong to the person speaking now and not to save facts about others.
+  - **What it recalled.** The run records the ids, versions and scores of what it was given (`saw.memory`, shown in What it
+    saw and the Sessions tab), by the run's trace content mode: the sources on `summaries` and `full`, the exact block only on
+    `full` and only in the journal, where only that person, the agent's editors and instance admins read it (the session record, which everyone who can read the session sees, keeps the sources, never the text), nothing on `off` ([run-trace.md](run-trace.md#what-it-saw)). An evaluation run and an agent without the switch
+    read and write no memory; a team member's notebook is the team's ([team-notebook.md](team-notebook.md)).
+  - **The memory card.** Abilities → Cross-session memory → **What it remembers** lists a person's memories (Static, the
+    version, when it was said) with **Forget** (a reason is required) and **Restore** under the **Forgotten** chip. The
+    agent's editors pick whose; `GET /api/agents/:id/memories`, `POST /api/agents/:id/memories/:memoryId` ([API](reference/api.md)).
+  - **On kagent** the agent gets the same through three MCP tools and a signed key ([a2a.md](a2a.md#memory-on-kagent)).
 - **Triggers** (Deploy; published version only):
   - **Schedules:** hourly, daily, weekly, monthly, or a five-field cron, in a time zone.
     Each fire is a new session whose user message is the schedule's *What to do*.

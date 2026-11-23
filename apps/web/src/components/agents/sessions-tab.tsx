@@ -16,7 +16,8 @@ import type { Brand } from '@/lib/shared/brand-icons';
 import { EmptyState } from '../ui/empty-state';
 import { Segmented } from '../ui/segmented';
 import { cleanPersona } from '@/lib/shared/persona';
-import { sawPersona } from '@/lib/shared/what-it-saw-sections';
+import type { SawMemorySource } from '@/lib/shared/what-it-saw';
+import { sawMemoryOf, sawPersona } from '@/lib/shared/what-it-saw-sections';
 import { WhatItSaw } from '../run-trace/what-it-saw';
 import { TimelineView, TraceChip, type ToolEntry } from './timeline';
 import { REASON_LABEL, useAgentRun } from './use-agent-run';
@@ -81,13 +82,15 @@ function SawFold({ session, agentId }: { session: AgentSession; agentId: string 
   }, [agentId, has]);
   const context = session.context;
   if (!context) return null;
+  // C11: the memory the run was given. The session carries it once the agent-memory package records it (`memory`, `memoryText`); none before.
+  const { memory, memoryText } = session as AgentSession & { memory?: SawMemorySource[]; memoryText?: string };
   return (
     <details className="group mb-4 rounded-2xl border border-hair bg-sf px-4 py-2.5" data-testid="session-saw">
       <summary className="flex min-h-9 cursor-pointer list-none items-center gap-1.5 text-[13px] font-semibold text-t1 [&::-webkit-details-marker]:hidden">
         <ChevronRight className="size-3.5 text-t3 transition-transform group-open:rotate-90" /> What it saw
       </summary>
       <div className="pb-1.5">
-        <WhatItSaw bare mode={context.mode} text={context.text} practices={context.practices} executionId={session.execution?.executionId} persona={persona} />
+        <WhatItSaw bare mode={context.mode} text={context.text} practices={context.practices} memory={sawMemoryOf(memory)} memoryText={memoryText} executionId={session.execution?.executionId} persona={persona} />
       </div>
     </details>
   );

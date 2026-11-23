@@ -213,6 +213,19 @@ describe('Slack agent channel with an OAuth2 credential', () => {
   credentials.saveOAuth2Token(oauth.id, { access_token: TOKEN, token_type: 'bot', obtained_at: new Date().toISOString(), team: { id: 'T1', name: 'Acme' } });
   const oauthRef = { id: oauth.id, name: oauth.name };
 
+  it('C09: a thread recalls and writes for the author of the message, not whoever opened the thread', async () => {
+    const agent = agentWith({ credential: oauthRef });
+    const post = async (user: string, id: string, ts: string) => {
+      const body = JSON.stringify({ type: 'event_callback', event_id: id, event: { type: 'app_mention', channel: 'C77', user, text: '<@U0BOT> hello', ts, thread_ts: '1700000077.000100' } });
+      await eventsRoute.POST(new Request('http://x/y', { method: 'POST', headers: signed(body), body }), { params: Promise.resolve({ agentId: agent.id, channelId: 'ch1' }) });
+      await settleSlackTasks();
+    };
+    await post('U1', 'EvShare1', '1700000077.000100');
+    await post('U2', 'EvShare2', '1700000077.000200');
+    const [shared] = agentStore.listSessions(agent.id);
+    expect(agentStore.getSession(shared.id)).toMatchObject({ source: 'slack', userId: 'slack:U2' });
+  });
+
   it('verifies events with the credential’s signing secret and replies with the installed bot token', async () => {
     const agent = agentWith({ credential: oauthRef });
     const body = JSON.stringify({ type: 'event_callback', event_id: 'EvOauth1', event: { type: 'app_mention', channel: 'C9', user: 'U1', text: '<@U0BOT> hello', ts: '1700000009.000100' } });
@@ -426,6 +439,14 @@ describe('Microsoft Teams channel', () => {
     const none = await post(agent.id, activity(), jwt(), 'nope');
     expect(none.status).toBe(404);
     expect(sent()).toHaveLength(0);
+  });
+
+  it('C09: a shared conversation recalls and writes for the author of the message, not whoever opened it', async () => {
+    const agent = teamsAgent();
+    await post(agent.id, activity({ conversation: { id: 'conv-shared', conversationType: 'channel' } }));
+    await post(agent.id, activity({ conversation: { id: 'conv-shared', conversationType: 'channel' }, from: { id: '29:bob', name: 'Bob', aadObjectId: 'oid-bob' }, text: '<at>Helper</at> and me?' }));
+    const [shared] = agentStore.listSessions(agent.id);
+    expect(agentStore.getSession(shared.id)).toMatchObject({ userId: 'teams:oid-bob' });
   });
 
   it('replies through the activity’s serviceUrl with a bot token; the conversation is one session', async () => {

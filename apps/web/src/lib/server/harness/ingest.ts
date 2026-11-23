@@ -11,7 +11,8 @@ import { agentStore } from '../agents/store';
 import { bus } from '../bus';
 import { contentOf } from '../journal/content';
 import { canResource, type Actor } from '../projects/access';
-import { classifyText } from '../../shared/quota-block';
+import { classifyText, type BlockedKind } from '../../shared/quota-block';
+import { countBlocked } from '../a2a/blocked';
 import { logger } from '../telemetry/logger';
 import { mayOpenSession, takeEvent } from './limits';
 import { mirrorEvent } from './mirror';
@@ -44,8 +45,14 @@ export function agentForHeader(actor: Actor, value: string | null | undefined): 
   return agent && canResource(actor, 'agent', agent.id, 'run') ? { id: agent.id, name: agent.name } : undefined;
 }
 
-/** Blocked from a quota signal: an explicit `quota_blocked` field, or a StopFailure whose words say a usage limit or no credits. */
-function blockedKindOf(name: string, payload: Record<string, unknown>): string | undefined {
+const BLOCKED_KINDS: readonly BlockedKind[] = ['usage_limit', 'credits_depleted', 'unknown'];
+
+/**
+ * Blocked from a quota signal: Codex's `quota_blocked` event (its `kind`, else unknown: the watch's one event, C08), an explicit
+ * `quota_blocked` field, or a StopFailure whose words say a usage limit or no credits.
+ */
+function blockedKindOf(name: string, payload: Record<string, unknown>): BlockedKind | undefined {
+  if (name === 'quota_blocked') return BLOCKED_KINDS.find((kind) => kind === payload.kind) ?? 'unknown';
   if (payload.quota_blocked === true) return 'unknown';
   if (name !== 'StopFailure') return undefined;
   for (const field of ['error_details', 'last_assistant_message', 'error']) {
@@ -113,11 +120,14 @@ export async function ingestHookEvent(input: IngestInput): Promise<IngestResult>
     receivedAt: receivedAt.toISOString(),
     verdict,
     viewFor,
+    ...(blocked && { blocked }),
     prompt: name === 'UserPromptSubmit',
     tool: name === 'PreToolUse',
     ...(repository && { repository }),
   });
   countHarnessEvent(entry.id, applied.applied ? 'applied' : 'late');
+  // One entry into Blocked from the Codex watch counts once (the metric's harness label is a small fixed set).
+  if (entry.id === 'codex' && blocked && applied.applied && applied.session.status === 'blocked' && (applied.created || applied.changed)) countBlocked(blocked, 'codex');
   if (applied.session.agent_id) {
     try {
       mirrorEvent(applied.session, { id: applied.eventId, name, view: applied.view, at: receivedAt.toISOString(), orderKey: orderKeyOf(input.headers, receivedAt).value }, !applied.applied);
