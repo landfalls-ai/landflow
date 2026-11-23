@@ -14,7 +14,7 @@ import { EmptyState } from '../ui/empty-state';
 /** What the approver reads: who, what, how long, why, and the account to grant to. */
 export function requestText(request: AccessRequestView): string {
   const lines = [`${request.requester.name} asks for ${request.entryName} for ${durationText(request.durationMinutes)}.`, `Why: ${request.reason}`];
-  if (request.account) lines.push(request.system.startsWith('github') ? `GitHub username: ${request.account} (unverified: they typed it)` : `Account: ${request.account}`);
+  if (request.account) lines.push(`${request.system.startsWith('github') ? 'GitHub username' : 'Account'}: ${request.account}${request.accountVerified === false ? ' (unverified: they typed it)' : ''}`);
   return lines.join('\n');
 }
 

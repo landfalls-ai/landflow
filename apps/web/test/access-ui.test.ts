@@ -22,7 +22,7 @@ import { DecideList } from '../src/components/access/to-decide';
 
 vi.mock('next/link', () => ({ default: (p: { href: string; children: unknown; className?: string }) => createElement('a', { href: p.href, className: p.className }, p.children as never) }));
 
-const setupDone: AccessSetup = { installed: true, active: true, workflowId: 'w1', chatWorkflowId: 'w2', projectId: 'p1', mail: false };
+const setupDone: AccessSetup = { installed: true, active: true, workflowId: 'w1', chatWorkflowId: 'w2', projectId: 'p1', mail: false, flowsAdminOnly: true, lockedWorkflowIds: [] };
 const member = { id: 'u2', role: 'member' as const };
 const owner = { id: 'u1', role: 'owner' as const };
 
@@ -292,6 +292,15 @@ describe('To decide (U-3)', () => {
     expect(out).toContain('On call this week');
     expect(out).toContain('mia-gh');
     expect(html(createElement(DecideList, { requests: [], entries: [], onDecided: () => {} }))).toContain('Nothing waits for you');
+  });
+  it('marks a GitHub username nobody verified as unverified, beside the name', () => {
+    const text = (over: Partial<AccessRequestView>) => html(createElement(DecideList, { requests: [request({ canDecide: true, ...over })], entries: [entry()], onDecided: () => {} }));
+    expect(text({ accountVerified: false })).toContain('mia-gh (unverified');
+    expect(text({ accountVerified: true })).not.toContain('unverified');
+  });
+  it('a failed grant shows Retry on My requests', () => {
+    const out = html(createElement(RequestRows, { requests: [request({ status: 'approved', canCancel: false, grant: grant({ status: 'failed', canRetry: true }) })], viewerId: 'u2', onCancel: () => {}, onGiveBack: () => {}, onRetry: () => {} }));
+    expect(out).toContain('Retry');
   });
 });
 

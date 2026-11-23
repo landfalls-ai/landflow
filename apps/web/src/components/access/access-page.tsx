@@ -128,7 +128,7 @@ export function AccessPage() {
       {current === 'mine' && <RequestsView viewerId={viewer.id} highlight={highlight} />}
       {current === 'decide' && <DecideView entries={entries} onDecided={refreshAll} />}
       {current === 'grants' && <GrantsView admin={isAdminViewer(viewer)} manages={isApprover(viewer, entries) || entries.some((e) => e.canEdit)} />}
-      {current === 'catalog' && <CatalogView viewer={viewer} entries={entries} people={people} projectId={setup?.projectId} onChanged={() => void reloadEntries()} />}
+      {current === 'catalog' && <CatalogView viewer={viewer} entries={entries} people={people} setup={setup} onChanged={() => void reloadEntries()} />}
     </AccessFrame>
   );
 }

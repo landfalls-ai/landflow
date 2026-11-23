@@ -32,7 +32,7 @@ function detail(request: AccessRequestView, state: ReturnType<typeof requestStat
   return request.note;
 }
 
-export function RequestRows({ requests, viewerId, highlight, onCancel, onGiveBack }: { requests: AccessRequestView[]; viewerId: string; highlight?: string; onCancel: (request: AccessRequestView) => void; onGiveBack: (request: AccessRequestView) => void }) {
+export function RequestRows({ requests, viewerId, highlight, onCancel, onGiveBack, onRetry }: { requests: AccessRequestView[]; viewerId: string; highlight?: string; onCancel: (request: AccessRequestView) => void; onGiveBack: (request: AccessRequestView) => void; onRetry?: (request: AccessRequestView) => void }) {
   if (requests.length === 0) {
     return (
       <Card>
@@ -60,6 +60,7 @@ export function RequestRows({ requests, viewerId, highlight, onCancel, onGiveBac
             </div>
             <div className="flex shrink-0 gap-2 max-md:w-full">
               {request.canCancel && state === 'waiting' && <Button size="sm" variant="outline" onClick={() => onCancel(request)} className="max-md:h-11 max-md:flex-1">Cancel</Button>}
+              {request.grant?.canRetry && onRetry && <Button size="sm" variant="outline" onClick={() => onRetry(request)} className="max-md:h-11 max-md:flex-1">Retry</Button>}
               {request.grant?.canRevoke && <Button size="sm" variant="outline" onClick={() => onGiveBack(request)} className="max-md:h-11 max-md:flex-1">Give it back</Button>}
             </div>
           </li>
@@ -94,6 +95,7 @@ export function RequestsView({ viewerId, highlight }: { viewerId: string; highli
       highlight={highlight}
       onCancel={(r) => run(() => accessApi.cancel(r.id), 'Cancelled')}
       onGiveBack={(r) => r.grant && run(() => accessApi.grantAction(r.grant!.id, 'revoke'), 'Given back')}
+      onRetry={(r) => r.grant && run(() => accessApi.grantAction(r.grant!.id, 'retry'), 'Tried again')}
     />
   );
 }

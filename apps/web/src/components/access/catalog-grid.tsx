@@ -1,9 +1,10 @@
 'use client';
 /** The catalog: one row per entry (a card on a phone), the sheet to edit one, and New entry for admins. */
 import { useState } from 'react';
+import Link from 'next/link';
 import { Plus, Library } from 'lucide-react';
 import { SYSTEM_FORM } from '@/lib/client/access';
-import { durationText, type AccessEntryView } from '@/lib/shared/access';
+import { durationText, type AccessEntryView, type AccessSetup } from '@/lib/shared/access';
 import type { Viewer } from '@/lib/shared/auth';
 import { usePhone } from '@/lib/client/use-phone';
 import { isAdminViewer, type Person2 } from '@/lib/client/access';
@@ -49,13 +50,21 @@ export function CatalogGrid({ entries, isAdmin, onOpen, onNew, phone }: { entrie
   );
 }
 
-export function CatalogView({ viewer, entries, people, projectId, onChanged }: { viewer: Pick<Viewer, 'role'>; entries: AccessEntryView[]; people: Person2[]; projectId?: string; onChanged: () => void }) {
+export function CatalogView({ viewer, entries, people, setup, onChanged }: { viewer: Pick<Viewer, 'role'>; entries: AccessEntryView[]; people: Person2[]; setup?: AccessSetup; onChanged: () => void }) {
+  const projectId = setup?.projectId;
   const phone = usePhone();
   const admin = isAdminViewer(viewer);
   const [sheet, setSheet] = useState<{ entry?: AccessEntryView }>();
   const editable = entries.filter((e) => admin || e.canEdit);
   return (
     <>
+      {admin && setup?.workflowId && (
+        <p className="mb-3 text-[12.5px] text-t3">
+          The flows behind this page: <Link href={`/workflows/${setup.workflowId}`} className="text-ac hover:underline">Access requests</Link>
+          {setup.chatWorkflowId && <>, <Link href={`/workflows/${setup.chatWorkflowId}`} className="text-ac hover:underline">the chat</Link></>}.
+          {setup.flowsAdminOnly ? ' Only admins can change them, so what an approver is shown can’t be altered by someone else.' : ''}
+        </p>
+      )}
       {editable.length === 0 && !admin ? (
         <Card><EmptyState icon={<Library />} title="You own no entries" /></Card>
       ) : (
