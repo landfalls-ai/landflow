@@ -48,7 +48,9 @@ export const POST = handler(async (request: Request) => {
   const body = await parseBody(request, z.object({ name: z.string().max(120).default(''), type: z.string().min(3), data: z.record(z.string(), z.unknown()).default({}), rateLimit: credentialRateLimitSchema.nullable().optional() }));
   if (!body.ok) return body.response;
   // ?projectId= puts it in a project (the caller must be an editor there); else the caller's personal project.
-  const credential = createInProject(request, 'credential', () => credentials.create({ ...body.data, data: body.data.data as JsonObject }, { actor: routeActor().id }), (c) => c.id);
+  // The id is chosen first so the credential's project is recorded before it is sealed: the project's key seals it (C31).
+  const id = credentials.newId();
+  const credential = createInProject(request, 'credential', () => credentials.create({ ...body.data, data: body.data.data as JsonObject }, { id, actor: routeActor().id }), (c) => c.id, { id });
   // Ids, names and the type only: never the data. The id exists only once it is created, so in fail-closed mode a
   // credential whose event can't be stored is deleted again (the credentials file is no transaction).
   try {

@@ -11,9 +11,10 @@ import { rotateEncryption } from '../src/lib/server/credentials/rotate';
 async function main(): Promise<number> {
   await openDatabase();
   const result = rotateEncryption();
-  recordAudit({ action: 'encryption.rotate', target: { type: 'settings', id: 'encryption', name: 'Encryption key' }, details: { primary: result.primary, resealed: result.resealed, current: result.current, failed: result.failed.length, stores: result.stores, via: 'script' } });
+  recordAudit({ action: 'encryption.rotate', target: { type: 'settings', id: 'encryption', name: 'Encryption key' }, details: { primary: result.primary, resealed: result.resealed, current: result.current, failed: result.failed.length, stores: result.stores, projectKeysRewrapped: result.projectKeys.rewrapped, via: 'script' } });
   console.log(`Primary key ${result.primary}: re-sealed ${result.resealed}, already current ${result.current}, failed ${result.failed.length}.`);
   for (const [name, count] of Object.entries(result.stores)) console.log(`  ${name}: ${count}`);
+  console.log(`  project keys re-wrapped: ${result.projectKeys.rewrapped} (already current ${result.projectKeys.current})`);
   for (const id of result.failed) console.error(`  could not open ${id}`);
   if (result.failed.length) console.error('Do not remove an old key from LANDFLOW_ENCRYPTION_KEYS yet.');
   // Postgres writes through a queue: wait for it before the process ends.

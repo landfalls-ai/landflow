@@ -9,7 +9,13 @@ import { credentials } from '../credentials/vault';
 import { dataTables } from '../datatables';
 import { store } from '../store';
 import { logger } from '../telemetry/logger';
+import { homeProjectId } from './store';
 import { adoptUnassigned } from './transfer';
+
+// C31: from the moment this module loads (every process, not only the one that adopts), a credential is sealed with the
+// key of its home project. The vault never imports projects: this is the one place that knows both. Before it runs
+// (a script, a test that never loads the host), credentials seal on the ring as before.
+credentials.setProjectResolver((credentialId) => homeProjectId('credential', credentialId));
 
 export function adoptUnassignedResources(): number {
   try {

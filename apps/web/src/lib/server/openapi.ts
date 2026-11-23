@@ -1354,6 +1354,49 @@ function paths(): Record<string, Record<string, Json>> {
     responses: { 200: reply('The settings', object({ settings: settingsDoc, jsonRender: { type: 'boolean' } })), 400: invalid, 403: errorRef('Not the owner (json-render)') },
   });
 
+  // C31: project keys (docs/features/secrets-and-environments.md#project-keys). Owner only, session only.
+  const reseal = { resealed: { type: 'integer' }, current: { type: 'integer' }, failed: array({ type: 'string' }), skipped: { type: 'integer' } };
+  add('get', '/api/settings/encryption/project-keys', {
+    tag: 'Settings',
+    id: 'getProjectKeys',
+    summary: 'Project keys: versions and what is sealed with them',
+    description: 'Owner only, session only (an API key gets 403). Per project its active version, its retired versions and how many credentials are sealed with it; `onRing` counts credentials still sealed with a key ring key; `unreadable` lists `<projectId>:<version>` of keys this process can’t unwrap (the ring lacks the key that wrapped them).',
+    responses: {
+      200: reply(
+        'Where the project keys stand',
+        object({ projects: array(object({ projectId: { type: 'string' }, name: { type: 'string' }, active: { type: 'integer' }, retired: array({ type: 'integer' }), credentials: { type: 'integer' } }, ['projectId', 'retired', 'credentials'])), onRing: { type: 'integer' }, unreadable: array({ type: 'string' }) }, ['projects', 'onRing', 'unreadable']),
+      ),
+      403: errorRef('Not the owner'),
+    },
+  });
+  add('post', '/api/settings/encryption/project-keys', {
+    tag: 'Settings',
+    id: 'moveCredentialsBetweenKeys',
+    summary: 'Migrate credentials onto project keys, or revert them to the ring',
+    description:
+      'Owner only, session only. `migrate` seals every credential with its project’s active key, one at a time, and deletes retired keys nothing names and keys of projects that are gone; `revert` seals every credential with the ring’s primary key as a version 2 value (run it before a downgrade to a build without project keys, and check `onProjectKeys` is 0). Both are idempotent: run again while `done` is false. Audited fail-closed as `encryption.project_key.migrated` / `.reverted`: 503 when the event can’t be stored under `LANDFLOW_AUDIT_FAIL_CLOSED`.',
+    body: jsonBody(object({ action: { type: 'string', enum: ['migrate', 'revert'] } }, ['action'])),
+    responses: {
+      200: reply('What moved', object({ ...reseal, destroyed: array({ type: 'string' }), onProjectKeys: { type: 'integer' }, done: { type: 'boolean' } }, ['resealed', 'current', 'failed', 'done'])),
+      400: invalid,
+      403: errorRef('Not the owner'),
+      503: errorRef('The audit log is unavailable'),
+    },
+  });
+  add('post', '/api/settings/encryption/project-keys/{projectId}/rotate', {
+    tag: 'Settings',
+    id: 'rotateProjectKey',
+    summary: 'Rotate one project’s key',
+    description: 'Owner only, session only. A new key version for the project: its credentials are re-sealed with it one at a time (no other project is touched) and the old version is deleted once no credential names it. `failed` lists credentials that stayed on the old version. Audited fail-closed as `encryption.project_key.rotated`.',
+    pathParams: { projectId: 'The project id' },
+    responses: {
+      200: reply('The new version', object({ version: { type: 'integer' }, resealed: { type: 'integer' }, failed: array({ type: 'string' }), destroyed: array({ type: 'integer' }), done: { type: 'boolean' } }, ['version', 'resealed', 'failed', 'destroyed', 'done'])),
+      403: errorRef('Not the owner'),
+      404: notFound,
+      503: errorRef('The audit log is unavailable'),
+    },
+  });
+
   // SB19: the model Spotlight uses (docs/assistant.md, "The Spotlight panel").
   const spotlightModelsDoc = object({ default: { type: 'string' }, models: array(object({ id: { type: 'string' }, label: { type: 'string' }, source: { type: 'string', enum: ['ollama', 'gateway', 'anthropic', 'openai'] }, local: { type: 'boolean' } }, ['id', 'label', 'source', 'local'])) }, ['default', 'models']);
   add('get', '/api/settings/spotlight', {

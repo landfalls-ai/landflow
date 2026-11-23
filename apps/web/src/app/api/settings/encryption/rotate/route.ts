@@ -3,7 +3,8 @@
  * the primary key of the ring (LANDFLOW_ENCRYPTION_KEYS). Owner only, session only. Refused while no ring is configured
  * (the primary would be the one key already in use). Idempotent: run it again after an interruption. In queue mode every
  * process must have the new ring first (docs/features/secrets-and-environments.md). The answer says what was re-sealed
- * and what could not be opened; remove an old key only when `failed` is empty.
+ * and what could not be opened; remove an old key only when `failed` is empty. Project keys (C31) are wrapped again, not
+ * their credentials: `projectKeys.rewrapped` says how many.
  */
 import { recordAudit } from '@/lib/server/audit';
 import { requireUser } from '@/lib/server/auth';
@@ -21,7 +22,7 @@ export const POST = handler(async () => {
   recordAudit({
     action: 'encryption.rotate',
     target: { type: 'settings', id: 'encryption', name: 'Encryption key' },
-    details: { primary: result.primary, resealed: result.resealed, current: result.current, failed: result.failed.length, stores: result.stores },
+    details: { primary: result.primary, resealed: result.resealed, current: result.current, failed: result.failed.length, stores: result.stores, projectKeysRewrapped: result.projectKeys.rewrapped },
   });
   return json({ ...result, done: result.failed.length === 0 });
 });

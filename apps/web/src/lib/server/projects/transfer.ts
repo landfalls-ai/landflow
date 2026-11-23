@@ -7,6 +7,7 @@
  * share) unless told otherwise, and moving a workflow can share the credentials it uses with the new project.
  */
 import { recordAudit } from '../audit';
+import { projectKeys } from '../credentials/project-keys'; // C31:
 import { personalProjectId, type ResourceKind, type ShareRole, type TransferTarget } from '../../shared/projects';
 import { authDb } from '../auth/db';
 import { deleteUser, getUser } from '../auth/users';
@@ -75,6 +76,8 @@ export function moveResource(kind: ResourceKind, id: string, projectId: string, 
       details: { kind, resourceId: id, from: result.from ?? null, to: target.id, toName: target.name, keepAccess: kind === 'credential' ? options.keepAccess !== false : null, sharedCredentials: options.shareCredentials?.length ?? 0 },
     });
     for (const [shareKind, shareId, withProject, was] of kept) auditShare(shareKind, shareId, withProject, was, 'user');
+    // C31: the credential is sealed with its new project's key now (the vault is not in this transaction: a failure leaves it on the old key, readable, and `migrate` finishes it).
+    if (kind === 'credential') projectKeys.resealCredentials([id]);
   }
   return { from: result.from, to: result.to };
 }
@@ -163,8 +166,9 @@ export function deleteUserWithTransfer(userId: string, target?: TransferTarget, 
   const personal = personalProjectId(userId);
   const db = authDb();
   settleCollectionsBeforeMove(); // C21: the upgrade's adoption has run before anything moves
-  const { retired, ...result } = db.transaction(() => {
+  const { retired, credentialIds, ...result } = db.transaction(() => {
     const owned = resourcesIn(personal);
+    const credentialIds = owned.filter((r) => r.kind === 'credential').map((r) => r.id);
     let to: ProjectRecord | undefined;
     let moved: Partial<Record<ResourceKind, number>> = {};
     if (target) {
@@ -181,9 +185,12 @@ export function deleteUserWithTransfer(userId: string, target?: TransferTarget, 
     removeProjectSubscriptions(personal);
     const retired = removeProjectRows(personal);
     if (!deleteUser(userId)) throw new ProjectError('User not found', 404);
-    return { moved, retired, ...(to && { to }) };
+    return { moved, retired, credentialIds, ...(to && { to }) };
   });
   for (const practiceId of retired) settleRetired(practiceId, actorId);
+  // C31: what moved is sealed with the new project's key, then the personal project's keys go (when nothing names them).
+  projectKeys.resealCredentials(credentialIds);
+  projectKeys.destroyIfUnused(personal);
   return result;
 }
 
@@ -197,6 +204,7 @@ export function deleteProjectWithTransfer(projectId: string, transferTo?: string
   const result = db.transaction(() => {
     let moved: Partial<Record<ResourceKind, number>> = {};
     const owned = resourcesIn(projectId);
+    const credentialIds = owned.filter((r) => r.kind === 'credential').map((r) => r.id);
     if (transferTo) {
       if (transferTo === projectId) throw new ProjectError('Choose another project to transfer to', 400);
       if (!getProject(transferTo)) throw new ProjectError('The project to transfer to doesn’t exist', 404);
@@ -208,10 +216,13 @@ export function deleteProjectWithTransfer(projectId: string, transferTo?: string
     }
     removeProjectSubscriptions(projectId);
     const retired = removeProjectRows(projectId);
-    return { moved, retired };
+    return { moved, retired, credentialIds };
   });
   // The project's practices are retired: their open inbox suggestions are dismissed, so none waits on a project that is gone.
   for (const practiceId of result.retired) settleRetired(practiceId, actorId);
+  // C31: what moved is sealed with the target's key, then this project's keys are destroyed (kept, retired, while a credential still names them).
+  projectKeys.resealCredentials(result.credentialIds);
+  projectKeys.destroyIfUnused(projectId);
   recordAudit({
     action: 'project.delete',
     target: { type: 'project', id: projectId, name: project.name },

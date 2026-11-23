@@ -21,10 +21,15 @@ export interface KeyRing {
   keys: Map<string, Buffer>;
 }
 
-/** Sealed value, version 2: bound to `aad`, names its key. Version 1 (no `v`, no `kid`) has neither. */
+/**
+ * Sealed value, version 2: bound to `aad`, names its key. Version 1 (no `v`, no `kid`) has neither. Version 3 (C31) is
+ * sealed with a project's data key instead of a ring key: `dek` is `<projectId>.<version>`, the AAD is the same.
+ */
 export interface SealedValue {
-  v?: 2;
+  v?: 2 | 3;
   kid?: string;
+  /** Version 3: `<projectId>.<version>` of the project key that sealed it. */
+  dek?: string;
   iv: string;
   tag: string;
   value: string;
@@ -92,8 +97,31 @@ function decrypt(key: Buffer, sealed: SealedValue, aad?: string): string {
   return Buffer.concat([decipher.update(Buffer.from(sealed.value, 'base64')), decipher.final()]).toString('utf8');
 }
 
-/** Opens a v2 value with its key and `aad`; a v1 value (no kid) with k0, then k0-legacy, without AAD. */
+/** Seals `text` with a project's data key (version 3, naming `<projectId>.<version>`), bound to `aad`. */
+export function sealWithDek(key: Buffer, dek: string, text: string, aad: string): SealedValue {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  cipher.setAAD(Buffer.from(aad));
+  const value = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
+  return { v: 3, dek, iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), value: value.toString('base64') };
+}
+
+/** Opens a version 3 value with the data key its `dek` names. */
+export function openWithDek(key: Buffer, sealed: SealedValue, aad: string): string {
+  return decrypt(key, sealed, aad);
+}
+
+/** The `[projectId, version]` a version 3 value names, or undefined when it is not one. */
+export function dekOf(sealed: SealedValue): [string, number] | undefined {
+  if (sealed.v !== 3 || !sealed.dek) return undefined;
+  const dot = sealed.dek.lastIndexOf('.');
+  const version = Number(sealed.dek.slice(dot + 1));
+  return dot > 0 && Number.isInteger(version) && version > 0 ? [sealed.dek.slice(0, dot), version] : undefined;
+}
+
+/** Opens a v2 value with its key and `aad`; a v1 value (no kid) with k0, then k0-legacy, without AAD. A v3 value is not the ring's. */
 export function openWith(ring: KeyRing, sealed: SealedValue, aad: string): string {
+  if (sealed.v === 3) throw new OpenError('sealed with a project key, not a ring key');
   if (sealed.v === 2) {
     const key = sealed.kid ? ring.keys.get(sealed.kid) : undefined;
     if (!key) throw new OpenError(`key "${sealed.kid}" is not in the key ring`);
@@ -111,8 +139,8 @@ export function openWith(ring: KeyRing, sealed: SealedValue, aad: string): strin
   throw new OpenError('no key in the ring opens it');
 }
 
-/** The key id a value is sealed with; v1 values report the legacy kid (rotation re-seals them). */
-export const kidOf = (sealed: SealedValue): string => (sealed.v === 2 && sealed.kid ? sealed.kid : LEGACY_KID);
+/** The key id a value is sealed with; v1 values report the legacy kid (rotation re-seals them), v3 values `dek:<projectId>.<version>`. */
+export const kidOf = (sealed: SealedValue): string => (sealed.v === 3 && sealed.dek ? `dek:${sealed.dek}` : sealed.v === 2 && sealed.kid ? sealed.kid : LEGACY_KID);
 
 /** A key for another purpose (signing OAuth2 state, resume URLs), HKDF-SHA256 from the primary key with the label as info. */
 export function hkdfKey(ring: KeyRing, label: string): Buffer {

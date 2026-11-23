@@ -6,6 +6,9 @@
  * its table is added to TABLES below. Each value is written on its own and a value already on the primary key is
  * skipped, so a run that stops can simply be run again; one that can't be opened is reported and left as it is.
  * Never remove an old key from the ring before a run reports no failures.
+ *
+ * Credentials sealed with a project key (C31) are not re-sealed: the project keys are wrapped again with the primary, so the
+ * work is the number of projects, not of credentials.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,6 +16,7 @@ import { agentStore } from '../agents/store';
 import { configStoreKind, writeJsonFile } from '../config-store';
 import { database } from '../db';
 import { store } from '../store';
+import { projectKeys } from './project-keys';
 import { credentials, parseSealedString } from './vault';
 
 export interface RotationResult {
@@ -25,6 +29,8 @@ export interface RotationResult {
   failed: string[];
   /** Per store, how many values were re-sealed. */
   stores: Record<string, number>;
+  /** C31: project keys wrapped again with the primary (their credentials are not touched), already on it, and not openable. */
+  projectKeys: { rewrapped: number; current: number; failed: string[] };
 }
 
 /** Tables with sealed values: the key columns (as the database's upsert knows them) and the column to scan (a sealed string or JSON holding some). */
@@ -81,13 +87,17 @@ function resealText(text: string, tally: { resealed: number; current: number; fa
 
 /** Re-seal every stored sealed value with the primary key. Idempotent; call it with the new ring on every process. */
 export function rotateEncryption(): RotationResult {
-  const result: RotationResult = { primary: credentials.primaryKid, resealed: 0, current: 0, failed: [], stores: {} };
+  const result: RotationResult = { primary: credentials.primaryKid, resealed: 0, current: 0, failed: [], stores: {}, projectKeys: { rewrapped: 0, current: 0, failed: [] } };
   const count = (name: string, tally: { resealed: number; current: number; failed: number }, ids: string[] = []) => {
     result.resealed += tally.resealed;
     result.current += tally.current;
     if (tally.resealed) result.stores[name] = (result.stores[name] ?? 0) + tally.resealed;
     if (tally.failed) result.failed.push(...(ids.length ? ids : [name]).map((id) => `${name}:${id}`));
   };
+
+  // C31: project keys first: they are re-wrapped, and the credentials sealed with them are left as they are.
+  result.projectKeys = projectKeys.rewrapAll();
+  result.failed.push(...result.projectKeys.failed.map((id) => `project_keys:${id}`));
 
   const creds = credentials.rotateCredentials();
   result.resealed += creds.resealed;

@@ -67,3 +67,56 @@ external secrets providers, transport connections) use AES-256-GCM with a key ri
      The script works with SQLite and Postgres: it opens the database and waits for the write queue before it ends. Rotation
      rewrites whole rows from the host's copy, so in queue mode a write to the same row from another process during the run
      (an alert channel's last delivery, say) can be overwritten; run it when the cluster is quiet.
+
+### Project keys
+
+Every project has its own data key (DEK) for its credentials, so one project's key opens only that project's
+credentials and a project can be crypto-shredded. The layers are: the key ring (above) wraps each project's key, and the
+project's key seals its credentials (`lib/server/credentials/project-key-store.ts`, `project-keys.ts`).
+
+- **What is sealed with them.** Credentials only (the personal project of each user included; a credential's project is its
+  home project). Alert channels, SIEM destinations, MCP and audit signing keys, TOTP and the other `sealSecret` values stay
+  on the ring. On by default: a credential created or changed after the upgrade is sealed with its project's key; the first
+  save in a project creates its key (audit event `encryption.project_key.created`).
+- **The format.** Version 3: `{ v: 3, dek: "<projectId>.<version>", iv, tag, value }` with the same associated data as
+  version 2 (`landflow:credential:<id>`). The key is 256 random bits kept in the `project_keys` table (migration 2932), wrapped
+  by the ring's primary key as a version 2 string whose associated data is `landflow:project-key:<projectId>:<version>`: a
+  wrapped key copied to another project or version does not open. A key that is unwrapped lives in a process's memory for ten
+  minutes and is never written, logged or audited. Credentials sealed before the upgrade (version 1 and 2) still open and
+  stay as they are until the owner runs **migrate**.
+- **Root rotation** (above) re-wraps the project keys with the new primary and touches no credential row: it takes as long
+  as there are projects, not credentials. The answer, the script's output and the audit event carry `projectKeys.rewrapped`.
+  A version 1 or 2 credential is re-sealed on the ring as before (never onto a project key); a version 3 one is left alone.
+- **Moving and deleting.** Moving a credential to another project re-seals it with the target's key, right after the move
+  commits. Deleting a project (with a transfer) or removing a user does the same for what moved and then deletes the project's
+  keys, once no credential names them; a credential whose re-seal failed stays readable on the old key, the key is kept
+  (retired) and `migrate` finishes it. A project deleted after its credentials were deleted leaves no key behind: a copy of the
+  database and `credentials.json` can't open their old ciphertext.
+- **Owner routes** (owner only, session only, no API key):
+
+  ```bash
+  curl -b "$SESSION" http://localhost:3000/api/settings/encryption/project-keys                       # status
+  curl -b "$SESSION" -X POST -H 'content-type: application/json' -d '{"action":"migrate"}' \
+       http://localhost:3000/api/settings/encryption/project-keys                                     # old credentials onto project keys
+  curl -b "$SESSION" -X POST -H 'content-type: application/json' -d '{"action":"revert"}' \
+       http://localhost:3000/api/settings/encryption/project-keys                                     # everything back on the ring
+  curl -b "$SESSION" -X POST http://localhost:3000/api/settings/encryption/project-keys/<projectId>/rotate   # one project's key
+  ```
+
+  *Status* lists per project its active and retired versions and the credentials sealed with it, the credentials still on the
+  ring (`onRing`) and keys this process can't unwrap (`unreadable`: the ring lacks the key that wrapped them). *Migrate* seals
+  every credential with its project's active key, one at a time: run it again after an interruption or while `done` is false;
+  it also deletes retired keys nothing names and keys of projects that no longer exist. *Rotate* makes a new version, re-seals
+  that project's credentials only and deletes the old version once nothing names it.
+- **Audit.** Creating a key and the root re-wrap are fail-open (as root rotation is: a save never waits on them). Rotating a
+  project's key, destroying one, migrate and revert are fail-closed: with `LANDFLOW_AUDIT_FAIL_CLOSED=true` and no audit
+  storage they answer 503 and change nothing (a destroy keeps the key, retired). Events: `encryption.project_key.created`,
+  `.rewrapped`, `.rotated`, `.destroyed`, `.migrated`, `.reverted`; they carry ids, versions and counts, never key material.
+- **Before a downgrade** to a build without project keys, run **revert** and check that `onProjectKeys` is 0: that build
+  can't open version 3 values. Revert puts every credential back on the ring's primary key as version 2 (the keys stay in
+  `project_keys`; a save after it seals with them again, so revert right before the downgrade and rerun it if the count isn't 0).
+- **Back up together.** Credentials (`credentials.json` or the `credentials` table), the `project_keys` table and the ring are
+  one unit: a restore of the credentials without their keys loses them (that is also how a project is shredded).
+- **Queue mode.** The key rows and the credentials replicate like any table; a process reads a project's active version from
+  its copy of the table on each save and caches an unwrapped key for ten minutes, so a rotation in one process is used by the
+  others as soon as the row reaches them (old versions stay readable until nothing names them).
