@@ -45,6 +45,13 @@ describe('resolveRelative', () => {
     expect(day('last week', MONDAY)).toEqual({ range: { from: '2026-02-23', to: '2026-03-01' } });
   });
 
+  it('on a Sunday, next Monday is tomorrow and last Monday is six days ago; on a Monday, last Monday is a week ago', () => {
+    const sunday = new Date('2026-11-22T10:00:00Z');
+    expect(day('next Monday', sunday)).toEqual({ iso: '2026-11-23' });
+    expect(day('last Monday', sunday)).toEqual({ iso: '2026-11-16' });
+    expect(day('last Monday', new Date('2026-11-23T10:00:00Z'))).toEqual({ iso: '2026-11-16' });
+  });
+
   it('leaves anything else to the model (AS-7)', () => {
     expect(day('sometime soon')).toBeUndefined();
     expect(day('a while back')).toBeUndefined();
@@ -76,6 +83,11 @@ describe('checkTime', () => {
     expect(checkTime({ text: 'soon', from: '2027-03-31', to: '2027-01-01' }, FRIDAY)).toEqual({ unresolved: true });
     expect(checkTime({ text: 'sometime soon' }, FRIDAY)).toEqual({ unresolved: true });
     expect(checkTime({}, FRIDAY)).toEqual({ unresolved: true });
+  });
+
+  it('compares a timestamp with an offset by its own calendar date', () => {
+    expect(checkTime({ iso: '2026-11-20T23:30:00-08:00' }, new Date('2026-11-20T00:00:00Z'))).toEqual({ iso: '2026-11-20T23:30:00-08:00' });
+    expect(checkTime({ iso: '2036-11-21T00:30:00+09:00' }, new Date('2026-11-20T00:00:00Z'))).toEqual({ unresolved: true });
   });
 
   it('accepts a full timestamp and keeps its date', () => {

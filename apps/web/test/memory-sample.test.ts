@@ -44,6 +44,26 @@ describe('sampleProfile', () => {
     expect(counts).toEqual([...counts].sort((a, b) => b - a));
   });
 
+  it('ranks a person’s static facts before extracted ones, whatever their evidence counts', () => {
+    const mk = (id: string, origin: 'person' | 'landflow', evidenceCount: number): MemoryItem => ({ id, text: id, kind: 'memory', source: 'fact', static: true, origin, evidenceCount, createdAt: at(1), updatedAt: at(1) });
+    const { static: list } = sampleProfile([mk('extracted-5', 'landflow', 5), mk('person-0', 'person', 0), mk('extracted-9', 'landflow', 9), mk('person-2', 'person', 2)]);
+    expect(list.map((i) => i.id)).toEqual(['person-2', 'person-0', 'extracted-9', 'extracted-5']);
+  });
+
+  it('counts distinct executions and documents, not evidence rows', () => {
+    const mk = (id: string, sourceCount: number, evidenceCount: number): MemoryItem => ({ id, text: id, kind: 'memory', source: 'fact', static: true, origin: 'landflow', sourceCount, evidenceCount, createdAt: at(1), updatedAt: at(1) });
+    const { static: list } = sampleProfile([mk('many-rows', 1, 6), mk('many-sources', 3, 3)]);
+    expect(list.map((i) => i.id)).toEqual(['many-sources', 'many-rows']);
+  });
+
+  it('falls back to the defaults for a size that is not a finite number, and clamps it to 1..500', () => {
+    const items = corpus();
+    expect(sampleProfile(items, { size: Number.NaN }).dynamic).toHaveLength(60);
+    expect(sampleProfile(items, { size: Number.POSITIVE_INFINITY }).dynamic).toHaveLength(60);
+    expect(sampleProfile(items, { size: 0 }).dynamic).toHaveLength(1);
+    expect(sampleProfile(items, { size: 10_000 }).dynamic).toHaveLength(340); // 500 is more than the 340 there are
+  });
+
   it('fills the buckets in order with 35 / 25 / 15 / 5 / 10 percent, the rest from the newest left', () => {
     const sampled = sampleProfile(corpus(), {});
     // floor(60 * w): 21 recent, 15 confident, 9 revised, 3 old, 6 inferred, then the 6 short of 60 from the most recent left
@@ -92,6 +112,14 @@ describe('profileMarkdown', () => {
     expect(out.markdown.trimEnd().endsWith(`_${out.left} more not shown_`)).toBe(true);
     expect(out.markdown.startsWith('## ')).toBe(true);
     expect(out.markdown).toContain('Static fact 0'); // static first
+  });
+
+  it('uses the default budget for one that is not a finite number, and clamps it to 100..20,000', () => {
+    const sampled = sampleProfile(corpus());
+    expect(profileMarkdown(sampled, Number.NaN).tokens).toBeLessThanOrEqual(1_500);
+    expect(profileMarkdown(sampled, 5).tokens).toBeLessThanOrEqual(100);
+    expect(profileMarkdown(sampled, 5).tokens).toBeGreaterThan(50);
+    expect(profileMarkdown(sampled, 1e9).tokens).toBeLessThanOrEqual(20_000);
   });
 
   it('lists everything and says nothing about omissions when it all fits', () => {

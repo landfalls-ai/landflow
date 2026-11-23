@@ -22,6 +22,8 @@ export interface MemoryItem {
   origin?: 'person' | 'landflow';
   /** How many places the fact is backed by (its evidence rows): what ranks static facts in a sampled profile (C28). */
   evidenceCount?: number;
+  /** How many distinct runs and documents the evidence names: what ranks a landflow-written static fact in a sampled profile. */
+  sourceCount?: number;
   createdAt: string;
   updatedAt: string;
 }

@@ -115,7 +115,7 @@ export const LABEL_SYSTEM = [
 export const normalized = (text: string) =>
   text
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ') // a space, not nothing: $3.50 and $350, v1.2 and v12 stay apart
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -216,6 +216,7 @@ export async function extractFacts(model: LanguageModel, input: string, referenc
   const parts = splitText(input);
   const all: ExtractedFact[] = [];
   for (const [index, part] of parts.entries()) {
+    signal?.throwIfAborted();
     const { value } = await generateStructured(model, {
       system: [EXTRACT_SYSTEM, formatInstructions(FACTS_SCHEMA)].join('\n\n'),
       prompt: extractPrompt(part, reference, index, parts.length),
@@ -243,6 +244,7 @@ export async function labelFacts(model: LanguageModel, facts: ExtractedFact[], n
     else if (near.length) asked.push(index);
   });
   for (let from = 0; from < asked.length; from += LABEL_BATCH) {
+    signal?.throwIfAborted();
     const batch = asked.slice(from, from + LABEL_BATCH);
     const lines = batch.flatMap((index) => [`${index}. ${facts[index].statement}`, ...(neighbours.get(index) ?? []).map((n) => `   remembered [${n.id}]: ${n.text}`)]);
     const allowed = (index: number) => new Set((neighbours.get(index) ?? []).map((n) => n.id));

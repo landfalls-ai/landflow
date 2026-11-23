@@ -42,12 +42,21 @@ const BUCKETS: Record<keyof SampleWeights, { eligible: (item: MemoryItem) => boo
   inferred: { eligible: (i) => i.origin === 'landflow' && (i.confidence ?? 1) < INFERRED_BELOW, order: byRecent },
 };
 
+/** A number from a parameter: the default when it is not finite, else clamped to `min..max` and rounded down. */
+export const clampNumber = (value: unknown, fallback: number, min: number, max: number): number => {
+  const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : Number.NaN;
+  return Number.isFinite(n) ? Math.max(min, Math.min(max, Math.floor(n))) : fallback;
+};
+export const SAMPLE_SIZE_RANGE = [1, 500] as const;
+export const TOKEN_BUDGET_RANGE = [100, 20_000] as const;
+
 export function sampleProfile(items: readonly MemoryItem[], options: { size?: number; weights?: Partial<SampleWeights> } = {}): SampledProfile {
-  const size = Math.max(0, Math.floor(options.size ?? DEFAULT_SAMPLE_SIZE));
+  const size = clampNumber(options.size, DEFAULT_SAMPLE_SIZE, ...SAMPLE_SIZE_RANGE);
   const weights = { ...DEFAULT_WEIGHTS, ...options.weights };
   const statics = items
     .filter((i) => i.static)
-    .sort((a, b) => (b.evidenceCount ?? 0) - (a.evidenceCount ?? 0) || byRecent(a, b));
+    // A person's static facts first (C28 review): what a model extracted never outranks what someone wrote. Then by distinct sources.
+    .sort((a, b) => Number(b.origin !== 'landflow') - Number(a.origin !== 'landflow') || (b.sourceCount ?? b.evidenceCount ?? 0) - (a.sourceCount ?? a.evidenceCount ?? 0) || byRecent(a, b));
   const pool = items.filter((i) => !i.static);
   const taken = new Set<string>();
   const buckets = { recent: 0, confident: 0, revised: 0, old: 0, inferred: 0, rest: 0 };
@@ -75,7 +84,8 @@ const clean = (text: string) => text.replace(/\s+/g, ' ').trim();
  * last line counting what is not shown (the sample's own `left` plus whatever the budget cut). Static facts go in first, so a
  * tight budget drops the newest context before it drops the standing facts.
  */
-export function profileMarkdown(sampled: Pick<SampledProfile, 'static' | 'dynamic' | 'left'>, budgetTokens = DEFAULT_TOKEN_BUDGET): { markdown: string; left: number; tokens: number } {
+export function profileMarkdown(sampled: Pick<SampledProfile, 'static' | 'dynamic' | 'left'>, requestedBudget: unknown = DEFAULT_TOKEN_BUDGET): { markdown: string; left: number; tokens: number } {
+  const budgetTokens = clampNumber(requestedBudget, DEFAULT_TOKEN_BUDGET, ...TOKEN_BUDGET_RANGE);
   const total = sampled.static.length + sampled.dynamic.length;
   const footer = (left: number) => (left > 0 ? `\n_${left} more not shown_\n` : '');
   // Keep room for the longest footer this profile could need, so the finished text never goes over.

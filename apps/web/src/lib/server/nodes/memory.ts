@@ -10,7 +10,7 @@
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem, type PropertyDescriptor } from '@landflow/sdk';
 import { MEMORY_LIMITS, type MemoryContainer, type MemoryItem } from '../../shared/memory';
 import { wrapMemory } from '../../shared/memory-fence';
-import { DEFAULT_SAMPLE_SIZE, DEFAULT_TOKEN_BUDGET, DEFAULT_WEIGHTS, profileMarkdown, sampleProfile } from '../memory/sample';
+import { clampNumber, DEFAULT_SAMPLE_SIZE, DEFAULT_TOKEN_BUDGET, DEFAULT_WEIGHTS, profileMarkdown, SAMPLE_SIZE_RANGE, sampleProfile } from '../memory/sample';
 import { HttpError } from '../errors';
 import { homeProjectId } from '../projects/store';
 import { store } from '../store';
@@ -367,18 +367,29 @@ const SAMPLE_READ_CAP = 2_000;
 async function sampledProfile(tool: boolean, i: number, read: (name: string, fallback?: unknown) => unknown, who: Who): Promise<JsonObject> {
   const { memory } = await import('../memory');
   const container = containerOf(read, who);
-  const all: MemoryItem[] = [];
-  let cursor: string | undefined;
-  do {
-    const page = await guarded(i, () => memory.list(container, { limit: MEMORY_LIMITS.list.max, ...(cursor && { cursor }) }, who.caller));
-    all.push(...page.items);
-    cursor = page.nextCursor;
-  } while (cursor && all.length < SAMPLE_READ_CAP);
+  // Every static fact first, on their own pages, so "every static fact" holds past the cap on the rest; then the newest others.
+  // A backend that cannot filter returns everything, so the static ones are kept by their flag.
+  const byId = new Map<string, MemoryItem>();
+  const pages = async (options: { static?: boolean }, keep: (item: MemoryItem) => boolean) => {
+    let cursor: string | undefined;
+    let seen = 0;
+    do {
+      const page = await guarded(i, () => memory.list(container, { limit: MEMORY_LIMITS.list.max, ...options, ...(cursor && { cursor }) }, who.caller));
+      seen += page.items.length;
+      for (const item of page.items) if (keep(item)) byId.set(item.id, item);
+      cursor = page.nextCursor;
+    } while (cursor && seen < SAMPLE_READ_CAP);
+  };
+  await pages({ static: true }, (item) => item.static === true);
+  await pages({}, () => true);
+  const all = [...byId.values()];
   const given = (read('weights', {}) ?? {}) as Record<string, unknown>;
   const weights = Object.fromEntries(Object.keys(DEFAULT_WEIGHTS).filter((k) => typeof given[k] === 'number').map((k) => [k, given[k]]));
-  const sampled = sampleProfile(all.slice(0, SAMPLE_READ_CAP), { size: Number(read('sampleSize', DEFAULT_SAMPLE_SIZE)), weights });
-  const { markdown, left } = profileMarkdown(sampled, Number(read('tokenBudget', DEFAULT_TOKEN_BUDGET)));
+  const sampled = sampleProfile(all, { size: clampNumber(read('sampleSize', DEFAULT_SAMPLE_SIZE), DEFAULT_SAMPLE_SIZE, ...SAMPLE_SIZE_RANGE), weights });
+  const { markdown, left } = profileMarkdown(sampled, read('tokenBudget', DEFAULT_TOKEN_BUDGET));
   // What a model reads is quoted memory (C03): the Markdown goes inside the fence, as every memory tool's answer does.
-  if (tool) return { memory: markdown ? wrapMemory(all.every((m) => m.source === 'note') ? 'team-notebook' : all.every((m) => m.source === 'provider') ? 'memory' : 'brain-facts', [markdown]) : 'Nothing is remembered yet.' };
-  return { static: sampled.static.map(itemJson), dynamic: sampled.dynamic.map(itemJson), left, markdown };
+  const fence = (text: string) => wrapMemory(all.every((m) => m.source === 'note') ? 'team-notebook' : all.every((m) => m.source === 'provider') ? 'memory' : 'brain-facts', [text]);
+  if (tool) return { memory: markdown ? fence(markdown) : 'Nothing is remembered yet.' };
+  // `markdown` is stored text to show a person; `fenced` is the same inside the quoted-memory fence, for a model's prompt.
+  return { static: sampled.static.map(itemJson), dynamic: sampled.dynamic.map(itemJson), left, markdown, fenced: markdown ? fence(markdown) : '' };
 }

@@ -29,7 +29,9 @@ const comparable = (item: MemoryItem) => item.source === 'provider' || item.sour
 function referenceOf(value: unknown): Date {
   const raw = typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
   if (!raw) return new Date();
-  const when = new Date(raw);
+  // A date with a clock and an offset (2026-11-20T23:30:00-08:00) keeps the calendar day it names, not the UTC day it falls on.
+  const day = /^\d{4}-\d{2}-\d{2}(?=$|[T ])/.exec(raw);
+  const when = new Date(day ? `${day[0]}T00:00:00Z` : raw);
   if (Number.isNaN(when.getTime())) throw new NodeOperationError(`The reference date “${raw}” is not a date`, { description: 'Use a date such as 2026-11-20, or leave it empty for now.' });
   return when;
 }
@@ -68,7 +70,10 @@ export const memoryExtractNode = defineNode({
         default: {},
         placeholder: 'Add option',
         displayOptions: { show: { operation: OPS } },
-        values: [{ name: 'maxFacts', displayName: 'Max Facts', type: 'number', default: MAX_FACTS, typeOptions: { minValue: 1, maxValue: MAX_FACTS }, description: 'Keep at most this many facts from one item' }],
+        values: [
+          { name: 'writeStatic', displayName: 'Write Static Facts', type: 'boolean', default: false, description: 'Off: every fact is written as a normal (dynamic) memory, even one the model calls static, so text it read cannot make a memory only a person may change. On: a fact the model calls static is written as static' },
+          { name: 'maxFacts', displayName: 'Max Facts', type: 'number', default: MAX_FACTS, typeOptions: { minValue: 1, maxValue: MAX_FACTS }, description: 'Keep at most this many facts from one item' },
+        ],
       },
     ],
   },
@@ -87,11 +92,14 @@ export const memoryExtractNode = defineNode({
         const write = read('write', false) === true;
         const compare = read('compare', true) !== false;
         const container = containerOf(read, who, write ? 'write' : 'read');
+        // A team's notebook is written by a team run only: say so now, before any model is paid for.
+        if (write && container.kind === 'team') throw new NodeOperationError('A team’s notebook cannot be written here: notes are written by a team run', { description: 'Turn off Write to Memory to compare with it only, or write to this flow’s project.' });
         const documentId = String(read('documentId', '') ?? '').trim();
-        const options = (read('options', {}) ?? {}) as { maxFacts?: number };
+        const options = (read('options', {}) ?? {}) as { maxFacts?: number; writeStatic?: boolean };
+        const writeStatic = options.writeStatic === true;
         const cap = Math.max(1, Math.min(MAX_FACTS, Math.floor(Number(options.maxFacts ?? MAX_FACTS)) || MAX_FACTS));
 
-        let found: ExtractedFact[] = await extractFacts(model, text, reference);
+        let found: ExtractedFact[] = await extractFacts(model, text, reference, ctx.signal);
         if (found.length > cap) {
           ctx.logger.warn(`item ${i}: ${found.length} facts found; keeping the first ${cap}`);
           found = found.slice(0, cap);
@@ -101,12 +109,13 @@ export const memoryExtractNode = defineNode({
         const neighbours = new Map<number, MemoryItem[]>();
         if (compare && found.length) {
           for (const [index, f] of found.entries()) {
+            ctx.signal?.throwIfAborted();
             const near = await guarded(i, () => memory.search(container, f.statement, { mode: 'hybrid', limit: 5 }, who.caller));
             const items = near.items.filter(comparable);
             if (items.length) neighbours.set(index, items);
           }
         }
-        const labels: Label[] = await labelFacts(model, found, neighbours);
+        const labels: Label[] = await labelFacts(model, found, neighbours, ctx.signal);
 
         for (const [index, f] of found.entries()) {
           const time = f.time ? checkTime(f.time, reference) : undefined;
@@ -135,10 +144,14 @@ export const memoryExtractNode = defineNode({
                 ...(at ? [{ label: 'validAt', value: at }] : []),
                 ...(f.sourceSpan ? [{ label: 'source', value: f.sourceSpan.slice(0, 200) }] : []),
               ].slice(0, MEMORY_EVIDENCE_MAX);
-              const input: MemoryAddInput = { text: f.statement, kind: 'memory', confidence: f.confidence, evidence, ...(f.kind === 'static' && label.label === 'new' && { static: true }), ...(label.label === 'updates' && label.matchId && { replaces: label.matchId }) };
+              // Only a memory Landflow wrote is replaced; a person's is kept as it is, and the fact is written beside it as new.
+              const matched = label.matchId ? neighbours.get(index)?.find((n) => n.id === label.matchId) : undefined;
+              const replaces = label.label === 'updates' && label.matchId && matched?.origin === 'landflow' ? label.matchId : undefined;
+              const input: MemoryAddInput = { text: f.statement, kind: 'memory', confidence: f.confidence, evidence, ...(writeStatic && f.kind === 'static' && label.label === 'new' && { static: true }), ...(replaces && { replaces }) };
+              if (label.label === 'updates' && !replaces) Object.assign(json, { replaced: false, writeNote: 'It updates a memory a person wrote: written as a new memory, the person’s kept' });
               try {
                 const saved = await memory.add(container, input, who.caller);
-                Object.assign(json, { written: true, memoryId: saved.id, ...(saved.version && { version: saved.version }) });
+                Object.assign(json, { written: true, memoryId: saved.id, ...(replaces && { replaced: true }), ...(saved.version && { version: saved.version }) });
               } catch (error) {
                 // A static memory is changed by a person only: say so on this fact, and keep going with the others.
                 if (!(error instanceof StaticFactError)) throw error;

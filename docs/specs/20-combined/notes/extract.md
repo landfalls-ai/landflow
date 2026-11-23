@@ -12,8 +12,9 @@ Apply these after the last merge of the wave; P27 edited no shared doc (`docs/hi
   weeks or months ago or ahead, last, this or next week, month, quarter or year, in UTC days); anything else, and every other
   language, is the model's answer, kept only when it is a real date within ten years of the reference date.
 - A fact's `validAt` travels in its evidence, not in a column of its own, so a memory cannot be searched or sorted by it.
-- An update of a static memory is not written (only a person changes one); an extracted fact whose kind is `static` is written as
-  static when it is new, so a later extraction cannot supersede it either.
+- An update of a static memory is not written (only a person changes one). A fact is written static only with option Write Static
+  Facts (off), because read text can claim to be a rule. Only a memory Landflow wrote is replaced; a person's is kept and the fact is
+  written as new (`replaced: false`). Sample Size and Token Budget are clamped to 1..500 and 100..20,000.
 - Comparison finds the five nearest items by words (and meaning when embeddings are on): a stored item that shares no word with
   a fact is not seen, so a paraphrase can be written as `new`. Extraction relations other than `updates` and `duplicate` are not
   written (C10 draws graph relations).
@@ -37,6 +38,7 @@ Apply these after the last merge of the wave; P27 edited no shared doc (`docs/hi
 
 ## `docs/protocol.md` (memory providers) and the SDKs
 
+- `docs/protocol.md:1298` (the `add` row of the memory-provider table, section 15.8) lists `{ container, text, kind?, static?, forgetAfter?, replaces? }`: add `confidence?` and `evidence?`. The Go SDK has only `MemoryProvider bool` (`sdks/go/types.go:268`) and the Python SDK no memory-provider request type, so neither SDK types the request body today: when they do, name the two fields.
 - The `add` request may carry `confidence` (0..1) and `evidence` (at most 6 rows of `label`, `value`, `href`). P27 added the two
   optional fields to `MemoryRequestWire` in `packages/protocol/src/memory-provider.ts` (outside P27's file list: one line, a
   type only); the protocol page's memory-provider section and the Go and Python SDK typings should name them.

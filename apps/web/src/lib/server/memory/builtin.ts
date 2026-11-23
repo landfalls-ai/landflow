@@ -41,6 +41,7 @@ function factItem(fact: BrainFact, score?: number): MemoryItem {
     confidence: fact.confidence,
     origin: fact.writtenBy?.origin === 'landflow' ? 'landflow' : 'person',
     evidenceCount: fact.evidence.length,
+    sourceCount: new Set(fact.evidence.filter((e) => e.label === 'execution' || e.label === 'document').map((e) => `${e.label}:${e.value ?? e.href ?? ''}`)).size,
     createdAt: fact.firstSeen,
     updatedAt: fact.lastSeen,
   };
@@ -216,6 +217,8 @@ export const builtInBackend: MemoryBackend = {
 
   async list(c, page, caller): Promise<MemoryPage> {
     const limit = clamp(page.limit, MEMORY_LIMITS.list);
+    // Only static facts: a notebook holds none, and a provider that ignores the flag is filtered by the caller.
+    if (c.kind === 'team' && page.static) return { items: [] };
     if (c.kind === 'team') {
       // Keyset by (created, id) in SQL: a cursor whose note is gone still continues after its position, never at page 1.
       const cursor = page.cursor ? decodeCursor(page.cursor) : undefined;
@@ -224,7 +227,7 @@ export const builtInBackend: MemoryBackend = {
       const last = shown.at(-1);
       return { items: shown.map((n) => noteItem(n)), ...(notes.length > limit && last && { nextCursor: encodeCursor({ s: last.createdAt, i: last.id }) }) };
     }
-    const { facts, nextCursor } = pageFacts(factFilter(c), { limit, cursor: page.cursor }, database());
+    const { facts, nextCursor } = pageFacts({ ...factFilter(c), ...(page.static && { static: true }) }, { limit, cursor: page.cursor }, database());
     return { items: facts.map((f) => factItem(f)), ...(nextCursor && { nextCursor }) };
   },
 };

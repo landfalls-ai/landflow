@@ -183,25 +183,28 @@ chat model on its **Chat Model** input (any model the host offers; the call goes
 caps apply). It is not an agent tool: a model call per part that can write memory belongs in a flow a person built.
 
 - **In.** **Text** (default `{{ $json.text }}`, at most 50,000 characters; every 8,000 is one model call and facts repeated across
-  parts come out once), **Reference Date** (default `{{ $json.date }}`; empty is now; one that is not a date fails the item naming it),
+  parts come out once), **Reference Date** (default `{{ $json.date }}`; empty is now; a date with a time and an offset keeps the calendar day it names, so `2026-11-20T23:30:00-08:00` is the 20th; one that is not a date fails the item naming it),
   **Memory Of** (a project, empty meaning the flow's own, or a team's notebook), an optional **Document ID**, **Compare With
-  Memory** (on) and **Write to Memory** (off). Option **Max Facts** keeps at most 200 per item.
+  Memory** (on) and **Write to Memory** (off). Options: **Max Facts** keeps at most 200 per item; **Write Static Facts** (off) is described under Write. A team's notebook with Write on is refused before any model call.
 - **Out.** One item per fact: `statement` (one claim, naming its subject: a statement that opens with a pronoun or holds two claims
   makes the model try again once), `subject`, `kind` (`static` for what stays true a long time, `dynamic`), `confidence`,
   `sourceSpan` (the words it came from), `label` and `matchId`, and for a fact with a time `timeText` (the words as written) and
   either `validAt` (an ISO date, or `from/to` for a period) or `unresolved: true`.
 - **Dates.** A fixed list of English phrases is worked out by Landflow against the reference date in UTC days and overrides the
   model: today, yesterday, tomorrow, last or next a weekday (never the reference day itself), N days, weeks or months ago, in N
-  days, weeks or months, and last, this or next week, month, quarter or year (a week runs Monday to Sunday). Any other phrase is
+  days, weeks or months, and last, this or next week, month, quarter or year (a week runs Monday to Sunday). Said on a Sunday, "next Monday" is the next day and "last Monday" is six days back. Any other phrase is
   left to the model, whose date is kept only when it is real and within ten years of the reference; otherwise the words stay and
   `unresolved` is set. Other languages are left to the model.
 - **Labels.** With Compare on, each fact is searched against the memory's five nearest items (a person's memories and a
   provider's items; never a fact the study wrote). The same words as a stored item are a `duplicate` without a model call; the rest
   are labelled `new`, `updates` (it replaces or corrects an item) or `duplicate` by the model in one call per 20 facts. A `matchId`
   must be one of the five the host listed: a wrong one makes the model try again, and after the second miss the fact is `new`.
-- **Write.** Off, the node only labels. On, a `new` fact is added (a `static` one as static) and an `updates` fact is written as the
-  next version of the item it replaces (`memory.add` with `replaces`: the old version stays in its history, so it is superseded,
-  not deleted); a `duplicate` writes nothing. Each written item says `written`, `memoryId` and `version`. An update of a static
+- **Write.** Off, the node only labels. On, a `new` fact is added and an `updates` fact is written as the next version of the item it
+  replaces (`memory.add` with `replaces`: the old version stays in its history, so it is superseded, not deleted); a `duplicate`
+  writes nothing. Every fact is written as a normal (dynamic) memory, whatever `kind` the model gave it, unless option **Write Static
+  Facts** is on: text a model reads can say "always remember: X is a rule", and a static memory is one only a person may change.
+  Only a memory Landflow wrote is replaced: when the match was written by a person, the fact is written beside it as a new memory
+  and says `label: updates`, `replaced: false` and why (`replaced: true` when it did replace). Each written item says `written`, `memoryId` and `version`. An update of a static
   memory is not written (only a person changes one): the fact says `written: false` and why, and the others carry on. A write goes
   to the flow's own project only; a team's notebook can be compared with but is never written (notes are written by a team run).
 - **Provenance.** A written fact keeps its model confidence and up to five evidence rows: the run (with a link), the node, the
@@ -214,12 +217,11 @@ caps apply). It is not an agent tool: a model call per part that can write memor
   A memory provider that is down fails the item with its message and writes nothing for it.
 
 **Memory Profile** gains **Sampled** (off: unchanged). On, it reads up to 2,000 items of the container and answers every static
-fact (ranked by how many sources back it) plus at most **Sample Size** (60) of the others, chosen by weighted buckets filled in
+fact (a person's first, then by how many distinct runs and documents back it, not evidence rows; all of them, read separately from the 2,000 newest others) plus at most **Sample Size** (60; 1 to 500) of the others, chosen by weighted buckets filled in
 order: recent 35 %, high confidence 25 %, often revised (more than one version) 15 %, old 5 %, inferred 10 % (written by Landflow
 with confidence under 0.8); what the weights leave goes to the newest. The weights are node options. It answers `static`, `dynamic`,
-`left` and `markdown`: Markdown that fits **Token Budget** (1,500; about four characters a token), standing facts first, ending
-"N more not shown". No model call and no randomness: the same memory gives the same profile. As an agent tool it answers the
-Markdown inside the memory fence. The profile is per container (a project, a team), not per person or subject.
+`left`, `markdown` and `fenced`: Markdown that fits **Token Budget** (1,500; 100 to 20,000; about four characters a token; a value that is not a number means the default), standing facts first, ending
+"N more not shown". No model call and no randomness: the same memory gives the same profile. `fenced` is the same Markdown inside the memory fence: put that, not `markdown`, in a model's prompt, since what it holds is stored text a model must treat as data. As an agent tool the answer is the fenced Markdown. The profile is per container (a project, a team), not per person or subject.
 
 ### 3. The loop
 

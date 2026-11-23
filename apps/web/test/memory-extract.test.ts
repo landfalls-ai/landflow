@@ -126,6 +126,43 @@ describe('extractFacts', () => {
   });
 });
 
+describe('normalized statements', () => {
+  it('turns punctuation into a space, so $3.50 is not $350 and v1.2 is not v12', () => {
+    expect(dedupeFacts([fact('The fee is $3.50'), fact('The fee is $350')])).toHaveLength(2);
+    expect(dedupeFacts([fact('Dana runs v1.2'), fact('Dana runs v12')])).toHaveLength(2);
+    expect(dedupeFacts([fact('Dana is on risk.'), fact('dana, is on RISK!')])).toHaveLength(1);
+  });
+});
+
+describe('cancellation', () => {
+  it('hands the signal to every model call', async () => {
+    const controller = new AbortController();
+    const { model, calls } = scripted([{ facts: [] }]);
+    await extractFacts(model, 'Dana left.', REFERENCE, controller.signal);
+    expect(calls[0].signal).toBe(controller.signal);
+  });
+
+  it('stops before the next part once the signal is aborted', async () => {
+    const controller = new AbortController();
+    const paragraph = 'Dana leads the payments team. '.repeat(150).trim();
+    const { model, calls } = scripted([() => (controller.abort(), { facts: [] }), { facts: [] }]);
+    await expect(extractFacts(model, [paragraph, paragraph].join('\n\n'), REFERENCE, controller.signal)).rejects.toThrow();
+    expect(calls).toHaveLength(1);
+  });
+
+  it('labelFacts hands the signal on and stops when it is aborted', async () => {
+    const controller = new AbortController();
+    const near = new Map([[0, [{ id: 'f1', text: 'Dana is on the risk team', kind: 'memory', source: 'fact' as const, createdAt: '', updatedAt: '' }]]]);
+    const { model, calls } = scripted([{ labels: [{ index: 0, label: 'new' }] }]);
+    await labelFacts(model, [fact('Dana moved to payments')], near, controller.signal);
+    expect(calls[0].signal).toBe(controller.signal);
+    controller.abort();
+    const again = scripted([{ labels: [] }]);
+    await expect(labelFacts(again.model, [fact('Dana moved to payments')], near, controller.signal)).rejects.toThrow();
+    expect(again.calls).toHaveLength(0);
+  });
+});
+
 describe('dedupeFacts', () => {
   it('keeps the first of equal statements and the stronger confidence is not lost on a later one', () => {
     expect(dedupeFacts([fact('Dana is on risk'), fact('dana is on RISK.'), fact('Raj is on risk', { subject: 'Raj' })]).map((f) => f.statement)).toEqual(['Dana is on risk', 'Raj is on risk']);
