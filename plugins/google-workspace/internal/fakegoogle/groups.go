@@ -14,8 +14,10 @@ import (
 // the group scopes the call is documented to take.
 
 const (
-	scopeGroup  = "https://www.googleapis.com/auth/admin.directory.group"
-	scopeMember = "https://www.googleapis.com/auth/admin.directory.group.member"
+	scopeGroup      = "https://www.googleapis.com/auth/admin.directory.group"
+	scopeGroupRead  = scopeGroup + ".readonly"
+	scopeMember     = scopeGroup + ".member"
+	scopeMemberRead = scopeMember + ".readonly"
 )
 
 // DirectoryGroup is a group as groups.get returns it (id and email are required).
@@ -103,9 +105,16 @@ func (s *Server) groups(w http.ResponseWriter, r *http.Request, segs []string, b
 		writeError(w, http.StatusForbidden, "Not Authorized to access this resource/api")
 		return
 	}
+	// A read takes the read-only scope too; a change needs the writable one.
 	needs := []string{scopeGroup}
 	if len(segs) > 1 {
 		needs = []string{scopeMember, scopeGroup}
+	}
+	if r.Method == http.MethodGet {
+		needs = append(needs, scopeGroupRead)
+		if len(segs) > 1 {
+			needs = append(needs, scopeMemberRead)
+		}
 	}
 	if info.serviceAccount && !hasAnyScope(info.scope, needs...) {
 		writeError(w, http.StatusForbidden, "Request had insufficient authentication scopes.")
@@ -136,6 +145,11 @@ func (s *Server) groups(w http.ResponseWriter, r *http.Request, segs []string, b
 	id := asString(g["id"])
 	switch {
 	case segs[1] == "hasMember" && len(segs) == 3:
+		// Google counts nested membership and refuses an outside address that is not a direct member.
+		if !s.sameDomain(g, segs[2]) && s.findMember(g, segs[2]) < 0 {
+			writeError(w, http.StatusBadRequest, "Invalid Input: memberKey")
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"isMember": s.findMember(g, segs[2]) >= 0})
 	case segs[1] != "members":
 		writeError(w, http.StatusNotFound, "Method not found: "+r.URL.Path)
@@ -286,4 +300,10 @@ func hasAnyScope(granted string, wanted ...string) bool {
 		}
 	}
 	return false
+}
+
+func (s *Server) sameDomain(g DirectoryGroup, email string) bool {
+	email = strings.ToLower(email)
+	domain := email[strings.LastIndex(email, "@")+1:]
+	return strings.HasSuffix(strings.ToLower(asString(g["email"])), "@"+domain)
 }

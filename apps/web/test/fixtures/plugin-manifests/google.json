@@ -4678,7 +4678,10 @@
        "value": "hasMember",
        "description": "Whether a person is a member of a group",
        "action": "Check a group member",
-       "idempotent": true
+       "idempotent": true,
+       "toolAnnotations": {
+        "readOnlyHint": true
+       }
       },
       {
        "name": "Remove",

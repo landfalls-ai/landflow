@@ -144,7 +144,7 @@ Used for access requests: add someone to a Google group, take them out again, se
 
 | Resource → operation | Parameters | Endpoint |
 |---|---|---|
-| **Group → Get** | Group (email, alias or id), Simplify | `GET groups/{groupKey}` |
+| **Group → Get** | Group (email or id), Simplify | `GET groups/{groupKey}` |
 | **Group → Get Many** | Return All / Limit, Simplify, Filters: Domain (default customer `my_customer`), Query (`email:eng*`) | `GET groups` (200 a page) |
 | **Group Member → Add** | Group, Member (email, alias or id), Role (`MEMBER` default, `MANAGER`, `OWNER`) | `POST groups/{groupKey}/members` |
 | **Group Member → Remove** | Group, Member | `GET`, then `DELETE groups/{groupKey}/members/{memberKey}` |
@@ -152,29 +152,37 @@ Used for access requests: add someone to a Google group, take them out again, se
 | **Group Member → Has Member** | Group, Member | `GET groups/{groupKey}/hasMember/{memberKey}` |
 | **Group Member → Update Role** | Group, Member, Role | `GET`, then `PATCH groups/{groupKey}/members/{memberKey}` when the role differs |
 
-Group Member operations output `{group, member, role, status, changed}` (emails lowercased; Has Member adds `isMember`,
-Get Many adds `type` and `id`, one item per member). `changed` says whether Google's state changed:
+Group, Member and keys must be an email address or an id (no spaces, slashes or dots-only values: they become URL paths, so
+anything else is refused before Google is called).
+
+Group Member operations output `{group, member, role, status, changed}` (emails lowercased; Add adds `alreadyHad`, Has Member adds
+`isMember`, `nestedChecked` and sometimes `note`, Get Many adds `type` and `id`, one item per member). `changed` says whether Google's state changed:
 
 | Operation | `status` / `changed` |
 |---|---|
-| Add | `added` / true; the person is already in the group: `already_member` / false with their current role (Google's 409 "Member already exists" is not an error, and the role is not changed: use Update Role) |
+| Add | `added` / true, `alreadyHad` false; the person is already in the group: `already_member` / false, `alreadyHad` true, with their **current** role (Google's 409 "Member already exists" is not an error; the role is never changed or downgraded, use Update Role). A flow that removes the grant when it expires must compare `alreadyHad` and `role` with what it asked for: access the person held before must not be removed |
 | Remove | `removed` / true (with the role they had); not in the group: `not_member` / false |
 | Update Role | `updated` / true; already that role: `unchanged` / false (nothing is sent); not a member: an error |
-| Has Member | `member` or `not_member`, always false |
+| Has Member | `member` or `not_member`, always `changed` false. Google's hasMember counts nested membership and answers 400 for an address outside the domain that is not a direct member; the node then reads the direct membership instead and returns `nestedChecked: false` and a `note` (nested groups were not checked) |
 
 Errors say what is missing: a 404 becomes `No group <key>` or `No user <email>` (a member in the group's own domain must be a
 Workspace user; outside addresses are accepted when the group allows them), and a 403 says that only an admin can
 manage groups and names the scope to delegate. The writes (Add, Remove, Update Role) are left out of the plugin's MCP
-tools so an agent cannot grant access by itself; the reads are tools.
+tools, and the node refuses them when an agent calls it as a tool (or through MCP), whatever parameters the model sets,
+so an agent cannot grant access by itself; they run in flows only. The reads are tools (Has Member is marked read-only).
 
 **Scopes.** The node asks for the scope of the resource it uses, and for nothing else, so list only what you use in the
 service account's domain-wide delegation (Admin console → Security → API controls → Domain-wide delegation):
 
-| Resource | Scope |
+| Resource and operations | Scope |
 |---|---|
 | User | `https://www.googleapis.com/auth/admin.directory.user.readonly` |
-| Group → Get, Get Many | `https://www.googleapis.com/auth/admin.directory.group` |
-| Group Member (all operations) | `https://www.googleapis.com/auth/admin.directory.group.member` |
+| Group → Get, Get Many | `https://www.googleapis.com/auth/admin.directory.group.readonly` |
+| Group Member → Get Many, Has Member | `https://www.googleapis.com/auth/admin.directory.group.member.readonly` |
+| Group Member → Add, Remove, Update Role | `https://www.googleapis.com/auth/admin.directory.group.member` |
+
+Reads ask for the read-only scopes, so a flow that only looks needs no write delegation; a flow that grants access
+delegates `admin.directory.group.member` (which covers reading members) and, to read groups, `admin.directory.group.readonly`.
 
 A service account must impersonate a Workspace admin who may manage groups (**Admin to Impersonate**, or the credential's
 Impersonate a User). With OAuth2 the signed-in admin grants the scopes at Connect.

@@ -26,6 +26,9 @@ const (
 	directoryScope       = "https://www.googleapis.com/auth/admin.directory.user.readonly"
 	directoryGroupScope  = "https://www.googleapis.com/auth/admin.directory.group"
 	directoryMemberScope = "https://www.googleapis.com/auth/admin.directory.group.member"
+	// Reads ask for the read-only scopes, so a flow that only looks needs no write delegation.
+	directoryGroupReadScope  = "https://www.googleapis.com/auth/admin.directory.group.readonly"
+	directoryMemberReadScope = "https://www.googleapis.com/auth/admin.directory.group.member.readonly"
 )
 
 func (DirectoryNode) Description() landflow.NodeDescriptor {
@@ -133,17 +136,18 @@ func (DirectoryNode) Execute(ctx *landflow.ExecuteContext) ([][]landflow.Item, e
 	return [][]landflow.Item{out}, nil
 }
 
-// directoryScopes are the scopes the items need: one per resource used, so a
-// flow that only reads users keeps working with the user scope alone.
+// directoryScopes are the scopes the items need: the narrowest one per resource and
+// operation, so a flow that only reads users, or only looks at groups, keeps working
+// with read-only delegation.
 func directoryScopes(ctx *landflow.ExecuteContext, n int) ([]string, error) {
 	var scopes []string
 	for i := 0; i < n; i++ {
 		scope := directoryScope
 		switch ctx.ParamString("resource", i, "user") {
 		case "group":
-			scope = directoryGroupScope
+			scope = directoryGroupReadScope
 		case "member":
-			scope = directoryMemberScope
+			scope = memberScope(ctx.ParamString("operation", i, "getAll"))
 		}
 		if !slices.Contains(scopes, scope) {
 			scopes = append(scopes, scope)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -43,7 +44,8 @@ func groupProperties() []landflow.PropertyDescriptor {
 		operationProperty("member", "getAll",
 			write(landflow.PropertyOption{Name: "Add", Value: "add", Description: "Add a member to a group (a member already in it is returned unchanged)", Action: "Add a member to a group"}),
 			landflow.PropertyOption{Name: "Get Many", Value: "getAll", Description: "List the members of a group", Action: "Get many group members", Idempotent: true},
-			landflow.PropertyOption{Name: "Has Member", Value: "hasMember", Description: "Whether a person is a member of a group", Action: "Check a group member", Idempotent: true},
+			landflow.PropertyOption{Name: "Has Member", Value: "hasMember", Description: "Whether a person is a member of a group", Action: "Check a group member", Idempotent: true,
+				ToolAnnotations: &landflow.McpToolAnnotations{ReadOnlyHint: landflow.Ptr(true)}},
 			write(landflow.PropertyOption{Name: "Remove", Value: "remove", Description: "Remove a member from a group (a person not in it is returned unchanged)", Action: "Remove a member from a group"}),
 			write(landflow.PropertyOption{Name: "Update Role", Value: "updateRole", Description: "Change a member's role in a group", Action: "Update a member's role"}),
 		),
@@ -81,14 +83,44 @@ func groupProperties() []landflow.PropertyDescriptor {
 	}
 }
 
+var (
+	emailKey = regexp.MustCompile(`^[^@\s/\\?#%]+@[^@\s/\\?#%]+$`)
+	idKey    = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+)
+
+// validKey accepts an email or an id and nothing else: the key becomes a URL path segment, and a "..",
+// a "/" or a "?" would reach another Directory endpoint with the admin's rights.
+func validKey(key string) error {
+	if emailKey.MatchString(key) || idKey.MatchString(key) {
+		return nil
+	}
+	return userError("Use the group's or member's email address, or its id: no spaces, slashes or dots-only values.",
+		"%q is not an email address or an id", key)
+}
+
+// memberScope is the scope a member operation asks for: read-only to look, the writable one to change.
+func memberScope(op string) string {
+	switch op {
+	case "add", "remove", "updateRole":
+		return directoryMemberScope
+	}
+	return directoryMemberReadScope
+}
+
 // groupKeyOf reads the group parameter: an email is lowercased (Google ignores case), an id is kept.
 func groupKeyOf(ctx *landflow.ExecuteContext, i int) (string, error) {
 	key, err := requireParam(ctx, "groupKey", "Group", i)
+	if err == nil {
+		err = validKey(key)
+	}
 	return strings.ToLower(key), err
 }
 
 func memberKeyOf(ctx *landflow.ExecuteContext, i int) (string, error) {
 	key, err := requireParam(ctx, "memberKey", "Member", i)
+	if err == nil {
+		err = validKey(key)
+	}
 	return strings.ToLower(key), err
 }
 
@@ -154,13 +186,13 @@ func executeGroup(ctx *landflow.ExecuteContext, c *client, i int) ([]map[string]
 		}
 		var g map[string]any
 		if err := c.do(ctx, apiDirectory, http.MethodGet, groupPath(key), nil, nil, &g); err != nil {
-			return nil, groupFailure(err, directoryGroupScope, key, "")
+			return nil, groupFailure(err, directoryGroupReadScope, key, "")
 		}
 		return []map[string]any{groupShape(g, simple)}, nil
 	case "getAll":
 		groups, err := listGroups(ctx, c, asMap(ctx.Param("filters", i)), limitFor(ctx, i, 100))
 		if err != nil {
-			return nil, groupFailure(err, directoryGroupScope, "", "")
+			return nil, groupFailure(err, directoryGroupReadScope, "", "")
 		}
 		for k, g := range groups {
 			groups[k] = groupShape(g, simple)
@@ -215,11 +247,17 @@ func listGroups(ctx *landflow.ExecuteContext, c *client, filters map[string]any,
 
 func executeMember(ctx *landflow.ExecuteContext, c *client, i int) ([]map[string]any, error) {
 	op := ctx.ParamString("operation", i, "getAll")
+	// An agent's tool slot lets the model set any parameter, role OWNER included: changing who is in a group is for flows
+	// (behind an approval), never for a model's tool call.
+	if mode := ctx.Mode(); (mode == landflow.ModeTool || mode == landflow.ModeMCP) && memberScope(op) == directoryMemberScope {
+		return nil, userError("Run the Google Directory node in a flow to change group members.",
+			"Group member %s is not available to agents or MCP calls", op)
+	}
 	group, err := groupKeyOf(ctx, i)
 	if err != nil {
 		return nil, err
 	}
-	scope := directoryMemberScope
+	scope := memberScope(op)
 	fail := func(err error, member string) error { return groupFailure(err, scope, group, member) }
 	if op == "getAll" {
 		members, err := listMembers(ctx, c, group, ctx.Param("filters", i), limitFor(ctx, i, 100))
@@ -255,7 +293,21 @@ func executeMember(ctx *landflow.ExecuteContext, c *client, i int) ([]map[string
 		var res struct {
 			IsMember bool `json:"isMember"`
 		}
-		if err := c.do(ctx, apiDirectory, http.MethodGet, groupPath(group, "/hasMember/", url.PathEscape(member)), nil, nil, &res); err != nil {
+		nested := true
+		err := c.do(ctx, apiDirectory, http.MethodGet, groupPath(group, "/hasMember/", url.PathEscape(member)), nil, nil, &res)
+		var ae *apiError
+		if errors.As(err, &ae) && ae.status == http.StatusBadRequest {
+			// hasMember counts nested membership and answers 400 for a member or nested group outside the domain:
+			// look at the direct membership instead.
+			nested = false
+			var m map[string]any
+			err = c.do(ctx, apiDirectory, http.MethodGet, memberPath(group, member), nil, nil, &m)
+			if isNotFound(err, "memberKey") {
+				err = nil
+			}
+			res.IsMember = err == nil && m != nil
+		}
+		if err != nil {
 			return nil, fail(err, member)
 		}
 		status := "not_member"
@@ -263,7 +315,10 @@ func executeMember(ctx *landflow.ExecuteContext, c *client, i int) ([]map[string
 			status = "member"
 		}
 		o := groupOutcome(group, member, "", status, false)
-		o["isMember"] = res.IsMember
+		o["isMember"], o["nestedChecked"] = res.IsMember, nested
+		if !nested {
+			o["note"] = "Google could not check nested groups for this address (outside the domain); only direct membership was checked."
+		}
 		return []map[string]any{o}, nil
 	case "add":
 		role, err := roleOf(ctx, i)
@@ -276,7 +331,9 @@ func executeMember(ctx *landflow.ExecuteContext, c *client, i int) ([]map[string
 		if errors.As(err, &ae) && ae.status == http.StatusConflict {
 			// Already in the group: report what is there, change nothing (a different role is Update Role's job).
 			if m, err = getMember(); err == nil && m != nil {
-				return []map[string]any{groupOutcome(group, member, getString(m, "role", role), "already_member", false)}, nil
+				o := groupOutcome(group, member, getString(m, "role", role), "already_member", false)
+				o["alreadyHad"] = true
+				return []map[string]any{o}, nil
 			}
 			if err == nil {
 				err = ae
@@ -285,7 +342,9 @@ func executeMember(ctx *landflow.ExecuteContext, c *client, i int) ([]map[string
 		if err != nil {
 			return nil, fail(err, member)
 		}
-		return []map[string]any{groupOutcome(group, member, getString(m, "role", role), "added", true)}, nil
+		o := groupOutcome(group, member, getString(m, "role", role), "added", true)
+		o["alreadyHad"] = false
+		return []map[string]any{o}, nil
 	case "remove":
 		m, err := getMember()
 		if err != nil {

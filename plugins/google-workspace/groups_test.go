@@ -1,11 +1,16 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/landflow/landflow/plugins/google-workspace/internal/fakegoogle"
+	landflow "github.com/landflow/landflow/sdks/go"
+	"github.com/landflow/landflow/sdks/go/mcpface"
+	"github.com/landflow/landflow/sdks/go/transport"
 )
 
 // ---------------------------------------------------------------------------
@@ -47,9 +52,9 @@ func TestGroupGet(t *testing.T) {
 			t.Errorf("get %q = %v", key, out)
 		}
 	}
-	// The token asks for the group scope alone, acting as the admin.
+	// A read asks for the read-only group scope alone, acting as the admin.
 	ex := h.fake.ExchangeList()
-	if ex[0].Claims["scope"] != directoryGroupScope || ex[0].Claims["sub"] != adminEmail {
+	if ex[0].Claims["scope"] != directoryGroupReadScope || ex[0].Claims["sub"] != adminEmail {
 		t.Errorf("claims = %v", ex[0].Claims)
 	}
 	// Simplify off: Google's own resource.
@@ -73,7 +78,7 @@ func TestGroupGetErrors(t *testing.T) {
 	p := groupParams("group", "get", map[string]any{"groupKey": "g1", "adminEmail": "me@example.com"})
 	resp = h.exec("googleDirectory", p, execOpts{})
 	text := errorText(resp)
-	if resp.Error == nil || !strings.Contains(text, "403") || !strings.Contains(text, directoryGroupScope) || !strings.Contains(text, "admin") {
+	if resp.Error == nil || !strings.Contains(text, "403") || !strings.Contains(text, directoryGroupReadScope) || !strings.Contains(text, "admin") {
 		t.Errorf("403 = %q", text)
 	}
 }
@@ -113,7 +118,7 @@ func TestMemberAdd(t *testing.T) {
 		return out[0]
 	}
 	got := add("eng@example.com", "Dana@Example.com", "MANAGER")
-	if got["group"] != "eng@example.com" || got["member"] != "dana@example.com" || got["role"] != "MANAGER" || got["status"] != "added" || got["changed"] != true {
+	if got["group"] != "eng@example.com" || got["member"] != "dana@example.com" || got["role"] != "MANAGER" || got["status"] != "added" || got["changed"] != true || got["alreadyHad"] != false {
 		t.Errorf("added = %v", got)
 	}
 	if m := h.fake.DirectoryMembers("g1"); m["dana@example.com"] != "MANAGER" || len(m) != 3 {
@@ -132,8 +137,13 @@ func TestMemberAdd(t *testing.T) {
 
 	// Again: the existing member comes back, nothing changed, no error (the 409 is absorbed).
 	again := add("eng@example.com", "dana@example.com", "MEMBER")
-	if again["changed"] != false || again["status"] != "already_member" || again["role"] != "MANAGER" || again["member"] != "dana@example.com" {
+	if again["changed"] != false || again["status"] != "already_member" || again["role"] != "MANAGER" || again["member"] != "dana@example.com" || again["alreadyHad"] != true {
 		t.Errorf("again = %v", again)
+	}
+	// Asking for OWNER of an existing MEMBER changes nothing and reports the role they already had.
+	h.fake.AddDirectoryMember("g1", fakegoogle.DirectoryMember{"email": "kim2@example.com", "role": "MEMBER"})
+	if up := add("g1", "kim2@example.com", "OWNER"); up["role"] != "MEMBER" || up["alreadyHad"] != true || up["changed"] != false {
+		t.Errorf("no upgrade = %v", up)
 	}
 	if m := h.fake.DirectoryMembers("g1"); m["dana@example.com"] != "MANAGER" {
 		t.Errorf("role was changed by a repeated add: %v", m)
@@ -299,4 +309,113 @@ func TestFakeGroupEndpoint(t *testing.T) {
 	if len(out) != 1 || out[0]["member"] != "x@partner.io" || out[0]["role"] != "OWNER" {
 		t.Errorf("members = %v", out)
 	}
+}
+
+// An agent's tool slot lets the model set any parameter; the writes refuse tool and MCP mode.
+func TestMemberWritesRefuseToolMode(t *testing.T) {
+	h := groupHarness(t)
+	for _, mode := range []landflow.ExecutionMode{landflow.ModeTool, landflow.ModeMCP} {
+		for _, op := range []string{"add", "remove", "updateRole"} {
+			p := groupParams("member", op, map[string]any{"groupKey": "g1", "memberKey": "dana@example.com", "role": "OWNER"})
+			resp := h.exec("googleDirectory", p, execOpts{mode: mode})
+			if resp.Error == nil || !strings.Contains(errorText(resp), "flow") {
+				t.Errorf("%s in %s mode = %+v", op, mode, resp.Error)
+			}
+		}
+	}
+	if m := h.fake.DirectoryMembers("g1"); len(m) != 2 {
+		t.Errorf("a refused write changed the group: %v", m)
+	}
+	if n := len(h.fake.Calls("", "/admin/directory/v1/groups")); n != 0 {
+		t.Errorf("a refused write called Google %d times", n)
+	}
+	// Reads are fine in tool mode.
+	out := h.ok(h.exec("googleDirectory", groupParams("member", "getAll", map[string]any{"groupKey": "g1"}), execOpts{mode: landflow.ModeTool}))
+	if len(out) != 2 {
+		t.Errorf("tool-mode read = %v", out)
+	}
+}
+
+func TestGroupKeysAreValidated(t *testing.T) {
+	h := groupHarness(t)
+	for _, key := range []string{".", "..", "a b", "g1/members", "../users", " ", "a@b@c", "x/y@example.com", "g1?x=1", "g1#"} {
+		for _, p := range []map[string]any{
+			groupParams("group", "get", map[string]any{"groupKey": key}),
+			groupParams("member", "hasMember", map[string]any{"groupKey": key, "memberKey": "ana@example.com"}),
+			groupParams("member", "hasMember", map[string]any{"groupKey": "g1", "memberKey": key}),
+		} {
+			resp := h.exec("googleDirectory", p, execOpts{})
+			if resp.Error == nil || !(strings.Contains(errorText(resp), "email") || strings.Contains(errorText(resp), "required")) {
+				t.Errorf("key %q accepted or unclear: %+v", key, resp.Error)
+			}
+		}
+	}
+	if n := len(h.fake.Calls("", "/admin/directory/v1/groups")); n != 0 {
+		t.Errorf("an invalid key reached Google (%d calls)", n)
+	}
+	// Emails and ids pass.
+	for _, key := range []string{"eng@example.com", "g1", "a.b+c@example.com"} {
+		if err := validKey(key); err != nil {
+			t.Errorf("%q rejected: %v", key, err)
+		}
+	}
+}
+
+// Google answers hasMember with 400 for a member outside the domain that is only nested; the
+// node falls back to the direct membership and says it did.
+func TestHasMemberFallsBackToDirect(t *testing.T) {
+	h := groupHarness(t)
+	h.fake.AddDirectoryMember("g1", fakegoogle.DirectoryMember{"email": "guest@partner.io", "role": "MEMBER"})
+	// A direct outside member is answered by hasMember itself.
+	yes := h.ok(h.exec("googleDirectory", groupParams("member", "hasMember", map[string]any{"groupKey": "g1", "memberKey": "guest@partner.io"}), execOpts{}))[0]
+	if yes["isMember"] != true || yes["nestedChecked"] != true {
+		t.Errorf("direct external = %v", yes)
+	}
+	no := h.ok(h.exec("googleDirectory", groupParams("member", "hasMember", map[string]any{"groupKey": "g1", "memberKey": "stranger@partner.io"}), execOpts{}))[0]
+	if no["isMember"] != false || no["status"] != "not_member" || no["nestedChecked"] != false || !strings.Contains(no["note"].(string), "nested") {
+		t.Errorf("external non-member = %v", no)
+	}
+	in := h.ok(h.exec("googleDirectory", groupParams("member", "hasMember", map[string]any{"groupKey": "g1", "memberKey": "ana@example.com"}), execOpts{}))[0]
+	if in["nestedChecked"] != true {
+		t.Errorf("in-domain = %v", in)
+	}
+}
+
+func TestGroupScopes(t *testing.T) {
+	h := groupHarness(t)
+	scopeOf := func() any { ex := h.fake.ExchangeList(); return ex[len(ex)-1].Claims["scope"] }
+	for _, c := range []struct {
+		resource, op, scope string
+	}{
+		{"group", "getAll", directoryGroupReadScope},
+		{"member", "getAll", directoryMemberReadScope},
+		{"member", "hasMember", directoryMemberReadScope},
+		{"member", "remove", directoryMemberScope},
+		{"member", "updateRole", directoryMemberScope},
+	} {
+		tokenCache.Clear()
+		h.exec("googleDirectory", groupParams(c.resource, c.op, map[string]any{"groupKey": "g1", "memberKey": "ana@example.com", "role": "MEMBER"}), execOpts{})
+		if scopeOf() != c.scope {
+			t.Errorf("%s %s asked for %v, want %s", c.resource, c.op, scopeOf(), c.scope)
+		}
+	}
+}
+
+func TestHasMemberIsReadOnlyTool(t *testing.T) {
+	dispatch := func(context.Context, transport.Method, json.RawMessage, transport.DispatchContext) (any, error) {
+		return nil, nil
+	}
+	face, err := mcpface.New(newPlugin().Manifest(), dispatch, mcpface.FaceOptions{Credentials: mcpface.Credentials{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range face.Tools() {
+		if tool.Name == "googleDirectory_member_hasMember" {
+			if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
+				t.Errorf("hasMember annotations = %+v", tool.Annotations)
+			}
+			return
+		}
+	}
+	t.Error("hasMember is not a tool")
 }

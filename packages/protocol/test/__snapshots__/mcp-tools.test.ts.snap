@@ -79,7 +79,7 @@ exports[`mapping every bundled plugin manifest > google > matches the snapshot o
   "googleDirectory_group_get ro=1 d=0 i=1 [adminEmail,groupKey,simple]",
   "googleDirectory_group_getAll ro=1 d=0 i=1 [adminEmail,returnAll,limit,filters,simple]",
   "googleDirectory_member_getAll ro=1 d=0 i=1 [adminEmail,groupKey,returnAll,limit,filters]",
-  "googleDirectory_member_hasMember ro=0 d=0 i=1 [adminEmail,groupKey,memberKey]",
+  "googleDirectory_member_hasMember ro=1 d=0 i=1 [adminEmail,groupKey,memberKey]",
   "googleDirectory_user_get ro=1 d=0 i=1 [adminEmail,userKey,simple]",
   "googleDirectory_user_getAll ro=1 d=0 i=1 [adminEmail,returnAll,limit,filters,simple]",
 ]
