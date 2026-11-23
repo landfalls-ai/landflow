@@ -200,7 +200,7 @@ export function decideGate(executionId: string, decision: 'accepted' | 'sent_bac
 }
 
 /** Answer an Ask a Person node's request: approve (with the draft as the person edited it, and a note) or reject (POST /api/executions/:id/approvals). */
-export async function decideConfirm(executionId: string, decision: { approved: boolean; text?: string; comment?: string }, onEvent: (event: string, data: unknown) => void = () => {}): Promise<void> {
+export async function decideConfirm(executionId: string, decision: { approved: boolean; text?: string; comment?: string; choice?: string }, onEvent: (event: string, data: unknown) => void = () => {}): Promise<void> {
   await streamEvents(`/api/executions/${executionId}/approvals`, { callId: 'confirm', ...decision }, onEvent);
 }
 

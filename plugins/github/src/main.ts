@@ -17,18 +17,19 @@
 import { definePlugin } from '@landflow/sdk';
 import { serve } from '@landflow/sdk/serve';
 import { GitHub, githubApi } from './nodes/github';
+import { GitHubAccess } from './nodes/github-access';
 
 export const plugin = definePlugin({
   info: {
     id: 'github',
     name: 'GitHub',
     version: '0.1.0',
-    description: 'Files, one-commit multi-file changes, branches, draft pull requests, issues and comments over the GitHub REST API; reachable over HTTP, gRPC, any installed broker and MCP',
+    description: 'Files, one-commit multi-file changes, branches, draft pull requests, issues and comments, and access (teams, organization, collaborators, projects) over the GitHub APIs; reachable over HTTP, gRPC, any installed broker and MCP',
     icon: 'file:github.svg',
     color: '#24292f',
     author: 'Landflow',
   },
-  nodes: [GitHub],
+  nodes: [GitHub, GitHubAccess],
   credentialTypes: [githubApi],
   // `file:` icons (plugin, nodes and credential types) are inlined from here as data: URLs when the manifest is built.
   iconDir: new URL('../icons/', import.meta.url),

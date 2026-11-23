@@ -11,6 +11,7 @@
  * live at its time with the requester as publisher. A schedule made while four-eyes was off, whose time comes after
  * it was switched on, becomes a publish request instead of going live (status `requested`).
  */
+import { guardAccessFlow } from './access/guard';
 import { isInstanceAdmin } from './projects/access';
 import { nanoid } from 'nanoid';
 import type { ScheduledPublish } from '../shared/publish';
@@ -96,6 +97,7 @@ export interface ScheduleAsk {
 
 /** Schedule a publish or unpublish. With four-eyes publishing on this also files the request that approves it. */
 export function schedulePublish(ask: ScheduleAsk): ScheduledPublish {
+  guardAccessFlow(ask.workflowId, ask.by);
   const workflow = store.getWorkflow(ask.workflowId);
   if (!workflow) throw new ScheduleError('Workflow not found', 404);
   const runAt = parseRunAt(ask.at);

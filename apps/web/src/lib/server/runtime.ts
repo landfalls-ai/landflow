@@ -30,6 +30,9 @@ import './practices/register';
 import './practices/context-source';
 // SP03: writes the parts of each recorded model call's prompt (docs/llm-gateway.md#what-a-prompt-was-made-of).
 import './ai-usage/parts-register';
+// C35: registers the built-in access backend (docs/access-requests.md), so routes and nodes reach it through the port.
+import './access/guard'; // registers the lock on the installed access flows
+import './access/port';
 // AP01: registers the approval inbox's port and settles a cancelled run's requests (docs/approval-inbox.md).
 import './approval-inbox';
 // NB02: registers the Notion client factory, so notionClientFor works wherever the runtime is loaded (docs/features/notion-brain.md).
@@ -234,6 +237,8 @@ export const SERVICES: ServiceSpec[] = [
   { name: 'event outbox', roles: MAIN, leader: true, start: () => eventOutbox.start(), stop: () => eventOutbox.stop() },
   // C22: scheduled syncs of knowledge sources (lib/server/knowledge-sources/scheduler.ts); the leader starts them, a claim in the database stops a second process from running the same source.
   { name: 'knowledge sources', roles: MAIN, leader: true, start: async () => (await import('./knowledge-sources/scheduler')).knowledgeSourceScheduler.start(), stop: async () => (await import('./knowledge-sources/scheduler')).knowledgeSourceScheduler.stop() },
+  // C35: takes back access grants at their end and reconciles hourly (lib/server/access/sweeper.ts); a claim in the database stops a second process removing the same grant.
+  { name: 'access grants', roles: MAIN, leader: true, start: async () => (await import('./access/sweeper')).accessGrants.start(), stop: async () => (await import('./access/sweeper')).accessGrants.stop() },
   // C26: a secret route's cluster Secret follows its credential: a minute tick on the leader rewrites only the Secret when a value changed (lib/server/kagent/route-refresh.ts).
   { name: 'kagent route refresh', roles: MAIN, leader: true, start: () => kagentRouteRefresh.start(), stop: () => kagentRouteRefresh.stop() },
   // C30: leased dynamic secrets (lib/server/secrets/lease-sweeper.ts): the leader revokes the leases of runs that are over, renews a running run's, retries revokes that failed; a minute tick.

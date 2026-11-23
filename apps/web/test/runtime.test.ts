@@ -50,6 +50,8 @@ const OLD_MAIN = [
   'event outbox',
   // C22: the scheduled syncs of knowledge sources, a leader service right after the outbox.
   'knowledge sources',
+  // C35: the access grants' timed removal and hourly reconcile, a leader service before the kagent route refresh.
+  'access grants',
   // C26: the secret routes' Secret follows a changed credential, a leader service.
   'kagent route refresh',
   // C30: the leader revokes, renews and retries leased secrets, right after the route refresh.

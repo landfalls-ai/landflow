@@ -61,6 +61,8 @@ exports[`mapping every bundled plugin manifest > google > matches the snapshot o
   "googleDrive_file_deleteFile ro=0 d=1 i=0 [fileId,options]",
   "googleDrive_file_download ro=1 d=0 i=1 [fileId,downloadAs,outputBinaryField]",
   "googleDrive_file_export ro=0 d=0 i=1 [fileId,exportFormat,outputBinaryField,options]",
+  "googleDrive_file_getItem ro=1 d=0 i=1 [fileId,activityOptions]",
+  "googleDrive_file_changesSince ro=0 d=0 i=1 [since,sharedDrives,returnAll,limit,activityOptions]",
   "googleDrive_file_upload ro=0 d=0 i=0 [name,folderId,uploadFrom,binaryPropertyName,fileContent,base64Content,options]",
   "googleDrive_fileFolder_search ro=1 d=0 i=1 [searchMethod,queryString,returnAll,limit,filter]",
   "googleDrive_folder_create ro=0 d=0 i=0 [name,folderId]",
@@ -68,11 +70,18 @@ exports[`mapping every bundled plugin manifest > google > matches the snapshot o
   "googleCalendar_event_delete ro=0 d=1 i=0 [calendar,eventId,options]",
   "googleCalendar_event_get ro=1 d=0 i=1 [calendar,eventId]",
   "googleCalendar_event_getAll ro=1 d=0 i=1 [calendar,returnAll,limit,timeMin,timeMax,options]",
+  "googleCalendar_event_changedSince ro=0 d=0 i=1 [calendar,since,returnAll,limit,activityOptions]",
   "googleCalendar_event_update ro=0 d=0 i=0 [calendar,eventId,updateFields]",
   "googleDocs_document_create ro=0 d=0 i=0 [title,folderId]",
   "googleDocs_document_get ro=1 d=0 i=1 [documentURL,simple]",
   "googleDocs_document_update ro=0 d=0 i=0 [documentURL,actionsUi]",
   "googleDocs_document_export ro=0 d=0 i=1 [documentURL,exportFormat,outputBinaryField,options]",
+  "googleDirectory_group_get ro=1 d=0 i=1 [adminEmail,groupKey,simple]",
+  "googleDirectory_group_getAll ro=1 d=0 i=1 [adminEmail,returnAll,limit,filters,simple]",
+  "googleDirectory_member_getAll ro=1 d=0 i=1 [adminEmail,groupKey,returnAll,limit,filters]",
+  "googleDirectory_member_hasMember ro=1 d=0 i=1 [adminEmail,groupKey,memberKey]",
+  "googleDirectory_user_get ro=1 d=0 i=1 [adminEmail,userKey,simple]",
+  "googleDirectory_user_getAll ro=1 d=0 i=1 [adminEmail,returnAll,limit,filters,simple]",
 ]
 `;
 

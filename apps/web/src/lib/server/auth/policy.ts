@@ -37,6 +37,8 @@ export function routePolicy(method: string, path: string): RoutePolicy {
 
   if (under('/api/auth/me')) return { scope: 'any' };
   if (under('/api/api-keys')) return { scope: 'any', sessionOnly: true };
+  // C35: access requests: the requester, the approver and the catalog editor are people (docs/access-requests.md); the library checks who may do what.
+  if (under('/api/access')) return { scope: 'any', sessionOnly: true };
   // B02: a person's own preferences and chats; an API key can't read them (the handlers answer the owner only).
   // C16: your own second factors; a session only (an API key can't add or remove one).
   if (under('/api/me/mfa')) return { scope: 'any', sessionOnly: true };

@@ -13,6 +13,8 @@ import { memoryExtractNode } from './memory-extract'; // C28:
 import { briefingNodes } from './briefing';
 // LL05:
 import { applyCapRaiseNode, capRaiseTriggerNode } from './cap-raise';
+// C35:
+import { accessDecisionNode, accessRequestTriggerNode, fileAccessRequestNode } from './access';
 // B32:
 import { proposeFlowsNode, velocitySignalsNode } from './velocity';
 import { detectorTriggerNode, findSimilarNode, landflowUsageNode, recordEventNode, suggestImprovementNode, suggestionDecidedTriggerNode, usageTriggerNode } from './usage';
@@ -131,6 +133,9 @@ export const corePlugin = definePlugin({
     suggestImprovementNode,
     // LL05:
     capRaiseTriggerNode,
+    accessRequestTriggerNode,
+    accessDecisionNode,
+    fileAccessRequestNode,
     applyCapRaiseNode,
     // B30:
     ...briefingNodes,

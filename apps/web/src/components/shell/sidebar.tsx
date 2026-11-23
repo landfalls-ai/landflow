@@ -2,10 +2,12 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { Activity, Bot, Brain, Ellipsis, House, KeyRound, PanelLeftClose, PanelLeftOpen, Puzzle, Search, Settings, Table2, Workflow, X } from 'lucide-react';
+import { Activity, Bot, Brain, Ellipsis, House, KeyRound, ShieldCheck, PanelLeftClose, PanelLeftOpen, Puzzle, Search, Settings, Table2, Workflow, X } from 'lucide-react';
 import { useNeedsYou } from '@/lib/client/run-trace';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
+import { ACCESS_SETUP_EVENT, accessApi, showAccessInRail } from '@/lib/client/access';
+import type { AccessSetup } from '@/lib/shared/access';
 import { useLiveConnected, useLiveEvents } from '@/lib/client/live';
 import { isChromelessPage } from '@/lib/shared/auth-paths';
 import type { PluginSummary } from '@/lib/shared/types';
@@ -30,6 +32,9 @@ const ICONS: Record<string, typeof House> = {
 };
 /** The rail's nine places: one list, Settings set apart at the foot. */
 const NAV = RAIL_ITEMS.filter((i) => i.href !== '/settings').map((i) => ({ ...i, icon: ICONS[i.href] }));
+
+/** Access requests (C35): the rail shows it for everyone once set up, and to admins always; a phone finds it in More. */
+const ACCESS_ITEM = { href: '/access', label: 'Access', icon: ShieldCheck };
 
 const RAIL_KEY = 'landflow-rail-collapsed';
 
@@ -149,6 +154,16 @@ function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; on
     if (event.channel === 'registry' && event.event.type !== 'plugin.heartbeat' && !event.event.type.startsWith('scan.')) void load();
   });
   const offline = offlineDot(plugins);
+  const viewer = useViewer();
+  const [accessSetup, setAccessSetup] = useState<AccessSetup>();
+  // Once on mount, and again when the Access page sets access requests up (a window event): not on every navigation.
+  useEffect(() => {
+    const load = () => void accessApi.setup().then(setAccessSetup).catch(() => setAccessSetup(undefined));
+    load();
+    window.addEventListener(ACCESS_SETUP_EVENT, load);
+    return () => window.removeEventListener(ACCESS_SETUP_EVENT, load);
+  }, []);
+  const items = showAccessInRail(viewer, accessSetup) ? [...NAV, ACCESS_ITEM] : NAV;
 
   return (
     <aside
@@ -202,7 +217,7 @@ function Rail({ pathname, open, onClose }: { pathname: string; open: boolean; on
       </div>
 
       <nav className="flex flex-col gap-0.5">
-        {NAV.map((item) => {
+        {items.map((item) => {
           const active = navActive(item.href, pathname);
           const Icon = item.icon;
           const dot = item.href === '/plugins' && offline.dot;

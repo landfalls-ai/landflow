@@ -6,12 +6,14 @@
  * when that was the last open call, the resumed run follows as on the run route (`execution` events, node.chunk
  * included, then `result`). `input` (a JSON object, with `approved: true`) is what a person changed in the call's input: the tool
  * runs with it, and the run's journal says it was edited. An Ask a Person node's request (`approval.confirm`) takes `text` (with `approved: true`
- * and only if the node allows editing: the draft as the person changed it) and `comment` instead of `input`; its call id is `confirm`. Errors before anything is decided answer JSON (404, 409).
+ * and only if the node allows editing: the draft as the person changed it) and `comment` instead of `input`; its call id is `confirm`. With Answer
+ * Choices (C35) an approval may carry `choice`, one of the node's values (the first when none is named; 400 otherwise); with People Only an API key
+ * or an MCP caller is refused with 403. Errors before anything is decided answer JSON (404, 409).
  */
 import { z } from 'zod';
 import type { JsonObject } from '@landflow/protocol';
 import { claim, closedOf, rowFor } from '@/lib/server/approval-inbox/store'; // AP01:
-import { ApprovalError, decideApproval, pendingApproval } from '@/lib/server/approvals';
+import { ApprovalError, assertPerson, choiceFor, decideApproval, pendingApproval } from '@/lib/server/approvals';
 import { currentPrincipal } from '@/lib/server/auth/guard';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { sseResponse } from '@/lib/server/sse';
@@ -24,8 +26,8 @@ type Ctx = { params: Promise<{ id: string }> };
 // `input`: the tool's input as a person edited it; the tool runs with it instead of the call's own (approvals only).
 const inputSchema = z.record(z.string(), z.unknown()).refine((value) => JSON.stringify(value).length <= 200_000, 'The edited input is too large');
 const decisionSchema = z
-  .object({ callId: z.string().min(1), approved: z.boolean(), input: inputSchema.optional(), text: z.string().min(1).max(200_000).optional(), comment: z.string().max(5_000).optional() })
-  .refine((body) => body.approved || (body.input === undefined && body.text === undefined), 'Only an approval can carry an edited input or text');
+  .object({ callId: z.string().min(1), approved: z.boolean(), input: inputSchema.optional(), text: z.string().min(1).max(200_000).optional(), comment: z.string().max(5_000).optional(), choice: z.string().min(1).max(200).optional() })
+  .refine((body) => body.approved || (body.input === undefined && body.text === undefined && body.choice === undefined), 'Only an approval can carry an edited input, text or choice');
 
 export const GET = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
@@ -61,6 +63,9 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   if (!approval.calls.some((c) => c.id === body.data.callId)) return error('That tool call is not waiting for approval', 404);
   if (approval.decisions?.[body.data.callId]) return error('Already decided', 409);
   const user = currentPrincipal()?.user;
+  // C35: refused here, before the stream starts, so the caller gets the plain status (400 for a bad choice, 403 for a caller that is not a person).
+  choiceFor(approval, body.data.approved, body.data.choice);
+  assertPerson(approval, { ...(user && { by: user.email || user.name }), ...(currentPrincipal()?.via && { principal: currentPrincipal()!.via }) });
 
   return sseResponse(request, async (write, close) => {
     // A client that went away (or fell too far behind) loses the stream; the run goes on.
@@ -75,6 +80,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
         ...(body.data.input && { input: body.data.input as JsonObject }),
         ...(body.data.text !== undefined && { text: body.data.text }),
         ...(body.data.comment !== undefined && { comment: body.data.comment }),
+        ...(body.data.choice !== undefined && { choice: body.data.choice }),
         onEvent: (event) => {
           if (!announced) {
             announced = true;

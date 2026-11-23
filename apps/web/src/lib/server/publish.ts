@@ -10,6 +10,7 @@
  * Workflows that were active before draft and publish existed count as published at their newest version
  * (migration 200, and `ensurePublications()` at boot for data imported after it).
  */
+import { guardAccessFlow } from './access/guard';
 import type { ExecutionMode } from '@landflow/protocol';
 import type { Workflow } from '@landflow/engine';
 import type { PublicationStatus, PublishResult } from '../shared/publish';
@@ -217,6 +218,7 @@ export function withAccess(blocks: PinBlock[], by?: string): AccessBlock[] {
  * `by`: who publishes (shown in the timeline). Approval flows wrap this function; it is the only one that publishes.
  */
 export async function publishVersion(workflowId: string, versionId: string, by?: string, note?: string, options: PublishOptions = {}): Promise<PublishResult> {
+  guardAccessFlow(workflowId, by); // the installed access flows: instance admins only, however the publish got here (scheduled, approved, synced)
   const workflow = store.getWorkflow(workflowId);
   if (!workflow) throw new PublishError('Workflow not found', 404);
   const version = getVersion(workflowId, versionId);
@@ -309,6 +311,7 @@ export async function publishUpdate(workflowId: string, agentIds: readonly strin
 
 /** Unpublish: production triggers stop, the workflow is inactive, and its app webhooks are removed from their services. */
 export async function unpublishWorkflow(workflowId: string, by?: string, note?: string): Promise<PublishResult> {
+  guardAccessFlow(workflowId, by);
   const workflow = store.getWorkflow(workflowId);
   if (!workflow) throw new PublishError('Workflow not found', 404);
   database().transaction(() => {

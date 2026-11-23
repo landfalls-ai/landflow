@@ -22,7 +22,7 @@ describe('GitHub plugin', () => {
     const manifest = manifestSchema.parse(await response.json()) as PluginManifest;
     expect(manifest.plugin).toMatchObject({ id: 'github', name: 'GitHub' });
     expect(manifest.plugin.icon).toMatch(/^data:image\/svg\+xml/);
-    expect(manifest.nodes.map((n) => n.name)).toEqual(['github']);
+    expect(manifest.nodes.map((n) => n.name)).toEqual(['github', 'githubAccess']);
     expect(manifest.nodes[0]).toMatchObject({ usableAsTool: true, idempotent: false, credentials: [{ name: 'githubApi', required: true }] });
     expect(manifest.credentialTypes?.map((c) => c.name)).toEqual(['githubApi']);
     expect(manifest.credentialTypes?.[0].properties.map((p) => p.name)).toEqual(['accessToken', 'baseUrl']);

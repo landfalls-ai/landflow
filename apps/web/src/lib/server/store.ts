@@ -18,7 +18,7 @@ import { database, dataDir, type Database } from './db';
 import { promoteExecution, readExecutionData, readRows } from './db/reads';
 import { executionRow, parse, pollRow, summarize, trimRunData, workflowRow } from './db/rows';
 import { backtestScope } from './brain/backtest-scope';
-import { singleton } from './singleton';
+import { guardWorkflowSave, singleton } from './singleton';
 import { syncPublication } from './publications';
 import { recordVersion, versionFor, versionHash } from './versions';
 
@@ -174,6 +174,9 @@ class Store {
   saveWorkflow(workflow: Workflow, options: { autosave?: boolean; actor?: string | null; versionAuthor?: string | null } = {}): Workflow {
     const now = new Date().toISOString();
     const actor = options.actor !== undefined ? (options.actor ?? undefined) : currentActorId();
+    // The installed access flows decide who gets access: whoever saves them, by whatever route, must be an instance admin (a save with no
+    // actor is the server's own).
+    if (actor) guardWorkflowSave(workflow.id, actor);
     const existing = this.cache.get(workflow.id);
     const { createdBy: _createdBy, updatedBy: _updatedBy, ...body } = workflow;
     const createdBy = existing ? existing.createdBy : actor;

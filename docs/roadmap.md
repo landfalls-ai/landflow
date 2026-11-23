@@ -3079,6 +3079,10 @@ yes/no to the three question types and an Ollama connection; the node's outputs 
 protocol, `expand: 'decide'`); calls are metered with the new purpose *Decide*. Tested against a fake System One
 server (`@landflow/test-fakes/systemone`) and, behind `LANDFLOW_INTEGRATION=ollama`, a real `nimble:9b`.
 
+## Access requests (C35, 2026-11-23)
+
+The person asked for access to be requested, approved and taken back inside Landflow. **Built (core):** the catalog of grantable access and its rules, requests, the two installed flows, Apply Access Decision that trusts only the run's record, grants made through the GitHub Access and Google Directory nodes, removal at the end by a leader service with retries and an hourly reconcile, manual entries, emails, a chat that can only file after a later-turn confirmation, session-only routes behind one port ([access-requests.md](access-requests.md)). Ask a Person gained **Answer Choices** and **People Only**, both off by default ([features/engine.md](features/engine.md)). **C35 UI built:** the Access page at both widths (Ask with form and chat, My requests, To decide, Catalog, Grants), an Allow-for select on the chat's confirm card, Spotlight lines for the access nodes ([access-requests.md](access-requests.md)). **Next:** several approval steps and an Approval node, an extension request, and a Landbright backend behind `lib/server/access/port.ts`, GitHub project entries once GitHub exposes a role read, and verifying the requester's GitHub username through a GitHub sign-in instead of trusting what they type.
+
 ## Combined wave 5 (2026-11-23)
 
 - **C28 built (memory extraction):** the Memory Extract node and a sampled Memory Profile. No migration. Open: per-subject profiles, an agent option to extract after each session, a `validAt` column, relations beyond `updates` and `duplicate`.

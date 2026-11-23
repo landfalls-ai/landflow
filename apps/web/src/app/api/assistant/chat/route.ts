@@ -16,6 +16,7 @@ import { currentPrincipal } from '@/lib/server/auth/guard';
 import { error, handler, parseBody } from '@/lib/server/http'; // SB19: error
 import { sseResponse } from '@/lib/server/sse';
 import { runDigestSchema, workflowSchema } from '@/lib/server/schemas';
+import { LOCKED_FLOW_MESSAGE, lockedAccessFlows } from '@/lib/server/access/locked';
 import { withOwnership } from '@/lib/server/projects';
 import { routeActor } from '@/lib/server/projects/http';
 import { traceparentHeader } from '@/lib/server/telemetry';
@@ -73,6 +74,7 @@ export const POST = handler(async (request: Request) => {
   const parsed = await parseBody(request, Body);
   if (!parsed.ok) return parsed.response;
   const { workflow, workflowId, resume, mentions, ...rest } = parsed.data;
+  if (workflowId && lockedAccessFlows().includes(workflowId)) return error(LOCKED_FLOW_MESSAGE, 403); // C35: the installed access flows are read-only for Spotlight, for everyone
   const picked = await resolveSpotlightModel(rest.model); // SB19: a model this server offers, else the Settings default
   if ('error' in picked) return error(picked.error, 400); // SB19:
   rest.model = picked.model; // SB19:
