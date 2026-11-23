@@ -19,7 +19,7 @@ import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge
 import { nanoid } from 'nanoid';
 import { toast } from 'sonner'; // AG17:
 import { create } from 'zustand';
-import { defaultParameters, defaultVersionOf, portParameters, withPropertyDefaults } from '@landflow/protocol';
+import { defaultParameters, defaultVersionOf, expandPorts, portParameters, withPropertyDefaults } from '@landflow/protocol';
 import type { NodeProgress } from '@/lib/client/node-progress';
 import { edgeCountsOf, statusesOf, waitSummary, withWaiting, type NodeStatus, type WaitInfo } from '@/lib/client/run-data';
 import type { FlowTemplate } from '@/lib/client/templates';
@@ -792,7 +792,8 @@ export const useEditor = create<EditorState>((set, get) => {
         position = { x: anchor.position.x + siblings * 110, y: anchor.position.y + Math.max(190, (anchor.measured?.height ?? 0) + SUBNODE_CLEARANCE) };
       } else {
         // Next step: one column to the right, branches fanned out by output index.
-        const outputs = state.nodeTypes[anchor.data.wf.type]?.descriptor.outputs.filter((p) => p.type === 'main').length ?? 1;
+        const anchorType = state.nodeTypes[anchor.data.wf.type];
+        const outputs = anchorType ? expandPorts(anchorType.descriptor.outputs, anchor.data.wf.parameters).filter((p) => p.type === 'main').length : 1;
         position = { x: anchor.position.x + 260, y: anchor.position.y + (handle.index - (outputs - 1) / 2) * 150 };
       }
     }

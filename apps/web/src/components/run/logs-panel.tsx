@@ -12,7 +12,7 @@ import { duration } from '@/lib/client/format';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import { remoteRunOfProgress, stepsOf, type NodeProgress } from '@/lib/client/node-progress';
 import { runsInOrder, type RunEntry } from '@/lib/client/run-data';
-import type { LogEntry } from '@landflow/protocol';
+import { expandPorts, type LogEntry } from '@landflow/protocol';
 import type { NodeRun, NodeTypeInfo } from '@/lib/shared/types';
 import { RemoteSteps } from '../agents/timeline';
 import { NodeIcon, isImageIcon } from '../ui/icon';
@@ -29,6 +29,8 @@ export interface LogsSelection {
 export interface LogsNode {
   name: string;
   type?: string;
+  /** For nodes whose outputs follow their parameters (Decide). */
+  parameters?: Record<string, unknown>;
 }
 
 /** Nodes that started but haven't finished (or where the debugger is holding the run). */
@@ -168,7 +170,7 @@ function RunDetail({ row, nodes, nodeTypes, actions }: { row: Row; nodes: Record
   const [logsOpen, setLogsOpen] = useState(false);
   const branches = side === 'output' ? run.outputs : run.inputs;
   const index = Math.min(branch, Math.max(0, branches.length - 1));
-  const ports = (side === 'output' ? info?.descriptor.outputs : info?.descriptor.inputs)?.filter((p) => p.type === 'main') ?? [];
+  const ports = (side === 'output' ? info && expandPorts(info.descriptor.outputs, node?.parameters ?? {}) : info?.descriptor.inputs)?.filter((p) => p.type === 'main') ?? [];
   const state: RunState = run.status;
   // The tool calls an agent made (A2A Agent, Run an Agent): a list, not only raw JSON.
   const first = run.outputs[0]?.[0]?.json;

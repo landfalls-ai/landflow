@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, Pause, PencilLine, Pin, PinOff, Play, X } from 'lucide-react';
-import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
+import { expandPorts, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { cn } from '@/lib/utils';
 import { duration, languageMeta } from '@/lib/client/format';
 import { DevOnly } from '@/lib/client/developer-details';
@@ -233,7 +233,7 @@ export function NodePanel() {
   // A trigger has no Input pane: moving to one from Input shows its Parameters.
   const shown = isTrigger && pane === 'input' ? 'parameters' : pane;
   const isSubnode = descriptor?.kind === 'subnode';
-  const outputPorts = descriptor?.outputs.filter((p) => p.type === 'main') ?? [];
+  const outputPorts = descriptor ? expandPorts(descriptor.outputs, wf.parameters).filter((p) => p.type === 'main') : [];
   const runNode = (scope: 'from' | 'only') => useEditor.getState().run?.({ kind: 'node', nodeId: openNodeId, scope });
   const singleOutput = outputPorts.length <= 1 && !isSubnode;
   const parents = edges

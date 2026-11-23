@@ -36,6 +36,7 @@ export const portSchema = z.object({
   required: z.boolean().optional(),
   maxConnections: z.number().int().positive().optional(),
   displayOptions: displayOptionsSchema.optional(),
+  expand: z.literal('decide').optional(),
 });
 
 const jsonSchemaObject = z.record(z.string(), z.any());

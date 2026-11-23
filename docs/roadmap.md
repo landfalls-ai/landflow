@@ -1152,7 +1152,7 @@ agent's knowledge bases returned?) and **stay on topic** in the builder (the eng
 
 Then **Jev and AWS Strands Decider as guardrail judges** ([agents.md](agents.md#building-an-agent)): TypeSafe AI’s Jev and AWS’s open-source Strands Decider are decision models (text and
 yes/no questions in, a probability per question out), so it cannot be a chat provider; it answers the guardrail checks that need a
-model instead, from a *TypeSafe API* credential chosen on the rule. Open: a Decide node, the model router and cost counting.
+model instead, from a *TypeSafe API* credential chosen on the rule. A Decide node was open here; it is built (C34, below: [ai.md](features/ai.md#decide)). Open: the model router and cost counting.
 
 ## Flow detectors (built 2026-11-12)
 
@@ -3059,3 +3059,12 @@ The person decided on 2026-11-18 that production approvals go to an approval inb
 - **C19 built:** run events through an outbox: event subscriptions per project, the shared outbox core, the audit outbox on it. Open: alert channels and the error workflow on the outbox; live `node.finished` (needs a durable node event); a broker sink (Kafka, NATS); Notion's outbox and approval tickets on the core; C12-style delegated approval callbacks can enqueue here.
 - **C20 built:** chunk diffing with embedding reuse, atomic per-document swap, Upsert by Key. Open: reuse in the Vector Store node without a key; markdown-aware chunking; C22's sync builds on `syncDocument`.
 - **C21 built:** access per vector collection: owner project, read/write grants, claim on first write, strict adoption with the lost-access notice, the Notion read switch. Open: an instance-wide collections page; per-document access.
+
+## Decide node (C34, 2026-11-23)
+
+The person asked for decision models in a flow. **Decide** (`core.decide`, [ai.md](features/ai.md#decide)) asks a decision model Choice, Yes/No and Score
+questions about each item (Ollama's `nimble`, TypeSafe's Jev or Strands Decider) and routes the item by the answer, with
+the probabilities in `decision`. It closes "a Decide node" that the Jev judge left open. The System One client grew from
+yes/no to the three question types and an Ollama connection; the node's outputs follow its options (a port rule in the
+protocol, `expand: 'decide'`); calls are metered with the new purpose *Decide*. Tested against a fake System One
+server (`@landflow/test-fakes/systemone`) and, behind `LANDFLOW_INTEGRATION=ollama`, a real `nimble:9b`.

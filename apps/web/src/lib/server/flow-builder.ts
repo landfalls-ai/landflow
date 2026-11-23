@@ -107,6 +107,7 @@ export const PARAMETER_FORMATS = `Parameter formats:
 - core.set (add or change fields): {"mode":"manual","fields":{"values":[{"name":"greeting","type":"string","value":"Hi {{ $json.name }}"}]},"includeOtherFields":true}
 - core.if / core.filter: {"conditions":{"condition":[{"left":"{{ $json.score }}","operator":"gt","right":"0.5"}]},"combinator":"and"}. Operators: equals, notEquals, contains, notContains, startsWith, gt, gte, lt, lte, regex, isEmpty, isNotEmpty, isTrue, isFalse.
 - core.code per item: {"mode":"each","codeEach":"return { ...$json, total: $json.a + $json.b };"}. For all items at once: {"mode":"all","code":"return items.map((item) => ({ ...item.json }));"}
+- core.decide asks a decision model questions about each item and routes it. Ollama source (no key): {"source":"ollama","model":"nimble:9b","state":"{{ $json }}","questions":{"question":[{"name":"category","type":"choice","instructions":"What is this ticket about?","options":"billing: charges and refunds\ntechnical: errors and bugs\nother"}]},"routeBy":"category"}. A question's type is choice (options: one per line, "name: what it means"), yesno or score (levels: one per line, lowest first). "routeBy" is the name of a choice question (one output per option in order, then Unsure) or a yesno question (output 0 Yes, 1 No); blank gives one output. It adds "decision" to each item: {"category":{"choice":"billing","probabilities":{…},"confidence":0.95}}, a yesno gives {"yes":true,"probability":0.9}. Put a step on each option's output ("output" 0 for the first option…). Use it to sort or triage by a category, a yes/no or a score; use core.if for a test on a field.
 - core.merge waits for both inputs: {"mode":"append"}. Connect the two branches to it.
 - core.aggregate, one item with a list of each field's values: {"aggregate":"aggregateIndividualFields","fieldsToAggregate":{"fieldToAggregate":[{"fieldToAggregate":"title"}]}} puts out {"title":["…","…"]}.
 - core.schedule at a time of day ("every morning at 9"): {"unit":"rules","rule":{"interval":[{"field":"days","daysInterval":1,"triggerAtHour":9,"triggerAtMinute":0}]}}. Weekdays at 9: {"unit":"rules","rule":{"interval":[{"field":"cronExpression","expression":"0 9 * * 1-5"}]}}. "unit":"hours" with "every" counts from when the workflow is activated, not from a time of day.`;
@@ -562,6 +563,7 @@ function without(type: string, p: PropertyDescriptor): string {
   if (type === 'core.if' || type === 'core.filter') return 'no condition yet: it keeps every item';
   if (type === 'core.set') return 'no fields yet: it sets nothing';
   if (type === 'core.switch') return 'no routing rule yet: every item takes the fallback';
+  if (type === 'core.decide') return 'no questions yet: it decides nothing';
   if (type === 'core.schedule') return 'no time yet: it never runs';
   if (type === 'core.dataTable') return 'no column values yet: it writes empty rows';
   return `${p.displayName.toLowerCase()} is still empty`;

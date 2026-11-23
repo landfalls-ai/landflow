@@ -293,7 +293,7 @@ function ExecutionDetail({ executionId }: { executionId: string }) {
   }, [runVersions]);
   const nodes = useMemo(() => {
     const map: Record<string, LogsNode> = {};
-    for (const n of canvasWorkflow?.nodes ?? []) map[n.id] = { name: n.name, type: n.type };
+    for (const n of canvasWorkflow?.nodes ?? []) map[n.id] = { name: n.name, type: n.type, parameters: n.parameters ?? {} };
     for (const [id, name] of Object.entries(record?.nodeNames ?? {})) map[id] = { ...map[id], name };
     return map;
   }, [canvasWorkflow, record?.nodeNames]);
