@@ -37,7 +37,7 @@ describe('Team membership', () => {
     expect(await only(team('add', { username: 'bob' }))).toEqual({ user: 'bob', target: `${ORG}/${TEAM}`, role: 'member', state: 'active', changed: true });
     expect(access.teams.get(TEAM)!.get('bob')).toEqual({ role: 'member', state: 'active' });
     api.requests.length = 0;
-    expect(await only(team('add', { username: 'bob' }))).toEqual({ user: 'bob', target: `${ORG}/${TEAM}`, role: 'member', state: 'active', changed: false });
+    expect(await only(team('add', { username: 'bob' }))).toEqual({ user: 'bob', target: `${ORG}/${TEAM}`, role: 'member', state: 'active', changed: false, alreadyHad: true });
     expect(methods()).toEqual([`GET /orgs/${ORG}/teams/${TEAM}/memberships/bob`]);
   });
 
@@ -62,12 +62,13 @@ describe('Team membership', () => {
   });
 
   it('removes a member, and removing someone who is not on the team succeeds with changed false', async () => {
-    expect(await only(team('remove', { username: 'alice' }))).toEqual({ user: 'alice', target: `${ORG}/${TEAM}`, role: null, state: 'none', changed: true });
-    expect(access.teams.get(TEAM)!.has('alice')).toBe(false);
+    await team('add', { username: 'bob' });
+    expect(await only(team('remove', { username: 'bob' }))).toEqual({ user: 'bob', target: `${ORG}/${TEAM}`, role: null, state: 'none', changed: true });
+    expect(access.teams.get(TEAM)!.has('bob')).toBe(false);
     api.requests.length = 0;
-    expect(await only(team('remove', { username: 'alice' }))).toMatchObject({ state: 'none', changed: false });
+    expect(await only(team('remove', { username: 'bob' }))).toMatchObject({ state: 'none', changed: false });
     // Not a member: the team and the user are checked, so a typo is an error and not a quiet "nothing to do".
-    expect(methods()).toEqual([`GET /orgs/${ORG}/teams/${TEAM}/memberships/alice`, `GET /orgs/${ORG}/teams/${TEAM}`, 'GET /users/alice']);
+    expect(methods()).toEqual([`GET /orgs/${ORG}/teams/${TEAM}/memberships/bob`, `GET /orgs/${ORG}/teams/${TEAM}`, 'GET /users/bob']);
   });
 
   it('lists members with their roles, paged to the end', async () => {
@@ -207,15 +208,16 @@ describe('Repository collaborator', () => {
     expect(access.collaborators.get('carol')).toBe('triage');
     expect(api.requests.at(-1)!.body).toEqual({ permission: 'triage' });
     api.requests.length = 0;
-    expect(await only(repo('add', { username: 'carol', permission: 'triage' }))).toMatchObject({ permission: 'triage', state: 'active', changed: false });
+    expect(await only(repo('add', { username: 'carol', permission: 'triage' }))).toMatchObject({ permission: 'triage', state: 'active', changed: false, alreadyHad: true });
     expect(api.requests.some((r) => r.method === 'PUT')).toBe(false);
   });
 
   it('maps push and pull to GitHub’s write and read, and changes an existing permission', async () => {
     expect(await only(repo('add', { username: 'bob', permission: 'push' }))).toMatchObject({ permission: 'push', changed: false });
     expect(await only(repo('add', { username: 'bob', permission: 'admin' }))).toMatchObject({ permission: 'admin', changed: true });
-    expect(await only(repo('add', { username: 'bob', permission: 'pull' }))).toMatchObject({ permission: 'pull', changed: true });
-    expect(access.collaborators.get('bob')).toBe('read');
+    // Never a downgrade: someone with admin who is asked to get pull keeps admin, and the answer says so.
+    expect(await only(repo('add', { username: 'bob', permission: 'pull' }))).toMatchObject({ permission: 'admin', changed: false, alreadyHad: true });
+    expect(access.collaborators.get('bob')).toBe('admin');
   });
 
   it('invites an outside collaborator: pending, with the invitation, and idempotent while it is open', async () => {
@@ -232,17 +234,20 @@ describe('Repository collaborator', () => {
   it('gets a permission: a role, pending, or none', async () => {
     expect(await only(repo('getPermission', { username: 'alice' }))).toEqual({ user: 'alice', target: `${OWNER}/${REPO}`, permission: 'admin', state: 'active', changed: false });
     expect(await only(repo('getPermission', { username: 'bob' }))).toMatchObject({ permission: 'push' });
-    expect(await only(repo('getPermission', { username: 'carol' }))).toEqual({ user: 'carol', target: `${OWNER}/${REPO}`, permission: null, state: 'none', changed: false });
+    expect(await only(repo('getPermission', { username: 'outsider' }))).toEqual({ user: 'outsider', target: `${OWNER}/${REPO}`, permission: null, state: 'none', changed: false });
+    // An organization member has the base permission without being a collaborator.
+    expect(await only(repo('getPermission', { username: 'carol' }))).toMatchObject({ permission: 'pull', state: 'active' });
   });
 
   it('removes a collaborator, cancels an open invitation, and is a no-op for a stranger', async () => {
-    expect(await only(repo('remove', { username: 'bob' }))).toEqual({ user: 'bob', target: `${OWNER}/${REPO}`, permission: null, state: 'none', changed: true });
+    // bob is an organization member: the direct access goes, the base permission stays, and the answer reports what is left.
+    expect(await only(repo('remove', { username: 'bob' }))).toMatchObject({ user: 'bob', target: `${OWNER}/${REPO}`, permission: 'pull', state: 'active', changed: true, note: expect.stringMatching(/base permission/) });
     expect(access.collaborators.has('bob')).toBe(false);
     await repo('add', { username: 'outsider', permission: 'pull' });
     expect(await only(repo('remove', { username: 'outsider' }))).toMatchObject({ state: 'none', changed: true });
     expect(access.repoInvitations).toEqual([]);
     api.requests.length = 0;
-    expect(await only(repo('remove', { username: 'carol' }))).toMatchObject({ changed: false });
+    expect(await only(repo('remove', { username: 'outsider' }))).toMatchObject({ changed: false, state: 'none' });
     expect(api.requests.some((r) => r.method === 'DELETE')).toBe(false);
   });
 
@@ -332,5 +337,159 @@ describe('Items, errors and tools', () => {
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual(['githubAccess_orgMembership_get', 'githubAccess_repoCollaborator_getMany', 'githubAccess_repoCollaborator_getPermission', 'githubAccess_teamMembership_get', 'githubAccess_teamMembership_getMany']);
     for (const tool of tools) expect(tool.annotations).toMatchObject({ readOnlyHint: true });
+  });
+});
+
+describe('Names are checked before any call', () => {
+  const bad: Array<[string, () => ReturnType<typeof call>, RegExp]> = [
+    ['team slug ..', () => team('remove', { teamSlug: '..', username: 'bob' }), /Team Slug/],
+    ['team slug with a slash', () => team('get', { teamSlug: 'a/b', username: 'bob' }), /Team Slug/],
+    ['team slug with a space', () => team('getMany', { teamSlug: 'a b' }), /Team Slug/],
+    ['org .', () => org('get', { org: '.', username: 'bob' }), /Organization/],
+    ['org ..', () => team('add', { org: '..', username: 'bob' }), /Organization/],
+    ['project org with a slash', () => project('add', { org: 'a/b', username: 'bob', projectRole: 'READER' }), /Organization/],
+    ['owner ..', () => repo('add', { owner: '..', username: 'bob', permission: 'pull' }), /Owner/],
+    ['repository ..', () => repo('getMany', { repository: '..', returnAll: true }), /Repository/],
+    ['repository with a slash', () => repo('getPermission', { repository: 'x/y', username: 'bob' }), /Repository/],
+    ['username ..', () => team('remove', { username: '..' }), /Username/],
+    ['username .', () => org('remove', { username: '.' }), /Username/],
+    ['username with a slash', () => repo('remove', { username: 'a/b' }), /Username/],
+    ['username with a space', () => team('get', { username: 'bo b' }), /Username/],
+    ['username starting with a hyphen', () => team('get', { username: '-bob' }), /Username/],
+    ['username with two hyphens in a row', () => org('invite', { username: 'a--b' }), /Username/],
+    ['username over 39 characters', () => project('remove', { username: 'a'.repeat(40) }), /Username/],
+    ['invitation id negative', () => org('cancelInvitation', { invitationId: -3 }), /Invitation ID/],
+  ];
+  for (const [name, attempt, message] of bad) {
+    it(`refuses ${name} and calls nothing`, async () => {
+      const response = await attempt();
+      expect(response.error?.message).toMatch(message);
+      expect(response.error?.message).toMatch(/not a valid|must be/i);
+      expect(api.requests).toEqual([]);
+    });
+  }
+
+  it('accepts ordinary logins, slugs and names', async () => {
+    expect((await team('get', { teamSlug: 'platform', username: 'a-b-c1' })).error?.message ?? '').not.toMatch(/not a valid/);
+    expect((await repo('getMany', { owner: OWNER, repository: 'my.repo_1-x', returnAll: true })).error?.message ?? '').not.toMatch(/not a valid/);
+  });
+});
+
+describe('Agent tools can read but never grant', () => {
+  const asTool = (parameters: JsonObject) => run(GitHubAccess, { org: ORG, teamSlug: TEAM, username: 'bob', ...parameters }, { credentials: creds(), mode: 'tool' });
+
+  it('refuses every write in tool mode, whatever the model overrode, with no call to GitHub', async () => {
+    const writes: JsonObject[] = [
+      { resource: 'teamMembership', operation: 'add' },
+      { resource: 'teamMembership', operation: 'remove' },
+      { resource: 'orgMembership', operation: 'invite' },
+      { resource: 'orgMembership', operation: 'remove' },
+      { resource: 'orgMembership', operation: 'cancelInvitation' },
+      { resource: 'repoCollaborator', operation: 'add', owner: OWNER, repository: REPO, permission: 'admin' },
+      { resource: 'repoCollaborator', operation: 'remove', owner: OWNER, repository: REPO },
+      { resource: 'projectCollaborator', operation: 'add', projectNumber: PROJECT_NUMBER, projectRole: 'ADMIN' },
+      { resource: 'projectCollaborator', operation: 'remove', projectNumber: PROJECT_NUMBER },
+    ];
+    for (const parameters of writes) {
+      const response = await asTool(parameters);
+      expect(response.error?.message, JSON.stringify(parameters)).toMatch(/not allowed as an agent tool|never grants access/i);
+    }
+    expect(api.requests).toEqual([]);
+    expect(access.teams.get(TEAM)!.has('bob')).toBe(false);
+  });
+
+  it('still reads in tool mode', async () => {
+    const response = await asTool({ resource: 'teamMembership', operation: 'get' });
+    expect(response.error).toBeUndefined();
+    expect(jsonOf(response)[0]).toMatchObject({ user: 'bob', state: 'none' });
+  });
+
+  it('refuses a write over MCP too', async () => {
+    const response = await run(GitHubAccess, { resource: 'teamMembership', operation: 'add', org: ORG, teamSlug: TEAM, username: 'bob' }, { credentials: creds(), mode: 'mcp' });
+    expect(response.error?.message).toMatch(/agent tool/i);
+    expect(api.requests).toEqual([]);
+  });
+});
+
+describe('Access is never downgraded', () => {
+  it('a maintainer asked to be a member stays a maintainer, and the answer says they already had it', async () => {
+    expect(await only(team('add', { username: 'alice' }))).toEqual({ user: 'alice', target: `${ORG}/${TEAM}`, role: 'maintainer', state: 'active', changed: false, alreadyHad: true });
+    expect(access.teams.get(TEAM)!.get('alice')!.role).toBe('maintainer');
+    expect(api.requests.some((r) => r.method === 'PUT')).toBe(false);
+  });
+
+  it('an organization owner counts as a maintainer of every team', async () => {
+    expect(await only(team('add', { username: 'octo-bot' }))).toMatchObject({ role: 'maintainer', changed: false, alreadyHad: true });
+    expect(access.teams.get(TEAM)!.has('octo-bot')).toBe(false);
+  });
+
+  it('a new grant says alreadyHad is not so', async () => {
+    expect(await only(team('add', { username: 'bob' }))).not.toHaveProperty('alreadyHad');
+  });
+
+  it('an organization owner asked to be a member keeps the admin role', async () => {
+    expect(await only(org('invite', { username: 'alice' }))).toEqual({ user: 'alice', target: ORG, role: 'admin', state: 'active', changed: false, alreadyHad: true });
+  });
+
+  it('refuses to report a higher org role as granted to a member or an invitee', async () => {
+    const member = await org('invite', { username: 'bob', orgRole: 'admin' });
+    expect(member.error?.message).toMatch(/bob.*already.*member.*role member/i);
+    expect(member.error?.description).toMatch(/does not change roles/i);
+    await org('invite', { username: 'dave' });
+    expect((await org('invite', { username: 'dave', orgRole: 'admin' })).error?.message).toMatch(/dave.*already.*invited.*role member/i);
+    await org('invite', { email: 'e@example.com' });
+    expect((await org('invite', { email: 'e@example.com', orgRole: 'admin' })).error?.message).toMatch(/already invited.*role member/i);
+    expect(access.orgMembers.get('bob')).toBe('member');
+    expect(access.orgInvitations.map((i) => i.role)).toEqual(['direct_member', 'direct_member']);
+  });
+
+  it('a higher invited repository permission is raised, a lower one is kept', async () => {
+    await repo('add', { username: 'outsider', permission: 'triage' });
+    expect(await only(repo('add', { username: 'outsider', permission: 'pull' }))).toMatchObject({ permission: 'triage', state: 'pending', changed: false, alreadyHad: false });
+    expect(await only(repo('add', { username: 'outsider', permission: 'admin' }))).toMatchObject({ permission: 'admin', state: 'pending', changed: true });
+  });
+
+  it('the base permission already covers a pull request for an organization member', async () => {
+    expect(await only(repo('add', { username: 'carol', permission: 'pull' }))).toMatchObject({ permission: 'pull', changed: false, alreadyHad: true });
+    expect(access.collaborators.has('carol')).toBe(false);
+  });
+});
+
+describe('Removing a repository collaborator reports what is left', () => {
+  it('an organization member keeps the base permission, and nothing direct means no change', async () => {
+    expect(await only(repo('remove', { username: 'bob' }))).toMatchObject({ permission: 'pull', state: 'active', changed: true });
+    api.requests.length = 0;
+    expect(await only(repo('remove', { username: 'bob' }))).toMatchObject({ permission: 'pull', state: 'active', changed: false });
+    expect(api.requests.some((r) => r.method === 'DELETE')).toBe(false);
+  });
+
+  it('with no base permission, removing leaves none', async () => {
+    access.orgBasePermission = 'none';
+    expect(await only(repo('remove', { username: 'bob' }))).toMatchObject({ permission: null, state: 'none', changed: true });
+  });
+
+  it('decides from the direct collaborators, not the effective permission', async () => {
+    // carol has pull only through the base permission: there is nothing of hers to remove.
+    expect(await only(repo('remove', { username: 'carol' }))).toMatchObject({ changed: false, permission: 'pull' });
+    expect(api.requests.some((r) => r.method === 'DELETE')).toBe(false);
+  });
+});
+
+describe('Logins are case-insensitive', () => {
+  it('Bob and bob are the same person on a team, in the organization and on a repository', async () => {
+    expect(await only(team('add', { username: 'Bob' }))).toMatchObject({ user: 'Bob', changed: true });
+    expect(await only(team('add', { username: 'bob' }))).toMatchObject({ changed: false, alreadyHad: true });
+    expect(await only(team('get', { username: 'BOB' }))).toMatchObject({ state: 'active' });
+    expect(access.teams.get(TEAM)!.has('bob')).toBe(true);
+    expect(await only(org('get', { username: 'ALICE' }))).toMatchObject({ role: 'admin', state: 'active' });
+    expect(await only(org('invite', { username: 'Carol' }))).toMatchObject({ changed: false });
+    expect(await only(repo('add', { username: 'BOB', permission: 'push' }))).toMatchObject({ changed: false });
+    await repo('add', { username: 'Outsider', permission: 'push' });
+    expect(await only(repo('add', { username: 'outsider', permission: 'push' }))).toMatchObject({ state: 'pending', changed: false });
+    expect(await only(repo('remove', { username: 'OUTSIDER' }))).toMatchObject({ changed: true });
+    await org('invite', { username: 'Dave' });
+    expect(await only(org('cancelInvitation', { username: 'dave' }))).toMatchObject({ changed: true });
+    expect(await only(project('add', { username: 'Bob', projectRole: 'READER' }))).toMatchObject({ role: 'READER' });
+    expect(access.projectRoles.get('bob')).toBe('READER');
   });
 });

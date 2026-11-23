@@ -44,6 +44,8 @@ export class FakeAccess {
   repoInvitations: RepoInvitation[] = [];
   /** The organization's project: collaborators login → READER | WRITER | ADMIN. */
   projectRoles = new Map<string, string>();
+  /** What every organization member can do on the repository without being a collaborator (the org's base permission). */
+  orgBasePermission: 'read' | 'none' = 'read';
   private nextId = 5000;
 
   constructor(private readonly repo: string) {
@@ -59,6 +61,7 @@ export class FakeAccess {
     this.repoInvitations = [];
     this.projectRoles = new Map();
     this.nextId = 5000;
+    this.orgBasePermission = 'read';
   }
 
   /** A team of `count` members (member-000…), for the paging tests; the first two are maintainers. */
@@ -78,7 +81,7 @@ export class FakeAccess {
     if (path === '/graphql') return this.graphql(req);
     let m = /^\/users\/([^/]+)$/.exec(path);
     if (m) {
-      const login = decodeURIComponent(m[1]);
+      const login = decodeURIComponent(m[1]).toLowerCase();
       const id = this.users.get(login);
       return id ? { body: { login, id, type: 'User' } } : notFound();
     }
@@ -119,10 +122,12 @@ export class FakeAccess {
       }
       const user = /^\/memberships\/([^/]+)$/.exec(tail);
       if (user) {
-        const login = user[1];
+        // GitHub logins are case-insensitive.
+        const login = user[1].toLowerCase();
         if (!this.users.has(login)) return notFound();
         if (method === 'GET') {
-          const membership = team.get(login);
+          // An organization owner is a maintainer of every team, listed or not.
+          const membership = team.get(login) ?? (this.orgMembers.get(login) === 'admin' ? { role: 'maintainer', state: 'active' } : undefined);
           return membership ? { body: { url: 'x', role: membership.role, state: membership.state } } : notFound();
         }
         if (method === 'PUT') {
@@ -143,7 +148,7 @@ export class FakeAccess {
 
     m = /^\/memberships\/([^/]+)$/.exec(rest);
     if (m) {
-      const login = m[1];
+      const login = m[1].toLowerCase();
       if (!this.users.has(login)) return notFound();
       if (method === 'GET') {
         const role = this.orgMembers.get(login);
@@ -193,20 +198,23 @@ export class FakeAccess {
     const body = req.body ?? {};
     if (rest === '/collaborators' && method === 'GET') {
       const affiliation = req.query.get('affiliation') ?? 'all';
+      // Direct: added to the repository itself (every row here); outside: those who are not organization members.
       const rows = [...this.collaborators]
-        .filter(([login]) => affiliation === 'all' || (affiliation === 'outside' ? !this.orgMembers.has(login) : true))
+        .filter(([login]) => affiliation !== 'outside' || !this.orgMembers.has(login))
         .map(([login, role]) => ({ login, id: this.users.get(login), role_name: role, permissions: { admin: role === 'admin' } }));
       return { body: this.page(req, rows) };
     }
     let m = /^\/collaborators\/([^/]+)\/permission$/.exec(rest);
     if (m && method === 'GET') {
-      if (!this.users.has(m[1])) return notFound();
-      const role = this.collaborators.get(m[1]);
-      return { body: { permission: role ? LEGACY[role] : 'none', role_name: role ?? 'none', user: { login: m[1], id: this.users.get(m[1]) } } };
+      const login = m[1].toLowerCase();
+      if (!this.users.has(login)) return notFound();
+      // The effective permission: the direct role, else the organization's base permission for a member.
+      const role = this.collaborators.get(login) ?? (this.orgMembers.has(login) && this.orgBasePermission !== 'none' ? this.orgBasePermission : undefined);
+      return { body: { permission: role ? LEGACY[role] : 'none', role_name: role ?? 'none', user: { login, id: this.users.get(login) } } };
     }
     m = /^\/collaborators\/([^/]+)$/.exec(rest);
     if (m) {
-      const login = m[1];
+      const login = m[1].toLowerCase();
       if (method === 'PUT') {
         if (!this.users.has(login)) return notFound();
         const permission = body.permission ?? 'push';
@@ -260,7 +268,7 @@ export class FakeAccess {
       return { body: { data: { organization: { projectV2: variables.number === PROJECT_NUMBER ? { id: `PVT_${PROJECT_NUMBER}`, title: 'Roadmap' } : null } } } };
     }
     if (query.includes('user(login')) {
-      const id = this.users.get(String(variables.login));
+      const id = this.users.get(String(variables.login).toLowerCase());
       return { body: id ? { data: { user: { id: `U_${id}` } } } : { data: { user: null }, errors: [{ type: 'NOT_FOUND', message: `Could not resolve to a User with the login of '${variables.login}'.` }] } };
     }
     return { status: 400, body: { message: 'unknown query' } };

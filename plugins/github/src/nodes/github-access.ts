@@ -49,6 +49,32 @@ async function sendOrMissing(a: Access, method: string, path: string): Promise<R
 }
 
 const enc = encodeURIComponent;
+
+/**
+ * Names go into URL paths, and `..` survives encodeURIComponent (fetch then collapses it: a team slug `..` would act on
+ * the whole organization), so every name is checked before any call. GitHub logins are letters, digits and single
+ * hyphens, 39 at most; a slug, organization, owner or repository name has no slash, no whitespace and is not `.` or `..`.
+ */
+const LOGIN = /^[A-Za-z0-9](?:-?[A-Za-z0-9]){0,38}$/;
+function validLogin(value: string, label: string): string {
+  if (!LOGIN.test(value)) throw new NodeOperationError(`${label} "${value}" is not a valid GitHub login`, { description: 'A login is letters, digits and single hyphens, up to 39 characters, not starting or ending with a hyphen.' });
+  return value;
+}
+function validName(value: string, label: string): string {
+  if (value === '.' || value === '..' || /[\s/\\]/.test(value) || [...value].some((ch) => ch.charCodeAt(0) < 32)) {
+    throw new NodeOperationError(`${label} "${value}" is not a valid name`, { description: 'Use the name as it is in the GitHub URL: no slashes, no spaces, and not "." or "..".' });
+  }
+  return value;
+}
+const loginParam = (ctx: IExecuteContext, name: string, label: string, i: number) => validLogin(requireString(ctx, name, label, i), label);
+const nameParam = (ctx: IExecuteContext, name: string, label: string, i: number) => validName(requireString(ctx, name, label, i), label);
+
+/** Ranks a role in the order of the list; a role the list does not know (a custom repository role) ranks above all, so it is never replaced. */
+const rank = (order: string[], role: string | null | undefined): number => (role ? (order.includes(role) ? order.indexOf(role) : Infinity) : -1);
+const TEAM_ROLES = ['member', 'maintainer'];
+const ORG_ROLES = ['member', 'admin'];
+/** A grant that changed nothing says whether the person really has it now, so a flow does not remove it again when the grant ends. */
+const had = (state: string): JsonObject => ({ alreadyHad: state === 'active' });
 const lower = (value: unknown) => String(value ?? '').toLowerCase();
 const body = (reply: Reply) => (reply.body ?? {}) as JsonObject;
 
@@ -112,8 +138,8 @@ const result = (user: string | null, target: string, kind: 'role' | 'permission'
 // ---------------------------------------------------------------------------
 
 async function teamOperation(ctx: IExecuteContext, a: Access, operation: string, i: number): Promise<JsonObject | JsonObject[]> {
-  const org = requireString(ctx, 'org', 'Organization', i);
-  const slug = requireString(ctx, 'teamSlug', 'Team Slug', i);
+  const org = nameParam(ctx, 'org', 'Organization', i);
+  const slug = nameParam(ctx, 'teamSlug', 'Team Slug', i);
   const target = `${org}/${slug}`;
   const base = `/orgs/${enc(org)}/teams/${enc(slug)}`;
   if (operation === 'getMany') {
@@ -125,7 +151,7 @@ async function teamOperation(ctx: IExecuteContext, a: Access, operation: string,
     const members = await collect(a, `${base}/members${filter === 'all' ? '' : `?role=${enc(filter)}`}`, limit, missing);
     return members.map((u) => result(String(u.login), target, 'role', filter === 'all' ? (maintainers.has(lower(u.login)) ? 'maintainer' : 'member') : filter, 'active', false));
   }
-  const username = requireString(ctx, 'username', 'Username', i);
+  const username = loginParam(ctx, 'username', 'Username', i);
   const membershipPath = `${base}/memberships/${enc(username)}`;
   const current = async (): Promise<{ role: string; state: string } | undefined> => {
     const response = await sendOrMissing(a, 'GET', membershipPath);
@@ -144,7 +170,8 @@ async function teamOperation(ctx: IExecuteContext, a: Access, operation: string,
       const role = ctx.getNodeParameter<string>('teamRole', i, 'member');
       if (role !== 'member' && role !== 'maintainer') throw new NodeOperationError(`Team Role must be member or maintainer, got "${role}"`, { itemIndex: i });
       const now = await current();
-      if (now && now.role === role) return result(username, target, 'role', role, now.state, false);
+      // Never a downgrade: a maintainer (or an organization owner, who is one everywhere) asked to be a member stays one.
+      if (now && rank(TEAM_ROLES, now.role) >= rank(TEAM_ROLES, role)) return result(username, target, 'role', now.role, now.state, false, had(now.state));
       const put = await send(a, 'PUT', membershipPath, { role });
       return result(username, target, 'role', role, String(body(put).state ?? 'active'), true);
     }
@@ -174,10 +201,19 @@ async function createInvitation(a: Access, org: string, payload: JsonObject): Pr
   return body(response);
 }
 
+/** This node never changes the role of someone already in (or invited to) the organization: asking for a higher one is an error, not a grant. */
+function refuseHigher(who: string, org: string, has: string, state: string, requested: string) {
+  const wanted = orgRoleName(requested);
+  if (rank(ORG_ROLES, wanted) <= rank(ORG_ROLES, has)) return;
+  throw new NodeOperationError(`${who} is already ${state === 'active' ? 'a member of' : 'invited to'} "${org}" with the role ${has}, not ${wanted}`, {
+    description: 'GitHub Access does not change roles of existing members or open invitations: cancel the invitation or change the role in GitHub first.',
+  });
+}
+
 async function orgOperation(ctx: IExecuteContext, a: Access, operation: string, i: number): Promise<JsonObject> {
-  const org = requireString(ctx, 'org', 'Organization', i);
+  const org = nameParam(ctx, 'org', 'Organization', i);
   const base = `/orgs/${enc(org)}`;
-  const username = optionalString(ctx, 'username', i);
+  const username = optionalString(ctx, 'username', i) ? loginParam(ctx, 'username', 'Username', i) : '';
   const email = optionalString(ctx, 'email', i);
   const membership = async (login: string): Promise<{ role: string; state: string } | undefined> => {
     const response = await sendOrMissing(a, 'GET', `${base}/memberships/${enc(login)}`);
@@ -187,7 +223,7 @@ async function orgOperation(ctx: IExecuteContext, a: Access, operation: string, 
     return undefined;
   };
   const openInvitations = () => collect(a, `${base}/invitations`, MAX_LIST, () => assertOrg(a, org));
-  const needUser = () => requireString(ctx, 'username', 'Username', i);
+  const needUser = () => loginParam(ctx, 'username', 'Username', i);
 
   switch (operation) {
     case 'get': {
@@ -203,12 +239,18 @@ async function orgOperation(ctx: IExecuteContext, a: Access, operation: string, 
       if (username) {
         const id = await userId(a, username);
         const now = await membership(username);
-        if (now) return result(username, org, 'role', now.role, now.state, false);
+        if (now) {
+          refuseHigher(username, org, now.role, now.state, orgRole);
+          return result(username, org, 'role', now.role, now.state, false, had(now.state));
+        }
         const created = await createInvitation(a, org, { invitee_id: id, role: orgRole });
         return result(username, org, 'role', orgRoleName(created.role ?? orgRole), 'pending', true, { invitationId: created.id ?? null });
       }
       const open = (await openInvitations()).find((inv) => lower(inv.email) === lower(email));
-      if (open) return result(email, org, 'role', orgRoleName(open.role), 'pending', false, { invitationId: open.id ?? null });
+      if (open) {
+        refuseHigher(email, org, orgRoleName(open.role), 'pending', orgRole);
+        return result(email, org, 'role', orgRoleName(open.role), 'pending', false, { invitationId: open.id ?? null, ...had('pending') });
+      }
       const created = await createInvitation(a, org, { email, role: orgRole });
       return result(email, org, 'role', orgRoleName(created.role ?? orgRole), 'pending', true, { invitationId: created.id ?? null });
     }
@@ -221,6 +263,7 @@ async function orgOperation(ctx: IExecuteContext, a: Access, operation: string, 
     }
     case 'cancelInvitation': {
       const id = Number(ctx.getNodeParameter<unknown>('invitationId', i, 0)) || 0;
+      if (id && (!Number.isInteger(id) || id < 1)) throw new NodeOperationError(`Invitation ID must be a positive whole number, got ${id}`, { itemIndex: i });
       if (!id && !username && !email) throw new NodeOperationError('Username, Email or Invitation ID is required', { itemIndex: i });
       const who = username || email || null;
       let target = id;
@@ -251,8 +294,8 @@ const fromGitHub = (role: unknown): string | null => {
 };
 
 async function collaboratorOperation(ctx: IExecuteContext, a: Access, operation: string, i: number): Promise<JsonObject | JsonObject[]> {
-  const owner = requireString(ctx, 'owner', 'Owner', i);
-  const repository = requireString(ctx, 'repository', 'Repository', i);
+  const owner = nameParam(ctx, 'owner', 'Owner', i);
+  const repository = nameParam(ctx, 'repository', 'Repository', i);
   const repo = repoPath(owner, repository);
   const target = `${owner}/${repository}`;
   const missingRepo = () => assertRepo(a, owner, repository);
@@ -273,17 +316,21 @@ async function collaboratorOperation(ctx: IExecuteContext, a: Access, operation:
     return out;
   }
 
-  const username = requireString(ctx, 'username', 'Username', i);
+  const username = loginParam(ctx, 'username', 'Username', i);
   const path = `${repo}/collaborators/${enc(username)}`;
-  /** The permission now (or none), and an open invitation when there is no permission yet. */
-  const current = async (): Promise<{ permission: string | null; invitation?: JsonObject }> => {
+  /** The effective permission: direct, through a team or the organization's base permission. */
+  const effective = async (): Promise<string | null> => {
     const response = await sendOrMissing(a, 'GET', `${path}/permission`);
     if (!response) {
       await missingRepo();
       await assertUser(a, username);
       throw new NodeOperationError(`GitHub could not read the permission of "${username}" on ${target}`);
     }
-    const permission = fromGitHub(body(response).role_name ?? body(response).permission);
+    return fromGitHub(body(response).role_name ?? body(response).permission);
+  };
+  /** The permission now (or none), and an open invitation when there is no permission yet. */
+  const current = async (): Promise<{ permission: string | null; invitation?: JsonObject }> => {
+    const permission = await effective();
     if (permission) return { permission };
     const invitation = (await invitations()).find((inv) => lower(inviteeOf(inv)) === lower(username));
     return { permission: null, ...(invitation && { invitation }) };
@@ -300,9 +347,10 @@ async function collaboratorOperation(ctx: IExecuteContext, a: Access, operation:
       const permission = ctx.getNodeParameter<string>('permission', i, 'pull');
       if (!PERMISSIONS.includes(permission)) throw new NodeOperationError(`Permission must be one of ${PERMISSIONS.join(', ')}, got "${permission}"`, { itemIndex: i });
       const now = await current();
-      if (now.permission === permission) return result(username, target, 'permission', permission, 'active', false);
-      if (now.invitation && fromGitHub(now.invitation.permissions) === permission) {
-        return result(username, target, 'permission', permission, 'pending', false, { invitationId: now.invitation.id ?? null });
+      // Never a downgrade: an effective permission (direct, a team's or the organization's base) at or above the request stays as it is.
+      if (now.permission && rank(PERMISSIONS, now.permission) >= rank(PERMISSIONS, permission)) return result(username, target, 'permission', now.permission, 'active', false, had('active'));
+      if (now.invitation && rank(PERMISSIONS, fromGitHub(now.invitation.permissions)) >= rank(PERMISSIONS, permission)) {
+        return result(username, target, 'permission', fromGitHub(now.invitation.permissions), 'pending', false, { invitationId: now.invitation.id ?? null, ...had('pending') });
       }
       const put = await send(a, 'PUT', path, { permission });
       // 201 with an invitation: the user is outside the organization (or the repository is personal) and must accept it; 204: added.
@@ -315,17 +363,22 @@ async function collaboratorOperation(ctx: IExecuteContext, a: Access, operation:
       return result(username, target, 'permission', permission, 'active', true);
     }
     case 'remove': {
-      const now = await current();
-      if (now.permission) {
+      // Decide from what was granted on this repository (direct collaborators, open invitations), not from the effective
+      // permission: an organization member has the base permission without being a collaborator, and removing the
+      // collaborator does not take that away. The answer reports what is left.
+      const direct = (await collect(a, `${repo}/collaborators?affiliation=direct`, MAX_LIST, missingRepo)).some((u) => lower(u.login) === lower(username));
+      const invitation = direct ? undefined : (await invitations()).find((inv) => lower(inviteeOf(inv)) === lower(username));
+      let changed = false;
+      if (direct) {
         await send(a, 'DELETE', path);
-        return result(username, target, 'permission', null, 'none', true);
-      }
-      if (now.invitation) {
-        const response = await rawCall(a.api, a.credentials, 'DELETE', `${repo}/invitations/${Number(now.invitation.id)}`);
+        changed = true;
+      } else if (invitation) {
+        const response = await rawCall(a.api, a.credentials, 'DELETE', `${repo}/invitations/${Number(invitation.id)}`);
         if (!response.ok && response.status !== 404) throw apiError(a.api, response as GitHubResponse<any>, accessHint);
-        return result(username, target, 'permission', null, 'none', response.ok);
+        changed = response.ok;
       }
-      return result(username, target, 'permission', null, 'none', false);
+      const left = await effective();
+      return result(username, target, 'permission', left, left ? 'active' : 'none', changed, left ? { note: 'The person still has this through the organization’s base permission or a team.' } : {});
     }
   }
   throw unsupported('repoCollaborator', operation);
@@ -367,10 +420,10 @@ function graphqlRefusal(errors: GraphQlError[]): NodeOperationError {
 
 async function projectOperation(ctx: IExecuteContext, a: Access, operation: string, i: number): Promise<JsonObject> {
   if (operation !== 'add' && operation !== 'remove') throw unsupported('projectCollaborator', operation);
-  const org = requireString(ctx, 'org', 'Organization', i);
+  const org = nameParam(ctx, 'org', 'Organization', i);
   const number = Number(ctx.getNodeParameter<unknown>('projectNumber', i, 0));
   if (!Number.isInteger(number) || number < 1) throw new NodeOperationError('Project Number is required', { itemIndex: i });
-  const username = requireString(ctx, 'username', 'Username', i);
+  const username = loginParam(ctx, 'username', 'Username', i);
   const target = `${org}/projects/${number}`;
   const role = operation === 'add' ? ctx.getNodeParameter<string>('projectRole', i, 'READER') : 'NONE';
   if (!['READER', 'WRITER', 'ADMIN', 'NONE'].includes(role)) throw new NodeOperationError(`Project Role must be READER, WRITER or ADMIN, got "${role}"`, { itemIndex: i });
@@ -418,6 +471,9 @@ const ACCESS_SCHEMA: JsonObject = {
   },
   required: ['user', 'target', 'state', 'changed'],
 };
+
+/** Everything else changes access. */
+const READ_OPERATIONS = new Set(['get', 'getMany', 'getPermission']);
 
 const show = (resource: string[], operation?: string[]) => ({ show: { resource, ...(operation && { operation }) } });
 
@@ -612,11 +668,16 @@ export const GitHubAccess = defineNode({
   },
 
   async execute(ctx) {
-    const credentials = ctx.getCredentials<GitHubCredentials>('githubApi');
-    const access: Access = { api: { http: ctx.http, metrics: ctx.metrics }, credentials };
     return mapItems(ctx, async (i) => {
       const resource = ctx.getNodeParameter<string>('resource', i);
       const operation = ctx.getNodeParameter<string>('operation', i);
+      // Attached to an agent's tool slot, the model can override `operation` (and the role or permission) with its own
+      // arguments, so the node's description is no guard: a write is refused whenever an agent is the caller.
+      const mode = ctx.getMode();
+      if ((mode === 'tool' || mode === 'mcp') && !READ_OPERATIONS.has(operation)) {
+        throw new NodeOperationError('Granting or removing access is not allowed as an agent tool', { description: 'An agent can read who has access; a person approves the change and a flow step makes it.' });
+      }
+      const access: Access = { api: { http: ctx.http, metrics: ctx.metrics }, credentials: ctx.getCredentials<GitHubCredentials>('githubApi') };
       switch (resource) {
         case 'teamMembership':
           return teamOperation(ctx, access, operation, i);

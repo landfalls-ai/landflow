@@ -130,8 +130,23 @@ the `admin:org` scope (classic) or Members read and write (fine-grained); collab
 A 403 says so.
 
 **Agent tools.** The node is `usableAsTool`, but only the read operations (Get Members, Get Membership, Get
-Collaborators, Get Permission) are offered as tools and through MCP; every write is marked `mcp: false`, so an agent can
-see who has access and never grants it. A flow's own node can still do all of it.
+Collaborators, Get Permission) are offered as tools and through MCP; every write is marked `mcp: false`. That is not the
+only guard: an agent's arguments override node parameters, so a node configured to read could be asked to write. The node
+therefore refuses every write when its mode is `tool` or `mcp` (`packages/engine/test/github-access-tool.test.ts` runs it
+through the engine's tool path). A flow's own node does all of it.
+
+**Names are checked first.** `..` survives URL-encoding and `fetch` collapses it, so a team slug or login of `..` would hit
+a different endpoint. Logins must match GitHub's login rule (letters, digits, single hyphens, up to 39), and
+organizations, slugs, owners and repositories have no slash or whitespace and are not `.` or `..`. A bad value fails the
+item before any call.
+
+**Never a downgrade.** Add compares roles and keeps what the person has when it is as high or higher: a team maintainer
+(or an organization owner, who is one everywhere) asked to be a member, a repository admin asked for pull, someone whose
+organization base permission already covers the request. The result then has `changed: false`, the existing role or
+permission, and `alreadyHad: true` when it is active, so a flow knows not to remove it when a timed grant ends. Invite
+refuses (an error, not a grant) when the person is already a member or invitee with a lower role than the one asked.
+Repository Remove removes the direct collaborator or invitation only and reports the permission that is left through a team
+or the base permission. Logins are compared case-insensitively. Project Add cannot compare: GitHub offers no read.
 
 ## Errors
 
