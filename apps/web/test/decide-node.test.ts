@@ -6,6 +6,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { expandPorts, indexedPorts } from '@landflow/protocol';
 import { fakeSystemOne } from '@landflow/test-fakes';
+import { DECIDE_LIMITS } from '@landflow/protocol';
 import { decideNode, readQuestions } from '@/lib/server/nodes/decide';
 import { ollamaConnection, SystemOneApiError, systemOneAsk, systemOneJudge, typesafeConnection, type DecideQuestion } from '@/lib/server/nodes/systemone';
 import { outputsOf, run, runFlow } from './helpers';
@@ -228,5 +229,79 @@ describe('the outputs follow the options', () => {
   it('is a SystemOneApiError when the server is down', async () => {
     await expect(systemOneAsk(ollamaConnection({ baseUrl: 'http://127.0.0.1:1', model: 'x' }), 'x', [readQuestions({ question: [topic] }).questions[0] as DecideQuestion])).rejects.toBeTruthy();
     expect(SystemOneApiError).toBeDefined();
+  });
+});
+
+describe('C34 review: what the node keeps, caps and sends', () => {
+  it('keeps the binary data of an item', async () => {
+    const result = await runFlow(
+      [{ name: 'Decide', type: 'core.decide', parameters: parameters({ state: '{{ $json.text }}' }) }],
+      [['Start', 'Decide']],
+      { input: [{ text: 'charged twice' }] },
+    );
+    expect(outputsOf(result, 'Decide')[0]).toHaveLength(1);
+    // The SDK runner sees the item's own fields: a binary item comes out with the same binary.
+    const input = { json: { text: 'charged twice, refund' }, binary: { invoice: { mimeType: 'application/pdf', fileName: 'a.pdf', data: 'JVBERi0=' } } };
+    const { runNode, } = await import('@landflow/sdk');
+    const response = await runNode(decideNode, {
+      protocol: 'landflow.plugin/v1', executionId: 'ex', workflowId: 'wf', mode: 'manual',
+      node: { id: 'n1', name: 'Decide', type: 'core.decide', typeVersion: 1 },
+      parameters: parameters({ state: '{{ $json }}' }) as never, itemParameters: [parameters({ state: '{{ $json }}' }) as never], inputs: [[input as never]],
+    });
+    const out = response.outputs.flat()[0] as unknown as { binary?: Record<string, unknown>; json: { decision?: unknown } };
+    expect(out.binary).toEqual(input.binary);
+    expect(out.json.decision).toBeDefined();
+  });
+
+  it('refuses a state over the cap and suggests narrowing What To Read', async () => {
+    const result = await run(decideNode, parameters(), [{ text: 'x'.repeat(DECIDE_LIMITS.stateChars + 1) }]);
+    expect(result.error?.message).toMatch(/too long/);
+    expect(result.error?.description ?? '').toMatch(/What To Read/);
+    expect(server.state().asked).toHaveLength(0);
+    const ok = await run(decideNode, parameters(), [{ text: 'x'.repeat(DECIDE_LIMITS.stateChars - 100) }]);
+    expect(ok.error).toBeUndefined();
+  });
+
+  it('sends a typed text as text: only an object or an array is read as JSON', async () => {
+    for (const [value, sent] of [['123', '123'], ['true', 'true'], ['"quoted"', '"quoted"'], ['{"a":1}', { a: 1 }], ['[1,2]', [1, 2]], ['plain words', 'plain words']] as const) {
+      server.reset();
+      await run(decideNode, parameters({ state: value }), [{}]);
+      expect((server.state().asked[0] as { state: unknown }).state).toEqual(sent);
+    }
+  });
+
+  it('says What To Read came out empty and what the item could have offered', async () => {
+    // The helper's run() does not resolve expressions, so a blank text stands for "resolved to nothing".
+    const result = await run(decideNode, parameters({ state: '{{ $json.missing }}' }), [{ text: 'x' }]);
+    expect(result.error).toBeUndefined(); // an unresolved expression is still text: only a blank one is empty
+    const blank = await run(decideNode, parameters({ state: ' ' }), [{ text: 'x', subject: 'y' }]);
+    // A blank state means the whole item (the documented default), so nothing is empty either.
+    expect(blank.error).toBeUndefined();
+    const flow = await runFlow([{ name: 'Decide', type: 'core.decide', parameters: parameters({ state: '{{ $json.description }}' }) }], [['Start', 'Decide']], { input: [{ text: 'x' }] });
+    const failed = flow.runData.Decide.find((r) => r.error)?.error;
+    expect(failed?.message).toMatch(/What To Read came out empty/);
+    expect(failed?.description).toMatch(/the fields text/);
+    expect(failed?.description).toMatch(/\{\{ \$json \}\}/);
+  });
+
+  it('refuses an option called Unsure, in any case', () => {
+    expect(() => readQuestions({ question: [{ ...topic, options: 'billing\nUnsure' }] })).toThrow(/Unsure/);
+    expect(() => readQuestions({ question: [{ ...topic, options: 'billing\nunsure' }] })).toThrow(/Unsure/);
+  });
+
+  it('does not let a question instruction be an expression, and offers Route By from the questions', async () => {
+    const property = (name: string) => (decideNode.description.properties.find((p) => p.name === 'questions')?.groups?.[0].values ?? []).find((v) => v.name === name);
+    expect(property('instructions')?.noDataExpression).toBe(true);
+    expect(property('options')?.noDataExpression).toBe(true);
+    const routeBy = decideNode.description.properties.find((p) => p.name === 'routeBy');
+    expect(routeBy?.typeOptions?.loadOptionsMethod).toBe('routes');
+    const listed = await decideNode.methods?.loadOptions?.routes?.({ getCurrentParameters: () => parameters({}, [topic, urgent, anger]) } as never);
+    expect(listed?.map((o) => o.value)).toEqual(['', 'topic', 'urgent']);
+  });
+
+  it('reads an answer key that is not its own: an option named like an Object property is no answer', async () => {
+    const [q] = readQuestions({ question: [topic] }).questions;
+    const toString = async () => new Response(JSON.stringify({ model: 'm', answers: { topic: { type: 'choice', choice: 'toString', probabilities: { billing: 0.3, technical: 0.3, other: 0.4 }, confidence: 0.1 } } }), { headers: { 'content-type': 'application/json' } });
+    await expect(systemOneAsk(ollamaConnection({ baseUrl: server.url, model: 'nimble:9b' }), 'x', [q], { fetcher: toString })).rejects.toThrow(/could not read/);
   });
 });

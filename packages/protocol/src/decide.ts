@@ -5,7 +5,7 @@
  */
 
 /** What a decision model takes in one request (the System One API: docs/features/ai.md#decide). */
-export const DECIDE_LIMITS = { questions: 64, options: 26, nameChars: 40 } as const;
+export const DECIDE_LIMITS = { questions: 64, options: 26, nameChars: 40, /** The state, serialised: what one call may carry (about 8k tokens). */ stateChars: 32_000 } as const;
 
 export type DecideQuestionType = 'choice' | 'yesno' | 'score';
 
@@ -38,6 +38,8 @@ export function parseDecideLines(text: unknown): DecideLine[] {
 /** Why an option name cannot be a key of the answer, or undefined when it can. */
 export function optionNameProblem(name: string): string | undefined {
   if (!name) return 'an option has no name';
+  // The Choice routing's own last output is called that.
+  if (name.toLowerCase() === UNSURE_LABEL.toLowerCase()) return `an option cannot be called “${UNSURE_LABEL}”: that is the output for answers the model is not sure of`;
   if (name.length > DECIDE_LIMITS.nameChars) return `the option "${name.slice(0, 12)}…" is longer than ${DECIDE_LIMITS.nameChars} characters`;
   if (UNSAFE_KEYS.has(name)) return `"${name}" cannot be an option name`;
   return undefined;
@@ -77,3 +79,32 @@ export function decideRouting(parameters: Record<string, unknown>): DecideRoutin
   }
   return { kind: 'none', labels: ['Decided'] };
 }
+
+/**
+ * Connections of a Decide node's main outputs, after its parameters changed from `oldParams` to `newParams`: each
+ * connection stays on the output of the same name (an option, Unsure, Yes, No), moves with it when the numbering
+ * changes, and is removed when that name is gone. A Choice with the same number of options as before and one new
+ * name is a rename: the connection stays on its place. `connections` are this node's outgoing main connections.
+ */
+export function remapExpandedConnections<C extends { sourceIndex?: number }>(oldParams: Record<string, unknown>, newParams: Record<string, unknown>, connections: C[]): C[] {
+  const before = decideRouting(oldParams);
+  const after = decideRouting(newParams);
+  const target = new Map<number, number>();
+  before.labels.forEach((label, index) => {
+    const found = after.labels.indexOf(label);
+    if (found >= 0) target.set(index, found);
+  });
+  if (before.kind === after.kind && before.kind === 'choice' && before.labels.length === after.labels.length) {
+    const taken = new Set(target.values());
+    const lost = before.labels.map((_l, i) => i).filter((i) => !target.has(i));
+    const fresh = after.labels.map((_l, i) => i).filter((i) => !taken.has(i));
+    if (lost.length === 1 && fresh.length === 1 && lost[0] === fresh[0]) target.set(lost[0], fresh[0]);
+  }
+  return connections.flatMap((c) => {
+    const to = target.get(c.sourceIndex ?? 0);
+    return to === undefined ? [] : [{ ...c, sourceIndex: to }];
+  });
+}
+
+/** How many main outputs a Decide node shows for `parameters`. */
+export const decideOutputCount = (parameters: Record<string, unknown>) => decideRouting(parameters).labels.length;

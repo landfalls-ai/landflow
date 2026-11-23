@@ -4,7 +4,7 @@
  * outline and a keyword search over the node catalog. No model calls here;
  * suggest.ts and the chat tools turn these into prompt text.
  */
-import { indexedPorts, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
+import { expandPorts, indexedPorts, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { collectionShape, type RunDigest } from '@/lib/shared/assistant-ops';
 import type { NodeTypeInfo, PropertyDescriptor, Workflow, WorkflowNode } from '@/lib/shared/types';
 import { registry } from '../plugins/registry';
@@ -86,7 +86,7 @@ export function nodeDocs(info: NodeTypeInfo, parameters?: Record<string, unknown
   const lines = [
     `${d.displayName} — ${info.type} [${d.kind}${d.supplies ? `, supplies ${d.supplies}` : ''}${d.usableAsTool ? ', usable as an agent tool' : ''}]`,
     `${info.pluginId === 'core' ? 'Built in' : `${info.pluginName} plugin (${info.language})`}. ${d.description}`,
-    `Inputs: ${ports(d.inputs)}. Outputs: ${ports(d.outputs)}.`,
+    `Inputs: ${ports(d.inputs)}. Outputs: ${ports(parameters ? expandPorts(d.outputs, parameters) : d.outputs)}.`,
   ];
   const effective = parameters && withPropertyDefaults(d.properties, parameters);
   const fields = outputFields(d, effective);

@@ -19,7 +19,7 @@ import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge
 import { nanoid } from 'nanoid';
 import { toast } from 'sonner'; // AG17:
 import { create } from 'zustand';
-import { defaultParameters, defaultVersionOf, expandPorts, portParameters, withPropertyDefaults } from '@landflow/protocol';
+import { defaultParameters, defaultVersionOf, expandPorts, portParameters, remapExpandedConnections, withPropertyDefaults } from '@landflow/protocol';
 import type { NodeProgress } from '@/lib/client/node-progress';
 import { edgeCountsOf, statusesOf, waitSummary, withWaiting, type NodeStatus, type WaitInfo } from '@/lib/client/run-data';
 import type { FlowTemplate } from '@/lib/client/templates';
@@ -1001,10 +1001,19 @@ export const useEditor = create<EditorState>((set, get) => {
 
   updateNode(id, patch) {
     record(`node:${id}`, 1500);
-    set((s) => ({
-      nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { wf: { ...n.data.wf, ...patch } } } : n)),
-      dirty: true,
-    }));
+    set((s) => {
+      const node = s.nodes.find((n) => n.id === id);
+      let edges = s.edges;
+      // A node whose outputs follow its parameters (Decide): a connection stays on the output of the same name when the options change.
+      if (node && patch.parameters && s.nodeTypes[node.data.wf.type]?.descriptor.outputs.some((p) => p.expand)) {
+        const mine = (e: FlowEdge) => e.source === id && (e.data?.connectionType ?? 'main') === 'main';
+        const indexOf = (e: FlowEdge) => Number((e.sourceHandle ?? 'main:0').split(':')[1] ?? 0);
+        const moved = remapExpandedConnections(node.data.wf.parameters, patch.parameters, s.edges.filter(mine).map((e) => ({ edge: e, sourceIndex: indexOf(e) })));
+        const kept = new Map(moved.map((m) => [m.edge.id, `main:${m.sourceIndex}`]));
+        edges = s.edges.flatMap((e) => (!mine(e) ? [e] : kept.has(e.id) ? [{ ...e, sourceHandle: kept.get(e.id) }] : []));
+      }
+      return { nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { wf: { ...n.data.wf, ...patch } } } : n)), edges, dirty: true };
+    });
   },
 
   renameNode(id, name) {

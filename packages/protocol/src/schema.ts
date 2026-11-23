@@ -437,7 +437,12 @@ export function parseManifest(input: unknown):
   | { ok: true; manifest: PluginManifest }
   | { ok: false; error: string } {
   const result = manifestSchema.safeParse(input);
-  if (result.success) return { ok: true, manifest: result.data };
+  if (result.success) {
+    // `expand` is the host's own port rule (the Decide node): a plugin that announces it is refused, never trusted.
+    const expands = result.data.nodes.some((node) => [...node.inputs, ...node.outputs].some((port) => port.expand !== undefined));
+    if (expands) return { ok: false, error: 'nodes: a port\'s "expand" rule is reserved for the host\'s own nodes' };
+    return { ok: true, manifest: result.data };
+  }
   const error = result.error.issues
     .slice(0, 5)
     .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)

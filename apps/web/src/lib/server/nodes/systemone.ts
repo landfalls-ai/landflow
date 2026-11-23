@@ -227,7 +227,7 @@ function readAnswer(connection: SystemOneConnection, q: DecideQuestion, raw: Rec
   }
   if (q.type === 'choice') {
     const probabilities = probabilitiesOf(raw.probabilities, q.options.map((o) => o.name));
-    if (typeof raw.choice !== 'string' || !(raw.choice in (probabilities ?? {})) || !probabilities || !finite(raw.confidence)) throw malformed();
+    if (typeof raw.choice !== 'string' || !Object.hasOwn(probabilities ?? {}, raw.choice) || !probabilities || !finite(raw.confidence)) throw malformed();
     return { type: 'choice', choice: raw.choice, probabilities, confidence: unit(raw.confidence) };
   }
   const probabilities = probabilitiesOf(raw.probabilities, q.levels.map((_l, i) => String(i)));
@@ -251,7 +251,7 @@ function explain(connection: SystemOneConnection, error: unknown): unknown {
  */
 export async function systemOneAsk(
   connection: SystemOneConnection,
-  state: string | Record<string, unknown>,
+  state: string | object,
   questions: DecideQuestion[],
   options: { signal?: AbortSignal; fetcher?: Fetcher } = {},
 ): Promise<AskResult> {

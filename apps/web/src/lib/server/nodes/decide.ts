@@ -98,9 +98,13 @@ function connectionOf(ctx: IExecuteContext, source: string): SystemOneConnection
   return ollamaConnection({ baseUrl: text(ctx.getNodeParameter('baseUrl', 0, '')) || ollamaUrl(), model: text(ctx.getNodeParameter('model', 0, DECIDE_DEFAULT_MODEL)) });
 }
 
+/** A typed text is text; only a JSON object or array is read as data ("123" or "true" stay the words they are). */
 function tryJson(value: string): unknown {
+  const trimmed = value.trim();
+  if (!/^[{[]/.test(trimmed)) return value;
   try {
-    return JSON.parse(value);
+    const parsed: unknown = JSON.parse(trimmed);
+    return parsed !== null && typeof parsed === 'object' ? parsed : value;
   } catch {
     return value;
   }
@@ -120,7 +124,7 @@ const QUESTION_FIELDS = [
       { name: 'Score', value: 'score', description: 'A level on a scale, lowest first' },
     ],
   },
-  { name: 'instructions', displayName: 'Question', type: 'string' as const, default: '', required: true, typeOptions: { rows: 2 }, description: 'What to decide, as a question about the item' },
+  { name: 'instructions', displayName: 'Question', type: 'string' as const, default: '', required: true, noDataExpression: true, typeOptions: { rows: 2 }, description: 'What to decide, as a question about the item' },
   {
     name: 'options',
     displayName: 'Options',
@@ -219,11 +223,12 @@ export const decideNode = defineNode({
       {
         name: 'routeBy',
         displayName: 'Route By',
-        type: 'string',
+        type: 'options',
         default: '',
         noDataExpression: true,
-        placeholder: 'category',
-        description: 'The name of a Choice question (one output per option, plus Unsure) or a Yes/No question (Yes and No). Blank: one output.',
+        options: [{ name: 'Nothing (one output)', value: '' }],
+        typeOptions: { loadOptionsMethod: 'routes', loadOptionsDependsOn: ['questions'] },
+        description: 'A Choice question (one output per option, plus Unsure) or a Yes/No question (Yes and No). Nothing: one output.',
       },
       {
         name: 'minConfidence',
@@ -239,6 +244,13 @@ export const decideNode = defineNode({
     loadOptions: {
       async models(ctx) {
         return ollamaModelOptions(String(ctx.getCurrentParameters().baseUrl || ''), false);
+      },
+      // The questions that can route: a Choice (its options) or a Yes/No. A Score cannot.
+      routes(ctx) {
+        const named = decideQuestions(ctx.getCurrentParameters().questions)
+          .filter((q) => (q.type === 'choice' || q.type === 'yesno') && text(q.name))
+          .map((q) => ({ name: `${text(q.name)} (${q.type === 'choice' ? 'Choice' : 'Yes/No'})`, value: text(q.name) }));
+        return [{ name: 'Nothing (one output)', value: '' }, ...named];
       },
     },
   },
@@ -267,14 +279,28 @@ export const decideNode = defineNode({
       const base = items[i].json;
       const raw = ctx.getNodeParameter<unknown>('state', i, base);
       const state = typeof raw === 'string' ? (!raw.trim() || raw.trim() === '{{ $json }}' ? base : tryJson(raw)) : raw;
-      if (state === null || state === undefined || state === '') throw new NodeOperationError('There is nothing to read: the state is empty', { itemIndex: i });
+      if (state === null || state === undefined || (typeof state === 'string' && !state.trim())) {
+        // The expression's text is not available once it is resolved; the item's own fields say what it could have read.
+        const fields = Object.keys(base);
+        throw new NodeOperationError('What To Read came out empty: its expression resolved to nothing', {
+          itemIndex: i,
+          description: `This item has ${fields.length ? `the fields ${fields.slice(0, 12).join(', ')}` : 'no fields'}. Point What To Read at one of them, or leave it as {{ $json }} to read the whole item.`,
+        });
+      }
+      const size = typeof state === 'string' ? state.length : JSON.stringify(state).length;
+      if (size > DECIDE_LIMITS.stateChars) {
+        throw new NodeOperationError(`What To Read is too long: ${size.toLocaleString('en-US')} characters, and a call takes at most ${DECIDE_LIMITS.stateChars.toLocaleString('en-US')}`, {
+          itemIndex: i,
+          description: 'Narrow What To Read to the fields that matter, for example {{ $json.body }}, so the model reads the part that decides.',
+        });
+      }
       let result: AskResult;
       try {
         // The call is a metered chat call (tokens from the service's usage; a local Ollama is unpriced).
         result = await withCallPurpose('decide', () =>
           traceChat(
             { system: connection.system, model: connection.model ?? connection.label },
-            () => systemOneAsk(connection, state as string | Record<string, unknown>, read.questions, { ...(ctx.signal && { signal: ctx.signal }) }),
+            () => systemOneAsk(connection, state as string | object, read.questions, { ...(ctx.signal && { signal: ctx.signal }) }),
             (asked) => ({ responseModel: asked.model, inputTokens: asked.usage.inputTokens, outputTokens: asked.usage.outputTokens }),
           ),
         );
@@ -284,7 +310,8 @@ export const decideNode = defineNode({
       const decision: JsonObject = { model: result.model };
       for (const q of read.questions) decision[q.name] = decisionOf(q, result.answers[q.name], read.thresholds[q.name] ?? DEFAULT_THRESHOLD);
       const output = routeOf(routing, routed, routed && result.answers[routed.name], routed ? (read.thresholds[routed.name] ?? DEFAULT_THRESHOLD) : DEFAULT_THRESHOLD, minConfidence);
-      out[output].push({ json: { ...base, decision }, pairedItem: { item: i } });
+      // The item's own parts (its binary data) pass through; only `json` gains the decision.
+      out[output].push({ ...items[i], json: { ...base, decision }, pairedItem: { item: i } });
     }
     return out;
   },

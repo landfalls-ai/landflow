@@ -19,7 +19,7 @@ import { plainDraft } from './ai-usage/drafts'; // SB19:
 import type { BuildPlan, BuildStage } from '@/lib/shared/build-plan'; // SB13:
 // SB01: the draft's reply held to a schema, checked for empty parts and sent back once.
 import { z } from 'zod';
-import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
+import { expandPorts, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import type { Workflow } from '@landflow/engine';
 import { collectionWarnings, structuralWarnings } from '@/lib/shared/assistant-ops';
 import { hollowSteps } from '@/lib/shared/run-check';
@@ -107,7 +107,7 @@ export const PARAMETER_FORMATS = `Parameter formats:
 - core.set (add or change fields): {"mode":"manual","fields":{"values":[{"name":"greeting","type":"string","value":"Hi {{ $json.name }}"}]},"includeOtherFields":true}
 - core.if / core.filter: {"conditions":{"condition":[{"left":"{{ $json.score }}","operator":"gt","right":"0.5"}]},"combinator":"and"}. Operators: equals, notEquals, contains, notContains, startsWith, gt, gte, lt, lte, regex, isEmpty, isNotEmpty, isTrue, isFalse.
 - core.code per item: {"mode":"each","codeEach":"return { ...$json, total: $json.a + $json.b };"}. For all items at once: {"mode":"all","code":"return items.map((item) => ({ ...item.json }));"}
-- core.decide asks a decision model questions about each item and routes it. Ollama source (no key): {"source":"ollama","model":"nimble:9b","state":"{{ $json }}","questions":{"question":[{"name":"category","type":"choice","instructions":"What is this ticket about?","options":"billing: charges and refunds\ntechnical: errors and bugs\nother"}]},"routeBy":"category"}. A question's type is choice (options: one per line, "name: what it means"), yesno or score (levels: one per line, lowest first). "routeBy" is the name of a choice question (one output per option in order, then Unsure) or a yesno question (output 0 Yes, 1 No); blank gives one output. It adds "decision" to each item: {"category":{"choice":"billing","probabilities":{…},"confidence":0.95}}, a yesno gives {"yes":true,"probability":0.9}. Put a step on each option's output ("output" 0 for the first option…). Use it to sort or triage by a category, a yes/no or a score; use core.if for a test on a field.
+- core.decide asks a decision model questions about each item and routes it. Ollama source (no key): {"source":"ollama","model":"nimble:9b","state":"{{ $json }}","questions":{"question":[{"name":"category","type":"choice","instructions":"What is this ticket about?","options":"billing: charges and refunds\ntechnical: errors and bugs\nother"}]},"routeBy":"category"}. A question's type is choice (options: one per line, "name: what it means"), yesno or score (levels: one per line, lowest first). "routeBy" is the name of a choice question (one output per option in order, then Unsure) or a yesno question (output 0 Yes, 1 No); blank gives one output. It adds "decision" to each item: {"category":{"choice":"billing","probabilities":{…},"confidence":0.95}}, a yesno gives {"yes":true,"probability":0.9}. It decides one item at a time, so give it one item per thing to sort (a core.code step that returns a list of items), never several tickets as fields of one item. Leave "state" as {{ $json }} (the whole item) unless the request names the one field to read. Connect one step per option from the Decide: with options billing, technical, other the connections are {"from":"d","to":"b","output":0}, {"from":"d","to":"t","output":1}, {"from":"d","to":"o","output":2}, and output 3 (the last, Unsure) only when a step should take the unsure ones; with n options the outputs are 0 to n-1, then Unsure is n. Use it to sort or triage by a category, a yes/no or a score; use core.if for a test on a field.
 - core.merge waits for both inputs: {"mode":"append"}. Connect the two branches to it.
 - core.aggregate, one item with a list of each field's values: {"aggregate":"aggregateIndividualFields","fieldsToAggregate":{"fieldToAggregate":[{"fieldToAggregate":"title"}]}} puts out {"title":["…","…"]}.
 - core.schedule at a time of day ("every morning at 9"): {"unit":"rules","rule":{"interval":[{"field":"days","daysInterval":1,"triggerAtHour":9,"triggerAtMinute":0}]}}. Weekdays at 9: {"unit":"rules","rule":{"interval":[{"field":"cronExpression","expression":"0 9 * * 1-5"}]}}. "unit":"hours" with "every" counts from when the workflow is activated, not from a time of day.`;
@@ -136,17 +136,23 @@ function describeProperty(p: PropertyDescriptor): string {
   return `${p.name} (${p.type}${options?.length ? `: ${options.join('|')}` : ''}${p.default !== undefined && typeof p.default !== 'object' && p.default !== '' ? `, default ${JSON.stringify(p.default)}` : ''})${hint}${shape ? ` [${shape}]` : ''}`;
 }
 
+export function catalogText(types: NodeTypeInfo[]): string {
+  return catalog(types);
+}
+
 function catalog(types: NodeTypeInfo[]): string {
   return types
     .map((t) => {
       const d = t.descriptor;
       const outputs = d.outputs.filter((o) => o.type === 'main');
+      // A port that follows the node's parameters (Decide) is explained: the catalog has no parameters to expand it with.
+      const follows = outputs.some((o) => o.expand) ? ' Outputs: one per option of the Choice question named in Route By, in order, then Unsure (output 0 is the first option, the last is Unsure); Yes then No for a Yes/No question; a single output when Route By is blank.' : '';
       const params = d.properties
         .filter((p) => p.type !== 'notice')
         .map(describeProperty)
         .join('; ');
       const where = t.pluginId === 'core' ? 'built in' : `${t.pluginName} plugin, ${t.language}`;
-      return `- ${t.type} — ${d.displayName} [${d.kind}${d.supplies ? `, supplies ${d.supplies}` : ''}${d.usableAsTool ? ', usable as tool' : ''}] (${where}): ${d.description}${outputs.length > 1 ? ` Outputs: ${outputs.map((o, i) => `${i}=${o.displayName ?? i}`).join(', ')}.` : ''}${outputFields(d) ? ` Output item: ${outputFields(d)}.` : ''}${params ? `\n  params: ${params}` : ''}`;
+      return `- ${t.type} — ${d.displayName} [${d.kind}${d.supplies ? `, supplies ${d.supplies}` : ''}${d.usableAsTool ? ', usable as tool' : ''}] (${where}): ${d.description}${follows || (outputs.length > 1 ? ` Outputs: ${outputs.map((o, i) => `${i}=${o.displayName ?? i}`).join(', ')}.` : '')}${outputFields(d) ? ` Output item: ${outputFields(d)}.` : ''}${params ? `\n  params: ${params}` : ''}`;
     })
     .join('\n');
 }
@@ -489,7 +495,7 @@ function assemble(raw: Reply, byType: Map<string, NodeTypeInfo>, teams: readonly
     const output = Math.max(0, Math.floor(c.output ?? 0));
     const ok =
       type === 'main'
-        ? output < source.outputs.filter((o) => o.type === 'main').length && target.inputs.some((i) => i.type === 'main')
+        ? output < expandPorts(source.outputs, nodes.find((x) => x.key === c.from)?.parameters ?? {}).filter((o) => o.type === 'main').length && target.inputs.some((i) => i.type === 'main')
         : target.inputs.some((i) => i.type === type) && (source.supplies === type || source.outputs.some((o) => o.type === type) || (type === 'ai_tool' && Boolean(source.usableAsTool)));
     if (!ok || edges.some(([f, t, o, ty]) => f === c.from && t === c.to && o === output && ty === type)) {
       if (!ok) dropped.push(`connection ${c.from} → ${c.to} (${type})`);
