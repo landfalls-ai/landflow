@@ -50,7 +50,7 @@ export type FlowEdge = [string, string, ConnectionType?, number?, number?];
 export async function runFlow(
   nodes: FlowNode[],
   edges: FlowEdge[],
-  options: { input?: Input; extra?: Record<string, INodeType>; variables?: Record<string, string>; workflowId?: string } = {},
+  options: { input?: Input; extra?: Record<string, INodeType>; variables?: Record<string, string>; workflowId?: string; signal?: AbortSignal } = {},
 ): Promise<ExecutionResult> {
   const all: FlowNode[] = [{ name: 'Start', type: 'core.manualTrigger' }, ...nodes];
   const resolver: NodeTypeResolver = {
@@ -84,6 +84,7 @@ export async function runFlow(
     triggerItems: items(...(options.input ?? [{}])),
     resolveCredentials: (node) => all.find((n) => n.name === node.name)?.credentials,
     ...(options.variables && { variables: options.variables }),
+    ...(options.signal && { signal: options.signal }),
   });
 }
 

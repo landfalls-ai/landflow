@@ -23,7 +23,7 @@ export interface MemoryItemWire {
 export type MemoryRequestWire =
   | { operation: 'search'; container: string; query: string; mode: 'keyword' | 'meaning' | 'hybrid'; limit: number; threshold: number }
   | { operation: 'profile'; container: string }
-  | { operation: 'add'; container: string; text: string; kind?: string; static?: boolean; forgetAfter?: string; replaces?: string }
+  | { operation: 'add'; container: string; text: string; kind?: string; static?: boolean; forgetAfter?: string; replaces?: string; confidence?: number; evidence?: Array<{ label: string; value?: string | number; href?: string }> }
   | { operation: 'forget'; container: string; id: string; reason: string }
   | { operation: 'list'; container: string; cursor?: string; limit: number };
 
