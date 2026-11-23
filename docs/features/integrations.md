@@ -2,7 +2,7 @@
 
 Part of the [Landflow docs](../README.md); the [feature map](../README.md#feature-map) lists every feature page.
 
-The integrations people use most in n8n, chosen from its catalogue and public usage data ([research](../research/04-n8n-integrations.md)), are built as plugins, one per language family, with n8n's resource → operation shape, names and options (Return All / Limit, Simplify, live pickers, usable as AI tools):
+The integrations people use most in n8n, chosen from its catalogue and public usage data (the n8n integrations research note in the repository), are built as plugins, one per language family, with n8n's resource → operation shape, names and options (Return All / Limit, Simplify, live pickers, usable as AI tools):
 
 | Plugin | Language, ports | Nodes | Credentials |
 |---|---|---|---|

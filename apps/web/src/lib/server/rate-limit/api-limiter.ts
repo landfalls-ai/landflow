@@ -33,6 +33,9 @@ const PUBLIC_GROUPS: Array<[group: string, prefix: string]> = [
   ['waiting', '/api/waiting'],
   // Unauthenticated (signed by the gateway's secret): each request still costs a body read and an HMAC.
   ['gateway-parts', '/api/gateway-parts'],
+  // The docs for agents: one 1.1 MB file a request, so both files share a group per address.
+  ['llms', '/llms.txt'],
+  ['llms', '/llms-full.txt'],
 ];
 
 const under = (path: string, prefix: string) => path === prefix || path.startsWith(`${prefix}/`);

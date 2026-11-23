@@ -313,4 +313,10 @@ export interface InstallConfirmation {
   install?: string;
   command: string;
   warning: string;
+  /** C27: the hash of the files that were downloaded and would run; send it back with `confirm: true` so the yes covers exactly these files. */
+  hash?: string;
+  /** The pinned commit, when the source is a GitHub one. */
+  commit?: string;
+  /** Set when an earlier version of this plugin was approved: what changed since is the question. */
+  changedSince?: { hash: string; at: string; by?: string };
 }

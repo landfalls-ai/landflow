@@ -39,6 +39,8 @@ import { singleton } from '../singleton';
 import { store } from '../store';
 import type { Cursor } from '../pagination';
 import { recordAgentVersion } from './version-rows'; // AG21:
+import { revokeSubject } from '../trust/store'; // C27:
+import { agentSubjects } from '../trust/mcp-tools'; // C27:
 import { deleteAgentMemories, importAgentMemories, profileNotes, rememberSync } from './memory-store'; // C09:
 import { logger } from '../telemetry/logger';
 
@@ -103,6 +105,7 @@ export function normalizeConfig(input: Partial<AgentConfig>): AgentConfig {
     ...(plugins && { plugins }),
     ...(CONTEXT_MODES.includes(input.projectContext as ContextMode) && { projectContext: input.projectContext }),
     ...((input.practices === 'on' || input.practices === 'off') && { practices: input.practices }),
+    ...(typeof input.holdChangedTools === 'boolean' && { holdChangedTools: input.holdChangedTools }), // C27:
   };
 }
 
@@ -521,7 +524,7 @@ class AgentStore {
 
   create(config: Partial<AgentConfig>): Agent {
     const now = new Date().toISOString();
-    const agent: Agent = { id: `ag_${nanoid(10)}`, ...normalizeConfig(config), createdAt: now, updatedAt: now, history: [] };
+    const agent: Agent = { id: `ag_${nanoid(10)}`, ...normalizeConfig({ ...config, holdChangedTools: config.holdChangedTools ?? true }), createdAt: now, updatedAt: now, history: [] }; // C27: new agents hold changed MCP tools
     return this.write(agent);
   }
 
@@ -535,14 +538,17 @@ class AgentStore {
     return this.write({ ...rest, ...next, instructions: withoutWithdrawnToolLines(next.instructions, next.tools), updatedAt: new Date().toISOString() });
   }
 
-  publish(id: string): Agent | undefined {
-    const agent = this.backend.get(id);
-    if (!agent) return undefined;
+  /** Publish the draft as the next version; `by` (a user id) is kept with the version row so the history can say who. */
+  publish(id: string, by?: string): Agent | undefined {
+    const stored = this.backend.get(id);
+    if (!stored) return undefined;
+    // C27: an agent from before the switch existed gets it at its next publish.
+    const agent = stored.holdChangedTools === undefined ? { ...stored, holdChangedTools: true } : stored;
     const version = (agent.published?.version ?? agent.history[0]?.version ?? 0) + 1;
     const published = { version, publishedAt: new Date().toISOString(), config: configOf(agent) };
     const history = [published, ...agent.history].slice(0, MAX_HISTORY);
     const saved = this.write({ ...agent, published, history, updatedAt: published.publishedAt });
-    recordAgentVersion(saved); // AG21: kept past the 20 in history while a workflow version may pin it
+    recordAgentVersion(saved, by); // AG21: kept past the 20 in history while a workflow version may pin it
     return saved;
   }
 
@@ -575,6 +581,7 @@ class AgentStore {
     const removed = this.backend.remove(id);
     // C09: what the agent remembered about people goes with it (private facts, and their vectors in the background).
     if (removed) void deleteAgentMemories(id).catch(() => undefined);
+    if (removed) revokeSubject(undefined, 'mcp-tools', agentSubjects(id)); // C27: what was approved for its MCP tools goes with it
     return removed;
   }
 

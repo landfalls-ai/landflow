@@ -1,12 +1,12 @@
 'use client';
 /** Abilities → Guardrails, under the guardrails: limits of the agent loop, and usage limits (tokens and estimated cost) with what the agent used so far. */
 import { useEffect, useState } from 'react';
-import { CircleDollarSign, Gauge, Mail, Target } from 'lucide-react';
+import { CircleDollarSign, Gauge, Mail, ShieldAlert, Target } from 'lucide-react';
 import { DEFAULT_AGENT_SETTINGS, type AgentConfig, type AgentSettings } from '@/lib/shared/agents';
 import { formatCost, formatTokens, type AiUsageReport, type AiUsageTotals } from '@/lib/shared/ai-usage';
 import { api } from '@/lib/client/api';
 import { CONTEXT_MODES, CONTEXT_MODE_LABELS, type ContextMode } from '@/lib/shared/project-context';
-import { Input } from '../ui/inputs';
+import { Input, Switch } from '../ui/inputs';
 import { Segmented } from '../ui/segmented';
 import { Field, Section } from './dialog';
 import type { UpdateConfig } from './util';
@@ -170,10 +170,27 @@ function ContextSwitches({ config, update }: { config: AgentConfig; update: Upda
   );
 }
 
+/** C27: the switch that holds an MCP tool a server changed after the agent was published (docs/agents.md#changed-mcp-tools-are-held). */
+function HoldChangedTools({ config, update }: { config: AgentConfig; update: UpdateConfig }) {
+  const on = config.holdChangedTools === true;
+  return (
+    <Section icon={<ShieldAlert className="size-4" />} title="MCP tools" description="What happens when an MCP server changes a tool after you published the agent.">
+      <Field
+        id="setting-holdChangedTools"
+        label="Hold changed MCP tools"
+        hint={on ? 'A tool whose description, input schema or annotations changed (or one the server added, when the agent takes all its tools) is not offered to the model until someone approves it on this page.' : 'Off: the agent uses whatever the server lists now. It turns on the next time you publish.'}
+      >
+        <Switch checked={on} onChange={(value) => update((c) => ({ ...c, holdChangedTools: value }))} label="Hold changed MCP tools" />
+      </Field>
+    </Section>
+  );
+}
+
 export function SettingsTab({ config, update, agentId }: { config: AgentConfig; update: UpdateConfig; agentId?: string }) {
   return (
     <div className="space-y-4">
       <ContextSwitches config={config} update={update} />
+      <HoldChangedTools config={config} update={update} />
       <Section icon={<Gauge className="size-4" />} title="Limits" description="Guardrails for how long and how widely the agent works on one request.">
         <div className="grid gap-5 sm:grid-cols-2">
           {FIELDS.map((field) => (

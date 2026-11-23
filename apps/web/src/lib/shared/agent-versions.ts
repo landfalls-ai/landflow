@@ -174,6 +174,8 @@ export interface AgentVersionUse {
   version: number;
   publishedAt: string;
   publishedBy?: string;
+  /** The person's name, when the list route knows it. */
+  publishedByName?: string;
   usedBy: Array<{ workflowId: string; name: string; workflowVersion: number; production: boolean }>;
 }
 

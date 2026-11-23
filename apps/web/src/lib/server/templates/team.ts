@@ -4,6 +4,8 @@
  * credentials the agents name into slots, and on use creates the agents and the team with every reference rewritten
  * (`createFromBundle`, `remapWorkflow`). The workflow's own part is the templates module's (./index.ts).
  */
+import { currentPrincipal } from '../auth/guard';
+import { publishAndTrust } from '../trust/publish'; // C27:
 import { chartOrder, type AgentTeam, type AgentTeamConfig, type TeamMember } from '../../shared/agent-teams';
 import type { Agent, AgentConfig, AgentToolConfig, CredentialRef } from '../../shared/agents';
 import { isNodeKnowledge } from '../../shared/agents';
@@ -222,7 +224,7 @@ export function createFromBundle(bundle: TemplateBundle, picks: Record<string, P
         return [tool];
       });
       const current = agentStore.saveDraft(created[i].id, { tools }) ?? created[i];
-      created[i] = source.published ? (agentStore.publish(current.id) ?? current) : current;
+      created[i] = source.published ? (publishAndTrust(current.id, currentPrincipal()?.user)?.agent ?? current) : current;
     });
 
     const teamConfig = structuredClone(bundle.team);

@@ -3,6 +3,8 @@
  * eval gate, then the publish, never skipping the gate (D3). Registered with lib/server/publish.ts by the publish route (publish.ts
  * cannot import it: the agent runtime reaches publish.ts through the Slack handlers).
  */
+import { currentPrincipal } from '../auth/guard';
+import { publishAndTrust } from '../trust/publish'; // C27:
 import { adoptRun, checkPublish } from './eval-gate';
 import { smokeTest } from './smoke-test';
 import { hasPrompt } from '../../shared/persona';
@@ -31,8 +33,10 @@ export async function publishAgentChecked(agentId: string, options: { signal?: A
     if (!gate.verdict.ok) return { ok: false, status: 409, message: `The eval gate held “${current.name}”: ${gate.verdict.reason ?? `it averages ${gate.verdict.average.toFixed(1)} / 5`}`, details: { agentId, gate: { verdict: gate.verdict, lowCases: gate.lowCases ?? [] } } }; // AG24: the score and the held run's lowest cases
     const now = agentStore.get(agentId);
     if (!now || JSON.stringify(configOf(now)) !== checked) return { ok: false, status: 409, message: `“${current.name}” changed while it was being checked: publish again`, details: { agentId } };
-    const agent = agentStore.publish(agentId)!;
+    const published = publishAndTrust(agentId, currentPrincipal()?.user)!;
+    const agent = published.agent;
     if (gate.run && agent.published) adoptRun(gate.run, agent.published.version);
+    await published.trust;
     try {
       await redeployIfDeployed(agent);
     } catch (error) {

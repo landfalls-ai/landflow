@@ -39,6 +39,9 @@ FROM deps AS build
 COPY . .
 # Turns on `output: 'standalone'` in apps/web/next.config.ts.
 ENV LANDFLOW_NEXT_OUTPUT=standalone
+# The docs for agents (docs/published.json → docs/llms.txt and the built, uncommitted docs/llms-full.txt, C25), served by the host
+# at /llms.txt and /llms-full.txt. Fails the build on a published page that holds a secret-looking string or an internal link.
+RUN node scripts/llms.mjs --write
 # pulsar-client's package.json is patched (patches/pulsar-client@1.18.0.patch, installed by pnpm in the deps stage): its
 # node-pre-gyp `binary` block gets the `napi_versions` field Turbopack's externals tracing needs, with module_path and remote_path
 # written so node-pre-gyp still finds the same binary (lib/binding/pulsar.node) at run time.
@@ -75,6 +78,8 @@ COPY --from=build --chown=node:node /app/apps/web/.next/static ./apps/web/.next/
 COPY --from=build --chown=node:node /app/apps/web/dist/worker.mjs ./apps/web/worker.mjs
 # Landflow's own Claude Code plugins (the landflow-harness mod), packed into images for kagent's agents (kagent/oci.ts).
 COPY --from=build --chown=node:node /app/apps/web/claude-plugins ./apps/web/claude-plugins
+# The two files the host serves at /llms.txt and /llms-full.txt (lib/server/llms.ts reads `<cwd>/llms`).
+COPY --from=build --chown=node:node /app/docs/llms.txt /app/docs/llms-full.txt ./apps/web/llms/
 # The worker bundle keeps the broker clients external (above). Next's standalone output ships them inside the pnpm store
 # and reaches them through its own hashed aliases, which only the mains use: link them where /app/apps/web/worker.mjs finds
 # them. The tracer also skips the native addons (kafka-javascript's build/, pulsar-client's lib/binding/), so they are

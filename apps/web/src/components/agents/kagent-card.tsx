@@ -18,6 +18,9 @@ import { Button } from '../ui/button';
 import { CopyButton } from '../ui/copy-button';
 import { Input, Select } from '../ui/inputs';
 import { Field, Section } from './dialog';
+import { KagentRoutes } from './kagent-routes';
+import { resourceCan, type ResourceOwnership } from '@/lib/shared/projects';
+import { draftsProblem, ROUTE_CREDENTIAL_TYPES, routeDefaults, type KagentRouteDraft } from '@/lib/shared/kagent-routes';
 
 const KAGENT = 'core.kagentApi';
 const CREATE = '__create__';
@@ -47,6 +50,7 @@ const FIELD_LABEL: Record<string, string> = {
   harness: 'Harness',
   egressPolicies: 'Network access',
   mcpServer: 'MCP server',
+  routes: 'Secret routes',
 };
 
 /** The landflow-harness mod's guard, as the card offers it (docs/a2a.md, "The landflow-harness mod"). */
@@ -152,6 +156,9 @@ export function KagentCard({ agent, onAgent }: { agent: Agent; onAgent: (agent: 
   const [egress, setEgress] = useState<string[]>();
   // Undefined until changed here: the deploy keeps the agent's guard.
   const [guard, setGuard] = useState<KagentGuard>();
+  // Undefined until changed here: the deploy keeps the agent's routes. The credential dialog is for a route's Bearer or Header Auth credential.
+  const [routes, setRoutes] = useState<KagentRouteDraft[]>();
+  const [routeCredential, setRouteCredential] = useState<{ index: number; name: string; projectId?: string; note: string }>();
 
   const published = agent.published;
   const deployedAt = agent.kagent?.deployedAt;
@@ -167,6 +174,7 @@ export function KagentCard({ agent, onAgent }: { agent: Agent; onAgent: (agent: 
         setPolicies(result.egressPolicies);
         setEgress(undefined);
         setGuard(undefined);
+        setRoutes(undefined);
       }
     } catch (e) {
       toast.error((e as Error).message);
@@ -203,6 +211,10 @@ export function KagentCard({ agent, onAgent }: { agent: Agent; onAgent: (agent: 
   // The guard applies to Claude Code: the runtime chosen, else the one deployed, else the cluster's first.
   const claude = (chosen ?? status?.harness ?? harnesses?.[0])?.runtime === 'claude';
   const shownGuard: KagentGuard = guard ?? status?.guard ?? 'enforce';
+  // The routes as deployed (the server's shape without the broken note), until the person changes them here.
+  const shownRoutes: KagentRouteDraft[] = routes ?? (status?.routes ?? []).map(({ broken: _broken, ...route }) => route);
+  const routesProblem = routes ? draftsProblem(routes) : undefined;
+  const routeName = status?.name ?? (name.trim() || slug(agent.name));
 
   const deploy = async () => {
     setBusy('deploy');
@@ -210,7 +222,9 @@ export function KagentCard({ agent, onAgent }: { agent: Agent; onAgent: (agent: 
       const moved = harness && harness !== status?.harness?.name ? { harness } : {};
       const network = egress ? { egressPolicies: egress } : {};
       const guarded = guard ? { guard } : {};
-      const body = status?.deployed ? { ...moved, ...network, ...guarded } : { credentialId, name: name.trim() || slug(agent.name), ...(harness && { harness }), ...network, ...guarded };
+      // Only on Claude Code, and only once changed here: the whole list (an empty one removes the routes).
+      const routed = routes && claude ? { routes } : {};
+      const body = status?.deployed ? { ...moved, ...network, ...guarded, ...routed } : { credentialId, name: name.trim() || slug(agent.name), ...(harness && { harness }), ...network, ...guarded, ...routed };
       const result = await api<{ agent: Agent; status: KagentStatus; unavailable: string[] }>(`/api/agents/${agent.id}/kagent`, { method: 'PUT', json: body });
       onAgent(result.agent);
       setStatus(result.status);
@@ -237,7 +251,29 @@ export function KagentCard({ agent, onAgent }: { agent: Agent; onAgent: (agent: 
     }
   };
 
+  /** A credential made for a route lives in the agent's home project when the person may create there, so the agent may use it. */
+  const openRouteCredential = async (typed: string, index: number) => {
+    let found: { projectId?: string; note: string } = { note: 'It is created in your personal project: share it with the agent’s project so the agent can use it.' };
+    try {
+      const { ownership } = await api<{ ownership?: ResourceOwnership }>(`/api/agents/${agent.id}`);
+      if (ownership) {
+        found = resourceCan(ownership.access, 'update')
+          ? { projectId: ownership.projectId, note: `It is created in “${ownership.projectName}”, the agent’s project, so the agent can use it.` }
+          : { note: `You can’t create things in “${ownership.projectName}”: it is created in your personal project, so share it with “${ownership.projectName}” for the agent to use it.` };
+      }
+    } catch {
+      // The default note stands.
+    }
+    setRouteCredential({ index, name: typed, ...found });
+  };
+
   const deployed = status?.deployed;
+  /** The Secret routes: credentials the gateway sends to hosts, for a Claude Code sandbox. */
+  const routeEditor = (id: string) => (
+    <Field id={id} label="Secret routes" hint={routes ? 'Redeploying writes this list. The sandbox never holds the values.' : 'Credentials kagent’s gateway adds for the hosts you name. Change them, then deploy.'}>
+      <KagentRoutes name={routeName} routes={shownRoutes} onChange={setRoutes} credentials={credentials ?? []} onCreate={(typed, index) => void openRouteCredential(typed, index)} broken={status?.routes?.map((r) => r.broken)} />
+    </Field>
+  );
   return (
     <Section
       icon={<ShipWheel className="size-4" />}
@@ -295,9 +331,11 @@ export function KagentCard({ agent, onAgent }: { agent: Agent; onAgent: (agent: 
               </Field>
             )}
           </div>
+          {claude && routeEditor('kagent-routes')}
+          {routesProblem && <p className="text-[12px] text-rd">{routesProblem}</p>}
           {harnessError && <p className="text-[12px] text-t3">The cluster’s Harnesses couldn’t be listed: {harnessError}</p>}
           <div className="flex justify-end">
-            <Button variant="primary" size="sm" loading={busy === 'deploy'} disabled={!published || !credentialId || Boolean(busy)} onClick={() => void deploy()}>
+            <Button variant="primary" size="sm" loading={busy === 'deploy'} disabled={!published || !credentialId || Boolean(busy) || Boolean(routesProblem)} onClick={() => void deploy()}>
               {busy !== 'deploy' && <ShipWheel className="size-3.5" />}
               Deploy v{published?.version ?? 1} to kagent
             </Button>
@@ -403,6 +441,8 @@ export function KagentCard({ agent, onAgent }: { agent: Agent; onAgent: (agent: 
               <GuardChoice value={shownGuard} onChange={setGuard} />
             </Field>
           )}
+          {claude && routeEditor('kagent-routes-move')}
+          {routesProblem && <p className="text-[12px] text-rd">{routesProblem}</p>}
           {harnesses && harnesses.length > 1 && (
             <Field id="kagent-move" label="Runtime" hint={harness !== status.harness?.name ? `Redeploying moves the agent to ${harness}.` : (runtimeHint(chosen, plugins.length) ?? undefined)}>
               <RuntimeSelect id="kagent-move" harnesses={harnesses} value={harness} onChange={setHarness} />
@@ -419,7 +459,7 @@ export function KagentCard({ agent, onAgent }: { agent: Agent; onAgent: (agent: 
               {busy !== 'remove' && <Trash2 className="size-3.5" />}
               Remove from kagent
             </Button>
-            <Button variant={status.inSync ? 'outline' : 'primary'} size="sm" loading={busy === 'deploy'} disabled={!published || Boolean(busy)} onClick={() => void deploy()}>
+            <Button variant={status.inSync ? 'outline' : 'primary'} size="sm" loading={busy === 'deploy'} disabled={!published || Boolean(busy) || Boolean(routesProblem)} onClick={() => void deploy()}>
               {busy !== 'deploy' && <ShipWheel className="size-3.5" />}
               Redeploy v{published?.version}
             </Button>
@@ -427,6 +467,21 @@ export function KagentCard({ agent, onAgent }: { agent: Agent; onAgent: (agent: 
         </div>
       )}
       {creating && <CredentialDialog allowedTypes={[KAGENT]} onClose={() => setCreating(false)} onSaved={(c) => setCredentialId(c.id)} />}
+      {routeCredential && (
+        <CredentialDialog
+          allowedTypes={[...ROUTE_CREDENTIAL_TYPES]}
+          initialName={routeCredential.name}
+          projectId={routeCredential.projectId}
+          note={routeCredential.note}
+          onClose={() => setRouteCredential(undefined)}
+          onSaved={(c) => {
+            // The route that asked gets it (hosts kept); a route that is gone meanwhile gets a new one.
+            const filled = { credential: { id: c.id, name: c.name }, header: routeDefaults(c.type).header, prefix: routeDefaults(c.type).prefix || undefined };
+            const at = routeCredential.index;
+            setRoutes(at < shownRoutes.length ? shownRoutes.map((r, i) => (i === at ? { ...r, ...filled } : r)) : [...shownRoutes, { hosts: [], ...filled }]);
+          }}
+        />
+      )}
     </Section>
   );
 }

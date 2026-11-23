@@ -2,6 +2,7 @@
  * Agents (docs/agents.md): standalone tool-using assistants, separate from the AI Agent node.
  * Types shared by the API routes and the React client. No runtime imports.
  */
+import type { KagentSecretRoute } from './kagent-routes';
 import type { AgentMessage } from '@landflow/engine';
 import type { ToolTarget } from './tool-target'; // AG14:
 import type { ApprovalBy } from './fix-autonomy'; // AG23:
@@ -451,6 +452,11 @@ export interface AgentConfig {
   projectContext?: ContextMode;
   /** Whether approved practices (docs/practices.md) go into this agent's prompt. Absent = on. */
   practices?: 'on' | 'off';
+  /**
+   * C27: hold an MCP tool whose description, schema or annotations changed since the agent was published (docs/agents.md#changed-mcp-tools-are-held).
+   * New agents have it on, and publishing turns it on for an agent that has no value yet. Absent = off (an agent from before it existed).
+   */
+  holdChangedTools?: boolean;
 }
 
 export interface AgentVersion {
@@ -500,6 +506,18 @@ export interface KagentDeployment {
   trace?: { url: string; /** The agent's A2A URL then, to know a call goes to it. */ a2aUrl?: string };
   /** The agent's A2A URL on kagent's controller, as deployed: the only address a memory key is minted for (kagent/memory-line.ts). */
   a2aUrl?: string;
+  /**
+   * Claude Code: the secret routes written last (docs/a2a.md, "Secret routes"), with the credential's name and the header and
+   * prefix as written. Never a value: that is in the cluster Secret `<name>-routes` only.
+   */
+  routes?: KagentSecretRoute[];
+  /** HMAC of the route values now in the Secret (keyed, can't be reversed); the refresh compares it with the vault's. */
+  routesHash?: string;
+  /** The same per route (HMAC of that route alone), so the refresh knows which credentials changed. */
+  routesHashes?: string[];
+  /** The same hash as the policy's annotation was written with (the refresh rewrites only the Secret, so this one stays). */
+  routesPolicyHash?: string;
+  routesRefreshedAt?: string;
 }
 
 /**
@@ -537,10 +555,15 @@ export interface KagentHarness {
 
 /** A difference between what kagent holds and what Landflow writes from the published version. */
 export interface KagentDrift {
-  /** `systemPrompt`, `description`, `tools`, `plugins`, `model`, `harness`, `mcpServer`, or the kind of a missing resource. */
+  /** `systemPrompt`, `description`, `tools`, `plugins`, `model`, `harness`, `mcpServer`, `routes`, or the kind of a missing resource. */
   field: string;
   landflow: string;
   kagent?: string;
+}
+
+/** A secret route as the status shows it. */
+export interface KagentRouteStatus extends KagentSecretRoute {
+  broken?: string;
 }
 
 /** GET /api/agents/<id>/kagent: the deployment and what kagent holds now. */
@@ -566,6 +589,8 @@ export interface KagentStatus {
   drift: KagentDrift[];
   /** The published version is newer than the one written last. */
   outdated: boolean;
+  /** Claude Code: its secret routes (credential names, hosts, header; never a value), `broken` naming why one can't be sent now. */
+  routes?: KagentRouteStatus[];
   /** The AgentTemplate's systemPrompt as kagent holds it. */
   systemPrompt?: string;
   /** The Agent's Ready condition. */

@@ -15,11 +15,13 @@ import { useViewer } from '@/components/auth/viewer';
 import { Card } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { HelpTip } from '@/components/ui/help-tip';
+import { DataGrid } from '@/components/ui/data-grid';
 import { Input, SectionLabel } from '@/components/ui/inputs';
 
 /** An override row as typed (numbers kept as text until saved). */
-interface Row {
-  key: number;
+export interface Row {
+  /** The grid's row id. */
+  id: string;
   provider: string;
   model: string;
   input: string;
@@ -31,7 +33,7 @@ interface Row {
 
 let nextKey = 1;
 const toRow = (price: ModelPrice): Row => ({
-  key: nextKey++,
+  id: `row${nextKey++}`,
   provider: price.provider,
   model: price.model,
   input: String(price.input),
@@ -39,10 +41,18 @@ const toRow = (price: ModelPrice): Row => ({
   cacheRead: price.cacheRead === undefined ? '' : String(price.cacheRead),
   cacheWrite: price.cacheWrite === undefined ? '' : String(price.cacheWrite),
 });
+/** The prices a cell edit sets: a number column hands the grid's number (or null, or the text typed), kept as the text it is until Save. */
+export const EDITABLE_FIELDS = ['provider', 'model', 'input', 'output', 'cacheRead', 'cacheWrite'] as const;
+export type PriceField = (typeof EDITABLE_FIELDS)[number];
+export function editRow(rows: Row[], id: string, field: string, value: unknown): Row[] {
+  if (!(EDITABLE_FIELDS as readonly string[]).includes(field)) return rows;
+  const text = value === null || value === undefined ? '' : String(value);
+  return rows.map((row) => (row.id === id ? { ...row, [field]: text } : row));
+}
 const usd = (value: number) => `$${value.toLocaleString('en-US', { maximumFractionDigits: 4 })}`;
 
-/** The rows as prices, or the first problem. */
-function parse(rows: Row[]): { prices: ModelPrice[] } | { error: string } {
+/** The rows as prices, or the first problem (what Save sends). */
+export function parseOverrides(rows: Row[]): { prices: ModelPrice[] } | { error: string } {
   const prices: ModelPrice[] = [];
   const seen = new Set<string>();
   for (const row of rows) {
@@ -93,10 +103,15 @@ export function AiPricesSettings() {
       .catch((e: Error) => setError(e.message));
   }, []);
 
-  const parsed = useMemo(() => parse(rows), [rows]);
+  const parsed = useMemo(() => parseOverrides(rows), [rows]);
   const dirty = Boolean(table && 'prices' in parsed && JSON.stringify(parsed.prices) !== JSON.stringify(table.overrides));
-  const set = (key: number, patch: Partial<Row>) => setRows((list) => list.map((row) => (row.key === key ? { ...row, ...patch } : row)));
-  const add = (price?: ModelPrice) => setRows((list) => [...list, toRow(price ?? { provider: 'ollama', model: '', input: 0, output: 0 })]);
+  const [openCell, setOpenCell] = useState<{ rowId: string; key: string }>();
+  // A new row opens the cell to fill first: the model for a blank one, the price for a copy of a built-in one.
+  const add = (price?: ModelPrice) => {
+    const row = toRow(price ?? { provider: 'ollama', model: '', input: 0, output: 0 });
+    setRows((list) => [...list, row]);
+    setOpenCell({ rowId: row.id, key: price ? 'input' : 'model' });
+  };
   const overridden = new Set(rows.map((row) => `${row.provider.trim().toLowerCase()}/${row.model.trim().toLowerCase()}`));
   const defaults = (table?.defaults ?? []).filter((price) => !filter.trim() || `${price.provider}/${price.model}`.toLowerCase().includes(filter.trim().toLowerCase()));
 
@@ -122,7 +137,6 @@ export function AiPricesSettings() {
     );
   }
 
-  const cell = 'h-8 px-2 font-mono text-[12px]';
   return (
     <div className="space-y-4">
       {/* SP12: local models, priced here */}
@@ -157,61 +171,29 @@ export function AiPricesSettings() {
           <a href="/settings#ai-caps" className="relative whitespace-nowrap text-t2 underline-offset-2 hover:underline">Usage caps are in AI caps ›</a>
         </p>
         {rows.length ? (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] border-collapse text-[13px]">
-              <thead>
-                <tr className="text-left text-[12px] text-t2">
-                  <th className="pb-1.5 pr-2 font-semibold">Provider</th>
-                  <th className="pb-1.5 pr-2 font-semibold">Model (or prefix)</th>
-                  <th className="pb-1.5 pr-2 text-right font-semibold">Input $/M</th>
-                  <th className="pb-1.5 pr-2 text-right font-semibold">Output $/M</th>
-                  <th className="pb-1.5 pr-2 text-right font-semibold" title="Cached input read (Anthropic cache read, OpenAI cached input)">
-                    Cache read $/M
-                  </th>
-                  <th className="pb-1.5 pr-2 text-right font-semibold" title="Tokens written to Anthropic's cache">
-                    Cache write $/M
-                  </th>
-                  <th className="w-8" />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={row.key}>
-                    <td className="py-1 pr-2">
-                      <Input value={row.provider} onChange={(e) => set(row.key, { provider: e.target.value })} disabled={!admin} placeholder="ollama" aria-label="Provider" className={`${cell} w-32`} list="ai-price-providers" />
-                    </td>
-                    <td className="py-1 pr-2">
-                      <Input value={row.model} onChange={(e) => set(row.key, { model: e.target.value })} disabled={!admin} placeholder="qwen3-coder" aria-label="Model" className={cell} />
-                    </td>
-                    <td className="py-1 pr-2">
-                      <Input value={row.input} onChange={(e) => set(row.key, { input: e.target.value })} disabled={!admin} inputMode="decimal" aria-label="Input price" className={`${cell} w-24 text-right`} />
-                    </td>
-                    <td className="py-1 pr-2">
-                      <Input value={row.output} onChange={(e) => set(row.key, { output: e.target.value })} disabled={!admin} inputMode="decimal" aria-label="Output price" className={`${cell} w-24 text-right`} />
-                    </td>
-                    <td className="py-1 pr-2">
-                      <Input value={row.cacheRead} onChange={(e) => set(row.key, { cacheRead: e.target.value })} disabled={!admin} inputMode="decimal" placeholder="= input" aria-label="Cache read price" className={`${cell} w-24 text-right`} />
-                    </td>
-                    <td className="py-1 pr-2">
-                      <Input value={row.cacheWrite} onChange={(e) => set(row.key, { cacheWrite: e.target.value })} disabled={!admin} inputMode="decimal" placeholder="= input" aria-label="Cache write price" className={`${cell} w-24 text-right`} />
-                    </td>
-                    <td className="py-1">
-                      {admin && (
-                        <Button size="icon-sm" variant="ghost" aria-label="Remove price" title="Remove" className="hover:bg-rddim hover:text-rd" onClick={() => setRows((list) => list.filter((r) => r.key !== row.key))}>
-                          <Trash2 className="size-3.5" />
-                        </Button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <datalist id="ai-price-providers">
-              {['anthropic', 'openai', 'ollama', 'ollama_chat'].map((p) => (
-                <option key={p} value={p} />
-              ))}
-            </datalist>
-          </div>
+          <DataGrid<Row>
+            label="Your prices"
+            rows={rows}
+            readOnly={!admin}
+            minWidth={720}
+            openCell={openCell}
+            onEdit={(id, key, value) => setRows((list) => editRow(list, id, key, value))}
+            columns={[
+              { key: 'provider', label: 'Provider', type: 'text', editable: true, width: 140, placeholder: 'ollama', suggestions: ['anthropic', 'openai', 'ollama', 'ollama_chat'] },
+              { key: 'model', label: 'Model (or prefix)', type: 'text', editable: true, width: 260, placeholder: 'qwen3-coder', className: 'font-mono text-[12px]' },
+              { key: 'input', label: 'Input $/M', type: 'number', editable: true, width: 110 },
+              { key: 'output', label: 'Output $/M', type: 'number', editable: true, width: 110 },
+              { key: 'cacheRead', label: 'Cache read $/M', title: 'Cached input read (Anthropic cache read, OpenAI cached input)', type: 'number', editable: true, width: 130, placeholder: '= input' },
+              { key: 'cacheWrite', label: 'Cache write $/M', title: "Tokens written to Anthropic's cache", type: 'number', editable: true, width: 130, placeholder: '= input' },
+            ]}
+            rowActions={(row) =>
+              admin && (
+                <Button size="icon-sm" variant="ghost" aria-label="Remove price" title="Remove" className="hover:bg-rddim hover:text-rd" onClick={() => setRows((list) => list.filter((r) => r.id !== row.id))}>
+                  <Trash2 className="size-3.5" />
+                </Button>
+              )
+            }
+          />
         ) : (
           <p className="rounded-[10px] border border-dashed border-bd px-3 py-3 text-center text-[12px] text-t3">No overrides: the built-in prices below apply, and local models are free.</p>
         )}

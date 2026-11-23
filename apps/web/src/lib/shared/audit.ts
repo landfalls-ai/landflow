@@ -207,6 +207,10 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'collection.transferred': 'Moved a vector collection to another project',
   'collection.adopted': 'Gave vector collections their owners',
   'collection.access_lost': 'A project lost access to a vector collection in the upgrade',
+  // C22:
+  'knowledge_source.created': 'Added a knowledge source',
+  'knowledge_source.updated': 'Changed a knowledge source',
+  'knowledge_source.removed': 'Removed a knowledge source',
   'resource.share': 'Shared a workflow or credential',
   'resource.unshare': 'Stopped sharing a workflow or credential',
   'resource.transfer': 'Moved a workflow, credential, data table, agent or agent team to another project',
@@ -222,6 +226,15 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'sync.export': 'Exported Git sync files',
   'datatable.export': 'Exported a data table',
   'agent.tool_approval': 'Approved or denied an agent’s tool call',
+  // C27: content-keyed trust (docs/agents.md#changed-mcp-tools-are-held)
+  'trust.approve': 'Approved content by its hash (an agent’s MCP tools, a marketplace plugin)',
+  'trust.reject': 'Kept changed MCP tools held',
+  'trust.revoke': 'Revoked what was approved by hash',
+  // C26: secret routes of a Claude Code agent on kagent (docs/a2a.md#secret-routes)
+  'kagent.route.added': 'Added a secret route to an agent on kagent',
+  'kagent.route.changed': 'Changed a secret route of an agent on kagent',
+  'kagent.route.removed': 'Removed a secret route from an agent on kagent',
+  'kagent.route.refreshed': 'Rewrote the secret of an agent’s routes after a credential changed',
   'api.denied': 'Request refused (401/403)',
   'api.request': 'API request',
 };

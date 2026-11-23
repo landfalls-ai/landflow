@@ -3,7 +3,9 @@
  * (every field that differs from what Landflow writes), and the Harnesses and EgressPolicies of a cluster (`?credentialId=`,
  * else the deployment's); PUT writes the published version there (`credentialId`, a core.kagentApi credential, an optional
  * `name`, `harness`, `egressPolicies`: the sandbox's network beyond Landflow and the model, and `guard`: how strictly
- * Claude Code's landflow-harness mod guards it); DELETE removes it from kagent.
+ * Claude Code's landflow-harness mod guards it, `routes`: credentials the gateway sends to hosts for a Claude Code sandbox, as
+ * { credential: { id }, hosts, header?, prefix? }, the whole list: an empty one removes them; the answers hold credential names, never
+ * a value); DELETE removes it from kagent.
  */
 import { agentStore } from '@/lib/server/agents/store';
 import { credentials } from '@/lib/server/credentials/vault';
@@ -22,6 +24,18 @@ const deploySchema = z.object({
   harness: z.string().max(63).optional(),
   egressPolicies: z.array(z.string().min(1).max(253)).max(20).optional(),
   guard: z.enum(KAGENT_GUARDS as [string, ...string[]]).optional(),
+  // The server resolves the credential's name from the vault; the rules (hosts, header, limits) are checked in deployToKagent.
+  routes: z
+    .array(
+      z.object({
+        credential: z.object({ id: z.string().min(1).max(200), name: z.string().max(200).optional() }),
+        hosts: z.array(z.string().max(300)).max(50),
+        header: z.string().max(200).optional(),
+        prefix: z.string().max(200).optional(),
+      }),
+    )
+    .max(100)
+    .optional(),
 });
 
 const failed = (cause: unknown) => (cause instanceof KagentError ? error(cause.message, cause.status) : error((cause as Error).message, 502));
@@ -53,7 +67,7 @@ export const PUT = handler(async (request: Request, { params }: Ctx) => {
     credential = { id: found.id, name: found.name };
   }
   try {
-    const { agent, status, unavailable } = await deployToKagent(id, { credential, name: body.data.name, harness: body.data.harness, egressPolicies: body.data.egressPolicies, ...(body.data.guard && { guard: body.data.guard as KagentGuard }) });
+    const { agent, status, unavailable } = await deployToKagent(id, { credential, name: body.data.name, harness: body.data.harness, egressPolicies: body.data.egressPolicies, ...(body.data.guard && { guard: body.data.guard as KagentGuard }), ...(body.data.routes && { routes: body.data.routes.map((r) => ({ ...r, credential: { id: r.credential.id, name: r.credential.name ?? '' } })) }) });
     return json({ agent, status, unavailable });
   } catch (cause) {
     return failed(cause);
