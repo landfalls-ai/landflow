@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Stateful fakes of outside services for tests: a small contract (defineFake) and fakes for Slack, GitHub, S3, Google Drive, a small website and a System One decision-model server, and a Vault that issues leased credentials. Test-only; node built-ins only.",
+  "description": "Stateful fakes of outside services for tests: a small contract (defineFake) and fakes for Slack, GitHub, S3, Google Drive, a small website and a System One decision-model server, a Vault that issues leased credentials and a Google OpenID Connect server. Test-only; node built-ins only.",
   "exports": {
     ".": "./src/index.ts",
     "./slack": "./src/slack.ts",
@@ -13,7 +13,8 @@
     "./drive": "./src/drive.ts",
     "./upstream": "./src/upstream.ts",
     "./systemone": "./src/systemone.ts",
-    "./vault-leases": "./src/vault-leases.ts"
+    "./vault-leases": "./src/vault-leases.ts",
+    "./google-oidc": "./src/google-oidc.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

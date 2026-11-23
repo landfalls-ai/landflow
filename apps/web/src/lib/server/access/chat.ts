@@ -3,11 +3,13 @@
  * a request. The server, not the model, enforces the confirmation: a call without `confirmToken` files nothing and answers a summary and
  * a token; a call with that token files, only from a LATER run of the same person (a later chat turn), within 15 minutes, with the
  * very same fields. So the model can't ask and file in one turn, and a request never goes in that the person did not read back.
- * The requester is the run's `startedBy`, never a parameter.
+ * The requester is the run's `startedBy`, never a parameter: a Landflow user, or (C36) an outside requester's `ext_…` id, who may only
+ * ask for the entries an admin opened to them and only while they still stand (the feature on, their domain allowed, not blocked).
  */
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { durationText } from '../../shared/access';
+import { durationText, OUTSIDE_LIMITS } from '../../shared/access';
 import { getUser } from '../auth/users';
+import { envInt } from '../config';
 import { credentials } from '../credentials/vault';
 import { database } from '../db';
 import { workflowForCall } from '../publish';
@@ -18,9 +20,10 @@ import { singleton } from '../singleton';
 import { store } from '../store';
 import type { Actor } from '../projects/access';
 import { AccessError } from './errors';
-import { listEntries } from './catalog';
-import { createRequest, summaryText } from './requests';
+import { listEntries, listOpenToOutside } from './catalog';
+import { fileRequest, questionWho, summaryText } from './requests';
 import { entryData } from './catalog';
+import { isOutsideId, outsideStanding, requesterOf, type Requester } from './principal';
 import { accessSettings, accountOf, requestRow } from './store';
 import { validateGithubLogin } from './systems';
 
@@ -116,17 +119,31 @@ export interface ChatAnswer {
   durations?: string[];
 }
 
-const actorOf = (userId: string): Actor | undefined => {
-  const user = getUser(userId);
-  return user && !user.disabledAt ? { id: user.id, role: user.role } : undefined;
+/** Who the call is for: an active Landflow user (with their actor), or an outside requester who still stands. Anyone else files nothing. */
+const callerOf = (id: string): { requester: Requester; actor?: Actor } | undefined => {
+  const requester = requesterOf(id);
+  if (!requester) return undefined;
+  if (requester.kind === 'outside') return outsideStanding(requester) ? { requester } : undefined;
+  const user = getUser(id);
+  return user && !user.disabledAt ? { requester, actor: { id: user.id, role: user.role } } : undefined;
+};
+
+/** The chat for outside requesters is on while the instance-wide hourly cap is above 0 (LANDFLOW_ACCESS_OUTSIDE_CHAT_PER_HOUR). */
+export const outsideChatPerHour = (): number => envInt('LANDFLOW_ACCESS_OUTSIDE_CHAT_PER_HOUR', { fallback: OUTSIDE_LIMITS.chatPerHourAll, min: 0 });
+
+/** Outsiders may chat: the installed chat flow exists (the owner's setup) and the hourly cap is above 0. The session route's `chat` flag. */
+export const outsideChatAvailable = (): boolean => {
+  const flowId = accessSettings().chatWorkflowId;
+  return outsideChatPerHour() > 0 && Boolean(flowId && store.getWorkflow(flowId));
 };
 
 /** The File Access Request tool. Never grants and never approves. */
 export async function fileAccessFromChat(call: ChatCall): Promise<ChatAnswer> {
-  const actor = call.userId ? actorOf(call.userId) : undefined;
-  if (!actor) return { status: 'refused', message: 'Sign in on the Access page to ask for access.' };
+  const caller = call.userId ? callerOf(call.userId) : undefined;
+  if (!caller) return { status: 'refused', message: call.userId && isOutsideId(call.userId) ? 'Sign in again on the request page to ask for access.' : 'Sign in on the Access page to ask for access.' };
+  const { requester, actor } = caller;
   const text = (value: unknown) => String(value ?? '').trim();
-  const entries = listEntries(actor);
+  const entries: Array<{ id: string; name: string; system: string; durations: Array<number | null> }> = requester.kind === 'outside' ? listOpenToOutside() : listEntries(actor!);
   const wanted = text(call.entry);
   if (!wanted) return { status: 'need', message: 'Which access do you want?', candidates: entries.map((e) => e.name) };
   const lower = wanted.toLowerCase();
@@ -145,31 +162,33 @@ export async function fileAccessFromChat(call: ChatCall): Promise<ChatAnswer> {
   let account = '';
   if (entry.system.startsWith('github')) {
     const given = text(call.account);
-    const kept = accountOf(actor.id, 'github');
+    const kept = accountOf(requester.id, 'github');
     if (!given && !kept) return { status: 'need', message: 'What is your GitHub username?' };
     try {
       account = given ? validateGithubLogin(given) : kept!;
     } catch (error) {
       return { status: 'need', message: (error as Error).message };
     }
-  } else if (entry.system === 'google-group') account = getUser(actor.id)?.email ?? '';
+  } else if (entry.system === 'google-group') account = requester.email ?? '';
 
   const token = text(call.confirmToken);
   if (!token) {
     const data = entryData(entry.id)!;
-    const summary = summaryText(data, getUser(actor.id)?.name || actor.id, minutes, reason, account || undefined);
-    const confirmToken = signToken({ u: actor.id, e: entry.id, d: minutes, r: reason, a: account, x: call.executionId, t: Date.now() + TOKEN_MINUTES * 60_000 });
+    const { name, who } = questionWho(requester);
+    const summary = summaryText(data, name, minutes, reason, account || undefined, who);
+    const confirmToken = signToken({ u: requester.id, e: entry.id, d: minutes, r: reason, a: account, x: call.executionId, t: Date.now() + TOKEN_MINUTES * 60_000 });
     return { status: 'confirm', message: 'Read this back to the person and file it only after they say yes in their next message.', summary, confirmToken };
   }
   const payload = verifyToken(token);
   if (!payload || payload.t < Date.now()) return { status: 'refused', message: 'That confirmation has expired or is not valid. Read the request back again.' };
-  if (payload.u !== actor.id) return { status: 'refused', message: 'That confirmation was made for someone else.' };
+  if (payload.u !== requester.id) return { status: 'refused', message: 'That confirmation was made for someone else.' };
   if (payload.x === call.executionId) return { status: 'refused', message: 'Ask the person to confirm in their next message, then file it.' };
   if (payload.e !== entry.id || payload.d !== minutes || payload.r !== reason || payload.a !== account) return { status: 'refused', message: 'The request changed since it was read back. Read it back again.' };
   if (!spendToken(token, call.executionId)) return { status: 'refused', message: 'That confirmation was already used. Read the request back again.' };
   try {
-    const request = await createRequest(actor, { entryId: entry.id, durationMinutes: minutes, reason, ...(entry.system.startsWith('github') && { account }), channel: 'chat' });
-    return { status: 'filed', message: `Your request was filed. ${request.approverNames.join(', ')} will decide it.`, requestId: request.id, state: request.status };
+    const request = await fileRequest(requester, { entryId: entry.id, durationMinutes: minutes, reason, ...(entry.system.startsWith('github') && { account }), channel: 'chat' }, actor);
+    // An outside requester is never told who decides (C36 D-13).
+    return { status: 'filed', message: `Your request was filed. ${'approverNames' in request ? `${request.approverNames.join(', ')} will` : 'An approver will'} decide it.`, requestId: request.id, state: request.status };
   } catch (error) {
     if (error instanceof AccessError) return { status: 'refused', message: error.message, ...(typeof error.details?.existingId === 'string' && { requestId: error.details.existingId }) };
     throw error;
@@ -181,8 +200,13 @@ export interface ChatReply {
   requestId?: string;
 }
 
-/** The chat flow in `chat` mode as the session user: one message in, the agent's reply out. */
-export async function runAccessChat(actor: Actor, input: { message: string; sessionId: string }): Promise<ChatReply> {
+/** The chat flow in `chat` mode as the session user (a Landflow user, or an outside requester): one message in, the agent's reply out. */
+export async function runAccessChat(actor: { id: string }, input: { message: string; sessionId: string }): Promise<ChatReply> {
+  if (isOutsideId(actor.id)) {
+    const requester = requesterOf(actor.id);
+    if (!requester || !outsideStanding(requester)) throw new AccessError('Sign in again to use the chat', 401);
+    if (outsideChatPerHour() <= 0) throw new AccessError('The chat is not available here; use the form', 409);
+  }
   const flowId = accessSettings().chatWorkflowId;
   const workflow = flowId ? workflowForCall(flowId, 'trigger') : undefined;
   const trigger = workflow?.nodes.find((n) => n.type === 'core.chatTrigger' && !n.disabled);
@@ -194,6 +218,7 @@ export async function runAccessChat(actor: Actor, input: { message: string; sess
   const record = await runWorkflow({ workflow, mode: 'chat', startNodeId: trigger.id, triggerItems: [item], executionId, streaming: true, startedBy: actor.id });
   const done = liveExecution(record.executionId) ?? record;
   const filed = database().get<{ id: string }>(`SELECT id FROM access_requests WHERE requester_id = ? AND channel = 'chat' AND created_at >= ? ORDER BY created_at DESC LIMIT 1`, actor.id, started);
-  if (record.status === 'error') throw new AccessError(record.error?.message ?? 'The access chat failed', 502);
+  // An outside requester gets a plain sentence: the run's error may quote a model provider's or a node's message.
+  if (record.status === 'error') throw new AccessError(isOutsideId(actor.id) ? 'The chat could not answer. Use the form instead.' : (record.error?.message ?? 'The access chat failed'), 502);
   return { reply: replyText(done) || 'I have nothing to add.', ...(filed && requestRow(filed.id) && { requestId: filed.id }) };
 }

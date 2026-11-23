@@ -3,7 +3,8 @@
  *
  * GET    /api/access/entries/:id → the entry; 404 when it does not exist or the caller may not see it.
  * PATCH  /api/access/entries/:id `{ version, …fields }` (owners and admins; the system, target and credential only admins) → the entry;
- *   409 when `version` is stale; 400 for an invalid field.
+ *   409 when `version` is stale; 400 for an invalid field. `outsideMayAsk` (open to people without a Landflow account) is an instance admin's only: an owner
+ *   who changes it gets 403.
  * DELETE /api/access/entries/:id (admins) → 204; 409 while access is in place or a request waits: disable it instead.
  */
 import { z } from 'zod';
@@ -23,6 +24,7 @@ const patchSchema = z.object({
   owners: z.array(z.string().max(100)).max(100).optional(),
   eligibleUserIds: z.array(z.string().max(100)).max(1000).optional(),
   enabled: z.boolean().optional(),
+  outsideMayAsk: z.boolean().optional(),
   system: z.enum(ACCESS_SYSTEMS).optional(),
   target: z.record(z.string(), z.unknown()).optional(),
   credentialId: z.string().max(100).nullable().optional(),

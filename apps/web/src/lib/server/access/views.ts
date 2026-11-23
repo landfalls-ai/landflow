@@ -1,13 +1,20 @@
 /** Rows as the page and the routes see them (the viewer's own `canDecide`, `canRevoke`, …). Plain server module. */
-import { durationText, requestState, shorterDurations, type AccessDecision, type AccessGrantView, type AccessRequestView } from '../../shared/access';
-import { getUser } from '../auth/users';
+import { durationText, requestState, shorterDurations, type AccessDecision, type AccessGrantView, type AccessPerson, type AccessRequestView, type RequesterKind } from '../../shared/access';
 import type { Actor } from '../projects/access';
 import { entryData } from './catalog';
+import { requesterOf } from './principal';
 import { approversFor, canCancelRequest, canMarkDone, canRetry, canRevoke, type EntryData } from './rules';
 import { grantOfRequest, parseJson, type GrantRow, type RequestRow } from './store';
 import { isSystem, targetLabel } from './systems';
 
-export const nameOf = (id: string | null | undefined): string => (id ? getUser(id)?.name || getUser(id)?.email || id : '');
+export const nameOf = (id: string | null | undefined): string => (id ? requesterOf(id)?.name || id : '');
+
+/** Who a request or grant names: a user by name, an outside requester with their verified email and how it was proven (the viewer is an approver, an owner or an admin). */
+export function personOf(id: string, kind: string | undefined): AccessPerson {
+  const who = requesterOf(id);
+  const outside = (kind as RequesterKind | undefined) === 'outside' || who?.kind === 'outside';
+  return { id, name: who?.name || id, kind: outside ? 'outside' : 'user', ...(outside && who?.email && { email: who.email }), ...(outside && who?.verifiedBy && { verifiedBy: who.verifiedBy }) };
+}
 
 /** The entry as it was when asked (a request keeps the snapshot, so a later edit changes nothing in flight). */
 export function snapshotOf(row: Pick<RequestRow, 'entry_snapshot'>): EntryData {
@@ -25,7 +32,7 @@ export function grantView(actor: Actor, row: GrantRow): AccessGrantView {
     ...(row.request_id && { requestId: row.request_id }),
     entryId: row.entry_id,
     entryName: entry?.name ?? nameFromTarget(target),
-    holder: { id: row.holder_id, name: nameOf(row.holder_id) },
+    holder: personOf(row.holder_id, row.holder_kind),
     ...(row.account && { account: row.account }),
     system,
     targetLabel: target.label ?? (target.config ? targetLabel(system, target.config) : row.system),
@@ -61,7 +68,7 @@ export function requestView(actor: Actor, row: RequestRow): AccessRequestView {
     entryId: row.entry_id,
     entryName: snapshot?.name ?? 'Deleted entry',
     system: snapshot?.system ?? 'manual',
-    requester: { id: row.requester_id, name: nameOf(row.requester_id) },
+    requester: personOf(row.requester_id, row.requester_kind),
     ...(row.account && { account: row.account, accountVerified: snapshot?.system === 'google-group' }),
     durationMinutes: row.duration_minutes === null ? null : Number(row.duration_minutes),
     reason: row.reason,

@@ -2191,6 +2191,34 @@ export const MIGRATIONS: Migration[] = [
       `CREATE UNIQUE INDEX IF NOT EXISTS access_accounts_handle ON access_accounts (system, lower(handle))`,
     ],
   },
+  // C36: access requests from people without a Landflow account (docs/access-requests.md#signing-in-without-an-account). `access_outside_requesters`:
+  // one row per verified address (`email_key` is its canonical form, unique); `access_outside_links`: the one-time email links (SHA-256 of the
+  // token only; single use is one conditional update on `used_at`); `access_outside_sessions`: the requester sessions (SHA-256 of the cookie).
+  // Holds no token and no secret in the clear.
+  {
+    version: 2936,
+    name: 'access_outside_identity',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS access_outside_requesters (id TEXT PRIMARY KEY, email TEXT NOT NULL, email_key TEXT NOT NULL UNIQUE, name TEXT, verified_by TEXT NOT NULL, google_subject TEXT, created_at TEXT NOT NULL, last_verified_at TEXT NOT NULL, last_seen_at TEXT, blocked_at TEXT, blocked_by TEXT)`,
+      `CREATE TABLE IF NOT EXISTS access_outside_links (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, email_key TEXT NOT NULL, email TEXT NOT NULL, ip TEXT, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS access_outside_links_email ON access_outside_links (email_key, created_at)`,
+      `CREATE TABLE IF NOT EXISTS access_outside_sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, requester_id TEXT NOT NULL, method TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, ip TEXT, user_agent TEXT)`,
+      `CREATE INDEX IF NOT EXISTS access_outside_sessions_requester ON access_outside_sessions (requester_id)`,
+    ],
+  },
+  // C36-B: requests from people without a Landflow account (docs/access-requests.md#outside-requesters-what-they-can-ask-and-see). An outside requester's
+  // id (`ext_…`) sits in `requester_id` / `holder_id` / `access_accounts.user_id`; the kind says which table names them. `outside` on an
+  // entry: open to outside requesters (0 = closed, the default). 2936 (the requester, link and session tables) is C36-A's.
+  {
+    version: 2937,
+    name: 'access_outside_requests',
+    statements: [],
+    addColumns: [
+      { table: 'access_entries', column: 'outside', definition: 'BIGINT NOT NULL DEFAULT 0' },
+      { table: 'access_requests', column: 'requester_kind', definition: `TEXT NOT NULL DEFAULT 'user'` },
+      { table: 'access_grants', column: 'holder_kind', definition: `TEXT NOT NULL DEFAULT 'user'` },
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -2362,6 +2390,9 @@ export const TABLES = {
   access_requests: ['id'], // C35:
   access_grants: ['id'], // C35:
   access_accounts: ['user_id', 'system'], // C35:
+  access_outside_requesters: ['id'], // C36:
+  access_outside_links: ['id'], // C36:
+  access_outside_sessions: ['id'], // C36:
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

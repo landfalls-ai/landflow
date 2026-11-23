@@ -28,6 +28,8 @@ const createSchema = z.object({
   system: z.enum(ACCESS_SYSTEMS),
   target: z.record(z.string(), z.unknown()).optional(),
   credentialId: z.string().max(100).nullable().optional(),
+  // Instance admins only (createEntry refuses an owner who isn't one).
+  outsideMayAsk: z.boolean().optional(),
 });
 
 export const GET = handler(async () => {

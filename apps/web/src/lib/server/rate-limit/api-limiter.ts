@@ -29,6 +29,8 @@ const PUBLIC_GROUPS: Array<[group: string, prefix: string]> = [
   ['webhook', '/api/webhook'],
   ['form', '/form'],
   ['chat', '/chat'],
+  // C36: people without a Landflow account asking for access (sign-in, the form, the chat); the sign-in limits of lib/server/access/outside/limits.ts come on top.
+  ['request-access', '/request-access'],
   ['mcp', '/mcp'],
   ['waiting', '/api/waiting'],
   // Unauthenticated (signed by the gateway's secret): each request still costs a body read and an HMAC.
@@ -90,6 +92,11 @@ async function hit(key: string, now: number, windowMs = WINDOW_MS): Promise<numb
 export async function windowHit(key: string, max: number, windowMs: number, now = Date.now()): Promise<{ allowed: true } | { allowed: false; retryAfter: number }> {
   if ((await hit(`window:${key}`, now, windowMs)) <= max) return { allowed: true };
   return { allowed: false, retryAfter: Math.max(1, Math.ceil((windowMs - (now % windowMs)) / 1000)) };
+}
+
+/** Forget this process's `windowHit` counters whose key starts with `prefix` (tests). */
+export function forgetWindows(prefix: string): void {
+  for (const key of [...local().windows.keys()]) if (key.startsWith(`window:${prefix}`)) local().windows.delete(key);
 }
 
 /** How many keys this process counts now (tests). */

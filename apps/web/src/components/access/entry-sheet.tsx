@@ -137,6 +137,15 @@ export function EntryFields({ draft, people, credentials, isAdmin, canEdit, save
       <PeoplePicker label="Approvers" people={people} value={draft.approverIds} disabled={!canEdit} onChange={(approverIds) => set({ approverIds })} hint="Nobody approves their own request." />
       <PeoplePicker label="Owners" people={people} value={draft.owners} disabled={!canEdit} onChange={(owners) => set({ owners })} hint="Owners change this entry. At least one stays." />
       <PeoplePicker label="Who may ask" people={people} value={draft.eligibleUserIds} disabled={!canEdit} onChange={(eligibleUserIds) => set({ eligibleUserIds })} hint="Empty: everyone signed in." />
+      <div>
+        <div className="flex items-center gap-3">
+          <Switch checked={Boolean(draft.outsideMayAsk)} onChange={(outsideMayAsk) => set({ outsideMayAsk })} disabled={!reach} label="Outside requesters may ask" />
+          <span className="text-[13px] text-t2">Outside requesters may ask</span>
+        </div>
+        <p className="mt-1 text-[12px] text-t3">
+          {isAdmin ? 'People without a Landflow account, from the domains allowed in Settings, can ask for it on the request page.' : 'Only an admin changes this: it widens who can ask. People without a Landflow account can ask only when it is on.'}
+        </p>
+      </div>
       <div className="flex items-center gap-3">
         <Switch checked={draft.enabled} onChange={(enabled) => set({ enabled })} disabled={!canEdit} label="On" />
         <span className="text-[13px] text-t2">{draft.enabled ? 'On: people can ask for it' : 'Off: hidden from the form'}</span>

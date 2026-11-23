@@ -1,6 +1,6 @@
 'use client';
 /**
- * /access (docs/access-requests.md#the-access-page): the tabs a person gets (Ask, My requests, To decide, Grants, Catalog), or before
+ * /access (docs/access-requests.md#the-access-page): the tabs a person gets (Ask, My requests, To decide, Grants, Catalog, and Settings for admins), or before
  * set-up the card that says so. `AccessFrame` is the shell (header, tabs, the gate); `AccessPage` loads the data and picks the tab's body.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -16,6 +16,7 @@ import { AccessChat } from './access-chat';
 import { AskForm } from './ask-form';
 import { CatalogView } from './catalog-grid';
 import { GrantsView } from './grants-grid';
+import { OutsideSettings } from './outside-settings';
 import { RequestsView } from './my-requests';
 import { SetupCard } from './setup-card';
 import { DecideView } from './to-decide';
@@ -57,7 +58,7 @@ export function AccessFrame({ viewer, setup, tabs, tab, onTab, children, onSetup
   );
 }
 
-const TABS: AccessTabId[] = ['ask', 'mine', 'decide', 'grants', 'catalog'];
+const TABS: AccessTabId[] = ['ask', 'mine', 'decide', 'grants', 'catalog', 'settings'];
 
 export function AccessPage() {
   const viewer = useViewer();
@@ -106,7 +107,7 @@ export function AccessPage() {
   const setup = setupState.data;
 
   if (!viewer) return null;
-  const tabs = accessTabs({ setup, viewer, entries, toDecide: decideState.data ?? 0 });
+  const tabs = accessTabs({ setup, viewer, entries, toDecide: decideState.data ?? 0, settings: isAdminViewer(viewer) });
   // A tab the person doesn't have (a link someone sent) falls back to Ask.
   const current: AccessTabId = tabs.some((t) => t.id === tab) ? tab : 'ask';
   const refreshAll = () => {
@@ -142,6 +143,7 @@ export function AccessPage() {
       {current === 'mine' && <RequestsView viewerId={viewer.id} highlight={highlight} tick={tick} />}
       {current === 'decide' && <DecideView tick={tick} onDecided={refreshAll} />}
       {current === 'grants' && <GrantsView tick={tick} admin={isAdminViewer(viewer)} manages={isApprover(viewer, entries) || entries.some((e) => e.canEdit)} />}
+      {current === 'settings' && <OutsideSettings mail={Boolean(setup?.mail)} />}
       {current === 'catalog' && <CatalogView viewer={viewer} entries={entries} people={people} setup={setup} onChanged={() => void reloadEntries()} />}
     </AccessFrame>
   );
