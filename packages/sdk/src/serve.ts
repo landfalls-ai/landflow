@@ -168,7 +168,7 @@ export async function serve(plugin: IPlugin, options: ServeOptions = {}): Promis
   if (options.guardHttp) {
     const secret = (await import('./guard')).transportSecretFromEnv(env);
     if (!secret) throw new Error('serve(): this plugin guards its HTTP face and needs LANDFLOW_TRANSPORT_SECRET (the same value the host runs with)');
-    guard = { token: (await import('./guard')).pluginHttpToken(secret) };
+    guard = { token: (await import('./guard')).pluginHttpToken(secret, plugin.info.id) };
   }
   if (httpPort) {
     httpFace = (await import('./http')).httpBinding({

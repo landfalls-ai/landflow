@@ -18,9 +18,12 @@ export interface HttpGuard {
   token: string;
 }
 
-/** The header value both sides compute from the shared secret. */
-export function pluginHttpToken(secret: string): string {
-  return createHmac('sha256', secret).update('landflow.plugin.http/v1').digest('hex');
+/**
+ * The header value both sides compute from the shared secret and the plugin's id: the host derives it for the plugin it is
+ * calling and the plugin checks it against its own id, so one plugin that receives its token cannot replay it to another.
+ */
+export function pluginHttpToken(secret: string, pluginId: string): string {
+  return createHmac('sha256', secret).update(`landflow.plugin.http/v1|${pluginId}`).digest('hex');
 }
 
 /** The shared secret from the environment, as the broker faces read it (docs/transports.md). */

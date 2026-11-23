@@ -13,14 +13,15 @@ const echo = defineNode({
 });
 const plugin = definePlugin({ info: { id: 'guarded', name: 'Guarded', version: '0.0.1' }, nodes: [echo] });
 
-const token = pluginHttpToken('s3cret');
+const token = pluginHttpToken('s3cret', 'guarded');
 const post = (path: string, headers: Record<string, string> = {}, body = '{}') => new Request(`http://127.0.0.1:7999${path}`, { method: 'POST', headers, body });
 const json = { 'content-type': 'application/json' };
 
 describe('pluginHttpToken', () => {
   it('is stable, differs by secret and never is the secret', () => {
-    expect(pluginHttpToken('s3cret')).toBe(token);
-    expect(pluginHttpToken('other')).not.toBe(token);
+    expect(pluginHttpToken('s3cret', 'guarded')).toBe(token);
+    expect(pluginHttpToken('other', 'guarded')).not.toBe(token);
+    expect(pluginHttpToken('s3cret', 'another-plugin')).not.toBe(token); // a token for one plugin does not open another
     expect(token).not.toContain('s3cret');
     expect(token).toMatch(/^[0-9a-f]{64}$/);
   });
@@ -54,7 +55,7 @@ describe('with a guard', () => {
   });
   it('requires the token', async () => {
     expect((await handle(post(HTTP_PATHS.execute, json))).status).toBe(401);
-    expect((await handle(post(HTTP_PATHS.execute, { ...json, [GUARD_HEADER]: pluginHttpToken('wrong') }))).status).toBe(401);
+    expect((await handle(post(HTTP_PATHS.execute, { ...json, [GUARD_HEADER]: pluginHttpToken('wrong', 'guarded') }))).status).toBe(401);
   });
   it('guards every POST route and the MCP mount', async () => {
     for (const path of [HTTP_PATHS.loadOptions, HTTP_PATHS.testCredentials, HTTP_PATHS.webhookMethod, HTTP_PATHS.webhook]) expect((await handle(post(path, json))).status).toBe(401);

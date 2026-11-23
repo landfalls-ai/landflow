@@ -6,7 +6,7 @@ plugin changes nothing in it. Built against the deck at commit `720a5f05` (read 
 
 ```sh
 # inside a terminal pane of the deck (the deck's CLI refuses anywhere else), with the SAME secret the host runs with:
-LANDFLOW_TRANSPORT_SECRET=<the host's> LANDFLOW_REGISTRY_URL=http://localhost:3000 pnpm plugin:deck   # HTTP :7122, gRPC :7222
+LANDFLOW_TRANSPORT_SECRET=<the host's> LANDFLOW_REGISTRY_URL=http://localhost:3000 pnpm plugin:deck   # HTTP :7122 only
 pnpm --filter @landflow/plugin-deck test                                                              # a fake deck on PATH; no deck needed
 ```
 
@@ -18,8 +18,11 @@ A plugin that can start a coding agent must not be callable by any web page, so 
 `guardHttp`): every POST route refuses a request carrying an `Origin` header or `Sec-Fetch-Site` other than `none`, a body that is
 not `application/json`, and a call without the token the host derives from `LANDFLOW_TRANSPORT_SECRET` (else
 `LANDFLOW_REGISTRY_SECRET`) as an HMAC, never the raw secret. The host sends that token on every HTTP call when it holds a secret; the
-plugin **refuses to start without one**, so start the host and the plugin with the same value. The MCP face is off. The gRPC
-face is not reachable from a browser; any other process of the same user on this machine can still call it, as it could run the deck itself.
+plugin **refuses to start without one**, so start the host and the plugin with the same value. The token is bound to the plugin's id
+(`HMAC(secret, "landflow.plugin.http/v1|deck")`), so another plugin cannot replay it here. **The plugin serves HTTP only**: no MCP
+face and no gRPC face (that one has no guard and would listen beyond loopback when `LANDFLOW_ADVERTISE_HOST` is set; `LANDFLOW_GRPC_PORT`
+is ignored), and the host calls it over HTTP. Any other process of the same user on this machine that knows the secret could still
+call it, as it could run the deck itself.
 
 ## The flow pattern
 
@@ -31,7 +34,7 @@ Dispatch (dot-agent-deck)  ->  Wait (Resume "On Webhook Call", HTTP Method POST,
 - Turn on **Limit Wait Time** and make it **a minute or two longer than Watch For**. When Watch For runs out the plugin POSTs
   `status: "timed_out"` so the Wait resumes with that; the Wait's own limit is only the backstop (it then continues with the Dispatch
   output and no report). The unit keeps running either way.
-- The run must reach its Wait before the report can land: the plugin retries a `409` (not waiting yet) until the deadline.
+- The run must reach its Wait before the report can land: the plugin retries a `409` "running, not waiting" until the deadline; any other `409` (a form or tool-approval wait) stops it, and the report is dropped.
 - **One item per run** when Report To is set (a run has one resume URL, one Wait hears one unit); the node refuses more.
 - **Unit names must be unique across flows** while a unit runs: the deck's inbox cannot tell two units with one name apart. The
   plugin reserves the name (and one of its 50 open watches, **a limit shared by every flow that uses the plugin**) before it
@@ -127,7 +130,7 @@ Verified 2026-11-23 against the deck at `720a5f05` inside Docker (OrbStack), hos
    Enter. Press Ctrl+d until the typing bar says "PaneInput" so keys reach the pane's shell.
 3. In that pane's shell, start the plugin (the deck's CLI only works from a pane):
    `LANDFLOW_TRANSPORT_SECRET=t LANDFLOW_REGISTRY_SECRET=s LANDFLOW_REGISTRY_URL=http://host.docker.internal:3190 LANDFLOW_ADVERTISE_HOST=127.0.0.1 LANDFLOW_DECK_ALLOW_COMMAND=1 pnpm --filter @landflow/plugin-deck start`
-   (outside Docker use `LANDFLOW_REGISTRY_URL=http://localhost:3190` and publish ports 7122 and 7222). The host lists `deck` under Plugins.
+   (outside Docker use `LANDFLOW_REGISTRY_URL=http://localhost:3190` and publish port 7122). The host lists `deck` under Plugins.
 4. Flow: Start -> Dispatch (Unit Name `real-check`, Agent `claude`, Command
    `sh -c 'sleep 8; dot-agent-deck work-done --done --task "hello"'`, Watch For 10) -> Wait (Resume On Webhook Call, HTTP Method
    POST, Limit Wait Time 12 minutes). Execute it.

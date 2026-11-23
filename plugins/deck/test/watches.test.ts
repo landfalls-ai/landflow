@@ -10,11 +10,13 @@ let origin: string;
 let posts: { url: string; body: Record<string, unknown> }[];
 let statuses: number[];
 let redirectTo: string | undefined;
+let conflict = 'This execution is running, not waiting';
 
 beforeEach(async () => {
   posts = [];
   statuses = [];
   redirectTo = undefined;
+  conflict = 'This execution is running, not waiting';
   server = createServer((req, res) => {
     let raw = '';
     req.on('data', (c) => (raw += c));
@@ -26,7 +28,7 @@ beforeEach(async () => {
         return res.end();
       }
       res.statusCode = statuses.shift() ?? 200;
-      res.end('{}');
+      res.end(res.statusCode === 409 ? JSON.stringify({ error: conflict }) : '{}');
     });
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -136,6 +138,17 @@ describe('Watches', () => {
     expect(watches.size).toBe(0);
   });
 
+  it('stops on a permanent 409 (a form or tool-approval wait) instead of retrying', async () => {
+    conflict = 'This execution waits for a form submission at /form/waiting/ex1';
+    statuses.push(409, 409);
+    const { watches, tick } = harness([[], [completion('u1', 'r')]]);
+    await watches.reserve('u1', `${origin}${W}/ex1`, 3_600_000);
+    await tick(10_000);
+    await tick(5_000);
+    expect(posts).toHaveLength(1);
+    expect(watches.size).toBe(0);
+  });
+
   it('retries a 409 (the run is not waiting yet) until the deadline', async () => {
     statuses.push(409, 409, 409);
     const { watches, tick } = harness([[], [completion('u1', 'r')]]);
@@ -234,5 +247,71 @@ describe('Watches', () => {
     expect(posts.map((p) => p.body.status)).toEqual(['inbox_unreadable']);
     expect(String(posts[0].body.report)).toContain('bad token');
     expect(watches.size).toBe(0);
+  });
+
+  describe('draining (a stale completion must not slip in while the name is being cleared)', () => {
+    function controlled() {
+      const clock = { t: 1_000_000 };
+      const pending: { resolve: (m: DeckMessage[]) => void; reject: (e: Error) => void }[] = [];
+      const watches = new Watches({
+        fetchInbox: () => new Promise<DeckMessage[]>((resolve, reject) => pending.push({ resolve, reject })),
+        hostOrigin: () => origin,
+        now: () => clock.t,
+      });
+      return { watches, clock, pending };
+    }
+    const flush = () => new Promise((r) => setTimeout(r, 5));
+
+    it('drops a stale completion a tick fetched while the reservation was still draining', async () => {
+      const { watches, clock, pending } = controlled();
+      const reserving = watches.reserve('u1', `${origin}${W}/a`, 3_600_000); // drain fetch #1 in flight
+      await flush();
+      clock.t += 10_000;
+      const ticking = watches.tick(); // the tick's own fetch #2, while u1 is draining
+      await flush();
+      pending[1].resolve([completion('u1', 'stale, from an earlier unit')]);
+      await ticking;
+      pending[0].resolve([]);
+      await reserving;
+      clock.t += 10_000;
+      const again = watches.tick();
+      await flush();
+      pending[2].resolve([]);
+      await again;
+      expect(posts).toEqual([]);
+      expect(watches.size).toBe(1);
+    });
+
+    it('drops a stale completion from a tick fetch that began before the reservation and ends after it', async () => {
+      const { watches, clock, pending } = controlled();
+      const first = watches.reserve('u0', `${origin}${W}/z`, 3_600_000);
+      await flush();
+      pending[0].resolve([]);
+      await first;
+      clock.t += 10_000;
+      const ticking = watches.tick(); // fetch #2 starts now
+      await flush();
+      const reserving = watches.reserve('u1', `${origin}${W}/a`, 3_600_000); // drain fetch #3
+      await flush();
+      pending[2].resolve([]);
+      await reserving;
+      pending[1].resolve([completion('u1', 'stale, handed over to the earlier fetch')]);
+      await ticking;
+      clock.t += 10_000;
+      const again = watches.tick();
+      await flush();
+      pending[3].resolve([]);
+      await again;
+      expect(posts).toEqual([]);
+    });
+
+    it('fails closed: when the drain read fails the reservation is released and the dispatch must not go on', async () => {
+      const { watches, pending } = controlled();
+      const reserving = watches.reserve('u1', `${origin}${W}/a`, 3_600_000);
+      await flush();
+      pending[0].reject(new Error('daemon down'));
+      await expect(reserving).rejects.toThrow(/inbox/);
+      expect(watches.size).toBe(0);
+    });
   });
 });

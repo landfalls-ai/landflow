@@ -4,7 +4,7 @@
  *
  *   pnpm plugin:deck      # from a terminal pane INSIDE the deck: the deck's CLI refuses anywhere else
  *
- * Serves HTTP on :7122 (no MCP face) and gRPC on :7222, then announces both to the host (`LANDFLOW_REGISTRY_URL`,
+ * Serves HTTP on :7122 only (no gRPC and no MCP face), then announces it to the host (`LANDFLOW_REGISTRY_URL`,
  * default http://127.0.0.1:3000). Opt-in: not part of `dev:all`, no image, no cluster component. Environment:
  * `LANDFLOW_TRANSPORT_SECRET` (the same value as the host's; required) guards the HTTP face, `LANDFLOW_DECK_BIN` names the binary, `LANDFLOW_DECK_ALLOW_COMMAND=1` lets a flow choose a unit's command. Traces go to
  * the usual `OTEL_EXPORTER_OTLP_*` endpoint (docs/observability.md).
@@ -37,12 +37,16 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const deck = await checkDeck();
   if (!deck.ok) log.warn('dot-agent-deck is not usable: Dispatch will fail until it is', { reason: deck.reason });
   if (!inPane()) log.warn('not running inside a deck pane (DOT_AGENT_DECK_PANE_ID is unset): Dispatch will fail until the plugin is started from one');
+  if (process.env.LANDFLOW_GRPC_PORT) {
+    log.warn('LANDFLOW_GRPC_PORT is ignored: the deck plugin serves HTTP only, because its gRPC face would be unguarded');
+    delete process.env.LANDFLOW_GRPC_PORT;
+  }
   await serve(plugin, {
     http: 7122,
-    grpc: 7222,
     host: process.env.LANDFLOW_HOST ?? (process.env.LANDFLOW_ADVERTISE_HOST ? '0.0.0.0' : '127.0.0.1'),
     maxConcurrency: DEFAULT_MAX_CONCURRENCY,
-    // A plugin that starts real work on this machine: no MCP face, and the HTTP face refuses browsers and callers without the
+    // A plugin that starts real work on this machine: HTTP only (no gRPC face: it has no guard and can listen beyond loopback
+    // when LANDFLOW_ADVERTISE_HOST is set; the host uses the HTTP face), no MCP face, and the HTTP face refuses browsers and callers without the
     // token derived from LANDFLOW_TRANSPORT_SECRET (the host sends it). serve() refuses to start without that secret.
     mcp: false,
     guardHttp: true,

@@ -72,6 +72,11 @@ interface Watch {
   giveUpAt: number;
   tries: number;
   nextTryAt: number;
+  /**
+   * Inbox reads that started before this sequence number may hold the deck's mail about an earlier unit of the same name, so
+   * messages about this unit from them are dropped. `Infinity` while the reservation is still draining.
+   */
+  minSeq: number;
 }
 
 export interface WatchesOptions {
@@ -87,6 +92,8 @@ export class Watches {
   private readonly open = new Map<string, Watch>();
   private buffer: DeckMessage[] = [];
   private nextFetchAt = 0;
+  /** Counts inbox reads as they start (see Watch.minSeq). */
+  private seq = 0;
   private unreadable = 0;
   private lastError = '';
   private timer?: NodeJS.Timeout;
@@ -119,15 +126,21 @@ export class Watches {
     const clamped = Math.max(60_000, Math.min(timeoutMs, MAX_TIMEOUT_MS));
     const deadline = this.now() + clamped;
     // Registered first so a concurrent reserve of the same name or the 51st sees it; matching starts after the drain below.
-    const watch: Watch = { unit, reportTo: target, deadline, giveUpAt: deadline, tries: 0, nextTryAt: 0 };
+    const watch: Watch = { unit, reportTo: target, deadline, giveUpAt: deadline, tries: 0, nextTryAt: 0, minSeq: Infinity };
     this.open.set(unit, watch);
     this.buffer = this.buffer.filter((m) => !about(m, unit));
     try {
-      // Take what the deck holds now and drop what is about this name; mail for other units stays in the buffer.
+      // Take what the deck holds now and drop what is about this name; mail for other units stays in the buffer. While this
+      // runs the watch is draining (minSeq Infinity): a tick's read can not hand it a stale completion in the meantime.
+      this.seq++;
       const stale = await this.fetchInbox();
       this.buffer = [...this.buffer, ...stale.filter((m) => !about(m, unit))].slice(-BUFFER_MAX);
+      watch.minSeq = this.seq + 1;
     } catch (error) {
+      // Fail closed: without a clean drain a stale completion could end this run, so the unit is not dispatched.
+      this.open.delete(unit);
       this.log('deck inbox not readable while reserving', { 'deck.unit.name': unit, error: (error as Error).message });
+      throw new DeckError(`Could not clear the deck inbox before dispatching "${unit}": ${(error as Error).message}`, 'Start the plugin from the pane that runs the deck, or leave Report To empty.');
     }
   }
 
@@ -179,8 +192,12 @@ export class Watches {
       const waiting = [...this.open.values()].some((w) => !w.found);
       if (waiting && now >= this.nextFetchAt) {
         this.nextFetchAt = now + POLL_MS;
+        const startedAt = ++this.seq;
         try {
-          this.buffer = [...this.buffer, ...(await this.fetchInbox())].slice(-BUFFER_MAX);
+          const fetched = await this.fetchInbox();
+          // Mail about a unit whose reservation was cleared after this read started may be from an earlier unit of that name.
+          const stale = (m: DeckMessage) => [...this.open.values()].some((w) => startedAt < w.minSeq && about(m, w.unit));
+          this.buffer = [...this.buffer, ...fetched.filter((m) => !stale(m))].slice(-BUFFER_MAX);
           this.unreadable = 0;
         } catch (error) {
           this.unreadable++;
@@ -197,7 +214,7 @@ export class Watches {
         }
       }
       // A completion fetched before its watch asked for it is still in the buffer; matched ones are delivered, not kept.
-      for (const watch of this.open.values()) if (!watch.found) watch.found = completionOf(this.buffer, watch.unit);
+      for (const watch of this.open.values()) if (!watch.found && watch.minSeq !== Infinity) watch.found = completionOf(this.buffer, watch.unit);
       this.buffer = this.buffer.filter((m) => ![...this.open.values()].some((w) => w.found && about(m, w.unit)));
       for (const watch of [...this.open.values()]) if (watch.found && now >= watch.nextTryAt) await this.deliver(watch, now);
     } finally {
@@ -215,8 +232,10 @@ export class Watches {
         // A resume URL never redirects; a redirect is a failure, not a place to send the report.
         redirect: 'error',
       });
-      // 409: the run has not reached its Wait yet (Dispatch returns first), so it is retried like a server error.
-      const retryable = response.status >= 500 || response.status === 408 || response.status === 409 || response.status === 429;
+      // 409 "running, not waiting": the run has not reached its Wait yet (Dispatch returns first), so it is retried. Any other
+      // 409 (a form or a tool-approval wait, a Wait set to another resume) never changes, so it stops.
+      const notWaitingYet = response.status === 409 && /running, not waiting/i.test(await response.text().catch(() => ''));
+      const retryable = response.status >= 500 || response.status === 408 || notWaitingYet || response.status === 429;
       if (response.ok || !retryable) {
         if (!response.ok) this.log('deck report refused by the host', { 'deck.unit.name': watch.unit, status: response.status });
         this.open.delete(watch.unit);
