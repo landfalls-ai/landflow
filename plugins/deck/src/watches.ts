@@ -3,11 +3,16 @@
  * completion arrives POSTs `{ unit, report, status }` to Report To, the run's resume URL, which a core Wait ("On Webhook
  * Call") is waiting on. Watches live in memory (a plugin restart loses them and the Wait times out).
  *
- * Completion is matched on the deck's documented words (dispatch_return.rs: the message opens
- * `dispatch: a unit you dispatched has completed`, its sender label names the unit, the report sits between
- * `[UNTRUSTED-WORKER-REPORT:` and `:END-UNTRUSTED-WORKER-REPORT]`). A reworded deck breaks the match; the README names the
- * commit read and the tests pin today's text.
+ * A message is classified by the deck's own **subject** (`dispatch completed`, `dispatch failed`, `dispatch ended`;
+ * `dispatch started` and `dispatch report updated` are ignored) and matched to a unit by its sender label
+ * (`the dispatch of "<unit>"`), both set by the deck, never by the unit. The body is the unit's text: it is carried, never
+ * read to decide anything. The report keeps the deck's `[UNTRUSTED-WORKER-REPORT:` wrapper and every POST says
+ * `trust: "untrusted"`. A reworded deck breaks the match; the README names the commit read and the tests pin today's text.
+ *
+ * Names must be unique across flows: the deck's inbox cannot tell two units with one name apart. The 50-watch cap is for
+ * the whole plugin, shared by every flow that uses it.
  */
+import { getTelemetry } from '@landflow/sdk';
 import { DeckError, fetchInbox as deckFetchInbox, type DeckMessage } from './deck-cli';
 
 export type { DeckMessage };
@@ -19,31 +24,41 @@ const POLL_MS = 10_000;
 const BACKOFF_START_MS = 1_000;
 const BACKOFF_MAX_MS = 60_000;
 const BUFFER_MAX = 200;
+/** How long a timed_out report keeps being retried after the deadline. */
+const TIMED_OUT_GRACE_MS = 10 * 60_000;
+/** Consecutive refused or failed inbox reads (about a minute) before the runs are told. */
+const UNREADABLE_AFTER = 6;
+const WAITING_PATH = '/api/waiting/';
 
-const COMPLETED = 'dispatch: a unit you dispatched has completed';
-const UPDATE = 'dispatch: a unit you dispatched sent an update';
-const SPAWNED = 'dispatch: spawned isolated';
-const FENCE = /\[UNTRUSTED-WORKER-REPORT:\s*([\s\S]*?)\s*:END-UNTRUSTED-WORKER-REPORT\]/;
+const FAILED_SUBJECTS = new Set(['dispatch failed', 'dispatch ended']);
+const FENCE = /\[UNTRUSTED-WORKER-REPORT:[\s\S]*?:END-UNTRUSTED-WORKER-REPORT\]/;
+
+export type WatchStatus = 'completed' | 'failed' | 'timed_out' | 'inbox_unreadable';
 
 export interface Completion {
+  /** Untrusted text: the deck's fenced report (completed), the deck's words (failed), the reason (inbox_unreadable) or empty. */
   report: string;
-  status: 'completed' | 'failed';
+  status: WatchStatus;
 }
 
-/** Whether a message is about `unit`: its sender label is `the dispatch of "<unit>"`. */
-const about = (message: DeckMessage, unit: string) => message.from.includes(`"${unit}"`) || message.from.endsWith(`dispatch:${unit}`);
+/** Whether a message is about `unit`: the deck's sender label is `the dispatch of "<unit>"`. */
+const about = (message: DeckMessage, unit: string) => message.from === `the dispatch of "${unit}"`;
 
-/**
- * The unit's completion in `messages`, if there is one. A `dispatch:` message about the unit that is neither the spawn
- * reply, nor an update, nor a completion is the deck refusing or failing the dispatch: a failed unit, with its words.
- */
+/** The message's body: what is between the opener line and the closer, minus the deck's `Sent by:` provenance line. */
+function bodyOf(text: string): string {
+  return text
+    .replace(/^\[dot-agent-deck message[^\]]*\]\s*/, '')
+    .replace(/^Sent by: [^\n]*\n?/, '')
+    .replace(/\s*\[end of dot-agent-deck message[^\]]*\]\s*$/, '')
+    .trim();
+}
+
+/** The unit's completion in `messages`, if there is one, decided by the deck's subject alone. */
 export function completionOf(messages: DeckMessage[], unit: string): Completion | undefined {
   for (const message of messages) {
     if (!about(message, unit)) continue;
-    const text = message.text;
-    if (text.includes(UPDATE) || text.includes(SPAWNED)) continue;
-    if (text.includes(COMPLETED)) return { report: FENCE.exec(text)?.[1] ?? '', status: 'completed' };
-    if (/\bdispatch:/.test(text)) return { report: text.replace(/^\[dot-agent-deck message[^\]]*\]\s*/, '').replace(/\s*\[end of dot-agent-deck message[^\]]*\]\s*$/, '').trim(), status: 'failed' };
+    if (message.subject === 'dispatch completed') return { report: FENCE.exec(message.text)?.[0] ?? '', status: 'completed' };
+    if (FAILED_SUBJECTS.has(message.subject)) return { report: bodyOf(message.text), status: 'failed' };
   }
   return undefined;
 }
@@ -53,30 +68,27 @@ interface Watch {
   reportTo: string;
   deadline: number;
   found?: Completion;
+  /** Stop retrying the delivery at this time. */
+  giveUpAt: number;
   tries: number;
   nextTryAt: number;
 }
 
 export interface WatchesOptions {
   fetchInbox?: () => Promise<DeckMessage[]>;
-  /** The host's own origin (where the plugin announced), the only origin Report To may name. */
-  hostOrigin: () => string;
+  /** The host's own origin (where the plugin announced), the only origin Report To may name; undefined when announcing is off. */
+  hostOrigin: () => string | undefined;
   now?: () => number;
   post?: typeof fetch;
   log?: (message: string, fields?: Record<string, unknown>) => void;
-}
-
-const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
-/** Same origin, with the loopback names counted as one (a host announced on 127.0.0.1 hands out localhost URLs). */
-function sameOrigin(a: URL, b: URL): boolean {
-  if (a.protocol !== b.protocol || a.port !== b.port) return false;
-  return a.hostname === b.hostname || (LOOPBACK.has(a.hostname) && LOOPBACK.has(b.hostname));
 }
 
 export class Watches {
   private readonly open = new Map<string, Watch>();
   private buffer: DeckMessage[] = [];
   private nextFetchAt = 0;
+  private unreadable = 0;
+  private lastError = '';
   private timer?: NodeJS.Timeout;
   private ticking = false;
   private readonly fetchInbox: () => Promise<DeckMessage[]>;
@@ -95,27 +107,55 @@ export class Watches {
     return this.open.size;
   }
 
-  /** Checks Report To and opens a watch. Throws a DeckError for another origin, a repeated unit or a full table. */
-  add(unit: string, reportTo: string, timeoutMs: number): void {
-    this.checkReportTo(reportTo);
-    if (this.open.has(unit)) throw new DeckError(`A watch for "${unit}" is already open`, 'Unit names must be unique while a unit is still running.');
-    if (this.open.size >= MAX_WATCHES) throw new DeckError(`Too many open watches (at most ${MAX_WATCHES})`, 'Wait for a running unit to finish before dispatching another.');
+  /**
+   * Reserves the unit's name and a place under the cap, **before** anything is dispatched, and clears what the deck may
+   * still hold about that name: a completion of an earlier unit with the same name must never end this run. Throws a
+   * DeckError for another origin, a repeated name or a full table. Call `release` when the dispatch then fails.
+   */
+  async reserve(unit: string, reportTo: string, timeoutMs: number): Promise<void> {
+    const target = this.checkReportTo(reportTo);
+    if (this.open.has(unit)) throw new DeckError(`A watch for "${unit}" is already open`, 'Unit names must be unique across flows while a unit is still running.');
+    if (this.open.size >= MAX_WATCHES) throw new DeckError(`Too many open watches (at most ${MAX_WATCHES})`, 'The limit is shared by every flow that uses this plugin. Wait for a running unit to finish before dispatching another.');
     const clamped = Math.max(60_000, Math.min(timeoutMs, MAX_TIMEOUT_MS));
-    this.open.set(unit, { unit, reportTo, deadline: this.now() + clamped, tries: 0, nextTryAt: 0 });
+    const deadline = this.now() + clamped;
+    // Registered first so a concurrent reserve of the same name or the 51st sees it; matching starts after the drain below.
+    const watch: Watch = { unit, reportTo: target, deadline, giveUpAt: deadline, tries: 0, nextTryAt: 0 };
+    this.open.set(unit, watch);
+    this.buffer = this.buffer.filter((m) => !about(m, unit));
+    try {
+      // Take what the deck holds now and drop what is about this name; mail for other units stays in the buffer.
+      const stale = await this.fetchInbox();
+      this.buffer = [...this.buffer, ...stale.filter((m) => !about(m, unit))].slice(-BUFFER_MAX);
+    } catch (error) {
+      this.log('deck inbox not readable while reserving', { 'deck.unit.name': unit, error: (error as Error).message });
+    }
   }
 
-  /** Report To must be a resume URL on this host's own origin: a flow cannot make the plugin call anywhere else. */
-  checkReportTo(reportTo: string): void {
-    const bad = new DeckError('Report To must be this Landflow host\'s resume URL', 'Leave it as {{ $execution.resumeUrl }}. It must be an http(s) address on the host the plugin announced to (LANDFLOW_REGISTRY_URL).');
+  /** Gives a reservation back (the dispatch failed). */
+  release(unit: string): void {
+    this.open.delete(unit);
+  }
+
+  /**
+ * Report To must be a resume URL under /api/waiting/. Only its path and signature are used: the plugin always posts to the
+ * host it announced to (`LANDFLOW_REGISTRY_URL`), whatever origin the URL names, because the host may be reached by another
+ * name from where the plugin runs (a container sees `host.docker.internal`, the run's URL says `localhost`). So a flow can
+ * never make the plugin call anywhere else. Returns the address it will post to.
+ */
+  checkReportTo(reportTo: string): string {
+    const bad = new DeckError('Report To must be this Landflow host\'s resume URL', 'Leave it as {{ $execution.resumeUrl }}. It must be an http(s) address under /api/waiting/ on the host the plugin announced to (LANDFLOW_REGISTRY_URL).');
+    const hostOrigin = this.options.hostOrigin();
+    if (!hostOrigin) throw new DeckError('Report To cannot be used: no host origin configured', 'The plugin has no Landflow host to report to (LANDFLOW_REGISTRY_URL=off). Start it with the host\'s URL, or leave Report To empty.');
     let url: URL;
     let host: URL;
     try {
       url = new URL(reportTo);
-      host = new URL(this.options.hostOrigin());
+      host = new URL(hostOrigin);
     } catch {
       throw bad;
     }
-    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !sameOrigin(url, host)) throw bad;
+    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !url.pathname.startsWith(WAITING_PATH) || url.pathname.length === WAITING_PATH.length) throw bad;
+    return new URL(url.pathname + url.search, host).toString();
   }
 
   /** One pass: expire, read the inbox (at most every 10 s), deliver what is due. */
@@ -124,10 +164,15 @@ export class Watches {
     this.ticking = true;
     try {
       const now = this.now();
-      for (const [unit, watch] of this.open) {
-        if (now >= watch.deadline) {
-          this.open.delete(unit);
-          this.log('deck watch timed out', { 'deck.unit.name': unit });
+      for (const watch of this.open.values()) {
+        if (!watch.found && now >= watch.deadline) {
+          // The run is told, not left to its own Wait limit; Watch For is shorter than the Wait's by design (README).
+          watch.found = { report: '', status: 'timed_out' };
+          watch.giveUpAt = now + TIMED_OUT_GRACE_MS;
+          watch.nextTryAt = 0;
+          this.log('deck watch timed out', { 'deck.unit.name': watch.unit });
+        } else if (watch.found && now >= watch.giveUpAt) {
+          this.open.delete(watch.unit);
         }
       }
       if (this.open.size === 0) return;
@@ -136,11 +181,22 @@ export class Watches {
         this.nextFetchAt = now + POLL_MS;
         try {
           this.buffer = [...this.buffer, ...(await this.fetchInbox())].slice(-BUFFER_MAX);
+          this.unreadable = 0;
         } catch (error) {
-          this.log('deck inbox not readable', { error: (error as Error).message });
+          this.unreadable++;
+          this.lastError = (error as Error).message;
+          this.log('deck inbox not readable', { error: this.lastError, 'deck.inbox.failures': this.unreadable });
+          if (this.unreadable >= UNREADABLE_AFTER) {
+            for (const watch of this.open.values()) {
+              if (watch.found) continue;
+              watch.found = { report: `The deck inbox could not be read: ${this.lastError}`, status: 'inbox_unreadable' };
+              watch.giveUpAt = now + TIMED_OUT_GRACE_MS;
+            }
+            this.unreadable = 0;
+          }
         }
       }
-      // A completion fetched before its watch opened is still in the buffer; matched ones are delivered, not kept.
+      // A completion fetched before its watch asked for it is still in the buffer; matched ones are delivered, not kept.
       for (const watch of this.open.values()) if (!watch.found) watch.found = completionOf(this.buffer, watch.unit);
       this.buffer = this.buffer.filter((m) => ![...this.open.values()].some((w) => w.found && about(m, w.unit)));
       for (const watch of [...this.open.values()]) if (watch.found && now >= watch.nextTryAt) await this.deliver(watch, now);
@@ -154,10 +210,13 @@ export class Watches {
       const response = await this.post(watch.reportTo, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ unit: watch.unit, report: watch.found!.report, status: watch.found!.status }),
+        body: JSON.stringify({ unit: watch.unit, report: watch.found!.report, status: watch.found!.status, trust: 'untrusted' }),
         signal: AbortSignal.timeout(10_000),
+        // A resume URL never redirects; a redirect is a failure, not a place to send the report.
+        redirect: 'error',
       });
-      const retryable = response.status >= 500 || response.status === 408 || response.status === 429;
+      // 409: the run has not reached its Wait yet (Dispatch returns first), so it is retried like a server error.
+      const retryable = response.status >= 500 || response.status === 408 || response.status === 409 || response.status === 429;
       if (response.ok || !retryable) {
         if (!response.ok) this.log('deck report refused by the host', { 'deck.unit.name': watch.unit, status: response.status });
         this.open.delete(watch.unit);
@@ -170,7 +229,7 @@ export class Watches {
     watch.tries++;
   }
 
-  /** Starts the 1 s loop (a no-op when it runs; the timer never keeps the process alive). */
+  /** Starts the 1 s loop (the timer never keeps the process alive). */
   start(): void {
     if (this.timer) return;
     this.timer = setInterval(() => void this.tick(), 1_000);
@@ -185,10 +244,16 @@ export class Watches {
   }
 }
 
-/** The plugin's one table of watches; the host it reports to is the one it announced to. */
+/** The plugin's one table of watches; the host it reports to is the one it announced to (none when announcing is off). */
 let shared: Watches | undefined;
 export function sharedWatches(): Watches {
-  shared ??= new Watches({ hostOrigin: () => process.env.LANDFLOW_REGISTRY_URL || 'http://127.0.0.1:3000' });
+  shared ??= new Watches({
+    hostOrigin: () => {
+      const url = process.env.LANDFLOW_REGISTRY_URL;
+      return url === 'off' ? undefined : url || 'http://127.0.0.1:3000';
+    },
+    log: (message, fields) => getTelemetry().logger.warn(message, fields),
+  });
   shared.start();
   return shared;
 }

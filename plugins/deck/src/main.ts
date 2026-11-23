@@ -4,9 +4,9 @@
  *
  *   pnpm plugin:deck      # from a terminal pane INSIDE the deck: the deck's CLI refuses anywhere else
  *
- * Serves HTTP on :7122 (MCP face at /mcp) and gRPC on :7222, then announces both to the host (`LANDFLOW_REGISTRY_URL`,
+ * Serves HTTP on :7122 (no MCP face) and gRPC on :7222, then announces both to the host (`LANDFLOW_REGISTRY_URL`,
  * default http://127.0.0.1:3000). Opt-in: not part of `dev:all`, no image, no cluster component. Environment:
- * `LANDFLOW_DECK_BIN` names the binary, `LANDFLOW_DECK_ALLOW_COMMAND=1` lets a flow choose a unit's command. Traces go to
+ * `LANDFLOW_TRANSPORT_SECRET` (the same value as the host's; required) guards the HTTP face, `LANDFLOW_DECK_BIN` names the binary, `LANDFLOW_DECK_ALLOW_COMMAND=1` lets a flow choose a unit's command. Traces go to
  * the usual `OTEL_EXPORTER_OTLP_*` endpoint (docs/observability.md).
  */
 import { definePlugin, getTelemetry } from '@landflow/sdk';
@@ -42,6 +42,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     grpc: 7222,
     host: process.env.LANDFLOW_HOST ?? (process.env.LANDFLOW_ADVERTISE_HOST ? '0.0.0.0' : '127.0.0.1'),
     maxConcurrency: DEFAULT_MAX_CONCURRENCY,
-    mcp: { token: process.env.LANDFLOW_MCP_TOKEN },
+    // A plugin that starts real work on this machine: no MCP face, and the HTTP face refuses browsers and callers without the
+    // token derived from LANDFLOW_TRANSPORT_SECRET (the host sends it). serve() refuses to start without that secret.
+    mcp: false,
+    guardHttp: true,
   });
 }

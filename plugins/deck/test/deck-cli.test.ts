@@ -100,6 +100,16 @@ describe('fetchInbox', () => {
     expect(await fetchInbox()).toEqual([]);
   });
 
+  it('carries the deck\'s own words when it refuses the read (a respawned pane\'s stale token)', async () => {
+    useFakeDeck();
+    process.env.FAKE_DECK_INBOX_REFUSE = 'The deck refused to fetch messages: token is for another generation (unattested).';
+    try {
+      await expect(fetchInbox()).rejects.toThrow(/unattested/);
+    } finally {
+      delete process.env.FAKE_DECK_INBOX_REFUSE;
+    }
+  });
+
   it('fails outside a pane', async () => {
     useFakeDeck({ pane: false });
     await expect(fetchInbox()).rejects.toThrow('run the deck plugin from a deck pane');

@@ -132,7 +132,11 @@ export interface DeckMessage {
 export async function fetchInbox(): Promise<DeckMessage[]> {
   if (!inPane()) throw NOT_IN_PANE;
   const run = await runDeck(['inbox', 'fetch', '--json']);
-  if (run.code !== 0) throw new DeckError('Could not read the deck inbox', (run.stderr || run.stdout).trim().slice(0, 600));
+  if (run.code !== 0) {
+    // The deck's own words say why (a respawned pane's stale token is "unattested", an old daemon says so): keep them.
+    const text = (run.stderr || run.stdout).trim();
+    throw new DeckError(`Could not read the deck inbox: ${text.split('\n')[0].slice(0, 300)}`, text.slice(0, 600));
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(run.stdout.trim().split('\n').pop() ?? '');

@@ -47,7 +47,7 @@ import {
   type WebhookMethodResponseMsg,
 } from '@landflow/protocol/grpc';
 import type { Transport } from '@landflow/engine';
-import { REGISTRY_CHALLENGE_HEADER, REGISTRY_PROOF_HEADER } from '@landflow/sdk';
+import { GUARD_HEADER, pluginHttpToken, REGISTRY_CHALLENGE_HEADER, REGISTRY_PROOF_HEADER, transportSecretFromEnv } from '@landflow/sdk';
 import { tracePluginRpc, type RpcMethod } from '../telemetry';
 import { envInt } from '../config';
 
@@ -104,9 +104,12 @@ export class HttpPluginClient extends TracedClient implements PluginClient {
   private async request<T>(path: string, init: RequestInit & { timeoutMs?: number; onResponse?: (response: Response) => void } = {}): Promise<T> {
     const timeout = AbortSignal.timeout(init.timeoutMs ?? 10_000);
     const { onResponse, ...rest } = init;
+    // Plugins that can start real work on their machine (the deck) opt in to a guard that wants this token, an HMAC of the
+    // shared secret (never the secret). Sent on calls that run something; the others ignore it. Read at call time.
+    const secret = path === HTTP_PATHS.execute || path === HTTP_PATHS.loadOptions || path === HTTP_PATHS.testCredentials || path === HTTP_PATHS.webhookMethod || path === HTTP_PATHS.webhook ? transportSecretFromEnv() : undefined;
     const response = await fetch(new URL(path, this.endpoint), {
       ...rest,
-      headers: { 'content-type': 'application/json', ...init.headers },
+      headers: { 'content-type': 'application/json', ...(secret && { [GUARD_HEADER]: pluginHttpToken(secret) }), ...init.headers },
       signal: init.signal ? AbortSignal.any([init.signal, timeout]) : timeout,
     });
     onResponse?.(response);

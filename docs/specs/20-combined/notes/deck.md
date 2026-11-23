@@ -18,3 +18,11 @@
 ## docs/roadmap.md
 
 - C33 (dot-agent-deck as a sibling): built as `plugins/deck` (Dispatch, watches, Report To). Open, for the person to raise with the deck project: a token-authenticated dispatch and inbox entry outside a pane; `TRACEPARENT` honoured on dispatch. Later: a deck view in Landlens; Delegate if the deck lets a non-orchestrator use it.
+
+## docs/transports.md (and docs/protocol.md if it lists the HTTP faces)
+
+- Add: a plugin may opt in to an **HTTP guard** (`serve(plugin, { guardHttp: true })`, `@landflow/sdk/guard`): its POST routes and `/mcp` refuse requests that carry an `Origin` header or `Sec-Fetch-Site` other than `none`, bodies that are not `application/json`, and calls without the `x-landflow-plugin-token` header (an HMAC of `LANDFLOW_TRANSPORT_SECRET`, else `LANDFLOW_REGISTRY_SECRET`); `serve()` refuses to start without a secret. The host sends the token on every HTTP call to a plugin when it holds a secret (`lib/server/plugins/clients.ts`); plugins that do not opt in ignore it and behave as before. The deck plugin is the first user.
+
+## docs/limitations.md (additions to the deck lines above)
+
+- Add: the deck plugin's report is untrusted text from the unit (`trust: "untrusted"`, the deck's wrapper kept); `status` is `completed`, `failed`, `timed_out` or `inbox_unreadable`. One item per run when Report To is set; unit names must be unique across flows; the 50-watch cap is shared by every flow that uses the plugin. The gRPC face of the plugin is not guarded (a browser cannot reach it).

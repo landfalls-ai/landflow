@@ -36,6 +36,10 @@ if (args[0] === '--version') {
     console.error(notInPane);
     process.exit(1);
   }
+  if (process.env.FAKE_DECK_INBOX_REFUSE) {
+    console.error(process.env.FAKE_DECK_INBOX_REFUSE);
+    process.exit(1);
+  }
   const file = join(dir, 'inbox.json');
   const messages = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [];
   writeFileSync(file, '[]');

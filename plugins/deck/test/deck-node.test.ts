@@ -26,12 +26,13 @@ const request = (parameters: JsonObject): ExecuteRequest => ({
 const extras = { credentialTypes: plugin.credentialTypes, pluginId: 'deck' };
 const origin = 'http://127.0.0.1:3000';
 const newWatches = () => new Watches({ fetchInbox: async () => [], hostOrigin: () => origin });
+const W = '/api/waiting';
 
 describe('Deck node', () => {
   it('Dispatch starts a unit, keeps a watch and outputs the unit', async () => {
     const fake = useFakeDeck();
     const watches = newWatches();
-    const response = await runNode(new Deck(watches), request({ operation: 'dispatch', name: 'nightly', task: 'fix the build', reportTo: `${origin}/api/waiting/ex_test` }), extras);
+    const response = await runNode(new Deck(watches), request({ operation: 'dispatch', name: 'nightly', task: 'fix the build', reportTo: `${origin}${W}/ex_test` }), extras);
     expect(response.error).toBeUndefined();
     expect(response.outputs[0][0].json).toMatchObject({ keep: 1, unit: 'nightly', admitted: true, watching: true, message: 'Dispatch request sent to the daemon.' });
     expect(fake.calls()[0]).toMatchObject({ args: ['dispatch', 'nightly', '--task-file', '-'], stdin: 'fix the build' });
@@ -72,9 +73,37 @@ describe('Deck node', () => {
     expect(response.error?.message).toContain('dot-agent-deck not found on PATH');
   });
 
-  it('does not keep a watch when Report To is another origin, and does not start the unit', async () => {
+  it('refuses a second dispatch of a name that is already watched, before running the deck', async () => {
     const fake = useFakeDeck();
-    const response = await runNode(new Deck(newWatches()), request({ operation: 'dispatch', name: 'n', task: 't', reportTo: 'http://evil.example/x' }), extras);
+    const watches = newWatches();
+    const node = new Deck(watches);
+    const params = { operation: 'dispatch', name: 'same', task: 't', reportTo: `${origin}${W}/ex_test` };
+    await runNode(node, request(params), extras);
+    const again = await runNode(node, request(params), extras);
+    expect(again.error?.message).toMatch(/already/);
+    expect(fake.calls().filter((c) => c.args[0] === 'dispatch')).toHaveLength(1);
+  });
+
+  it('releases the name when the deck refuses, so the flow can try again', async () => {
+    const fake = useFakeDeck();
+    fake.refuse('Error: orchestration "review" is not trusted.');
+    const watches = newWatches();
+    const response = await runNode(new Deck(watches), request({ operation: 'dispatch', name: 'n', task: 't', reportTo: `${origin}${W}/ex_test` }), extras);
+    expect(response.error).toBeDefined();
+    expect(watches.size).toBe(0);
+  });
+
+  it('refuses several items when Report To is set (one Wait cannot hear several units)', async () => {
+    const fake = useFakeDeck();
+    const two = { ...request({ operation: 'dispatch', name: 'n', task: 't', reportTo: `${origin}${W}/ex_test` }), inputs: [[{ json: { a: 1 } }, { json: { a: 2 } }]], itemParameters: [{}, {}] } as ExecuteRequest;
+    const response = await runNode(new Deck(newWatches()), two, extras);
+    expect(response.error?.message).toMatch(/one item/i);
+    expect(fake.calls()).toEqual([]);
+  });
+
+  it('does not start the unit when Report To is off the waiting path', async () => {
+    const fake = useFakeDeck();
+    const response = await runNode(new Deck(newWatches()), request({ operation: 'dispatch', name: 'n', task: 't', reportTo: `${origin}/api/other/x` }), extras);
     expect(response.error?.message).toMatch(/Report To/);
     expect(fake.calls()).toEqual([]);
   });
