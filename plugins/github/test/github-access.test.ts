@@ -41,11 +41,15 @@ describe('Team membership', () => {
     expect(methods()).toEqual([`GET /orgs/${ORG}/teams/${TEAM}/memberships/bob`]);
   });
 
-  it('adds as a maintainer and changes the role of an existing member', async () => {
+  it('adds a new person as a maintainer, but never raises the role of an existing member', async () => {
+    expect(await only(team('add', { username: 'carol', teamRole: 'maintainer' }))).toMatchObject({ role: 'maintainer', changed: true });
     await team('add', { username: 'bob' });
-    expect(await only(team('add', { username: 'bob', teamRole: 'maintainer' }))).toMatchObject({ role: 'maintainer', changed: true });
-    expect(access.teams.get(TEAM)!.get('bob')!.role).toBe('maintainer');
-    expect(api.requests.at(-1)!.body).toEqual({ role: 'maintainer' });
+    api.requests.length = 0;
+    const refused = await team('add', { username: 'bob', teamRole: 'maintainer' });
+    expect(refused.error?.message).toMatch(/already a member of .*role member, not maintainer/);
+    expect(refused.error?.description).toMatch(/change the role in GitHub/);
+    expect(access.teams.get(TEAM)!.get('bob')!.role).toBe('member');
+    expect(api.requests.some((r) => r.method === 'PUT')).toBe(false);
   });
 
   it('reports pending for a user outside the organization', async () => {
@@ -212,12 +216,17 @@ describe('Repository collaborator', () => {
     expect(api.requests.some((r) => r.method === 'PUT')).toBe(false);
   });
 
-  it('maps push and pull to GitHub’s write and read, and changes an existing permission', async () => {
+  it('maps push and pull to GitHub’s write and read, and never changes an existing collaborator’s permission', async () => {
     expect(await only(repo('add', { username: 'bob', permission: 'push' }))).toMatchObject({ permission: 'push', changed: false });
-    expect(await only(repo('add', { username: 'bob', permission: 'admin' }))).toMatchObject({ permission: 'admin', changed: true });
-    // Never a downgrade: someone with admin who is asked to get pull keeps admin, and the answer says so.
-    expect(await only(repo('add', { username: 'bob', permission: 'pull' }))).toMatchObject({ permission: 'admin', changed: false, alreadyHad: true });
-    expect(access.collaborators.get('bob')).toBe('admin');
+    // Never a raise: a direct collaborator with push asked for admin is refused, and nothing is sent.
+    api.requests.length = 0;
+    const refused = await repo('add', { username: 'bob', permission: 'admin' });
+    expect(refused.error?.message).toMatch(/already a collaborator on .*permission push, not admin/);
+    expect(refused.error?.description).toMatch(/change the permission in GitHub/);
+    expect(access.collaborators.get('bob')).toBe('write');
+    expect(api.requests.some((r) => r.method === 'PUT')).toBe(false);
+    // Never a downgrade either: someone with push who is asked to get pull keeps push, and the answer says so.
+    expect(await only(repo('add', { username: 'bob', permission: 'pull' }))).toMatchObject({ permission: 'push', changed: false, alreadyHad: true });
   });
 
   it('invites an outside collaborator: pending, with the invitation, and idempotent while it is open', async () => {
@@ -443,10 +452,10 @@ describe('Access is never downgraded', () => {
     expect(access.orgInvitations.map((i) => i.role)).toEqual(['direct_member', 'direct_member']);
   });
 
-  it('a higher invited repository permission is raised, a lower one is kept', async () => {
+  it('a higher invited repository permission is refused, a lower one is kept', async () => {
     await repo('add', { username: 'outsider', permission: 'triage' });
     expect(await only(repo('add', { username: 'outsider', permission: 'pull' }))).toMatchObject({ permission: 'triage', state: 'pending', changed: false, alreadyHad: false });
-    expect(await only(repo('add', { username: 'outsider', permission: 'admin' }))).toMatchObject({ permission: 'admin', state: 'pending', changed: true });
+    expect((await repo('add', { username: 'outsider', permission: 'admin' })).error?.message).toMatch(/invited to .* with the permission triage, not admin/);
   });
 
   it('the base permission already covers a pull request for an organization member', async () => {

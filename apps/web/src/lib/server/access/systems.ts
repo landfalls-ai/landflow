@@ -244,3 +244,6 @@ export function resultOf(system: AccessSystem, op: Operation, output: Record<str
   const state = output.state === 'pending' || output.state === 'none' ? output.state : output.state === 'active' ? 'active' : op === 'remove' ? 'none' : 'active';
   return { changed, state, alreadyHad: op === 'add' && alreadyHad };
 }
+
+/** `system|target` without the role or permission (the same team asked at two roles is one target): one live grant per target and account. */
+export const targetKeyOf = (system: AccessSystem, config: Record<string, string>): string => `${system}|${targetOf(system, config).key}`.toLowerCase();

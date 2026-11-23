@@ -257,6 +257,7 @@ async function settle(
       edited: approved && text !== original,
       text,
       originalText: original,
+      title,
       ...(comment && { comment }),
       ...(choice !== undefined && { choice }),
       ...(by && { by }),

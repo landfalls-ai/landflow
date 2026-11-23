@@ -12,6 +12,10 @@ export interface RecordedStep {
   by?: string;
   comment?: string;
   choice?: string;
+  /** The node that recorded it, and the question it asked (the server compares both with what it built). */
+  nodeId?: string;
+  title?: string;
+  originalText?: string;
 }
 
 export interface RecordedRun {
@@ -29,9 +33,12 @@ export async function recordedDecisions(executionId: string, stepNames: string[]
     const outputs = node && record.runData[node.id]?.at(-1)?.outputs;
     const item = outputs?.[0]?.[0] ?? outputs?.[1]?.[0];
     if (!item) return undefined;
-    const json = item.json as { approved?: unknown; by?: unknown; comment?: unknown; choice?: unknown };
+    const json = item.json as { approved?: unknown; by?: unknown; comment?: unknown; choice?: unknown; title?: unknown; originalText?: unknown };
     return {
       name,
+      nodeId: node?.id,
+      ...(typeof json.title === 'string' && { title: json.title }),
+      ...(typeof json.originalText === 'string' && { originalText: json.originalText }),
       approved: Boolean(outputs?.[0]?.length) && json.approved === true,
       ...(typeof json.by === 'string' && { by: json.by }),
       ...(typeof json.comment === 'string' && { comment: json.comment }),

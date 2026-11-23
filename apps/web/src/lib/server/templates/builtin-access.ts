@@ -46,8 +46,8 @@ export function accessTemplates(h: Helpers): TemplateDetail[] {
       nodes: [
         node('request', 'Access Request', 'accessRequestTrigger', [0, 0]),
         node('ask', ASK_NODE, 'confirmDraft', [260, 0], {
-          title: 'Give {{ $json.requester.name }} {{ $json.entry.name }} for {{ $json.durationText }}?',
-          draft: '{{ $json.summary }}',
+          title: '{{ $json.askTitle }}',
+          draft: '{{ $json.askText }}',
           channel: 'chat',
           emails: '{{ $json.approvers }}',
           approvers: '{{ $json.approvers }}',

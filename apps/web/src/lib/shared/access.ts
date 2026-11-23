@@ -68,6 +68,8 @@ export interface AccessRequestView {
   system: AccessSystem;
   requester: { id: string; name: string };
   account?: string;
+  /** A GitHub username is typed by the requester and not checked against their GitHub sign-in; a Google account is the requester's own Landflow email. */
+  accountVerified?: boolean;
   durationMinutes: number | null;
   reason: string;
   channel: 'form' | 'chat';
@@ -118,6 +120,9 @@ export interface AccessSetup {
   projectId?: string;
   /** The host can send email (the page is the only notice without it). */
   mail: boolean;
+  /** The installed flows are what decides who gets access: only an instance admin edits, publishes, unpublishes or deletes them. */
+  flowsAdminOnly: boolean;
+  lockedWorkflowIds: string[];
 }
 
 export const ACCESS_LIMITS = {

@@ -50,7 +50,22 @@ async function pending(entryId = team.id, user = mia, minutes: number | null = 6
   const request = await createRequest(user, { entryId, durationMinutes: minutes, reason: 'Fixing the build', account: login });
   return { id: request.id, executionId: request.executionId!, login };
 }
-const says = (partial: Record<string, unknown> | undefined, workflowId = installed()) => (): unknown => ({ workflowId, steps: partial === undefined ? [undefined] : [{ name: STEP, ...partial }] });
+/** The question the server built for the run's request (what an honest Ask a Person records), so a forged answer is the only thing wrong. */
+const questionOf = (executionId: string) => JSON.parse(database().get<{ question: string }>('SELECT question FROM access_requests WHERE execution_id = ?', executionId)!.question) as { title: string; text: string; nodes: string[] };
+const says = (partial: Record<string, unknown> | undefined, workflowId = installed()) => (executionId: string): unknown => {
+  const q = questionOf(executionId);
+  return { workflowId, steps: partial === undefined ? [undefined] : [{ name: STEP, nodeId: q.nodes[0], title: q.title, originalText: q.text, ...partial }] };
+};
+/** Make the request's entry a two-step one (the second step is Lee Lead), as the data allows. */
+function twoSteps(requestId: string) {
+  const row = w.requestRow(requestId)!;
+  const snapshot = JSON.parse(row.entry_snapshot);
+  snapshot.steps.push({ name: 'Second', approvers: { userIds: [lead.id] }, approvalsRequired: 1 });
+  const question = JSON.parse(row.question!);
+  question.nodes.push('node_second');
+  database().upsert('access_requests', { ...row, entry_snapshot: JSON.stringify(snapshot), question: JSON.stringify(question) } as never);
+  return question as { title: string; text: string; nodes: string[] };
+}
 const teamHas = (login: string) => Object.hasOwn(fake.members('teams', 'acme/platform'), login);
 const status = (id: string) => w.requestRow(id)!.status;
 const note = (id: string) => w.requestRow(id)!.note;
@@ -118,7 +133,7 @@ describe('an approval that is not believed grants nothing', () => {
     await refuseWith(says({ approved: true, by: 'mia@landflow.test' }), /own request/);
   });
   it('the decider is not an approver of the entry', async () => {
-    await refuseWith(says({ approved: true, by: 'ola@landflow.test' }), /not an approver of this entry/);
+    await refuseWith(says({ approved: true, by: 'ola@landflow.test' }), /not an approver of this request/);
   });
   it('the decider is unknown, Slack, a timeout or nobody', async () => {
     for (const by of ['nobody@landflow.test', 'slack:U123', 'timeout', 'unknown', undefined]) {
@@ -150,7 +165,8 @@ describe('an approval that is not believed grants nothing', () => {
   });
   it('two steps are listed and only one answered: waiting for step 2', async () => {
     const a = await pending(team.id, mia);
-    record.next = () => ({ workflowId: installed(), steps: [{ name: STEP, approved: true, by: 'ann@landflow.test' }, undefined] });
+    const q = twoSteps(a.id);
+    record.next = () => ({ workflowId: installed(), steps: [{ name: STEP, nodeId: q.nodes[0], title: q.title, originalText: q.text, approved: true, by: 'ann@landflow.test' }, undefined] });
     const done = await applyDecision(a.id, a.executionId, 'approved', { steps: [STEP, 'Second approver'] });
     expect(done).toMatchObject({ status: 'failed' });
     expect(note(a.id)).toMatch(/waiting for step 2/);
@@ -158,9 +174,10 @@ describe('an approval that is not believed grants nothing', () => {
   });
   it('a later step is decided by someone else, not the first step’s approver', async () => {
     const a = await pending(team.id, mia);
-    record.next = () => ({ workflowId: installed(), steps: [{ name: STEP, approved: true, by: 'ann@landflow.test' }, { name: 'Second', approved: true, by: 'ann@landflow.test' }] });
+    const q = twoSteps(a.id);
+    record.next = () => ({ workflowId: installed(), steps: [{ name: STEP, nodeId: q.nodes[0], title: q.title, originalText: q.text, approved: true, by: 'ann@landflow.test' }, { name: 'Second', nodeId: q.nodes[1], originalText: q.text, approved: true, by: 'ann@landflow.test' }] });
     expect(await applyDecision(a.id, a.executionId, 'approved', { steps: [STEP, 'Second'] })).toMatchObject({ status: 'failed' });
-    expect(note(a.id)).toMatch(/not an approver of this entry/);
+    expect(note(a.id)).toMatch(/not an approver of this request/);
   });
   it('a settled request cannot be applied again', async () => {
     const a = await pending();

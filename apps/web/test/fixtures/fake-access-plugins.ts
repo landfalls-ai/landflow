@@ -19,13 +19,22 @@ export const fake = {
   calls: [] as Array<{ type: string; mode: string; operation: string; parameters: Record<string, unknown>; credential: boolean }>,
   /** Fail the next call with this message (`{{token}}` becomes the credential's token, to prove it is scrubbed). */
   failNext: undefined as string | undefined,
+  /** With `failNext`: fail only this operation (`add`, `remove`, `get`…), not the first call. */
+  failOperation: undefined as string | undefined,
   /** Fail every call (the system is down). */
   down: false,
+  /** Make the next write succeed at the system and then fail as a timeout would (the answer never came back). */
+  timeoutAfterWrite: false,
+  /** Hold every GitHub write until this resolves (a slow system), to try what happens meanwhile. */
+  hold: undefined as Promise<void> | undefined,
   reset() {
     for (const map of [this.teams, this.orgs, this.repos, this.projects, this.groups]) map.clear();
     this.calls.length = 0;
     this.failNext = undefined;
+    this.failOperation = undefined;
     this.down = false;
+    this.timeoutAfterWrite = false;
+    this.hold = undefined;
   },
   seedTeam(org: string, slug: string, members: Record<string, Role> = {}) {
     this.teams.set(`${org}/${slug}`, new Map(Object.entries(members)));
@@ -63,7 +72,8 @@ function gate(ctx: IExecuteContext, credential: string, token: string | undefine
   if (write && (ctx.getMode() === 'tool' || ctx.getMode() === 'mcp')) throw new NodeOperationError('Granting or removing access is not allowed as an agent tool');
   if (!token) throw new NodeOperationError(`No ${credential} credential`);
   if (fake.down) throw new NodeOperationError('The system is not reachable right now');
-  if (fake.failNext) {
+  if (fake.failNext && (!fake.failOperation || fake.failOperation === operation)) {
+    fake.failOperation = undefined;
     const message = fake.failNext.replaceAll('{{token}}', token);
     fake.failNext = undefined;
     throw new NodeOperationError(message);
@@ -107,12 +117,19 @@ const githubAccess = defineNode({
     const operation = ctx.getNodeParameter<string>('operation', 0);
     const user = String(ctx.getNodeParameter('username', 0)).toLowerCase();
     const token = ctx.getCredentials<{ accessToken?: string }>('githubApi').accessToken;
+    if (fake.hold && (operation === 'add' || operation === 'invite' || operation === 'remove')) await fake.hold;
     gate(ctx, 'githubApi', token, operation === 'add' || operation === 'remove' || operation === 'invite', operation);
     const answer = (members: Map<string, Role>, rank: Record<string, number>, asked: string, label: string) => {
       const had = members.get(user);
       if (operation === 'add' || operation === 'invite') {
         if (had && (rank[had] ?? 0) >= (rank[asked] ?? 0)) return item({ user, target: label, role: had, state: 'active', changed: false, alreadyHad: true });
+        // The real node never raises what a member or collaborator already has (change it in GitHub).
+        if (had) throw new NodeOperationError(`${user} is already in ${label} with the role ${had}, not ${asked}`, { description: 'GitHub Access does not change roles of existing members: change the role in GitHub first.' });
         members.set(user, asked);
+        if (fake.timeoutAfterWrite) {
+          fake.timeoutAfterWrite = false;
+          throw new NodeOperationError('The request to GitHub timed out');
+        }
         return item({ user, target: label, role: asked, state: 'active', changed: true });
       }
       if (operation === 'remove') return item({ user, target: label, state: 'none', changed: members.delete(user) });

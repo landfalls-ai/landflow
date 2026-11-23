@@ -16,7 +16,7 @@ This page is the core: data, rules, nodes, templates, the removal service and th
 
 An admin posts `POST /api/access/setup` (the Access page's button). It installs the `access-requests` and `access-requests-chat` templates into a project (the admin's home project by default), publishes them and writes the settings key `access_requests`, which names the flows. A second call answers the existing setup. Until then a request answers `409 An admin must set up access requests first`.
 
-Only the flow named by the setting handles requests, and only while it is published with its trigger enabled. A copy of the template made from the gallery does not start for a request, so what an approver is shown is what the admin put there. Every credential an entry uses must be usable by the project the flows live in; the catalog refuses one that is not.
+**Only an instance admin edits, publishes, unpublishes, restores or deletes the two installed flows** (an editor of their project can do none of it; the setup data says so: `flowsAdminOnly` and `lockedWorkflowIds`). Only the flow named by the setting handles requests, and only while it is published with its trigger enabled. A copy of the template made from the gallery does not start for a request, so what an approver is shown is what the admin put there. Every credential an entry uses must be usable by the project the flows live in; the catalog refuses one that is not.
 
 When the host has SMTP (`LANDFLOW_SMTP_HOST`) at setup, Ask a Person asks by **email** (the approver gets signed single-use links); otherwise it asks in **chat**, in Needs you. To tell a Slack channel, add a Slack node after **Grant** in the installed flow.
 
@@ -28,7 +28,7 @@ When the host has SMTP (`LANDFLOW_SMTP_HOST`) at setup, Ask a Person asks by **e
 | An entry's owners | change the name, description, durations, approvers, owners, who may ask and whether it is on. The last owner stays. A stale `version` answers 409 |
 | Instance admins | everything, and the only ones who create and delete entries, and change what an entry reaches: **system, target and credential** |
 
-Durations are whole minutes from 1 to 129,600 (90 days) or unlimited, at most 8 per entry. An entry with a live grant or a waiting request is **disabled, not deleted**. Every change is audited (`access.entry.create`, `.update`, `.delete`) with what it was and what it became; no credential value is ever in a request, a grant, an audit row or an email.
+Durations are whole minutes from 1 to 129,600 (90 days) or unlimited, at most 8 per entry. An owner may shorten or remove durations; offering unlimited or a longer time than the entry ever did is an admin's. An entry with a live grant or a waiting request is **disabled, not deleted**. Every change is audited (`access.entry.create`, `.update`, `.delete`) with what it was and what it became; no credential value is ever in a request, a grant, an audit row or an email.
 
 Systems and what each does (the operation names live in `lib/server/access/systems.ts`):
 
@@ -45,7 +45,7 @@ Systems and what each does (the operation names live in `lib/server/access/syste
 
 `POST /api/access/requests { entryId, durationMinutes, reason, account? }`. The requester is the **session user**, never a field of the body. The request is refused when the duration is not one the entry offers (400), the reason is outside 3 to 500 characters (400), the entry is not one the person may see (404), a request for the same entry is already open or they already hold it (409 with `existingId`), the flows are not set up (409), or nobody but the requester could approve it (409 `Nobody but you can approve this. Ask an admin to add an approver.`).
 
-**Accounts.** A GitHub entry needs the requester's login: typed once, kept per person in `access_accounts`, shown to the approver beside their name and changed only by them (`access.account.set`). Google access always goes to the requester's own Landflow email, whatever the body says. A manual entry needs none.
+**Accounts.** A GitHub entry needs the requester's login: typed once, kept per person in `access_accounts`, shown to the approver beside their name marked *unverified* (it is typed, not checked against GitHub sign-in) and changed only by them (`access.account.set`). One login belongs to one person, whatever its case. One live grant per target and account across entries. Google access always goes to the requester's own Landflow email, whatever the body says. A manual entry needs none.
 
 **Who approves.** The entry's approvers other than the requester; when none is left, the active instance admins other than the requester. **Nobody approves their own request**, at any step: the approvers list never holds the requester, the decision route refuses them (403) and Apply Access Decision checks again.
 
@@ -56,7 +56,9 @@ Systems and what each does (the operation names live in `lib/server/access/syste
 3. **Ask the approver** waits. It has *Who May Answer* = the approvers, *Answer Choices* = the durations, *People Only* on, *Allow Editing* off, and a 3-day timeout that rejects. The approver sees it in Needs you (or by email) and approves with one of the choices, or rejects with a comment.
 4. **Grant** (Apply Access Decision) reads the decision from the **server's own record of the run**, never from the item it received. A grant happens only if all of this holds:
    - the request is `pending`, was started by this run, and the run is the installed flow;
-   - the decision was recorded by an active person who is an approver of that step now, is not the requester, and is not Slack, a timeout or unknown;
+   - the answer is to the question the server built (`askTitle` and `askText`, stored with the request: who, what, target, duration, reason) and was recorded by the Ask a Person node the request was filed with, and the flow lists as many steps as the entry has;
+   - the decision was recorded by an active person who is one of the approvers **stored when the request was filed** (the fallback admins of that day included, not an admin who came later), is not the requester, and is not Slack, a timeout or unknown;
+   - no other live grant already gives that account this target (through another entry);
    - the duration is one the entry offers and not longer than asked.
    Anything else records the request `failed` with the reason, grants nothing and tells the requester. In the editor, with the trigger's example item, the node only reports a dry run.
 5. Approved: the request becomes `approved`, the grant is made, the requester is emailed. Rejected: `denied` with the comment. A timeout: `expired`.
@@ -67,12 +69,12 @@ Approvers who are not members of the flow's project decide through `POST /api/ac
 
 ## Grants and removal
 
-A grant of an automatic system is made at once through the plugin node, in `trigger` mode (never `tool` or `mcp`, which the GitHub node refuses for writes). If the person **already had** the access (the plugin says `alreadyHad`), it is recorded and never taken back at the end. If the plugin fails, the grant is `failed` with the plugin's message (credential values scrubbed) and the requester is emailed; an owner, approver or admin presses **Retry**.
+A grant of an automatic system is made at once through the plugin node, in `trigger` mode (never `tool` or `mcp`, which the GitHub node refuses for writes). **Before the first add** the system is checked once and the answer is stored (`already_had`): a person who already had the access is never taken back at the end, and no retry or takeover works it out again (a retry's add that says "already a member" is only the first add's result). If the plugin fails, the grant is `failed` with the plugin's message (credential values scrubbed) and the requester is emailed; an owner, approver or admin presses **Retry** (only a `failed` grant is retried, one at a time). A revoke that arrives while the add is in flight is remembered and carried out the moment the access is in place. GitHub never raises what a member or collaborator already has: asking for a higher team role or repository permission fails with that reason (change it in GitHub).
 
 The `access grants` **leader service** runs every minute and every hour:
 
 - **Minute pass.** An `active` grant whose `until` has passed is claimed (a conditional update to `removing` with a 10-minute lease, so two processes never both remove it), removed through the plugin, and becomes `expired`. A failed removal is `revoke_failed` and is tried again after 1 minute, then 2, 4 and so on, never more than an hour apart. At most 100 grants a pass. Unlimited grants never end by themselves.
-- **Hourly reconcile.** A `removing` row whose lease ran out (a process stopped) is taken again. Each live automatic grant that can be checked is checked: a person removed outside Landflow makes it `drift` (audited, **never added back**). A grant still in place 24 hours after its end raises `access.grant.revoke_overdue` once.
+- **Hourly reconcile.** A `removing` row whose lease ran out (a process stopped) is taken again, and so is a `pending` automatic grant whose lease ran out (it keeps the recorded `already_had`). Each live automatic grant that can be checked is checked: a person removed outside Landflow makes it `drift` (audited, **never added back**); a drifted grant still ends at its end (checked then, removed if the person is back, otherwise just ended). Every write is a conditional update of the columns it changes, never a whole stale row. A grant still in place 24 hours after its end raises `access.grant.revoke_overdue` once.
 
 **Revoke now** (`POST /api/access/grants/:id/revoke`) is the holder giving it back, or an owner, approver or admin taking it back; a stranger gets 404. **Manual entries.** An approved manual request makes a `pending` grant and emails the approvers "please grant by hand" with the entry's instructions; **Done** (never the holder) starts it from now. At its end, or on a revoke, the grant becomes `removing` and the approvers are asked to remove it by hand; **Done** ends it.
 
@@ -85,6 +87,7 @@ Never blocking: without SMTP the Access page is the only notice. To the requeste
 The chat flow's agent has one tool, **File Access Request** (`core.fileAccessRequest`), with one operation: file. The server, not the model, enforces the confirmation:
 
 - called **without** `confirmToken`, it validates and files nothing; it answers a summary and a token (HMAC over the entry, duration, reason, account, person and this run, valid 15 minutes);
+- it files only from a run the Access page's chat started for the installed chat flow (any other chat run files nothing), and the token is **spent** when it files;
 - called **with** that token, it files only from a **later run of the same person** (a later chat turn) with the same fields. The same run, another person, an old token or changed fields are refused;
 - the requester is the chat run's `startedBy`; a run nobody signed in for (hosted chat) answers `Sign in on the Access page to ask for access.`;
 - it can't approve, grant or name who is asking.

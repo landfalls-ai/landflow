@@ -18,11 +18,11 @@ import { AccessError } from './errors';
 import { mailRequester } from './notify';
 import { approversFor, auditActorOf, canAskFor, canCancelRequest, canSeeEntry, canSeeRequest, type EntryData } from './rules';
 import { accessSettings, accountOf, claimRequest, insertRequest, parseJson, patchRequest, requestRow, saveAccount, type RequestRow } from './store';
-import { validateGithubLogin } from './systems';
-import { accessFlow, fireAccessRequest, type AccessRequestItem } from './trigger';
+import { targetKeyOf, validateGithubLogin } from './systems';
+import { accessFlow, fireAccessRequest, stepNodesOf, type AccessRequestItem } from './trigger';
 import { requestView } from './views';
 
-export const LIVE_GRANT = ['pending', 'active', 'removing', 'revoke_failed', 'drift'] as const;
+export const LIVE_GRANT = ['pending', 'active', 'removing', 'revoke_failed', 'drift', 'failed'] as const;
 
 export interface RequestInput {
   entryId: string;
@@ -53,9 +53,22 @@ function accountFor(actor: Actor, entry: EntryData, given: string | undefined): 
   return login;
 }
 
-export function summaryText(entry: EntryData, requesterName: string, minutes: number | null, reason: string, account: string | undefined): string {
-  return [`${requesterName} asks for ${entry.name}`, `What: ${entry.target.label}`, `For: ${durationText(minutes)}`, ...(account ? [`Account: ${account}`] : []), `Why: ${reason}`].join('\n');
+/** The live grant (any entry) on this target for this account, if one exists. */
+export function liveGrantOnTarget(system: EntryData['system'], config: Record<string, string>, account: string): string | undefined {
+  return database().get<{ id: string }>(`SELECT id FROM access_grants WHERE target_key = ? AND lower(account) = lower(?) AND status IN (${LIVE_GRANT.map(() => '?').join(', ')})`, targetKeyOf(system, config), account, ...LIVE_GRANT)?.id;
 }
+
+export function summaryText(entry: EntryData, requesterName: string, minutes: number | null, reason: string, account: string | undefined): string {
+  // A GitHub username is typed by the requester; Google access always goes to their own Landflow email.
+  const accountLine = account ? [`Account: ${account}${entry.system === 'google-group' ? '' : ' (unverified: typed by the requester)'}`] : [];
+  return [`${requesterName} asks for ${entry.name}`, `What: ${entry.target.label}`, `For: ${durationText(minutes)}`, ...accountLine, `Why: ${reason}`].join('\n');
+}
+
+/** The question Ask a Person puts to the approvers, built here and nowhere else: Apply Access Decision compares the recorded one with it. */
+export const questionFor = (entry: EntryData, requesterName: string, minutes: number | null, reason: string, account: string | undefined) => ({
+  title: `Give ${requesterName} ${entry.name} for ${durationText(minutes)}?`.trim(),
+  text: summaryText(entry, requesterName, minutes, reason, account),
+});
 
 export async function createRequest(actor: Actor, input: RequestInput): Promise<AccessRequestView> {
   const settings = accessSettings();
@@ -77,7 +90,13 @@ export async function createRequest(actor: Actor, input: RequestInput): Promise<
 
   const approverIds = approversFor(entry, actor.id);
   if (!approverIds.length) throw new AccessError('Nobody but you can approve this. Ask an admin to add an approver.', 409);
+  const stepNodes = stepNodesOf(flow.workflow);
+  if (!stepNodes || stepNodes.length !== entry.steps.length) throw new AccessError('The installed access flow is not the one set-up made: an admin must set access requests up again', 409);
   const account = accountFor(actor, entry, input.account);
+  if (account && entry.system !== 'manual') {
+    const taken = liveGrantOnTarget(entry.system, entry.target.config, account);
+    if (taken) throw new AccessError('That account already has this access, through another entry', 409, { existingId: taken });
+  }
   const requester = getUser(actor.id);
   const requesterName = requester?.name || requester?.email || actor.id;
   const now = new Date().toISOString();
@@ -101,10 +120,18 @@ export async function createRequest(actor: Actor, input: RequestInput): Promise<
     decisions: null,
     approved_minutes: null,
     note: null,
+    question: JSON.stringify({ ...questionFor(entry, requesterName, minutes, reason, account), nodes: stepNodes }),
     created_at: now,
     updated_at: now,
   };
-  insertRequest(row);
+  try {
+    insertRequest(row);
+  } catch (error) {
+    // Two asks at once: the table lets one pending request through (`access_requests_open`).
+    const existing = database().get<{ id: string }>(`SELECT id FROM access_requests WHERE entry_id = ? AND requester_id = ? AND status = 'pending'`, entry.id, actor.id);
+    if (existing) throw new AccessError('You already asked for this; wait for the answer or cancel it', 409, { existingId: existing.id });
+    throw error;
+  }
   recordAudit({ action: 'access.request.create', actor: auditActorOf(actor), target: { type: 'access_request', id, name: entry.name }, project: null, summary: `Asked for ${entry.name} for ${durationText(minutes)}`, details: { from: null, to: JSON.stringify({ entry: entry.name, duration: durationText(minutes), channel: row.channel }) } });
 
   const item: AccessRequestItem = {
@@ -119,6 +146,10 @@ export async function createRequest(actor: Actor, input: RequestInput): Promise<
     approvers: approverIds.map((approver) => getUser(approver)?.email).filter(Boolean).join(','),
     durationChoices: shorterDurations(entry.durations, minutes).map((m) => `${m === null ? 'unlimited' : m}: ${durationText(m)}`).join('\n'),
     summary: summaryText(entry, requesterName, minutes, reason, account),
+    ...(() => {
+      const question = questionFor(entry, requesterName, minutes, reason, account);
+      return { askTitle: question.title, askText: question.text };
+    })(),
   };
   try {
     const run = await fireAccessRequest(flow, item, executionId);

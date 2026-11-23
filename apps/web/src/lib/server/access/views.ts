@@ -56,7 +56,7 @@ export function requestView(actor: Actor, row: RequestRow): AccessRequestView {
     entryName: snapshot?.name ?? 'Deleted entry',
     system: snapshot?.system ?? 'manual',
     requester: { id: row.requester_id, name: nameOf(row.requester_id) },
-    ...(row.account && { account: row.account }),
+    ...(row.account && { account: row.account, accountVerified: snapshot?.system === 'google-group' }),
     durationMinutes: row.duration_minutes === null ? null : Number(row.duration_minutes),
     reason: row.reason,
     channel: row.channel === 'chat' ? 'chat' : 'form',

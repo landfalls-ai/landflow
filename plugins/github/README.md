@@ -140,11 +140,12 @@ a different endpoint. Logins must match GitHub's login rule (letters, digits, si
 organizations, slugs, owners and repositories have no slash or whitespace and are not `.` or `..`. A bad value fails the
 item before any call.
 
-**Never a downgrade.** Add compares roles and keeps what the person has when it is as high or higher: a team maintainer
+**Never a downgrade, never a raise.** Add compares roles and keeps what the person has when it is as high or higher: a team maintainer
 (or an organization owner, who is one everywhere) asked to be a member, a repository admin asked for pull, someone whose
 organization base permission already covers the request. The result then has `changed: false`, the existing role or
-permission, and `alreadyHad: true` when it is active, so a flow knows not to remove it when a timed grant ends. Invite
-refuses (an error, not a grant) when the person is already a member or invitee with a lower role than the one asked.
+permission, and `alreadyHad: true` when it is active, so a flow knows not to remove it when a timed grant ends. Invite,
+team Add and repository Add refuse (an error, not a grant) when the person is already a member, collaborator or invitee with a lower
+role or permission than the one asked: change it in GitHub first.
 Repository Remove removes the direct collaborator or invitation only and reports the permission that is left through a team
 or the base permission. Logins are compared case-insensitively. Project Add cannot compare: GitHub offers no read.
 

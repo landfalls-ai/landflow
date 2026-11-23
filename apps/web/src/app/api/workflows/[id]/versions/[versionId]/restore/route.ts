@@ -6,6 +6,8 @@
  * the restored version, not to the person restoring it: a restore changes no content
  * of its own (lib/server/versions.ts, versionAuthor).
  */
+import { guardAccessFlow } from '@/lib/server/access/guard';
+import { currentActorId } from '@/lib/server/auth/context';
 import { error, handler, json } from '@/lib/server/http';
 import { store } from '@/lib/server/store';
 import { applyVersion, getVersion, listVersions, markRestored, versionAuthor } from '@/lib/server/versions';
@@ -15,6 +17,7 @@ type Ctx = { params: Promise<{ id: string; versionId: string }> };
 
 export const POST = handler(async (_request: Request, { params }: Ctx) => {
   const { id, versionId } = await params;
+  guardAccessFlow(id, currentActorId());
   const current = store.getWorkflow(id);
   if (!current) return error('Workflow not found', 404);
   const version = getVersion(id, versionId);

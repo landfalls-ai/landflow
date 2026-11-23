@@ -36,7 +36,7 @@ export interface EntryData {
   updatedAt: string;
 }
 
-const active = (userId: string) => {
+export const isActiveUser = (userId: string) => {
   const user = getUser(userId);
   return Boolean(user && !user.disabledAt);
 };
@@ -71,7 +71,7 @@ export function canAskFor(actor: Actor, entry: EntryData): boolean {
  * the active instance admins other than the requester (Landbright's approver fallback). Empty: nobody can approve it.
  */
 export function approversFor(entry: Pick<EntryData, 'steps'>, requesterId: string, step = 0): string[] {
-  const named = stepApproverIds(entry, step).filter((id) => id !== requesterId && active(id));
+  const named = stepApproverIds(entry, step).filter((id) => id !== requesterId && isActiveUser(id));
   if (named.length) return [...new Set(named)];
   return listUsers().filter((user) => user.id !== requesterId && !user.disabledAt && (user.role === 'owner' || user.role === 'admin')).map((user) => user.id);
 }

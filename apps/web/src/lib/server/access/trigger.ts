@@ -36,6 +36,9 @@ export interface AccessRequestItem {
   durationChoices: string;
   /** The text the approver reads. */
   summary: string;
+  /** The question the server built for Ask a Person: Apply believes only an answer to exactly this title and text. */
+  askTitle: string;
+  askText: string;
 }
 
 const state = () => singleton('access-trigger', () => ({ armed: { at: 0, list: [] as ArmedAccess[] } }));
@@ -62,6 +65,17 @@ export async function fireAccessRequest(entry: ArmedAccess, item: AccessRequestI
   // The run is the flow's, not the requester's: it must not run as the person who asked.
   const record = await outsideRequest(() => runWorkflow({ workflow: entry.workflow, mode: 'trigger', startNodeId: entry.node.id, triggerItems, executionId }));
   return { workflowId: entry.workflow.id, executionId: record.executionId, ...(record.status === 'error' && { error: record.error?.message ?? 'The access flow failed' }) };
+}
+
+/**
+ * The Ask a Person nodes the flow's Approved Apply node names as its steps, in order (their ids), or undefined when the flow has none or
+ * names one it does not have. A request stores these: Apply believes only answers recorded by exactly these nodes.
+ */
+export function stepNodesOf(workflow: Workflow): string[] | undefined {
+  const apply = workflow.nodes.find((n) => n.type === 'core.accessDecision' && !n.disabled && String(n.parameters?.decision ?? 'approved') !== 'rejected');
+  const names = String(apply?.parameters?.steps ?? 'Ask the approver').split(/\r?\n/).map((name) => name.trim()).filter(Boolean);
+  const ids = names.map((name) => workflow.nodes.find((n) => n.type === 'core.confirmDraft' && !n.disabled && n.name === name)?.id);
+  return ids.length && ids.every(Boolean) ? (ids as string[]) : undefined;
 }
 
 export function resetAccessTrigger() {

@@ -14,6 +14,7 @@ import type { Workflow } from '../../shared/types';
 import type { AccessSetup } from '../../shared/access';
 import { AccessError } from './errors';
 import { auditActorOf } from './rules';
+import { lockedAccessFlows } from './guard';
 import { accessSettings, saveAccessSettings } from './store';
 import { accessFlow, resetAccessTrigger } from './trigger';
 
@@ -31,6 +32,9 @@ export function accessSetup(): AccessSetup {
     ...(settings.chatWorkflowId && store.getWorkflow(settings.chatWorkflowId) && { chatWorkflowId: settings.chatWorkflowId }),
     ...(settings.projectId && { projectId: settings.projectId }),
     mail: mailConfigured(),
+    // Said on the setup screen: the flows are what decides who gets access.
+    flowsAdminOnly: true,
+    lockedWorkflowIds: lockedAccessFlows(),
   };
 }
 

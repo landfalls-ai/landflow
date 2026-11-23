@@ -10,6 +10,7 @@
  */
 import { database, type Database } from '../db';
 import type { GrantStatus, RequestStatus } from '../../shared/access';
+import { AccessError } from './errors';
 
 export interface EntryRow {
   id: string;
@@ -46,6 +47,8 @@ export interface RequestRow {
   decisions: string | null;
   approved_minutes: number | null;
   note: string | null;
+  /** What the server asked the approver (`{ title, text, nodes }`): Apply believes only an answer to this question. */
+  question: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -73,6 +76,11 @@ export interface GrantRow {
   last_error: string | null;
   checked_at: string | null;
   overdue_noted: number;
+  /** A revoke that came while the access was being put in place: removed the moment it is (`given_back` or `revoked`). */
+  remove_reason: string | null;
+  remove_by: string | null;
+  /** `system|target` without the role: one live grant per target and account across entries. */
+  target_key: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -115,7 +123,12 @@ export const insertGrant = (row: GrantRow) => database().insertNew('access_grant
 // ---- accounts ---------------------------------------------------------------------------------------------
 
 export const accountOf = (userId: string, system: string): string | undefined => database().get<{ handle: string }>('SELECT handle FROM access_accounts WHERE user_id = ? AND system = ?', userId, system)?.handle;
-export const saveAccount = (userId: string, system: string, handle: string) => database().upsert('access_accounts', { user_id: userId, system, handle, updated_at: new Date().toISOString() });
+/** One login belongs to one person (whatever its case): the table says so too (`access_accounts_handle`). */
+export function saveAccount(userId: string, system: string, handle: string): void {
+  const other = database().get<{ user_id: string }>('SELECT user_id FROM access_accounts WHERE system = ? AND lower(handle) = lower(?) AND user_id <> ?', system, handle, userId);
+  if (other) throw new AccessError('That username is already linked to someone else', 409, { field: 'account' });
+  database().upsert('access_accounts', { user_id: userId, system, handle, updated_at: new Date().toISOString() });
+}
 
 // ---- claims -----------------------------------------------------------------------------------------------
 
@@ -132,7 +145,7 @@ async function adopt(handle: Database, table: ClaimTable, key: string, row: Row)
  * Move row `id` to `patch` when its `status` is one of `from`. `won` is false when it was not (then `row` is what it is now,
  * the winner's). `status` in `patch` is the move; `updated_at` is set here. `handle` is for tests (two processes' databases).
  */
-async function claimRow<T extends { id: string; status: string }>(table: ClaimTable, id: string, from: readonly string[], patch: Partial<T>, handle: Database): Promise<{ won: boolean; row: T | undefined }> {
+async function claimRow<T extends { id: string; status: string }>(table: ClaimTable, id: string, from: readonly string[], patch: Partial<T>, handle: Database, leaseFreeAt?: string): Promise<{ won: boolean; row: T | undefined }> {
   const changes = { ...patch, updated_at: new Date().toISOString() } as Record<string, string | number | null>;
   const columns = Object.keys(changes);
   if (columns.some((column) => !COLUMN.test(column) || column === 'id')) throw new Error('A claim names only plain columns');
@@ -142,6 +155,8 @@ async function claimRow<T extends { id: string; status: string }>(table: ClaimTa
       const row = read();
       if (!row) return { won: false, row: undefined };
       if (!from.includes(row.status)) return { won: false, row };
+      const leased = (row as unknown as { lease_until?: string | null }).lease_until;
+      if (leaseFreeAt && leased && leased > leaseFreeAt) return { won: false, row };
       const next = { ...row, ...changes } as T;
       handle.upsert(table, asRow(next));
       return { won: true, row: next };
@@ -152,7 +167,8 @@ async function claimRow<T extends { id: string; status: string }>(table: ClaimTa
   const set = columns.map((column, i) => `${column} = $${i + 1}`).join(', ');
   const values = columns.map((column) => changes[column]);
   const result = await handle.direct(async (client) => {
-    const updated = await client.query<T>(`UPDATE ${table} SET ${set} WHERE id = $${columns.length + 1} AND status = ANY($${columns.length + 2}) RETURNING *`, [...values, id, [...from]]);
+    const lease = leaseFreeAt ? ` AND (lease_until IS NULL OR lease_until <= $${columns.length + 3})` : '';
+    const updated = await client.query<T>(`UPDATE ${table} SET ${set} WHERE id = $${columns.length + 1} AND status = ANY($${columns.length + 2})${lease} RETURNING *`, [...values, id, [...from], ...(leaseFreeAt ? [leaseFreeAt] : [])]);
     if (updated.rows[0]) {
       const payload = handle.keyNotice(table, [id]);
       if (payload) await client.query('SELECT pg_notify($1, $2)', ['landflow_changes', payload]);
@@ -179,9 +195,10 @@ export function claimRequest(id: string, from: RequestStatus | readonly RequestS
  * Move a grant from one of `from` to the status in `patch`, once. A claim for work (removing, granting) passes `leaseMs`: the
  * row says who is working until then, so a process that stopped leaves a lease the hourly reconcile finds out.
  */
-export function claimGrant(id: string, from: GrantStatus | readonly GrantStatus[], patch: Partial<Omit<GrantRow, 'id'>> & { status: GrantStatus }, options: { leaseMs?: number; now?: number } = {}, handle: Database = database()) {
-  const lease = options.leaseMs ? { lease_until: new Date((options.now ?? Date.now()) + options.leaseMs).toISOString() } : {};
-  return claimRow<GrantRow>('access_grants', id, Array.isArray(from) ? from : [from], { ...patch, ...lease }, handle);
+export function claimGrant(id: string, from: GrantStatus | readonly GrantStatus[], patch: Partial<Omit<GrantRow, 'id'>> & { status: GrantStatus }, options: { leaseMs?: number; now?: number; /** Only when nobody holds an unexpired lease on it. */ leaseFree?: boolean } = {}, handle: Database = database()) {
+  const now = options.now ?? Date.now();
+  const lease = options.leaseMs ? { lease_until: new Date(now + options.leaseMs).toISOString() } : {};
+  return claimRow<GrantRow>('access_grants', id, Array.isArray(from) ? from : [from], { ...patch, ...lease }, handle, options.leaseFree ? new Date(now).toISOString() : undefined);
 }
 
 // ---- setup ------------------------------------------------------------------------------------------------

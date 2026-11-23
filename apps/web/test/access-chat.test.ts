@@ -16,7 +16,7 @@ const previousEnv = { ...process.env };
 Object.assign(process.env, ENV);
 
 const { makeWorld } = await import('./fixtures/access-world');
-const { fileAccessFromChat, signToken, verifyToken, parseDuration, runAccessChat, TOKEN_MINUTES } = await import('@/lib/server/access/chat');
+const { fileAccessFromChat, signToken, verifyToken, parseDuration, runAccessChat, markChatRun, TOKEN_MINUTES } = await import('@/lib/server/access/chat');
 const { fileAccessRequestNode } = await import('@/lib/server/nodes/access');
 const { runWorkflow } = await import('@/lib/server/runner');
 const { chatItem } = await import('@/lib/server/chat');
@@ -143,10 +143,13 @@ describe('the tool in a run', () => {
       ],
       connections: [{ id: 'c1', type: 'main', source: 'chat', target: 'file', sourceIndex: 0, targetIndex: 0 }],
     }) as unknown as Workflow;
-  const run = async (params: Record<string, unknown>, startedBy?: string, mode: 'chat' | 'manual' = 'chat') => {
+  const run = async (params: Record<string, unknown>, startedBy?: string, mode: 'chat' | 'manual' = 'chat', legit = true) => {
+    // As the Access page's chat starts it: the installed chat flow's id, and the run marked as its own.
+    saveAccessSettings({ ...accessSettings(), chatWorkflowId: 'wf_chat_tool' });
     const workflow = flow(params);
     const executionId = `ex_tool_${Math.random().toString(36).slice(2, 8)}`;
     const item = await chatItem({ chatInput: 'hi', sessionId: 's1', files: [] }, executionId);
+    if (legit) markChatRun(executionId);
     const record = await runWorkflow({ workflow, mode, startNodeId: 'chat', triggerItems: [item], executionId, ...(startedBy && { startedBy }) });
     return record.runData.file.at(-1)!.outputs[0]![0]!.json as Record<string, unknown>;
   };
@@ -158,6 +161,24 @@ describe('the tool in a run', () => {
   it('refuses a hosted chat nobody signed in for, and a run that is not a chat', async () => {
     expect(await run(base, undefined)).toMatchObject({ status: 'refused', message: expect.stringMatching(/Sign in on the Access page/) });
     expect(await run(base, mia.id, 'manual')).toMatchObject({ status: 'refused' });
+  });
+  it('refuses a chat run the Access page’s chat did not start, and one of another flow', async () => {
+    expect(await run(base, mia.id, 'chat', false)).toMatchObject({ status: 'refused', message: expect.stringMatching(/Sign in on the Access page/) });
+    saveAccessSettings({ ...accessSettings(), chatWorkflowId: 'wf_some_other_chat' });
+    const workflow = flow(base);
+    const executionId = 'ex_other_flow';
+    markChatRun(executionId);
+    const item = await chatItem({ chatInput: 'hi', sessionId: 's1', files: [] }, executionId);
+    const record = await runWorkflow({ workflow, mode: 'chat', startNodeId: 'chat', triggerItems: [item], executionId, startedBy: mia.id });
+    expect(record.runData.file.at(-1)!.outputs[0]![0]!.json).toMatchObject({ status: 'refused' });
+  });
+  it('spends the confirmation token on use', async () => {
+    const { confirmToken } = await fileAccessFromChat({ userId: mia.id, executionId: 'ex_s1', ...base });
+    const filed = await fileAccessFromChat({ userId: mia.id, executionId: 'ex_s2', ...base, confirmToken });
+    expect(filed.status).toBe('filed');
+    await cancelRequest(mia, filed.requestId!);
+    const again = await fileAccessFromChat({ userId: mia.id, executionId: 'ex_s3', ...base, confirmToken });
+    expect(again).toMatchObject({ status: 'refused', message: expect.stringMatching(/already used/) });
   });
 });
 
