@@ -1,0 +1,70 @@
+# The live check of the network runner (docs/network-runners.md, "Checking it on this machine"): two containers, a runner
+# and a private HTTP service, on an internal network with no published port. A throwaway project: bring it down with
+# `--rmi local -v` after the check. Local only; the image is built here and never pushed.
+#
+#   LANDFLOW_RUNNER_TOKEN=lf_run_… LANDFLOW_RUNNER_HOST=http://host.docker.internal:3190 \
+#     COMPOSE_BAKE=false docker compose -p landflow-runner-check -f deploy/compose.network-check.yml up -d --build
+#
+# - `inside` answers on 10.20.0.10 (network `office`, internal: no route out, no route in from the host): it echoes the
+#   request headers back (the check that a credential reached it) and never logs them.
+# - `private` shares the runner's network namespace and listens on 127.0.0.1:8080 there: nothing outside that container can
+#   reach it, not even from this machine (OrbStack routes the Mac to container addresses, `inside` included, so this one is
+#   the service the host provably cannot reach).
+# - `runner` is on `office` and on the default network (to reach the host); LANDFLOW_RUNNER_ALLOW lets it reach 10.20.0.0/16 only.
+
+name: landflow-runner-check
+
+services:
+  inside:
+    image: node:22.23.2-alpine3.24
+    command:
+      - node
+      - -e
+      - |
+        require('http').createServer((req, res) => {
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ inside: true, path: req.url, headers: req.headers }));
+        }).listen(80);
+    networks:
+      office:
+        ipv4_address: 10.20.0.10
+
+  runner:
+    build:
+      context: ..
+      dockerfile: deploy/docker/network-runner.Dockerfile
+    image: landflow-network-runner:runner-check
+    environment:
+      LANDFLOW_URL: ${LANDFLOW_RUNNER_HOST:-http://host.docker.internal:3190}
+      LANDFLOW_RUNNER_TOKEN: ${LANDFLOW_RUNNER_TOKEN:?register a runner in Settings → Networks and set its token}
+      LANDFLOW_RUNNER_ALLOW: ${LANDFLOW_RUNNER_ALLOW:-10.20.0.0/16 127.0.0.1:8080}
+      LANDFLOW_RUNNER_NAME: check-runner
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    depends_on: [inside]
+    networks:
+      - office
+      - default
+
+  private:
+    image: node:22.23.2-alpine3.24
+    network_mode: 'service:runner'
+    command:
+      - node
+      - -e
+      - |
+        require('http').createServer((req, res) => {
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ private: true, path: req.url, headers: req.headers }));
+        }).listen(8080, '127.0.0.1');
+    depends_on: [runner]
+
+networks:
+  office:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.20.0.0/16

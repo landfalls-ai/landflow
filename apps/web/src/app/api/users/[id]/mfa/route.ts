@@ -8,6 +8,7 @@
 import { canResetMfa } from '@/lib/shared/auth';
 import { getUser, requireUser } from '@/lib/server/auth';
 import { resetFactors } from '@/lib/server/auth/mfa';
+import { mayActOnUser } from '@/lib/server/auth/user-scope';
 import { error, handler, json } from '@/lib/server/http';
 
 export const dynamic = 'force-dynamic';
@@ -19,5 +20,6 @@ export const DELETE = handler(async (_request: Request, { params }: Ctx) => {
   if (!target) return error('User not found', 404);
   if (target.id === me.id) return error('Use Sign-in & security to change your own second factor', 400);
   if (!canResetMfa(me, target)) return error('You can’t reset this person’s second factor', 403);
+  if (!mayActOnUser(me, target)) return error('This person belongs to projects you don’t administer', 403);
   return json({ ok: true, removed: resetFactors(me, target) });
 });

@@ -6,6 +6,9 @@
  * its table is added to TABLES below. Each value is written on its own and a value already on the primary key is
  * skipped, so a run that stops can simply be run again; one that can't be opened is reported and left as it is.
  * Never remove an old key from the ring before a run reports no failures.
+ *
+ * Credentials sealed with a project key (C31) are not re-sealed: the project keys are wrapped again with the primary, so the
+ * work is the number of projects, not of credentials.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,6 +16,9 @@ import { agentStore } from '../agents/store';
 import { configStoreKind, writeJsonFile } from '../config-store';
 import { database } from '../db';
 import { store } from '../store';
+import { leaseIdPurpose, leaseValuesPurpose } from '../secrets/lease-purpose';
+import { projectKeys } from './project-keys';
+import type { RewrapResult } from './project-key-store';
 import { credentials, parseSealedString } from './vault';
 
 export interface RotationResult {
@@ -25,10 +31,18 @@ export interface RotationResult {
   failed: string[];
   /** Per store, how many values were re-sealed. */
   stores: Record<string, number>;
+  /** C31: project keys wrapped again with the primary (their credentials are not touched), already on it, and not openable. */
+  projectKeys: { rewrapped: number; current: number; failed: string[] };
 }
 
 /** Tables with sealed values: the key columns (as the database's upsert knows them) and the column to scan (a sealed string or JSON holding some). */
-const TABLES: Array<{ table: 'settings' | 'config_files' | 'alert_channels' | 'audit_destinations' | 'audit_signing_keys' | 'external_secret_providers' | 'transport_connections' | 'user_mfa_factors' | 'event_subscriptions'; key: string; column: string }> = [
+const TABLES: Array<{
+  table: 'settings' | 'config_files' | 'alert_channels' | 'audit_destinations' | 'audit_signing_keys' | 'external_secret_providers' | 'transport_connections' | 'user_mfa_factors' | 'event_subscriptions' | 'secret_leases';
+  key: string;
+  column: string;
+  /** What the column's sealed strings are bound to, when it isn't the default (`sealSecret(value, purpose)`). */
+  purpose?: string | ((key: string) => string);
+}> = [
   { table: 'settings', key: 'key', column: 'value' },
   { table: 'config_files', key: 'name', column: 'data' },
   { table: 'alert_channels', key: 'id', column: 'data' },
@@ -39,17 +53,20 @@ const TABLES: Array<{ table: 'settings' | 'config_files' | 'alert_channels' | 'a
   { table: 'user_mfa_factors', key: 'id', column: 'secret' }, // C16: TOTP secrets
   // C19: the signing secret of an event subscription.
   { table: 'event_subscriptions', key: 'id', column: 'secret' },
+  // C30: a leased dynamic secret's issued values and lease id, each bound to its own row (`secrets.lease:<id>`).
+  { table: 'secret_leases', key: 'id', column: 'lease_values', purpose: (id) => leaseValuesPurpose(id) },
+  { table: 'secret_leases', key: 'id', column: 'lease_id', purpose: (id) => leaseIdPurpose(id) },
 ];
 
 /** A sealed string's shape: v1 is `v1.iv.tag.value`, v2 is `v2.kid.iv.tag.value`; the iv is 12 bytes (16 base64 characters) and the tag 16 bytes (24), so a version such as `v1.2.3.4` is not one. */
 const SEALED = /^(?:v1|v2\.[A-Za-z0-9_-]{1,32})\.[A-Za-z0-9+/]{16}\.[A-Za-z0-9+/]{22}==\.[A-Za-z0-9+/=]*$/;
 
 /** `text` with every sealed string in it re-sealed (text itself, or JSON holding some); undefined when nothing changed. */
-function resealText(text: string, tally: { resealed: number; current: number; failed: number }): string | undefined {
+function resealText(text: string, tally: { resealed: number; current: number; failed: number }, purpose?: string): string | undefined {
   const seal = (value: string): string => {
     if (!SEALED.test(value) || !parseSealedString(value)) return value;
     try {
-      const next = credentials.resealSecret(value);
+      const next = credentials.resealSecret(value, purpose);
       if (next === undefined) tally.current += 1;
       else tally.resealed += 1;
       return next ?? value;
@@ -79,15 +96,36 @@ function resealText(text: string, tally: { resealed: number; current: number; fa
   return tally.resealed === before ? undefined : JSON.stringify(walked);
 }
 
-/** Re-seal every stored sealed value with the primary key. Idempotent; call it with the new ring on every process. */
-export function rotateEncryption(): RotationResult {
-  const result: RotationResult = { primary: credentials.primaryKid, resealed: 0, current: 0, failed: [], stores: {} };
+/**
+ * Root rotation as the route and the script run it: the project keys are re-wrapped first (in Postgres mode that waits for the
+ * database), then everything else is re-sealed.
+ */
+export async function rotateEncryptionAll(): Promise<RotationResult> {
+  return rotateEncryption({ projectKeys: await projectKeys.rewrapAll() });
+}
+
+function postgresNeedsAsync(): RewrapResult {
+  // Project keys in Postgres can only be re-wrapped by waiting for the database: a caller that did not do it must not report a root rotation that skipped them.
+  if (database().kind === 'postgres') throw new Error('Project keys were not re-wrapped: on Postgres call rotateEncryptionAll() (it waits for the database)');
+  return projectKeys.rewrapAllNow();
+}
+
+/**
+ * Re-seal every stored sealed value with the primary key. Idempotent; call it with the new ring on every process. Project keys are
+ * re-wrapped here only without Postgres (`rotateEncryptionAll` does it where that has to wait): pass their result when the caller did.
+ */
+export function rotateEncryption(options: { projectKeys?: RewrapResult } = {}): RotationResult {
+  const result: RotationResult = { primary: credentials.primaryKid, resealed: 0, current: 0, failed: [], stores: {}, projectKeys: { rewrapped: 0, current: 0, failed: [] } };
   const count = (name: string, tally: { resealed: number; current: number; failed: number }, ids: string[] = []) => {
     result.resealed += tally.resealed;
     result.current += tally.current;
     if (tally.resealed) result.stores[name] = (result.stores[name] ?? 0) + tally.resealed;
     if (tally.failed) result.failed.push(...(ids.length ? ids : [name]).map((id) => `${name}:${id}`));
   };
+
+  // C31: project keys first: they are re-wrapped, and the credentials sealed with them are left as they are.
+  result.projectKeys = options.projectKeys ?? postgresNeedsAsync();
+  result.failed.push(...result.projectKeys.failed.map((id) => `project_keys:${id}`));
 
   const creds = credentials.rotateCredentials();
   result.resealed += creds.resealed;
@@ -96,12 +134,12 @@ export function rotateEncryption(): RotationResult {
   result.failed.push(...creds.failed.map((id) => `credentials:${id}`));
 
   const db = database();
-  for (const { table, key, column } of TABLES) {
+  for (const { table, key, column, purpose } of TABLES) {
     for (const row of db.all<Record<string, string | null>>(`SELECT * FROM ${table}`)) {
       const text = row[column];
       if (!text) continue;
       const tally = { resealed: 0, current: 0, failed: 0 };
-      const next = resealText(text, tally);
+      const next = resealText(text, tally, typeof purpose === 'function' ? purpose(String(row[key])) : purpose);
       // A new `updated_at` on a config file, so every process's cached copy (stamped by it) is dropped.
       if (next !== undefined) db.upsert(table, { ...row, [column]: next, ...(table === 'config_files' && { updated_at: new Date().toISOString() }) });
       count(table, tally, [String(row[key])]);

@@ -14,6 +14,7 @@
     "./serve": "./src/serve.ts",
     "./telemetry": "./src/telemetry.ts",
     "./messaging": "./src/messaging.ts",
+    "./guard": "./src/guard.ts",
     "./mcp": "./src/mcp.ts"
   },
   "scripts": {

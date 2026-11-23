@@ -103,6 +103,29 @@ export interface TablesChanged {
 type ChangeListener = (change: TablesChanged) => void;
 const state = () => singleton('db-replication', () => ({ listeners: new Set<ChangeListener>(), replica: undefined as Replica | undefined }));
 
+/**
+ * Other channels on the same LISTEN connection (a subsystem's own wake-ups, e.g. network runner calls): `onNotification`
+ * listens on `channel` (a plain identifier) and hands each payload to `listener`; `publishNotification` sends one with
+ * `pg_notify` (nothing on SQLite). A process that hears its own notice just wakes up once more: harmless.
+ */
+const CHANNEL_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
+const extra = () => singleton('db-extra-channels', () => new Map<string, Set<(payload: string) => void>>());
+
+export function onNotification(channel: string, listener: (payload: string) => void): () => void {
+  if (!CHANNEL_NAME.test(channel)) throw new Error(`invalid notification channel ${channel}`);
+  const known = extra().has(channel);
+  if (!known) extra().set(channel, new Set());
+  extra().get(channel)!.add(listener);
+  if (!known) void state().replica?.listenOn(channel);
+  return () => extra().get(channel)?.delete(listener);
+}
+
+export function publishNotification(channel: string, payload: string): void {
+  if (!CHANNEL_NAME.test(channel)) return;
+  const sent = state().replica?.notifyOn(channel, payload);
+  void sent?.catch(() => {});
+}
+
 export function onTablesChanged(listener: ChangeListener): () => void {
   state().listeners.add(listener);
   return () => state().listeners.delete(listener);
@@ -166,7 +189,11 @@ export class Replica {
     const { Client } = (await import('pg')).default ?? (await import('pg'));
     const client = new Client({ connectionString: this.url, application_name: `landflow-listen:${this.origin}` });
     client.on('notification', (message) => {
-      if (message.channel !== CHANGES_CHANNEL || !message.payload) return;
+      if (message.channel !== CHANGES_CHANNEL) {
+        for (const listener of extra().get(message.channel) ?? []) listener(message.payload ?? '');
+        return;
+      }
+      if (!message.payload) return;
       let notice: ChangeNotice;
       try {
         notice = JSON.parse(message.payload) as ChangeNotice;
@@ -188,9 +215,20 @@ export class Replica {
     client.on('end', () => lost());
     await client.connect();
     await client.query(`LISTEN ${CHANGES_CHANNEL}`);
+    for (const channel of extra().keys()) await client.query(`LISTEN ${channel}`);
     this.listener = client;
     state().replica = this;
     this.unregisterMetrics ??= registerReplicationMetrics(() => this.lagMs);
+  }
+
+  /** LISTEN on one more channel (see `onNotification`). */
+  async listenOn(channel: string) {
+    await this.listener?.query(`LISTEN ${channel}`).catch(() => {});
+  }
+
+  /** `pg_notify` through the pool (see `publishNotification`). */
+  notifyOn(channel: string, payload: string) {
+    return this.pool.query('SELECT pg_notify($1, $2)', [channel, payload]);
   }
 
   /** The copy is loaded: apply what arrived meanwhile and from now on. */

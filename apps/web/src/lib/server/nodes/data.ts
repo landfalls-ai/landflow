@@ -1,4 +1,6 @@
 import { defineNode, NodeOperationError, type JsonObject, type NodeItem } from '@landflow/sdk';
+import { tableScope } from '../datatables/projects';
+import { networkChoices } from '../networks/store';
 import { BODY_METHODS, executeHttpRequest, httpAuthCredentials, httpAuthProperties } from './http-request';
 
 const main = [{ type: 'main' as const }];
@@ -178,6 +180,16 @@ export const httpRequestNode = defineNode({
         options: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].map((m) => ({ name: m, value: m })),
       },
       { name: 'url', displayName: 'URL', type: 'string', default: 'http://127.0.0.1:3000/api/health', required: true },
+      {
+        name: 'runIn',
+        displayName: 'Run In',
+        type: 'options',
+        // Empty is Host: no new value lands on existing nodes (an Apply diff would list "Run In: empty → host" on every HTTP Request step it touches).
+        default: '',
+        noDataExpression: true,
+        typeOptions: { loadOptionsMethod: 'networks' },
+        description: 'Host: Landflow makes the call. A network: a runner inside that network makes it (Settings → Networks), so the address can be one the host can’t reach',
+      },
       ...httpAuthProperties,
       {
         name: 'query',
@@ -271,6 +283,8 @@ export const httpRequestNode = defineNode({
       },
     ],
   },
+  // Run In: the networks an admin registered (Settings → Networks); who may use which is checked when the node runs (networks/fetch.ts).
+  methods: { loadOptions: { networks: () => [{ name: 'Host (this Landflow)', value: '' }, ...networkChoices(tableScope()?.actor).map((network) => ({ name: network.name, value: network.id, ...(network.projectId && { description: 'Only this project’s workflows' }) }))] } },
   // Bodies with files and file responses: ./http-request.ts.
   execute: (ctx) => executeHttpRequest(ctx),
 });

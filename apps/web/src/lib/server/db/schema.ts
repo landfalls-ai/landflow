@@ -2130,11 +2130,53 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS knowledge_sync_runs_source ON knowledge_sync_runs (source_id, started_at)`,
     ],
   },
+  // C32: custom instance roles (docs/features/authentication.md#custom-roles): `rules` is JSON `[{ action, effect: 'allow' }]`, `name_key` the lower-cased name (unique); a member holds at most one, on `users.custom_role_id`, read with the user on every request so an edit or a delete shows at the holder's next one
+  {
+    version: 2931,
+    name: 'custom_roles',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS custom_roles (id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE, description TEXT, rules TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+    ],
+    addColumns: [{ table: 'users', column: 'custom_role_id', definition: 'TEXT' }],
+  },
+  // C31: a data key per project for its credentials, wrapped by the key ring (docs/features/secrets-and-environments.md#project-keys); `state` is active (at most one per project) or retired, `wrapped` a v2 sealed string
+  {
+    version: 2932,
+    name: 'project_keys',
+    statements: [`CREATE TABLE IF NOT EXISTS project_keys (project_id TEXT NOT NULL, version BIGINT NOT NULL, wrapped TEXT NOT NULL, state TEXT NOT NULL, created_at TEXT NOT NULL, retired_at TEXT, PRIMARY KEY (project_id, version))`],
+  },
+  // C30: a leased credential issued to a run by OpenBao / Vault's database engine (docs/features/secrets-and-environments.md#dynamic-secrets): one row per (run, provider, path), the lease id and the issued values sealed and dropped when the lease ends; `failing_since` times the 24 h after which a revoke that keeps failing is given up, `dismissed_at` hides that failure's banner
+  {
+    version: 2933,
+    name: 'secret_leases',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS secret_leases (id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, workflow_id TEXT, provider TEXT NOT NULL, path TEXT NOT NULL, lease_id TEXT, lease_values TEXT, state TEXT NOT NULL, issued_at TEXT NOT NULL, expires_at TEXT NOT NULL, renewed_until TEXT, attempts BIGINT NOT NULL DEFAULT 0, next_attempt_at TEXT, last_error TEXT, failing_since TEXT, dismissed_at TEXT, ended_at TEXT, ended_by TEXT, renew_failures BIGINT NOT NULL DEFAULT 0, renewable BIGINT NOT NULL DEFAULT 1)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS secret_leases_run_path ON secret_leases (execution_id, provider, path)`,
+      `CREATE INDEX IF NOT EXISTS secret_leases_state ON secret_leases (state, next_attempt_at)`,
+    ],
+  },
+  // C29: network runners for the HTTP Request node (docs/network-runners.md): a network (instance-wide, or bound to one project), the runners registered to it (a token each, kept as its SHA-256), what each runner last reported (apart from the runner row, so a poll never rewrites a revoke), and the calls waiting for or answered by a runner (sealed bodies, deleted once read)
+  {
+    version: 2934,
+    name: 'network_runners',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS networks (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT, project_id TEXT, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS network_runners (id TEXT PRIMARY KEY, network_id TEXT NOT NULL, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, token_hint TEXT NOT NULL, allowed_ips TEXT, created_by TEXT, created_at TEXT NOT NULL, revoked_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS network_runners_network ON network_runners (network_id)`,
+      `CREATE TABLE IF NOT EXISTS network_runner_seen (runner_id TEXT PRIMARY KEY, last_seen_at TEXT NOT NULL, connected_since TEXT, version TEXT, address TEXT)`,
+      `CREATE TABLE IF NOT EXISTS network_calls (id TEXT PRIMARY KEY, network_id TEXT NOT NULL, execution_id TEXT, workflow_id TEXT, node TEXT, state TEXT NOT NULL, runner_id TEXT, request TEXT NOT NULL, response TEXT, queued_at TEXT NOT NULL, claimed_at TEXT, done_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS network_calls_queue ON network_calls (network_id, state, queued_at)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
 export const TABLES = {
   meta: ['key'],
+  networks: ['id'], // C29:
+  network_runners: ['id'], // C29:
+  network_runner_seen: ['runner_id'], // C29:
+  network_calls: ['id'], // C29:
   workflows: ['id'],
   executions: ['id'],
   execution_steps: ['execution_id', 'seq'],
@@ -2290,6 +2332,9 @@ export const TABLES = {
   knowledge_source_state: ['source_id'], // C22:
   knowledge_source_items: ['source_id', 'item_key'], // C22:
   knowledge_sync_runs: ['id'], // C22:
+  custom_roles: ['id'], // C32:
+  project_keys: ['project_id', 'version'], // C31:
+  secret_leases: ['id'], // C30:
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

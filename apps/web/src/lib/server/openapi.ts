@@ -60,7 +60,7 @@ interface Operation {
 function scopeText(scope: string, sessionOnly?: boolean, action?: string): string {
   if (sessionOnly) return 'Needs a session: API keys are refused.';
   const key = scope === 'any' ? 'Any API key (or a session).' : `API keys need the \`${scope}\` scope.`;
-  return action ? `${key} Owners and admins only (\`${action}\`).` : key;
+  return action ? `${key} Owners and admins only (\`${action}\`), or a member whose custom role grants it.` : key;
 }
 
 const PUBLIC_TEXT = 'Public: no API key or session. The trigger’s own authentication (and IP allow-list) applies.';
@@ -358,6 +358,47 @@ const schemas: Record<string, Json> = {
     ['server', '_meta'],
   ),
   McpServerList: object({ servers: array(ref('McpServerResponse')), metadata: object({ count: { type: 'integer' }, nextCursor: { type: 'string' } }, ['count']) }, ['servers', 'metadata']),
+  CustomRole: object(
+    {
+      id: { type: 'string' },
+      name: { type: 'string', maxLength: 40 },
+      description: { type: 'string', maxLength: 200 },
+      rules: array(object({ action: { type: 'string', description: 'One of the role-gated actions, such as `plugins:manage`; never `projects:manage`' }, effect: { type: 'string', const: 'allow' } }, ['action', 'effect'])),
+      holders: { type: 'integer', description: 'Members who hold it' },
+      createdAt: { type: 'string' },
+      updatedAt: { type: 'string' },
+    },
+    ['id', 'name', 'rules', 'holders', 'createdAt', 'updatedAt'],
+  ),
+  // C29: networks and runners (docs/network-runners.md; lib/shared/networks.ts).
+  NetworkRunner: object(
+    {
+      id: { type: 'string' },
+      name: { type: 'string' },
+      hint: { type: 'string', description: 'The last four characters of the token; the token is never shown again' },
+      status: { type: 'string', enum: ['online', 'offline', 'revoked'], description: 'Online: seen in the last 30 seconds' },
+      allowedIps: { ...array({ type: 'string' }), description: 'Addresses and CIDR ranges the runner may connect from; empty: any' },
+      version: { type: 'string' },
+      address: { type: 'string', description: 'Where its last poll came from' },
+      lastSeenAt: { type: 'string' },
+      createdAt: { type: 'string' },
+      revokedAt: { type: 'string' },
+    },
+    ['id', 'name', 'hint', 'status', 'allowedIps', 'createdAt'],
+  ),
+  Network: object(
+    {
+      id: { type: 'string' },
+      name: { type: 'string' },
+      description: { type: 'string' },
+      projectId: { type: 'string', description: 'Set: only this project’s workflows may run in the network' },
+      projectName: { type: 'string' },
+      runners: array(ref('NetworkRunner')),
+      workflows: { ...array(object({ id: { type: 'string' }, name: { type: 'string' } }, ['id', 'name'])), description: 'The workflows with an HTTP Request node that runs in it (only the ones the caller may see)' },
+      createdAt: { type: 'string' },
+    },
+    ['id', 'name', 'runners', 'workflows', 'createdAt'],
+  ),
   ApiKey: object(
     {
       id: { type: 'string' },
@@ -1354,6 +1395,49 @@ function paths(): Record<string, Record<string, Json>> {
     responses: { 200: reply('The settings', object({ settings: settingsDoc, jsonRender: { type: 'boolean' } })), 400: invalid, 403: errorRef('Not the owner (json-render)') },
   });
 
+  // C31: project keys (docs/features/secrets-and-environments.md#project-keys). Owner only, session only.
+  const reseal = { resealed: { type: 'integer' }, current: { type: 'integer' }, failed: array({ type: 'string' }), skipped: { type: 'integer' }, pending: array({ type: 'string' }) };
+  add('get', '/api/settings/encryption/project-keys', {
+    tag: 'Settings',
+    id: 'getProjectKeys',
+    summary: 'Project keys: versions and what is sealed with them',
+    description: 'Owner only, session only (an API key gets 403). Per project its active version, its retired versions and how many credentials are sealed with it; `onRing` counts credentials still sealed with a key ring key; `unreadable` lists `<projectId>:<version>` of keys this process can’t unwrap (the ring lacks the key that wrapped them).',
+    responses: {
+      200: reply(
+        'Where the project keys stand',
+        object({ projects: array(object({ projectId: { type: 'string' }, name: { type: 'string' }, active: { type: 'integer' }, retired: array({ type: 'integer' }), credentials: { type: 'integer' } }, ['projectId', 'retired', 'credentials'])), onRing: { type: 'integer' }, unreadable: array({ type: 'string' }) }, ['projects', 'onRing', 'unreadable']),
+      ),
+      403: errorRef('Not the owner'),
+    },
+  });
+  add('post', '/api/settings/encryption/project-keys', {
+    tag: 'Settings',
+    id: 'moveCredentialsBetweenKeys',
+    summary: 'Migrate credentials onto project keys, or revert them to the ring',
+    description:
+      'Owner only, session only. `migrate` seals every credential with its project’s active key, one at a time, and sweeps: keys retired for 15 minutes that no credential names are deleted (keys of projects that are gone are retired first); `revert` seals every credential with the ring’s primary key as a version 2 value (run it before a downgrade to a build without project keys, and check `onProjectKeys` is 0). Both are idempotent: run again while `done` is false. Audited fail-closed as `encryption.project_key.migrated` / `.reverted`: 503 when the event can’t be stored under `LANDFLOW_AUDIT_FAIL_CLOSED`.',
+    body: jsonBody(object({ action: { type: 'string', enum: ['migrate', 'revert'] } }, ['action'])),
+    responses: {
+      200: reply('What moved', object({ ...reseal, destroyed: array({ type: 'string' }), onProjectKeys: { type: 'integer' }, done: { type: 'boolean' } }, ['resealed', 'current', 'failed', 'done'])),
+      400: invalid,
+      403: errorRef('Not the owner'),
+      503: errorRef('The audit log is unavailable'),
+    },
+  });
+  add('post', '/api/settings/encryption/project-keys/{projectId}/rotate', {
+    tag: 'Settings',
+    id: 'rotateProjectKey',
+    summary: 'Rotate one project’s key',
+    description: 'Owner only, session only. A new key version for the project: its credentials are re-sealed with it one at a time (no other project is touched) and the old version is retired (a later sweep deletes it). `failed` lists credentials that stayed on the old version. Audited fail-closed as `encryption.project_key.rotated`.',
+    pathParams: { projectId: 'The project id' },
+    responses: {
+      200: reply('The new version', object({ version: { type: 'integer' }, resealed: { type: 'integer' }, failed: array({ type: 'string' }), done: { type: 'boolean' } }, ['version', 'resealed', 'failed', 'done'])),
+      403: errorRef('Not the owner'),
+      404: notFound,
+      503: errorRef('The audit log is unavailable'),
+    },
+  });
+
   // SB19: the model Spotlight uses (docs/assistant.md, "The Spotlight panel").
   const spotlightModelsDoc = object({ default: { type: 'string' }, models: array(object({ id: { type: 'string' }, label: { type: 'string' }, source: { type: 'string', enum: ['ollama', 'gateway', 'anthropic', 'openai'] }, local: { type: 'boolean' } }, ['id', 'label', 'source', 'local'])) }, ['default', 'models']);
   add('get', '/api/settings/spotlight', {
@@ -1400,6 +1484,34 @@ function paths(): Record<string, Record<string, Json>> {
     failureMode: { type: 'string', enum: ['closed', 'open'], description: 'Default `closed` in the production profile, `open` otherwise' },
     match: hookMatch,
   };
+  // C30: leased dynamic secrets (docs/features/secrets-and-environments.md#dynamic-secrets)
+  const leaseDoc = {
+    type: 'object',
+    description: 'A `SecretLeaseView` (lib/shared/secrets.ts): id, executionId, workflowId, provider, path (`database/creds/report-reader`), state (`active`, `revoked`, `expired` or `revoke_failed`), issuedAt, expiresAt, renewedUntil, attempts, lastError, endedAt, endedBy (`finish`, `sweeper` or `admin`) and dismissed. Never the lease id or the issued values.',
+    additionalProperties: true,
+  };
+  add('get', '/api/external-secrets/leases', {
+    tag: 'Settings',
+    id: 'listSecretLeases',
+    summary: 'List leased dynamic secrets',
+    description: 'Credentials an OpenBao / Vault provider issued to runs from its Dynamic mounts, newest first, with `counts` (open leases, and failed revokes nobody set aside). Admins.',
+    query: [
+      { name: 'state', description: '`active`, `ended` (revoked or expired) or `revoke_failed`; default all', schema: { type: 'string', enum: ['active', 'ended', 'revoke_failed'] } },
+      { name: 'executionId', description: 'Only the leases of this run', schema: { type: 'string' } },
+      { name: 'limit', description: '1 to 500, default 100', schema: { type: 'integer', minimum: 1, maximum: 500 } },
+      { name: 'cursor', description: '`nextCursor` of the previous page', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The leases', object({ leases: array(leaseDoc), nextCursor: { type: 'string' }, counts: object({ active: { type: 'integer' }, revokeFailed: { type: 'integer' } }, ['active', 'revokeFailed']) }, ['leases', 'counts'])), 400: invalid },
+  });
+  add('post', '/api/external-secrets/leases/revoke', {
+    tag: 'Settings',
+    id: 'revokeSecretLeases',
+    summary: 'Revoke leased dynamic secrets now',
+    description:
+      'Admins. `{ id }` revokes one lease, `{ executionId }` every open lease of a run, `{ id, dismiss: true }` sets a lease whose revoke was given up aside (409 when it is not one). A store that refuses leaves the lease active with the reason in `lastError` and counts it in `failed`; the host tries again by itself. Audited with the person who asked.',
+    body: jsonBody({ oneOf: [object({ id: { type: 'string' }, dismiss: { type: 'boolean' } }, ['id'], { additionalProperties: false }), object({ executionId: { type: 'string' } }, ['executionId'], { additionalProperties: false })] }),
+    responses: { 200: reply('What was revoked', object({ revoked: { type: 'integer' }, failed: { type: 'integer' }, leases: array(leaseDoc) }, ['revoked', 'failed', 'leases'])), 400: invalid, 404: notFound, 409: errorRef('Not a lease that could not be revoked') },
+  });
   add('get', '/api/settings/mcp/policy-hooks', {
     tag: 'Settings',
     id: 'listMcpPolicyHooks',
@@ -2155,6 +2267,41 @@ function paths(): Record<string, Record<string, Json>> {
     description: 'For someone locked out. The owner resets anyone’s but their own; an admin resets members’ and other admins’, never the owner’s; nobody their own. Ends the person’s sessions and records `auth.mfa_reset` in the same transaction (503 and no change when audit is fail-closed and down).',
     responses: { 200: reply('Reset', object({ ok: { type: 'boolean' }, removed: { type: 'integer' } }, ['ok', 'removed'])), 400: errorRef('Use Sign-in & security for yourself'), 403: errorRef('Not allowed for that role'), 404: notFound, 503: errorRef('The audit log is unavailable') },
   });
+  // C32: custom roles. Under /api/users, so the policy table needs no entry: reads for any signed-in user, writes `users:manage`.
+  add('get', '/api/users/roles', { tag: 'Account', id: 'listCustomRoles', summary: 'List the custom roles', description: 'Each with its rules and how many members hold it. A custom role grants a subset of the role-gated actions to a member (one per member); `projects:manage` is never grantable.', responses: { 200: reply('The roles', object({ roles: array(ref('CustomRole')) }, ['roles'])) } });
+  add('post', '/api/users/roles', {
+    tag: 'Account',
+    id: 'createCustomRole',
+    summary: 'Create a custom role',
+    description: 'You may grant only the actions you hold, only the owner grants `users:manage`, `apiKeys:admin`, `scim:manage`, `plugins:manage` or `settings:manage`, and nobody grants `projects:manage` (403 naming the action). A name is 1 to 40 characters, unique in any case, and not `owner`, `admin` or `member` (409 for a taken one). Recorded as `role.created` in one transaction with the change (503 and no change when audit is fail-closed and down).',
+    body: jsonBody(object({ name: { type: 'string', minLength: 1, maxLength: 40 }, description: { type: 'string', maxLength: 200 }, rules: { ...array(object({ action: { type: 'string' }, effect: { type: 'string', const: 'allow' } }, ['action', 'effect'])), minItems: 1, maxItems: 20 } }, ['name', 'rules'])),
+    responses: { 201: reply('The role', object({ role: ref('CustomRole') }, ['role'])), 400: invalid, 403: errorRef('A rule grants more than you may'), 409: errorRef('The name is taken'), 503: errorRef('The audit log is unavailable') },
+  });
+  add('get', '/api/users/roles/{id}', { tag: 'Account', id: 'getCustomRole', summary: 'Read a custom role', responses: { 200: reply('The role', object({ role: ref('CustomRole') }, ['role'])), 404: notFound } });
+  add('put', '/api/users/roles/{id}', {
+    tag: 'Account',
+    id: 'updateCustomRole',
+    summary: 'Change a custom role',
+    description: 'Any of `name`, `description` (null clears it) and `rules`; the escalation check runs on the whole new rule set. The holders see the change on their next request. Recorded as `role.updated` with the old and new rules.',
+    body: jsonBody(object({ name: { type: 'string', minLength: 1, maxLength: 40 }, description: { type: ['string', 'null'], maxLength: 200 }, rules: { ...array(object({ action: { type: 'string' }, effect: { type: 'string', const: 'allow' } }, ['action', 'effect'])), minItems: 1, maxItems: 20 } })),
+    responses: { 200: reply('The role', object({ role: ref('CustomRole') }, ['role'])), 400: invalid, 403: errorRef('A rule grants more than you may'), 404: notFound, 409: errorRef('The name is taken'), 503: errorRef('The audit log is unavailable') },
+  });
+  add('delete', '/api/users/roles/{id}', {
+    tag: 'Account',
+    id: 'deleteCustomRole',
+    summary: 'Delete a custom role',
+    description: 'A role someone holds answers 409 with `holders` until `?confirm=true`; its holders then become plain members, one `user.custom_role` event each, and the role is gone (`role.deleted`).',
+    query: [{ name: 'confirm', description: '`true` to delete a role that has holders', schema: { type: 'string', enum: ['true', 'false'] } }],
+    responses: { 200: reply('Deleted', ok), 404: notFound, 409: errorRef('Someone holds it: confirm to delete'), 503: errorRef('The audit log is unavailable') },
+  });
+  add('patch', '/api/users/{id}', {
+    tag: 'Account',
+    id: 'updateUser',
+    summary: 'Change a person’s role, or give a member a custom role',
+    description: 'Either `{ role: "admin" | "member" }` or `{ customRoleId: "<id>" | null }`, not both. A custom role is held by members only (400 for an admin; making a holder an admin clears it), and you must hold every action it grants. Recorded as `user.role_change` or `user.custom_role` with from and to.',
+    body: jsonBody({ oneOf: [object({ role: { type: 'string', enum: ['admin', 'member'] } }, ['role']), object({ customRoleId: { type: ['string', 'null'] } }, ['customRoleId'])] }),
+    responses: { 200: reply('The user', object({ user: { type: 'object', additionalProperties: true } }, ['user'])), 400: invalid, 403: errorRef('Not allowed'), 404: notFound, 503: errorRef('The audit log is unavailable') },
+  });
   add('get', '/api/api-keys', { tag: 'Account', id: 'listApiKeys', summary: 'List your API keys', responses: { 200: reply('Your keys (never the keys themselves)', object({ keys: array(ref('ApiKey')) }, ['keys'])) } });
   add('post', '/api/api-keys', {
     tag: 'Account',
@@ -2438,6 +2585,55 @@ function paths(): Record<string, Record<string, Json>> {
   });
   add('get', '/api/mcp/registry/v0.1/servers/{name}/versions', { tag: 'MCP', id: 'listMcpServerVersions', summary: 'Every version of one server', public: true, pathParams: { name: 'URL-encoded, e.g. `local.landflow%2Ftwilio`' }, responses: { 200: reply('The versions, newest first', ref('McpServerList')), 404: notFound } });
   add('get', '/api/mcp/registry/v0.1/servers/{name}/versions/{version}', { tag: 'MCP', id: 'getMcpServerVersion', summary: 'One version of a server', public: true, pathParams: { name: 'URL-encoded', version: 'A version, or `latest`' }, responses: { 200: reply('The server', ref('McpServerResponse')), 404: notFound } });
+
+  // ---- C29: network runners for the HTTP Request node (docs/network-runners.md) ----
+  // The admin routes sit under /api/settings, so the policy table needs no entry: reads `workflows:read` (the list is filtered by project), writes the built-in admin's.
+  add('get', '/api/settings/networks', { tag: 'Plugins', id: 'listNetworks', summary: 'List networks and their runners', description: 'The instance-wide networks and those of the caller’s projects, each with its runners’ status, version and last seen and the workflows that run in it. A token is never in a read.', responses: { 200: reply('The networks', object({ networks: array(ref('Network')) }, ['networks'])) } });
+  add('post', '/api/settings/networks', {
+    tag: 'Plugins',
+    id: 'createNetwork',
+    summary: 'Create a network',
+    description: 'A place the host can’t reach by itself. With `projectId`, only that project’s workflows may run in it. Owner or admin. Recorded as `network.created`.',
+    body: jsonBody(object({ name: { type: 'string', minLength: 1, maxLength: 60 }, description: { type: 'string', maxLength: 300 }, projectId: { type: 'string' } }, ['name'])),
+    responses: { 201: reply('The network', object({ network: ref('Network') }, ['network'])), 400: invalid, 403: errorRef('Not an owner or admin'), 409: errorRef('The name is taken') },
+  });
+  add('put', '/api/settings/networks/{id}', {
+    tag: 'Plugins',
+    id: 'updateNetwork',
+    summary: 'Rename or describe a network',
+    body: jsonBody(object({ name: { type: 'string', minLength: 1, maxLength: 60 }, description: { type: ['string', 'null'], maxLength: 300 } })),
+    responses: { 200: reply('The network', object({ network: ref('Network') }, ['network'])), 400: invalid, 403: errorRef('Not an owner or admin'), 404: notFound, 409: errorRef('The name is taken') },
+  });
+  add('delete', '/api/settings/networks/{id}', { tag: 'Plugins', id: 'deleteNetwork', summary: 'Delete a network', description: 'Its runners are revoked first; a node that runs in it then fails “Network not found”. Recorded as `network.deleted`.', responses: { 200: reply('Deleted', ok), 403: errorRef('Not an owner or admin'), 404: notFound } });
+  add('post', '/api/settings/networks/{id}/runners', {
+    tag: 'Plugins',
+    id: 'registerNetworkRunner',
+    summary: 'Register a runner',
+    description: 'The answer holds the runner’s token (`lf_run_…`): this is the only time it is returned; Landflow keeps its SHA-256. `allowedIps` limits where the runner may connect from. Recorded as `network.runner.registered`.',
+    body: jsonBody(object({ name: { type: 'string', minLength: 1, maxLength: 60 }, allowedIps: { ...array({ type: 'string' }), maxItems: 50 } }, ['name'])),
+    responses: { 201: reply('The runner and its token', object({ runner: ref('NetworkRunner'), token: { type: 'string' } }, ['runner', 'token'])), 400: invalid, 403: errorRef('Not an owner or admin'), 404: notFound },
+  });
+  add('delete', '/api/settings/networks/{id}/runners/{runnerId}', { tag: 'Plugins', id: 'revokeNetworkRunner', summary: 'Revoke a runner', description: 'Its token is refused from its next check (a runner waiting on a poll is cut off within a second); a call it holds fails as lost. Recorded as `network.runner.revoked`.', responses: { 200: reply('The runner', object({ runner: ref('NetworkRunner') }, ['runner'])), 403: errorRef('Not an owner or admin'), 404: notFound } });
+  add('post', '/api/runner/v1/poll', {
+    tag: 'Plugins',
+    id: 'pollNetworkRunner',
+    summary: 'A network runner’s long poll',
+    description: 'Used by `services/network-runner`. Holds the request up to 25 seconds and answers `200 { id, request: { method, url, headers: [[name, value]], body?: base64, timeoutMs } }` with the next call for the runner’s network, or `204`. `max: 0` only reports that the runner is here. 401 for no token, a wrong or revoked one, or an address the runner’s list refuses.',
+    public: true,
+    publicNote: 'Public: no API key or session; the runner’s own token (`Authorization: Bearer lf_run_…`) is the credential.',
+    body: jsonBody(object({ name: { type: 'string' }, version: { type: 'string' }, max: { type: 'integer', minimum: 0, maximum: 1 } })),
+    responses: { 200: reply('A call to make', object({ id: { type: 'string' }, request: { type: 'object', additionalProperties: true } }, ['id', 'request'])), 204: { description: 'No call within the wait' }, 401: errorRef('Not a valid runner token') },
+  });
+  add('post', '/api/runner/v1/calls/{id}', {
+    tag: 'Plugins',
+    id: 'answerNetworkCall',
+    summary: 'A network runner’s answer to one call',
+    description: 'The claiming runner’s answer: `{ status, headers: [[name, value]], body?: base64 }`, or `{ error: { code: "refused" | "timeout" | "network", message } }`. Bodies up to 10 MiB. 404 for a call the runner did not claim or that was answered already.',
+    public: true,
+    publicNote: 'Public: no API key or session; the runner’s own token is the credential.',
+    body: jsonBody({ oneOf: [object({ status: { type: 'integer' }, headers: array(array({ type: 'string' })), body: { type: 'string' } }, ['status', 'headers']), object({ error: object({ code: { type: 'string', enum: ['refused', 'timeout', 'network'] }, message: { type: 'string' } }, ['code', 'message']) }, ['error'])] }),
+    responses: { 204: { description: 'Taken' }, 400: invalid, 401: errorRef('Not a valid runner token'), 404: notFound },
+  });
 
   add('get', '/api/transports', {
     tag: 'Plugins',

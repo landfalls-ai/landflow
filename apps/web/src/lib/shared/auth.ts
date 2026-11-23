@@ -74,9 +74,76 @@ const ALLOWED: Record<Action, readonly Role[]> = {
   'audit:read': ADMINS,
 };
 
-/** The role check: whether `user` may do `action`. */
-export function can(user: { role: Role } | null | undefined, action: Action): boolean {
-  return Boolean(user && ALLOWED[action].includes(user.role));
+/** Every action, for the role editor and for validating a custom role's rules (C32). */
+export const ACTIONS = Object.keys(ALLOWED) as readonly Action[];
+
+/**
+ * What a custom role may grant: every action but `projects:manage`, which also means "admin of every project" and so
+ * would make its holder an instance admin for project access (C32-D2).
+ */
+export const GRANTABLE_ACTIONS: readonly Action[] = ACTIONS.filter((action) => action !== 'projects:manage');
+
+/**
+ * Granted through a custom role only by the owner (decided 2026-11-23). `users:manage` and `apiKeys:admin` let their
+ * holder change who may do what; `scim:manage` lets a token rewrite users and groups; `plugins:manage` installs code that
+ * runs on the host with the host's access to the data directory; `settings:manage` changes instance settings, security,
+ * source control and environments, which reach every project.
+ */
+export const OWNER_ONLY_GRANTS: readonly Action[] = ['users:manage', 'apiKeys:admin', 'scim:manage', 'plugins:manage', 'settings:manage'];
+
+/**
+ * The actions of a stored role's `rules` text (JSON `[{ action, effect: 'allow' }]`): unknown actions (a role saved by an
+ * older or newer build) and `projects:manage` are dropped and repeats merged, so a bad row can only ever grant less;
+ * anything that isn't JSON grants nothing.
+ */
+export function parseStoredActions(text: string | null | undefined): Action[] {
+  let parsed: unknown;
+  try {
+    parsed = text ? JSON.parse(text) : [];
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const seen = new Set<Action>();
+  for (const entry of parsed as Array<{ action?: unknown; effect?: unknown }>) {
+    const action = entry?.action as Action;
+    if (entry?.effect === 'allow' && GRANTABLE_ACTIONS.includes(action)) seen.add(action);
+  }
+  return [...seen];
+}
+
+/**
+ * The part of a user the role check reads: the built-in role, plus what a custom role grants, as the server's user
+ * record carries it (`customRole.actions`) or the client's `Viewer` (`grants`).
+ */
+export interface RoleHolder {
+  role: Role;
+  grants?: readonly Action[];
+  customRole?: { id?: string; name?: string; actions?: readonly Action[] };
+}
+
+/** The built-in owner or admin role itself (a custom role never counts): what instance-wide controls need. */
+export const isBuiltInAdmin = (user: { role: Role } | null | undefined): boolean => user?.role === 'owner' || user?.role === 'admin';
+
+/** The role check: whether `user` may do `action` (the built-in role allows it, or a custom role grants it). */
+export function can(user: RoleHolder | null | undefined, action: Action): boolean {
+  if (!user) return false;
+  if (ALLOWED[action].includes(user.role)) return true;
+  return Boolean(user.grants?.includes(action) || user.customRole?.actions?.includes(action));
+}
+
+/**
+ * The escalation check (C32 FR-3): the actions in `wanted` that `actor` may not put in a custom role. Nobody grants
+ * `projects:manage`; only the owner grants `users:manage` and `apiKeys:admin`; anyone else grants only what they hold.
+ * An empty answer means the role is fine.
+ */
+export function ungrantable(actor: RoleHolder, wanted: readonly Action[]): Action[] {
+  return wanted.filter((action) => {
+    if (!GRANTABLE_ACTIONS.includes(action)) return true;
+    if (actor.role === 'owner') return false;
+    if (OWNER_ONLY_GRANTS.includes(action)) return true;
+    return !can(actor, action);
+  });
 }
 
 /** A change one user makes to another in Settings → Users. */
@@ -86,9 +153,11 @@ export type UserChange = { kind: 'role'; role: Role } | { kind: 'remove' } | { k
  * Whether `actor` may make `change` to `target`. Owners and admins manage users, but nobody changes or removes the
  * owner (or themselves, apart from their own password), nobody makes another owner, and only the owner manages admins.
  */
-export function canManageUser(actor: { id: string; role: Role } | null | undefined, target: { id: string; role: Role }, change: UserChange): boolean {
+export function canManageUser(actor: (RoleHolder & { id: string }) | null | undefined, target: { id: string; role: Role; customRole?: { actions?: readonly Action[] } }, change: UserChange): boolean {
   if (!actor || !can(actor, 'users:manage')) return false;
   if (target.role === 'owner') return false;
+  // Not someone who holds actions the actor couldn't grant: resetting their password or removing them would be a way round the escalation check (C32).
+  if (actor.role !== 'owner' && actor.id !== target.id && ungrantable(actor, target.customRole?.actions ?? []).length) return false;
   if (actor.id === target.id) return change.kind === 'reset-password';
   if (change.kind === 'role' && change.role === 'owner') return false;
   if (actor.role !== 'owner' && (target.role === 'admin' || (change.kind === 'role' && change.role === 'admin'))) return false;
@@ -96,12 +165,14 @@ export function canManageUser(actor: { id: string; role: Role } | null | undefin
 }
 
 /**
- * Whether `actor` may reset `target`'s second factors (C16-D4): owners reset anyone's but their own; admins reset
- * members' and other admins', never an owner's; nobody uses this path on themselves (they use Sign-in & security).
+ * Whether `actor` may reset `target`'s second factors (C16-D4, narrowed by C32): owners reset anyone's but their own; admins and
+ * user managers reset members' only (an admin's are the owner's to reset); nobody uses this path on themselves (they use Sign-in & security).
  */
-export function canResetMfa(actor: { id: string; role: Role } | null | undefined, target: { id: string; role: Role }): boolean {
+export function canResetMfa(actor: (RoleHolder & { id: string }) | null | undefined, target: { id: string; role: Role; customRole?: { actions?: readonly Action[] } }): boolean {
   if (!actor || !can(actor, 'users:manage') || actor.id === target.id) return false;
-  return actor.role === 'owner' || target.role !== 'owner';
+  if (actor.role === 'owner') return true;
+  // Everyone else resets a member's second factors, and only a member who holds nothing the actor couldn't grant.
+  return target.role === 'member' && ungrantable(actor, target.customRole?.actions ?? []).length === 0;
 }
 
 /** Second factors (C16). */
@@ -157,6 +228,9 @@ export interface Viewer {
   disabled?: boolean;
   /** Created by provisioning: `scim` or `saml`. */
   provisionedBy?: string;
+  /** The custom role the user holds besides `member` (C32), and what it grants (`can` reads `grants`). */
+  customRole?: { id: string; name: string };
+  grants?: Action[];
 }
 
 /** A user in Settings → Users (GET /api/users). */
@@ -179,7 +253,8 @@ export interface InviteView {
 
 /** POST /api/users/invites and POST /api/users/<id>/password-reset: the link (shown to copy) and whether it was emailed. */
 export interface LinkResponse {
-  link: string;
+  /** Absent for someone who isn't an owner or admin: a reset link is emailed to the person, never shown. */
+  link?: string;
   emailed: boolean;
   /** Why it wasn't emailed: SMTP isn't configured, or sending failed (the message). */
   emailError?: string;

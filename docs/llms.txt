@@ -46,6 +46,7 @@
 - [Marketplace](/llms-full.txt#marketplace-md): The Marketplace: Claude Code plugin marketplaces as agents, skills, node plugins and flows; flow share pages.
 - [Writing plugins](/llms-full.txt#plugins-md): Writing plugins: the node interface, autodiscovery and branding.
 - [Plan: one plugin, every transport, and MCP](https://github.com/landfalls-ai/landflow/blob/main/docs/transports.md): Transports: HTTP, gRPC, brokers, Auto, the claim check and MCP faces for one plugin.
+- [Network runners](https://github.com/landfalls-ai/landflow/blob/main/docs/network-runners.md): Network runners: run the HTTP Request node inside a private network with tokens, allow-lists and Run In.
 - [agentgateway in Landflow: what we verified](https://github.com/landfalls-ai/landflow/blob/main/docs/mcp-gateway.md): agentgateway in Landflow: sync, identity and tokens, as verified.
 - [The LLM gateway (LiteLLM)](https://github.com/landfalls-ai/landflow/blob/main/docs/llm-gateway.md): The LLM gateway (LiteLLM): models, caps, spend by project, agent, person and model, and the AI page.
 - [The landflow-brain Claude Code mod](https://github.com/landfalls-ai/landflow/blob/main/docs/landflow-brain-mod.md): The landflow-brain Claude Code mod: your own session as a held, private work event, reviewed before it is sent.

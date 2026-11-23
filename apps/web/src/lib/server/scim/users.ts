@@ -16,6 +16,7 @@ import { instanceOwnerId } from '../projects/store';
 import { deleteUserWithTransfer } from '../projects/transfer';
 import { getKey, parsePatchPath } from './filter';
 import { groupsOf } from './groups';
+import { changeRefusal, isAdminActor, scimActor } from './guard';
 import { auditUserChange, auditUserProvisioned, auditUserRemoved } from './audit';
 import { SCHEMAS, ScimError } from './http';
 
@@ -173,11 +174,25 @@ function setActive(user: UserRecord, active: boolean | undefined): UserRecord {
   return setUserDisabled(user.id, !active);
 }
 
+/** SCIM changes a person only if `changeRefusal` (./guard) allows it for the token's person. */
+function requireChangeable(user: UserRecord) {
+  const refusal = changeRefusal(scimActor(), user);
+  if (refusal) throw new ScimError(403, refusal, 'mutability');
+}
+
+/** A token of a non-admin person (a custom role with Manage SCIM) renames only accounts SCIM provisioned: sign-in names are how people are found. */
+function requireRenamable(user: UserRecord, email: string | undefined) {
+  if (email === undefined || email === user.email || isAdminActor(scimActor()) || user.provisionedBy === 'scim') return;
+  throw new ScimError(403, 'This token can’t change the userName or emails of an account SCIM didn’t provision', 'mutability');
+}
+
 /** PUT /Users/<id>: replace userName, name and externalId (kept when absent); `active` when given. */
 export function replaceScimUser(id: string, body: Record<string, unknown>): UserRecord {
   const user = requireScimUser(id);
+  requireChangeable(user);
   const draft = draftFrom(body);
   const email = draftEmail(draft);
+  requireRenamable(user, email);
   if (draft.externalId) {
     const other = findUserByExternalId(draft.externalId);
     if (other && other.id !== id) throw new ScimError(409, `Another user has the externalId ${draft.externalId}`, 'uniqueness');
@@ -197,6 +212,7 @@ export function replaceScimUser(id: string, body: Record<string, unknown>): User
 /** PATCH /Users/<id> (RFC 7644 §3.5.2). */
 export function patchScimUser(id: string, body: Record<string, unknown>): UserRecord {
   const user = requireScimUser(id);
+  requireChangeable(user);
   const operations = getKey(body, 'Operations');
   if (!Array.isArray(operations) || !operations.length) throw new ScimError(400, 'A PATCH needs Operations', 'invalidSyntax');
   const draft: Draft = {};
@@ -219,6 +235,7 @@ export function patchScimUser(id: string, body: Record<string, unknown>): UserRe
   }
   const patch: Parameters<typeof updateUser>[1] = {};
   if (draft.userName !== undefined) patch.email = draftEmail(draft);
+  requireRenamable(user, patch.email);
   if (draft.displayName?.trim()) patch.name = draft.displayName.trim().slice(0, 120);
   else if (draft.formatted?.trim()) patch.name = draft.formatted.trim().slice(0, 120);
   else if (draft.givenName !== undefined || draft.familyName !== undefined) {
@@ -244,7 +261,7 @@ export function patchScimUser(id: string, body: Record<string, unknown>): UserRe
 /** DELETE /Users/<id>: remove the user; what they own goes to the instance owner's personal project. */
 export function deleteScimUser(id: string, actorId?: string) {
   const user = requireScimUser(id);
-  if (user.role === 'owner') throw new ScimError(403, 'The owner can’t be removed through SCIM', 'mutability');
+  requireChangeable(user);
   const owner = instanceOwnerId();
   auditedTransaction(() => {
     const result = deleteUserWithTransfer(id, owner ? { userId: owner } : undefined, actorId);

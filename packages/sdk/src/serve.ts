@@ -71,6 +71,11 @@ export interface ServeOptions {
   brokers?: BrokerBinding[];
   /** The MCP face; `false` turns it off. */
   mcp?: McpOptions | false;
+  /**
+   * Opt-in: guard the HTTP face (POST routes and `/mcp`) against browsers and callers without the token derived from
+   * LANDFLOW_TRANSPORT_SECRET (else LANDFLOW_REGISTRY_SECRET). serve() refuses to start when no secret is set.
+   */
+  guardHttp?: boolean;
 }
 
 export interface ServeResult {
@@ -159,10 +164,17 @@ export async function serve(plugin: IPlugin, options: ServeOptions = {}): Promis
       : undefined;
   const withMcp = mcpMode === 'http' && Boolean(httpPort) && !mcpRefused;
   let httpFace: (TransportBinding & { readonly mcp: McpFace | undefined }) | undefined;
+  let guard: { token: string } | undefined;
+  if (options.guardHttp) {
+    const secret = (await import('./guard')).transportSecretFromEnv(env);
+    if (!secret) throw new Error('serve(): this plugin guards its HTTP face and needs LANDFLOW_TRANSPORT_SECRET (the same value the host runs with)');
+    guard = { token: (await import('./guard')).pluginHttpToken(secret, plugin.info.id) };
+  }
   if (httpPort) {
     httpFace = (await import('./http')).httpBinding({
       port: httpPort,
       host: options.host,
+      ...(guard && { guard }),
       ...(withMcp && { mcp: { path: mcpOptions.path, token: mcpToken, credentials: mcpCredentials } }),
     });
     offer(httpFace);

@@ -68,6 +68,11 @@ export interface ContextExtras {
   pluginId?: string;
   /** In-process only: the host's binary store (remote plugins use the request's `binaryAccess` over HTTP). */
   binary?: BinaryDataClient;
+  /**
+   * In-process only: the saved run this call belongs to, set by the engine for a real run (never inferred from the request's
+   * `executionId`, which synthetic callers invent). The host issues dynamic secrets (leases) to it; a call without it gets none.
+   */
+  secretRun?: { executionId: string; workflowId?: string };
 }
 
 /** Bodies fetch sends as they are (files, forms, streams); anything else that isn't a string goes as JSON. */

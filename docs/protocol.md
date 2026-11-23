@@ -848,6 +848,7 @@ recommended; [deployment.md](deployment.md#message-brokers-and-the-mcp-gateway) 
   host and to every plugin; a plugin without it cannot start a messaging binding, a host without it never uses a
   brokered endpoint. Rotation: `LANDFLOW_TRANSPORT_SECRET_PREVIOUS` (comma-separated) lists secrets that still verify
   and decrypt but no longer sign.
+- **HTTP guard (opt-in).** A plugin may require `x-landflow-plugin-token = hex(HMAC-SHA256(secret, "landflow.plugin.http/v1|" + pluginId))` on its POST routes and refuse `Origin` and cross-site requests; see [transports.md](transports.md#guarding-a-plugins-http-face).
 - **Keys.** Per plugin, two 32-byte keys by HKDF-SHA256 over the secret (no salt):
   `encKey = HKDF(secret, info = "landflow transport v1\n" + pluginId + "\nenc")` and
   `sigKey = HKDF(secret, info = "landflow transport v1\n" + pluginId + "\nsig")`. Every replica of a plugin derives the
@@ -1294,7 +1295,7 @@ the project chose; it reads the first output item.
 |---|---|---|
 | `search` | `{ container, query, mode: keyword\|meaning\|hybrid, limit, threshold }` | `{ items }` |
 | `profile` | `{ container }` | `{ static: [...], recent: [...] }` |
-| `add` | `{ container, text, kind?, static?, forgetAfter?, replaces? }` | `{ item }` |
+| `add` | `{ container, text, kind?, static?, forgetAfter?, replaces?, confidence?, evidence? }` | `{ item }` |
 | `forget` | `{ container, id, reason }` | `{ item }` |
 | `list` | `{ container, cursor?, limit }` | `{ items, nextCursor? }` |
 
@@ -1303,7 +1304,7 @@ A provider's answers are untrusted: the host refuses an item whose `id` is not 1
 `container` is `project:<id>`. An item is `{ id, text, kind?, score?, version?, static?, createdAt?, updatedAt? }` with `score` 0..1.
 A provider that errors, does not answer in 10 s or answers an item without `id` and `text` fails the call; Landflow never falls back to
 another memory. Its own HTTP goes through `ctx.http`. The Go SDK has `NodeDescriptor.MemoryProvider`; the Python SDK passes the
-descriptor as a dict.
+descriptor as a dict. The `add` request may carry `confidence` (0..1) and `evidence` (at most 6 rows of `label`, `value`, `href`) when Memory Extract writes a fact; a provider may ignore them. Neither SDK types the request body yet.
 
 ## 16. Activity items
 

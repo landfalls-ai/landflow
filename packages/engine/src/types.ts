@@ -536,6 +536,8 @@ export interface ExecuteWorkflowOptions {
   loadSecrets?: (references: SecretReference[], node: WorkflowNode) => Promise<SecretValues>;
   /** Each resolved parameter value that read `$secrets` (per item), so the host can redact it like the secrets themselves. */
   onSecretParameter?: (value: unknown) => void;
+  /** This is a real, saved run: its node calls carry `secretRun` so the host can issue dynamic secrets (leases) to it. */
+  secretRun?: { workflowId?: string };
   /** Continue a waiting execution (same `executionId`); start options are ignored. */
   resume?: ResumeOptions;
   // SP01: runs a node's (or sub-node's) work with the node known to the host, so a model call under it can name it
