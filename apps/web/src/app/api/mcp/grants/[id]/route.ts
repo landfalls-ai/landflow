@@ -23,10 +23,10 @@ export const PATCH = handler(async (request: Request, { params }: Ctx) => {
 });
 
 export const DELETE = handler(async (_request: Request, { params }: Ctx) => {
-  await requireUser('mcp:manage');
+  const me = await requireUser('mcp:manage');
   const grant = getGrant((await params).id);
   if (!grant) return error('Grant not found', 404);
-  deleteGrant(grant.id);
+  deleteGrant(grant.id, me);
   recordAudit({ action: 'mcp.grant.delete', target: { type: 'mcp_grant', id: grant.id, name: `${grant.subject.kind}:${grant.subject.id} → ${grant.pluginId}` }, summary: `Removed the grant of ${grant.subject.kind} ${grant.subject.name ?? grant.subject.id} on ${grant.pluginId}`, details: { pluginId: grant.pluginId, subjectKind: grant.subject.kind, subjectId: grant.subject.id } });
   return json({ ok: true });
 });

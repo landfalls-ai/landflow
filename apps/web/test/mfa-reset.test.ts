@@ -68,13 +68,13 @@ describe('admin reset of second factors', () => {
     expect(JSON.stringify(event)).not.toMatch(/secret|code_hash/i);
   });
 
-  it('follows the roles: admins reset admins but never the owner; the owner resets admins; nobody resets themselves', async () => {
+  it('follows the roles: admins reset only members, never an admin or the owner (C32 review); the owner resets admins; nobody resets themselves', async () => {
     const owner = await make('owner', true);
     const admin = await make('admin', true);
     const otherAdmin = await make('admin', true);
     expect((await reset(session(admin), owner.id)).status).toBe(403);
     expect(count(owner.id)).toBe(1);
-    expect((await reset(session(admin), otherAdmin.id)).status).toBe(200);
+    expect((await reset(session(admin), otherAdmin.id)).status).toBe(403);
     expect((await reset(session(owner), admin.id)).status).toBe(200);
     expect((await reset(session(owner), owner.id)).status).toBe(400);
     expect((await reset(session(owner), 'usr_missing')).status).toBe(404);

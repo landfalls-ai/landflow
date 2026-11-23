@@ -2,7 +2,9 @@
  * Saved credentials, encrypted at rest with AES-256-GCM. Keys form a ring (./key-ring): LANDFLOW_ENCRYPTION_KEYS
  * (`kid:key,…`, the first seals) and the legacy key, LANDFLOW_ENCRYPTION_KEY (64 hex chars, or a passphrase) or one
  * generated once into <data dir>/encryption.key, as kid `k0`. Every blob names its key and is bound to its credential
- * id; `rotateCredentials` re-seals them with the primary key. Workflows only reference a
+ * id; `rotateCredentials` re-seals them with the primary key. With a project resolver (C31, set at boot by
+ * projects/boot) a credential is sealed with its project's data key instead (version 3, ./project-key-store).
+ * Workflows only reference a
  * credential by id; decrypted values leave this module on their way to a node
  * (ExecuteRequest.credentials) or a TestCredentials call, never through the API.
  *
@@ -34,7 +36,8 @@ import { singleton } from '../singleton';
 import { store } from '../store';
 import { SECRET_KEY } from '../telemetry/config';
 import { logger } from '../telemetry/logger';
-import { buildKeyRing, hkdfKey, kidOf, LEGACY_KID, LEGACY_SHA_KID, openWith, sealWith, type KeyRing, type SealedValue } from './key-ring';
+import { buildKeyRing, dekOf, hkdfKey, kidOf, LEGACY_KID, LEGACY_SHA_KID, openWith, openWithDek, sealWith, sealWithDek, type KeyRing, type SealedValue } from './key-ring';
+import { ProjectKeyError, ProjectKeyStore } from './project-key-store';
 import {
   ACCOUNT_FIELD,
   clientCredentialsToken,
@@ -323,11 +326,22 @@ export interface CredentialVaultOptions {
   /** The data directory (credentials.json, encryption.key); default LANDFLOW_DATA_DIR. */
   dir?: string;
   backend?: CredentialBackend;
+  /** The database holding the project keys (default: the host's); tests give each simulated process its own. */
+  keyDb?: () => Database;
+  /** The clock of the project key cache (tests). */
+  keyClock?: () => number;
 }
+
+/** Which key a credential is sealed with, for status and tests: `ring:<kid>` or `dek:<projectId>.<version>`. */
+export type SealedWith = `ring:${string}` | `dek:${string}`;
 
 export class CredentialVault {
   private readonly ring: KeyRing;
   private readonly backend: CredentialBackend;
+  /** The data keys of the projects (C31). */
+  readonly projectKeys: ProjectKeyStore;
+  /** The home project of a credential, set once at boot (projects/boot): the vault never imports projects. Unset: everything seals on the ring. */
+  private projectOf?: (credentialId: string) => string | undefined;
   /** Loaded on first use: in Postgres mode the database opens after this module is imported. */
   private loaded?: Map<string, StoredCredential>;
   /** OAuth2 refreshes in flight, by credential id: concurrent nodes wait for the same one. */
@@ -337,6 +351,7 @@ export class CredentialVault {
     const dir = options.dir ?? store.dir;
     const listed = process.env.LANDFLOW_ENCRYPTION_KEYS;
     this.ring = buildKeyRing(listed, loadLegacyKey(dir, Boolean(listed?.trim())));
+    this.projectKeys = new ProjectKeyStore({ ring: this.ring, ...(options.keyDb && { db: options.keyDb }), ...(options.keyClock && { now: options.keyClock }) });
     const file = join(dir, 'credentials.json');
     this.backend = options.backend ?? (configStoreKind() === 'database' ? new CredentialTable(file) : new CredentialFile(file));
   }
@@ -368,8 +383,116 @@ export class CredentialVault {
     }
   }
 
-  private seal(data: JsonObject, id: string): Sealed {
+  /** From now on credentials are sealed with their project's key; `resolve` says which project (undefined: the ring). */
+  setProjectResolver(resolve: ((credentialId: string) => string | undefined) | undefined) {
+    this.projectOf = resolve;
+  }
+
+  /** The project whose key seals this credential now, if any. */
+  private sealProject(id: string): string | undefined {
+    try {
+      return this.projectOf?.(id);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private sealRing(data: JsonObject, id: string): Sealed {
     return sealWith(this.ring, JSON.stringify(data), credentialAad(id));
+  }
+
+  /** Sealed with the project's active key, or undefined when this process has none yet (Postgres mode: the key is being made, see `ProjectKeyStore.activeFor`). */
+  private sealProjectKey(data: JsonObject, id: string, projectId: string): Sealed | undefined {
+    try {
+      const active = this.projectKeys.activeFor(projectId);
+      if (!active) return undefined;
+      return sealWithDek(active.key, `${projectId}.${active.version}`, JSON.stringify(data), credentialAad(id));
+    } catch (error) {
+      if (error instanceof ProjectKeyError) throw new CredentialError(`The encryption key of this credential's project can't be used: ${error.message}`, 500);
+      throw error;
+    }
+  }
+
+  /** A fresh credential id, so a caller can record the credential's project before it is sealed (the project's key seals it). */
+  newId(): string {
+    return `cred_${nanoid(12)}`;
+  }
+
+  private seal(data: JsonObject, id: string): Sealed {
+    const project = this.sealProject(id);
+    if (!project) return this.sealRing(data, id);
+    const sealed = this.sealProjectKey(data, id, project);
+    if (sealed) return sealed;
+    // No key for this project reached this process yet (queue mode): readable on the ring now, a key is made in Postgres in the background, and the next save or `migrate` moves it.
+    this.projectKeys.ensureInBackground(project);
+    return this.sealRing(data, id);
+  }
+
+  /** Make sure a credential's project has a key this process can use, before sealing (routes, migrate and moves wait for it). */
+  async ensureProjectKey(projectId: string): Promise<void> {
+    await this.projectKeys.ensure(projectId);
+  }
+
+  /** The project whose key would seal this credential (undefined: the ring). */
+  projectFor(id: string): string | undefined {
+    return this.sealProject(id);
+  }
+
+  /** Which key a credential is sealed with (undefined: no such credential). */
+  sealedWith(id: string): SealedWith | undefined {
+    const credential = this.credentials.get(id);
+    if (!credential) return undefined;
+    const dek = credential.data.v === 3 ? credential.data.dek : undefined;
+    return dek ? `dek:${dek}` : `ring:${kidOf(credential.data)}`;
+  }
+
+  /** Every credential id with the key it is sealed with. */
+  sealedWithAll(): Array<{ id: string; sealedWith: SealedWith }> {
+    return [...this.credentials.keys()].map((id) => ({ id, sealedWith: this.sealedWith(id)! }));
+  }
+
+  /** The credentials sealed with a project key: `[projectId, version]` per credential id (what must stay openable). */
+  projectKeyUse(): Map<string, [string, number]> {
+    // Another process may have saved credentials into the shared file since this one read it (a sweep must see them).
+    this.reloadIfChanged();
+    const use = new Map<string, [string, number]>();
+    for (const credential of this.credentials.values()) {
+      const dek = dekOf(credential.data);
+      if (dek) use.set(credential.id, dek);
+    }
+    return use;
+  }
+
+  /**
+   * Re-seal one credential, written on its own: `project` onto its project's active key, `ring` onto the ring's primary.
+   * `current` when it is there already; `skipped` when `project` has no project to seal with; `pending` when its project's key
+   * has not reached this process (queue mode; `ensureProjectKey` first). Throws when it can't be opened or written.
+   */
+  resealOne(id: string, target: 'project' | 'ring'): 'resealed' | 'current' | 'skipped' | 'pending' {
+    const credential = this.credentials.get(id);
+    if (!credential) return 'skipped';
+    let next: Sealed | undefined;
+    if (target === 'ring') {
+      if (credential.data.v === 2 && kidOf(credential.data) === this.ring.primary) return 'current';
+      next = this.sealRing(this.open(credential), id);
+    } else {
+      const project = this.sealProject(id);
+      if (!project) return 'skipped';
+      const have = dekOf(credential.data);
+      if (have && have[0] === project && have[1] === this.projectKeys.activeVersion(project)) return 'current';
+      next = this.sealProjectKey(this.open(credential), id, project);
+      if (!next) return 'pending';
+    }
+    // A new object, put back only if the write fails: the copy in memory never runs ahead of what is stored.
+    const resealed: StoredCredential = { ...credential, data: next };
+    this.credentials.set(id, resealed);
+    try {
+      this.persist({ saved: resealed });
+    } catch (error) {
+      this.credentials.set(id, credential);
+      throw error;
+    }
+    return 'resealed';
   }
 
   /** The key id new values are sealed with. */
@@ -432,13 +555,15 @@ export class CredentialVault {
   rotateCredentials(): { resealed: number; current: number; failed: string[] } {
     const result = { resealed: 0, current: 0, failed: [] as string[] };
     for (const credential of [...this.credentials.values()]) {
-      if (credential.data.v === 2 && kidOf(credential.data) === this.ring.primary) {
+      // A value on a project key stays: root rotation re-wraps the keys instead (./project-keys).
+      if (credential.data.v === 3 || (credential.data.v === 2 && kidOf(credential.data) === this.ring.primary)) {
         result.current += 1;
         continue;
       }
       try {
         // A new object, put back only if the write fails: the copy in memory never runs ahead of what is stored.
-        const resealed: StoredCredential = { ...credential, data: this.seal(this.open(credential), credential.id) };
+        // On the ring, never onto a project key: that is the owner's `migrate`, not a side effect of rotating.
+        const resealed: StoredCredential = { ...credential, data: this.sealRing(this.open(credential), credential.id) };
         this.credentials.set(credential.id, resealed);
         try {
           this.persist({ saved: resealed });
@@ -455,6 +580,21 @@ export class CredentialVault {
   }
 
   private open(credential: StoredCredential): JsonObject {
+    const dek = dekOf(credential.data);
+    if (dek) {
+      let key: Buffer;
+      try {
+        key = this.projectKeys.keyFor(dek[0], dek[1]);
+      } catch (error) {
+        const gone = error instanceof ProjectKeyError && error.reason === 'gone';
+        throw new CredentialError(`Credential "${credential.name}" can't be decrypted — ${gone ? "its project's key is gone" : "its project's key can't be unwrapped (is the key that wrapped it in LANDFLOW_ENCRYPTION_KEYS?)"}`, 500);
+      }
+      try {
+        return JSON.parse(openWithDek(key, credential.data, credentialAad(credential.id))) as JsonObject;
+      } catch {
+        throw new CredentialError(`Credential "${credential.name}" can't be decrypted — its project's key does not open it`, 500);
+      }
+    }
     try {
       return JSON.parse(openWith(this.ring, credential.data, credentialAad(credential.id))) as JsonObject;
     } catch {

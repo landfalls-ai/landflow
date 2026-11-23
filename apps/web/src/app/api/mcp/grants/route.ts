@@ -19,7 +19,7 @@ export const POST = handler(async (request: Request) => {
   const me = await requireUser('mcp:manage');
   const body = await parseBody(request, grantCreateSchema);
   if (!body.ok) return body.response;
-  const grant = createGrant(body.data, me.id);
+  const grant = createGrant(body.data, me);
   recordAudit({
     action: 'mcp.grant.create',
     target: { type: 'mcp_grant', id: grant.id, name: `${grant.subject.kind}:${grant.subject.id} → ${grant.pluginId}` },

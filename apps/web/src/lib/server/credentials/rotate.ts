@@ -6,6 +6,9 @@
  * its table is added to TABLES below. Each value is written on its own and a value already on the primary key is
  * skipped, so a run that stops can simply be run again; one that can't be opened is reported and left as it is.
  * Never remove an old key from the ring before a run reports no failures.
+ *
+ * Credentials sealed with a project key (C31) are not re-sealed: the project keys are wrapped again with the primary, so the
+ * work is the number of projects, not of credentials.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,6 +16,8 @@ import { agentStore } from '../agents/store';
 import { configStoreKind, writeJsonFile } from '../config-store';
 import { database } from '../db';
 import { store } from '../store';
+import { projectKeys } from './project-keys';
+import type { RewrapResult } from './project-key-store';
 import { credentials, parseSealedString } from './vault';
 
 export interface RotationResult {
@@ -25,6 +30,8 @@ export interface RotationResult {
   failed: string[];
   /** Per store, how many values were re-sealed. */
   stores: Record<string, number>;
+  /** C31: project keys wrapped again with the primary (their credentials are not touched), already on it, and not openable. */
+  projectKeys: { rewrapped: number; current: number; failed: string[] };
 }
 
 /** Tables with sealed values: the key columns (as the database's upsert knows them) and the column to scan (a sealed string or JSON holding some). */
@@ -79,15 +86,36 @@ function resealText(text: string, tally: { resealed: number; current: number; fa
   return tally.resealed === before ? undefined : JSON.stringify(walked);
 }
 
-/** Re-seal every stored sealed value with the primary key. Idempotent; call it with the new ring on every process. */
-export function rotateEncryption(): RotationResult {
-  const result: RotationResult = { primary: credentials.primaryKid, resealed: 0, current: 0, failed: [], stores: {} };
+/**
+ * Root rotation as the route and the script run it: the project keys are re-wrapped first (in Postgres mode that waits for the
+ * database), then everything else is re-sealed.
+ */
+export async function rotateEncryptionAll(): Promise<RotationResult> {
+  return rotateEncryption({ projectKeys: await projectKeys.rewrapAll() });
+}
+
+function postgresNeedsAsync(): RewrapResult {
+  // Project keys in Postgres can only be re-wrapped by waiting for the database: a caller that did not do it must not report a root rotation that skipped them.
+  if (database().kind === 'postgres') throw new Error('Project keys were not re-wrapped: on Postgres call rotateEncryptionAll() (it waits for the database)');
+  return projectKeys.rewrapAllNow();
+}
+
+/**
+ * Re-seal every stored sealed value with the primary key. Idempotent; call it with the new ring on every process. Project keys are
+ * re-wrapped here only without Postgres (`rotateEncryptionAll` does it where that has to wait): pass their result when the caller did.
+ */
+export function rotateEncryption(options: { projectKeys?: RewrapResult } = {}): RotationResult {
+  const result: RotationResult = { primary: credentials.primaryKid, resealed: 0, current: 0, failed: [], stores: {}, projectKeys: { rewrapped: 0, current: 0, failed: [] } };
   const count = (name: string, tally: { resealed: number; current: number; failed: number }, ids: string[] = []) => {
     result.resealed += tally.resealed;
     result.current += tally.current;
     if (tally.resealed) result.stores[name] = (result.stores[name] ?? 0) + tally.resealed;
     if (tally.failed) result.failed.push(...(ids.length ? ids : [name]).map((id) => `${name}:${id}`));
   };
+
+  // C31: project keys first: they are re-wrapped, and the credentials sealed with them are left as they are.
+  result.projectKeys = options.projectKeys ?? postgresNeedsAsync();
+  result.failed.push(...result.projectKeys.failed.map((id) => `project_keys:${id}`));
 
   const creds = credentials.rotateCredentials();
   result.resealed += creds.resealed;

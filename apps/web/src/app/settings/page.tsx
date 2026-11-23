@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { BellRing, Braces, Building2, ChevronLeft, ChevronRight, CircleDollarSign, Cpu, Gauge, GitBranch, KeyRound, Landmark, Layers, Network, Plug, Route, ScrollText, Sparkles, ShieldCheck, SlidersHorizontal, Users, Vault } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { can, type Action } from '@/lib/shared/auth';
+import { can, isBuiltInAdmin, type Action } from '@/lib/shared/auth';
 import { useViewer } from '@/components/auth/viewer';
 import { PageBody, PageHeader } from '@/components/shell/page-header';
 import { AiCapsSettings } from '@/components/settings/ai-caps-settings';
@@ -27,8 +27,8 @@ import { VariablesSettings } from '@/components/settings/variables-settings';
 import { TransportsSettings } from '@/components/settings/transports-settings';
 import { WorkersSettings } from '@/components/settings/workers-settings';
 
-/** `role`: only shown to roles that `can` do it. */
-const SECTIONS: readonly { id: string; label: string; icon: typeof Braces; hint: string; role?: Action }[] = [
+/** `role`: only shown to roles that `can` do it; `admin`: and only to the built-in owner or admin role (instance-wide controls, C32 review). */
+const SECTIONS: readonly { id: string; label: string; icon: typeof Braces; hint: string; role?: Action; admin?: true }[] = [
   { id: 'general', label: 'General', icon: SlidersHorizontal, hint: 'Time zone and execution retention' },
   { id: 'company', label: 'Company', icon: Building2, hint: 'Name and mission' },
   { id: 'variables', label: 'Variables', icon: Braces, hint: '$vars for expressions' },
@@ -40,14 +40,14 @@ const SECTIONS: readonly { id: string; label: string; icon: typeof Braces; hint:
   { id: 'mcp', label: 'MCP', icon: Plug, hint: 'Let coding agents build workflows' },
   { id: 'users', label: 'Users', icon: Users, hint: 'Invite people, change roles', role: 'users:manage' },
   { id: 'api-keys', label: 'API keys', icon: KeyRound, hint: 'For scripts, CI and the CLI' },
-  { id: 'security', label: 'Security', icon: ShieldCheck, hint: 'Single sign-on and sessions', role: 'settings:manage' },
+  { id: 'security', label: 'Security', icon: ShieldCheck, hint: 'Single sign-on and sessions', role: 'settings:manage', admin: true },
   { id: 'audit', label: 'Audit log', icon: ScrollText, hint: 'Who did what; SIEM streaming', role: 'audit:read' },
   { id: 'governance', label: 'Governance', icon: Landmark, hint: 'Allowed nodes, publish approval' },
-  { id: 'source-control', label: 'Source control', icon: GitBranch, hint: 'Push and pull workflows with Git', role: 'settings:manage' },
-  { id: 'environments', label: 'Environments', icon: Layers, hint: 'Promote between environments', role: 'settings:manage' },
-  { id: 'external-secrets', label: 'External secrets', icon: Vault, hint: 'Vault, 1Password, cloud secret stores', role: 'settings:manage' },
+  { id: 'source-control', label: 'Source control', icon: GitBranch, hint: 'Push and pull workflows with Git', role: 'settings:manage', admin: true },
+  { id: 'environments', label: 'Environments', icon: Layers, hint: 'Promote between environments', role: 'settings:manage', admin: true },
+  { id: 'external-secrets', label: 'External secrets', icon: Vault, hint: 'Vault, 1Password, cloud secret stores', role: 'settings:manage', admin: true },
   { id: 'workers', label: 'Workers', icon: Cpu, hint: 'Queue mode, workers and the leader' },
-  { id: 'transports', label: 'Transports', icon: Network, hint: 'HTTP, gRPC and broker connections', role: 'settings:manage' },
+  { id: 'transports', label: 'Transports', icon: Network, hint: 'HTTP, gRPC and broker connections', role: 'settings:manage', admin: true },
 ];
 type Section = string;
 
@@ -77,7 +77,7 @@ const BODIES: Record<string, () => React.ReactNode> = {
 export default function SettingsPage() {
   const viewer = useViewer();
   const router = useRouter();
-  const sections = SECTIONS.filter((s) => !s.role || can(viewer, s.role));
+  const sections = SECTIONS.filter((s) => (!s.role || can(viewer, s.role)) && (!s.admin || isBuiltInAdmin(viewer)));
   const groups = SETTINGS_GROUPS.map((group) => ({ ...group, items: group.sections.map((id) => sections.find((s) => s.id === id)).filter((s) => s !== undefined) })).filter((group) => group.items.length);
   const [chosen, setSection] = useState<Section>('general');
   const section = sections.some((s) => s.id === chosen) ? chosen : 'general';

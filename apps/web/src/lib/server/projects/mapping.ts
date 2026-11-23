@@ -65,16 +65,18 @@ export function grantsFor(values: Iterable<string>, map: Record<string, ProjectG
 /**
  * Make the memberships `source` manages for `userId` exactly `desired`: add or change those, and remove the ones of
  * that source that aren't wanted any more. A membership someone added by hand isn't removed, but a grant for the
- * same project takes it over (with the granted role). One transaction.
+ * same project takes it over (with the granted role). `mayChange` limits which projects it touches (a SCIM token of a
+ * person who isn't an instance admin changes only the projects that person administers). One transaction.
  */
-export function syncManagedMemberships(userId: string, source: 'saml' | 'scim', desired: Array<{ projectId: string; role: ProjectRole }>) {
+export function syncManagedMemberships(userId: string, source: 'saml' | 'scim', desired: Array<{ projectId: string; role: ProjectRole }>, mayChange: (projectId: string) => boolean = () => true) {
   const db = authDb();
   db.transaction(() => {
     const wanted = new Map(desired.map((grant) => [grant.projectId, grant.role]));
     for (const membership of membershipsOf(userId)) {
-      if (membership.source === source && !wanted.has(membership.projectId)) removeMember(membership.projectId, userId, source);
+      if (membership.source === source && !wanted.has(membership.projectId) && mayChange(membership.projectId)) removeMember(membership.projectId, userId, source);
     }
     for (const [projectId, role] of wanted) {
+      if (!mayChange(projectId)) continue;
       const current = membershipsOf(userId).find((m) => m.projectId === projectId);
       if (current?.role === role && current.source === source) continue;
       setMember(projectId, userId, role, source);

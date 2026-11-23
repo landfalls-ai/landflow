@@ -29,7 +29,7 @@ import { readCookie } from '../auth/cookies';
 import { sameSecret } from '../auth/passwords';
 import { enrolmentRequired } from '../auth/policy';
 import { sessionUser } from '../auth/sessions';
-import { findUserByOidc, type UserRecord } from '../auth/users';
+import { findUserByOidc, getUser, type UserRecord } from '../auth/users';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry';
 import { effectiveTool, effectiveTools, effectiveTrigger, effectiveTriggers, pluginTools, type EffectiveTool, type EffectiveTrigger } from './grants';
@@ -339,7 +339,7 @@ const subjectsOfCaller = (caller: McpCaller) => ({ userId: caller.userId, role: 
 
 /** Owners and admins browsing from the UI (a session or an API key, not an agent) see every tool, to write grants. */
 function browsesEverything(caller: McpCaller): boolean {
-  return (caller.kind === 'session' || caller.kind === 'apiKey') && can({ role: caller.role as Role }, 'mcp:manage');
+  return (caller.kind === 'session' || caller.kind === 'apiKey') && can((caller.userId ? getUser(caller.userId) : undefined) ?? { role: caller.role as Role }, 'mcp:manage');
 }
 
 /** Whether `tools/list` on `pluginId` shows `toolName` to `caller`. */

@@ -166,6 +166,7 @@ export function guardRequest(request: Request | undefined): GuardResult {
     }
   }
   if (policy.action && !can(principal.user, policy.action)) return { ok: false, response: deny('role', 'Your role can’t do this. Ask an owner or admin.', 403) };
+  if (policy.instanceAdmin && principal.user.role !== 'owner' && principal.user.role !== 'admin') return { ok: false, response: deny('role', 'Only an owner or admin can do this: it reaches every project.', 403) };
   // A protected environment: workflows change only by pull or promotion (lib/server/environments/protection.ts).
   const readOnly = protectedWriteRefusal(method, path);
   if (readOnly) return { ok: false, response: deny('protected_environment', readOnly, 403, { protected: true }) };
