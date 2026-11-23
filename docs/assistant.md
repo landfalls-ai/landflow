@@ -637,3 +637,7 @@ needs; `propose_agent_update` offers test-then-publish of a newer agent version.
 `agent_changes_unpublished`, *Publish <agent> first*). Nothing is published until Publish is clicked. The MCP tool
 `list_agent_updates` (scope `workflows:read`) reads the same list. Routes: `GET /api/workflows/:id/agent-updates`,
 `POST /api/workflows/:id/test-update` ([the API](reference/api.md)).
+
+## Access nodes in Spotlight
+
+Spotlight knows the access nodes' parameters: Ask a Person's *Answer Choices* (`value: label` per line) and *People Only*, Access Request, Apply Access Decision (it needs a request id from the trigger, else it applies nothing) and File Access Request. The installed access flows are admin-only; Spotlight changes a copy, not them.

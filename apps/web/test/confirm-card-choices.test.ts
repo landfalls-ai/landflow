@@ -25,3 +25,12 @@ describe('the confirm card’s choices', () => {
     expect(out).toContain('data-testid="confirm-approve"');
   });
 });
+
+describe('the journal hands the card its choices', async () => {
+  const { confirmAttrs } = await import('../src/lib/server/journal/translator');
+  it('carries the pick list, the approvers and the draft; none when the request has no choices', () => {
+    const withChoices = confirmAttrs({ title: 'T', text: 'x', allowEdit: false, approvers: ['a@x.io'], choices: [{ value: '240', label: '4 h' }, { value: 'bad' }] });
+    expect(withChoices).toEqual({ title: 'T', text: 'x', allowEdit: false, approvers: ['a@x.io'], choices: [{ value: '240', label: '4 h' }] });
+    expect(confirmAttrs({ title: 'T', text: 'x' })).toEqual({ title: 'T', text: 'x', allowEdit: true });
+  });
+});

@@ -74,7 +74,7 @@ export function accessTemplates(h: Helpers): TemplateDetail[] {
         node('chat', 'When chat message received', 'chatTrigger', [0, 0]),
         node('agent', 'Access assistant', 'aiAgent', [260, -6], {
           systemMessage:
-            'You help people ask for access. You can only file a request with the File Access Request tool. Read the request back and file it only after the person says yes in a later message. You never grant, approve or promise access.',
+            'You help people ask for access. You can only file a request with the File Access Request tool. Read the request back and file it only after the person says yes in a later message. Only GitHub entries need a GitHub username; never ask for one for a Google group or a manual entry, leave the account empty. When the entry or the duration is unclear, call the tool without a token and let it list the choices instead of guessing. You never grant, approve or promise access.',
         }),
         node('claude', 'Anthropic Chat Model', 'anthropicChatModel', [220, 200], { model: 'claude-sonnet-5-5' }, { uses: [SLOT.anthropic] } as never),
         node('memory', 'Simple Memory', 'simpleMemory', [330, 200], {}),

@@ -96,6 +96,19 @@ The chat flow's agent has one tool, **File Access Request** (`core.fileAccessReq
 
 `POST /api/access/chat { message, sessionId }` runs the chat flow as the session user and answers `{ reply, requestId? }`.
 
+## The Access page
+
+`/access` (the rail's Access item shows once Access is set up, or to an admin before). Tabs scroll sideways on a phone; every list is cards there and a grid on desktop.
+
+- **Setup** (admins, first visit): pick the project and, optionally, an Anthropic key for the chat, then one button (`access-setup-go`) installs the request flow and the chat flow. Admins then see links to both flows and, when the flows are admin-only, the sentence saying so.
+- **Ask**: the Form (entry, GitHub username when the system needs one, remembered for next time, duration chips from the entry's list, reason) and the Chat. The chat says "It can only file a request; an approver decides." and links the request it filed under My requests.
+- **My requests**: state word, what was asked, the reason of a denial or failure, the note of a give-back, Cancel while waiting, Give it back when granted, Retry when a grant failed (a failed grant counts as live, so it can't be asked again).
+- **To decide** (approvers): the same confirm card as Needs you, with an *Allow* select of the entry's durations (never longer than asked) and a comment. A GitHub username is marked "unverified: they typed it".
+- **Grants**: Everyone or Mine; Revoke now, Done (by-hand entries) and Retry; an overdue banner when a by-hand grant should have ended.
+- **Catalog** (admins and owners): entries in a grid; the sheet is full height on a phone. GitHub Projects can't be added. Owners can't add unlimited or longer durations; the server refuses too.
+
+The Run Trace's Ask a Person card also shows the *Allow for* select when the request carries Answer Choices.
+
 ## The nodes
 
 - **Access Request** (`core.accessRequestTrigger`) starts the flow once per request; a manual run emits an example item.

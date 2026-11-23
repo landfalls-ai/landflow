@@ -566,7 +566,7 @@ export function createTranslator(options: TranslatorOptions) {
       // Ask a Person: the question and the draft, answered with Approve, Edit or Reject.
       const confirm = isObject(approval.confirm) ? approval.confirm : undefined;
       if (confirm) {
-        attrs.confirm = { title: confirm.title, text: confirm.text, allowEdit: confirm.allowEdit !== false, ...(Array.isArray(confirm.approvers) && confirm.approvers.length && { approvers: confirm.approvers }) };
+        attrs.confirm = confirmAttrs(confirm);
         name = `Waiting for ${Array.isArray(confirm.approvers) && confirm.approvers.length ? confirm.approvers.map(String).join(', ') : 'a person'}: ${String(confirm.title)}`;
       }
       // A team member's tool (Run a Team): who wants it, and what with.
@@ -710,4 +710,16 @@ function toolTargetAttr(node: WorkflowNode): { target?: unknown } {
   } catch {
     return {};
   }
+}
+
+/** What the Run Trace's Ask a Person card gets of a waiting `confirm` request: the question, the draft, who may answer and (C35) the pick list of Answer Choices. */
+export function confirmAttrs(confirm: Record<string, unknown>): Record<string, unknown> {
+  const choices = Array.isArray(confirm.choices) ? confirm.choices.filter((c): c is { value: string; label: string } => isObject(c) && typeof c.value === 'string' && typeof c.label === 'string') : [];
+  return {
+    title: confirm.title,
+    text: confirm.text,
+    allowEdit: confirm.allowEdit !== false,
+    ...(Array.isArray(confirm.approvers) && confirm.approvers.length && { approvers: confirm.approvers }),
+    ...(choices.length && { choices }),
+  };
 }

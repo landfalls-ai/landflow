@@ -304,6 +304,8 @@ python3 deploy/scripts/servicebus-config.py --check   # the Service Bus emulator
 
 ### Integration tests (`LANDFLOW_INTEGRATION`)
 
+`access` runs `test/access-contract.test.ts`: the real Go Google plugin against fakegoogle and the real GitHub plugin against its stateful fake (needs `go`). `browser` also runs `e2e/access.spec.ts`.
+
 The host's tests against real services are skipped unless `LANDFLOW_INTEGRATION` (a comma-separated list) names them.
 Start the matching infra services first ([deployment.md](deployment.md)), then run the files from `apps/web`, e.g.
 `LANDFLOW_INTEGRATION=postgres,ollama npx vitest run test/pgvector.test.ts test/rag-live.test.ts`.

@@ -19,7 +19,8 @@ interface Line {
   requestId?: string;
 }
 
-export function AccessChat({ available, onFiled }: { available: boolean; onFiled?: (requestId: string) => void }) {
+/** `onFiled`: a request was filed (the page says so); `onOpen`: the person asked to see it under My requests. */
+export function AccessChat({ available, onFiled, onOpen }: { available: boolean; onFiled?: (requestId: string) => void; onOpen?: (requestId: string) => void }) {
   const [lines, setLines] = useState<Line[]>([]);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -64,7 +65,11 @@ export function AccessChat({ available, onFiled }: { available: boolean; onFiled
           ) : (
             <AssistantRow key={i}>
               <ChatMarkdown text={line.text} />
-              {line.requestId && <p className="text-[12px] text-t3">Filed. See it under My requests.</p>}
+              {line.requestId && (
+                <button type="button" onClick={() => onOpen?.(line.requestId!)} className="text-[12.5px] font-semibold text-ac hover:underline max-md:min-h-11" data-testid="access-chat-filed">
+                  Filed. See it under My requests
+                </button>
+              )}
             </AssistantRow>
           ),
         )}

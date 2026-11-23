@@ -121,7 +121,7 @@ export function AccessPage() {
               onAccountSaved={() => void accounts.reload()}
             />
           ) : (
-            <AccessChat available={Boolean(setup?.chatWorkflowId)} onFiled={(id) => { setHighlight(id); setTab('mine'); }} />
+            <AccessChat available={Boolean(setup?.chatWorkflowId)} onFiled={() => { toast.success('Filed. You will see the answer under My requests.'); void reloadDecide(); }} onOpen={(id) => { setTab('mine'); setHighlight(id); }} />
           )}
         </div>
       )}

@@ -82,10 +82,11 @@ export function EntryFields({ draft, people, credentials, isAdmin, canEdit, onCh
       <div>
         <FieldLabel>System</FieldLabel>
         <Select aria-label="System" value={draft.system} disabled={!reach} onChange={(e) => set({ system: e.target.value as AccessSystem, target: {}, credentialId: '' })} className="max-md:h-11">
-          {ACCESS_SYSTEMS.map((system) => (
+          {ACCESS_SYSTEMS.filter((system) => system !== 'github-project' || draft.system === 'github-project').map((system) => (
             <option key={system} value={system}>{SYSTEM_FORM[system].label}</option>
           ))}
         </Select>
+        <p className="mt-1 text-[12px] text-t3">GitHub Projects can’t be added: GitHub can’t check or remove that access later.</p>
       </div>
       {form.fields.map((field) => (
         <div key={field.name}>

@@ -28,7 +28,7 @@ function detail(request: AccessRequestView, state: ReturnType<typeof requestStat
   if (state === 'waiting') return `Waiting for ${request.approverNames.length ? request.approverNames.join(', ') : 'an approver'}`;
   if (state === 'approved') return request.grant?.system === 'manual' ? 'Approved. Someone will set it up by hand.' : 'Approved.';
   if (state === 'granted') return `${durationText(request.approvedMinutes === undefined ? request.durationMinutes : request.approvedMinutes)}, ${untilText(request.grant?.until)}`;
-  if (state === 'removed') return request.grant?.endReason ? `Ended: ${request.grant.endReason.replace(/_/g, ' ')}` : undefined;
+  if (state === 'removed') return [request.grant?.endReason ? `Ended: ${request.grant.endReason.replace(/_/g, ' ')}` : '', request.note].filter(Boolean).join('. ') || undefined;
   return request.note;
 }
 
