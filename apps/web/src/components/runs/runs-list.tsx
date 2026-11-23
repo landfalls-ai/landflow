@@ -16,7 +16,7 @@ import { useLiveEvents } from '@/lib/client/live';
 import type { ExecutionSummary } from '@/lib/shared/types';
 import type { RunSearchResult } from '@/lib/server/journal/runs-query';
 import { useViewer } from '@/components/auth/viewer';
-import { can } from '@/lib/shared/auth';
+import { isBuiltInAdmin } from '@/lib/shared/auth';
 import { RERUN_CHOICES, RERUN_LABEL, RERUN_WORD, RETRY_CHOICES, RETRY_LABEL, canRetry, deleteExecution, retryTitle, startRerun, startRetry, stopAllExecutions, stopAllSummary, type RerunBody, type RetryBody } from '@/components/executions/meta';
 import { RUN_STATE, RunStateIcon, formatStamp, runStateOf, useNow } from '@/components/run/run-status';
 import { LiveRuns, NeedsYouList } from '@/components/run-trace/run-lists';
@@ -381,7 +381,7 @@ function StopAllButton({ onStopped }: { onStopped: () => void }) {
 export function RunsList() {
   // Stop all reaches every project's runs: admins only (the route enforces it; a null viewer is a host without sign-in).
   const viewer = useViewer();
-  const canStopAll = !viewer || can(viewer, 'settings:manage');
+  const canStopAll = !viewer || isBuiltInAdmin(viewer);
   const params = useSearchParams();
   const router = useRouter();
   const paramsKey = params.toString();

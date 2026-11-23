@@ -122,6 +122,9 @@ export interface RoleHolder {
   customRole?: { id?: string; name?: string; actions?: readonly Action[] };
 }
 
+/** The built-in owner or admin role itself (a custom role never counts): what instance-wide controls need. */
+export const isBuiltInAdmin = (user: { role: Role } | null | undefined): boolean => user?.role === 'owner' || user?.role === 'admin';
+
 /** The role check: whether `user` may do `action` (the built-in role allows it, or a custom role grants it). */
 export function can(user: RoleHolder | null | undefined, action: Action): boolean {
   if (!user) return false;
@@ -250,7 +253,8 @@ export interface InviteView {
 
 /** POST /api/users/invites and POST /api/users/<id>/password-reset: the link (shown to copy) and whether it was emailed. */
 export interface LinkResponse {
-  link: string;
+  /** Absent for someone who isn't an owner or admin: a reset link is emailed to the person, never shown. */
+  link?: string;
   emailed: boolean;
   /** Why it wasn't emailed: SMTP isn't configured, or sending failed (the message). */
   emailError?: string;

@@ -72,6 +72,13 @@ describe('what the editor lets a viewer grant', () => {
     expect(source).toContain("can(viewer, 'users:manage')");
     expect(source).toContain('{mayChange(role) && (');
   });
+  it('hides Stop all, Source control, Environments, Security, External secrets and Transports from anyone but the built-in admin role', () => {
+    const page = readFileSync(join(root, 'app/settings/page.tsx'), 'utf8');
+    for (const id of ['security', 'source-control', 'environments', 'external-secrets', 'transports']) expect(page).toMatch(new RegExp(`id: '${id}'[^\\n]*admin: true`));
+    expect(page).toContain('isBuiltInAdmin(viewer)');
+    expect(readFileSync(join(root, 'components/runs/runs-list.tsx'), 'utf8')).toContain('isBuiltInAdmin(viewer)');
+    expect(readFileSync(join(root, 'components/settings/environments-settings.tsx'), 'utf8')).toContain('isBuiltInAdmin(viewer)');
+  });
   it('the editor disables a box it may not grant and prints the reason under it', () => {
     // The dialog portals to <body>, which a server render has none of: checked through its source.
     const source = readFileSync(join(root, 'components/settings/roles-settings.tsx'), 'utf8');

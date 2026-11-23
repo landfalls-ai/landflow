@@ -30,16 +30,18 @@ function LinkNotice({ title, result, onClose }: { title: string; result: LinkRes
         {result.emailed ? <Mail className="mt-0.5 size-3.5 shrink-0 text-gn" /> : <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warn" />}
         <span className="min-w-0 flex-1 text-t2">
           <span className="font-semibold text-t1">{title}.</span>{' '}
-          {result.emailed ? 'It was emailed; you can also copy the link.' : result.emailError ? `Sending the email failed (${result.emailError}): copy the link and send it yourself.` : 'Email isn’t configured: copy the link and send it yourself.'}
+          {result.emailed ? (result.link ? 'It was emailed; you can also copy the link.' : 'It was emailed to them.') : result.emailError ? `Sending the email failed (${result.emailError}): copy the link and send it yourself.` : 'Email isn’t configured: copy the link and send it yourself.'}
         </span>
         <button onClick={onClose} aria-label="Dismiss" className="text-t3 hover:text-t1">
           <X className="size-3.5" />
         </button>
       </div>
-      <div className="flex items-center gap-1 rounded-[10px] border border-hair bg-wl py-1 pl-3 pr-1">
-        <code className="min-w-0 flex-1 truncate font-mono text-[12px] text-t1">{result.link}</code>
-        <CopyButton text={result.link} label="Copy link" />
-      </div>
+      {result.link && (
+        <div className="flex items-center gap-1 rounded-[10px] border border-hair bg-wl py-1 pl-3 pr-1">
+          <code className="min-w-0 flex-1 truncate font-mono text-[12px] text-t1">{result.link}</code>
+          <CopyButton text={result.link} label="Copy link" />
+        </div>
+      )}
     </div>
   );
 }

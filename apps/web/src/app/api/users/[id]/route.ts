@@ -18,6 +18,7 @@ import { error, json, parseBody } from '@/lib/server/http';
 import { deleteUserWithTransfer } from '@/lib/server/projects';
 import { projectRoute } from '@/lib/server/projects/http';
 import { auditedTransaction, recordAudit } from '@/lib/server/audit';
+import { mayActOnUser, mayTransferTo } from '@/lib/server/auth/user-scope';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
@@ -68,8 +69,10 @@ export const DELETE = projectRoute(async (request: Request, { params }: Ctx) => 
   const target = getUser((await params).id);
   if (!target) return error('User not found', 404);
   if (!canManageUser(me, target, { kind: 'remove' })) return error('You can’t remove this user', 403);
+  if (!mayActOnUser(me, target)) return error('This person belongs to projects you don’t administer', 403);
   const transferTo = await transferTarget(request);
   if (transferTo instanceof Response) return transferTo;
+  if (!mayTransferTo(me, transferTo)) return error('You can move their things only to the owner or to a project you administer', 403);
   if (transferTo && 'userId' in transferTo && transferTo.userId === target.id) return error('Transfer to someone else, or to a project');
   const result = deleteUserWithTransfer(target.id, transferTo, me.id);
   editLocks.releaseUser(target.id);

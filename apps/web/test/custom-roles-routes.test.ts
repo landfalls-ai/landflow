@@ -89,10 +89,11 @@ describe('custom roles through the routes', () => {
     const roleId = created.body.role.id as string;
     await call(userRoute.PATCH, `/api/users/${member.user.id}`, { method: 'PATCH', session: ownerSession, body: { customRoleId: roleId } }, { id: member.user.id });
     expect((await call(mcpRoute.GET, '/api/settings/mcp', { session: member.session })).status).toBe(200);
-    expect((await call(mcpRoute.PATCH, '/api/settings/mcp', { method: 'PATCH', session: member.session, body: { enabled: false } })).status).toBe(200);
+    // Changing the instance MCP server reaches every project: the built-in admin role's, whatever the holder holds.
+    expect((await call(mcpRoute.PATCH, '/api/settings/mcp', { method: 'PATCH', session: member.session, body: { enabled: false } })).status).toBe(403);
     const edit = await call(roleRoute.PUT, `/api/users/roles/${roleId}`, { method: 'PUT', session: ownerSession, body: { rules: [{ action: 'variables:manage', effect: 'allow' }] } }, { id: roleId });
     expect(edit.status).toBe(200);
-    expect((await call(mcpRoute.PATCH, '/api/settings/mcp', { method: 'PATCH', session: member.session, body: { enabled: false } })).status).toBe(403);
+    expect((await call(mcpRoute.GET, '/api/settings/mcp', { session: member.session })).status).toBe(403);
   });
 
   it('AS-3: an admin can’t grant users:manage; the owner can; projects:manage is refused for both', async () => {

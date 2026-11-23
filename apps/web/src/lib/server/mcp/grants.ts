@@ -23,7 +23,7 @@ import { parse } from '../db/rows';
 import { nodeTypeBlocked, scopedNodeBlocked } from '../governance/policy';
 import { policyScope } from '../governance/scopes';
 import { registry } from '../plugins/registry';
-import { isInstanceAdmin, visibleIds, type Actor } from '../projects/access';
+import { canResource, isInstanceAdmin, visibleIds, type Actor } from '../projects/access';
 import { getProject, membershipsOf } from '../projects/store';
 import { getGroup, groupsOf } from '../scim/groups';
 import { singleton } from '../singleton';
@@ -170,18 +170,21 @@ export type GrantActor = string | Actor;
  * A grant binds credentials for everyone it names, so its author may bind only credentials they can use themselves: an
  * owner or admin binds any; a member holding Manage MCP through a custom role (C32) binds what their projects hold.
  */
-function requireUsableCredentials(credentials: Record<string, string> | undefined, actor: GrantActor | undefined) {
+function requireUsableCredentials(credentials: Record<string, string> | undefined, actor: GrantActor | undefined, subject: { kind: McpGrantSubjectKind; id: string }) {
   if (!actor || typeof actor === 'string' || !credentials) return;
   const ids = Object.values(credentials);
   if (!ids.length || isInstanceAdmin(actor)) return;
   const visible = visibleIds(actor, 'credential', ids);
   if (visible && ids.some((id) => !visible.has(id))) throw new McpGrantError('You can only bind credentials you can use yourself', 403);
+  // Binding one for anyone but yourself shares it: that needs the right to share it.
+  const forSelf = subject.kind === 'user' && subject.id === actor.id;
+  if (!forSelf && ids.some((id) => !canResource(actor, 'credential', id, 'share'))) throw new McpGrantError('You can only bind a credential for other people if you may share it', 403);
 }
 
 export function createGrant(input: GrantInput, actor?: GrantActor): McpToolGrant {
   const createdBy = typeof actor === 'string' ? actor : actor?.id;
   validate(input);
-  requireUsableCredentials(input.credentials, actor);
+  requireUsableCredentials(input.credentials, actor, input.subject);
   const now = new Date().toISOString();
   const row: GrantRow = {
     id: `mcpg_${nanoid(12)}`,
@@ -205,11 +208,15 @@ export function createGrant(input: GrantInput, actor?: GrantActor): McpToolGrant
  * an instance owner. Turning them up is for any manager.
  */
 export function updateGrant(id: string, patch: Partial<Omit<GrantInput, 'subject' | 'pluginId'>>, actor?: { id: string; role?: string }): McpToolGrant {
-  requireUsableCredentials(patch.credentials, actor?.role ? (actor as Actor) : undefined);
   const db = mcpDb();
   const row = db.get<GrantRow>('SELECT * FROM mcp_grants WHERE id = ?', id);
   if (!row) throw new McpGrantError('Grant not found', 404);
   validate(patch);
+  // A non-admin changes a grant only if they could have bound what it binds now (the stored credentials too) and what it will bind.
+  const author = actor?.role ? (actor as Actor) : undefined;
+  const subject = { kind: row.subject_kind, id: row.subject_id } as { kind: McpGrantSubjectKind; id: string };
+  requireUsableCredentials(parse<Record<string, string>>(row.credentials) ?? {}, author, subject);
+  requireUsableCredentials(patch.credentials, author, subject);
   const mode = requestedMode(patch);
   if (actor && mode !== undefined && weakens(approvalOf(row).approval, mode ?? undefined)) {
     const mine = row.created_by ? row.created_by === actor.id : actor.role === 'owner';
@@ -226,7 +233,9 @@ export function updateGrant(id: string, patch: Partial<Omit<GrantInput, 'subject
   return fromRow(next);
 }
 
-export function deleteGrant(id: string): boolean {
+export function deleteGrant(id: string, actor?: Actor): boolean {
+  const row = mcpDb().get<GrantRow>('SELECT * FROM mcp_grants WHERE id = ?', id);
+  if (row) requireUsableCredentials(parse<Record<string, string>>(row.credentials) ?? {}, actor, { kind: row.subject_kind, id: row.subject_id } as { kind: McpGrantSubjectKind; id: string });
   return mcpDb().delete('mcp_grants', { id }) > 0;
 }
 

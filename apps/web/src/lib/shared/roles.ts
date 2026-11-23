@@ -25,11 +25,11 @@ export interface CustomRoleView {
 /** The editor's words for each action; `note` says what else the action opens, so nobody grants it by accident. */
 export const ACTION_LABELS: Record<Action, { label: string; note?: string }> = {
   'users:manage': { label: 'Manage users', note: 'Invite, remove and change roles. Only the owner can grant it.' },
-  'settings:manage': { label: 'Manage settings', note: 'Instance settings, security, source control and environments, which reach every project. Only the owner can grant it.' },
+  'settings:manage': { label: 'Manage settings', note: 'Instance-wide settings (security, governance, source control, environments, transports, retention) change every project, so they need the built-in owner or admin role even with this action. Only the owner can grant it.' },
   'credentials:share': { label: 'Share credentials' },
-  'mcp:manage': { label: 'Manage MCP', note: 'The instance MCP server, its tokens’ grants and the gateway.' },
+  'mcp:manage': { label: 'Manage MCP', note: 'Who may call which MCP tools (the grants). The MCP server’s token, policy hooks and gateway stay with owners and admins.' },
   'plugins:manage': { label: 'Manage plugins', note: 'Installs third-party code that runs on the host, with the host’s access to the data directory. Only the owner can grant it.' },
-  'variables:manage': { label: 'Manage variables' },
+  'variables:manage': { label: 'Manage variables', note: 'Instance variables reach every project, so changing them needs the built-in owner or admin role even with this action; a project’s own variables are its admins’.' },
   'workflows:takeover': { label: 'Take over workflows', note: 'Take a workflow someone else has open in the editor.' },
   'apiKeys:admin': { label: 'Create admin API keys', note: 'Only the owner can grant it.' },
   'projects:manage': { label: 'Manage projects', note: 'Sees every project. Can’t be granted through a custom role.' },

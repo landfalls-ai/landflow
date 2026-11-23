@@ -26,10 +26,12 @@ import { currentActorId } from '../auth/context';
 import { authDb } from '../auth/db';
 import { roleByName, setCustomRole } from '../auth/roles';
 import { ungrantable } from '../../shared/auth';
+import { projectRole } from '../projects/access';
 import { getUser, updateUser } from '../auth/users';
 import { recordAudit } from '../audit';
 import { describeProjectMap, grantsFor, parseProjectMap, syncManagedMemberships, type ProjectGrant } from '../projects/mapping';
 import { findProject } from '../projects/store';
+import { changeRefusal, isAdminActor, scimActor } from './guard';
 import { auditGroupChange, auditGroupCreated, auditGroupRemoved, auditUserChange } from './audit';
 import { ScimError } from './http';
 
@@ -164,11 +166,15 @@ export function recomputeGrants(userIds: Iterable<string>) {
   const managesRoles = Object.values(map).some((mapping) => mapping.role);
   const namedCustom = new Set(Object.values(map).flatMap((mapping) => (mapping.customRole ? [mapping.customRole.toLowerCase()] : [])));
   // The token's person (none outside a SCIM request: the map in the environment is the operator's own).
-  const actorId = currentActorId();
-  const actor = actorId ? getUser(actorId) : undefined;
+  const actor = scimActor();
+  // Built-in roles (to or from admin) change only on the owner's token (or the operator's, with no token); a non-admin token touches only projects its person administers.
+  const mayChangeRoles = !actor || actor.role === 'owner';
+  const mayChangeProject = (projectId: string) => isAdminActor(actor) || projectRole(actor, projectId) === 'admin';
   for (const userId of new Set(userIds)) {
     const user = getUser(userId);
     if (!user) continue;
+    // Never the token's own person, nor anyone SCIM may not change through /Users (the owner, an admin on a non-owner token, a role it couldn't grant).
+    if (actor && changeRefusal(actor, user)) continue;
     const projectMap: Record<string, ProjectGrant> = {};
     let role: 'admin' | 'member' | undefined;
     // C32-D4: the group first by name wins when several map different custom roles.
@@ -183,10 +189,10 @@ export function recomputeGrants(userIds: Iterable<string>) {
         if (team?.type === 'team' && team.name.toLowerCase() === group.displayName.toLowerCase()) projectMap[group.displayName] = { project: team.id, role: 'editor' as ProjectRole };
       }
     }
-    syncManagedMemberships(userId, 'scim', grantsFor(Object.keys(projectMap), projectMap, { create: true, createdBy: currentActorId() }));
+    syncManagedMemberships(userId, 'scim', grantsFor(Object.keys(projectMap), projectMap, { create: isAdminActor(actor), createdBy: currentActorId() }), mayChangeProject);
     const managed = user.externalId || user.provisionedBy === 'scim';
-    // A token never gives more than its person could: a member's token (a custom role with scim:manage) changes no built-in role.
-    if (managesRoles && managed && user.role !== 'owner' && actor?.role !== 'member') {
+    // A token never gives more than its person could: only the owner's changes a built-in role.
+    if (managesRoles && managed && user.role !== 'owner' && mayChangeRoles) {
       const desired = role ?? 'member';
       if (user.role !== desired) auditUserChange(user, updateUser(userId, { role: desired }));
     }

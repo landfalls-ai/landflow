@@ -46,7 +46,7 @@ const reads = async (response: Response) => (await response.json()) as Record<st
 describe('the policy hook routes', () => {
   it('are admin mcp:manage by the settings rule, for every method', () => {
     for (const [method, path] of [['GET', '/api/settings/mcp/policy-hooks'], ['POST', '/api/settings/mcp/policy-hooks'], ['PATCH', '/api/settings/mcp/policy-hooks/x'], ['DELETE', '/api/settings/mcp/policy-hooks/x'], ['POST', '/api/settings/mcp/policy-hooks/x/test']] as const) {
-      expect(routePolicy(method, path)).toEqual({ scope: 'admin', action: 'mcp:manage' });
+      expect(routePolicy(method, path)).toEqual({ scope: 'admin', action: 'mcp:manage', ...(method !== 'GET' && { instanceAdmin: true }) });
     }
   });
 
