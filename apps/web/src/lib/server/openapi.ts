@@ -1484,6 +1484,34 @@ function paths(): Record<string, Record<string, Json>> {
     failureMode: { type: 'string', enum: ['closed', 'open'], description: 'Default `closed` in the production profile, `open` otherwise' },
     match: hookMatch,
   };
+  // C30: leased dynamic secrets (docs/features/secrets-and-environments.md#dynamic-secrets)
+  const leaseDoc = {
+    type: 'object',
+    description: 'A `SecretLeaseView` (lib/shared/secrets.ts): id, executionId, workflowId, provider, path (`database/creds/report-reader`), state (`active`, `revoked`, `expired` or `revoke_failed`), issuedAt, expiresAt, renewedUntil, attempts, lastError, endedAt, endedBy (`finish`, `sweeper` or `admin`) and dismissed. Never the lease id or the issued values.',
+    additionalProperties: true,
+  };
+  add('get', '/api/external-secrets/leases', {
+    tag: 'Settings',
+    id: 'listSecretLeases',
+    summary: 'List leased dynamic secrets',
+    description: 'Credentials an OpenBao / Vault provider issued to runs from its Dynamic mounts, newest first, with `counts` (open leases, and failed revokes nobody set aside). Admins.',
+    query: [
+      { name: 'state', description: '`active`, `ended` (revoked or expired) or `revoke_failed`; default all', schema: { type: 'string', enum: ['active', 'ended', 'revoke_failed'] } },
+      { name: 'executionId', description: 'Only the leases of this run', schema: { type: 'string' } },
+      { name: 'limit', description: '1 to 500, default 100', schema: { type: 'integer', minimum: 1, maximum: 500 } },
+      { name: 'cursor', description: '`nextCursor` of the previous page', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The leases', object({ leases: array(leaseDoc), nextCursor: { type: 'string' }, counts: object({ active: { type: 'integer' }, revokeFailed: { type: 'integer' } }, ['active', 'revokeFailed']) }, ['leases', 'counts'])), 400: invalid },
+  });
+  add('post', '/api/external-secrets/leases/revoke', {
+    tag: 'Settings',
+    id: 'revokeSecretLeases',
+    summary: 'Revoke leased dynamic secrets now',
+    description:
+      'Admins. `{ id }` revokes one lease, `{ executionId }` every open lease of a run, `{ id, dismiss: true }` sets a lease whose revoke was given up aside (409 when it is not one). A store that refuses leaves the lease active with the reason in `lastError` and counts it in `failed`; the host tries again by itself. Audited with the person who asked.',
+    body: jsonBody({ oneOf: [object({ id: { type: 'string' }, dismiss: { type: 'boolean' } }, ['id'], { additionalProperties: false }), object({ executionId: { type: 'string' } }, ['executionId'], { additionalProperties: false })] }),
+    responses: { 200: reply('What was revoked', object({ revoked: { type: 'integer' }, failed: { type: 'integer' }, leases: array(leaseDoc) }, ['revoked', 'failed', 'leases'])), 400: invalid, 404: notFound, 409: errorRef('Not a lease that could not be revoked') },
+  });
   add('get', '/api/settings/mcp/policy-hooks', {
     tag: 'Settings',
     id: 'listMcpPolicyHooks',

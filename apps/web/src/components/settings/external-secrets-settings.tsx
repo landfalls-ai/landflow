@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { confirmAction } from '@/components/ui/confirm';
 import { CopyButton } from '@/components/ui/copy-button';
 import { FieldLabel, Input, SectionLabel, Select, Switch, Textarea } from '@/components/ui/inputs';
+import { SecretLeases } from './secret-leases';
 
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 /** How a credential field references a secret: dots for plain names, brackets for paths. */
@@ -360,6 +361,8 @@ export function ExternalSecretsSettings() {
         )}
       </Card>
       <WhereCard allowed={data.allowInParameters} onChange={(allowInParameters) => setData((d) => d && { ...d, allowInParameters })} />
+      {/* Leased dynamic secrets (C30): shown once a provider has Dynamic mounts, so an instance without them sees nothing new. */}
+      {data.providers.some((p) => p.settings.dynamicMounts) && <SecretLeases />}
       {draft && (
         <ProviderForm
           key={draft.editing ?? 'new'}

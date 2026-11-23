@@ -2145,6 +2145,16 @@ export const MIGRATIONS: Migration[] = [
     name: 'project_keys',
     statements: [`CREATE TABLE IF NOT EXISTS project_keys (project_id TEXT NOT NULL, version BIGINT NOT NULL, wrapped TEXT NOT NULL, state TEXT NOT NULL, created_at TEXT NOT NULL, retired_at TEXT, PRIMARY KEY (project_id, version))`],
   },
+  // C30: a leased credential issued to a run by OpenBao / Vault's database engine (docs/features/secrets-and-environments.md#dynamic-secrets): one row per (run, provider, path), the lease id and the issued values sealed and dropped when the lease ends; `failing_since` times the 24 h after which a revoke that keeps failing is given up, `dismissed_at` hides that failure's banner
+  {
+    version: 2933,
+    name: 'secret_leases',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS secret_leases (id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, workflow_id TEXT, provider TEXT NOT NULL, path TEXT NOT NULL, lease_id TEXT, lease_values TEXT, state TEXT NOT NULL, issued_at TEXT NOT NULL, expires_at TEXT NOT NULL, renewed_until TEXT, attempts BIGINT NOT NULL DEFAULT 0, next_attempt_at TEXT, last_error TEXT, failing_since TEXT, dismissed_at TEXT, ended_at TEXT, ended_by TEXT, renew_failures BIGINT NOT NULL DEFAULT 0, renewable BIGINT NOT NULL DEFAULT 1)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS secret_leases_run_path ON secret_leases (execution_id, provider, path)`,
+      `CREATE INDEX IF NOT EXISTS secret_leases_state ON secret_leases (state, next_attempt_at)`,
+    ],
+  },
   // C29: network runners for the HTTP Request node (docs/network-runners.md): a network (instance-wide, or bound to one project), the runners registered to it (a token each, kept as its SHA-256), what each runner last reported (apart from the runner row, so a poll never rewrites a revoke), and the calls waiting for or answered by a runner (sealed bodies, deleted once read)
   {
     version: 2934,
@@ -2324,6 +2334,7 @@ export const TABLES = {
   knowledge_sync_runs: ['id'], // C22:
   custom_roles: ['id'], // C32:
   project_keys: ['project_id', 'version'], // C31:
+  secret_leases: ['id'], // C30:
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

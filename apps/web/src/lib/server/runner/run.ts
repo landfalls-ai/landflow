@@ -258,6 +258,8 @@ export async function runSegment(segment: Segment): Promise<ExecutionRecord> {
       resolveCredentials: (node, descriptor) => tagNodeCredentials(node, auditCredentialUse(executionId, workflow.id, node, record.mcp ? credentials.resolveFor(node, descriptor) : resolveWorkflowCredentials(workflow.id, node, descriptor))),
       // $secrets in node parameters when Settings → External secrets allows it; their values are redacted like credentials'.
       ...parameterSecretOptions,
+      // A real, saved run: its nodes may be issued dynamic secrets (leases, lib/server/secrets/leases.ts).
+      secretRun: { workflowId: workflow.id },
       // $vars: read fresh for every run, so a change in Settings applies to the next one.
       variables: variables.forWorkflow(workflow.id),
       // Composite frames whose type falls back, times out or has properties run as one step (docs/composites.md).
