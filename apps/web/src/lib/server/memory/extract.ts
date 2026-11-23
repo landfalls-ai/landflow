@@ -103,7 +103,7 @@ export const LABEL_SYSTEM = [
   'You compare new facts with what is already remembered, and label each new fact.',
   '',
   'Labels:',
-  '- "duplicate": a remembered item already says the same thing. Give its id as matchId.',
+  '- "duplicate": a remembered item already says the same claim, so nothing is learned. A different event about the same subject (joined versus moved, started versus finished) is not a duplicate. Give its id as matchId.',
   '- "updates": the new fact replaces or corrects a remembered item about the same thing (a changed role, a moved date). Give that item\'s id as matchId.',
   '- "new": nothing remembered covers it.',
   '',
