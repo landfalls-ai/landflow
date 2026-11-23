@@ -14,12 +14,15 @@ import type { ExecuteRequest, JsonObject } from '@landflow/protocol';
 import type { ExecuteWorkflowOptions, ResolvedNodeType } from '@landflow/engine';
 import type { ContextExtras } from '@landflow/sdk';
 import { installRedaction } from './install';
+import './leases'; // registers the dynamic-secret issuer (C30) with ./resolve
 import { hasSecretValues, redactValue, rememberSecretValues } from './redact';
 import { loadParameterSecrets, resolveSecretsIn, resolveSecretsInRecord } from './resolve';
 
-const withCredentials = async (request: ExecuteRequest): Promise<ExecuteRequest> => {
+const withCredentials = async (request: ExecuteRequest, extras?: ContextExtras): Promise<ExecuteRequest> => {
   installRedaction();
-  const credentials = await resolveSecretsInRecord(request.credentials);
+  // A dynamic path (C30) is issued to the run the engine names (`secretRun`), at the first node that needs it; a call that
+  // names none (agent channels, MCP lists, run changes: their ids are made up) gets the refusal.
+  const credentials = await resolveSecretsInRecord(request.credentials, extras?.secretRun);
   return credentials ? { ...request, credentials } : request;
 };
 
@@ -39,7 +42,7 @@ export function withExternalSecrets(resolved: ResolvedNodeType): ResolvedNodeTyp
   return {
     ...resolved,
     execute: async (request, extras) => {
-      const prepared = await withCredentials(request);
+      const prepared = await withCredentials(request, extras);
       try {
         return redactValue(await resolved.execute(prepared, redactedExtras(extras)));
       } catch (error) {
@@ -47,7 +50,7 @@ export function withExternalSecrets(resolved: ResolvedNodeType): ResolvedNodeTyp
       }
     },
     ...(resolved.supplyData && {
-      supplyData: async (request: ExecuteRequest, extras?: Parameters<NonNullable<ResolvedNodeType['supplyData']>>[1]) => resolved.supplyData!(await withCredentials(request), extras),
+      supplyData: async (request: ExecuteRequest, extras?: Parameters<NonNullable<ResolvedNodeType['supplyData']>>[1]) => resolved.supplyData!(await withCredentials(request, extras), extras),
     }),
   };
 }

@@ -67,6 +67,57 @@ export interface SecretProvidersResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Leased dynamic secrets (C30)
+// ---------------------------------------------------------------------------
+
+/**
+ * `active`: the run may still use it. `revoked`: the store removed the credential. `expired`: its time ran out first
+ * (the store removed it itself). `revoke_failed`: revoking failed for 24 hours and was given up; an admin can try again.
+ */
+export type SecretLeaseState = 'active' | 'revoked' | 'expired' | 'revoke_failed';
+
+/** One leased credential as the API shows it: which run, where from and when, never the lease id or the values. */
+export interface SecretLeaseView {
+  id: string;
+  executionId: string;
+  workflowId?: string;
+  /** The provider's name (`$secrets.<name>`) and the dynamic path, `database/creds/report-reader`. */
+  provider: string;
+  path: string;
+  state: SecretLeaseState;
+  issuedAt: string;
+  expiresAt: string;
+  /** Set when the lease was extended while its run went. */
+  renewedUntil?: string;
+  /** Revoke attempts that failed so far, and the last reason (provider text, redacted). */
+  attempts: number;
+  lastError?: string;
+  endedAt?: string;
+  /** `finish` (the run ended), `sweeper`, or `admin`. */
+  endedBy?: string;
+  /** A `revoke_failed` lease an admin has seen and set aside. */
+  dismissed?: boolean;
+}
+
+/** GET /api/external-secrets/leases */
+export interface SecretLeasesResponse {
+  leases: SecretLeaseView[];
+  nextCursor?: string;
+  /** Leases in each state that needs eyes: open ones, and the failed ones nobody dismissed (the banner). */
+  counts: { active: number; revokeFailed: number };
+}
+
+/** POST /api/external-secrets/leases/revoke: one lease, every active lease of a run, or set a failed one aside. */
+export type SecretLeaseRevokeRequest = { id: string; dismiss?: boolean } | { executionId: string };
+
+export interface SecretLeaseRevokeResponse {
+  /** Leases whose credential was removed now, and those the store refused again. */
+  revoked: number;
+  failed: number;
+  leases: SecretLeaseView[];
+}
+
+// ---------------------------------------------------------------------------
 // Environments
 // ---------------------------------------------------------------------------
 

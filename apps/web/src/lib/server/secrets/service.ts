@@ -15,7 +15,7 @@ import type { SecretProviderCheck, SecretProviderKind, SecretProviderView } from
 import { formatSecretReference } from '@landflow/engine';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
-import { PROVIDERS, SecretProviderError, type ProviderConfig, type SecretsProvider, type SecretValue } from './providers';
+import { PROVIDERS, SecretProviderError, type IssuedSecret, type ProviderConfig, type SecretsProvider, type SecretValue } from './providers';
 import { redactText } from './redact';
 import { recordAudit } from '../audit';
 import { configOf, providerStore, viewOf, type StoredProvider } from './store';
@@ -33,6 +33,9 @@ export class SecretsError extends HttpError {
     super(message, status, { expose: true });
   }
 }
+
+/** Why a dynamic path (a mount that issues credentials) is refused outside a node call (C30-D4). */
+export const DYNAMIC_OUTSIDE_RUN = 'a dynamic secret is issued per run: use it in a node credential';
 
 /** Seconds a value is reused. */
 export function cacheTtlSeconds(): number {
@@ -262,6 +265,8 @@ export const externalSecrets = {
   async read(provider: string, name: string): Promise<SecretValue> {
     const key = cacheKey(provider, name);
     const live = instance(provider);
+    // A dynamic path is issued to a run (./leases.ts), never read and cached: every caller of `read` is refused here.
+    if (live.isDynamic?.(name)) throw new SecretsError(`External secret ${formatSecretReference({ provider, name })}: ${DYNAMIC_OUTSIDE_RUN}`);
     const cached = state.values.get(key);
     if (cached && cached.expires > Date.now()) return cached.value;
     let pending = state.inflight.get(key);
@@ -285,6 +290,55 @@ export const externalSecrets = {
     }
     if (value === undefined) throw new SecretsError(`External secret ${formatSecretReference({ provider, name })} doesn’t exist`, 404);
     return value;
+  },
+
+  /** Whether `name` is under one of the provider's dynamic mounts. Throws like `read` when the provider isn't set up. */
+  isDynamic(provider: string, name: string): boolean {
+    return instance(provider).isDynamic?.(name) ?? false;
+  },
+
+  /** A new credential from a dynamic mount (not cached, not shared): its values, lease id and length. Throws a SecretsError naming the reference when the store refuses. */
+  async issue(provider: string, name: string): Promise<IssuedSecret> {
+    const live = instance(provider);
+    try {
+      if (!live.issue || !live.isDynamic?.(name)) throw new SecretProviderError('is not under a dynamic mount');
+      return await live.issue(name);
+    } catch (error) {
+      throw new SecretsError(`External secret ${formatSecretReference({ provider, name })}: ${redactText((error as Error).message)}`, 502);
+    }
+  },
+
+  /** Extend a lease by the provider's Lease TTL (or `atMostSeconds`, when shorter); resolves to the seconds it has now. */
+  async renewLease(provider: string, leaseId: string, atMostSeconds?: number): Promise<number> {
+    const live = instance(provider);
+    try {
+      if (!live.renewLease) throw new SecretProviderError('cannot renew leases');
+      return await live.renewLease(leaseId, atMostSeconds);
+    } catch (error) {
+      throw new SecretsError(`Renewing a lease of ${provider} failed: ${redactText((error as Error).message)}`, 502);
+    }
+  },
+
+  /**
+   * End a lease. Resolves to `gone` when the store says it has no such lease (it ended it itself), `revoked` otherwise;
+   * throws a SecretsError when the store can't be reached or refuses. A turned-off provider still revokes (its
+   * leases must not outlive it); a deleted one can't, and the lease is retried until the store ends it at its TTL.
+   */
+  async revokeLease(provider: string, leaseId: string): Promise<'revoked' | 'gone'> {
+    const stored = providerStore.get(provider);
+    if (!stored) throw new SecretsError(`External secrets provider “${provider}” isn’t set up on this instance`, 404);
+    const live = stored.enabled ? instance(provider) : build(stored);
+    try {
+      if (!live.revokeLease) throw new SecretProviderError('cannot revoke leases');
+      await live.revokeLease(leaseId);
+      return 'revoked';
+    } catch (error) {
+      // A store that answers 400 "lease not found" (Vault and OpenBao themselves answer 204 for an unknown lease, which reads as revoked): it was removed there.
+      if (error instanceof SecretProviderError && error.status !== undefined && error.status >= 400 && error.status < 500 && /lease not found|invalid lease|no such lease/i.test(error.message)) return 'gone';
+      throw new SecretsError(`Revoking a lease of ${provider} failed: ${redactText((error as Error).message)}`, 502);
+    } finally {
+      if (!stored.enabled) live.close?.();
+    }
   },
 
   /** Forget cached values (one provider, or all). */
