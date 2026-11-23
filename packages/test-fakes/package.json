@@ -10,7 +10,8 @@
     "./github": "./src/github.ts",
     "./s3": "./src/s3.ts",
     "./site": "./src/site.ts",
-    "./drive": "./src/drive.ts"
+    "./drive": "./src/drive.ts",
+    "./upstream": "./src/upstream.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

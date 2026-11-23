@@ -41,6 +41,7 @@ import './brain/store';
 // NB04: the Notion brain's push service (its outbox listener registers when it loads).
 import { notionBrain } from './brain/notion/service';
 import { eventOutbox } from './outbox/dispatcher';
+import { kagentRouteRefresh } from './kagent/route-refresh';
 // NB05: registers the Notion pull (setPullStep), the region conflict and the problem actions (docs/features/notion-brain.md#what-comes-back-from-notion).
 import './brain/notion/pull';
 // NB06: registers the knowledge walk (the company's Notion pages as knowledge) with the Notion sync (docs/features/notion-brain.md).
@@ -232,6 +233,8 @@ export const SERVICES: ServiceSpec[] = [
   { name: 'event outbox', roles: MAIN, leader: true, start: () => eventOutbox.start(), stop: () => eventOutbox.stop() },
   // C22: scheduled syncs of knowledge sources (lib/server/knowledge-sources/scheduler.ts); the leader starts them, a claim in the database stops a second process from running the same source.
   { name: 'knowledge sources', roles: MAIN, leader: true, start: async () => (await import('./knowledge-sources/scheduler')).knowledgeSourceScheduler.start(), stop: async () => (await import('./knowledge-sources/scheduler')).knowledgeSourceScheduler.stop() },
+  // C26: a secret route's cluster Secret follows its credential: a minute tick on the leader rewrites only the Secret when a value changed (lib/server/kagent/route-refresh.ts).
+  { name: 'kagent route refresh', roles: MAIN, leader: true, start: () => kagentRouteRefresh.start(), stop: () => kagentRouteRefresh.stop() },
   {
     name: 'registry gRPC server',
     roles: MAIN,

@@ -230,6 +230,11 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'trust.approve': 'Approved content by its hash (an agent’s MCP tools, a marketplace plugin)',
   'trust.reject': 'Kept changed MCP tools held',
   'trust.revoke': 'Revoked what was approved by hash',
+  // C26: secret routes of a Claude Code agent on kagent (docs/a2a.md#secret-routes)
+  'kagent.route.added': 'Added a secret route to an agent on kagent',
+  'kagent.route.changed': 'Changed a secret route of an agent on kagent',
+  'kagent.route.removed': 'Removed a secret route from an agent on kagent',
+  'kagent.route.refreshed': 'Rewrote the secret of an agent’s routes after a credential changed',
   'api.denied': 'Request refused (401/403)',
   'api.request': 'API request',
 };
